@@ -136,8 +136,16 @@ guardrails:
     guidance: knowledge/contracts/public-inheritance-surface.md#invariants
     implementation:
       - knowledge/contracts/public-inheritance-surface.md#invariants
+      - tools/repository_scope.py
+      - Dockerfile
     tests:
       - tests/test_tools.py::PublicationBaselineTests.test_repository_contains_no_specialization_vocabulary
+      - tests/test_repository_scope.py::RepositoryCandidateScopeTests.test_only_git_tracked_candidate_files_are_semantic_inputs
+      - tests/test_repository_scope.py::RepositoryCandidateScopeTests.test_forbidden_vocabulary_in_a_tracked_file_is_reported
+      - tests/test_repository_scope.py::RepositoryCandidateScopeTests.test_tracked_symlink_does_not_expose_external_file_content
+      - tests/test_repository_scope.py::RepositoryCandidateScopeTests.test_packaged_candidate_uses_its_build_manifest_without_git
+      - tests/test_repository_scope.py::RepositoryCandidateScopeTests.test_unsafe_build_manifest_entry_is_rejected
+      - tests/test_repository_scope.py::RepositoryCandidateScopeTests.test_container_runtime_declares_both_candidate_sources
 
   - id: legacy-content-quarantine
     title: Unnormalized legacy Markdown remains outside the validated bundle

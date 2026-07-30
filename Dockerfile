@@ -3,6 +3,13 @@
 ARG PYTHON_BASE_IMAGE=python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
 FROM ${PYTHON_BASE_IMAGE} AS base
 
+ARG GIT_PACKAGE_VERSION=1:2.47.3-0+deb13u1
+
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
+      "git=${GIT_PACKAGE_VERSION}" \
+    && rm -rf /var/lib/apt/lists/*
+
 ARG KIT_VERSION=0.1.0
 ARG VCS_REF=development
 ARG BUILD_DATE=unknown
@@ -27,6 +34,15 @@ RUN groupadd --gid 10001 kit \
 
 WORKDIR ${KNOWLEDGE_KIT_ROOT}
 COPY --chown=kit:kit . .
+RUN find . -mindepth 1 \( -type f -o -type l \) \
+      -printf '%P\0' > /tmp/gnostoa-source-files.unsorted \
+    && sort --zero-terminated /tmp/gnostoa-source-files.unsorted \
+      > /tmp/.gnostoa-source-files \
+    && install --owner=kit --group=kit --mode=0444 \
+      /tmp/.gnostoa-source-files .gnostoa-source-files \
+    && rm -f \
+      /tmp/gnostoa-source-files.unsorted \
+      /tmp/.gnostoa-source-files
 RUN python -m pip install --no-cache-dir -r requirements/runtime.lock \
     && python -m pip install --no-cache-dir --no-deps -e .
 

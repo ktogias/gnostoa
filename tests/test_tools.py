@@ -24,6 +24,7 @@ from tools.knowledge_common import (
     markdown_links,
     resolve_target,
 )
+from tools.repository_scope import find_text_matches
 from tools.validate_bundle import validate_bundle
 
 
@@ -99,21 +100,7 @@ class PublicationBaselineTests(unittest.TestCase):
                 re.IGNORECASE,
             ),
         }
-        excluded_parts = {".git", "__pycache__", ".pytest_cache"}
-        findings: list[str] = []
-
-        for path in sorted(candidate for candidate in ROOT.rglob("*") if candidate.is_file()):
-            if any(part in excluded_parts for part in path.relative_to(ROOT).parts):
-                continue
-            try:
-                body = path.read_text(encoding="utf-8")
-            except UnicodeDecodeError:
-                continue
-            for label, pattern in forbidden_patterns.items():
-                if pattern.search(body):
-                    findings.append(f"{path.relative_to(ROOT)}: {label}")
-
-        self.assertEqual([], findings)
+        self.assertEqual([], find_text_matches(ROOT, forbidden_patterns))
 
     def test_schema_ids_use_the_versioned_gnostoa_namespace(self) -> None:
         schema_paths = sorted((ROOT / "schemas").glob("*.schema.json"))
