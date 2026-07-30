@@ -1,0 +1,8 @@
+# Replace the example owner with the project's accountable review team.
+/AGENTS.md @example-knowledge-maintainers
+/.knowledge/ @example-knowledge-maintainers
+/knowledge/ @example-knowledge-maintainers
+/ci/verify @example-knowledge-maintainers
+/.githooks/ @example-knowledge-maintainers
+/.github/workflows/ @example-knowledge-maintainers
+/.gitlab-ci.yml @example-knowledge-maintainers

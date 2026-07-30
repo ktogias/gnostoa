@@ -1,0 +1,108 @@
+id: project-change-control-core
+version: "0.1.0"
+owner: team:project-maintainers
+extends: []
+
+integration:
+  protected_default_branch: true
+  direct_push: false
+  force_push: false
+  branch_deletion: false
+  change_request_required: true
+  required_checks: true
+  resolved_conversations: true
+
+branches:
+  short_lived: true
+  target_lifetime_hours: 24
+
+agents:
+  may_author_changes: true
+  may_approve_own_change: false
+  may_bypass_controls: false
+  may_promote_stable_without_human: false
+
+verification:
+  expected_behavior_required: true
+  observable_behavior_over_implementation_details: true
+  deterministic_required_tests: true
+  flaky_required_tests_block: true
+  coverage_alone_sufficient: false
+  fast_feedback_target_minutes: 10
+
+change_classes:
+  mechanical:
+    work_item: optional
+    change_request_timing: before-merge
+    minimum_approvals: 0
+    independent_approval: false
+    code_owner_approval: false
+    decision_record: false
+    human_approval: false
+    auto_merge: true
+    follow_up_review: false
+    verification:
+      automated_test: existing-evidence
+      failing_evidence: optional
+      evidence_timing: before-merge
+      human_semantic_verification: false
+  normal:
+    work_item: optional
+    change_request_timing: before-merge
+    minimum_approvals: 1
+    independent_approval: true
+    code_owner_approval: false
+    decision_record: false
+    human_approval: true
+    auto_merge: false
+    follow_up_review: false
+    verification:
+      automated_test: when-automatable
+      failing_evidence: when-applicable
+      evidence_timing: before-implementation
+      human_semantic_verification: true
+  normative:
+    work_item: required
+    change_request_timing: before-merge
+    minimum_approvals: 1
+    independent_approval: true
+    code_owner_approval: true
+    decision_record: true
+    human_approval: true
+    auto_merge: false
+    follow_up_review: false
+    verification:
+      automated_test: when-automatable
+      failing_evidence: required
+      evidence_timing: before-implementation
+      human_semantic_verification: true
+  critical:
+    work_item: required
+    change_request_timing: before-merge
+    minimum_approvals: 2
+    independent_approval: true
+    code_owner_approval: true
+    decision_record: true
+    human_approval: true
+    auto_merge: false
+    follow_up_review: false
+    verification:
+      automated_test: required
+      failing_evidence: required
+      evidence_timing: before-implementation
+      human_semantic_verification: true
+  emergency:
+    work_item: required-follow-up
+    change_request_timing: post-event-allowed
+    minimum_approvals: 0
+    independent_approval: false
+    code_owner_approval: false
+    decision_record: false
+    human_approval: false
+    auto_merge: false
+    follow_up_review: true
+    verification:
+      automated_test: required
+      failing_evidence: required-follow-up
+      evidence_timing: post-event
+      human_semantic_verification: true

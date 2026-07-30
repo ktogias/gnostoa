@@ -1,0 +1,65 @@
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+
+stages:
+  - policy
+  - fast
+  - regression
+  - conditional
+  - extended
+
+.toolkit-job:
+  # Bootstrap fallback until the first published toolkit image is available.
+  image: python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+  before_script:
+    - python -m pip install -r requirements/runtime.lock
+    - python -m pip install --no-deps -e .
+
+knowledge:policy:
+  extends: .toolkit-job
+  stage: policy
+  script:
+    - ./ci/verify policy
+
+knowledge:fast:
+  extends: .toolkit-job
+  stage: fast
+  interruptible: true
+  script:
+    - ./ci/verify fast
+
+knowledge:regression:
+  extends: .toolkit-job
+  stage: regression
+  interruptible: true
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  script:
+    - ./ci/verify regression
+
+knowledge:conditional:
+  extends: .toolkit-job
+  stage: conditional
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  script:
+    - ./ci/verify integration
+    - ./ci/verify smoke
+
+knowledge:extended:
+  extends: .toolkit-job
+  stage: extended
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+  before_script:
+    - python -m pip install -r requirements/development.lock
+    - python -m pip install --no-deps -e .
+  script:
+    - ./ci/verify extended

@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+
+suite="${1:-}"
+
+case "${suite}" in
+  fast)
+    exec project-test-command fast
+    ;;
+  regression)
+    exec project-test-command regression
+    ;;
+  integration|smoke|extended|release)
+    echo "SKIP: ${suite} capability is not declared"
+    ;;
+  *)
+    echo "usage: ./ci/verify {fast|regression|integration|smoke|extended|release}" >&2
+    exit 2
+    ;;
+esac

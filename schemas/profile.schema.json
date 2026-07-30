@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/project-knowledge/profile.schema.json",
+  "title": "Project knowledge profile",
+  "type": "object",
+  "required": [
+    "id",
+    "version",
+    "okf_version",
+    "extends",
+    "concept_types",
+    "relation_kinds",
+    "rules",
+    "type_rules"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "okf_version": {
+      "const": "0.2"
+    },
+    "extends": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "concept_types": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "relation_kinds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "rules": {
+      "type": "object",
+      "required": [
+        "required_fields",
+        "required_project_fields",
+        "statuses",
+        "stable_requires_verification",
+        "stable_requires_human_verification",
+        "require_unique_ids",
+        "unknown_types",
+        "unknown_relation_kinds",
+        "broken_links"
+      ],
+      "properties": {
+        "required_fields": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "required_project_fields": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "statuses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "stable_requires_verification": {
+          "type": "boolean"
+        },
+        "stable_requires_human_verification": {
+          "type": "boolean"
+        },
+        "require_unique_ids": {
+          "type": "boolean"
+        },
+        "unknown_types": {
+          "enum": ["ignore", "warning", "error"]
+        },
+        "unknown_relation_kinds": {
+          "enum": ["ignore", "warning", "error"]
+        },
+        "broken_links": {
+          "enum": ["ignore", "warning", "error"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "type_rules": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "required_sections": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
+

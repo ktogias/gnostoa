@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/project-knowledge/guardrails.schema.json",
+  "title": "Guardrail coverage manifest",
+  "type": "object",
+  "required": [
+    "version",
+    "guardrails"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "guardrails": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/guardrail"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "pathReference": {
+      "type": "string",
+      "minLength": 1
+    },
+    "guardrail": {
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "applies_to",
+        "enforcement",
+        "owner",
+        "guidance"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "applies_to": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "kit",
+              "adopting-projects"
+            ]
+          }
+        },
+        "enforcement": {
+          "enum": [
+            "automated",
+            "hybrid",
+            "review"
+          ]
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "guidance": {
+          "$ref": "#/$defs/pathReference"
+        },
+        "implementation": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/pathReference"
+          }
+        },
+        "tests": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/pathReference"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "enforcement": {
+                "const": "automated"
+              }
+            },
+            "required": [
+              "enforcement"
+            ]
+          },
+          "then": {
+            "required": [
+              "implementation",
+              "tests"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

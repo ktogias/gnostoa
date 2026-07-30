@@ -1,0 +1,360 @@
+version: "0.6.0"
+guardrails:
+  - id: monotonic-profile-inheritance
+    title: Child profiles do not weaken parent policy
+    applies_to: [kit, adopting-projects]
+    enforcement: automated
+    owner: team:gnostoa-maintainers
+    guidance: guidance/guardrails/non-negotiable.md#rule
+    implementation:
+      - tools/knowledge_common.py#_assert_monotonic
+    tests:
+      - tests/test_tools.py::ProfileTests.test_profile_cannot_weaken_parent
+
+  - id: stable-human-verification
+    title: Stable concepts require human verification
+    applies_to: [kit, adopting-projects]
+    enforcement: automated
+    owner: team:gnostoa-maintainers
+    guidance: guidance/guardrails/non-negotiable.md#rule
+    implementation:
+      - tools/validate_bundle.py#validate_bundle
+    tests:
+      - tests/test_tools.py::BundleTests.test_stable_concept_requires_human_verifier
+
+  - id: graph-integrity
+    title: IDs are unique and links resolve
+    applies_to: [kit, adopting-projects]
+    enforcement: automated
+    owner: team:gnostoa-maintainers
+    guidance: guidance/guardrails/non-negotiable.md#rule
+    implementation:
+      - tools/validate_bundle.py#validate_bundle
+    tests:
+      - tests/test_tools.py::BundleTests.test_generic_example_is_valid
+      - tests/test_tools.py::BundleTests.test_guidance_bundle_is_valid
+      - tests/test_tools.py::BundleTests.test_self_knowledge_bundle_is_valid
+      - tests/test_tools.py::DocumentationTests.test_repository_documentation_links_resolve
+
+  - id: generated-content-starts-draft
+    title: Generated content starts as draft
+    applies_to: [kit, adopting-projects]
+    enforcement: review
+    owner: team:gnostoa-maintainers
+    guidance: guidance/guardrails/non-negotiable.md#rule
+
+  - id: executable-artifacts-remain-canonical
+    title: Native executable artifacts are linked rather than copied
+    applies_to: [kit, adopting-projects]
+    enforcement: review
+    owner: team:gnostoa-maintainers
+    guidance: guidance/practices/source-authority-and-lifecycle.md#rule
+
+  - id: derived-views-are-noncanonical
+    title: Derived views and context packs are replaceable
+    applies_to: [kit, adopting-projects]
+    enforcement: hybrid
+    owner: team:gnostoa-maintainers
+    guidance: guidance/guardrails/non-negotiable.md#rule
+    implementation:
+      - tools/build_context_pack.py#build_pack
+      - tools/build_docs.py#build_docs
+      - tools/build_docs.py#prepare_projection
+    tests:
+      - tests/test_tools.py::BundleTests.test_context_pack_traverses_project_relations
+      - tests/test_tools.py::DocumentationTests.test_mkdocs_pages_are_explicit_projections
+      - tests/test_tools.py::DocumentationTests.test_docs_builder_stages_canonical_surfaces
+
+  - id: immutable-toolkit-version
+    title: Adopting projects pin an immutable toolkit version
+    applies_to: [adopting-projects]
+    enforcement: review
+    owner: team:adopting-project-maintainers
+    guidance: guidance/reference/versioning-and-upgrades.md#content
+
+  - id: justified-specialization
+    title: Specializations add demonstrated rules or vocabulary
+    applies_to: [kit, adopting-projects]
+    enforcement: review
+    owner: team:gnostoa-maintainers
+    guidance: guidance/workflows/create-specialization.md#procedure
+
+  - id: task-scoped-guidance
+    title: Agents load guidance through a task-specific route
+    applies_to: [kit, adopting-projects]
+    enforcement: hybrid
+    owner: team:gnostoa-maintainers
+    guidance: guidance/patterns/policy-guidance-self-separation.md#pattern
+    implementation:
+      - AGENTS.md
+      - templates/AGENTS.project.md
+    tests:
+      - tests/test_tools.py::GuardrailTests.test_project_agent_router_is_bounded
+      - tests/test_tools.py::BundleTests.test_guidance_context_pack_excludes_toolkit_self_knowledge
+
+  - id: self-knowledge-boundary
+    title: Adopting projects do not inherit toolkit self-knowledge
+    applies_to: [kit, adopting-projects]
+    enforcement: automated
+    owner: team:gnostoa-maintainers
+    guidance: guidance/patterns/policy-guidance-self-separation.md#pattern
+    implementation:
+      - knowledge/contracts/public-inheritance-surface.md#boundary
+      - templates/AGENTS.project.md
+    tests:
+      - tests/test_tools.py::GuardrailTests.test_public_profile_does_not_inherit_self_knowledge
+      - tests/test_tools.py::GuardrailTests.test_project_agent_router_is_bounded
+
+  - id: legacy-content-quarantine
+    title: Unnormalized legacy Markdown remains outside the validated bundle
+    applies_to: [adopting-projects]
+    enforcement: review
+    owner: team:adopting-project-maintainers
+    guidance: guidance/workflows/adopt-existing-project.md#procedure
+
+  - id: provenance-preserved
+    title: Knowledge transformations preserve source authority and provenance
+    applies_to: [kit, adopting-projects]
+    enforcement: hybrid
+    owner: team:gnostoa-maintainers
+    guidance: guidance/practices/source-authority-and-lifecycle.md#rule
+    implementation:
+      - schemas/frontmatter.schema.json
+
+  - id: accountable-review-ownership
+    title: Canonical knowledge paths have accountable review ownership
+    applies_to: [kit, adopting-projects]
+    enforcement: hybrid
+    owner: team:gnostoa-maintainers
+    guidance: guidance/guardrails/non-negotiable.md#rule
+    implementation:
+      - templates/CODEOWNERS.project
+      - templates/knowledge-change-checklist.md
+
+  - id: container-first-consumer-runtime
+    title: Consumer and CI execution is container-first with native fallback
+    applies_to: [kit, adopting-projects]
+    enforcement: automated
+    owner: team:gnostoa-maintainers
+    guidance: guidance/reference/runtime-and-distribution.md#content
+    implementation:
+      - Dockerfile
+      - requirements/runtime.lock
+      - requirements/development.lock
+      - .devcontainer/devcontainer.json
+      - tools/cli.py#main
+      - guidance/workflows/bootstrap-new-project.md#procedure
+    tests:
+      - tests/test_tools.py::RuntimeTests.test_runtime_image_contract_is_pinned_and_non_root
+      - tests/test_tools.py::RuntimeTests.test_development_container_uses_development_target
+      - tests/test_tools.py::RuntimeTests.test_unified_cli_exposes_supported_commands
+      - tests/test_tools.py::RuntimeTests.test_bootstrap_is_container_first_with_native_fallback
+      - tests/test_tools.py::RuntimeTests.test_consumer_ci_templates_use_pinned_runtime_image
+      - tests/test_tools.py::RuntimeTests.test_native_ci_is_explicit_fallback
+
+  - id: runtime-source-lockstep
+    title: Runtime image and toolkit source/profile revisions match
+    applies_to: [kit, adopting-projects]
+    enforcement: automated
+    owner: team:gnostoa-maintainers
+    guidance: guidance/reference/runtime-and-distribution.md#content
+    implementation:
+      - schemas/toolkit-lock.schema.json
+      - templates/knowledge-kit.lock.yaml
+      - tools/check_runtime_lock.py#check_runtime_lock
+      - tools/check_runtime_lock.py#public_surface_digest
+    tests:
+      - tests/test_tools.py::RuntimeTests.test_runtime_lock_accepts_matching_revisions
+      - tests/test_tools.py::RuntimeTests.test_runtime_lock_rejects_image_revision_drift
+      - tests/test_tools.py::RuntimeTests.test_runtime_lock_rejects_public_surface_drift
+
+  - id: concrete-tools-are-specialized
+    title: Concrete implementation and test products stay out of generic guidance
+    applies_to: [kit, adopting-projects]
+    enforcement: hybrid
+    owner: team:gnostoa-maintainers
+    guidance: guidance/reference/tool-selection.md#content
+    implementation:
+      - guidance/reference/tool-selection.md
+    tests:
+      - tests/test_tools.py::RuntimeTests.test_tool_selection_keeps_concrete_product_choices_specialized
+
+  - id: protected-change-request-flow
+    title: Integration uses protected branches and risk-classified Change Requests
+    applies_to: [kit, adopting-projects]
+    enforcement: hybrid
+    owner: team:gnostoa-maintainers
+    guidance: guidance/patterns/protected-short-lived-change-flow.md#pattern
+    implementation:
+      - core/change-control.yaml
+      - schemas/change-control.schema.json
+      - templates/change-control.project.yaml
+      - templates/change-request.md
+      - templates/repository-settings-checklist.md
+    tests:
+      - tests/test_tools.py::ChangeControlTests.test_generic_baseline_has_protected_change_flow
+
+  - id: monotonic-change-control
+    title: Child change-control policies do not weaken their parent
+    applies_to: [kit, adopting-projects]
+    enforcement: automated
+    owner: team:gnostoa-maintainers
+    guidance: guidance/reference/change-classification-and-approval.md#content
+    implementation:
+      - tools/check_change_policy.py#load_change_policy
+      - tools/check_change_policy.py#_assert_monotonic
+    tests:
+      - tests/test_tools.py::ChangeControlTests.test_toolkit_policy_strengthens_generic_baseline
+      - tests/test_tools.py::ChangeControlTests.test_change_policy_cannot_weaken_parent
+      - tests/test_tools.py::ChangeControlTests.test_verification_policy_cannot_weaken_parent
+
+  - id: human-change-approval-authority
+    title: Agents cannot satisfy required human semantic approval
+    applies_to: [kit, adopting-projects]
+    enforcement: hybrid
+    owner: team:gnostoa-maintainers
+    guidance: guidance/workflows/propose-review-merge-change.md#procedure
+    implementation:
+      - core/change-control.yaml
+      - policy/change-control.yaml
+      - templates/AGENTS.project.md
+      - templates/change-request.md
+    tests:
+      - tests/test_tools.py::ChangeControlTests.test_agents_cannot_approve_or_bypass
+
+  - id: verification-first-change-evidence
+    title: Expected behavior and proportionate evidence precede implementation
+    applies_to: [kit, adopting-projects]
+    enforcement: hybrid
+    owner: team:gnostoa-maintainers
+    guidance: guidance/workflows/develop-verification-first.md#procedure
+    implementation:
+      - core/change-control.yaml
+      - schemas/change-control.schema.json
+      - tools/check_change_policy.py#_assert_monotonic
+      - templates/change-request.md
+      - templates/verification-plan.md
+      - templates/AGENTS.project.md
+    tests:
+      - tests/test_tools.py::ChangeControlTests.test_generic_policy_requires_verification_first_evidence
+      - tests/test_tools.py::ChangeControlTests.test_change_request_captures_preimplementation_evidence
+      - tests/test_tools.py::ChangeControlTests.test_verification_first_guidance_and_self_route_are_complete
+
+  - id: required-test-quality
+    title: Required tests are behavior-oriented deterministic and non-flaky
+    applies_to: [kit, adopting-projects]
+    enforcement: hybrid
+    owner: team:gnostoa-maintainers
+    guidance: guidance/reference/testing-and-verification-strategy.md#content
+    implementation:
+      - core/change-control.yaml
+      - templates/change-request.md
+      - templates/verification-plan.md
+      - templates/knowledge-change-checklist.md
+    tests:
+      - tests/test_tools.py::ChangeControlTests.test_generic_policy_requires_verification_first_evidence
+
+  - id: authoritative-centralized-ci
+    title: Centralized CI authoritatively verifies the latest integration candidate
+    applies_to: [kit, adopting-projects]
+    enforcement: automated
+    owner: team:gnostoa-maintainers
+    guidance: guidance/patterns/tiered-ci-and-local-feedback.md#pattern
+    implementation:
+      - core/continuous-integration.yaml
+      - schemas/continuous-integration.schema.json
+      - tools/check_ci_policy.py#load_ci_policy
+      - tools/check_ci_policy.py#_assert_monotonic
+    tests:
+      - tests/test_tools.py::ContinuousIntegrationTests.test_generic_ci_policy_is_authoritative_and_tiered
+      - tests/test_tools.py::ContinuousIntegrationTests.test_ci_policy_cannot_weaken_parent
+
+  - id: declared-tiered-verification
+    title: Projects declare capabilities and every active required suite
+    applies_to: [kit, adopting-projects]
+    enforcement: automated
+    owner: team:gnostoa-maintainers
+    guidance: guidance/reference/continuous-integration-contract.md#content
+    implementation:
+      - schemas/verification-manifest.schema.json
+      - tools/check_ci_policy.py#check_ci_policy
+      - policy/verification.yaml
+      - templates/verification.project.yaml
+      - templates/verify.project
+    tests:
+      - tests/test_tools.py::ContinuousIntegrationTests.test_toolkit_verification_manifest_covers_declared_capabilities
+      - tests/test_tools.py::ContinuousIntegrationTests.test_verification_manifest_uses_one_pinned_runtime
+      - tests/test_tools.py::ContinuousIntegrationTests.test_manifest_runtime_must_match_ci_runtime
+      - tests/test_tools.py::ContinuousIntegrationTests.test_missing_required_suite_is_rejected
+
+  - id: advisory-repository-hooks
+    title: Repository hooks provide bounded feedback but never replace CI
+    applies_to: [kit, adopting-projects]
+    enforcement: hybrid
+    owner: team:gnostoa-maintainers
+    guidance: guidance/patterns/tiered-ci-and-local-feedback.md#pattern
+    implementation:
+      - .githooks/pre-commit
+      - .githooks/pre-push
+      - ci/verify
+      - templates/githooks/pre-commit
+      - templates/githooks/pre-push
+    tests:
+      - tests/test_tools.py::ContinuousIntegrationTests.test_repository_hooks_are_advisory_shared_command_adapters
+
+  - id: immutable-provider-ci-adapters
+    title: Provider adapters cover candidate events with immutable dependencies
+    applies_to: [kit, adopting-projects]
+    enforcement: hybrid
+    owner: team:gnostoa-maintainers
+    guidance: guidance/workflows/configure-continuous-integration.md#procedure
+    implementation:
+      - ci/github-actions.yml
+      - ci/gitlab-ci.yml
+      - .gitlab-ci.yml
+      - guidance/reference/continuous-integration-contract.md
+    tests:
+      - tests/test_tools.py::ContinuousIntegrationTests.test_provider_adapters_cover_candidate_and_integration_events
+
+  - id: conditional-artifact-promotion
+    title: Delivery activates for deployable artifacts and promotes the verified artifact
+    applies_to: [kit, adopting-projects]
+    enforcement: hybrid
+    owner: team:gnostoa-maintainers
+    guidance: guidance/reference/continuous-integration-contract.md#content
+    implementation:
+      - core/continuous-integration.yaml
+      - schemas/continuous-integration.schema.json
+      - templates/verification.project.yaml
+    tests:
+      - tests/test_tools.py::ContinuousIntegrationTests.test_generic_ci_policy_is_authoritative_and_tiered
+
+  - id: declared-apache-2-license-contract
+    title: Gnostoa distributions declare one verified Apache-2.0 contract
+    applies_to: [kit]
+    enforcement: automated
+    owner: team:gnostoa-maintainers
+    guidance: LICENSING.md#licensing-gnostoa-and-adopting-projects
+    implementation:
+      - LICENSE
+      - LICENSING.md
+      - pyproject.toml
+      - Dockerfile
+    tests:
+      - tests/test_tools.py::LicensePolicyTests.test_distribution_declares_one_apache_2_license_contract
+      - tests/test_tools.py::LicensePolicyTests.test_license_scope_is_explicit_for_adopting_projects
+
+  - id: explicit-copyright-provenance
+    title: Initial ownership and contributor retention remain explicit
+    applies_to: [kit]
+    enforcement: automated
+    owner: team:gnostoa-maintainers
+    guidance: LICENSING.md#licensing-gnostoa-and-adopting-projects
+    implementation:
+      - NOTICE
+      - LICENSING.md
+      - CONTRIBUTING.md
+      - pyproject.toml
+      - Dockerfile
+    tests:
+      - tests/test_tools.py::LicensePolicyTests.test_initial_owner_and_contributor_retention_are_consistent

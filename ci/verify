@@ -1,0 +1,47 @@
+#!/bin/sh
+set -eu
+
+suite="${1:-}"
+
+knowledge_cli() {
+  if command -v knowledge >/dev/null 2>&1; then
+    knowledge "$@"
+  else
+    python -m tools.cli "$@"
+  fi
+}
+
+case "${suite}" in
+  policy)
+    knowledge_cli check-change-policy --policy policy/change-control.yaml
+    knowledge_cli check-ci-policy \
+      --policy policy/continuous-integration.yaml \
+      --verification policy/verification.yaml
+    knowledge_cli check-guardrails
+    knowledge_cli validate --profile guidance/profile.yaml --bundle guidance
+    knowledge_cli validate --profile knowledge/profile.yaml --bundle knowledge
+    ;;
+  fast)
+    python -m unittest discover -s tests -v
+    ;;
+  regression)
+    knowledge_cli self-check
+    ;;
+  integration)
+    echo "SKIP: integration capability is not declared"
+    ;;
+  smoke)
+    knowledge_cli --help
+    ;;
+  extended)
+    site_dir="${TMPDIR:-/tmp}/gnostoa-site"
+    knowledge_cli docs-build --site-dir "${site_dir}"
+    ;;
+  release)
+    echo "SKIP: deployable_artifact capability is false"
+    ;;
+  *)
+    echo "usage: ./ci/verify {policy|fast|regression|integration|smoke|extended|release}" >&2
+    exit 2
+    ;;
+esac

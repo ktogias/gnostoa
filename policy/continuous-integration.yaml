@@ -1,0 +1,5 @@
+id: gnostoa-continuous-integration
+version: "0.1.0"
+owner: team:gnostoa-maintainers
+extends:
+  - ../core/continuous-integration.yaml

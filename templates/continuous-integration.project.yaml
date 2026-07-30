@@ -1,0 +1,7 @@
+id: example-project-continuous-integration
+version: "0.1.0"
+owner: team:example-project-maintainers
+extends:
+  - ../.knowledge-kit/core/continuous-integration.yaml
+
+# Add only stricter overrides. Keep provider configuration in its adapter.

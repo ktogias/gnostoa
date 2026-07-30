@@ -1,0 +1,31 @@
+id: gnostoa-verification
+version: "0.1.0"
+owner: team:gnostoa-maintainers
+policy: continuous-integration.yaml
+
+runtime:
+  mode: toolkit
+
+capabilities:
+  integration: false
+  smoke: true
+  extended: true
+  deployable_artifact: false
+
+suites:
+  fast:
+    command: ["./ci/verify", fast]
+    timeout_minutes: 5
+    evidence: [test-report]
+  regression:
+    command: ["./ci/verify", regression]
+    timeout_minutes: 10
+    evidence: [validation-report, test-report]
+  smoke:
+    command: ["./ci/verify", smoke]
+    timeout_minutes: 2
+    evidence: [observation]
+  extended:
+    command: ["./ci/verify", extended]
+    timeout_minutes: 30
+    evidence: [artifact]

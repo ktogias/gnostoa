@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/project-knowledge/verification-manifest.schema.json",
+  "title": "Project verification capability and suite manifest",
+  "type": "object",
+  "required": [
+    "id",
+    "version",
+    "owner",
+    "policy",
+    "runtime",
+    "capabilities",
+    "suites"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9.-]*$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "owner": {
+      "type": "string",
+      "minLength": 1
+    },
+    "policy": {
+      "type": "string",
+      "minLength": 1
+    },
+    "runtime": {
+      "$ref": "#/$defs/runtime"
+    },
+    "capabilities": {
+      "type": "object",
+      "required": [
+        "integration",
+        "smoke",
+        "extended",
+        "deployable_artifact"
+      ],
+      "properties": {
+        "integration": {
+          "type": "boolean"
+        },
+        "smoke": {
+          "type": "boolean"
+        },
+        "extended": {
+          "type": "boolean"
+        },
+        "deployable_artifact": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "suites": {
+      "type": "object",
+      "properties": {
+        "fast": {
+          "$ref": "#/$defs/suite"
+        },
+        "regression": {
+          "$ref": "#/$defs/suite"
+        },
+        "integration": {
+          "$ref": "#/$defs/suite"
+        },
+        "smoke": {
+          "$ref": "#/$defs/suite"
+        },
+        "extended": {
+          "$ref": "#/$defs/suite"
+        },
+        "release": {
+          "$ref": "#/$defs/suite"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "runtime": {
+      "type": "object",
+      "required": [
+        "mode"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "toolkit",
+            "project"
+          ]
+        },
+        "image": {
+          "type": "string",
+          "pattern": "^[^\\s]+@sha256:[a-f0-9]{64}$"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "project"
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          },
+          "then": {
+            "required": [
+              "image"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "image"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "suite": {
+      "type": "object",
+      "required": [
+        "command",
+        "timeout_minutes",
+        "evidence"
+      ],
+      "properties": {
+        "command": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "timeout_minutes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "validation-report",
+              "test-report",
+              "artifact",
+              "observation"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

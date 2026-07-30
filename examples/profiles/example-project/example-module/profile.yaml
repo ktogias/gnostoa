@@ -1,0 +1,24 @@
+id: example-project.example-module
+version: "0.1.0"
+okf_version: "0.2"
+extends:
+  - ../profile.yaml
+
+concept_types:
+  - Extension Point
+  - Conformance Suite
+
+relation_kinds:
+  - tested-by
+
+rules: {}
+
+type_rules:
+  Extension Point:
+    required_sections:
+      - Purpose
+      - Inputs
+      - Outputs
+      - Errors
+      - Conformance
+

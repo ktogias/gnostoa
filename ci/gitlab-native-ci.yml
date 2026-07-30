@@ -1,0 +1,20 @@
+knowledge:validate:native:
+  image: python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+  stage: test
+  before_script:
+    - python -m pip install -r "${KNOWLEDGE_KIT_PATH}/requirements/runtime.lock"
+    - python -m pip install --no-deps -e "${KNOWLEDGE_KIT_PATH}"
+  script:
+    - knowledge check-runtime --lock "${KNOWLEDGE_LOCK}"
+    - knowledge check-change-policy --policy "${KNOWLEDGE_CHANGE_POLICY}"
+    - knowledge check-ci-policy --policy "${KNOWLEDGE_CI_POLICY}" --verification "${KNOWLEDGE_VERIFICATION}"
+    - knowledge validate --profile "${KNOWLEDGE_PROFILE}" --bundle "${KNOWLEDGE_BUNDLE}"
+  variables:
+    GIT_SUBMODULE_STRATEGY: recursive
+    KNOWLEDGE_KIT_PATH: ".knowledge-kit"
+    KNOWLEDGE_LOCK: ".knowledge/kit.lock.yaml"
+    KNOWLEDGE_CHANGE_POLICY: ".knowledge/change-control.yaml"
+    KNOWLEDGE_CI_POLICY: ".knowledge/continuous-integration.yaml"
+    KNOWLEDGE_VERIFICATION: ".knowledge/verification.yaml"
+    KNOWLEDGE_PROFILE: ".knowledge/profile.yaml"
+    KNOWLEDGE_BUNDLE: "knowledge"

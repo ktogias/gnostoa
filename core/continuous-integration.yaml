@@ -1,0 +1,77 @@
+id: project-continuous-integration-core
+version: "0.1.0"
+owner: team:project-maintainers
+extends: []
+
+authority:
+  centralized_ci_required: true
+  provider_neutral_contract: true
+  required_checks_authoritative: true
+  latest_revision_required: true
+
+security:
+  immutable_dependencies: true
+  least_privilege: true
+  untrusted_changes_no_secrets: true
+
+local_feedback:
+  hooks: recommended
+  hooks_authoritative: false
+  shared_commands_required: true
+  network_access: false
+  max_seconds: 30
+
+feedback:
+  fast_max_minutes: 10
+  required_max_minutes: 30
+
+events:
+  branch_revision:
+    activation: always
+    gate: advisory
+    latest_revision: true
+    required_suites: [policy, fast]
+    conditional_suites: []
+    cancel_superseded: true
+  change_request:
+    activation: always
+    gate: required
+    latest_revision: true
+    required_suites: [policy, fast, regression]
+    conditional_suites: [integration, smoke]
+    cancel_superseded: true
+  merge_candidate:
+    activation: always
+    gate: required
+    latest_revision: true
+    required_suites: [policy, fast, regression]
+    conditional_suites: [integration, smoke]
+    cancel_superseded: true
+  integration:
+    activation: always
+    gate: restore-green
+    latest_revision: true
+    required_suites: [policy, fast, regression]
+    conditional_suites: [integration, smoke]
+    cancel_superseded: false
+  scheduled:
+    activation: when-applicable
+    gate: advisory
+    latest_revision: true
+    required_suites: [policy]
+    conditional_suites: [extended]
+    cancel_superseded: true
+  release:
+    activation: when-deployable
+    gate: required
+    latest_revision: true
+    required_suites: [policy, fast, regression]
+    conditional_suites: [integration, smoke, release]
+    cancel_superseded: false
+
+delivery:
+  enabled: when-deployable
+  promote_same_artifact: true
+  rebuild_between_environments: false
+  environment_protection: true
+  post_deploy_smoke: true

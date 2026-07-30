@@ -1,0 +1,83 @@
+id: project-knowledge-core
+version: "0.1.0"
+okf_version: "0.2"
+extends: []
+
+concept_types:
+  - Project
+  - System
+  - Component
+  - Repository
+  - Interface
+  - Contract
+  - Operation
+  - Data Model
+  - Decision
+  - Requirement
+  - Invariant
+  - Lifecycle
+  - Failure Mode
+  - Example
+  - Source
+  - Runbook
+  - Glossary Term
+
+relation_kinds:
+  - contains
+  - depends-on
+  - implements
+  - exposes
+  - consumes
+  - consumed-by
+  - produces
+  - references
+  - governs
+  - governed-by
+  - supersedes
+  - conflicts-with
+  - verifies
+  - verified-by
+  - derived-from
+  - conforms-to
+
+rules:
+  required_fields:
+    - type
+    - title
+    - description
+    - status
+    - generated
+    - x-project-knowledge
+  required_project_fields:
+    - id
+    - owners
+  statuses:
+    - draft
+    - stable
+    - deprecated
+  stable_requires_verification: true
+  stable_requires_human_verification: true
+  require_unique_ids: true
+  unknown_types: error
+  unknown_relation_kinds: error
+  broken_links: error
+
+type_rules:
+  Decision:
+    required_sections:
+      - Context
+      - Decision
+      - Consequences
+  Contract:
+    required_sections:
+      - Purpose
+      - Boundary
+      - Invariants
+      - Operations
+      - Failure semantics
+  Runbook:
+    required_sections:
+      - Preconditions
+      - Procedure
+      - Verification
+      - Recovery

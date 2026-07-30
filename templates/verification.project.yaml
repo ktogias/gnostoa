@@ -1,0 +1,24 @@
+id: example-project-verification
+version: "0.1.0"
+owner: team:example-project-maintainers
+policy: continuous-integration.yaml
+
+runtime:
+  mode: project
+  image: registry.example.org/example-project-ci@sha256:0000000000000000000000000000000000000000000000000000000000000000
+
+capabilities:
+  integration: false
+  smoke: false
+  extended: false
+  deployable_artifact: false
+
+suites:
+  fast:
+    command: ["./ci/verify", fast]
+    timeout_minutes: 10
+    evidence: [test-report]
+  regression:
+    command: ["./ci/verify", regression]
+    timeout_minutes: 30
+    evidence: [test-report]

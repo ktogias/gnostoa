@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+# Local feedback only. Central CI remains authoritative.
+exec ./ci/verify fast

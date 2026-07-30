@@ -1,0 +1,163 @@
+name: Project verification
+
+on:
+  workflow_call:
+  pull_request:
+  merge_group:
+    types: [checks_requested]
+  push:
+  schedule:
+    - cron: "17 3 * * *"
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verification-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref != 'refs/heads/main') }}
+
+env:
+  KNOWLEDGE_KIT_IMAGE: ${{ vars.KNOWLEDGE_KIT_IMAGE }}
+  PROJECT_VERIFICATION_IMAGE: ${{ vars.PROJECT_VERIFICATION_IMAGE }}
+
+jobs:
+  policy:
+    name: policy
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          submodules: recursive
+      - name: Require immutable runtime image
+        shell: bash
+        run: |
+          [[ "${KNOWLEDGE_KIT_IMAGE}" == *@sha256:* ]]
+      - name: Validate runtime, knowledge and inherited policies
+        run: |
+          docker run --rm \
+            --env KNOWLEDGE_KIT_IMAGE \
+            --mount type=bind,source="${GITHUB_WORKSPACE}",target=/workspace,readonly \
+            --workdir /workspace \
+            "${KNOWLEDGE_KIT_IMAGE}" \
+            check-runtime --lock .knowledge/kit.lock.yaml
+          docker run --rm \
+            --mount type=bind,source="${GITHUB_WORKSPACE}",target=/workspace,readonly \
+            --workdir /workspace \
+            "${KNOWLEDGE_KIT_IMAGE}" \
+            validate --profile .knowledge/profile.yaml --bundle knowledge
+          docker run --rm \
+            --mount type=bind,source="${GITHUB_WORKSPACE}",target=/workspace,readonly \
+            --workdir /workspace \
+            "${KNOWLEDGE_KIT_IMAGE}" \
+            check-change-policy --policy .knowledge/change-control.yaml
+          docker run --rm \
+            --env PROJECT_VERIFICATION_IMAGE \
+            --mount type=bind,source="${GITHUB_WORKSPACE}",target=/workspace,readonly \
+            --workdir /workspace \
+            "${KNOWLEDGE_KIT_IMAGE}" \
+            check-ci-policy \
+            --policy .knowledge/continuous-integration.yaml \
+            --verification .knowledge/verification.yaml
+
+  fast:
+    name: fast
+    needs: policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          submodules: recursive
+      - name: Run fast suite in the pinned project runtime
+        shell: bash
+        run: |
+          [[ "${PROJECT_VERIFICATION_IMAGE}" == *@sha256:* ]]
+          docker run --rm \
+            --mount type=bind,source="${GITHUB_WORKSPACE}",target=/workspace,readonly \
+            --workdir /workspace \
+            "${PROJECT_VERIFICATION_IMAGE}" \
+            ./ci/verify fast
+
+  regression:
+    name: regression
+    needs: fast
+    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          submodules: recursive
+      - name: Run regression suite in the pinned project runtime
+        shell: bash
+        run: |
+          [[ "${PROJECT_VERIFICATION_IMAGE}" == *@sha256:* ]]
+          docker run --rm \
+            --mount type=bind,source="${GITHUB_WORKSPACE}",target=/workspace,readonly \
+            --workdir /workspace \
+            "${PROJECT_VERIFICATION_IMAGE}" \
+            ./ci/verify regression
+
+  integration:
+    name: integration
+    needs: regression
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'release' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          submodules: recursive
+      - name: Run conditional candidate suites
+        shell: bash
+        run: |
+          [[ "${PROJECT_VERIFICATION_IMAGE}" == *@sha256:* ]]
+          docker run --rm \
+            --mount type=bind,source="${GITHUB_WORKSPACE}",target=/workspace,readonly \
+            --workdir /workspace \
+            "${PROJECT_VERIFICATION_IMAGE}" \
+            ./ci/verify integration
+          docker run --rm \
+            --mount type=bind,source="${GITHUB_WORKSPACE}",target=/workspace,readonly \
+            --workdir /workspace \
+            "${PROJECT_VERIFICATION_IMAGE}" \
+            ./ci/verify smoke
+
+  extended:
+    name: extended
+    needs: policy
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          submodules: recursive
+      - name: Run extended suite
+        shell: bash
+        run: |
+          [[ "${PROJECT_VERIFICATION_IMAGE}" == *@sha256:* ]]
+          docker run --rm \
+            --mount type=bind,source="${GITHUB_WORKSPACE}",target=/workspace,readonly \
+            --workdir /workspace \
+            "${PROJECT_VERIFICATION_IMAGE}" \
+            ./ci/verify extended
+
+  release:
+    name: release
+    needs: [regression, integration]
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          submodules: recursive
+      - name: Run release suite
+        shell: bash
+        run: |
+          [[ "${PROJECT_VERIFICATION_IMAGE}" == *@sha256:* ]]
+          docker run --rm \
+            --mount type=bind,source="${GITHUB_WORKSPACE}",target=/workspace,readonly \
+            --workdir /workspace \
+            "${PROJECT_VERIFICATION_IMAGE}" \
+            ./ci/verify release

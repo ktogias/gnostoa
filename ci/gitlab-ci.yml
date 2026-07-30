@@ -1,0 +1,93 @@
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_COMMIT_TAG'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+
+stages:
+  - policy
+  - fast
+  - regression
+  - conditional
+  - extended
+  - release
+
+knowledge:policy:
+  image:
+    name: "${KNOWLEDGE_KIT_IMAGE}"
+    entrypoint: [""]
+  stage: policy
+  script:
+    - case "${KNOWLEDGE_KIT_IMAGE}" in *@sha256:*) ;; *) echo "KNOWLEDGE_KIT_IMAGE must be pinned by digest"; exit 2;; esac
+    - knowledge check-runtime --lock "${KNOWLEDGE_LOCK}"
+    - knowledge check-change-policy --policy "${KNOWLEDGE_CHANGE_POLICY}"
+    - knowledge check-ci-policy --policy "${KNOWLEDGE_CI_POLICY}" --verification "${KNOWLEDGE_VERIFICATION}"
+    - knowledge validate --profile "${KNOWLEDGE_PROFILE}" --bundle "${KNOWLEDGE_BUNDLE}"
+  variables:
+    GIT_SUBMODULE_STRATEGY: recursive
+    KNOWLEDGE_LOCK: ".knowledge/kit.lock.yaml"
+    KNOWLEDGE_CHANGE_POLICY: ".knowledge/change-control.yaml"
+    KNOWLEDGE_CI_POLICY: ".knowledge/continuous-integration.yaml"
+    KNOWLEDGE_VERIFICATION: ".knowledge/verification.yaml"
+    KNOWLEDGE_PROFILE: ".knowledge/profile.yaml"
+    KNOWLEDGE_BUNDLE: "knowledge"
+
+.project-verification:
+  image:
+    name: "${PROJECT_VERIFICATION_IMAGE}"
+    entrypoint: [""]
+  before_script:
+    - case "${PROJECT_VERIFICATION_IMAGE}" in *@sha256:*) ;; *) echo "PROJECT_VERIFICATION_IMAGE must be pinned by digest"; exit 2;; esac
+
+project:fast:
+  extends: .project-verification
+  stage: fast
+  interruptible: true
+  script:
+    - ./ci/verify fast
+
+project:regression:
+  extends: .project-verification
+  stage: regression
+  interruptible: true
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+  script:
+    - ./ci/verify regression
+
+project:integration:
+  extends: .project-verification
+  stage: conditional
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  script:
+    - ./ci/verify integration
+    - ./ci/verify smoke
+
+project:extended:
+  extends: .project-verification
+  stage: extended
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+  script:
+    - ./ci/verify extended
+
+project:release:
+  extends: .project-verification
+  stage: release
+  rules:
+    - if: '$CI_COMMIT_TAG'
+  script:
+    - ./ci/verify integration
+    - ./ci/verify smoke
+    - ./ci/verify release
+
+# Define KNOWLEDGE_KIT_IMAGE and PROJECT_VERIFICATION_IMAGE as immutable
+# image references ending in @sha256:<digest>. Enable merged-results pipelines
+# when supported so merge-request jobs validate the candidate with target.

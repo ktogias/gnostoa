@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+site/
+dist/
+*.egg-info/
+.DS_Store
+
+# Generated orientation artifacts are reproducible and must not become truth.
+context-packs/
+

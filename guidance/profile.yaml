@@ -1,0 +1,52 @@
+id: knowledge-architecture-guidance
+version: "0.1.0"
+okf_version: "0.2"
+extends:
+  - ../core/profile.yaml
+
+concept_types:
+  - Practice
+  - Pattern
+  - Workflow
+  - Guardrail
+  - Reference
+
+relation_kinds:
+  - guides
+  - operationalizes
+  - enforced-by
+  - applies-to
+
+rules: {}
+
+type_rules:
+  Practice:
+    required_sections:
+      - Intent
+      - Rule
+      - Application
+      - Verification
+  Pattern:
+    required_sections:
+      - Context
+      - Pattern
+      - Consequences
+  Workflow:
+    required_sections:
+      - Outcome
+      - Preconditions
+      - Procedure
+      - Verification
+      - Recovery
+  Guardrail:
+    required_sections:
+      - Risk
+      - Rule
+      - Enforcement
+      - Exceptions
+  Reference:
+    required_sections:
+      - Purpose
+      - Content
+      - Usage
+

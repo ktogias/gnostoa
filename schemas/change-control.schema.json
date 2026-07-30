@@ -1,0 +1,338 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/project-knowledge/change-control.schema.json",
+  "title": "Provider-neutral change-control policy",
+  "type": "object",
+  "required": [
+    "id",
+    "version",
+    "owner",
+    "extends",
+    "integration",
+    "branches",
+    "agents",
+    "verification",
+    "change_classes"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9.-]*$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "owner": {
+      "type": "string",
+      "minLength": 1
+    },
+    "extends": {
+      "type": "array",
+      "maxItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "integration": {
+      "type": "object",
+      "required": [
+        "protected_default_branch",
+        "direct_push",
+        "force_push",
+        "branch_deletion",
+        "change_request_required",
+        "required_checks",
+        "resolved_conversations"
+      ],
+      "properties": {
+        "protected_default_branch": {
+          "type": "boolean"
+        },
+        "direct_push": {
+          "type": "boolean"
+        },
+        "force_push": {
+          "type": "boolean"
+        },
+        "branch_deletion": {
+          "type": "boolean"
+        },
+        "change_request_required": {
+          "type": "boolean"
+        },
+        "required_checks": {
+          "type": "boolean"
+        },
+        "resolved_conversations": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "branches": {
+      "type": "object",
+      "required": [
+        "short_lived",
+        "target_lifetime_hours"
+      ],
+      "properties": {
+        "short_lived": {
+          "type": "boolean"
+        },
+        "target_lifetime_hours": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "agents": {
+      "type": "object",
+      "required": [
+        "may_author_changes",
+        "may_approve_own_change",
+        "may_bypass_controls",
+        "may_promote_stable_without_human"
+      ],
+      "properties": {
+        "may_author_changes": {
+          "type": "boolean"
+        },
+        "may_approve_own_change": {
+          "type": "boolean"
+        },
+        "may_bypass_controls": {
+          "type": "boolean"
+        },
+        "may_promote_stable_without_human": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "verification": {
+      "type": "object",
+      "required": [
+        "expected_behavior_required",
+        "observable_behavior_over_implementation_details",
+        "deterministic_required_tests",
+        "flaky_required_tests_block",
+        "coverage_alone_sufficient",
+        "fast_feedback_target_minutes"
+      ],
+      "properties": {
+        "expected_behavior_required": {
+          "type": "boolean"
+        },
+        "observable_behavior_over_implementation_details": {
+          "type": "boolean"
+        },
+        "deterministic_required_tests": {
+          "type": "boolean"
+        },
+        "flaky_required_tests_block": {
+          "type": "boolean"
+        },
+        "coverage_alone_sufficient": {
+          "type": "boolean"
+        },
+        "fast_feedback_target_minutes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "change_classes": {
+      "type": "object",
+      "required": [
+        "mechanical",
+        "normal",
+        "normative",
+        "critical",
+        "emergency"
+      ],
+      "properties": {
+        "mechanical": {
+          "$ref": "#/$defs/changeClass"
+        },
+        "normal": {
+          "$ref": "#/$defs/changeClass"
+        },
+        "normative": {
+          "$ref": "#/$defs/changeClass"
+        },
+        "critical": {
+          "$ref": "#/$defs/changeClass"
+        },
+        "emergency": {
+          "$ref": "#/$defs/changeClass"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "changeClass": {
+      "type": "object",
+      "required": [
+        "work_item",
+        "change_request_timing",
+        "minimum_approvals",
+        "independent_approval",
+        "code_owner_approval",
+        "decision_record",
+        "human_approval",
+        "auto_merge",
+        "follow_up_review",
+        "verification"
+      ],
+      "properties": {
+        "work_item": {
+          "enum": [
+            "optional",
+            "required-follow-up",
+            "required"
+          ]
+        },
+        "change_request_timing": {
+          "enum": [
+            "post-event-allowed",
+            "before-merge"
+          ]
+        },
+        "minimum_approvals": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "independent_approval": {
+          "type": "boolean"
+        },
+        "code_owner_approval": {
+          "type": "boolean"
+        },
+        "decision_record": {
+          "type": "boolean"
+        },
+        "human_approval": {
+          "type": "boolean"
+        },
+        "auto_merge": {
+          "type": "boolean"
+        },
+        "follow_up_review": {
+          "type": "boolean"
+        },
+        "verification": {
+          "$ref": "#/$defs/classVerification"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "minimum_approvals": {
+                "minimum": 1
+              }
+            },
+            "required": [
+              "minimum_approvals"
+            ]
+          },
+          "then": {
+            "properties": {
+              "independent_approval": {
+                "const": true
+              },
+              "human_approval": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "auto_merge": {
+                "const": true
+              }
+            },
+            "required": [
+              "auto_merge"
+            ]
+          },
+          "then": {
+            "properties": {
+              "minimum_approvals": {
+                "const": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "classVerification": {
+      "type": "object",
+      "required": [
+        "automated_test",
+        "failing_evidence",
+        "evidence_timing",
+        "human_semantic_verification"
+      ],
+      "properties": {
+        "automated_test": {
+          "enum": [
+            "existing-evidence",
+            "when-automatable",
+            "required"
+          ]
+        },
+        "failing_evidence": {
+          "enum": [
+            "optional",
+            "when-applicable",
+            "required-follow-up",
+            "required"
+          ]
+        },
+        "evidence_timing": {
+          "enum": [
+            "post-event",
+            "before-merge",
+            "before-implementation"
+          ]
+        },
+        "human_semantic_verification": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "failing_evidence": {
+                "const": "required-follow-up"
+              }
+            },
+            "required": [
+              "failing_evidence"
+            ]
+          },
+          "then": {
+            "properties": {
+              "evidence_timing": {
+                "const": "post-event"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

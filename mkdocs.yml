@@ -1,0 +1,33 @@
+site_name: Gnostoa
+site_description: Reusable, layered knowledge architecture for people and agents
+theme:
+  name: material
+nav:
+  - Home: index.md
+  - Roadmap: roadmap.md
+  - Core:
+      - Architecture: core/architecture.md
+      - Toolchain: core/toolchain.md
+      - Governance: core/governance.md
+      - Adoption: core/adoption.md
+  - Profile authoring: profiles.md
+  - Decisions:
+      - OKF as canonical format: decisions/0001-okf-as-canonical-format.md
+      - Profiles instead of copies: decisions/0002-profile-inheritance.md
+      - Derived retrieval layers: decisions/0003-derived-retrieval-layers.md
+      - Self-hosting surfaces: decisions/0004-self-hosting-surfaces.md
+      - Container-first runtime: decisions/0005-container-first-runtime.md
+      - Provider-neutral change governance: decisions/0006-provider-neutral-change-governance.md
+      - Verification-first development: decisions/0007-verification-first-development.md
+      - Authoritative tiered CI: decisions/0008-authoritative-tiered-continuous-integration.md
+      - Adopt the Gnostoa project name: decisions/0009-adopt-gnostoa-project-name.md
+      - License Gnostoa under Apache-2.0: decisions/0010-license-gnostoa-under-apache-2.0.md
+      - Record initial copyright ownership: decisions/0011-record-initial-copyright-ownership.md
+markdown_extensions:
+  - admonition
+  - tables
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format

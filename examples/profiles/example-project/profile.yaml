@@ -1,0 +1,25 @@
+id: example-project
+version: "0.1.0"
+okf_version: "0.2"
+extends:
+  - ../../../core/profile.yaml
+
+concept_types:
+  - Product
+  - Module
+
+relation_kinds:
+  - delegates-to
+  - owned-by
+
+rules:
+  required_project_fields:
+    - scope
+
+type_rules:
+  Module:
+    required_sections:
+      - Responsibilities
+      - Boundaries
+      - Interfaces
+

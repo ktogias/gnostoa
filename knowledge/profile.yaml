@@ -1,0 +1,14 @@
+id: gnostoa-self
+version: "0.1.0"
+okf_version: "0.2"
+extends:
+  - ../core/profile.yaml
+
+concept_types: []
+relation_kinds: []
+
+rules:
+  required_project_fields:
+    - scope
+
+type_rules: {}

@@ -1,0 +1,20 @@
+{
+  "name": "Gnostoa",
+  "build": {
+    "dockerfile": "../Dockerfile",
+    "context": "..",
+    "target": "development",
+    "args": {
+      "VCS_REF": "development"
+    }
+  },
+  "workspaceFolder": "/workspace",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+  "remoteUser": "kit",
+  "updateRemoteUserUID": true,
+  "containerEnv": {
+    "KNOWLEDGE_KIT_ROOT": "/workspace",
+    "KNOWLEDGE_KIT_REVISION": "development",
+    "PYTHONPATH": "/workspace"
+  }
+}

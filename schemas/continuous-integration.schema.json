@@ -1,0 +1,260 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/project-knowledge/continuous-integration.schema.json",
+  "title": "Provider-neutral continuous-integration policy",
+  "type": "object",
+  "required": [
+    "id",
+    "version",
+    "owner",
+    "extends",
+    "authority",
+    "security",
+    "local_feedback",
+    "feedback",
+    "events",
+    "delivery"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9.-]*$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "owner": {
+      "type": "string",
+      "minLength": 1
+    },
+    "extends": {
+      "type": "array",
+      "maxItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "authority": {
+      "type": "object",
+      "required": [
+        "centralized_ci_required",
+        "provider_neutral_contract",
+        "required_checks_authoritative",
+        "latest_revision_required"
+      ],
+      "properties": {
+        "centralized_ci_required": {
+          "type": "boolean"
+        },
+        "provider_neutral_contract": {
+          "type": "boolean"
+        },
+        "required_checks_authoritative": {
+          "type": "boolean"
+        },
+        "latest_revision_required": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "security": {
+      "type": "object",
+      "required": [
+        "immutable_dependencies",
+        "least_privilege",
+        "untrusted_changes_no_secrets"
+      ],
+      "properties": {
+        "immutable_dependencies": {
+          "type": "boolean"
+        },
+        "least_privilege": {
+          "type": "boolean"
+        },
+        "untrusted_changes_no_secrets": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "local_feedback": {
+      "type": "object",
+      "required": [
+        "hooks",
+        "hooks_authoritative",
+        "shared_commands_required",
+        "network_access",
+        "max_seconds"
+      ],
+      "properties": {
+        "hooks": {
+          "enum": [
+            "optional",
+            "recommended",
+            "required"
+          ]
+        },
+        "hooks_authoritative": {
+          "type": "boolean"
+        },
+        "shared_commands_required": {
+          "type": "boolean"
+        },
+        "network_access": {
+          "type": "boolean"
+        },
+        "max_seconds": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "feedback": {
+      "type": "object",
+      "required": [
+        "fast_max_minutes",
+        "required_max_minutes"
+      ],
+      "properties": {
+        "fast_max_minutes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "required_max_minutes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "events": {
+      "type": "object",
+      "required": [
+        "branch_revision",
+        "change_request",
+        "merge_candidate",
+        "integration",
+        "scheduled",
+        "release"
+      ],
+      "properties": {
+        "branch_revision": {
+          "$ref": "#/$defs/event"
+        },
+        "change_request": {
+          "$ref": "#/$defs/event"
+        },
+        "merge_candidate": {
+          "$ref": "#/$defs/event"
+        },
+        "integration": {
+          "$ref": "#/$defs/event"
+        },
+        "scheduled": {
+          "$ref": "#/$defs/event"
+        },
+        "release": {
+          "$ref": "#/$defs/event"
+        }
+      },
+      "additionalProperties": false
+    },
+    "delivery": {
+      "type": "object",
+      "required": [
+        "enabled",
+        "promote_same_artifact",
+        "rebuild_between_environments",
+        "environment_protection",
+        "post_deploy_smoke"
+      ],
+      "properties": {
+        "enabled": {
+          "enum": [
+            "when-deployable",
+            "always"
+          ]
+        },
+        "promote_same_artifact": {
+          "type": "boolean"
+        },
+        "rebuild_between_environments": {
+          "type": "boolean"
+        },
+        "environment_protection": {
+          "type": "boolean"
+        },
+        "post_deploy_smoke": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "suiteId": {
+      "enum": [
+        "policy",
+        "fast",
+        "regression",
+        "integration",
+        "smoke",
+        "extended",
+        "release"
+      ]
+    },
+    "suiteList": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/suiteId"
+      }
+    },
+    "event": {
+      "type": "object",
+      "required": [
+        "activation",
+        "gate",
+        "latest_revision",
+        "required_suites",
+        "conditional_suites",
+        "cancel_superseded"
+      ],
+      "properties": {
+        "activation": {
+          "enum": [
+            "always",
+            "when-applicable",
+            "when-deployable"
+          ]
+        },
+        "gate": {
+          "enum": [
+            "advisory",
+            "required",
+            "restore-green"
+          ]
+        },
+        "latest_revision": {
+          "type": "boolean"
+        },
+        "required_suites": {
+          "$ref": "#/$defs/suiteList"
+        },
+        "conditional_suites": {
+          "$ref": "#/$defs/suiteList"
+        },
+        "cancel_superseded": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

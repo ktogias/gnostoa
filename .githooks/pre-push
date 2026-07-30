@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+# Keep this bounded; the Change Request pipeline runs broader evidence.
+exec ./ci/verify fast

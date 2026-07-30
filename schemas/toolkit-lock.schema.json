@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/project-knowledge/toolkit-lock.schema.json",
+  "title": "Gnostoa source and runtime lock",
+  "type": "object",
+  "required": [
+    "version",
+    "toolkit",
+    "runtime"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "toolkit": {
+      "type": "object",
+      "required": [
+        "source",
+        "revision",
+        "profile"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "profile": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "runtime": {
+      "type": "object",
+      "required": [
+        "image",
+        "revision"
+      ],
+      "properties": {
+        "image": {
+          "type": "string",
+          "pattern": "^[^\\s]+@sha256:[a-f0-9]{64}$"
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
