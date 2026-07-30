@@ -1,0 +1,148 @@
+schema_version: "1.0"
+id: gnostoa.issue-3
+title: Add durable task context and explicit agent handoffs
+status: review-ready
+
+change:
+  class: normative
+  work_item: https://github.com/ktogias/gnostoa/issues/3
+  decisions:
+    - knowledge/decisions/0015-adopt-bounded-execution-plans-and-explicit-handoffs.md
+  owner: team:gnostoa-maintainers
+
+repository:
+  branch: agent/durable-task-context
+  base_revision: 23013ba0932ce04337e6558a95e62db749217a29
+
+scope:
+  outcome: A person or software agent can safely resume, checkpoint and hand off a repository change from bounded canonical state.
+  included:
+    - Provider-neutral Execution Plan policy, schema, template and workflow
+    - Shared validation, reconciliation and Change Request projection commands
+    - Gnostoa self-policy and active-plan specialization
+    - Cross-agent repository skill and thin GitHub and Copilot adapters
+    - Automated drift, provenance and provider-metadata checks
+  excluded:
+    - Raw prompts, private reasoning and complete activity transcripts
+    - A mandatory plan for every mechanical or short local change
+    - A hosted knowledge graph, catalog or agent-memory dependency
+    - Repository visibility, merge or protection-setting changes
+
+contracts:
+  read:
+    - AGENTS.md
+    - knowledge/contracts/public-inheritance-surface.md
+    - knowledge/runbooks/maintain-the-kit.md
+    - guidance/guardrails/non-negotiable.md
+    - guidance/workflows/propose-review-merge-change.md
+    - guidance/workflows/develop-verification-first.md
+    - policy/change-control.yaml
+  affected:
+    - core/change-control.yaml
+    - schemas/change-control.schema.json
+    - templates/AGENTS.project.md
+    - templates/change-request.md
+
+progress:
+  completed:
+    - Created Work Item 3 with scope, exclusions and acceptance criteria
+    - Isolated the work on a branch stacked on Pull Request 2
+    - Recorded Decision 0015 before implementation
+    - Established focused Red evidence with 2 expected failures and 5 expected errors
+    - Implemented the provider-neutral policy, schema, template, workflow and shared task command
+    - Added the Gnostoa self-specialization, cross-agent skill and thin GitHub and Copilot adapters
+    - Connected managed Pull Request context validation to the read-only GitHub policy job
+    - Completed native, runtime-container and development-container verification
+    - Reconciled the complete diff against the Work Item, Decision and public inheritance boundary
+    - Kept volatile image metadata after the pinned Git layer so revision changes retain the dependency cache
+  current: The clean checkpoint is ready for owner semantic review in a stacked Draft Change Request.
+  remaining:
+    - Owner semantic review
+    - Merge after its parent Change Request is integrated
+
+discoveries:
+  - summary: Durable problem, rationale, execution state and review evidence have different authorities.
+    evidence: https://github.com/ktogias/gnostoa/issues/3
+  - summary: A commit cannot safely contain its own immutable revision identifier.
+    evidence: Candidate revision belongs in the generated Change Request projection and is checked against repository HEAD.
+  - summary: Default Git porcelain collapses untracked directories and cannot support exact file-level checkpoint reconciliation.
+    evidence: tests/test_task_context.py::TaskContextToolTests.test_repository_state_expands_untracked_directories_to_files
+  - summary: Container-first repository reconciliation requires a Git client in the runtime, not only on the host.
+    evidence: Dockerfile pins the runtime Git package and the runtime self-check exercises repository_state.
+  - summary: A non-root container must trust only the explicitly selected bind-mounted repository, never a global safe-directory wildcard.
+    evidence: tests/test_task_context.py::TaskContextToolTests.test_git_trust_is_scoped_to_the_selected_repository
+  - summary: Volatile image revision metadata must not invalidate the pinned system-dependency layer.
+    evidence: Dockerfile orders KIT_VERSION, VCS_REF and BUILD_DATE after the Git installation.
+
+verification:
+  pre_change:
+    - command: python -m unittest tests.test_task_context -v
+      result: failed-as-expected
+      observed_at: "2026-07-30T00:00:00Z"
+      summary: Seven tests ran; two failed on absent public/provider surfaces and five errored on absent policy fields and task-context tooling.
+    - command: python -m tools.cli task checkpoint --plan plans/issue-3-durable-task-context.yaml --repository-root .
+      result: failed-as-expected
+      observed_at: "2026-07-30T00:00:00Z"
+      summary: The first self-checkpoint exposed Git's collapsed untracked-directory paths; a focused regression test reproduced it before the file-level status fix.
+    - command: docker run --rm gnostoa-task-context:runtime self-check
+      result: failed-as-expected
+      observed_at: "2026-07-30T00:00:00Z"
+      summary: The first runtime self-check exposed that the container-first task command lacked a Git executable.
+    - command: docker run --rm --mount type=bind,source=<repository>,target=/workspace,readonly gnostoa-task-context:runtime task checkpoint --plan plans/issue-3-durable-task-context.yaml --repository-root /workspace
+      result: failed-as-expected
+      observed_at: "2026-07-30T00:00:00Z"
+      summary: The first bind-mounted checkpoint exposed Git ownership protection; scoped safe.directory configuration was added instead of a wildcard exception.
+  current:
+    - command: python -m unittest tests.test_task_context -v
+      result: passed
+      observed_at: "2026-07-30T00:00:00Z"
+      summary: Sixteen focused tests cover generic and specialized policy, schema, monotonicity, reconciliation, clean handoff, provider projection, GitHub CI adaptation, container dependencies and CLI routing.
+    - command: python -m unittest tests.test_task_context.TaskContextToolTests.test_repository_state_expands_untracked_directories_to_files -v
+      result: passed
+      observed_at: "2026-07-30T00:00:00Z"
+      summary: Git repository-state inspection now expands nested untracked files deterministically.
+    - command: ./ci/verify policy
+      result: passed
+      observed_at: "2026-07-30T12:50:44Z"
+      summary: Change-control, CI, guardrail and both knowledge-bundle policies passed.
+    - command: ./ci/verify fast
+      result: passed
+      observed_at: "2026-07-30T12:50:44Z"
+      summary: All 71 native tests passed.
+    - command: ./ci/verify regression
+      result: passed
+      observed_at: "2026-07-30T12:50:44Z"
+      summary: All 71 tests and every bundle, guardrail, plan and inherited policy check passed.
+    - command: ./ci/verify smoke
+      result: passed
+      observed_at: "2026-07-30T12:50:44Z"
+      summary: The unified CLI exposed the supported command surface, including task.
+    - command: docker run --rm gnostoa-task-context:runtime self-check
+      result: passed
+      observed_at: "2026-07-30T12:50:44Z"
+      summary: The non-root runtime passed all 71 tests plus bundle, guardrail, plan and policy checks with pinned Git 2.47.3.
+    - command: docker run --rm --workdir /opt/gnostoa --entrypoint /opt/gnostoa/ci/verify gnostoa-task-context:development extended
+      result: passed
+      observed_at: "2026-07-30T12:50:44Z"
+      summary: The development image built the complete human documentation projection.
+    - command: docker run --rm --mount type=bind,source=<repository>,target=/workspace,readonly gnostoa-task-context:runtime task checkpoint --plan plans/issue-3-durable-task-context.yaml --repository-root /workspace
+      result: passed
+      observed_at: "2026-07-30T12:50:44Z"
+      summary: Scoped Git trust reconciled the real read-only bind-mounted worktree as the non-root runtime user.
+
+next_action:
+  actor: human:Konstantinos-Togias
+  instruction: Review the stacked Draft Change Request semantically and merge it after its parent is integrated.
+
+handoff:
+  status: ready
+  recipient: human:Konstantinos-Togias
+  summary: The normative change is bounded, fully verified and ready for owner semantic review; no provider settings or integration state were changed.
+  expected_worktree: []
+
+provenance:
+  authors:
+    - codex/gpt-5.6
+  evaluators: []
+
+updated_at: "2026-07-30T12:53:39Z"

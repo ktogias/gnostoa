@@ -12,6 +12,9 @@ and self-knowledge surfaces.
    [`templates/change-request.md`](templates/change-request.md).
    Gnostoa requires a linked Work Item and Decision for every non-mechanical
    change; an emergency may complete them in its mandatory follow-up.
+   Use the
+   [bounded-change handoff workflow](guidance/workflows/resume-and-handoff-change.md)
+   and a validated Execution Plan when self-policy or continuity requires it.
 4. Follow the
    [proportionate verification workflow](guidance/workflows/develop-verification-first.md)
    and establish the Gnostoa self-policy's required evidence before
@@ -20,7 +23,9 @@ and self-knowledge surfaces.
 6. For CI or hook changes, follow
    [configure continuous integration](guidance/workflows/configure-continuous-integration.md)
    and run `./ci/verify policy`.
-7. Inspect the final diff before merge. Community contributions receive
+7. Reconcile any managed task context with the actual candidate revision.
+   Transfer unfinished work only from a clean committed checkpoint.
+8. Inspect the final diff before merge. Community contributions receive
    maintainer review; satisfy additional approval gates only when the effective
    specialization requires them.
 

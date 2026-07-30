@@ -1,0 +1,58 @@
+name: Bounded change
+description: Capture the problem, outcome, scope and evidence for a repository change.
+title: ""
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the need here. Keep execution state in a linked Execution Plan only when policy or continuity requires one.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What observed need or risk exists?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: State the observable end condition.
+    validations:
+      required: true
+  - type: dropdown
+    id: change_class
+    attributes:
+      label: Change class
+      options:
+        - mechanical
+        - normal
+        - normative
+        - critical
+        - emergency
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and exclusions
+      description: List what is included, explicitly excluded and who owns the outcome.
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Expected behavior and evidence
+      description: Record observable behavior, pre-change evidence and required verification levels.
+    validations:
+      required: true
+  - type: input
+    id: decisions
+    attributes:
+      label: Related Decisions
+      description: Link durable rationale when required; otherwise leave blank.
+  - type: input
+    id: execution_plan
+    attributes:
+      label: Active Execution Plan
+      description: Link bounded live state when required; do not link raw agent logs.

@@ -41,17 +41,21 @@ process documentation.
 The generic baseline is canonical in `core/change-control.yaml`. Its classes
 are:
 
-| Class | Typical scope | Separate Work Item | Generic merge gate |
-|---|---|---|---|
-| `mechanical` | Typo, formatting or reproducible generated output with no semantic change | Optional | CI; auto-merge may be allowed |
-| `normal` | Bounded implementation, test, draft knowledge or non-breaking documentation | Optional when the Change Request states the problem | Passing checks and accountable maintainer review |
-| `normative` | Policy, profile, schema, stable knowledge or public contract behavior | Optional; use one when rationale must outlive the Change Request | Passing checks and accountable semantic review |
-| `critical` | Breaking, security, release, runtime or high-blast-radius change | Optional in the baseline; strongly consider a durable record | Required verification and explicit maintainer review |
-| `emergency` | Time-critical restoration when the normal pre-merge path is unsafe | Follow-up required | Scoped break-glass change and accountable follow-up |
+| Class | Typical scope | Separate Work Item | Execution Plan | Generic merge gate |
+|---|---|---|---|---|
+| `mechanical` | Typo, formatting or reproducible generated output with no semantic change | Optional | Optional | CI; auto-merge may be allowed |
+| `normal` | Bounded implementation, test, draft knowledge or non-breaking documentation | Optional when the Change Request states the problem | When continuity or reconstruction cost justifies it | Passing checks and accountable maintainer review |
+| `normative` | Policy, profile, schema, stable knowledge or public contract behavior | Optional; use one when rationale must outlive the Change Request | When continuity or reconstruction cost justifies it | Passing checks and accountable semantic review |
+| `critical` | Breaking, security, release, runtime or high-blast-radius change | Optional in the baseline; strongly consider a durable record | When continuity or reconstruction cost justifies it | Required verification and explicit maintainer review |
+| `emergency` | Time-critical restoration when the normal pre-merge path is unsafe | Follow-up required | Follow-up required | Scoped break-glass change and accountable follow-up |
 
 A Work Item describes the problem, desired outcome, scope and acceptance
 criteria. A Change Request describes the chosen solution and its verification.
 Do not copy the same narrative into both; link them.
+An Execution Plan carries only current progress, evidence, discoveries and next
+action while the work is active. It is conditional in the generic baseline and
+becomes mandatory only through demonstrated continuity needs or a stricter
+specialization.
 
 Classification follows the highest impact of the diff. A change is not
 `mechanical` if it changes meaning, accepted inputs, generated output semantics,
@@ -76,9 +80,11 @@ requirements.
    context will not fit cleanly in the Change Request.
 3. Add a Decision when policy requires it or architectural rationale must
    remain independently discoverable.
-4. Reclassify upward when the diff grows or reveals broader impact.
-5. Apply the strictest class when a change spans several concerns.
-6. Use `emergency` only with an identified incident, accountable maintainer,
+4. Start an Execution Plan when the class requires it or unfinished work will
+   cross a person, agent or session boundary.
+5. Reclassify upward when the diff grows or reveals broader impact.
+6. Apply the strictest class when a change spans several concerns.
+7. Use `emergency` only with an identified incident, accountable maintainer,
    bounded impact and a required post-event review.
 
 Validate a project specialization with:

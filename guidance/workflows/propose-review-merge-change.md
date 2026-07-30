@@ -21,6 +21,8 @@ x-project-knowledge:
       target: /guardrails/non-negotiable.md
     - kind: depends-on
       target: /workflows/develop-verification-first.md
+    - kind: depends-on
+      target: /workflows/resume-and-handoff-change.md
 ---
 
 # Propose, review and merge a change
@@ -47,8 +49,9 @@ why it happened.
 3. Record or link a Decision only when policy requires it or the rationale must
    remain discoverable independently of the Change Request.
 4. Create a short-lived branch from the current integration branch.
-5. Open a draft Change Request early when feedback or agent/human handoff is
-   useful.
+5. When policy or continuity requires an Execution Plan, follow the
+   [resume and handoff workflow](resume-and-handoff-change.md). Open a draft
+   Change Request early when feedback or a person/agent handoff is useful.
 6. Follow the
    [proportionate verification workflow](develop-verification-first.md): state expected
    behavior, make the smallest coherent implementation, and establish
@@ -76,6 +79,8 @@ why it happened.
 - The Change Request records its class and verification evidence.
 - Expected behavior and proportionate evidence are present before integration.
 - Required Work Items and Decisions are linked, not duplicated.
+- A required Execution Plan reconciles with the branch and managed Change
+  Request context.
 - No agent or author is counted as independent approval when a specialization
   requires a different human reviewer.
 - The integrated revision passed required checks.

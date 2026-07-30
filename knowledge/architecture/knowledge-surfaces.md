@@ -17,6 +17,8 @@ x-project-knowledge:
       target: /contracts/public-inheritance-surface.md
     - kind: derived-from
       target: /decisions/0004-self-host-policy-guidance-and-knowledge.md
+    - kind: derived-from
+      target: /decisions/0015-adopt-bounded-execution-plans-and-explicit-handoffs.md
 ---
 
 # Knowledge surfaces
@@ -31,3 +33,8 @@ The repository exposes three independently loadable surfaces:
 
 Anonymous examples and templates demonstrate the contract without introducing
 a real project's names, taxonomy or architecture.
+
+`plans/` is bounded operational state for active Gnostoa changes. It is neither
+a fourth canonical knowledge bundle nor a consumer inheritance surface. A plan
+links the three surfaces and repository evidence only for the lifetime of a
+change.

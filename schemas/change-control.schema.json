@@ -11,6 +11,7 @@
     "integration",
     "branches",
     "agents",
+    "continuity",
     "verification",
     "change_classes"
   ],
@@ -113,6 +114,26 @@
       },
       "additionalProperties": false
     },
+    "continuity": {
+      "type": "object",
+      "required": [
+        "resume_reconciliation_required",
+        "unfinished_handoff_checkpoint_required",
+        "raw_activity_log_canonical"
+      ],
+      "properties": {
+        "resume_reconciliation_required": {
+          "type": "boolean"
+        },
+        "unfinished_handoff_checkpoint_required": {
+          "type": "boolean"
+        },
+        "raw_activity_log_canonical": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
     "verification": {
       "type": "object",
       "required": [
@@ -181,6 +202,7 @@
       "type": "object",
       "required": [
         "work_item",
+        "execution_plan",
         "change_request_timing",
         "minimum_approvals",
         "independent_approval",
@@ -195,6 +217,14 @@
         "work_item": {
           "enum": [
             "optional",
+            "required-follow-up",
+            "required"
+          ]
+        },
+        "execution_plan": {
+          "enum": [
+            "optional",
+            "when-needed",
             "required-follow-up",
             "required"
           ]

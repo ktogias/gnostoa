@@ -26,11 +26,20 @@ required human semantic review.
 For this repository, every normal, normative or critical change requires a
 linked Work Item and Decision before implementation; an emergency supplies them
 in its mandatory follow-up.
+Normative and critical changes also require a validated active Execution Plan;
+normal changes require one when work crosses an actor/session boundary or is
+otherwise costly to reconstruct. At start or resume, inspect Git state and run
+`knowledge task start|resume --plan <path>` through
+`guidance/workflows/resume-and-handoff-change.md`. Keep raw prompts, reasoning
+and exhaustive activity logs noncanonical.
 Before implementation, follow
 `guidance/workflows/develop-verification-first.md`; record expected behavior and
 establish the applicable failing or characterization evidence before editing.
 Mechanical changes and emergency follow-up use the timing declared by
 `policy/change-control.yaml`.
+Before handing unfinished work to another person or agent, update its plan,
+commit a coherent checkpoint, require a clean worktree and reconcile the
+managed Change Request block with the actual candidate revision.
 
 Before completion run:
 

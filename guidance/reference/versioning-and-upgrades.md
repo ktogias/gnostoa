@@ -39,6 +39,11 @@ Profile and change-control policy versions use semantic meaning:
 - MAJOR: any removal, rename or stricter requirement that can invalidate a
   previously valid bundle.
 
+Before a declared `1.0.0` public baseline, a MINOR increment may carry a
+breaking experimental change, but it still requires an explicit migration note
+and may not be presented as backward compatible. After `1.0.0`, use a MAJOR
+increment for that change.
+
 `okf_version` is independent from the profile version.
 
 Upgrade workflow:

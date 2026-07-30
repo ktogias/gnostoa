@@ -41,12 +41,20 @@ EVIDENCE_TIMING_RANK = {
     "before-merge": 1,
     "before-implementation": 2,
 }
+EXECUTION_PLAN_RANK = {
+    "optional": 0,
+    "when-needed": 1,
+    "required-follow-up": 2,
+    "required": 3,
+}
 REQUIRED_TRUE_PATHS = (
     ("integration", "protected_default_branch"),
     ("integration", "change_request_required"),
     ("integration", "required_checks"),
     ("integration", "resolved_conversations"),
     ("branches", "short_lived"),
+    ("continuity", "resume_reconciliation_required"),
+    ("continuity", "unfinished_handoff_checkpoint_required"),
     ("verification", "expected_behavior_required"),
     ("verification", "observable_behavior_over_implementation_details"),
     ("verification", "deterministic_required_tests"),
@@ -60,6 +68,7 @@ REQUIRED_FALSE_PATHS = (
     ("agents", "may_bypass_controls"),
     ("agents", "may_promote_stable_without_human"),
     ("verification", "coverage_alone_sufficient"),
+    ("continuity", "raw_activity_log_canonical"),
 )
 CLASS_REQUIRED_TRUE = (
     "independent_approval",
@@ -148,6 +157,18 @@ def _assert_monotonic(
             raise KnowledgeFormatError(
                 f"{path} weakens {class_id}.work_item: "
                 f"{parent_work_item} -> {child_work_item}"
+            )
+
+        parent_execution_plan = baseline.get("execution_plan")
+        child_execution_plan = overrides.get("execution_plan")
+        if (
+            child_execution_plan is not None
+            and EXECUTION_PLAN_RANK.get(child_execution_plan, -1)
+            < EXECUTION_PLAN_RANK.get(parent_execution_plan, -1)
+        ):
+            raise KnowledgeFormatError(
+                f"{path} weakens {class_id}.execution_plan: "
+                f"{parent_execution_plan} -> {child_execution_plan}"
             )
 
         parent_timing = baseline.get("change_request_timing")

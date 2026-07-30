@@ -1,5 +1,5 @@
 id: gnostoa-change-control
-version: "0.3.0"
+version: "0.4.0"
 owner: team:gnostoa-maintainers
 extends:
   - ../core/change-control.yaml
@@ -12,12 +12,14 @@ change_classes:
       evidence_timing: before-implementation
   normative:
     work_item: required
+    execution_plan: required
     decision_record: true
     verification:
       failing_evidence: required
       evidence_timing: before-implementation
   critical:
     work_item: required
+    execution_plan: required
     decision_record: true
     verification:
       failing_evidence: required

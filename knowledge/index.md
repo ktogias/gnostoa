@@ -26,6 +26,7 @@ inherited, copied or loaded by adopting projects.
 - [Versioned public schema identifiers](decisions/0012-use-versioned-public-schema-identifiers.md)
 - [Deferred private-repository enforcement](decisions/0013-defer-provider-enforcement-while-private.md)
 - [Stricter Gnostoa self-governance](decisions/0014-strengthen-gnostoa-self-governance.md)
+- [Bounded execution plans and explicit handoffs](decisions/0015-adopt-bounded-execution-plans-and-explicit-handoffs.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Verification precedes integration](requirements/verification-precedes-implementation.md)

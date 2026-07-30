@@ -84,6 +84,7 @@ x-project-knowledge:
 | [Daily change loop](../../guidance/workflows/daily-change-loop.md) | Routine usability for people and agents | — | — |
 | [Develop with proportionate verification](../../guidance/workflows/develop-verification-first.md) | Final, Red, characterization and semantic paths | — | — |
 | [Propose, review and merge](../../guidance/workflows/propose-review-merge-change.md) | Complete protected change lifecycle | — | — |
+| [Resume and hand off a bounded change](../../guidance/workflows/resume-and-handoff-change.md) | Authority boundaries, state reconciliation and clean transfer | — | — |
 
 ### Toolkit self-knowledge
 
@@ -105,6 +106,7 @@ x-project-knowledge:
 | [Versioned schema identifiers](../decisions/0012-use-versioned-public-schema-identifiers.md) | Permanence, ownership and version policy | — | — |
 | [Deferred private-repository enforcement](../decisions/0013-defer-provider-enforcement-while-private.md) | Provider limitation, expiry and compensating controls | — | — |
 | [Stricter Gnostoa self-governance](../decisions/0014-strengthen-gnostoa-self-governance.md) | Internal issue, Decision and evidence chronology without consumer leakage | — | — |
+| [Bounded execution plans and explicit handoffs](../decisions/0015-adopt-bounded-execution-plans-and-explicit-handoffs.md) | Resumable state, authority boundaries and handoff cost | — | — |
 | [Toolkit evolution](../lifecycles/toolkit-evolution.md) | Lifecycle stages and drift controls | — | — |
 | [Gnostoa project](../project/gnostoa.md) | Product purpose and scope | — | — |
 | [Centralized CI verifies candidates](../requirements/centralized-ci-verifies-integration-candidates.md) | Required candidate evidence | — | — |

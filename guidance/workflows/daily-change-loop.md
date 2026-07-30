@@ -23,6 +23,8 @@ x-project-knowledge:
       target: /workflows/propose-review-merge-change.md
     - kind: depends-on
       target: /workflows/configure-continuous-integration.md
+    - kind: depends-on
+      target: /workflows/resume-and-handoff-change.md
 ---
 
 # Daily knowledge change loop
@@ -43,6 +45,8 @@ decisions and navigational knowledge mutually traceable.
 1. Classify the change and establish its Change Request plus any additional
    records required through the
    [change workflow](propose-review-merge-change.md).
+   Start or resume a bounded Execution Plan when policy or continuity requires
+   it.
 2. Start from the root index or a task-specific context pack.
 3. Open only the relevant concepts.
 4. Follow concept links to native code, schemas, tests and decisions.
@@ -61,6 +65,8 @@ decisions and navigational knowledge mutually traceable.
     semantic diff and satisfy any stricter specialized gates.
 12. Regenerate derived sites, search indexes, graphs and context packs after
     canonical changes merge.
+13. Before unfinished work changes actor, checkpoint the plan and transfer only
+    a clean committed repository state.
 
 ## Verification
 

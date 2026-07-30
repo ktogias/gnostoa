@@ -2,14 +2,21 @@
 
 <!-- State the observable result, not the implementation activity. -->
 
+<!-- When an Execution Plan applies, replace this complete managed block with
+the output of `knowledge task render-change-request --plan <path>`. -->
+<!-- task-context:start -->
+<!-- No managed task context for this Change Request. -->
+<!-- task-context:end -->
+
 ## Change control
 
 - Class: `mechanical | normal | normative | critical | emergency`
 - Work Item:
 - Decision:
+- Execution Plan:
 - Accountable owner:
 
-<!-- Work Item and Decision are optional unless the effective policy requires them. -->
+<!-- These records are optional unless the effective policy requires them. -->
 
 ## Why and scope
 
@@ -42,5 +49,6 @@
 - [ ] Required tests are deterministic and non-flaky.
 - [ ] Contracts, tests and canonical knowledge are synchronized.
 - [ ] Any records or approvals required by the effective specialization are linked.
+- [ ] Managed task context, when present, names the latest candidate revision.
 - [ ] Community contributions have accountable maintainer review.
 - [ ] Review conversations are resolved or explicitly tracked.

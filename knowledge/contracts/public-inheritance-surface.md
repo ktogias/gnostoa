@@ -29,10 +29,13 @@ toolkit's internal concerns.
 ## Boundary
 
 The public surface consists of the core profile, schemas, supported tools,
-reusable guidance, anonymous templates and documented CI integration.
+reusable guidance, anonymous templates, the generic `change-lifecycle` Agent
+Skill and documented CI integration.
 `knowledge/`, `policy/`, internal decisions and maintainer runbooks are outside
-the consumer inheritance boundary. Adopting projects create their own
-`.knowledge/` policies by extending the public files under `core/`.
+the consumer inheritance boundary. Repository-local active plans under
+`plans/` are Gnostoa maintenance state, not a consumer dependency. Adopting
+projects create their own `.knowledge/` policies by extending the public files
+under `core/` and select their own active-plan location.
 
 ## Invariants
 
@@ -62,6 +65,11 @@ the consumer inheritance boundary. Adopting projects create their own
 - Child CI policies may add gates or suites but cannot weaken inherited event,
   security, feedback or artifact-promotion controls.
 - Delivery requirements activate only for a declared deployable artifact.
+- Bounded Execution Plans are used proportionately, reconcile with actual
+  repository state and never turn raw agent transcripts into canonical
+  knowledge.
+- An unfinished change transfers between people or agents only through an
+  explicit clean committed checkpoint.
 
 ## Operations
 
@@ -79,6 +87,8 @@ generic verification vocabulary and non-weakening policy.
 Projects validate an inherited `.knowledge/continuous-integration.yaml`, declare
 capabilities and suites in `.knowledge/verification.yaml`, and map them to a
 provider adapter without changing their generic meaning.
+Projects use the public Execution Plan schema, template and task command when
+their effective change policy or continuity needs durable live state.
 
 ## Failure semantics
 

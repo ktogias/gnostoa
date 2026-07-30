@@ -23,6 +23,8 @@ x-project-knowledge:
       target: /workflows/propose-review-merge-change.md
     - kind: depends-on
       target: /workflows/configure-continuous-integration.md
+    - kind: depends-on
+      target: /workflows/resume-and-handoff-change.md
 ---
 
 # Adopt an existing project
@@ -52,6 +54,9 @@ The adoption does not attempt a big-bang rewrite of legacy documentation.
    record gaps without silently treating them as compliant.
 4. Select one protected integration branch and one pilot Change Request. Do not
    attempt to migrate all open long-lived branches in the first change.
+   If the pilot crosses an actor/session boundary, create one bounded Execution
+   Plan from observable repository state; do not import historical chat or
+   activity logs.
 5. Establish high-impact characterization tests around the pilot behavior before
    refactoring or normalizing it. Do not pursue blanket coverage.
 6. Create the verification manifest around the pilot. Map existing fast and
@@ -89,6 +94,8 @@ The adoption does not attempt a big-bang rewrite of legacy documentation.
   Request and any review required by the project's specialization.
 - Required checks belong to the latest pilot merge candidate; hook success
   alone cannot satisfy integration.
+- Any pilot handoff reconciles with Git state and uses a clean committed
+  checkpoint.
 
 ## Recovery
 

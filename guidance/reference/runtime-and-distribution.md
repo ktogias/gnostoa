@@ -61,6 +61,7 @@ The runtime image:
 - runs as a non-root user;
 - declares its toolkit source revision;
 - pins its base image by digest;
+- includes a pinned Git client for repository-state reconciliation;
 - reads the project through an explicit bind mount;
 - writes only through an explicitly writable output mount;
 - exposes one `knowledge` command with subcommands.

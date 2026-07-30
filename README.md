@@ -210,9 +210,13 @@ trademarks.
   [shared verification command](templates/verify.project),
   [Change Request](templates/change-request.md), optional
   [Work Item](templates/work-item.md),
+  [Execution Plan](templates/execution-plan.project.yaml),
   [emergency record](templates/emergency-change-record.md) and
   [repository-settings checklist](templates/repository-settings-checklist.md).
 - Record expected behavior and the evidence portfolio with the
   [verification plan](templates/verification-plan.md).
+- For work that needs continuity, follow the
+  [resume and handoff workflow](guidance/workflows/resume-and-handoff-change.md);
+  do not make raw agent logs part of project knowledge.
 - Adapt the GitHub or GitLab provider template under `ci/`; optionally copy
   `templates/githooks/` and configure `core.hooksPath` for local feedback.

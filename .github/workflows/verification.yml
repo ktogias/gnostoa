@@ -2,6 +2,7 @@ name: Gnostoa verification
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, edited]
   merge_group:
     types: [checks_requested]
   push:
@@ -43,6 +44,18 @@ jobs:
             --workdir /workspace \
             "${GNOSTOA_CI_IMAGE}" \
             -ec './ci/verify policy'
+      - name: Verify managed Pull Request context
+        if: github.event_name == 'pull_request'
+        run: |
+          docker run --rm \
+            --entrypoint python \
+            --mount type=bind,source="${GITHUB_WORKSPACE}",target=/workspace,readonly \
+            --mount type=bind,source="${GITHUB_EVENT_PATH}",target=/tmp/github-event.json,readonly \
+            --workdir /workspace \
+            "${GNOSTOA_CI_IMAGE}" \
+            .github/check_task_context.py \
+            --event /tmp/github-event.json \
+            --repository-root /workspace
 
   fast:
     name: fast

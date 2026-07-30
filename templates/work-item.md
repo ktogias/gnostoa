@@ -26,3 +26,5 @@
 ## Evidence and dependencies
 
 <!-- Link source artifacts, contracts, incidents, Decisions and related Work Items. -->
+
+- Active Execution Plan, when policy or continuity requires one:

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Change Lifecycle"
+  short_description: "Resume, checkpoint, and hand off changes"
+  default_prompt: "Use $change-lifecycle to resume and validate this repository change."

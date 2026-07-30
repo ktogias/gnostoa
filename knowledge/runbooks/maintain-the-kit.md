@@ -32,7 +32,9 @@ x-project-knowledge:
 - Identify affected consumers and whether the public contract changes.
 - Classify the change using `policy/change-control.yaml`. For every normal,
   normative or critical Gnostoa change, create or link its Work Item and
-  Decision before implementation. An emergency supplies them in follow-up.
+  Decision before implementation. Create a schema-valid Execution Plan for
+  normative and critical changes and whenever a normal change needs durable
+  continuity. An emergency supplies required records in follow-up.
 - Read the [public inheritance contract](../contracts/public-inheritance-surface.md)
   and the relevant route in [`guidance/index.md`](../../guidance/index.md).
 - State expected observable behavior and establish the applicable
@@ -43,6 +45,8 @@ x-project-knowledge:
 
 1. Create a short-lived branch and Change Request through the
    [generic change workflow](../../guidance/workflows/propose-review-merge-change.md).
+   Start or resume required live state through the
+   [handoff workflow](../../guidance/workflows/resume-and-handoff-change.md).
 2. For a bug, run a reproducer before the fix. For a behavior-preserving
    refactor, establish green characterization tests before editing structure.
 3. For changes to `tools/`, `schemas/`, `core/` or `policy/`, add and run the
@@ -65,6 +69,9 @@ x-project-knowledge:
 13. Inspect the final diff and semantic impact. Community contributions receive
     maintainer review; satisfy independent approvals only when a future
     specialization requires them.
+14. Before transferring unfinished work, update the plan and create a clean
+    committed checkpoint. Reconcile the managed Change Request block with the
+    actual candidate revision.
 
 ## Verification
 

@@ -9,6 +9,7 @@ and workflows are:
 - [protected lightweight change flow](../../guidance/patterns/protected-short-lived-change-flow.md);
 - [change classification and review](../../guidance/reference/change-classification-and-approval.md);
 - [propose, review and merge workflow](../../guidance/workflows/propose-review-merge-change.md);
+- [resume and hand off a bounded change](../../guidance/workflows/resume-and-handoff-change.md);
 - [proportionate verification](../../guidance/patterns/verification-first-development.md);
 - [testing and verification strategy](../../guidance/reference/testing-and-verification-strategy.md);
 - [develop with proportionate verification](../../guidance/workflows/develop-verification-first.md);

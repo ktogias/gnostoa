@@ -1,0 +1,58 @@
+schema_version: "1.0"
+id: example.change-1
+title: Deliver the example change
+status: planned
+
+change:
+  class: normal
+  work_item: https://example.invalid/issues/1
+  decisions: []
+  owner: team:example-project-maintainers
+
+repository:
+  branch: change/example-change
+  base_revision: "0000000000000000000000000000000000000000"
+
+scope:
+  outcome: The example behavior satisfies the linked Work Item.
+  included:
+    - The smallest project change needed for the outcome
+  excluded:
+    - Unrelated cleanup
+
+contracts:
+  read:
+    - AGENTS.md
+  affected: []
+
+progress:
+  completed: []
+  current: Establish expected behavior and proportionate pre-change evidence.
+  remaining:
+    - Implement the bounded change
+    - Verify the final candidate
+
+discoveries: []
+
+verification:
+  pre_change:
+    - command: replace-with-focused-command
+      result: pending
+      summary: Record the observed failure or characterization before implementation when policy requires it.
+  current: []
+
+next_action:
+  actor: developer-or-agent
+  instruction: Run the focused pre-change verification and record its result.
+
+handoff:
+  status: not-ready
+  summary: Work has not been prepared for transfer.
+  expected_worktree: []
+
+provenance:
+  authors:
+    - human:replace-me
+  evaluators: []
+
+updated_at: "2026-01-01T00:00:00Z"

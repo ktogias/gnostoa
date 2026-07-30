@@ -3,6 +3,7 @@
 * @ktogias
 
 /.github/ @ktogias
+/.agents/ @ktogias
 /.gitlab-ci.yml @ktogias
 /AGENTS.md @ktogias
 /ci/ @ktogias
@@ -10,6 +11,7 @@
 /guidance/ @ktogias
 /knowledge/ @ktogias
 /policy/ @ktogias
+/plans/ @ktogias
 /schemas/ @ktogias
 /templates/ @ktogias
 /tests/ @ktogias

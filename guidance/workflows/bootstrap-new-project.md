@@ -25,6 +25,8 @@ x-project-knowledge:
       target: /workflows/propose-review-merge-change.md
     - kind: depends-on
       target: /workflows/configure-continuous-integration.md
+    - kind: depends-on
+      target: /workflows/resume-and-handoff-change.md
 ---
 
 # Bootstrap a new project
@@ -71,6 +73,13 @@ without demonstrated need.
    decisions and explicit open questions.
 10. Adapt the Change Request, emergency and CODEOWNERS templates. Add the Work
    Item and verification-plan templates only when they provide durable value.
+   Configure the short agent router and select an active-plan location, but
+   create an Execution Plan only when the effective policy or continuity
+   requires it.
+   When the team's agent clients support the Agent Skills standard, copy the
+   pinned `.knowledge-kit/.agents/skills/change-lifecycle/` directory to
+   `.agents/skills/change-lifecycle/` and refresh it only through a reviewed
+   toolkit upgrade.
    Establish one fast focused suite, one relevant
    boundary check and, when applicable, one critical smoke path rather than
    pursuing blanket coverage.
@@ -137,6 +146,9 @@ without demonstrated need.
 Use the project router template at
 [`templates/AGENTS.project.md`](../../templates/AGENTS.project.md) so agents
 load this guidance by task rather than loading the entire toolkit.
+When the first qualifying change begins, copy
+[`templates/execution-plan.project.yaml`](../../templates/execution-plan.project.yaml)
+and follow the [resume and handoff workflow](resume-and-handoff-change.md).
 
 When an OCI runtime is unavailable, use the supported native fallback:
 
@@ -169,6 +181,8 @@ knowledge validate --profile .knowledge/profile.yaml --bundle knowledge/
 - The first supported behavior has expected and final verification evidence;
   pre-change evidence is present when useful or required by a specialization.
 - A task context pack can be produced from the Project concept.
+- A qualifying change can validate, resume and hand off from a bounded
+  Execution Plan without loading toolkit self-knowledge.
 
 ## Recovery
 

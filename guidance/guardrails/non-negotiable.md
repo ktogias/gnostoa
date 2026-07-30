@@ -72,6 +72,13 @@ irrelevant context.
     changes receive no privileged secrets.
 28. Delivery gates exist only for declared deployable artifacts and promote the
     exact verified CI artifact without rebuilding it between environments.
+29. One bounded Execution Plan carries live state only when policy or
+    continuity requires it; Work Items, Decisions, repositories and Change
+    Requests retain their distinct authority.
+30. Resume reconciles the plan with the repository, and unfinished work is
+    handed off only from an explicit clean committed checkpoint.
+31. Prompts, private reasoning, raw transcripts and exhaustive activity logs
+    are not canonical project knowledge.
 
 ## Enforcement
 
@@ -86,6 +93,8 @@ CI event and suite rules are expressed in inherited
 declared in a validated verification manifest.
 Agent behavior is routed by a short `AGENTS.md`, not by duplicating this entire
 document into every prompt.
+Execution Plans are validated and reconciled through the shared task command;
+provider fields are managed projections, not independent sources of truth.
 
 ## Exceptions
 

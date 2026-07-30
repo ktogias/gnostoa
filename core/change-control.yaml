@@ -1,5 +1,5 @@
 id: project-change-control-core
-version: "0.2.0"
+version: "0.3.0"
 owner: team:project-maintainers
 extends: []
 
@@ -22,6 +22,11 @@ agents:
   may_bypass_controls: false
   may_promote_stable_without_human: false
 
+continuity:
+  resume_reconciliation_required: true
+  unfinished_handoff_checkpoint_required: true
+  raw_activity_log_canonical: false
+
 verification:
   expected_behavior_required: true
   observable_behavior_over_implementation_details: true
@@ -33,6 +38,7 @@ verification:
 change_classes:
   mechanical:
     work_item: optional
+    execution_plan: optional
     change_request_timing: before-merge
     minimum_approvals: 0
     independent_approval: false
@@ -48,6 +54,7 @@ change_classes:
       human_semantic_verification: false
   normal:
     work_item: optional
+    execution_plan: when-needed
     change_request_timing: before-merge
     minimum_approvals: 0
     independent_approval: false
@@ -63,6 +70,7 @@ change_classes:
       human_semantic_verification: true
   normative:
     work_item: optional
+    execution_plan: when-needed
     change_request_timing: before-merge
     minimum_approvals: 0
     independent_approval: false
@@ -78,6 +86,7 @@ change_classes:
       human_semantic_verification: true
   critical:
     work_item: optional
+    execution_plan: when-needed
     change_request_timing: before-merge
     minimum_approvals: 0
     independent_approval: false
@@ -93,6 +102,7 @@ change_classes:
       human_semantic_verification: true
   emergency:
     work_item: required-follow-up
+    execution_plan: required-follow-up
     change_request_timing: post-event-allowed
     minimum_approvals: 0
     independent_approval: false

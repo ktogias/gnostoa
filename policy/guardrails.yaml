@@ -1,4 +1,4 @@
-version: "0.9.0"
+version: "1.0.0"
 guardrails:
   - id: monotonic-profile-inheritance
     title: Child profiles do not weaken parent policy
@@ -47,6 +47,7 @@ guardrails:
     implementation:
       - schemas/change-control.schema.json
       - schemas/continuous-integration.schema.json
+      - schemas/execution-plan.schema.json
       - schemas/frontmatter.schema.json
       - schemas/guardrails.schema.json
       - schemas/profile.schema.json
@@ -112,6 +113,43 @@ guardrails:
     tests:
       - tests/test_tools.py::GuardrailTests.test_project_agent_router_is_bounded
       - tests/test_tools.py::BundleTests.test_guidance_context_pack_excludes_toolkit_self_knowledge
+
+  - id: bounded-change-continuity
+    title: Durable live change state is bounded, validated and authority-aware
+    applies_to: [kit, adopting-projects]
+    enforcement: automated
+    owner: team:gnostoa-maintainers
+    guidance: guidance/workflows/resume-and-handoff-change.md#procedure
+    implementation:
+      - core/change-control.yaml
+      - schemas/change-control.schema.json
+      - schemas/execution-plan.schema.json
+      - templates/execution-plan.project.yaml
+      - tools/task_context.py#validate_execution_plan
+      - tools/task_context.py#reconcile_execution_plan
+    tests:
+      - tests/test_task_context.py::TaskContextContractTests.test_generic_contract_and_routes_are_public
+      - tests/test_task_context.py::TaskContextToolTests.test_active_gnostoa_plan_is_schema_valid
+      - tests/test_task_context.py::TaskContextToolTests.test_reconciliation_detects_branch_and_worktree_drift
+      - tests/test_task_context.py::TaskContextContractTests.test_container_first_task_commands_have_a_pinned_git_runtime
+
+  - id: explicit-clean-handoff
+    title: Unfinished work transfers through a clean committed checkpoint
+    applies_to: [kit, adopting-projects]
+    enforcement: hybrid
+    owner: team:gnostoa-maintainers
+    guidance: guidance/workflows/resume-and-handoff-change.md#procedure
+    implementation:
+      - templates/change-request.md
+      - tools/task_context.py#render_change_request_context
+      - tools/task_context.py#check_change_request_context
+      - .github/check_task_context.py#check_event
+      - .agents/skills/change-lifecycle/SKILL.md
+    tests:
+      - tests/test_task_context.py::TaskContextToolTests.test_change_request_projection_rejects_a_stale_revision
+      - tests/test_task_context.py::TaskContextToolTests.test_handoff_requires_a_clean_committed_checkpoint
+      - tests/test_task_context.py::TaskContextContractTests.test_cross_agent_skill_and_provider_adapters_are_bounded
+      - tests/test_task_context.py::TaskContextContractTests.test_github_adapter_checks_the_pull_request_candidate
 
   - id: self-knowledge-boundary
     title: Adopting projects do not inherit toolkit self-knowledge
@@ -255,11 +293,13 @@ guardrails:
     guidance: knowledge/decisions/0014-strengthen-gnostoa-self-governance.md#decision
     implementation:
       - policy/change-control.yaml
+      - plans/issue-3-durable-task-context.yaml
       - AGENTS.md
       - CONTRIBUTING.md
       - knowledge/runbooks/maintain-the-kit.md
     tests:
       - tests/test_tools.py::ChangeControlTests.test_gnostoa_self_policy_requires_durable_context_and_test_first
+      - tests/test_task_context.py::TaskContextContractTests.test_gnostoa_specialization_requires_proportionate_plans
 
   - id: human-change-approval-authority
     title: Agents cannot satisfy a human gate required by a specialization

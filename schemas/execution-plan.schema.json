@@ -1,0 +1,358 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ktogias.github.io/gnostoa/schemas/v1/execution-plan.schema.json",
+  "title": "Bounded execution plan",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "title",
+    "status",
+    "change",
+    "repository",
+    "scope",
+    "contracts",
+    "progress",
+    "discoveries",
+    "verification",
+    "next_action",
+    "handoff",
+    "provenance",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9.-]*$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "enum": [
+        "planned",
+        "active",
+        "blocked",
+        "review-ready",
+        "complete"
+      ]
+    },
+    "change": {
+      "type": "object",
+      "required": [
+        "class",
+        "decisions",
+        "owner"
+      ],
+      "properties": {
+        "class": {
+          "enum": [
+            "mechanical",
+            "normal",
+            "normative",
+            "critical",
+            "emergency"
+          ]
+        },
+        "work_item": {
+          "type": "string",
+          "minLength": 1
+        },
+        "decisions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "repository": {
+      "type": "object",
+      "required": [
+        "branch",
+        "base_revision"
+      ],
+      "properties": {
+        "branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "base_revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "change_request": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "scope": {
+      "type": "object",
+      "required": [
+        "outcome",
+        "included",
+        "excluded"
+      ],
+      "properties": {
+        "outcome": {
+          "type": "string",
+          "minLength": 1
+        },
+        "included": {
+          "$ref": "#/$defs/nonEmptyStrings"
+        },
+        "excluded": {
+          "$ref": "#/$defs/nonEmptyStrings"
+        }
+      },
+      "additionalProperties": false
+    },
+    "contracts": {
+      "type": "object",
+      "required": [
+        "read",
+        "affected"
+      ],
+      "properties": {
+        "read": {
+          "$ref": "#/$defs/nonEmptyStrings"
+        },
+        "affected": {
+          "$ref": "#/$defs/nonEmptyStrings"
+        }
+      },
+      "additionalProperties": false
+    },
+    "progress": {
+      "type": "object",
+      "required": [
+        "completed",
+        "current",
+        "remaining"
+      ],
+      "properties": {
+        "completed": {
+          "$ref": "#/$defs/nonEmptyStrings"
+        },
+        "current": {
+          "type": "string",
+          "minLength": 1
+        },
+        "remaining": {
+          "$ref": "#/$defs/nonEmptyStrings"
+        }
+      },
+      "additionalProperties": false
+    },
+    "discoveries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "summary",
+          "evidence"
+        ],
+        "properties": {
+          "summary": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evidence": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "verification": {
+      "type": "object",
+      "required": [
+        "pre_change",
+        "current"
+      ],
+      "properties": {
+        "pre_change": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        },
+        "current": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "next_action": {
+      "type": "object",
+      "required": [
+        "actor",
+        "instruction"
+      ],
+      "properties": {
+        "actor": {
+          "type": "string",
+          "minLength": 1
+        },
+        "instruction": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "handoff": {
+      "type": "object",
+      "required": [
+        "status",
+        "summary",
+        "expected_worktree"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "not-ready",
+            "ready",
+            "accepted"
+          ]
+        },
+        "recipient": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expected_worktree": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "ready",
+                  "accepted"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "required": [
+              "recipient"
+            ]
+          }
+        }
+      ]
+    },
+    "provenance": {
+      "type": "object",
+      "required": [
+        "authors",
+        "evaluators"
+      ],
+      "properties": {
+        "authors": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "evaluators": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "revision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "nonEmptyStrings": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "required": [
+        "command",
+        "result",
+        "summary"
+      ],
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "result": {
+          "enum": [
+            "pending",
+            "failed-as-expected",
+            "passed",
+            "failed",
+            "skipped"
+          ]
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -37,6 +37,7 @@ Recommended single-repository layout:
 ```text
 project/
 ├── .knowledge-kit/          # pinned dependency
+├── .agents/skills/          # optional standard agent workflows
 ├── .knowledge/
 │   ├── profile.yaml
 │   ├── kit.lock.yaml
@@ -47,6 +48,7 @@ project/
 ├── .githooks/              # optional advisory local adapters
 ├── ci/verify               # shared project suite interface
 ├── knowledge/               # canonical project bundle
+├── plans/active/            # optional bounded live change state
 ├── AGENTS.md                # short project router
 └── source/
 ```
@@ -81,3 +83,14 @@ knowledge repository when architecture spans independently versioned
 repositories. In either case, resolve profiles locally and use commit-aware
 links to external source artifacts. Pin source/profile assets and their matching
 runtime image together in `.knowledge/kit.lock.yaml`.
+
+Keep active Execution Plans with the repository whose Git state they describe,
+not in a separate knowledge repository. Create that directory only when a plan
+is first required. Archive or remove completed plans according to project
+retention so the active route stays small.
+
+When compatible software agents are used, install the generic
+`change-lifecycle` Agent Skill from the pinned toolkit under the project's
+`.agents/skills/`. Treat it as a copied adapter: record its source version and
+refresh it deliberately during toolkit upgrades rather than editing divergent
+copies in several agent-specific locations.

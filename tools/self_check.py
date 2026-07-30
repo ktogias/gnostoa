@@ -9,6 +9,7 @@ from .check_change_policy import check_change_policy
 from .check_ci_policy import check_ci_policy
 from .check_guardrails import check_guardrails
 from .knowledge_common import KnowledgeFormatError, toolkit_root
+from .task_context import validate_execution_plan
 from .validate_bundle import validate_bundle
 
 
@@ -56,6 +57,17 @@ def self_check(repository_root: Path, run_tests: bool = True) -> bool:
             print(f"ERROR: guardrails: {issue}", file=sys.stderr)
     else:
         print("OK: guardrail coverage")
+
+    plan_issues: list[str] = []
+    for plan in sorted((root / "plans").rglob("*.yaml")):
+        for issue in validate_execution_plan(plan, root):
+            plan_issues.append(f"{plan.relative_to(root)}: {issue}")
+    if plan_issues:
+        passed = False
+        for issue in plan_issues:
+            print(f"ERROR: execution plan: {issue}", file=sys.stderr)
+    else:
+        print("OK: active execution plans")
 
     for name, path in (
         ("generic change control", "core/change-control.yaml"),

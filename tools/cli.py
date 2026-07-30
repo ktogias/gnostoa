@@ -6,7 +6,7 @@ from typing import Callable
 
 from . import build_context_pack, build_docs, check_change_policy, check_ci_policy
 from . import check_guardrails
-from . import check_runtime_lock, self_check, validate_bundle
+from . import check_runtime_lock, self_check, task_context, validate_bundle
 
 
 COMMANDS: dict[str, tuple[str, Callable[[list[str] | None], int]]] = {
@@ -28,6 +28,10 @@ COMMANDS: dict[str, tuple[str, Callable[[list[str] | None], int]]] = {
     "check-runtime": (
         "validate toolkit source and runtime lockstep",
         check_runtime_lock.main,
+    ),
+    "task": (
+        "validate, resume, checkpoint or hand off a bounded change",
+        task_context.main,
     ),
     "self-check": ("run the toolkit self-check", self_check.main),
 }
