@@ -1,7 +1,7 @@
 schema_version: "1.0"
 id: gnostoa.issue-3
 title: Add durable task context and explicit agent handoffs
-status: review-ready
+status: active
 
 change:
   class: normative
@@ -13,6 +13,7 @@ change:
 repository:
   branch: agent/durable-task-context
   base_revision: 23013ba0932ce04337e6558a95e62db749217a29
+  change_request: https://github.com/ktogias/gnostoa/pull/4
 
 scope:
   outcome: A person or software agent can safely resume, checkpoint and hand off a repository change from bounded canonical state.
@@ -55,10 +56,18 @@ progress:
     - Completed native, runtime-container and development-container verification
     - Reconciled the complete diff against the Work Item, Decision and public inheritance boundary
     - Kept volatile image metadata after the pinned Git layer so revision changes retain the dependency cache
-  current: The clean checkpoint is ready for owner semantic review in a stacked Draft Change Request.
+  current: Owner review found unresolved Issue 3 acceptance criteria and a clean-resume defect; the candidate is not review-ready while those findings are reconciled.
   remaining:
-    - Owner semantic review
-    - Merge after its parent Change Request is integrated
+    - Reconcile the linked Work Item and live provider Change Request before mutation
+    - Bind verification evidence to the exact immutable candidate and reject stale evidence
+    - Distinguish executing agent, tool and model provenance from substantive authorship
+    - Preserve explicit allowed and prohibited action boundaries without treating them as semantic approval
+    - Add one synthetic end-to-end fixture for the motivating handoff and unexplained-workspace scenario
+    - Narrow orientation claims to discovery adapters and defer complete-mediation mutation gating to Work Item 9
+    - Correct clean-plan resume so a committed plan is not falsely required to appear in the dirty worktree
+    - Re-run focused, policy, fast, regression and container verification on the resulting candidate
+    - Complete owner semantic review only after the findings above are resolved or explicitly deferred
+    - Merge only after its parent Change Request is integrated
 
 discoveries:
   - summary: Durable problem, rationale, execution state and review evidence have different authorities.
@@ -73,9 +82,19 @@ discoveries:
     evidence: tests/test_task_context.py::TaskContextToolTests.test_git_trust_is_scoped_to_the_selected_repository
   - summary: Volatile image revision metadata must not invalidate the pinned system-dependency layer.
     evidence: Dockerfile orders KIT_VERSION, VCS_REF and BUILD_DATE after the Git installation.
+  - summary: Green CI proves the implemented subset but does not satisfy unresolved Work Item acceptance criteria.
+    evidence: https://github.com/ktogias/gnostoa/pull/4#issuecomment-5131782400
+  - summary: Instruction and skill adapters make orientation discoverable but cannot make pre-mutation admission unavoidable.
+    evidence: https://github.com/ktogias/gnostoa/pull/4#issuecomment-5132026215
+  - summary: A clean committed Execution Plan currently fails resume because the command implicitly requires the plan path to appear in changed worktree state.
+    evidence: docker run --rm --mount type=bind,source=<repository>,target=/workspace,readonly --workdir /workspace gnostoa-task-context:runtime task resume --plan plans/issue-3-durable-task-context.yaml --repository-root /workspace
 
 verification:
   pre_change:
+    - command: docker run --rm --mount type=bind,source=<repository>,target=/workspace,readonly --workdir /workspace gnostoa-task-context:runtime task resume --plan plans/issue-3-durable-task-context.yaml --repository-root /workspace
+      result: failed-as-expected
+      observed_at: "2026-07-30T16:30:00Z"
+      summary: The clean committed candidate was rejected with "expected worktree paths are absent" for the plan itself, establishing focused evidence for the clean-resume defect before any implementation change.
     - command: python -m unittest tests.test_task_context -v
       result: failed-as-expected
       observed_at: "2026-07-30T00:00:00Z"
@@ -131,18 +150,18 @@ verification:
       summary: Scoped Git trust reconciled the real read-only bind-mounted worktree as the non-root runtime user.
 
 next_action:
-  actor: human:Konstantinos-Togias
-  instruction: Review the stacked Draft Change Request semantically and merge it after its parent is integrated.
+  actor: team:gnostoa-maintainers
+  instruction: Resolve or explicitly defer each recorded Issue 3 finding with focused pre-change evidence before returning the candidate to owner review.
 
 handoff:
-  status: ready
-  recipient: human:Konstantinos-Togias
-  summary: The normative change is bounded, fully verified and ready for owner semantic review; no provider settings or integration state were changed.
+  status: not-ready
+  summary: The candidate remains active because owner review and a containerized resume attempt exposed unresolved acceptance and lifecycle defects.
   expected_worktree: []
 
 provenance:
   authors:
     - codex/gpt-5.6
+    - codex/model-id-unavailable
   evaluators: []
 
-updated_at: "2026-07-30T12:53:39Z"
+updated_at: "2026-07-30T16:30:00Z"
