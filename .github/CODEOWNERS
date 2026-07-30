@@ -1,5 +1,5 @@
-# Gnostoa operational ownership. Independent approval requirements still apply:
-# an author or software agent cannot satisfy its own required human review.
+# Gnostoa operational ownership. This routes community review and does not by
+# itself require an independent approval for a maintainer-authored change.
 * @ktogias
 
 /.github/ @ktogias

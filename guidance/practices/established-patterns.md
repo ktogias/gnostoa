@@ -59,10 +59,10 @@ knowledge-management methodology.
 Use:
 
 - **Docs as Code** for plain-text versioning, review and CI.
-- **Trunk-based change flow** for small, short-lived, reviewed changes into a
+- **Trunk-based change flow** for small, bounded, verified changes into a
   protected integration branch.
-- **Verification-first development** for observable intent, proportionate
-  pre-change evidence and Red-Green-Refactor where behavior is executable.
+- **Proportionate verification** for observable intent, evidence before
+  integration and Red-Green-Refactor where it adds confidence.
 - **Continuous integration** for fast evidence on pushed revisions,
   authoritative candidate gates and immediate restoration of a broken trunk.
 - **OKF** for portable concepts, provenance, lifecycle and progressive

@@ -1,7 +1,7 @@
 ---
 type: Pattern
-title: Protected short-lived change flow
-description: Integrate small reviewed changes through one protected branch without imposing a hosting provider.
+title: Protected lightweight change flow
+description: Integrate small verified changes through one protected branch without imposing a hosting provider or team-sized approval model.
 status: draft
 generated:
   by: codex/gpt-5
@@ -34,7 +34,7 @@ x-project-knowledge:
       target: /guardrails/non-negotiable.md
 ---
 
-# Protected short-lived change flow
+# Protected lightweight change flow
 
 ## Context
 
@@ -57,7 +57,8 @@ Use a trunk-based, change-request flow:
 4. Open a change request before integration.
 5. Keep motivation, scope, evidence and review discussion in that request.
 6. Require passing checks and resolved conversations.
-7. Select work-item and approval requirements from the declared change class.
+7. Select any additional work-item, review and approval requirements from the
+   declared change class and project specialization.
 8. Delete the branch after integration.
 
 The provider-neutral terms map as follows:
@@ -71,9 +72,9 @@ The provider-neutral terms map as follows:
 | Protected Integration Branch | Protected branch or repository ruleset |
 | Required Verification | CI status check or pipeline |
 
-Agents may prepare work items, branches, commits, evidence and draft change
-requests. They do not approve their own work, bypass protection or replace
-required human semantic approval.
+Agents may prepare work items, branches, commits, evidence and change requests.
+They do not bypass protection or satisfy a human approval gate when a
+specialization requires one.
 
 ## Consequences
 
@@ -82,5 +83,8 @@ required human semantic approval.
 - Work items capture problems that outlive a single change without duplicating
   every mechanical edit.
 - Provider adapters and repository settings still require configuration.
-- Human review remains a capacity constraint and must be reserved
-  proportionately through change classification.
+- A solo maintainer can merge a self-authored change without inventing an
+  independent reviewer, cooling-off period or formal attestation.
+- Community contributions still receive normal maintainer review.
+- Higher-assurance projects can add independent approvals and durable records
+  without changing the generic flow.

@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Defer provider enforcement while the bootstrap repository is private
-description: Keep publication and merge gates closed when the current GitHub plan cannot enforce branch protection on a private repository.
+description: Keep integration gated while the current GitHub plan cannot enforce the lightweight baseline on a private repository.
 status: draft
 generated:
   by: codex/gpt-5
@@ -37,25 +37,25 @@ GitHub account. An attempt to enable protection for `main` through the GitHub
 branch-protection API returned HTTP 403 with the provider requirement to upgrade
 the account plan or make the repository public.
 
-Making the repository public before semantic review would violate the
-pre-publication gate. Silently weakening the inherited change policy would
-violate the public contract. The current limitation is therefore a temporary
-provider-side enforcement gap, not a policy change.
+Making the repository public before owner review would violate the
+pre-publication gate. Silently treating an unprotected branch as protected
+would violate the public contract. The current limitation is therefore a
+temporary provider-side enforcement gap, not a reason to add manual ceremony.
 
 ## Decision
 
-Keep the repository private and keep the normative policy unchanged. Do not
-merge the publication-baseline Change Request or permit other integration while
-provider enforcement is unavailable.
+Keep the repository private during review. Do not merge the
+publication-baseline Change Request or permit other integration while provider
+enforcement is unavailable.
 
 Use these compensating controls:
 
 - retain all publication work in a draft Pull Request;
 - run the active centralized GitHub verification workflow on every pushed
   revision and Pull Request candidate;
-- keep repository CODEOWNERS explicit even though the provider cannot enforce
-  its approval on the current private plan;
-- require the complete independent-human review matrix before publication;
+- keep repository CODEOWNERS explicit for ownership and community routing;
+- use the publication matrix as a traversable owner-review aid rather than a
+  formal sign-off ledger;
 - prohibit direct updates to `main` by maintainer procedure;
 - apply and audit branch protection before any post-bootstrap merge.
 
@@ -66,14 +66,16 @@ This exception expires immediately when either:
 2. the approved publication procedure changes repository visibility and
    protection can be applied.
 
-In either case, enforce required Pull Requests, strict current-branch checks,
-CODEOWNER review, stale-review dismissal, resolved conversations, linear
-history, and force-push/deletion prohibition before integration resumes.
+In either case, enforce required Pull Requests, required current-candidate
+checks, resolved conversations and force-push/deletion prohibition before
+integration resumes. Use zero required approvals while Gnostoa has one
+maintainer; CODEOWNER and independent approvals activate only through a future
+stricter specialization.
 Reconsider this Decision no later than 2026-08-30 if neither trigger occurs.
 
 ## Consequences
 
-- The source can receive centralized evidence and human review while remaining
+- The source can receive centralized evidence and owner review while remaining
   private.
 - The default branch is not mechanically protected during the temporary
   bootstrap window, so publication and merging remain blocked.

@@ -42,7 +42,7 @@ x-project-knowledge:
 ## Context
 
 The toolkit requires protected integration, required checks and
-verification-first evidence, but does not yet define which repository events
+proportionate verification evidence, but does not yet define which repository events
 must run which evidence tiers. Its consumer adapters validate knowledge and
 policy but cannot prove that a project runs its application regression suites.
 It also has no portable local hook contract.

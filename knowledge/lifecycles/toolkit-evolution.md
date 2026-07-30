@@ -25,7 +25,7 @@ The reusable foundation includes the core profile, monotonic inheritance,
 schemas, validation, templates, deterministic context packs, anonymous
 examples, reusable guidance, an OCI runtime, a Development Container,
 provider-neutral inherited change control and CI integration.
-The inherited policy also defines verification-first intent and evidence
+The inherited policy also defines proportionate verification intent and evidence
 requirements without selecting project test frameworks.
 Provider-neutral CI policy now separates authoritative candidate gates,
 project-declared verification capabilities, provider adapters and advisory

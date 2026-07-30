@@ -35,7 +35,7 @@ The adoption does not attempt a big-bang rewrite of legacy documentation.
 
 ## Preconditions
 
-- A bounded pilot area and its accountable reviewers are selected.
+- A bounded pilot area and its accountable owners are selected.
 - The source repositories and available historical material are accessible.
 - The team agrees to distinguish current state, target state and proposals.
 - A baseline task set exists for measuring searches, tokens, correctness and
@@ -85,8 +85,8 @@ The adoption does not attempt a big-bang rewrite of legacy documentation.
 - Current and target architecture are distinguishable.
 - The pilot answers its selected questions by following concepts to evidence.
 - Measured savings exceed generation and maintenance cost.
-- The pilot change reaches the protected branch only through a passing,
-  appropriately approved Change Request.
+- The pilot change reaches the protected branch only through a passing Change
+  Request and any review required by the project's specialization.
 - Required checks belong to the latest pilot merge candidate; hook success
   alone cannot satisfy integration.
 

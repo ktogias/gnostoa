@@ -1,7 +1,7 @@
 ---
 type: Decision
-title: Require verification-first development without universal TDD
-description: Define expected behavior and proportionate evidence before implementation while avoiding artificial tests for non-executable changes.
+title: Use proportionate verification without universal TDD
+description: Require reliable evidence before integration while keeping test-first optional in the lightweight baseline.
 status: draft
 generated:
   by: codex/gpt-5
@@ -34,7 +34,7 @@ x-project-knowledge:
       target: /decisions/0006-provider-neutral-change-governance.md
 ---
 
-# Require verification-first development without universal TDD
+# Use proportionate verification without universal TDD
 
 ## Context
 
@@ -52,41 +52,37 @@ chronology after squash or rebase.
 
 ## Decision
 
-Adopt verification-first development as the generic invariant:
+Adopt proportionate verification as the generic invariant:
 
-1. State observable expected behavior and acceptance evidence before changing
-   the implementation.
-2. Use test-first Red-Green-Refactor when behavior is executable and
-   automatable.
-3. Reproduce a defect with a failing regression test before its fix.
-4. Establish characterization coverage before behavior-preserving refactoring.
-5. Define failing conformance or policy evidence before changing schemas,
-   profiles, contracts or guardrails.
-6. Use structural validation plus accountable human semantic review for
+1. State observable expected behavior early enough to guide a bounded change.
+2. Require reliable final evidence before integration.
+3. Prefer test-first Red-Green-Refactor for new executable behavior, defects,
+   policies and contracts when it improves design or prevents regression.
+4. Prefer characterization coverage before behavior-preserving refactoring.
+5. Use structural validation plus accountable human semantic review for
    non-executable knowledge; do not create ceremonial unit tests for prose.
-7. Permit exploratory work without test-first evidence only when it is
-   time-boxed and cannot integrate as supported behavior until verified.
-8. Permit emergency post-event evidence only through the existing audited
-   emergency class.
+6. Require emergency post-event evidence through the audited emergency class.
 
-Express minimum verification intent and timing in the inherited change-control
-policy. Let projects strengthen the requirements and choose stack-specific test
-tools in their narrowest specialization.
+The community-light baseline does not require proof of test authoring order,
+formal test-first exceptions or failing evidence for every change. It records
+`when-applicable` failing evidence and requires final evidence before merge.
+Projects can strengthen evidence timing to `before-implementation` and require
+failing evidence in a specialization.
 
-For this toolkit, changes to `tools/`, `schemas/`, `core/` and `policy/` use
-test-first evidence. Bug fixes begin with a reproducer. Refactors begin with a
-green characterization suite. Reviewers confirm that a proposed test would fail
-when the behavior is broken; CI confirms the final state, but does not claim to
-prove chronology.
+For this toolkit, changes to `tools/`, `schemas/`, `core/` and `policy/` should
+normally use focused conformance evidence first. Bug fixes should normally
+begin with a reproducer and refactors with a characterization suite. When that
+sequence adds no useful confidence, the Change Request may simply explain the
+final evidence used.
 
 ## Consequences
 
 - Tests become executable behavioral evidence rather than coverage decoration.
 - Developers and agents receive a smaller, more precise implementation target.
 - Mechanical and prose-only work avoids low-value test proliferation.
-- Change Requests must record expected behavior and pre-change evidence.
+- Change Requests record expected behavior and proportionate final evidence.
 - Test suites remain reviewed production assets and add maintenance cost.
 - Flaky, slow or implementation-coupled tests undermine the feedback loop and
   must be treated as defects.
 - Enforcement is hybrid: schemas and CI validate declared policy and outcomes;
-  reviewers validate chronology, relevance and semantic correctness.
+  maintainers validate relevance and semantic correctness.

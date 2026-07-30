@@ -1,4 +1,4 @@
-version: "0.7.0"
+version: "0.9.0"
 guardrails:
   - id: monotonic-profile-inheritance
     title: Child profiles do not weaken parent policy
@@ -122,8 +122,10 @@ guardrails:
     implementation:
       - knowledge/contracts/public-inheritance-surface.md#boundary
       - templates/AGENTS.project.md
+      - templates/change-control.project.yaml
     tests:
       - tests/test_tools.py::GuardrailTests.test_public_profile_does_not_inherit_self_knowledge
+      - tests/test_tools.py::GuardrailTests.test_public_change_control_does_not_inherit_gnostoa_self_policy
       - tests/test_tools.py::GuardrailTests.test_project_agent_router_is_bounded
 
   - id: generic-scope-isolation
@@ -240,12 +242,27 @@ guardrails:
       - tools/check_change_policy.py#load_change_policy
       - tools/check_change_policy.py#_assert_monotonic
     tests:
-      - tests/test_tools.py::ChangeControlTests.test_toolkit_policy_strengthens_generic_baseline
+      - tests/test_tools.py::ChangeControlTests.test_generic_baseline_is_practical_for_solo_and_community_projects
+      - tests/test_tools.py::ChangeControlTests.test_gnostoa_self_policy_requires_durable_context_and_test_first
       - tests/test_tools.py::ChangeControlTests.test_change_policy_cannot_weaken_parent
       - tests/test_tools.py::ChangeControlTests.test_verification_policy_cannot_weaken_parent
 
+  - id: gnostoa-self-change-discipline
+    title: Gnostoa requires durable context and test-first chronology above the public baseline
+    applies_to: [kit]
+    enforcement: hybrid
+    owner: team:gnostoa-maintainers
+    guidance: knowledge/decisions/0014-strengthen-gnostoa-self-governance.md#decision
+    implementation:
+      - policy/change-control.yaml
+      - AGENTS.md
+      - CONTRIBUTING.md
+      - knowledge/runbooks/maintain-the-kit.md
+    tests:
+      - tests/test_tools.py::ChangeControlTests.test_gnostoa_self_policy_requires_durable_context_and_test_first
+
   - id: human-change-approval-authority
-    title: Agents cannot satisfy required human semantic approval
+    title: Agents cannot satisfy a human gate required by a specialization
     applies_to: [kit, adopting-projects]
     enforcement: hybrid
     owner: team:gnostoa-maintainers
@@ -259,7 +276,7 @@ guardrails:
       - tests/test_tools.py::ChangeControlTests.test_agents_cannot_approve_or_bypass
 
   - id: verification-first-change-evidence
-    title: Expected behavior and proportionate evidence precede implementation
+    title: Expected behavior and proportionate evidence precede integration
     applies_to: [kit, adopting-projects]
     enforcement: hybrid
     owner: team:gnostoa-maintainers
@@ -273,7 +290,7 @@ guardrails:
       - templates/AGENTS.project.md
     tests:
       - tests/test_tools.py::ChangeControlTests.test_generic_policy_requires_verification_first_evidence
-      - tests/test_tools.py::ChangeControlTests.test_change_request_captures_preimplementation_evidence
+      - tests/test_tools.py::ChangeControlTests.test_change_request_captures_proportionate_evidence
       - tests/test_tools.py::ChangeControlTests.test_verification_first_guidance_and_self_route_are_complete
 
   - id: required-test-quality

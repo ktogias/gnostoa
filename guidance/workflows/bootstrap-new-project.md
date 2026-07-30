@@ -69,8 +69,9 @@ without demonstrated need.
    before generating summaries.
 9. Add the smallest useful spine: project, systems, repositories, contracts,
    decisions and explicit open questions.
-10. Adapt the Work Item, Change Request, verification-plan, emergency and
-   CODEOWNERS templates. Establish one fast focused suite, one relevant
+10. Adapt the Change Request, emergency and CODEOWNERS templates. Add the Work
+   Item and verification-plan templates only when they provide durable value.
+   Establish one fast focused suite, one relevant
    boundary check and, when applicable, one critical smoke path rather than
    pursuing blanket coverage.
    Publish the baseline and apply the
@@ -165,8 +166,8 @@ knowledge validate --profile .knowledge/profile.yaml --bundle knowledge/
   once through centralized CI.
 - The default branch is protected and the baseline Change Request path is
   exercised once.
-- The first supported behavior has expected, pre-change and final verification
-  evidence.
+- The first supported behavior has expected and final verification evidence;
+  pre-change evidence is present when useful or required by a specialization.
 - A task context pack can be produced from the Project concept.
 
 ## Recovery

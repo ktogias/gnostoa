@@ -12,9 +12,9 @@ remain generic so adopting projects do not inherit branded domain vocabulary.
 
 | Surface | Purpose | Consumer behavior |
 |---|---|---|
-| `core/`, `schemas/`, `tools/`, `policy/` | Enforceable generic contract | Pin and inherit |
+| `core/`, `schemas/`, `tools/`, `ci/`, `templates/` | Enforceable generic contract | Pin and inherit |
 | `guidance/` | Generic workflows, patterns and practices | Load one task route |
-| `knowledge/` | Architecture and operation of this toolkit | Toolkit maintainers only |
+| `knowledge/`, `policy/` | Architecture, operation and self-policy of this toolkit | Toolkit maintainers only |
 
 An adopting project creates a profile that extends `core/profile.yaml` and owns
 its own OKF bundle. A project area or module specializes that profile only when
@@ -37,9 +37,9 @@ under `examples/` is deliberately anonymous and non-normative.
 - [Governance](docs/core/governance.md)
 - [Contributing](CONTRIBUTING.md)
 - [Licensing](LICENSING.md)
-- [Change classification and approval](guidance/reference/change-classification-and-approval.md)
-- [Protected change flow](guidance/patterns/protected-short-lived-change-flow.md)
-- [Verification-first development](guidance/patterns/verification-first-development.md)
+- [Change classification and review](guidance/reference/change-classification-and-approval.md)
+- [Protected lightweight change flow](guidance/patterns/protected-short-lived-change-flow.md)
+- [Proportionate verification](guidance/patterns/verification-first-development.md)
 - [Testing and verification strategy](guidance/reference/testing-and-verification-strategy.md)
 - [Tiered centralized CI](guidance/patterns/tiered-ci-and-local-feedback.md)
 - [Continuous-integration contract](guidance/reference/continuous-integration-contract.md)
@@ -159,11 +159,16 @@ canonical copy in the repository.
 - Agent instructions are short routers; they do not embed the whole knowledge
   corpus into every task.
 - Consumer and CI execution is OCI-container-first and pinned by digest.
-- Default-branch integration uses short-lived, risk-classified Change Requests.
+- Default-branch integration uses bounded, risk-classified Change Requests.
 - Change-control specializations may strengthen but not weaken their parent.
-- Agents never satisfy required human approval or bypass repository controls.
-- Expected observable behavior and proportionate evidence precede
-  implementation; executable behavior uses test-first evidence where applicable.
+- Gnostoa's internal self-policy requires a Work Item, Decision and
+  pre-implementation evidence for normal, normative and critical toolkit
+  changes, with emergency follow-up; consumers do not inherit that
+  specialization.
+- Agents never satisfy a required human gate or bypass repository controls.
+- Expected observable behavior and proportionate evidence precede integration;
+  test-first evidence is recommended where it adds confidence and can be
+  required by a specialization.
 - Required tests are behavior-oriented, deterministic and blocking when flaky;
   coverage alone is not acceptance.
 - Centralized CI is authoritative on the latest integration candidate; local
@@ -203,7 +208,8 @@ trademarks.
   [CI policy](templates/continuous-integration.project.yaml),
   [verification manifest](templates/verification.project.yaml),
   [shared verification command](templates/verify.project),
-  [Work Item](templates/work-item.md), [Change Request](templates/change-request.md)
+  [Change Request](templates/change-request.md), optional
+  [Work Item](templates/work-item.md),
   [emergency record](templates/emergency-change-record.md) and
   [repository-settings checklist](templates/repository-settings-checklist.md).
 - Record expected behavior and the evidence portfolio with the

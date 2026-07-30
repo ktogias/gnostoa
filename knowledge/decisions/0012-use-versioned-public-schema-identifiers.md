@@ -74,5 +74,5 @@ redirect before introducing a new identifier.
 - The derived project site can expose the same bytes at their identifiers.
 - The publication namespace includes the initial repository owner, so a future
   transfer must preserve compatibility rather than renaming IDs casually.
-- This decision remains draft until independent human semantic review confirms
+- This decision remains draft until accountable human semantic review confirms
   the permanence and ownership trade-off.

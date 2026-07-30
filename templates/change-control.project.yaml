@@ -1,13 +1,12 @@
 id: example-project-change-control
-version: "0.1.0"
+version: "0.2.0"
 owner: team:example-project-maintainers
 extends:
   - ../.knowledge-kit/core/change-control.yaml
 
 # Add only stricter overrides. Example:
 # change_classes:
-#   mechanical:
+#   critical:
 #     minimum_approvals: 1
 #     independent_approval: true
 #     human_approval: true
-#     auto_merge: false

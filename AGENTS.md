@@ -21,10 +21,16 @@ keep executable artifacts canonical in their native formats.
 Classify every change through
 `guidance/workflows/propose-review-merge-change.md` and
 `policy/change-control.yaml`. Agents may author changes and evidence, but never
-self-approve, bypass controls or replace required human semantic review.
+self-approve where independent approval is required, bypass controls or replace
+required human semantic review.
+For this repository, every normal, normative or critical change requires a
+linked Work Item and Decision before implementation; an emergency supplies them
+in its mandatory follow-up.
 Before implementation, follow
-`guidance/workflows/develop-verification-first.md` and record expected behavior
-plus the required failing or characterization evidence.
+`guidance/workflows/develop-verification-first.md`; record expected behavior and
+establish the applicable failing or characterization evidence before editing.
+Mechanical changes and emergency follow-up use the timing declared by
+`policy/change-control.yaml`.
 
 Before completion run:
 

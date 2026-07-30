@@ -47,9 +47,9 @@ The generic policy uses these evidence requirements:
 | Change class | Automated evidence | Failing evidence | Timing |
 |---|---|---|---|
 | `mechanical` | Existing checks | Optional | Before merge |
-| `normal` | Required when automatable | When applicable, especially defects | Before implementation |
-| `normative` | Required when automatable | Required unmet behavior or conformance evidence | Before implementation |
-| `critical` | Required | Required | Before implementation |
+| `normal` | Required when automatable | When applicable, especially defects | Before merge |
+| `normative` | Required when automatable | When applicable | Before merge |
+| `critical` | Required | When applicable | Before merge |
 | `emergency` | Required | Required follow-up regression | Post-event exception |
 
 Evidence types own different questions:
@@ -76,7 +76,7 @@ Required tests:
 - assert observable behavior rather than implementation details;
 - are deterministic and isolated where practical;
 - cover success, boundary, invalid input and failure semantics as applicable;
-- fail for the intended reason before the corresponding behavior exists;
+- would fail when the intended behavior is broken;
 - produce actionable output and fast feedback;
 - are reviewed as maintained source artifacts;
 - block integration when flaky until fixed or explicitly quarantined through a
@@ -94,9 +94,9 @@ start with high-impact characterization tests around the pilot area rather than
 attempting blanket coverage.
 
 Record stack-specific frameworks, test commands, environments, reliability
-targets and contract tooling in project or module specializations. Keep the
-generic evidence vocabulary unchanged so developers and agents can traverse
-projects consistently.
+targets, mandatory test-first rules and contract tooling in project or module
+specializations. Keep the generic evidence vocabulary unchanged so developers
+and agents can traverse projects consistently.
 
 Map the resulting portfolio to `fast`, `regression`, applicable conditional and
 scheduled suites through the project verification manifest. Central CI owns

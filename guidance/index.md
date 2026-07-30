@@ -16,9 +16,9 @@ Load only the route that matches the current task.
 
 - [Daily knowledge change loop](workflows/daily-change-loop.md)
 - [Propose, review and merge a change](workflows/propose-review-merge-change.md)
-- [Develop with verification first](workflows/develop-verification-first.md)
+- [Develop with proportionate verification](workflows/develop-verification-first.md)
 - [Configure continuous integration](workflows/configure-continuous-integration.md)
-- [Change classification and approval](reference/change-classification-and-approval.md)
+- [Change classification and review](reference/change-classification-and-approval.md)
 - [Testing and verification strategy](reference/testing-and-verification-strategy.md)
 - [Continuous-integration contract](reference/continuous-integration-contract.md)
 - [Source authority and lifecycle](practices/source-authority-and-lifecycle.md)
@@ -27,8 +27,8 @@ Load only the route that matches the current task.
 ## Design and operations
 
 - [Policy, guidance and self-knowledge separation](patterns/policy-guidance-self-separation.md)
-- [Protected short-lived change flow](patterns/protected-short-lived-change-flow.md)
-- [Verification-first development](patterns/verification-first-development.md)
+- [Protected lightweight change flow](patterns/protected-short-lived-change-flow.md)
+- [Proportionate verification](patterns/verification-first-development.md)
 - [Tiered centralized CI with advisory local feedback](patterns/tiered-ci-and-local-feedback.md)
 - [Established supporting patterns](practices/established-patterns.md)
 - [Repository layout and distribution](reference/repository-layout-and-distribution.md)

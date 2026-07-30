@@ -2,10 +2,10 @@
 
 <!-- State observable results, boundaries, failure semantics and non-goals. -->
 
-## Pre-change failure or baseline
+## Evidence
 
-- Evidence:
-- Expected Red failure or characterization result:
+- Final evidence required before merge:
+- Optional Red failure or characterization result:
 - Exact command:
 
 ## Verification portfolio
@@ -24,9 +24,8 @@
 - Flaky-test handling:
 - Why coverage is sufficient or insufficient:
 
-## Exception
+## Stricter specialization, when applicable
 
-- Test-first exception: `none | mechanical | exploratory | emergency`
-- Rationale:
-- Compensating control:
-- Follow-up Work Item and deadline:
+- Additional evidence timing:
+- Required approval or record:
+- Exception and follow-up:

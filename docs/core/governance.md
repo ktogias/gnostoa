@@ -6,12 +6,12 @@ and workflows are:
 - [non-negotiable guardrails](../../guidance/guardrails/non-negotiable.md);
 - [source authority and lifecycle](../../guidance/practices/source-authority-and-lifecycle.md);
 - [daily knowledge change loop](../../guidance/workflows/daily-change-loop.md);
-- [protected short-lived change flow](../../guidance/patterns/protected-short-lived-change-flow.md);
-- [change classification and approval](../../guidance/reference/change-classification-and-approval.md);
+- [protected lightweight change flow](../../guidance/patterns/protected-short-lived-change-flow.md);
+- [change classification and review](../../guidance/reference/change-classification-and-approval.md);
 - [propose, review and merge workflow](../../guidance/workflows/propose-review-merge-change.md);
-- [verification-first development](../../guidance/patterns/verification-first-development.md);
+- [proportionate verification](../../guidance/patterns/verification-first-development.md);
 - [testing and verification strategy](../../guidance/reference/testing-and-verification-strategy.md);
-- [develop with verification first](../../guidance/workflows/develop-verification-first.md);
+- [develop with proportionate verification](../../guidance/workflows/develop-verification-first.md);
 - [tiered centralized CI](../../guidance/patterns/tiered-ci-and-local-feedback.md);
 - [continuous-integration contract](../../guidance/reference/continuous-integration-contract.md);
 - [configure continuous integration](../../guidance/workflows/configure-continuous-integration.md);

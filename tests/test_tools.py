@@ -437,6 +437,31 @@ class GuardrailTests(unittest.TestCase):
         self.assertEqual([], profile["extends"])
         self.assertNotIn("knowledge/", (ROOT / "core" / "profile.yaml").read_text())
 
+    def test_public_change_control_does_not_inherit_gnostoa_self_policy(
+        self,
+    ) -> None:
+        template = load_yaml(ROOT / "templates" / "change-control.project.yaml")
+        example = load_yaml(
+            ROOT
+            / "examples"
+            / "profiles"
+            / "example-project"
+            / "change-control.yaml"
+        )
+        self.assertEqual(
+            ["../.knowledge-kit/core/change-control.yaml"],
+            template["extends"],
+        )
+        self.assertEqual(
+            ["../../../core/change-control.yaml"],
+            example["extends"],
+        )
+        boundary = (
+            ROOT / "knowledge" / "contracts" / "public-inheritance-surface.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("`policy/`", boundary)
+        self.assertIn("outside", boundary)
+
     def test_project_agent_router_is_bounded(self) -> None:
         router = (ROOT / "templates" / "AGENTS.project.md").read_text(
             encoding="utf-8"
@@ -461,32 +486,107 @@ class ChangeControlTests(unittest.TestCase):
         self.assertFalse(integration["direct_push"])
         self.assertFalse(integration["force_push"])
         self.assertFalse(integration["branch_deletion"])
-        self.assertLessEqual(policy["branches"]["target_lifetime_hours"], 24)
+        self.assertEqual(168, policy["branches"]["target_lifetime_hours"])
 
-    def test_toolkit_policy_strengthens_generic_baseline(self) -> None:
-        self.assertEqual(
-            [],
-            check_change_policy(ROOT / "policy" / "change-control.yaml"),
-        )
+    def test_generic_baseline_is_practical_for_solo_and_community_projects(
+        self,
+    ) -> None:
         generic = load_change_policy(ROOT / "core" / "change-control.yaml")
-        toolkit = load_change_policy(ROOT / "policy" / "change-control.yaml")
-        self.assertEqual(
-            0,
-            generic["change_classes"]["mechanical"]["minimum_approvals"],
-        )
-        self.assertEqual(
-            1,
-            toolkit["change_classes"]["mechanical"]["minimum_approvals"],
-        )
-        self.assertFalse(
-            toolkit["change_classes"]["mechanical"]["auto_merge"],
-        )
+        for class_id in ("mechanical", "normal", "normative", "critical"):
+            change_class = generic["change_classes"][class_id]
+            self.assertEqual(0, change_class["minimum_approvals"], class_id)
+            self.assertFalse(change_class["independent_approval"], class_id)
+            self.assertFalse(change_class["code_owner_approval"], class_id)
+            self.assertFalse(change_class["human_approval"], class_id)
+
+        for class_id in ("normal", "normative", "critical"):
+            self.assertEqual(
+                "optional",
+                generic["change_classes"][class_id]["work_item"],
+                class_id,
+            )
+            self.assertFalse(
+                generic["change_classes"][class_id]["decision_record"],
+                class_id,
+            )
+            self.assertEqual(
+                "before-merge",
+                generic["change_classes"][class_id]["verification"][
+                    "evidence_timing"
+                ],
+                class_id,
+            )
+            self.assertEqual(
+                "when-applicable",
+                generic["change_classes"][class_id]["verification"][
+                    "failing_evidence"
+                ],
+                class_id,
+            )
+
+        guidance = (
+            ROOT
+            / "guidance"
+            / "reference"
+            / "change-classification-and-approval.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("solo maintainer", guidance)
+        self.assertIn("formal approval", guidance)
+        self.assertIn("cooling-off period", guidance)
+        self.assertIn("owner attestation", guidance)
+
         example = load_change_policy(
             ROOT / "examples" / "profiles" / "example-project" / "change-control.yaml"
         )
         self.assertEqual(
             1,
-            example["change_classes"]["mechanical"]["minimum_approvals"],
+            example["change_classes"]["critical"]["minimum_approvals"],
+        )
+
+    def test_gnostoa_self_policy_requires_durable_context_and_test_first(
+        self,
+    ) -> None:
+        self.assertEqual(
+            [],
+            check_change_policy(ROOT / "policy" / "change-control.yaml"),
+        )
+        policy = load_change_policy(ROOT / "policy" / "change-control.yaml")
+
+        mechanical = policy["change_classes"]["mechanical"]
+        self.assertEqual("optional", mechanical["work_item"])
+        self.assertFalse(mechanical["decision_record"])
+        self.assertEqual(
+            "before-merge",
+            mechanical["verification"]["evidence_timing"],
+        )
+
+        failing_evidence = {
+            "normal": "when-applicable",
+            "normative": "required",
+            "critical": "required",
+        }
+        for class_id, expected_failure in failing_evidence.items():
+            change_class = policy["change_classes"][class_id]
+            self.assertEqual("required", change_class["work_item"], class_id)
+            self.assertTrue(change_class["decision_record"], class_id)
+            self.assertEqual(
+                "before-implementation",
+                change_class["verification"]["evidence_timing"],
+                class_id,
+            )
+            self.assertEqual(
+                expected_failure,
+                change_class["verification"]["failing_evidence"],
+                class_id,
+            )
+            self.assertEqual(0, change_class["minimum_approvals"], class_id)
+
+        emergency = policy["change_classes"]["emergency"]
+        self.assertEqual("required-follow-up", emergency["work_item"])
+        self.assertTrue(emergency["decision_record"])
+        self.assertEqual(
+            "post-event",
+            emergency["verification"]["evidence_timing"],
         )
 
     def test_change_policy_cannot_weaken_parent(self) -> None:
@@ -535,8 +635,10 @@ extends:
             policy["agents"]["may_promote_stable_without_human"],
         )
         for class_id in ("normal", "normative", "critical"):
+            change_class = policy["change_classes"][class_id]
+            self.assertFalse(change_class["human_approval"], class_id)
             self.assertTrue(
-                policy["change_classes"][class_id]["human_approval"],
+                change_class["verification"]["human_semantic_verification"],
                 class_id,
             )
 
@@ -593,19 +695,19 @@ change_classes:
             "normal": (
                 "when-automatable",
                 "when-applicable",
-                "before-implementation",
+                "before-merge",
                 True,
             ),
             "normative": (
                 "when-automatable",
-                "required",
-                "before-implementation",
+                "when-applicable",
+                "before-merge",
                 True,
             ),
             "critical": (
                 "required",
-                "required",
-                "before-implementation",
+                "when-applicable",
+                "before-merge",
                 True,
             ),
             "emergency": (
@@ -651,14 +753,14 @@ change_classes:
             with self.assertRaises(KnowledgeFormatError):
                 load_change_policy(child)
 
-    def test_change_request_captures_preimplementation_evidence(self) -> None:
+    def test_change_request_captures_proportionate_evidence(self) -> None:
         template = (ROOT / "templates" / "change-request.md").read_text(
             encoding="utf-8"
         )
         self.assertIn("Expected behavior", template)
-        self.assertIn("Pre-change failure evidence", template)
+        self.assertIn("Evidence available before merge", template)
         self.assertIn("Verification strategy", template)
-        self.assertIn("Test-first exception", template)
+        self.assertNotIn("Test-first exception", template)
 
     def test_verification_first_guidance_and_self_route_are_complete(self) -> None:
         workflow = (
@@ -678,7 +780,7 @@ change_classes:
         )
 
         self.assertIn("Red", workflow)
-        self.assertIn("Green", workflow)
+        self.assertIn("green", workflow.lower())
         self.assertIn("characterization", workflow)
         self.assertIn("non-executable", workflow)
         self.assertIn("observable behavior", reference)
@@ -688,7 +790,7 @@ change_classes:
         self.assertIn("reproducer before the fix", runbook)
         self.assertIn("characterization", runbook)
         self.assertIn("Expected behavior", plan)
-        self.assertIn("Pre-change failure", plan)
+        self.assertIn("Final evidence required before merge", plan)
 
 
 class ContinuousIntegrationTests(unittest.TestCase):

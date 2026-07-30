@@ -18,13 +18,14 @@ nav:
       - Self-hosting surfaces: decisions/0004-self-hosting-surfaces.md
       - Container-first runtime: decisions/0005-container-first-runtime.md
       - Provider-neutral change governance: decisions/0006-provider-neutral-change-governance.md
-      - Verification-first development: decisions/0007-verification-first-development.md
+      - Proportionate verification: decisions/0007-verification-first-development.md
       - Authoritative tiered CI: decisions/0008-authoritative-tiered-continuous-integration.md
       - Adopt the Gnostoa project name: decisions/0009-adopt-gnostoa-project-name.md
       - License Gnostoa under Apache-2.0: decisions/0010-license-gnostoa-under-apache-2.0.md
       - Record initial copyright ownership: decisions/0011-record-initial-copyright-ownership.md
       - Versioned public schema identifiers: decisions/0012-use-versioned-public-schema-identifiers.md
       - Deferred private-repository enforcement: decisions/0013-defer-provider-enforcement-while-private.md
+      - Stricter Gnostoa self-governance: decisions/0014-strengthen-gnostoa-self-governance.md
 markdown_extensions:
   - admonition
   - tables

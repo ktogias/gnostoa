@@ -9,6 +9,8 @@
 - Decision:
 - Accountable owner:
 
+<!-- Work Item and Decision are optional unless the effective policy requires them. -->
+
 ## Why and scope
 
 <!-- Explain the problem, boundaries and explicit non-goals. Do not duplicate the linked Work Item. -->
@@ -26,12 +28,11 @@
 ### Verification strategy
 
 - Expected behavior:
-- Pre-change failure evidence:
+- Evidence available before merge:
+- Pre-change failure or characterization evidence, when used:
 - Automated test level:
 - Human semantic evidence:
 - Exact commands:
-- Test-first exception: `none | mechanical | exploratory | emergency`
-- Exception rationale and follow-up:
 
 - [ ] Required checks pass.
 - [ ] Required checks belong to the latest merge-candidate revision.
@@ -40,6 +41,6 @@
 - [ ] Tests assert observable behavior rather than implementation details.
 - [ ] Required tests are deterministic and non-flaky.
 - [ ] Contracts, tests and canonical knowledge are synchronized.
-- [ ] Required Work Item and Decision are linked.
-- [ ] Required independent human/CODEOWNER approvals are present.
-- [ ] Review conversations are resolved or deferred through a linked Work Item.
+- [ ] Any records or approvals required by the effective specialization are linked.
+- [ ] Community contributions have accountable maintainer review.
+- [ ] Review conversations are resolved or explicitly tracked.

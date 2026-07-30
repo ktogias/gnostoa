@@ -11,7 +11,7 @@ Keep this file short. Route to one source; do not duplicate the guidance here.
   `.knowledge-kit/guidance/workflows/daily-change-loop.md`.
 - Any repository change: read
   `.knowledge-kit/guidance/workflows/propose-review-merge-change.md`.
-- Before implementation: read
+- For implementation and verification: read
   `.knowledge-kit/guidance/workflows/develop-verification-first.md`.
 - CI or hook work: read
   `.knowledge-kit/guidance/workflows/configure-continuous-integration.md`.

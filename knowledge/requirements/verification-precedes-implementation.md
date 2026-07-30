@@ -1,7 +1,7 @@
 ---
 type: Requirement
-title: Verification precedes implementation
-description: Every change defines proportionate observable evidence before implementation or records an explicit permitted exception.
+title: Verification precedes integration
+description: Every change carries proportionate observable evidence before integration; specializations may require test-first chronology.
 status: draft
 generated:
   by: codex/gpt-5
@@ -21,18 +21,18 @@ x-project-knowledge:
       target: /requirements/prevent-policy-drift.md
 ---
 
-# Verification precedes implementation
+# Verification precedes integration
 
 The toolkit must:
 
-- require expected behavior before implementation for every change class;
-- require test-first evidence when behavior is executable and automatable;
-- require a failing reproducer before a defect fix;
-- require failing behavioral or conformance evidence for normative and critical
-  executable changes;
+- require expected behavior and final evidence before integration;
+- recommend test-first evidence when behavior is executable and automatable;
+- support failing reproducers, characterization and conformance evidence without
+  requiring formal chronology in the community-light baseline;
 - require post-event regression evidence for emergency changes;
 - keep required tests deterministic, behavior-oriented and blocking when flaky;
-- reject child policies that weaken inherited evidence or timing;
+- reject child policies that weaken inherited evidence or timing while allowing
+  stricter specializations to require evidence before implementation;
 - use human semantic verification instead of artificial tests for
   non-executable claims;
 - keep technology-specific frameworks and portfolio choices in project or
