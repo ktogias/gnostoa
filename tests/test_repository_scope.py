@@ -67,7 +67,7 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
 
             self.assertEqual(
                 [Path(".gitignore"), Path("tracked.md")],
-                self.module().tracked_candidate_paths(root),
+                self.module().candidate_paths(root),
             )
             self.assertEqual(
                 [],
@@ -110,13 +110,48 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
             )
             self.assertEqual("Open" + "OP", external.read_text(encoding="utf-8"))
 
-    def test_container_runtime_pins_the_git_used_for_candidate_scope(self) -> None:
+    def test_packaged_candidate_uses_its_build_manifest_without_git(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source.md").write_text("generic source\n", encoding="utf-8")
+            (root / "incidental.md").write_text(
+                "Open" + "OP",
+                encoding="utf-8",
+            )
+            (root / self.module().SOURCE_MANIFEST).write_bytes(b"source.md\0")
+
+            self.assertEqual(
+                [Path("source.md")],
+                self.module().candidate_paths(root),
+            )
+            self.assertEqual(
+                [],
+                self.module().find_text_matches(root, FORBIDDEN_PATTERNS),
+            )
+
+    def test_unsafe_build_manifest_entry_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / self.module().SOURCE_MANIFEST).write_bytes(b"../external.md\0")
+
+            with self.assertRaisesRegex(
+                self.module().RepositoryScopeError,
+                "unsafe candidate path",
+            ):
+                self.module().candidate_paths(root)
+
+    def test_container_runtime_declares_both_candidate_sources(self) -> None:
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
         self.assertRegex(
             dockerfile,
             r"ARG GIT_PACKAGE_VERSION=[^\s]+",
         )
         self.assertIn('"git=${GIT_PACKAGE_VERSION}"', dockerfile)
+        self.assertIn(self.module().SOURCE_MANIFEST, dockerfile)
+        self.assertLess(
+            dockerfile.index(self.module().SOURCE_MANIFEST),
+            dockerfile.index("python -m pip install"),
+        )
 
 
 if __name__ == "__main__":
