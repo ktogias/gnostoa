@@ -1,0 +1,19 @@
+# Gnostoa operational ownership. Independent approval requirements still apply:
+# an author or software agent cannot satisfy its own required human review.
+* @ktogias
+
+/.github/ @ktogias
+/.gitlab-ci.yml @ktogias
+/AGENTS.md @ktogias
+/ci/ @ktogias
+/core/ @ktogias
+/guidance/ @ktogias
+/knowledge/ @ktogias
+/policy/ @ktogias
+/schemas/ @ktogias
+/templates/ @ktogias
+/tests/ @ktogias
+/tools/ @ktogias
+/Dockerfile @ktogias
+/pyproject.toml @ktogias
+/requirements/ @ktogias

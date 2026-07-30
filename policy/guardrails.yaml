@@ -1,4 +1,4 @@
-version: "0.6.0"
+version: "0.7.0"
 guardrails:
   - id: monotonic-profile-inheritance
     title: Child profiles do not weaken parent policy
@@ -19,8 +19,10 @@ guardrails:
     guidance: guidance/guardrails/non-negotiable.md#rule
     implementation:
       - tools/validate_bundle.py#validate_bundle
+      - knowledge/runbooks/review-publication-baseline.md
     tests:
       - tests/test_tools.py::BundleTests.test_stable_concept_requires_human_verifier
+      - tests/test_tools.py::PublicationBaselineTests.test_publication_review_matrix_covers_every_canonical_concept
 
   - id: graph-integrity
     title: IDs are unique and links resolve
@@ -35,6 +37,25 @@ guardrails:
       - tests/test_tools.py::BundleTests.test_guidance_bundle_is_valid
       - tests/test_tools.py::BundleTests.test_self_knowledge_bundle_is_valid
       - tests/test_tools.py::DocumentationTests.test_repository_documentation_links_resolve
+
+  - id: stable-public-schema-identity
+    title: Public schemas use unique versioned identifiers under an owned namespace
+    applies_to: [kit]
+    enforcement: automated
+    owner: team:gnostoa-maintainers
+    guidance: knowledge/decisions/0012-use-versioned-public-schema-identifiers.md#decision
+    implementation:
+      - schemas/change-control.schema.json
+      - schemas/continuous-integration.schema.json
+      - schemas/frontmatter.schema.json
+      - schemas/guardrails.schema.json
+      - schemas/profile.schema.json
+      - schemas/toolkit-lock.schema.json
+      - schemas/verification-manifest.schema.json
+      - tools/build_docs.py#prepare_projection
+    tests:
+      - tests/test_tools.py::PublicationBaselineTests.test_schema_ids_use_the_versioned_gnostoa_namespace
+      - tests/test_tools.py::DocumentationTests.test_docs_builder_stages_canonical_surfaces
 
   - id: generated-content-starts-draft
     title: Generated content starts as draft
@@ -105,6 +126,17 @@ guardrails:
       - tests/test_tools.py::GuardrailTests.test_public_profile_does_not_inherit_self_knowledge
       - tests/test_tools.py::GuardrailTests.test_project_agent_router_is_bounded
 
+  - id: generic-scope-isolation
+    title: Gnostoa source contains no downstream specialization vocabulary
+    applies_to: [kit]
+    enforcement: automated
+    owner: team:gnostoa-maintainers
+    guidance: knowledge/contracts/public-inheritance-surface.md#invariants
+    implementation:
+      - knowledge/contracts/public-inheritance-surface.md#invariants
+    tests:
+      - tests/test_tools.py::PublicationBaselineTests.test_repository_contains_no_specialization_vocabulary
+
   - id: legacy-content-quarantine
     title: Unnormalized legacy Markdown remains outside the validated bundle
     applies_to: [adopting-projects]
@@ -128,8 +160,11 @@ guardrails:
     owner: team:gnostoa-maintainers
     guidance: guidance/guardrails/non-negotiable.md#rule
     implementation:
+      - .github/CODEOWNERS
       - templates/CODEOWNERS.project
       - templates/knowledge-change-checklist.md
+    tests:
+      - tests/test_tools.py::PublicationBaselineTests.test_github_provider_surface_is_active_and_owned
 
   - id: container-first-consumer-runtime
     title: Consumer and CI execution is container-first with native fallback
@@ -191,6 +226,7 @@ guardrails:
       - templates/change-control.project.yaml
       - templates/change-request.md
       - templates/repository-settings-checklist.md
+      - knowledge/decisions/0013-defer-provider-enforcement-while-private.md
     tests:
       - tests/test_tools.py::ChangeControlTests.test_generic_baseline_has_protected_change_flow
 
@@ -309,12 +345,14 @@ guardrails:
     owner: team:gnostoa-maintainers
     guidance: guidance/workflows/configure-continuous-integration.md#procedure
     implementation:
+      - .github/workflows/verification.yml
       - ci/github-actions.yml
       - ci/gitlab-ci.yml
       - .gitlab-ci.yml
       - guidance/reference/continuous-integration-contract.md
     tests:
       - tests/test_tools.py::ContinuousIntegrationTests.test_provider_adapters_cover_candidate_and_integration_events
+      - tests/test_tools.py::PublicationBaselineTests.test_github_provider_surface_is_active_and_owned
 
   - id: conditional-artifact-promotion
     title: Delivery activates for deployable artifacts and promotes the verified artifact

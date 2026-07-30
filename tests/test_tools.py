@@ -6,6 +6,7 @@ import json
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+import re
 import tempfile
 import tomllib
 import unittest
@@ -79,6 +80,121 @@ class BrandIdentityTests(unittest.TestCase):
             "team:knowledge-architecture-kit-maintainers",
             (ROOT / "policy" / "guardrails.yaml").read_text(encoding="utf-8"),
         )
+
+
+class PublicationBaselineTests(unittest.TestCase):
+    def test_repository_contains_no_specialization_vocabulary(self) -> None:
+        forbidden_patterns = {
+            "project name": re.compile("Open" + "OP", re.IGNORECASE),
+            "standards organization": re.compile(
+                r"\b" + "ET" + "SI" + r"\b",
+                re.IGNORECASE,
+            ),
+            "module name": re.compile(
+                r"\b" + "TF" + r"[-_ ]" + "SDK" + r"\b",
+                re.IGNORECASE,
+            ),
+            "component acronym": re.compile(
+                r"\b" + "S" + "RM" + r"\b",
+                re.IGNORECASE,
+            ),
+        }
+        excluded_parts = {".git", "__pycache__", ".pytest_cache"}
+        findings: list[str] = []
+
+        for path in sorted(candidate for candidate in ROOT.rglob("*") if candidate.is_file()):
+            if any(part in excluded_parts for part in path.relative_to(ROOT).parts):
+                continue
+            try:
+                body = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            for label, pattern in forbidden_patterns.items():
+                if pattern.search(body):
+                    findings.append(f"{path.relative_to(ROOT)}: {label}")
+
+        self.assertEqual([], findings)
+
+    def test_schema_ids_use_the_versioned_gnostoa_namespace(self) -> None:
+        schema_paths = sorted((ROOT / "schemas").glob("*.schema.json"))
+        self.assertTrue(schema_paths)
+
+        ids: list[str] = []
+        for path in schema_paths:
+            schema = json.loads(path.read_text(encoding="utf-8"))
+            expected = (
+                "https://ktogias.github.io/gnostoa/schemas/v1/"
+                f"{path.name}"
+            )
+            self.assertEqual(expected, schema.get("$id"), path.name)
+            ids.append(schema["$id"])
+
+        self.assertEqual(len(ids), len(set(ids)))
+
+    def test_github_provider_surface_is_active_and_owned(self) -> None:
+        workflow_path = ROOT / ".github" / "workflows" / "verification.yml"
+        codeowners_path = ROOT / ".github" / "CODEOWNERS"
+        self.assertTrue(workflow_path.is_file())
+        self.assertTrue(codeowners_path.is_file())
+
+        workflow = workflow_path.read_text(encoding="utf-8")
+        for event in (
+            "pull_request:",
+            "merge_group:",
+            "push:",
+            "schedule:",
+            "workflow_dispatch:",
+        ):
+            self.assertIn(event, workflow)
+        for suite in ("policy", "fast", "regression", "smoke", "extended"):
+            self.assertIn(f"./ci/verify {suite}", workflow)
+        self.assertIn("permissions:", workflow)
+        self.assertIn("contents: read", workflow)
+        self.assertIn(
+            "github.event.pull_request.number || github.ref",
+            workflow,
+        )
+        self.assertIn(
+            "if: github.event_name != 'push' || "
+            "github.ref == 'refs/heads/main'",
+            workflow,
+        )
+        self.assertRegex(workflow, r"actions/checkout@[a-f0-9]{40}")
+        self.assertIn("docker build", workflow)
+
+        codeowners = codeowners_path.read_text(encoding="utf-8")
+        for owned_path in (
+            "* @ktogias",
+            "/.github/ @ktogias",
+            "/core/ @ktogias",
+            "/schemas/ @ktogias",
+            "/policy/ @ktogias",
+            "/knowledge/ @ktogias",
+            "/guidance/ @ktogias",
+        ):
+            self.assertIn(owned_path, codeowners)
+
+    def test_publication_review_matrix_covers_every_canonical_concept(self) -> None:
+        matrix = (
+            ROOT
+            / "knowledge"
+            / "runbooks"
+            / "review-publication-baseline.md"
+        )
+        self.assertTrue(matrix.is_file())
+
+        linked = {
+            resolved
+            for target in markdown_links(matrix.read_text(encoding="utf-8"))
+            if (resolved := resolve_target(ROOT, matrix, target)) is not None
+        }
+        expected = {
+            path.resolve()
+            for surface in ("guidance", "knowledge")
+            for path in (ROOT / surface).rglob("*.md")
+            if path.name not in {"index.md", matrix.name}
+        }
+        self.assertEqual(set(), expected - linked)
 
 
 class LicensePolicyTests(unittest.TestCase):
@@ -747,6 +863,15 @@ suites:
         self.assertIn("push:", github)
         self.assertIn("concurrency:", github)
         self.assertIn("cancel-in-progress:", github)
+        self.assertIn(
+            "github.event.pull_request.number || github.ref",
+            github,
+        )
+        self.assertIn(
+            "if: github.event_name != 'push' || "
+            "github.ref == 'refs/heads/main'",
+            github,
+        )
         self.assertIn("check-ci-policy", github)
         self.assertIn("./ci/verify fast", github)
         self.assertIn("./ci/verify regression", github)
@@ -1070,6 +1195,14 @@ class DocumentationTests(unittest.TestCase):
             self.assertTrue((content / "guidance" / "index.md").is_file())
             self.assertTrue((content / "knowledge" / "index.md").is_file())
             self.assertTrue((content / "policy" / "guardrails.yaml").is_file())
+            self.assertTrue(
+                (
+                    content
+                    / "schemas"
+                    / "v1"
+                    / "profile.schema.json"
+                ).is_file()
+            )
             projected_config = config.read_text(encoding="utf-8")
             self.assertIn("- Home: docs/index.md", projected_config)
             self.assertIn("docs_dir:", projected_config)

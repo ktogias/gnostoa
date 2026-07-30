@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.org/project-knowledge/frontmatter.schema.json",
+  "$id": "https://ktogias.github.io/gnostoa/schemas/v1/frontmatter.schema.json",
   "title": "OKF v0.2 concept frontmatter with project knowledge extension",
   "type": "object",
   "required": [
@@ -190,4 +190,3 @@
   },
   "additionalProperties": true
 }
-

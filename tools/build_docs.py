@@ -19,6 +19,7 @@ PROJECTION_SURFACES = (
     "policy",
     "templates",
 )
+SCHEMA_PROJECTION_VERSION = "v1"
 NAV_DOCUMENT_RE = re.compile(
     r"^(?P<prefix>\s*-\s+[^:\n]+:\s+)(?P<path>[^\s]+\.md)\s*$",
     re.MULTILINE,
@@ -63,6 +64,16 @@ def prepare_projection(
         else:
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, destination)
+
+    schemas = root / "schemas"
+    if not schemas.is_dir():
+        raise KnowledgeFormatError(
+            f"Documentation projection source does not exist: {schemas}"
+        )
+    shutil.copytree(
+        schemas,
+        content / "schemas" / SCHEMA_PROJECTION_VERSION,
+    )
 
     source_config = (root / "mkdocs.yml").read_text(encoding="utf-8")
     config = staging / "mkdocs.yml"

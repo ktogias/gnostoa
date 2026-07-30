@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.org/project-knowledge/toolkit-lock.schema.json",
+  "$id": "https://ktogias.github.io/gnostoa/schemas/v1/toolkit-lock.schema.json",
   "title": "Gnostoa source and runtime lock",
   "type": "object",
   "required": [

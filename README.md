@@ -140,8 +140,9 @@ knowledge docs-build --site-dir site
 ```
 
 The builder creates a temporary projection containing `docs/`, `guidance/`,
-`knowledge/`, `policy/` and `templates/`. The generated site is derived; it
-does not create another canonical copy in the repository.
+`knowledge/`, `policy/` and `templates/`, plus versioned public schema copies
+under `schemas/v1/`. The generated site is derived; it does not create another
+canonical copy in the repository.
 
 ## Design constraints
 

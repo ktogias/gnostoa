@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.org/project-knowledge/guardrails.schema.json",
+  "$id": "https://ktogias.github.io/gnostoa/schemas/v1/guardrails.schema.json",
   "title": "Guardrail coverage manifest",
   "type": "object",
   "required": [

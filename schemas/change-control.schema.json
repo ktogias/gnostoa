@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.org/project-knowledge/change-control.schema.json",
+  "$id": "https://ktogias.github.io/gnostoa/schemas/v1/change-control.schema.json",
   "title": "Provider-neutral change-control policy",
   "type": "object",
   "required": [

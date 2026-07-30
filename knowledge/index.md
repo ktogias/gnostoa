@@ -23,12 +23,15 @@ inherited, copied or loaded by adopting projects.
 - [Adopt the Gnostoa project name](decisions/0009-adopt-gnostoa-project-name.md)
 - [License Gnostoa under Apache-2.0](decisions/0010-license-gnostoa-under-apache-2.0.md)
 - [Record initial copyright ownership](decisions/0011-record-initial-copyright-ownership.md)
+- [Versioned public schema identifiers](decisions/0012-use-versioned-public-schema-identifiers.md)
+- [Deferred private-repository enforcement](decisions/0013-defer-provider-enforcement-while-private.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Reviewed change control](requirements/reviewed-change-control.md)
 - [Verification precedes implementation](requirements/verification-precedes-implementation.md)
 - [Centralized CI verifies integration candidates](requirements/centralized-ci-verifies-integration-candidates.md)
 - [Toolkit evolution](lifecycles/toolkit-evolution.md)
 - [Maintain the toolkit](runbooks/maintain-the-kit.md)
+- [Review the publication baseline](runbooks/review-publication-baseline.md)
 
 For project-independent operating guidance, route through
 [`guidance/index.md`](../guidance/index.md).
