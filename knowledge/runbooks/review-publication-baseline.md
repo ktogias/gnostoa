@@ -1,7 +1,7 @@
 ---
 type: Runbook
-title: Review the publication baseline
-description: Traverse Gnostoa's canonical guidance and self-knowledge once before public publication without a formal sign-off ledger.
+title: Review the pre-publication source baseline
+description: Run an owner-led review of Gnostoa's mandatory canonical-source manifest before integration or source publication.
 status: draft
 generated:
   by: codex/gpt-5
@@ -9,7 +9,7 @@ generated:
 sources:
   - id: publication-baseline-work-item
     resource: https://github.com/ktogias/gnostoa/issues/1
-    title: Prepare the protected Gnostoa publication baseline
+    title: Prepare the Gnostoa publication baseline
 x-project-knowledge:
   id: kit.runbook.review-publication-baseline
   owners:
@@ -25,7 +25,61 @@ x-project-knowledge:
       target: /decisions/0009-adopt-gnostoa-project-name.md
 ---
 
-# Review the publication baseline
+# Review the pre-publication source baseline
+
+## Purpose and scope
+
+This runbook governs accountable-owner semantic review of one exact private
+pre-publication source-baseline candidate. Its immediate decision is whether
+that candidate may be accepted and integrated into the default branch as a
+private source baseline. It does not itself authorize a repository-visibility
+change, source publication or publication of a package, OCI image or site.
+
+The publication lifecycle keeps these states distinct:
+
+1. **Candidate preparation:** a private Change Request assembles and verifies
+   a proposed source revision.
+2. **Owner acceptance:** the accountable owner accepts the semantics of one
+   exact candidate revision.
+3. **Default-branch integration:** the accepted revision becomes the private
+   integrated source baseline.
+4. **Repository visibility and source publication:** a separate authorized
+   provider change makes the selected source revision public.
+5. **Artifact or site publication:** separately verified packages, images or
+   documentation projections are released through their own gates.
+
+Completion of one state never implies or authorizes the next.
+
+The `Reusable guidance` and `Toolkit self-knowledge` matrices below together
+form the mandatory canonical-source traversal manifest for this review. They
+mirror the direct canonical targets linked by `guidance/index.md` and
+`knowledge/index.md`; every such target must appear exactly once in the
+applicable matrix. A missing, duplicate, inaccessible or unclassified
+canonical target is a publication blocker. This runbook is the controlling
+procedure and is not a row in its own manifest.
+
+Review material has four distinct roles:
+
+- **Direct semantic-review targets** are the canonical sources named by the
+  two matrices. The accountable owner judges their meaning and suitability.
+- **Supporting executable evidence** includes relevant code, schemas, policy,
+  tests, configuration and CI results. Follow it when it bears on a target;
+  it is not automatically another semantic-review row.
+- **Selected history** includes applicable accepted Decisions, Work Items and
+  owner records used to understand authority or rationale. Historical records
+  remain evidence and are not silently rewritten or automatically rereviewed.
+- **Derived projections** include generated sites, search views, context packs
+  and mutable session summaries. They are non-canonical and receive separate
+  semantic review only when selected as actual publication artifacts.
+
+The accountable owner alone records semantic comments, dispositions and the
+final decision for the exact candidate. Agents may preserve exact text,
+assemble context, analyze, recommend and record evidence, but cannot supply an
+owner disposition. CI may verify declared machine-checkable properties but
+cannot establish semantic sufficiency. No separate per-row sign-off ledger is
+required: durable review comments and dispositions plus the final exact-revision
+decision provide the review trace without duplicating signatures or
+attestations for every matrix row.
 
 ## Preconditions
 
@@ -40,23 +94,28 @@ x-project-knowledge:
 
 ## Procedure
 
-1. Review the public inheritance boundary before reviewing individual
+1. Reconcile both matrices with `guidance/index.md` and `knowledge/index.md`.
+   Stop on a missing, duplicate, inaccessible or unclassified canonical target.
+2. Review the public inheritance boundary before reviewing individual
    documents. Reject vocabulary, controls or operating assumptions that belong
    only to a downstream project.
-2. Use the matrix to traverse each canonical source once. Record actionable
-   concerns as Pull Request comments or linked Work Items. Per-row outcome,
-   signature or attestation fields are not required.
-3. Check source authority, internal consistency, genericity, ownership,
+3. Traverse each matrix row once for the exact candidate revision. Revisit a
+   row only when its source changes or an unresolved blocker requires rework.
+   Record actionable concerns as Pull Request comments or linked Work Items.
+4. Check source authority, internal consistency, genericity, ownership,
    lifecycle status and compatibility impact. Automated structural validation
    is evidence, not a substitute for semantic judgment.
-4. Resolve publication blockers in the Change Request. Do not add `human:`
+5. Resolve publication blockers in the Change Request. Do not add `human:`
    metadata unless the named person actually verified a concept being promoted
    to `stable`.
-5. For every promotion candidate, update the concept in a reviewed revision
+6. For every promotion candidate, update the concept in a reviewed revision
    with explicit human verification. Keep exploratory or unsettled concepts as
    draft.
-6. Resolve review conversations or track non-blocking follow-up separately. A
+7. Resolve review conversations or track non-blocking follow-up separately. A
    deferred publication blocker keeps the repository private.
+8. Reconcile the final exact candidate, affected rows, supporting evidence and
+   open follow-up. The accountable owner records the final semantic decision;
+   a source-only publication audit records `GO` or `NO-GO` separately.
 
 ### Reusable guidance
 
@@ -115,9 +174,12 @@ x-project-knowledge:
 
 ## Verification
 
-- The matrix links every canonical concept exactly through its source path.
+- The two matrices match their canonical indexes, and every direct target is
+  classified and linked exactly once through its source path.
 - The accountable owner traversed the matrix and resolved all publication
   blockers without a separate per-row attestation exercise.
+- Supporting evidence, selected history and derived projections retain their
+  distinct authority and are not promoted into canonical targets implicitly.
 - Stable concepts contain actual `human:` verification metadata.
 - Required CI passes on the latest Change Request revision.
 - Repository visibility remains private until the final source-only audit

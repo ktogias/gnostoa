@@ -1,8 +1,15 @@
 # Gnostoa
 
-Gnostoa is a technology-neutral, Git-native foundation for knowledge that must
-be usable by both people and software agents. It uses itself without forcing
-consuming projects to inherit its internal documentation.
+Gnostoa is a Git-native foundation for knowledge that must be usable by both
+people and software agents. It is technology-neutral with respect to consuming
+projects' application stacks and Git hosting providers; Git remains the
+normative version-control and change-lifecycle substrate.
+
+Gnostoa uses its public contracts and validation mechanisms in its own
+development and maintenance. This self-use does not enlarge the consumer
+inheritance boundary: toolkit-specific design history, self-policy and
+maintainer procedures remain internal and are not inherited by consuming
+projects.
 
 The name joins *gnosis* (knowledge) with *stoa* (a shared place for teaching,
 discussion and exchange). Gnostoa is the product identity; its public contracts

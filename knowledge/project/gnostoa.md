@@ -34,6 +34,14 @@ x-project-knowledge:
 Gnostoa provides a technology-neutral profile, validation tools, reusable
 operating guidance and anonymous examples for Git-native project knowledge.
 
-Its public value is the reusable contract. Its internal design history and
-maintenance procedures stay in this self-knowledge bundle so consumers do not
-pay for irrelevant context.
+Gnostoa's public value is its complete reusable public surface: normative
+profiles, policies and schemas; supporting validation tools and runtime
+behavior; operating guidance, workflows and patterns; anonymous templates and
+examples; and documented CI integration. The public contract binds these
+artifacts into a coherent inheritance surface and versions that surface as a
+unit. It defines what consumers may rely on, inherit or consult, while
+preserving each artifact's distinct authority rather than making every artifact
+equally normative.
+
+Its internal design history and maintenance procedures stay in this
+self-knowledge bundle so consumers do not pay for irrelevant context.
