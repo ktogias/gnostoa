@@ -165,6 +165,7 @@ attestations for every matrix row.
 | [Deferred private-repository enforcement](../decisions/0013-defer-provider-enforcement-while-private.md) | Provider limitation, expiry and compensating controls | — | — |
 | [Stricter Gnostoa self-governance](../decisions/0014-strengthen-gnostoa-self-governance.md) | Internal issue, Decision and evidence chronology without consumer leakage | — | — |
 | [Toolkit evolution](../lifecycles/toolkit-evolution.md) | Lifecycle stages and drift controls | — | — |
+| [Publication-baseline review drift](../failure-modes/publication-baseline-review-drift.md) | Critical-path containment, authority boundaries and recovery | — | — |
 | [Gnostoa project](../project/gnostoa.md) | Product purpose and scope | — | — |
 | [Centralized CI verifies candidates](../requirements/centralized-ci-verifies-integration-candidates.md) | Required candidate evidence | — | — |
 | [Prevent policy drift](../requirements/prevent-policy-drift.md) | Mechanical and semantic enforcement | — | — |
