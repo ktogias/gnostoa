@@ -116,9 +116,16 @@ It does not prove that a package or image has been published, that Gnostoa is
 production-ready, or that another project can adopt it efficiently. Those are
 separate release and transfer gates.
 
+For release-candidate verification, the maintainer smoke builds both native
+archives, checks their metadata and clean-install behavior, and can emit an
+exact evidence manifest. See [Compatibility and upgrade status](compatibility.md)
+for the command, pinning boundary and remaining non-promises.
+
 ## Continue
 
 - Read [Current status](status.md) before relying on a capability.
+- Read [Compatibility and upgrade status](compatibility.md) before pinning an
+  artifact or changing a toolkit version.
 - Follow the [adoption guide](core/adoption.md) to evaluate project integration.
 - Use the [reusable guidance router](../guidance/index.md) for a specific task.
 - Inspect the [public inheritance contract](../knowledge/contracts/public-inheritance-surface.md)

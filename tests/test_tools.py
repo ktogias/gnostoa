@@ -5,9 +5,11 @@ import hashlib
 import json
 import os
 from contextlib import redirect_stderr, redirect_stdout
-from io import StringIO
+from io import BytesIO, StringIO
 from pathlib import Path
 import re
+import subprocess
+import tarfile
 import tempfile
 import tomllib
 import unittest
@@ -15,9 +17,14 @@ import zipfile
 from unittest.mock import patch
 
 from tools.release_smoke import (
+    ArtifactResult,
     ReleaseSmokeError,
+    distribution_metadata_issues,
     release_smoke,
+    release_evidence_manifest,
+    verify_release_source,
     wheel_canonical_payloads,
+    write_release_evidence_manifest,
 )
 from tools import knowledge_common
 from tools.build_context_pack import build_pack
@@ -38,6 +45,70 @@ from tools.validate_bundle import validate_bundle
 
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def _add_tar_bytes(archive: tarfile.TarFile, name: str, content: bytes) -> None:
+    member = tarfile.TarInfo(name)
+    member.size = len(content)
+    archive.addfile(member, BytesIO(content))
+
+
+def _release_archive_fixtures(
+    directory: Path,
+    *,
+    version: str = "0.1.0",
+    include_notice: bool = True,
+) -> tuple[Path, Path]:
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+        "project"
+    ]
+    metadata = (
+        "Metadata-Version: 2.4\n"
+        f"Name: {project['name']}\n"
+        f"Version: {version}\n"
+        f"License-Expression: {project['license']}\n"
+        f"Requires-Python: {project['requires-python']}\n"
+        + "".join(
+            f"Requires-Dist: {requirement}\n"
+            for requirement in project["dependencies"]
+        )
+        + "".join(
+            f'Requires-Dist: {requirement}; extra == "{extra}"\n'
+            for extra, requirements in project.get("optional-dependencies", {}).items()
+            for requirement in requirements
+        )
+        + "\n"
+    ).encode()
+    entry_points = (
+        "[console_scripts]\n"
+        + "".join(
+            f"{name} = {target}\n"
+            for name, target in project["scripts"].items()
+        )
+    ).encode()
+    license_bytes = (ROOT / "LICENSE").read_bytes()
+    notice_bytes = (ROOT / "NOTICE").read_bytes()
+
+    wheel = directory / f"gnostoa-{version}-py3-none-any.whl"
+    dist_info = f"gnostoa-{version}.dist-info"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("tools/__init__.py", "")
+        archive.writestr(f"{dist_info}/METADATA", metadata)
+        archive.writestr(f"{dist_info}/entry_points.txt", entry_points)
+        archive.writestr(f"{dist_info}/licenses/LICENSE", license_bytes)
+        if include_notice:
+            archive.writestr(f"{dist_info}/licenses/NOTICE", notice_bytes)
+
+    source_distribution = directory / f"gnostoa-{version}.tar.gz"
+    source_root = f"gnostoa-{version}"
+    with tarfile.open(source_distribution, "w:gz") as archive:
+        _add_tar_bytes(archive, f"{source_root}/PKG-INFO", metadata)
+        _add_tar_bytes(archive, f"{source_root}/LICENSE", license_bytes)
+        if include_notice:
+            _add_tar_bytes(archive, f"{source_root}/NOTICE", notice_bytes)
+        for name in ("README.md", "pyproject.toml", "tools/cli.py"):
+            _add_tar_bytes(archive, f"{source_root}/{name}", (ROOT / name).read_bytes())
+    return wheel, source_distribution
 
 
 class BrandIdentityTests(unittest.TestCase):
@@ -1133,6 +1204,101 @@ class RuntimeTests(unittest.TestCase):
                 ["schemas/profile.schema.json"],
                 wheel_canonical_payloads(wheel),
             )
+
+    def test_distribution_archives_match_declared_project_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            wheel, source_distribution = _release_archive_fixtures(Path(directory))
+            self.assertEqual(
+                [],
+                distribution_metadata_issues(ROOT, wheel, source_distribution),
+            )
+
+    def test_distribution_metadata_rejects_version_and_notice_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            wheel, source_distribution = _release_archive_fixtures(
+                Path(directory),
+                version="9.9.9",
+                include_notice=False,
+            )
+            issues = distribution_metadata_issues(ROOT, wheel, source_distribution)
+            self.assertTrue(any("version" in issue.casefold() for issue in issues))
+            self.assertTrue(any("NOTICE" in issue for issue in issues))
+
+    def test_release_evidence_manifest_is_deterministic_and_path_neutral(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            wheel = root / "gnostoa-0.1.0-py3-none-any.whl"
+            source_distribution = root / "gnostoa-0.1.0.tar.gz"
+            wheel.write_bytes(b"wheel")
+            source_distribution.write_bytes(b"source distribution")
+            results = [
+                ArtifactResult(
+                    artifact=wheel,
+                    kind="wheel",
+                    digest="1" * 64,
+                    size_bytes=5,
+                    metadata_digest="2" * 64,
+                    validation="validation\n",
+                    context_pack="context pack\n",
+                    surface_digest="sha256:" + "3" * 64 + "\n",
+                ),
+                ArtifactResult(
+                    artifact=source_distribution,
+                    kind="sdist",
+                    digest="4" * 64,
+                    size_bytes=19,
+                    metadata_digest="5" * 64,
+                    validation="validation\n",
+                    context_pack="context pack\n",
+                    surface_digest="sha256:" + "3" * 64 + "\n",
+                ),
+            ]
+            revision = "6" * 40
+            first = release_evidence_manifest(ROOT, results, revision)
+            second = release_evidence_manifest(ROOT, list(reversed(results)), revision)
+            self.assertEqual(first, second)
+            self.assertEqual("gnostoa-release-evidence/v1", first["format"])
+            self.assertEqual(revision, first["source"]["revision"])
+            self.assertEqual(
+                [wheel.name, source_distribution.name],
+                [artifact["filename"] for artifact in first["artifacts"]],
+            )
+            self.assertNotIn(directory, json.dumps(first, sort_keys=True))
+
+            manifest = root / "release-evidence.json"
+            write_release_evidence_manifest(manifest, first)
+            written = manifest.read_text(encoding="utf-8")
+            self.assertTrue(written.endswith("\n"))
+            self.assertEqual(first, json.loads(written))
+
+    def test_release_evidence_manifest_requires_exact_source_revision(self) -> None:
+        with self.assertRaisesRegex(ReleaseSmokeError, "source revision"):
+            release_evidence_manifest(ROOT, [], "main")
+
+    def test_release_source_must_match_head_and_be_clean(self) -> None:
+        revision = "a" * 40
+
+        def completed(output: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=output, stderr=""
+            )
+
+        with patch("tools.release_smoke._run") as run:
+            run.side_effect = [completed(revision + "\n"), completed("")]
+            verify_release_source(ROOT, revision)
+
+        with patch("tools.release_smoke._run") as run:
+            run.return_value = completed("b" * 40 + "\n")
+            with self.assertRaisesRegex(ReleaseSmokeError, "does not match HEAD"):
+                verify_release_source(ROOT, revision)
+
+        with patch("tools.release_smoke._run") as run:
+            run.side_effect = [
+                completed(revision + "\n"),
+                completed(" M tools/release_smoke.py\n"),
+            ]
+            with self.assertRaisesRegex(ReleaseSmokeError, "clean source tree"):
+                verify_release_source(ROOT, revision)
 
     def test_release_build_frontend_and_backend_are_pinned(self) -> None:
         development_lock = (

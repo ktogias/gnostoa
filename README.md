@@ -94,7 +94,8 @@ planned streamlined self-hosting and external transfer experiments.
   [current-status page](docs/status.md).
 - **Understand:** read the [architecture](docs/core/architecture.md),
   [public inheritance contract](knowledge/contracts/public-inheritance-surface.md)
-  and [toolchain](docs/core/toolchain.md).
+  and [toolchain](docs/core/toolchain.md), then check the current
+  [compatibility and upgrade boundary](docs/compatibility.md).
 - **Adopt:** start with the [adoption guide](docs/core/adoption.md), then use the
   route for a [new project](guidance/workflows/bootstrap-new-project.md) or an
   [existing project](guidance/workflows/adopt-existing-project.md).

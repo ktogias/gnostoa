@@ -203,7 +203,11 @@ out of the execution-only wheel. The bound location is not identity evidence;
 artifact hashes, source revision and public-surface digest must still be pinned
 and checked. `python ci/release_smoke.py --output-dir <empty-directory>` builds
 and exercises clean wheel and source-distribution installs against this
-boundary.
+boundary. Supplying `--source-revision <exact-git-object-id>` and
+`--evidence-manifest <path>` additionally verifies distribution metadata,
+console commands, license and notice and records a deterministic path-neutral
+JSON manifest. The manifest is unsigned build evidence, not published
+provenance or a replacement for the remaining security and release gates.
 
 1. Build an sdist and wheel from a clean checkout. Install each into a fresh
    environment and run the documented quick start without an editable source

@@ -37,8 +37,13 @@ independent transfer pilot.
 Clean wheel and source-distribution candidates now build and run against an
 explicit separate public-source binding; an absent or malformed binding fails
 with an actionable diagnostic, and the wheel does not duplicate the canonical
-schemas or profiles. This is release-candidate evidence, not a published
-package claim. Artifact hash pinning, full release gates and publication still
+schemas or profiles. The release smoke also verifies package metadata, console
+commands, license and notice and can emit a path-neutral evidence manifest with
+the source, public-surface and artifact digests. The
+[compatibility note](compatibility.md) states the current exact-pin boundary
+and non-promises. This is release-candidate evidence, not a published package
+claim. Dependency and secret scanning, coverage evidence, a third-party
+license inventory, an SBOM, remaining full release gates and publication still
 remain open.
 
 ## Current direction
