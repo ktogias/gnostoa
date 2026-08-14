@@ -56,6 +56,7 @@ progress:
     - Completed native, runtime-container and development-container verification
     - Reconciled the complete diff against the Work Item, Decision and public inheritance boundary
     - Kept volatile image metadata after the pinned Git layer so revision changes retain the dependency cache
+    - Replaced machine-local skill-validation evidence with repository-owned structural and publication-safety checks
   current: Owner review found unresolved Issue 3 acceptance criteria and a clean-resume defect; the candidate is not review-ready while those findings are reconciled.
   remaining:
     - Reconcile the linked Work Item and live provider Change Request before mutation
@@ -88,9 +89,15 @@ discoveries:
     evidence: https://github.com/ktogias/gnostoa/pull/4#issuecomment-5132026215
   - summary: A clean committed Execution Plan currently fails resume because the command implicitly requires the plan path to appear in changed worktree state.
     evidence: docker run --rm --mount type=bind,source=<repository>,target=/workspace,readonly --workdir /workspace gnostoa-task-context:runtime task resume --plan plans/issue-3-durable-task-context.yaml --repository-root /workspace
+  - summary: Machine-local validator paths are neither portable project evidence nor appropriate publication metadata.
+    evidence: tests/test_task_context.py::TaskContextContractTests.test_active_plan_omits_machine_local_tool_paths
 
 verification:
   pre_change:
+    - command: python -m unittest tests.test_task_context.TaskContextContractTests.test_active_plan_omits_machine_local_tool_paths -v
+      result: failed-as-expected
+      observed_at: "2026-08-14T15:46:32Z"
+      summary: The focused test detected the maintainer-local absolute Codex validator path in this plan before remediation.
     - command: docker run --rm --mount type=bind,source=<repository>,target=/workspace,readonly --workdir /workspace gnostoa-task-context:runtime task resume --plan plans/issue-3-durable-task-context.yaml --repository-root /workspace
       result: failed-as-expected
       observed_at: "2026-07-30T16:30:00Z"
@@ -112,6 +119,26 @@ verification:
       observed_at: "2026-07-30T00:00:00Z"
       summary: The first bind-mounted checkpoint exposed Git ownership protection; scoped safe.directory configuration was added instead of a wildcard exception.
   current:
+    - command: python -m tools.cli task checkpoint --plan plans/issue-3-durable-task-context.yaml --repository-root .
+      result: passed
+      observed_at: "2026-08-14T15:48:03Z"
+      summary: The active plan reconciled the two exact remediation-owned worktree paths while retaining all pre-existing Issue 3 findings.
+    - command: ./ci/verify policy
+      result: passed
+      observed_at: "2026-08-14T15:48:03Z"
+      summary: Change-control, CI, guardrail and both knowledge-bundle policies passed after remediation.
+    - command: ./ci/verify regression
+      result: passed
+      observed_at: "2026-08-14T15:48:03Z"
+      summary: All 72 tests and every bundle, guardrail, active-plan and inherited policy check passed after remediation.
+    - command: python -m unittest tests.test_task_context.TaskContextContractTests.test_cross_agent_skill_and_provider_adapters_are_bounded tests.test_task_context.TaskContextContractTests.test_active_plan_omits_machine_local_tool_paths -v
+      result: passed
+      observed_at: "2026-08-14T15:47:08Z"
+      summary: Repository-owned checks validated the skill metadata and adapter configuration and rejected machine-local home-directory paths in the active plan.
+    - command: python -m unittest tests.test_task_context -v
+      result: passed
+      observed_at: "2026-08-14T15:47:08Z"
+      summary: All 17 task-context contract and tool tests passed after the bounded publication-path remediation.
     - command: python -m unittest tests.test_task_context -v
       result: passed
       observed_at: "2026-07-30T00:00:00Z"
@@ -164,4 +191,4 @@ provenance:
     - codex/model-id-unavailable
   evaluators: []
 
-updated_at: "2026-07-30T16:30:00Z"
+updated_at: "2026-08-14T15:48:03Z"

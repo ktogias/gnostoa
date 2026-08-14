@@ -13,7 +13,7 @@ import unittest
 
 from tools.check_change_policy import load_change_policy
 from tools.cli import main as cli_main
-from tools.knowledge_common import KnowledgeFormatError, load_yaml
+from tools.knowledge_common import KnowledgeFormatError, load_yaml, parse_markdown
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -88,11 +88,21 @@ change_classes:
 
     def test_cross_agent_skill_and_provider_adapters_are_bounded(self) -> None:
         skill = ROOT / ".agents" / "skills" / "change-lifecycle" / "SKILL.md"
+        agent = skill.parent / "agents" / "openai.yaml"
         issue_form = ROOT / ".github" / "ISSUE_TEMPLATE" / "change.yml"
         pull_request = ROOT / ".github" / "pull_request_template.md"
         copilot = ROOT / ".github" / "copilot-instructions.md"
-        for path in (skill, issue_form, pull_request, copilot):
+        for path in (skill, agent, issue_form, pull_request, copilot):
             self.assertTrue(path.is_file(), path)
+
+        skill_document = parse_markdown(skill, ROOT)
+        self.assertEqual("change-lifecycle", skill_document.metadata["name"])
+        self.assertTrue(skill_document.metadata["description"].strip())
+        self.assertTrue(skill_document.body.strip())
+
+        agent_config = load_yaml(agent)["interface"]
+        self.assertEqual("Change Lifecycle", agent_config["display_name"])
+        self.assertIn("$change-lifecycle", agent_config["default_prompt"])
 
         copilot_text = copilot.read_text(encoding="utf-8")
         self.assertIn("AGENTS.md", copilot_text)
@@ -106,6 +116,12 @@ change_classes:
             if isinstance(item, dict) and "id" in item
         ]
         self.assertEqual(len(field_ids), len(set(field_ids)))
+
+    def test_active_plan_omits_machine_local_tool_paths(self) -> None:
+        plan_text = PLAN.read_text(encoding="utf-8")
+        for prefix in ("/home/", "/Users/"):
+            self.assertNotIn(prefix, plan_text)
+        self.assertNotRegex(plan_text, r"[A-Za-z]:\\Users\\")
 
     def test_github_adapter_checks_the_pull_request_candidate(self) -> None:
         module = importlib.import_module("tools.task_context")
