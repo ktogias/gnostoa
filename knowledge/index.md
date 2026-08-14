@@ -31,8 +31,10 @@ inherited, copied or loaded by adopting projects.
 - [Verification precedes integration](requirements/verification-precedes-implementation.md)
 - [Centralized CI verifies integration candidates](requirements/centralized-ci-verifies-integration-candidates.md)
 - [Toolkit evolution](lifecycles/toolkit-evolution.md)
+- [Self-dogfood bootstrap value assessment](assessments/gnostoa-self-dogfood-bootstrap-assessment.md)
 - [Publication-baseline review drift](failure-modes/publication-baseline-review-drift.md)
 - [Maintain the toolkit](runbooks/maintain-the-kit.md)
+- [Prepare the first public repository publication](runbooks/prepare-first-publication.md)
 - [Review the publication baseline](runbooks/review-publication-baseline.md)
 
 For project-independent operating guidance, route through

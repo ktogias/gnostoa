@@ -178,6 +178,7 @@ attestations for every matrix row.
 | [Deferred private-repository enforcement](../decisions/0013-defer-provider-enforcement-while-private.md) | Provider limitation, expiry and compensating controls | — | — |
 | [Stricter Gnostoa self-governance](../decisions/0014-strengthen-gnostoa-self-governance.md) | Internal issue, Decision and evidence chronology without consumer leakage | — | — |
 | [Toolkit evolution](../lifecycles/toolkit-evolution.md) | Lifecycle stages and drift controls | — | — |
+| [Self-dogfood bootstrap value assessment](../assessments/gnostoa-self-dogfood-bootstrap-assessment.md) | Self-hosting evidence, cost, claim boundaries and transfer limits | — | — |
 | [Publication-baseline review drift](../failure-modes/publication-baseline-review-drift.md) | Critical-path containment, authority boundaries and recovery | — | — |
 | [Gnostoa project](../project/gnostoa.md) | Product purpose and scope | — | — |
 | [Centralized CI verifies candidates](../requirements/centralized-ci-verifies-integration-candidates.md) | Required candidate evidence | — | — |
@@ -185,6 +186,7 @@ attestations for every matrix row.
 | [Traceable change control](../requirements/reviewed-change-control.md) | Solo/community usability and traceability | — | — |
 | [Verification precedes integration](../requirements/verification-precedes-implementation.md) | Observable intent and evidence timing | — | — |
 | [Maintain the toolkit](maintain-the-kit.md) | Executable maintainer workflow | — | — |
+| [Prepare the first public repository publication](prepare-first-publication.md) | Cleanup, evidence, provider transition and release readiness | — | — |
 
 ## Verification
 
