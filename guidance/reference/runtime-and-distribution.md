@@ -65,12 +65,13 @@ The runtime image:
 - writes only through an explicitly writable output mount;
 - exposes one `knowledge` command with subcommands.
 
-A project lock records the toolkit source revision, profile path, runtime image
-digest and runtime revision. Validation rejects mismatched source and runtime
-revisions and compares a deterministic digest of the mounted public toolkit
-surface with the surface embedded in the executing image. Development images
-and mutable local tags are permitted only for toolkit development, never as CI
-policy dependencies.
+A project lock records the toolkit source revision, deterministic public-surface
+digest, profile path, runtime image digest and runtime revision. Validation
+recomputes the mounted source digest and rejects a mismatch with either the lock
+or the public surface embedded in the executing image. The locked source digest
+also protects the native fallback, where no independent image surface exists.
+Development images and mutable local tags are permitted only for toolkit
+development, never as CI policy dependencies.
 
 ## Usage
 

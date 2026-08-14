@@ -29,6 +29,10 @@ COMMANDS: dict[str, tuple[str, Callable[[list[str] | None], int]]] = {
         "validate toolkit source and runtime lockstep",
         check_runtime_lock.main,
     ),
+    "surface-digest": (
+        "compute the deterministic toolkit public-surface digest",
+        check_runtime_lock.surface_digest_main,
+    ),
     "self-check": ("run the toolkit self-check", self_check.main),
 }
 

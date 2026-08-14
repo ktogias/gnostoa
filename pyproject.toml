@@ -32,6 +32,7 @@ knowledge-check-change-policy = "tools.check_change_policy:main"
 knowledge-check-ci-policy = "tools.check_ci_policy:main"
 knowledge-check-guardrails = "tools.check_guardrails:main"
 knowledge-check-runtime = "tools.check_runtime_lock:main"
+knowledge-surface-digest = "tools.check_runtime_lock:surface_digest_main"
 knowledge-self-check = "tools.self_check:main"
 
 [tool.setuptools]

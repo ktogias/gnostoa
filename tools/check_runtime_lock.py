@@ -104,6 +104,7 @@ def check_runtime_lock(
         return sorted(set(issues))
 
     toolkit_revision = toolkit.get("revision")
+    locked_surface_digest = toolkit.get("public_surface_digest")
     runtime_revision = runtime.get("revision")
     if (
         isinstance(toolkit_revision, str)
@@ -194,6 +195,14 @@ def check_runtime_lock(
         except (KnowledgeFormatError, OSError) as exc:
             issues.append(f"cannot compare toolkit public surfaces: {exc}")
         else:
+            if (
+                isinstance(locked_surface_digest, str)
+                and source_digest != locked_surface_digest
+            ):
+                issues.append(
+                    "mounted toolkit public surface does not match locked "
+                    f"digest: {source_digest} != {locked_surface_digest}"
+                )
             if source_digest != runtime_digest:
                 issues.append(
                     "mounted toolkit public surface does not match executing "
@@ -213,6 +222,24 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--expected-image")
     parser.add_argument("--schema", type=Path)
     return parser
+
+
+def _digest_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Compute the deterministic toolkit public-surface digest."
+    )
+    parser.add_argument("--root", type=Path, required=True)
+    return parser
+
+
+def surface_digest_main(argv: list[str] | None = None) -> int:
+    args = _digest_parser().parse_args(argv)
+    try:
+        print(public_surface_digest(args.root))
+    except (KnowledgeFormatError, OSError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

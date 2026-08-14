@@ -198,7 +198,7 @@ guardrails:
       - tests/test_tools.py::RuntimeTests.test_native_ci_is_explicit_fallback
 
   - id: runtime-source-lockstep
-    title: Runtime image and toolkit source/profile revisions match
+    title: Runtime image, toolkit public-surface digest and revisions match
     applies_to: [kit, adopting-projects]
     enforcement: automated
     owner: team:gnostoa-maintainers
@@ -208,10 +208,13 @@ guardrails:
       - templates/knowledge-kit.lock.yaml
       - tools/check_runtime_lock.py#check_runtime_lock
       - tools/check_runtime_lock.py#public_surface_digest
+      - tools/cli.py#main
     tests:
+      - tests/test_tools.py::RuntimeTests.test_runtime_lock_requires_pinned_public_surface_digest
       - tests/test_tools.py::RuntimeTests.test_runtime_lock_accepts_matching_revisions
       - tests/test_tools.py::RuntimeTests.test_runtime_lock_rejects_image_revision_drift
       - tests/test_tools.py::RuntimeTests.test_runtime_lock_rejects_public_surface_drift
+      - tests/test_tools.py::RuntimeTests.test_runtime_lock_rejects_locked_source_digest_drift
 
   - id: concrete-tools-are-specialized
     title: Concrete implementation and test products stay out of generic guidance

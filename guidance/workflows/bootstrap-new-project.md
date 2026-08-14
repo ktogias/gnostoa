@@ -49,7 +49,10 @@ without demonstrated need.
    reproducible local dependency. Pin the matching runtime image by digest in
    `.knowledge/kit.lock.yaml`, adapting
    [`templates/knowledge-kit.lock.yaml`](../../templates/knowledge-kit.lock.yaml).
-   Do not follow a mutable default branch or image tag.
+   Compute the exact toolkit digest with `knowledge surface-digest --root
+   .knowledge-kit` from the matching pinned runtime and record its output as
+   `toolkit.public_surface_digest`. Do not follow a mutable default branch or
+   image tag, and do not treat a revision label as a content digest.
 2. Create `.knowledge/profile.yaml` extending
    `../.knowledge-kit/core/profile.yaml`.
 3. Create `.knowledge/change-control.yaml` from
@@ -74,14 +77,23 @@ without demonstrated need.
    Establish one fast focused suite, one relevant
    boundary check and, when applicable, one critical smoke path rather than
    pursuing blanket coverage.
-   Publish the baseline and apply the
+   Prepare the baseline and apply the
    [repository-settings checklist](../../templates/repository-settings-checklist.md)
-   to map the policy to the selected provider.
+   to map the policy to the selected provider. Do not publish or integrate the
+   baseline yet.
 11. Check source/runtime lockstep and validate through the pinned image:
 
    ```bash
    KNOWLEDGE_KIT_IMAGE='registry.example.org/gnostoa@sha256:<digest>'
 
+   docker run --rm \
+     --mount type=bind,source="$PWD",target=/workspace,readonly \
+     --workdir /workspace \
+     "$KNOWLEDGE_KIT_IMAGE" \
+     surface-digest \
+     --root .knowledge-kit
+
+   # Record the exact output above as toolkit.public_surface_digest, then:
    docker run --rm \
      --env KNOWLEDGE_KIT_IMAGE \
      --mount type=bind,source="$PWD",target=/workspace,readonly \
@@ -133,6 +145,9 @@ without demonstrated need.
     [`templates/CODEOWNERS.project`](../../templates/CODEOWNERS.project) and
     [`templates/knowledge-change-checklist.md`](../../templates/knowledge-change-checklist.md)
     to make ownership and the change loop visible in review.
+15. After steps 11-14 pass and the required provider protections and checks are
+    verified, publish the validated baseline and integrate it through its
+    protected Change Request at the exact tested head.
 
 Use the project router template at
 [`templates/AGENTS.project.md`](../../templates/AGENTS.project.md) so agents
@@ -145,6 +160,8 @@ python3 -m venv .venv-knowledge
 . .venv-knowledge/bin/activate
 python -m pip install -r ./.knowledge-kit/requirements/runtime.lock
 python -m pip install --no-deps -e ./.knowledge-kit
+knowledge surface-digest --root ./.knowledge-kit
+# Verify the exact output matches toolkit.public_surface_digest, then:
 knowledge check-runtime --lock .knowledge/kit.lock.yaml
 knowledge check-change-policy --policy .knowledge/change-control.yaml
 knowledge check-ci-policy --policy .knowledge/continuous-integration.yaml --verification .knowledge/verification.yaml
@@ -158,7 +175,8 @@ knowledge validate --profile .knowledge/profile.yaml --bundle knowledge/
 - The root index reaches every initial concept.
 - No generated concept is stable without human verification.
 - CI uses the same pinned toolkit revision as local validation.
-- The lock, executing image revision and project profile agree.
+- The lock, recomputed toolkit public-surface digest, executing image revision
+  and project profile agree.
 - The inherited change-control policy validates without weakened controls.
 - The inherited CI policy and verification capabilities validate without
   weakened controls or missing suites.
@@ -166,6 +184,8 @@ knowledge validate --profile .knowledge/profile.yaml --bundle knowledge/
   once through centralized CI.
 - The default branch is protected and the baseline Change Request path is
   exercised once.
+- The baseline is published only after lock, bundle, policy, provider-adapter
+  and protection checks pass at its exact head.
 - The first supported behavior has expected and final verification evidence;
   pre-change evidence is present when useful or required by a specialization.
 - A task context pack can be produced from the Project concept.

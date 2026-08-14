@@ -17,6 +17,7 @@
       "required": [
         "source",
         "revision",
+        "public_surface_digest",
         "profile"
       ],
       "properties": {
@@ -27,6 +28,10 @@
         "revision": {
           "type": "string",
           "minLength": 1
+        },
+        "public_surface_digest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
         },
         "profile": {
           "type": "string",

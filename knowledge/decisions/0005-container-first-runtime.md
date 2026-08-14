@@ -42,9 +42,11 @@ interface. Provide a Development Container as the primary maintainer
 environment. Continue supporting an isolated native CLI as a fallback.
 
 Couple the runtime image and toolkit source/profile revision through a validated
-project lock and a deterministic public-surface digest comparison. Pin release
-and CI images by digest. Keep project knowledge and profiles portable plain
-files outside the image.
+project lock that also records the deterministic toolkit public-surface digest.
+Recompute that digest from the mounted source and compare it with both the lock
+and the surface embedded in the executing image. Pin release and CI images by
+digest. Keep project knowledge and profiles portable plain files outside the
+image.
 
 Concrete application frameworks and contract-testing products are not part of
 the generic tool selection; they belong in project or module specializations.
@@ -58,3 +60,5 @@ the generic tool selection; they belong in project or module specializations.
 - Bind mounts, user identity and restricted container environments require
   documented handling.
 - Native execution remains supported and must produce equivalent validation.
+- Native execution still verifies the locked public-source content even though
+  no independent container filesystem is present.

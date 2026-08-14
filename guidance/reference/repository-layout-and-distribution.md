@@ -70,7 +70,7 @@ Distribution choices:
 |---|---|---|
 | Pinned Git submodule | Normal connected development | Extra clone/update discipline |
 | Vendored release | Air-gapped or operational simplicity | Manual upstream updates |
-| Pinned package plus local profile assets | Mature release pipeline | Packaging/version coordination |
+| Pinned native installation from pinned source | Explicit container-unavailable fallback | Python environment and dependency-lock lifecycle |
 | OCI image pinned by digest | Default execution and CI runtime | Registry and image lifecycle |
 | Mutable branch | Never for validation policy | Non-reproducible behavior |
 
@@ -80,4 +80,8 @@ Use embedded knowledge for a new single-repository project. Prefer a dedicated
 knowledge repository when architecture spans independently versioned
 repositories. In either case, resolve profiles locally and use commit-aware
 links to external source artifacts. Pin source/profile assets and their matching
-runtime image together in `.knowledge/kit.lock.yaml`.
+runtime image together in `.knowledge/kit.lock.yaml`. Record the deterministic
+toolkit public-surface digest as well as the immutable source revision and image
+digest; a revision label alone is not a transport-independent content identity.
+A native installation supplies execution only and never replaces the pinned
+public source/profile assets.

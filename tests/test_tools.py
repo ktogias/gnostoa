@@ -15,7 +15,7 @@ from tools.build_context_pack import build_pack
 from tools.build_docs import prepare_projection
 from tools.check_change_policy import check_change_policy, load_change_policy
 from tools.check_guardrails import check_guardrails
-from tools.check_runtime_lock import check_runtime_lock
+from tools.check_runtime_lock import check_runtime_lock, public_surface_digest
 from tools.cli import main as cli_main
 from tools.knowledge_common import (
     KnowledgeFormatError,
@@ -1038,7 +1038,7 @@ suites:
 
 
 class RuntimeTests(unittest.TestCase):
-    def test_runtime_lock_accepts_matching_revisions(self) -> None:
+    def test_runtime_lock_requires_pinned_public_surface_digest(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "source" / "core").mkdir(parents=True)
@@ -1065,7 +1065,54 @@ type_rules: {}
 version: 1
 toolkit:
   source: source
+  revision: fabricated-revision
+  profile: profile.yaml
+runtime:
+  image: registry.example/kit@sha256:{'a' * 64}
+  revision: fabricated-revision
+""".lstrip(),
+                encoding="utf-8",
+            )
+            issues = check_runtime_lock(
+                lock,
+                root,
+                runtime_root=root / "source",
+            )
+            self.assertTrue(
+                any("public_surface_digest" in issue for issue in issues),
+                issues,
+            )
+
+    def test_runtime_lock_accepts_matching_revisions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source" / "core").mkdir(parents=True)
+            (root / "source" / "core" / "marker.txt").write_text(
+                "same surface\n",
+                encoding="utf-8",
+            )
+            (root / "profile.yaml").write_text(
+                """
+id: test-profile
+version: "0.1.0"
+okf_version: "0.2"
+extends: []
+concept_types: [Project]
+relation_kinds: []
+rules: {}
+type_rules: {}
+""".lstrip(),
+                encoding="utf-8",
+            )
+            lock = root / "kit.lock.yaml"
+            surface_digest = public_surface_digest(root / "source")
+            lock.write_text(
+                f"""
+version: 1
+toolkit:
+  source: source
   revision: revision-1
+  public_surface_digest: {surface_digest}
   profile: profile.yaml
 runtime:
   image: registry.example/kit@sha256:{'a' * 64}
@@ -1104,12 +1151,14 @@ type_rules: {}
                 encoding="utf-8",
             )
             lock = root / "kit.lock.yaml"
+            surface_digest = public_surface_digest(root / "source")
             lock.write_text(
                 f"""
 version: 1
 toolkit:
   source: source
   revision: revision-1
+  public_surface_digest: {surface_digest}
   profile: profile.yaml
 runtime:
   image: registry.example/kit@sha256:{'b' * 64}
@@ -1166,12 +1215,14 @@ type_rules: {}
                 encoding="utf-8",
             )
             lock = root / "kit.lock.yaml"
+            surface_digest = public_surface_digest(source)
             lock.write_text(
                 f"""
 version: 1
 toolkit:
   source: source
   revision: revision-1
+  public_surface_digest: {surface_digest}
   profile: profile.yaml
 runtime:
   image: registry.example/kit@sha256:{'c' * 64}
@@ -1188,6 +1239,53 @@ runtime:
             )
             self.assertTrue(
                 any("public surface does not match" in issue for issue in issues),
+                issues,
+            )
+
+    def test_runtime_lock_rejects_locked_source_digest_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            (source / "core").mkdir(parents=True)
+            (source / "core" / "marker.txt").write_text(
+                "current surface\n",
+                encoding="utf-8",
+            )
+            (root / "profile.yaml").write_text(
+                """
+id: test-profile
+version: "0.1.0"
+okf_version: "0.2"
+extends: []
+concept_types: [Project]
+relation_kinds: []
+rules: {}
+type_rules: {}
+""".lstrip(),
+                encoding="utf-8",
+            )
+            lock = root / "kit.lock.yaml"
+            lock.write_text(
+                f"""
+version: 1
+toolkit:
+  source: source
+  revision: revision-1
+  public_surface_digest: sha256:{'0' * 64}
+  profile: profile.yaml
+runtime:
+  image: registry.example/kit@sha256:{'d' * 64}
+  revision: revision-1
+""".lstrip(),
+                encoding="utf-8",
+            )
+            issues = check_runtime_lock(
+                lock,
+                root,
+                runtime_root=source,
+            )
+            self.assertTrue(
+                any("does not match locked digest" in issue for issue in issues),
                 issues,
             )
 
@@ -1233,6 +1331,7 @@ runtime:
             self.assertEqual(0, cli_main(["--help"]))
             self.assertEqual(0, cli_main(["--version"]))
         self.assertIn("check-runtime", output.getvalue())
+        self.assertIn("surface-digest", output.getvalue())
         self.assertIn("check-change-policy", output.getvalue())
 
     def test_bootstrap_is_container_first_with_native_fallback(self) -> None:
@@ -1243,6 +1342,11 @@ runtime:
         self.assertIn("OCI-compatible container runtime", preconditions)
         self.assertNotIn("Python 3.11+", preconditions)
         self.assertIn("supported native fallback", bootstrap)
+        self.assertIn("knowledge surface-digest", bootstrap)
+        self.assertLess(
+            bootstrap.index("11. Check source/runtime lockstep"),
+            bootstrap.index("publish the validated baseline"),
+        )
 
     def test_tool_selection_keeps_concrete_product_choices_specialized(self) -> None:
         selection = (
