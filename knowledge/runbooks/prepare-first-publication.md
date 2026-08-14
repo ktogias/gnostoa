@@ -217,8 +217,14 @@ tree. It uploads the machine-readable reports as short-lived CI evidence. This
 closes only those bounded Stage 4 evidence gaps: static analysis and coverage
 are not acceptance, vulnerability data is time/provider-bound, the dependency
 locks do not yet use artifact hashes, and the secret scan does not inspect Git
-history, provider metadata, Actions artifacts or logs. The Stage 6 disclosure
-audit, third-party license inventory and SBOM remain separate open gates.
+history, provider metadata, Actions artifacts or logs. The same extended suite
+now binds exact installed runtime and development Python lock entries to their
+package-declared license metadata and emits deterministic, strictly validated
+CycloneDX 1.6 JSON SBOMs. Missing distributions, version mismatches and absent
+declarations fail the gate; legacy metadata remains visible for human review.
+This closes only the Python-lock inventory/SBOM layer. Base-image and system
+packages, artifact hashes, license compatibility/legal review and the Stage 6
+disclosure audit remain separate open gates.
 
 1. Build an sdist and wheel from a clean checkout. Install each into a fresh
    environment and run the documented quick start without an editable source

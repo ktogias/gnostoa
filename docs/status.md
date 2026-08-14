@@ -46,12 +46,17 @@ claim. The extended suite now enforces Ruff formatting and a bounded lint set,
 strictly type-checks the maintained `tools/` and `ci/` Python surfaces, and
 records branch-aware `tools/` coverage with a 65% regression floor,
 known-vulnerability audits of both exact Python locks and a no-network
-heuristic scan of the current Git-tracked tree. Those reports are unsigned and
-bounded evidence: static analysis and coverage do not prove acceptance, the
-package audit does not establish package trust, and the tree scan does not
-cover history or provider artifacts. A third-party license inventory, an SBOM,
-lock artifact hashes, the full exposed history/provider disclosure audit,
-remaining release gates and publication still remain open.
+heuristic scan of the current Git-tracked tree. It also generates
+package-declared license inventories and deterministic, strictly validated
+CycloneDX 1.6 SBOMs for the exact installed Python distributions in both locks.
+Those reports are unsigned and bounded evidence: static analysis and coverage
+do not prove acceptance, the package audit does not establish package trust,
+legacy license metadata still requires human review, and neither the inventory
+nor the tree scan covers the OS/base image, Git history or provider artifacts.
+[Dependency evidence](dependency-evidence.md) documents the exact boundary.
+Lock artifact hashes, complete image/system-component inventory, legal review,
+the full exposed history/provider disclosure audit, remaining release gates and
+publication still remain open.
 
 ## Current direction
 

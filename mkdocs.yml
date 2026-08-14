@@ -37,6 +37,7 @@ nav:
       - Public inheritance contract: knowledge/contracts/public-inheritance-surface.md
       - Runtime and distribution: guidance/reference/runtime-and-distribution.md
       - Compatibility and upgrades: compatibility.md
+      - Dependency evidence: dependency-evidence.md
       - Continuous-integration contract: guidance/reference/continuous-integration-contract.md
       - Non-negotiable guardrails: guidance/guardrails/non-negotiable.md
   - Project evidence:

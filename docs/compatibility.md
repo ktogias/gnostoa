@@ -78,7 +78,10 @@ verification.
 
 The current candidate has no demonstrated compatibility matrix with an older
 or newer release, automated migration tool, deprecation window, support
-lifetime or rollback guarantee. Dependency/security scans, coverage evidence,
-a third-party license inventory and an SBOM also remain separate release gates.
-These limits must be resolved or carried explicitly before artifact
-publication; they must not be inferred from the presence of a `0.1.0` version.
+lifetime or rollback guarantee. Dependency/security scans and coverage evidence
+are bounded release-candidate signals. Exact-lock Python license inventories and
+CycloneDX 1.6 SBOMs now exist, but they do not cover base-image/system packages,
+do not bind downloadable package artifacts until lock hashes exist, and do not
+constitute legal compatibility review. These limits must be resolved or carried
+explicitly before artifact publication; they must not be inferred from the
+presence of a `0.1.0` version.

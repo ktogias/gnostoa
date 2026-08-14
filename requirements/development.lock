@@ -1,6 +1,6 @@
 # Exact development resolution: runtime, tests, documentation, release builds
-# and bounded formatting, lint, typing, coverage, dependency-audit and
-# tracked-tree secret-scan evidence.
+# and bounded formatting, lint, typing, coverage, dependency-audit,
+# license-inventory, SBOM and tracked-tree secret-scan evidence.
 ast-serialize==0.8.0
 attrs==26.1.0
 babel==2.18.0

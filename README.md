@@ -155,12 +155,18 @@ python -m pip install -r requirements/development.lock
 The scheduled/manual `extended` suite checks Ruff formatting and a bounded,
 explicit lint rule set across `tools/`, `ci/` and `tests/`; runs strict mypy
 across `tools/` and `ci/`; and emits those reports with branch-aware coverage,
-exact-lock Python dependency audits and a heuristic scan of the current
+exact-lock Python dependency audits, package-declared license inventories,
+strictly validated CycloneDX 1.6 SBOMs and a heuristic scan of the current
 Git-tracked tree into
 `${GNOSTOA_QUALITY_OUTPUT:-/tmp/gnostoa-quality-evidence}`. Static analysis and
 the coverage floor are regression signals, not acceptance. The dependency
 lookup is time/provider-bound, and the tree scan does not replace the separate
-full history and provider-surface disclosure audit.
+full history and provider-surface disclosure audit. The inventories and SBOMs
+cover only the exact installed Python distributions named by the runtime and
+development locks. Legacy license metadata remains flagged for human review;
+OS/base-image components, artifact hashes and legal compatibility remain
+separate release gates. See [Dependency evidence](docs/dependency-evidence.md)
+for report contents and limits.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and the
 [maintainer runbook](knowledge/runbooks/maintain-the-kit.md) before changing a

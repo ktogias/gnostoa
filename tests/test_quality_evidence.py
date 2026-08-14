@@ -4,16 +4,21 @@ import hashlib
 import json
 import tempfile
 import unittest
+from email.message import Message
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from tools.quality_evidence import (
     QualityEvidenceError,
+    build_cyclonedx_sbom,
+    build_license_inventory,
     collect_quality_evidence,
     dependency_audit_summary,
     file_evidence,
     json_array_diagnostic_count,
     json_lines_diagnostic_count,
+    locked_requirements,
     secret_findings,
 )
 
@@ -21,6 +26,181 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class QualityEvidenceParsingTests(unittest.TestCase):
+    def test_exact_lock_parser_rejects_unpinned_or_duplicate_dependencies(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            lock = Path(directory) / "runtime.lock"
+            lock.write_text(
+                "# exact runtime set\nExample_Name==1.0\nsecond==2.0\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                [
+                    {
+                        "name": "Example_Name",
+                        "normalized_name": "example-name",
+                        "version": "1.0",
+                    },
+                    {
+                        "name": "second",
+                        "normalized_name": "second",
+                        "version": "2.0",
+                    },
+                ],
+                locked_requirements(lock),
+            )
+
+            lock.write_text("example>=1.0\n", encoding="utf-8")
+            with self.assertRaisesRegex(QualityEvidenceError, "exact name==version"):
+                locked_requirements(lock)
+
+            lock.write_text("example-name==1.0\nexample_name==1.0\n", encoding="utf-8")
+            with self.assertRaisesRegex(QualityEvidenceError, "duplicate"):
+                locked_requirements(lock)
+
+    def test_license_inventory_binds_installed_versions_and_preserves_metadata(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            lock = Path(directory) / "runtime.lock"
+            lock.write_text("example==1.0\n", encoding="utf-8")
+            package_metadata = Message()
+            package_metadata["Metadata-Version"] = "2.4"
+            package_metadata["Name"] = "example"
+            package_metadata["License-Expression"] = "MIT"
+            package_metadata["License-File"] = "LICENSE"
+            distribution = SimpleNamespace(version="1.0", metadata=package_metadata)
+
+            with (
+                patch(
+                    "tools.quality_evidence.metadata.distribution",
+                    return_value=distribution,
+                ),
+                patch(
+                    "tools.quality_evidence._normalized_spdx_expression",
+                    return_value="MIT",
+                ),
+            ):
+                inventory = build_license_inventory(
+                    lock,
+                    lock_identity="requirements/runtime.lock",
+                    scope="runtime",
+                )
+
+            self.assertEqual(
+                {
+                    "legacy_declarations": 0,
+                    "manual_review": 0,
+                    "missing_declarations": 0,
+                    "non_spdx_declarations": 0,
+                    "packages": 1,
+                    "spdx_expressions": 1,
+                },
+                inventory["summary"],
+            )
+            self.assertEqual(
+                {
+                    "declaration": "MIT",
+                    "expression": "MIT",
+                    "manual_review": False,
+                    "source": "license-expression",
+                },
+                inventory["packages"][0]["license"],
+            )
+            self.assertEqual(["LICENSE"], inventory["packages"][0]["license_files"])
+            self.assertNotIn(str(Path(directory)), json.dumps(inventory))
+
+            distribution.version = "2.0"
+            with patch(
+                "tools.quality_evidence.metadata.distribution",
+                return_value=distribution,
+            ):
+                with self.assertRaisesRegex(QualityEvidenceError, "version mismatch"):
+                    build_license_inventory(
+                        lock,
+                        lock_identity="requirements/runtime.lock",
+                        scope="runtime",
+                    )
+
+    def test_license_inventory_fails_when_distribution_declares_no_license(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            lock = Path(directory) / "runtime.lock"
+            lock.write_text("example==1.0\n", encoding="utf-8")
+            package_metadata = Message()
+            package_metadata["Metadata-Version"] = "2.3"
+            package_metadata["Name"] = "example"
+            distribution = SimpleNamespace(version="1.0", metadata=package_metadata)
+
+            with patch(
+                "tools.quality_evidence.metadata.distribution",
+                return_value=distribution,
+            ):
+                with self.assertRaisesRegex(QualityEvidenceError, "no license"):
+                    build_license_inventory(
+                        lock,
+                        lock_identity="requirements/runtime.lock",
+                        scope="runtime",
+                    )
+
+    def test_cyclonedx_sbom_is_deterministic_and_carries_declared_licenses(
+        self,
+    ) -> None:
+        inventory = {
+            "schema_version": 1,
+            "scope": "runtime",
+            "lock": {
+                "path": "requirements/runtime.lock",
+                "sha256": "a" * 64,
+                "size_bytes": 20,
+            },
+            "packages": [
+                {
+                    "name": "Example",
+                    "normalized_name": "example",
+                    "version": "1.0",
+                    "metadata_version": "2.4",
+                    "license_files": ["LICENSE"],
+                    "license": {
+                        "declaration": "MIT",
+                        "expression": "MIT",
+                        "source": "license-expression",
+                        "manual_review": False,
+                    },
+                }
+            ],
+            "summary": {},
+            "limits": [],
+        }
+
+        first = build_cyclonedx_sbom(
+            inventory,
+            project_name="gnostoa",
+            project_version="0.1.0",
+            source_revision="abc123",
+        )
+        second = build_cyclonedx_sbom(
+            inventory,
+            project_name="gnostoa",
+            project_version="0.1.0",
+            source_revision="abc123",
+        )
+
+        self.assertEqual(first, second)
+        self.assertEqual("CycloneDX", first["bomFormat"])
+        self.assertEqual("1.6", first["specVersion"])
+        self.assertTrue(first["serialNumber"].startswith("urn:uuid:"))
+        self.assertNotIn("timestamp", first["metadata"])
+        self.assertEqual(
+            [{"expression": "MIT"}],
+            first["components"][0]["licenses"],
+        )
+        self.assertEqual(
+            "pkg:pypi/example@1.0",
+            first["components"][0]["purl"],
+        )
+
     def test_secret_findings_expose_location_and_type_but_not_secret_material(
         self,
     ) -> None:
@@ -114,6 +294,15 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                     "example==1.0\n",
                     encoding="utf-8",
                 )
+            (root / "pyproject.toml").write_text(
+                '[project]\nname = "gnostoa"\nversion = "0.1.0"\n',
+                encoding="utf-8",
+            )
+            package_metadata = Message()
+            package_metadata["Metadata-Version"] = "2.4"
+            package_metadata["Name"] = "example"
+            package_metadata["License-Expression"] = "MIT"
+            distribution = SimpleNamespace(version="1.0", metadata=package_metadata)
 
             def fake_run(command, *, root, environment=None, stdout=None):
                 if command[2] == "ruff":
@@ -157,7 +346,9 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                     "tools.quality_evidence._tool_versions",
                     return_value={
                         "coverage": "1",
+                        "cyclonedx-python-lib": "1",
                         "detect-secrets": "1",
+                        "license-expression": "1",
                         "mypy": "1",
                         "pip-audit": "1",
                         "ruff": "1",
@@ -169,6 +360,15 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                     "tools.quality_evidence.candidate_paths",
                     return_value=[Path("tracked.txt")],
                 ),
+                patch(
+                    "tools.quality_evidence.metadata.distribution",
+                    return_value=distribution,
+                ),
+                patch(
+                    "tools.quality_evidence._normalized_spdx_expression",
+                    return_value="MIT",
+                ),
+                patch("tools.quality_evidence.validate_cyclonedx_document"),
             ):
                 summary_path = collect_quality_evidence(root, output)
 
@@ -198,13 +398,25 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                 {
                     "coverage.json",
                     "development-dependency-audit.json",
+                    "development-license-inventory.json",
+                    "development-sbom.cdx.json",
                     "mypy.jsonl",
                     "ruff-format.json",
                     "ruff-lint.json",
                     "runtime-dependency-audit.json",
+                    "runtime-license-inventory.json",
+                    "runtime-sbom.cdx.json",
                     "tracked-tree-secret-scan.json",
                 },
                 set(summary["reports"]),
+            )
+            self.assertEqual(
+                1,
+                summary["results"]["runtime_license_inventory"]["packages"],
+            )
+            self.assertEqual(
+                0,
+                summary["results"]["runtime_license_inventory"]["manual_review"],
             )
 
     def test_collector_fails_after_recording_secret_candidate_metadata(self) -> None:
@@ -217,6 +429,15 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                     "example==1.0\n",
                     encoding="utf-8",
                 )
+            (root / "pyproject.toml").write_text(
+                '[project]\nname = "gnostoa"\nversion = "0.1.0"\n',
+                encoding="utf-8",
+            )
+            package_metadata = Message()
+            package_metadata["Metadata-Version"] = "2.4"
+            package_metadata["Name"] = "example"
+            package_metadata["License-Expression"] = "MIT"
+            distribution = SimpleNamespace(version="1.0", metadata=package_metadata)
 
             def fake_run(command, *, root, environment=None, stdout=None):
                 if command[2] == "ruff":
@@ -260,7 +481,9 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                     "tools.quality_evidence._tool_versions",
                     return_value={
                         "coverage": "1",
+                        "cyclonedx-python-lib": "1",
                         "detect-secrets": "1",
+                        "license-expression": "1",
                         "mypy": "1",
                         "pip-audit": "1",
                         "ruff": "1",
@@ -272,6 +495,15 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                     "tools.quality_evidence.candidate_paths",
                     return_value=[Path("tracked.txt")],
                 ),
+                patch(
+                    "tools.quality_evidence.metadata.distribution",
+                    return_value=distribution,
+                ),
+                patch(
+                    "tools.quality_evidence._normalized_spdx_expression",
+                    return_value="MIT",
+                ),
+                patch("tools.quality_evidence.validate_cyclonedx_document"),
             ):
                 with self.assertRaisesRegex(QualityEvidenceError, "secret_candidates"):
                     collect_quality_evidence(root, output)
@@ -320,7 +552,9 @@ class QualityEvidenceIntegrationTests(unittest.TestCase):
         lock = (ROOT / "requirements" / "development.lock").read_text(encoding="utf-8")
         for requirement in (
             "coverage==7.15.2",
+            "cyclonedx-python-lib==11.12.0",
             "detect-secrets==1.5.0",
+            "license-expression==30.4.4",
             "mypy==2.3.0",
             "pip-audit==2.10.1",
             "ruff==0.16.0",
