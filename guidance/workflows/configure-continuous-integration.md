@@ -45,8 +45,10 @@ commands, an authoritative provider gate and optional bounded local hooks.
    `.knowledge/verification.yaml`.
 3. Declare `integration`, `smoke`, `extended` and `deployable_artifact`
    capabilities truthfully. Do not create ceremonial suites.
-4. Map every active suite to an exec-style command, timeout, evidence type and
-   pinned runtime.
+4. Map every active project-owned suite to an exec-style command, timeout,
+   evidence type and pinned runtime. Keep the toolkit-owned `policy` suite in
+   the provider adapter rather than redeclaring it in the project verification
+   manifest.
 5. Copy `templates/verify.project` to `ci/verify`; implement the declared suite
    commands and explicit conditional skips.
 6. Run `knowledge check-ci-policy` against the policy and manifest.
@@ -58,8 +60,9 @@ commands, an authoritative provider gate and optional bounded local hooks.
 9. Make stable policy, fast, regression and merge-candidate statuses required
    on the protected branch. Disallow bypass.
 10. Give validation jobs read-only permissions and no privileged secrets for
-    untrusted changes. Isolate environment credentials behind protected
-    deployment gates.
+    untrusted changes. Disable persisted checkout credentials unless a
+    separately authorized authenticated source operation requires them.
+    Isolate environment credentials behind protected deployment gates.
 11. Optionally copy `templates/githooks/` to `.githooks/` and enable it with
     `git config --local core.hooksPath .githooks`. Record that hooks remain
     advisory.

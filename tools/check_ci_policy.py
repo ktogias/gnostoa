@@ -148,11 +148,24 @@ def _assert_monotonic(
                 f"{parent_gate} -> {child_gate}"
             )
 
-        for field in ("latest_revision", "cancel_superseded"):
+        for field in ("latest_revision",):
             if baseline.get(field) is True and overrides.get(field) is False:
                 raise KnowledgeFormatError(
                     f"{path} disables parent rule {event_id}.{field}"
                 )
+
+        parent_cancellation = baseline.get("cancel_superseded")
+        child_cancellation = overrides.get("cancel_superseded")
+        if (
+            isinstance(parent_cancellation, bool)
+            and child_cancellation is not None
+            and child_cancellation != parent_cancellation
+        ):
+            raise KnowledgeFormatError(
+                f"{path} changes inherited event cancellation semantics "
+                f"{event_id}.cancel_superseded: "
+                f"{parent_cancellation} -> {child_cancellation}"
+            )
 
         effective = deep_merge(baseline, overrides)
         for field in ("required_suites", "conditional_suites"):
@@ -246,6 +259,8 @@ def _required_suites(
             if capability and capabilities.get(capability) is True:
                 required.add(suite_id)
 
+    # The provider adapter runs the toolkit-owned policy suite separately from
+    # the project verification runtime and manifest.
     required.discard("policy")
     return required
 

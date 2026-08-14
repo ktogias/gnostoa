@@ -32,6 +32,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           submodules: recursive
+          persist-credentials: false
       - name: Require immutable runtime image
         shell: bash
         run: |
@@ -71,6 +72,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           submodules: recursive
+          persist-credentials: false
       - name: Run fast suite in the pinned project runtime
         shell: bash
         run: |
@@ -90,6 +92,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           submodules: recursive
+          persist-credentials: false
       - name: Run regression suite in the pinned project runtime
         shell: bash
         run: |
@@ -109,6 +112,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           submodules: recursive
+          persist-credentials: false
       - name: Run conditional candidate suites
         shell: bash
         run: |
@@ -133,6 +137,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           submodules: recursive
+          persist-credentials: false
       - name: Run extended suite
         shell: bash
         run: |
@@ -152,6 +157,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           submodules: recursive
+          persist-credentials: false
       - name: Run release suite
         shell: bash
         run: |

@@ -834,6 +834,37 @@ events:
             with self.assertRaises(KnowledgeFormatError):
                 module.load_ci_policy(child)
 
+    def test_ci_policy_preserves_event_cancellation_semantics(self) -> None:
+        module = importlib.import_module("tools.check_ci_policy")
+        parent = (ROOT / "core" / "continuous-integration.yaml").resolve()
+        cases = (
+            ("branch_revision", False),
+            ("integration", True),
+            ("release", True),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            child = Path(directory) / "child.yaml"
+            for event_id, cancel_superseded in cases:
+                with self.subTest(event_id=event_id):
+                    child.write_text(
+                        f"""
+id: cancellation-changing-ci-child
+version: "0.1.0"
+owner: team:test
+extends:
+  - {str(parent)!r}
+events:
+  {event_id}:
+    cancel_superseded: {str(cancel_superseded).lower()}
+""".lstrip(),
+                        encoding="utf-8",
+                    )
+                    with self.assertRaisesRegex(
+                        KnowledgeFormatError,
+                        "changes inherited event cancellation semantics",
+                    ):
+                        module.load_ci_policy(child)
+
     def test_toolkit_verification_manifest_covers_declared_capabilities(self) -> None:
         module = importlib.import_module("tools.check_ci_policy")
         issues = module.check_ci_policy(
@@ -967,6 +998,10 @@ suites:
         self.assertRegex(
             github,
             r"actions/checkout@[a-f0-9]{40}",
+        )
+        self.assertEqual(
+            github.count("actions/checkout@"),
+            github.count("persist-credentials: false"),
         )
 
         self.assertIn("merge_request_event", gitlab)
@@ -1244,6 +1279,7 @@ runtime:
         self.assertIn("pip install", gitlab)
         self.assertIn("native fallback", github)
         self.assertIn("pip install", github)
+        self.assertIn("persist-credentials: false", github)
 
 
 class DocumentationTests(unittest.TestCase):
