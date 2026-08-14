@@ -5,22 +5,21 @@ from __future__ import annotations
 
 import argparse
 import configparser
-from dataclasses import dataclass
-from email import policy
-from email.parser import BytesParser
 import hashlib
 import json
 import os
-from pathlib import Path, PurePosixPath
 import re
 import subprocess
 import sys
 import tarfile
 import tempfile
 import tomllib
-from typing import Any
 import zipfile
-
+from dataclasses import dataclass
+from email import policy
+from email.parser import BytesParser
+from pathlib import Path, PurePosixPath
+from typing import Any
 
 CANONICAL_SOURCE_ROOTS = {
     "ci",
@@ -108,12 +107,15 @@ def _normalized_requirement(value: str) -> str:
     name = re.sub(r"[-_.]+", "-", match.group(1)).casefold()
     extras = ""
     if match.group(2):
-        extras = "[" + ",".join(
-            sorted(
-                item.strip().casefold()
-                for item in match.group(2)[1:-1].split(",")
+        extras = (
+            "["
+            + ",".join(
+                sorted(
+                    item.strip().casefold() for item in match.group(2)[1:-1].split(",")
+                )
             )
-        ) + "]"
+            + "]"
+        )
     clauses = sorted(
         clause.strip().casefold()
         for clause in match.group(3).split(",")
@@ -160,8 +162,7 @@ def _metadata_issues(
         _normalized_requirement(item) for item in declared_dependencies
     }
     actual_dependencies = {
-        _normalized_requirement(item)
-        for item in message.get_all("Requires-Dist", [])
+        _normalized_requirement(item) for item in message.get_all("Requires-Dist", [])
     }
     if actual_dependencies != expected_dependencies:
         issues.append(
@@ -193,9 +194,7 @@ def _unique_sdist_name(
 ) -> str | None:
     relative_parts = PurePosixPath(relative).parts
     matches = [
-        name
-        for name in names
-        if PurePosixPath(name).parts[1:] == relative_parts
+        name for name in names if PurePosixPath(name).parts[1:] == relative_parts
     ]
     if len(matches) != 1:
         issues.append(
@@ -207,22 +206,21 @@ def _unique_sdist_name(
 
 
 def _entry_point_issues(content: bytes, project: dict[str, Any]) -> list[str]:
-    parser = configparser.ConfigParser(interpolation=None)
-    parser.optionxform = str
+    class CaseSensitiveConfigParser(configparser.ConfigParser):
+        def optionxform(self, optionstr: str) -> str:
+            return optionstr
+
+    parser = CaseSensitiveConfigParser(interpolation=None)
     try:
         parser.read_string(content.decode("utf-8"))
     except (UnicodeDecodeError, configparser.Error) as exc:
         return [f"wheel console entry points are invalid: {exc}"]
     actual = (
-        dict(parser["console_scripts"])
-        if parser.has_section("console_scripts")
-        else {}
+        dict(parser["console_scripts"]) if parser.has_section("console_scripts") else {}
     )
     expected = project["scripts"]
     if actual != expected:
-        return [
-            f"wheel console entry points are {actual!r}, expected {expected!r}"
-        ]
+        return [f"wheel console entry points are {actual!r}, expected {expected!r}"]
     return []
 
 
@@ -242,9 +240,7 @@ def distribution_metadata_issues(
     expected_sdist = f"{name}-{version}.tar.gz"
     issues: list[str] = []
     if wheel.name != expected_wheel:
-        issues.append(
-            f"wheel filename is {wheel.name!r}, expected {expected_wheel!r}"
-        )
+        issues.append(f"wheel filename is {wheel.name!r}, expected {expected_wheel!r}")
     if source_distribution.name != expected_sdist:
         issues.append(
             "source-distribution filename is "
@@ -256,34 +252,37 @@ def distribution_metadata_issues(
         "NOTICE": (root / "NOTICE").read_bytes(),
     }
     try:
-        with zipfile.ZipFile(wheel) as archive:
-            names = archive.namelist()
-            metadata_name = _unique_name(
-                names, "METADATA", "wheel", issues
-            )
-            entry_points_name = _unique_name(
-                names, "entry_points.txt", "wheel", issues
-            )
+        with zipfile.ZipFile(wheel) as wheel_archive:
+            names = wheel_archive.namelist()
+            metadata_name = _unique_name(names, "METADATA", "wheel", issues)
+            entry_points_name = _unique_name(names, "entry_points.txt", "wheel", issues)
             if metadata_name is not None:
                 issues.extend(
-                    _metadata_issues("wheel", archive.read(metadata_name), project)
+                    _metadata_issues(
+                        "wheel",
+                        wheel_archive.read(metadata_name),
+                        project,
+                    )
                 )
             if entry_points_name is not None:
                 issues.extend(
-                    _entry_point_issues(archive.read(entry_points_name), project)
+                    _entry_point_issues(
+                        wheel_archive.read(entry_points_name),
+                        project,
+                    )
                 )
             for filename, expected in expected_files.items():
-                member = _unique_name(
-                    names, f"licenses/{filename}", "wheel", issues
-                )
-                if member is not None and archive.read(member) != expected:
+                member = _unique_name(names, f"licenses/{filename}", "wheel", issues)
+                if member is not None and wheel_archive.read(member) != expected:
                     issues.append(f"wheel {filename} does not match canonical source")
     except (OSError, zipfile.BadZipFile) as exc:
         issues.append(f"cannot inspect wheel metadata: {exc}")
 
     try:
-        with tarfile.open(source_distribution, "r:gz") as archive:
-            members = [member for member in archive.getmembers() if member.isfile()]
+        with tarfile.open(source_distribution, "r:gz") as sdist_archive:
+            members = [
+                member for member in sdist_archive.getmembers() if member.isfile()
+            ]
             names = [member.name for member in members]
             member_by_name = {member.name: member for member in members}
 
@@ -291,7 +290,7 @@ def distribution_metadata_issues(
                 selected = _unique_sdist_name(names, suffix, issues)
                 if selected is None:
                     return None
-                stream = archive.extractfile(member_by_name[selected])
+                stream = sdist_archive.extractfile(member_by_name[selected])
                 if stream is None:
                     issues.append(f"cannot read source-distribution member {selected}")
                     return None
@@ -324,31 +323,30 @@ def distribution_metadata_issues(
 
 def _artifact_metadata_digest(artifact: Path, kind: str) -> str:
     if kind == "wheel":
-        with zipfile.ZipFile(artifact) as archive:
-            matches = [
-                name
-                for name in archive.namelist()
-                if name.endswith("/METADATA")
+        with zipfile.ZipFile(artifact) as wheel_archive:
+            wheel_matches = [
+                name for name in wheel_archive.namelist() if name.endswith("/METADATA")
             ]
-            if len(matches) != 1:
+            if len(wheel_matches) != 1:
                 raise ReleaseSmokeError(
-                    f"wheel must contain exactly one METADATA; found {len(matches)}"
+                    "wheel must contain exactly one METADATA; "
+                    f"found {len(wheel_matches)}"
                 )
-            return _sha256_bytes(archive.read(matches[0]))
+            return _sha256_bytes(wheel_archive.read(wheel_matches[0]))
     if kind == "sdist":
-        with tarfile.open(artifact, "r:gz") as archive:
-            matches = [
+        with tarfile.open(artifact, "r:gz") as sdist_archive:
+            sdist_matches = [
                 member
-                for member in archive.getmembers()
+                for member in sdist_archive.getmembers()
                 if member.isfile()
                 and PurePosixPath(member.name).parts[1:] == ("PKG-INFO",)
             ]
-            if len(matches) != 1:
+            if len(sdist_matches) != 1:
                 raise ReleaseSmokeError(
                     "source distribution must contain exactly one PKG-INFO; "
-                    f"found {len(matches)}"
+                    f"found {len(sdist_matches)}"
                 )
-            stream = archive.extractfile(matches[0])
+            stream = sdist_archive.extractfile(sdist_matches[0])
             if stream is None:
                 raise ReleaseSmokeError("cannot read source-distribution PKG-INFO")
             return _sha256_bytes(stream.read())

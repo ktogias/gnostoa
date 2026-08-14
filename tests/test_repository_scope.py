@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
 import re
 import subprocess
 import tempfile
 import unittest
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 FORBIDDEN_PATTERNS = {
@@ -151,6 +150,14 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
         self.assertLess(
             dockerfile.index(self.module().SOURCE_MANIFEST),
             dockerfile.index("python -m pip install"),
+        )
+
+    def test_container_build_context_excludes_local_analysis_state(self) -> None:
+        exclusions = set(
+            (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
+        )
+        self.assertTrue(
+            {".coverage", ".coverage.*", ".mypy_cache", ".ruff_cache"} <= exclusions
         )
 
 

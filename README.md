@@ -152,12 +152,15 @@ python -m pip install -r requirements/development.lock
 ./ci/verify extended
 ```
 
-The scheduled/manual `extended` suite emits branch-aware coverage, exact-lock
-Python dependency audits and a heuristic scan of the current Git-tracked tree
-into `${GNOSTOA_QUALITY_OUTPUT:-/tmp/gnostoa-quality-evidence}`. The coverage
-floor is a regression signal, not acceptance. The dependency lookup is
-time/provider-bound, and the secret scan does not replace the separate full
-history and provider-surface disclosure audit.
+The scheduled/manual `extended` suite checks Ruff formatting and a bounded,
+explicit lint rule set across `tools/`, `ci/` and `tests/`; runs strict mypy
+across `tools/` and `ci/`; and emits those reports with branch-aware coverage,
+exact-lock Python dependency audits and a heuristic scan of the current
+Git-tracked tree into
+`${GNOSTOA_QUALITY_OUTPUT:-/tmp/gnostoa-quality-evidence}`. Static analysis and
+the coverage floor are regression signals, not acceptance. The dependency
+lookup is time/provider-bound, and the tree scan does not replace the separate
+full history and provider-surface disclosure audit.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and the
 [maintainer runbook](knowledge/runbooks/maintain-the-kit.md) before changing a

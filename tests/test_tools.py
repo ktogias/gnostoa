@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import importlib
 import hashlib
+import importlib
 import json
 import os
-from contextlib import redirect_stderr, redirect_stdout
-from io import BytesIO, StringIO
-from pathlib import Path
 import re
 import subprocess
 import tarfile
@@ -14,18 +11,11 @@ import tempfile
 import tomllib
 import unittest
 import zipfile
+from contextlib import redirect_stderr, redirect_stdout
+from io import BytesIO, StringIO
+from pathlib import Path
 from unittest.mock import patch
 
-from tools.release_smoke import (
-    ArtifactResult,
-    ReleaseSmokeError,
-    distribution_metadata_issues,
-    release_smoke,
-    release_evidence_manifest,
-    verify_release_source,
-    wheel_canonical_payloads,
-    write_release_evidence_manifest,
-)
 from tools import knowledge_common
 from tools.build_context_pack import build_pack
 from tools.build_docs import prepare_projection
@@ -40,9 +30,18 @@ from tools.knowledge_common import (
     markdown_links,
     resolve_target,
 )
+from tools.release_smoke import (
+    ArtifactResult,
+    ReleaseSmokeError,
+    distribution_metadata_issues,
+    release_evidence_manifest,
+    release_smoke,
+    verify_release_source,
+    wheel_canonical_payloads,
+    write_release_evidence_manifest,
+)
 from tools.repository_scope import find_text_matches
 from tools.validate_bundle import validate_bundle
-
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -69,8 +68,7 @@ def _release_archive_fixtures(
         f"License-Expression: {project['license']}\n"
         f"Requires-Python: {project['requires-python']}\n"
         + "".join(
-            f"Requires-Dist: {requirement}\n"
-            for requirement in project["dependencies"]
+            f"Requires-Dist: {requirement}\n" for requirement in project["dependencies"]
         )
         + "".join(
             f'Requires-Dist: {requirement}; extra == "{extra}"\n'
@@ -81,10 +79,7 @@ def _release_archive_fixtures(
     ).encode()
     entry_points = (
         "[console_scripts]\n"
-        + "".join(
-            f"{name} = {target}\n"
-            for name, target in project["scripts"].items()
-        )
+        + "".join(f"{name} = {target}\n" for name, target in project["scripts"].items())
     ).encode()
     license_bytes = (ROOT / "LICENSE").read_bytes()
     notice_bytes = (ROOT / "NOTICE").read_bytes()
@@ -128,12 +123,7 @@ class BrandIdentityTests(unittest.TestCase):
         )
         self.assertTrue((ROOT / "knowledge" / "project" / "gnostoa.md").is_file())
         self.assertFalse(
-            (
-                ROOT
-                / "knowledge"
-                / "project"
-                / "knowledge-architecture-kit.md"
-            ).exists()
+            (ROOT / "knowledge" / "project" / "knowledge-architecture-kit.md").exists()
         )
 
     def test_self_policy_and_distribution_identity_track_gnostoa(self) -> None:
@@ -189,10 +179,7 @@ class PublicationBaselineTests(unittest.TestCase):
         ids: list[str] = []
         for path in schema_paths:
             schema = json.loads(path.read_text(encoding="utf-8"))
-            expected = (
-                "https://ktogias.github.io/gnostoa/schemas/v1/"
-                f"{path.name}"
-            )
+            expected = f"https://ktogias.github.io/gnostoa/schemas/v1/{path.name}"
             self.assertEqual(expected, schema.get("$id"), path.name)
             ids.append(schema["$id"])
 
@@ -222,8 +209,7 @@ class PublicationBaselineTests(unittest.TestCase):
             workflow,
         )
         self.assertIn(
-            "if: github.event_name != 'push' || "
-            "github.ref == 'refs/heads/main'",
+            "if: github.event_name != 'push' || github.ref == 'refs/heads/main'",
             workflow,
         )
         self.assertRegex(workflow, r"actions/checkout@[a-f0-9]{40}")
@@ -242,12 +228,7 @@ class PublicationBaselineTests(unittest.TestCase):
             self.assertIn(owned_path, codeowners)
 
     def test_publication_review_matrix_covers_every_canonical_concept(self) -> None:
-        matrix = (
-            ROOT
-            / "knowledge"
-            / "runbooks"
-            / "review-publication-baseline.md"
-        )
+        matrix = ROOT / "knowledge" / "runbooks" / "review-publication-baseline.md"
         self.assertTrue(matrix.is_file())
 
         linked = {
@@ -267,9 +248,7 @@ class PublicationBaselineTests(unittest.TestCase):
 class LicensePolicyTests(unittest.TestCase):
     def test_distribution_declares_one_apache_2_license_contract(self) -> None:
         license_bytes = (ROOT / "LICENSE").read_bytes()
-        expected_license_digest = (
-            "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"  # pragma: allowlist secret -- public LICENSE digest
-        )
+        expected_license_digest = "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"  # pragma: allowlist secret -- public LICENSE digest
         self.assertEqual(
             expected_license_digest,
             hashlib.sha256(license_bytes).hexdigest(),
@@ -512,11 +491,7 @@ class GuardrailTests(unittest.TestCase):
     ) -> None:
         template = load_yaml(ROOT / "templates" / "change-control.project.yaml")
         example = load_yaml(
-            ROOT
-            / "examples"
-            / "profiles"
-            / "example-project"
-            / "change-control.yaml"
+            ROOT / "examples" / "profiles" / "example-project" / "change-control.yaml"
         )
         self.assertEqual(
             ["../.knowledge-kit/core/change-control.yaml"],
@@ -533,9 +508,7 @@ class GuardrailTests(unittest.TestCase):
         self.assertIn("outside", boundary)
 
     def test_project_agent_router_is_bounded(self) -> None:
-        router = (ROOT / "templates" / "AGENTS.project.md").read_text(
-            encoding="utf-8"
-        )
+        router = (ROOT / "templates" / "AGENTS.project.md").read_text(encoding="utf-8")
         self.assertIn("Do not load", router)
         self.assertIn(".knowledge-kit/knowledge/", router)
         self.assertLessEqual(len(router.splitlines()), 24)
@@ -581,24 +554,17 @@ class ChangeControlTests(unittest.TestCase):
             )
             self.assertEqual(
                 "before-merge",
-                generic["change_classes"][class_id]["verification"][
-                    "evidence_timing"
-                ],
+                generic["change_classes"][class_id]["verification"]["evidence_timing"],
                 class_id,
             )
             self.assertEqual(
                 "when-applicable",
-                generic["change_classes"][class_id]["verification"][
-                    "failing_evidence"
-                ],
+                generic["change_classes"][class_id]["verification"]["failing_evidence"],
                 class_id,
             )
 
         guidance = (
-            ROOT
-            / "guidance"
-            / "reference"
-            / "change-classification-and-approval.md"
+            ROOT / "guidance" / "reference" / "change-classification-and-approval.md"
         ).read_text(encoding="utf-8")
         self.assertIn("solo maintainer", guidance)
         self.assertIn("formal approval", guidance)
@@ -744,9 +710,7 @@ change_classes:
         policy = load_change_policy(ROOT / "core" / "change-control.yaml")
         verification = policy["verification"]
         self.assertTrue(verification["expected_behavior_required"])
-        self.assertTrue(
-            verification["observable_behavior_over_implementation_details"]
-        )
+        self.assertTrue(verification["observable_behavior_over_implementation_details"])
         self.assertTrue(verification["deterministic_required_tests"])
         self.assertTrue(verification["flaky_required_tests_block"])
         self.assertFalse(verification["coverage_alone_sufficient"])
@@ -839,15 +803,11 @@ change_classes:
         reference = (
             ROOT / "guidance" / "reference" / "testing-and-verification-strategy.md"
         ).read_text(encoding="utf-8")
-        guidance_index = (ROOT / "guidance" / "index.md").read_text(
+        guidance_index = (ROOT / "guidance" / "index.md").read_text(encoding="utf-8")
+        runbook = (ROOT / "knowledge" / "runbooks" / "maintain-the-kit.md").read_text(
             encoding="utf-8"
         )
-        runbook = (
-            ROOT / "knowledge" / "runbooks" / "maintain-the-kit.md"
-        ).read_text(encoding="utf-8")
-        plan = (ROOT / "templates" / "verification-plan.md").read_text(
-            encoding="utf-8"
-        )
+        plan = (ROOT / "templates" / "verification-plan.md").read_text(encoding="utf-8")
 
         self.assertIn("Red", workflow)
         self.assertIn("green", workflow.lower())
@@ -973,14 +933,8 @@ events:
 
     def test_manifest_runtime_must_match_ci_runtime(self) -> None:
         module = importlib.import_module("tools.check_ci_policy")
-        locked = (
-            "registry.example.org/example-ci@sha256:"
-            + ("a" * 64)
-        )
-        executing = (
-            "registry.example.org/example-ci@sha256:"
-            + ("b" * 64)
-        )
+        locked = "registry.example.org/example-ci@sha256:" + ("a" * 64)
+        executing = "registry.example.org/example-ci@sha256:" + ("b" * 64)
         with tempfile.TemporaryDirectory() as directory:
             manifest = Path(directory) / "verification.yaml"
             manifest.write_text(
@@ -1015,7 +969,10 @@ suites:
                 expected_runtime_image=executing,
             )
             self.assertTrue(
-                any("does not match executing project runtime" in issue for issue in issues),
+                any(
+                    "does not match executing project runtime" in issue
+                    for issue in issues
+                ),
                 issues,
             )
 
@@ -1071,8 +1028,7 @@ suites:
             github,
         )
         self.assertIn(
-            "if: github.event_name != 'push' || "
-            "github.ref == 'refs/heads/main'",
+            "if: github.event_name != 'push' || github.ref == 'refs/heads/main'",
             github,
         )
         self.assertIn("check-ci-policy", github)
@@ -1097,12 +1053,8 @@ suites:
         self.assertIn("./ci/verify smoke", toolkit_gitlab)
 
     def test_repository_hooks_are_advisory_shared_command_adapters(self) -> None:
-        pre_commit = (ROOT / ".githooks" / "pre-commit").read_text(
-            encoding="utf-8"
-        )
-        pre_push = (ROOT / ".githooks" / "pre-push").read_text(
-            encoding="utf-8"
-        )
+        pre_commit = (ROOT / ".githooks" / "pre-commit").read_text(encoding="utf-8")
+        pre_push = (ROOT / ".githooks" / "pre-push").read_text(encoding="utf-8")
         guidance = (
             ROOT / "guidance" / "patterns" / "tiered-ci-and-local-feedback.md"
         ).read_text(encoding="utf-8")
@@ -1128,15 +1080,15 @@ class RuntimeTests(unittest.TestCase):
     def test_native_distribution_requires_explicit_public_source_binding(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             installed_module = (
-                Path(directory)
-                / "site-packages"
-                / "tools"
-                / "knowledge_common.py"
+                Path(directory) / "site-packages" / "tools" / "knowledge_common.py"
             )
-            with patch.dict(os.environ, {}, clear=True), patch.object(
-                knowledge_common,
-                "__file__",
-                str(installed_module),
+            with (
+                patch.dict(os.environ, {}, clear=True),
+                patch.object(
+                    knowledge_common,
+                    "__file__",
+                    str(installed_module),
+                ),
             ):
                 with self.assertRaisesRegex(
                     KnowledgeFormatError,
@@ -1176,11 +1128,14 @@ class RuntimeTests(unittest.TestCase):
             for command in commands:
                 with self.subTest(command=command):
                     output = StringIO()
-                    with patch.dict(
-                        os.environ,
-                        {"KNOWLEDGE_KIT_ROOT": directory},
-                        clear=True,
-                    ), redirect_stderr(output):
+                    with (
+                        patch.dict(
+                            os.environ,
+                            {"KNOWLEDGE_KIT_ROOT": directory},
+                            clear=True,
+                        ),
+                        redirect_stderr(output),
+                    ):
                         self.assertEqual(2, cli_main(command))
                     message = output.getvalue()
                     self.assertIn("KNOWLEDGE_KIT_ROOT", message)
@@ -1304,9 +1259,9 @@ class RuntimeTests(unittest.TestCase):
                 verify_release_source(ROOT, revision)
 
     def test_release_build_frontend_and_backend_are_pinned(self) -> None:
-        development_lock = (
-            ROOT / "requirements" / "development.lock"
-        ).read_text(encoding="utf-8")
+        development_lock = (ROOT / "requirements" / "development.lock").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("build==1.5.0", development_lock)
         self.assertIn("pyproject-hooks==1.2.0", development_lock)
         self.assertIn("setuptools==83.0.0", development_lock)
@@ -1341,7 +1296,7 @@ toolkit:
   revision: fabricated-revision
   profile: profile.yaml
 runtime:
-  image: registry.example/kit@sha256:{'a' * 64}
+  image: registry.example/kit@sha256:{"a" * 64}
   revision: fabricated-revision
 """.lstrip(),
                 encoding="utf-8",
@@ -1388,7 +1343,7 @@ toolkit:
   public_surface_digest: {surface_digest}
   profile: profile.yaml
 runtime:
-  image: registry.example/kit@sha256:{'a' * 64}
+  image: registry.example/kit@sha256:{"a" * 64}
   revision: revision-1
 """.lstrip(),
                 encoding="utf-8",
@@ -1434,7 +1389,7 @@ toolkit:
   public_surface_digest: {surface_digest}
   profile: profile.yaml
 runtime:
-  image: registry.example/kit@sha256:{'b' * 64}
+  image: registry.example/kit@sha256:{"b" * 64}
   revision: revision-2
 """.lstrip(),
                 encoding="utf-8",
@@ -1498,7 +1453,7 @@ toolkit:
   public_surface_digest: {surface_digest}
   profile: profile.yaml
 runtime:
-  image: registry.example/kit@sha256:{'c' * 64}
+  image: registry.example/kit@sha256:{"c" * 64}
   revision: revision-1
 """.lstrip(),
                 encoding="utf-8",
@@ -1544,10 +1499,10 @@ version: 1
 toolkit:
   source: source
   revision: revision-1
-  public_surface_digest: sha256:{'0' * 64}
+  public_surface_digest: sha256:{"0" * 64}
   profile: profile.yaml
 runtime:
-  image: registry.example/kit@sha256:{'d' * 64}
+  image: registry.example/kit@sha256:{"d" * 64}
   revision: revision-1
 """.lstrip(),
                 encoding="utf-8",
@@ -1590,9 +1545,7 @@ runtime:
 
     def test_development_container_uses_development_target(self) -> None:
         definition = json.loads(
-            (ROOT / ".devcontainer" / "devcontainer.json").read_text(
-                encoding="utf-8"
-            )
+            (ROOT / ".devcontainer" / "devcontainer.json").read_text(encoding="utf-8")
         )
         self.assertEqual("development", definition["build"]["target"])
         self.assertEqual("kit", definition["remoteUser"])
@@ -1622,9 +1575,9 @@ runtime:
         )
 
     def test_tool_selection_keeps_concrete_product_choices_specialized(self) -> None:
-        selection = (
-            ROOT / "guidance" / "reference" / "tool-selection.md"
-        ).read_text(encoding="utf-8")
+        selection = (ROOT / "guidance" / "reference" / "tool-selection.md").read_text(
+            encoding="utf-8"
+        )
         self.assertIn(
             "Implementation frameworks and concrete conformance tools",
             selection,
@@ -1646,12 +1599,8 @@ runtime:
         self.assertIn("check-change-policy", github)
 
     def test_native_ci_is_explicit_fallback(self) -> None:
-        gitlab = (ROOT / "ci" / "gitlab-native-ci.yml").read_text(
-            encoding="utf-8"
-        )
-        github = (ROOT / "ci" / "github-native-actions.yml").read_text(
-            encoding="utf-8"
-        )
+        gitlab = (ROOT / "ci" / "gitlab-native-ci.yml").read_text(encoding="utf-8")
+        github = (ROOT / "ci" / "github-native-actions.yml").read_text(encoding="utf-8")
         self.assertIn("native", gitlab)
         self.assertIn("pip install", gitlab)
         self.assertIn("native fallback", github)
@@ -1662,9 +1611,7 @@ runtime:
 class DocumentationTests(unittest.TestCase):
     def test_public_front_door_exposes_verified_evaluation_path(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        quick_start = (ROOT / "docs" / "quick-start.md").read_text(
-            encoding="utf-8"
-        )
+        quick_start = (ROOT / "docs" / "quick-start.md").read_text(encoding="utf-8")
         status = (ROOT / "docs" / "status.md").read_text(encoding="utf-8")
 
         self.assertIn("## Try Gnostoa from this checkout", readme)
@@ -1715,12 +1662,7 @@ class DocumentationTests(unittest.TestCase):
             self.assertTrue((content / "knowledge" / "index.md").is_file())
             self.assertTrue((content / "policy" / "guardrails.yaml").is_file())
             self.assertTrue(
-                (
-                    content
-                    / "schemas"
-                    / "v1"
-                    / "profile.schema.json"
-                ).is_file()
+                (content / "schemas" / "v1" / "profile.schema.json").is_file()
             )
             projected_config = config.read_text(encoding="utf-8")
             self.assertIn("- Home: docs/index.md", projected_config)

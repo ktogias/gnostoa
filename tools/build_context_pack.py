@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from collections import deque
 from pathlib import Path
-import sys
 
 from .knowledge_common import (
     Document,
@@ -108,9 +108,7 @@ def build_pack(
     _, issues = validate_bundle(profile_path, bundle_path)
     errors = [issue for issue in issues if issue.severity == "error"]
     if errors:
-        preview = "; ".join(
-            f"{issue.path}: {issue.message}" for issue in errors[:5]
-        )
+        preview = "; ".join(f"{issue.path}: {issue.message}" for issue in errors[:5])
         raise KnowledgeFormatError(
             f"Refusing to build context from an invalid bundle: {preview}"
         )
@@ -155,9 +153,7 @@ def build_pack(
         seen.add(resolved_path)
         ordered.append(document)
         if level < depth:
-            for neighbor in _neighbors(
-                document, bundle, by_id, by_path, incoming
-            ):
+            for neighbor in _neighbors(document, bundle, by_id, by_path, incoming):
                 queue.append((neighbor, level + 1))
 
     root_index = parse_markdown(bundle / "index.md", bundle)
@@ -211,7 +207,9 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.depth < 0 or args.max_tokens < 128:
-        print("ERROR: depth must be >= 0 and max-tokens must be >= 128", file=sys.stderr)
+        print(
+            "ERROR: depth must be >= 0 and max-tokens must be >= 128", file=sys.stderr
+        )
         return 2
     try:
         result = build_pack(

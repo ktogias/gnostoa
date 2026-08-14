@@ -4,16 +4,15 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-from importlib import metadata
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
-from typing import Any
+from importlib import metadata
+from pathlib import Path
+from typing import Any, TextIO
 
 from tools.repository_scope import candidate_paths
-
 
 DEFAULT_COVERAGE_FLOOR = 65.0
 
@@ -30,6 +29,42 @@ def file_evidence(path: Path) -> dict[str, int | str]:
         "sha256": hashlib.sha256(content).hexdigest(),
         "size_bytes": len(content),
     }
+
+
+def json_array_diagnostic_count(path: Path, label: str) -> int:
+    """Validate a JSON-array diagnostic report and return its item count."""
+
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise QualityEvidenceError(f"cannot read {label}: {exc}") from exc
+    if not isinstance(document, list) or any(
+        not isinstance(item, dict) for item in document
+    ):
+        raise QualityEvidenceError(f"{label} is not a JSON diagnostic array")
+    return len(document)
+
+
+def json_lines_diagnostic_count(path: Path, label: str) -> int:
+    """Validate a JSON-lines diagnostic report and return its record count."""
+
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise QualityEvidenceError(f"cannot read {label}: {exc}") from exc
+
+    count = 0
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            diagnostic = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise QualityEvidenceError(f"cannot read {label}: {exc}") from exc
+        if not isinstance(diagnostic, dict):
+            raise QualityEvidenceError(f"{label} contains a non-object diagnostic")
+        count += 1
+    return count
 
 
 def secret_findings(document: dict[str, Any]) -> list[dict[str, int | str]]:
@@ -97,7 +132,7 @@ def _run(
     *,
     root: Path,
     environment: dict[str, str] | None = None,
-    stdout: Any = None,
+    stdout: TextIO | None = None,
 ) -> int:
     displayed = command
     if len(displayed) > 20:
@@ -157,7 +192,15 @@ def _git_state(root: Path) -> dict[str, Any]:
 
 def _tool_versions() -> dict[str, str]:
     versions: dict[str, str] = {}
-    for distribution in ("coverage", "detect-secrets", "pip-audit"):
+    for distribution in (
+        "coverage",
+        "detect-secrets",
+        "mypy",
+        "pip-audit",
+        "ruff",
+        "types-PyYAML",
+        "types-jsonschema",
+    ):
         try:
             versions[distribution] = metadata.version(distribution)
         except metadata.PackageNotFoundError as exc:
@@ -183,18 +226,18 @@ def collect_quality_evidence(
     if not tracked_paths:
         raise QualityEvidenceError("tracked-tree secret scan has no candidate files")
     tracked_symlinks = [
-        path.as_posix()
-        for path in tracked_paths
-        if (root / path).is_symlink()
+        path.as_posix() for path in tracked_paths if (root / path).is_symlink()
     ]
     if tracked_symlinks:
         raise QualityEvidenceError(
-            "tracked-tree secret scan refuses symlinks: "
-            + ", ".join(tracked_symlinks)
+            "tracked-tree secret scan refuses symlinks: " + ", ".join(tracked_symlinks)
         )
 
     coverage_data = output / ".coverage"
     coverage_report = output / "coverage.json"
+    format_report = output / "ruff-format.json"
+    lint_report = output / "ruff-lint.json"
+    typing_report = output / "mypy.jsonl"
     runtime_audit = output / "runtime-dependency-audit.json"
     development_audit = output / "development-dependency-audit.json"
     secret_report = output / "tracked-tree-secret-scan.json"
@@ -202,8 +245,53 @@ def collect_quality_evidence(
 
     environment = os.environ.copy()
     environment["COVERAGE_FILE"] = str(coverage_data)
+    environment["MYPY_CACHE_DIR"] = str(output / ".mypy_cache")
+    environment["RUFF_CACHE_DIR"] = str(output / ".ruff_cache")
     python = sys.executable
     statuses: dict[str, int] = {}
+
+    with format_report.open("w", encoding="utf-8") as stream:
+        statuses["format"] = _run(
+            [
+                python,
+                "-m",
+                "ruff",
+                "format",
+                "--check",
+                "--output-format",
+                "json",
+                "tools",
+                "ci",
+                "tests",
+            ],
+            root=root,
+            environment=environment,
+            stdout=stream,
+        )
+    with lint_report.open("w", encoding="utf-8") as stream:
+        statuses["lint"] = _run(
+            [
+                python,
+                "-m",
+                "ruff",
+                "check",
+                "--output-format",
+                "json",
+                "tools",
+                "ci",
+                "tests",
+            ],
+            root=root,
+            environment=environment,
+            stdout=stream,
+        )
+    with typing_report.open("w", encoding="utf-8") as stream:
+        statuses["typing"] = _run(
+            [python, "-m", "mypy", "--output", "json", "tools", "ci"],
+            root=root,
+            environment=environment,
+            stdout=stream,
+        )
 
     statuses["coverage_erase"] = _run(
         [python, "-m", "coverage", "erase"],
@@ -304,11 +392,26 @@ def collect_quality_evidence(
         raise QualityEvidenceError("coverage report has no total percentage")
     coverage_percent = float(totals["percent_covered"])
     secret_candidates = secret_findings(secret_document)
+    format_diagnostics = json_array_diagnostic_count(
+        format_report,
+        "Ruff format report",
+    )
+    lint_diagnostics = json_array_diagnostic_count(
+        lint_report,
+        "Ruff lint report",
+    )
+    typing_diagnostics = json_lines_diagnostic_count(
+        typing_report,
+        "mypy report",
+    )
 
     reports = {
         path.name: file_evidence(path)
         for path in (
             coverage_report,
+            format_report,
+            lint_report,
+            typing_report,
             runtime_audit,
             development_audit,
             secret_report,
@@ -319,6 +422,10 @@ def collect_quality_evidence(
         "source": _git_state(root),
         "tools": _tool_versions(),
         "scope": {
+            "static_quality": {
+                "format_and_lint": ["tools", "ci", "tests"],
+                "strict_typing": ["tools", "ci"],
+            },
             "coverage": "branch-aware unittest coverage of the tools package",
             "dependency_audit": [
                 "requirements/runtime.lock",
@@ -331,13 +438,16 @@ def collect_quality_evidence(
         },
         "thresholds": {"coverage_percent": coverage_floor},
         "results": {
+            "static_quality": {
+                "format_diagnostics": format_diagnostics,
+                "lint_diagnostics": lint_diagnostics,
+                "typing_diagnostics": typing_diagnostics,
+            },
             "coverage": {
                 "percent": coverage_percent,
                 "passes_floor": coverage_percent >= coverage_floor,
             },
-            "runtime_dependency_audit": dependency_audit_summary(
-                runtime_document
-            ),
+            "runtime_dependency_audit": dependency_audit_summary(runtime_document),
             "development_dependency_audit": dependency_audit_summary(
                 development_document
             ),
@@ -349,6 +459,11 @@ def collect_quality_evidence(
         "command_statuses": statuses,
         "reports": reports,
         "limits": [
+            (
+                "Formatting, lint and static typing cover the declared Python "
+                "paths only; a clean result is not behavior, security or semantic "
+                "acceptance evidence."
+            ),
             "Coverage is a regression signal, not acceptance or test-quality proof.",
             (
                 "The dependency audits cover known Python-package advisories "
@@ -381,7 +496,7 @@ def collect_quality_evidence(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Collect bounded coverage and security evidence",
+        description="Collect bounded static-quality, coverage and security evidence",
     )
     parser.add_argument(
         "--repository-root",

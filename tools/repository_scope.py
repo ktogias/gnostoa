@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
 import os
-from pathlib import Path
 import re
 import stat
 import subprocess
-
+from collections.abc import Mapping
+from pathlib import Path
 
 SOURCE_MANIFEST = ".gnostoa-source-files"
 
@@ -21,11 +20,7 @@ def _decode_paths(encoded_paths: bytes, source: str) -> list[Path]:
         if not encoded:
             continue
         relative = Path(os.fsdecode(encoded))
-        if (
-            relative == Path(".")
-            or relative.is_absolute()
-            or ".." in relative.parts
-        ):
+        if relative == Path(".") or relative.is_absolute() or ".." in relative.parts:
             raise RepositoryScopeError(
                 f"{source} returned an unsafe candidate path: {relative}"
             )

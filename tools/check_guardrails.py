@@ -2,22 +2,24 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import re
 import sys
+from pathlib import Path
 from typing import Any
 
 from jsonschema import Draft202012Validator
 
 from .knowledge_common import KnowledgeFormatError, load_yaml, toolkit_root
 
-
 HEADING_RE = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
 NON_SLUG_RE = re.compile(r"[^\w\s-]", re.UNICODE)
 
 
 def _schema(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    schema = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(schema, dict):
+        raise KnowledgeFormatError(f"Schema must be a mapping in {path}")
+    return schema
 
 
 def _anchor(value: str) -> str:
@@ -50,9 +52,7 @@ def _check_reference(
     if fragment:
         text = path.read_text(encoding="utf-8")
         if path.suffix.casefold() == ".md":
-            headings = {
-                _anchor(match.group(1)) for match in HEADING_RE.finditer(text)
-            }
+            headings = {_anchor(match.group(1)) for match in HEADING_RE.finditer(text)}
             if fragment not in headings:
                 return [f"{label} heading does not exist: {reference!r}"]
         if path.suffix.casefold() == ".py":
@@ -114,9 +114,7 @@ def check_guardrails(
                 continue
             for reference in references:
                 if isinstance(reference, str):
-                    issues.extend(
-                        _check_reference(root, reference, f"{label}.{field}")
-                    )
+                    issues.extend(_check_reference(root, reference, f"{label}.{field}"))
 
     return sorted(set(issues))
 

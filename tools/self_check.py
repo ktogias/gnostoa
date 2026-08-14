@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 import sys
 import unittest
+from pathlib import Path
 
 from .check_change_policy import check_change_policy
 from .check_ci_policy import check_ci_policy
 from .check_guardrails import check_guardrails
 from .knowledge_common import KnowledgeFormatError, toolkit_root
 from .validate_bundle import validate_bundle
-
 
 BUNDLES = (
     ("generic example", "core/profile.yaml", "examples/generic"),
@@ -38,9 +37,9 @@ def self_check(repository_root: Path, run_tests: bool = True) -> bool:
         errors = [issue for issue in issues if issue.severity == "error"]
         if errors:
             passed = False
-            for issue in errors:
+            for bundle_issue in errors:
                 print(
-                    f"ERROR: {name}: {issue.path}: {issue.message}",
+                    f"ERROR: {name}: {bundle_issue.path}: {bundle_issue.message}",
                     file=sys.stderr,
                 )
         else:
@@ -52,8 +51,8 @@ def self_check(repository_root: Path, run_tests: bool = True) -> bool:
     )
     if guardrail_issues:
         passed = False
-        for issue in guardrail_issues:
-            print(f"ERROR: guardrails: {issue}", file=sys.stderr)
+        for guardrail_issue in guardrail_issues:
+            print(f"ERROR: guardrails: {guardrail_issue}", file=sys.stderr)
     else:
         print("OK: guardrail coverage")
 
@@ -67,8 +66,8 @@ def self_check(repository_root: Path, run_tests: bool = True) -> bool:
             policy_issues = [str(exc)]
         if policy_issues:
             passed = False
-            for issue in policy_issues:
-                print(f"ERROR: {name}: {issue}", file=sys.stderr)
+            for policy_issue in policy_issues:
+                print(f"ERROR: {name}: {policy_issue}", file=sys.stderr)
         else:
             print(f"OK: {name}")
 
@@ -89,8 +88,8 @@ def self_check(repository_root: Path, run_tests: bool = True) -> bool:
             ci_issues = [str(exc)]
         if ci_issues:
             passed = False
-            for issue in ci_issues:
-                print(f"ERROR: {name}: {issue}", file=sys.stderr)
+            for ci_issue in ci_issues:
+                print(f"ERROR: {name}: {ci_issue}", file=sys.stderr)
         else:
             print(f"OK: {name}")
 

@@ -42,14 +42,16 @@ commands, license and notice and can emit a path-neutral evidence manifest with
 the source, public-surface and artifact digests. The
 [compatibility note](compatibility.md) states the current exact-pin boundary
 and non-promises. This is release-candidate evidence, not a published package
-claim. The extended suite now records branch-aware `tools/` coverage with a
-65% regression floor, known-vulnerability audits of both exact Python locks and
-a no-network heuristic scan of the current Git-tracked tree. Those reports are
-unsigned and time-bound; coverage does not prove acceptance, the package audit
-does not establish package trust, and the tree scan does not cover history or
-provider artifacts. A third-party license inventory, an SBOM, the full exposed
-history/provider disclosure audit, declared formatting/lint and static-typing
-gates, remaining release gates and publication still remain open.
+claim. The extended suite now enforces Ruff formatting and a bounded lint set,
+strictly type-checks the maintained `tools/` and `ci/` Python surfaces, and
+records branch-aware `tools/` coverage with a 65% regression floor,
+known-vulnerability audits of both exact Python locks and a no-network
+heuristic scan of the current Git-tracked tree. Those reports are unsigned and
+bounded evidence: static analysis and coverage do not prove acceptance, the
+package audit does not establish package trust, and the tree scan does not
+cover history or provider artifacts. A third-party license inventory, an SBOM,
+lock artifact hashes, the full exposed history/provider disclosure audit,
+remaining release gates and publication still remain open.
 
 ## Current direction
 

@@ -4,8 +4,8 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
 import sys
+from pathlib import Path
 from typing import Any
 
 from jsonschema import Draft202012Validator
@@ -16,7 +16,6 @@ from .knowledge_common import (
     load_yaml,
     toolkit_root,
 )
-
 
 UNENFORCED_REVISIONS = {"", "development", "unknown"}
 PUBLIC_SURFACE_PATHS = (
@@ -37,7 +36,10 @@ IGNORED_SUFFIXES = {".pyc", ".pyo"}
 
 
 def _schema(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    schema = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(schema, dict):
+        raise KnowledgeFormatError(f"Schema must be a mapping in {path}")
+    return schema
 
 
 def public_surface_digest(root: Path) -> str:
@@ -48,7 +50,9 @@ def public_surface_digest(root: Path) -> str:
         if path.is_file():
             files.append(path)
         elif path.is_dir():
-            files.extend(candidate for candidate in path.rglob("*") if candidate.is_file())
+            files.extend(
+                candidate for candidate in path.rglob("*") if candidate.is_file()
+            )
 
     digest = hashlib.sha256()
     included = 0
@@ -154,15 +158,11 @@ def check_runtime_lock(
         try:
             source.relative_to(root)
         except ValueError:
-            issues.append(
-                f"toolkit.source escapes project root: {source_reference!r}"
-            )
+            issues.append(f"toolkit.source escapes project root: {source_reference!r}")
             source = None
         else:
             if not source.is_dir():
-                issues.append(
-                    f"toolkit.source does not exist: {source_reference!r}"
-                )
+                issues.append(f"toolkit.source does not exist: {source_reference!r}")
                 source = None
 
     profile_reference = toolkit.get("profile")
@@ -176,9 +176,7 @@ def check_runtime_lock(
             )
         else:
             if not profile.is_file():
-                issues.append(
-                    f"toolkit.profile does not exist: {profile_reference!r}"
-                )
+                issues.append(f"toolkit.profile does not exist: {profile_reference!r}")
             else:
                 try:
                     load_profile(profile)
@@ -186,9 +184,7 @@ def check_runtime_lock(
                     issues.append(f"toolkit.profile is invalid: {exc}")
 
     if source is not None:
-        executing_root = (
-            runtime_root.resolve() if runtime_root else toolkit_root()
-        )
+        executing_root = runtime_root.resolve() if runtime_root else toolkit_root()
         try:
             source_digest = public_surface_digest(source)
             runtime_digest = public_surface_digest(executing_root)

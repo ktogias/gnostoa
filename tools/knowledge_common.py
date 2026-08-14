@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import os
-from pathlib import Path
 import re
-from typing import Any, Iterable
+from collections.abc import Iterable
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 import yaml
-
 
 FRONTMATTER_RE = re.compile(
     r"\A---[ \t]*\r?\n(?P<yaml>.*?)\r?\n---[ \t]*(?:\r?\n|$)(?P<body>.*)\Z",
@@ -48,9 +48,7 @@ def toolkit_root() -> Path:
     if configured:
         root = Path(configured).expanduser().resolve()
         missing = [
-            marker
-            for marker in TOOLKIT_ROOT_MARKERS
-            if not (root / marker).is_file()
+            marker for marker in TOOLKIT_ROOT_MARKERS if not (root / marker).is_file()
         ]
         if missing:
             raise KnowledgeFormatError(
@@ -134,22 +132,26 @@ def load_concepts(bundle: Path) -> list[Document]:
 
 def deep_merge(parent: Any, child: Any) -> Any:
     if isinstance(parent, dict) and isinstance(child, dict):
-        merged = dict(parent)
+        merged_mapping = dict(parent)
         for key, value in child.items():
-            merged[key] = (
-                deep_merge(merged[key], value) if key in merged else value
+            merged_mapping[key] = (
+                deep_merge(merged_mapping[key], value)
+                if key in merged_mapping
+                else value
             )
-        return merged
+        return merged_mapping
     if isinstance(parent, list) and isinstance(child, list):
-        merged = list(parent)
+        merged_sequence = list(parent)
         for value in child:
-            if value not in merged:
-                merged.append(value)
-        return merged
+            if value not in merged_sequence:
+                merged_sequence.append(value)
+        return merged_sequence
     return child
 
 
-def _assert_monotonic(parent: dict[str, Any], child: dict[str, Any], path: Path) -> None:
+def _assert_monotonic(
+    parent: dict[str, Any], child: dict[str, Any], path: Path
+) -> None:
     parent_rules = parent.get("rules", {})
     child_rules = child.get("rules", {})
     if not isinstance(parent_rules, dict) or not isinstance(child_rules, dict):
@@ -209,7 +211,10 @@ def _load_profile(path: Path, stack: tuple[Path, ...]) -> dict[str, Any]:
         merged = deep_merge(merged, parent)
 
     _assert_monotonic(merged, current, path)
-    return deep_merge(merged, current)
+    result = deep_merge(merged, current)
+    if not isinstance(result, dict):
+        raise KnowledgeFormatError(f"Merged profile must be a mapping in {path}")
+    return result
 
 
 def markdown_links(body: str) -> list[str]:

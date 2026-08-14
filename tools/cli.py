@@ -1,13 +1,19 @@
 from __future__ import annotations
 
-from importlib.metadata import PackageNotFoundError, version
 import sys
-from typing import Callable
+from collections.abc import Callable
+from importlib.metadata import PackageNotFoundError, version
 
-from . import build_context_pack, build_docs, check_change_policy, check_ci_policy
-from . import check_guardrails
-from . import check_runtime_lock, self_check, validate_bundle
-
+from . import (
+    build_context_pack,
+    build_docs,
+    check_change_policy,
+    check_ci_policy,
+    check_guardrails,
+    check_runtime_lock,
+    self_check,
+    validate_bundle,
+)
 
 COMMANDS: dict[str, tuple[str, Callable[[list[str] | None], int]]] = {
     "validate": ("validate an OKF bundle", validate_bundle.main),

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from tools.quality_evidence import (
@@ -12,15 +12,18 @@ from tools.quality_evidence import (
     collect_quality_evidence,
     dependency_audit_summary,
     file_evidence,
+    json_array_diagnostic_count,
+    json_lines_diagnostic_count,
     secret_findings,
 )
-
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
 class QualityEvidenceParsingTests(unittest.TestCase):
-    def test_secret_findings_expose_location_and_type_but_not_secret_material(self) -> None:
+    def test_secret_findings_expose_location_and_type_but_not_secret_material(
+        self,
+    ) -> None:
         report = {
             "results": {
                 "tracked.txt": [
@@ -83,6 +86,24 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                 file_evidence(path),
             )
 
+    def test_static_diagnostic_counts_validate_machine_readable_reports(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ruff_report = root / "ruff.json"
+            mypy_report = root / "mypy.jsonl"
+            ruff_report.write_text('[{"code": "I001"}, {"code": "UP035"}]\n')
+            mypy_report.write_text(
+                '{"code": "assignment", "severity": "error"}\n',
+                encoding="utf-8",
+            )
+
+            self.assertEqual(2, json_array_diagnostic_count(ruff_report, "ruff"))
+            self.assertEqual(1, json_lines_diagnostic_count(mypy_report, "mypy"))
+
+            mypy_report.write_text("not-json\n", encoding="utf-8")
+            with self.assertRaisesRegex(QualityEvidenceError, "mypy"):
+                json_lines_diagnostic_count(mypy_report, "mypy")
+
     def test_collector_writes_bounded_summary_from_successful_reports(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "repository"
@@ -95,7 +116,11 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                 )
 
             def fake_run(command, *, root, environment=None, stdout=None):
-                if command[2:4] == ["coverage", "json"]:
+                if command[2] == "ruff":
+                    json.dump([], stdout)
+                elif command[2] == "mypy":
+                    stdout.write("")
+                elif command[2:4] == ["coverage", "json"]:
                     report = Path(command[command.index("-o") + 1])
                     report.write_text(
                         json.dumps({"totals": {"percent_covered": 72.5}}),
@@ -133,7 +158,11 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                     return_value={
                         "coverage": "1",
                         "detect-secrets": "1",
+                        "mypy": "1",
                         "pip-audit": "1",
+                        "ruff": "1",
+                        "types-PyYAML": "1",
+                        "types-jsonschema": "1",
                     },
                 ),
                 patch(
@@ -145,6 +174,14 @@ class QualityEvidenceParsingTests(unittest.TestCase):
 
             summary = json.loads(summary_path.read_text(encoding="utf-8"))
             self.assertEqual("abc123", summary["source"]["revision"])
+            self.assertEqual(
+                {
+                    "format_diagnostics": 0,
+                    "lint_diagnostics": 0,
+                    "typing_diagnostics": 0,
+                },
+                summary["results"]["static_quality"],
+            )
             self.assertEqual(72.5, summary["results"]["coverage"]["percent"])
             self.assertEqual(
                 0,
@@ -161,6 +198,9 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                 {
                     "coverage.json",
                     "development-dependency-audit.json",
+                    "mypy.jsonl",
+                    "ruff-format.json",
+                    "ruff-lint.json",
                     "runtime-dependency-audit.json",
                     "tracked-tree-secret-scan.json",
                 },
@@ -179,7 +219,11 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                 )
 
             def fake_run(command, *, root, environment=None, stdout=None):
-                if command[2:4] == ["coverage", "json"]:
+                if command[2] == "ruff":
+                    json.dump([], stdout)
+                elif command[2] == "mypy":
+                    stdout.write("")
+                elif command[2:4] == ["coverage", "json"]:
                     Path(command[command.index("-o") + 1]).write_text(
                         json.dumps({"totals": {"percent_covered": 72.5}}),
                         encoding="utf-8",
@@ -217,7 +261,11 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                     return_value={
                         "coverage": "1",
                         "detect-secrets": "1",
+                        "mypy": "1",
                         "pip-audit": "1",
+                        "ruff": "1",
+                        "types-PyYAML": "1",
+                        "types-jsonschema": "1",
                     },
                 ),
                 patch(
@@ -269,23 +317,31 @@ class QualityEvidenceParsingTests(unittest.TestCase):
 
 class QualityEvidenceIntegrationTests(unittest.TestCase):
     def test_extended_suite_uses_exact_tools_and_uploads_bounded_reports(self) -> None:
-        lock = (ROOT / "requirements" / "development.lock").read_text(
-            encoding="utf-8"
-        )
+        lock = (ROOT / "requirements" / "development.lock").read_text(encoding="utf-8")
         for requirement in (
             "coverage==7.15.2",
             "detect-secrets==1.5.0",
+            "mypy==2.3.0",
             "pip-audit==2.10.1",
+            "ruff==0.16.0",
+            "types-jsonschema==4.26.0.20260518",
+            "types-PyYAML==6.0.12.20260518",
         ):
             self.assertIn(requirement, lock)
+
+        project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        self.assertIn("[tool.ruff]", project)
+        self.assertIn('target-version = "py311"', project)
+        self.assertIn("[tool.mypy]", project)
+        self.assertIn("strict = true", project)
 
         verify = (ROOT / "ci" / "verify").read_text(encoding="utf-8")
         self.assertIn("ci/quality_evidence.py", verify)
         self.assertIn("GNOSTOA_QUALITY_OUTPUT", verify)
 
-        workflow = (
-            ROOT / ".github" / "workflows" / "verification.yml"
-        ).read_text(encoding="utf-8")
+        workflow = (ROOT / ".github" / "workflows" / "verification.yml").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("gnostoa-quality-evidence", workflow)
         self.assertIn(
             "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
