@@ -20,6 +20,14 @@ PROJECTION_SURFACES = (
     "templates",
 )
 SCHEMA_PROJECTION_VERSION = "v1"
+NAV_NATIVE_ROOTS = (
+    "docs/",
+    "guidance/",
+    "knowledge/",
+    "policy/",
+    "schemas/",
+    "templates/",
+)
 NAV_DOCUMENT_RE = re.compile(
     r"^(?P<prefix>\s*-\s+[^:\n]+:\s+)(?P<path>[^\s]+\.md)\s*$",
     re.MULTILINE,
@@ -29,7 +37,7 @@ NAV_DOCUMENT_RE = re.compile(
 def _projection_config(source: str, content: Path, site: Path) -> str:
     def prefix_document(match: re.Match[str]) -> str:
         path = match.group("path")
-        if path.startswith("docs/"):
+        if path.startswith(NAV_NATIVE_ROOTS):
             return match.group(0)
         return f"{match.group('prefix')}docs/{path}"
 

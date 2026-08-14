@@ -1387,6 +1387,22 @@ runtime:
 
 
 class DocumentationTests(unittest.TestCase):
+    def test_public_front_door_exposes_verified_evaluation_path(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        quick_start = (ROOT / "docs" / "quick-start.md").read_text(
+            encoding="utf-8"
+        )
+        status = (ROOT / "docs" / "status.md").read_text(encoding="utf-8")
+
+        self.assertIn("## Try Gnostoa from this checkout", readme)
+        self.assertIn("--seed example.system.processing", readme)
+        self.assertIn("python -m pip install --no-deps -e .", readme)
+        self.assertIn("No package, image or site has been released yet", readme)
+        self.assertIn("navigation projection", quick_start)
+        self.assertIn("knowledge validate", quick_start)
+        self.assertIn("navigation projection", status)
+        self.assertIn("Pre-release", status)
+
     def test_repository_documentation_links_resolve(self) -> None:
         paths = [
             ROOT / "README.md",
@@ -1434,6 +1450,18 @@ class DocumentationTests(unittest.TestCase):
             )
             projected_config = config.read_text(encoding="utf-8")
             self.assertIn("- Home: docs/index.md", projected_config)
+            self.assertIn(
+                "- Reusable guidance: guidance/index.md",
+                projected_config,
+            )
+            self.assertIn(
+                "- Project status: knowledge/project/gnostoa.md",
+                projected_config,
+            )
+            self.assertNotIn("docs/guidance/index.md", projected_config)
+            self.assertNotIn("docs/knowledge/project/gnostoa.md", projected_config)
+            self.assertIn("not_in_nav:", projected_config)
+            self.assertIn("!templates/**", projected_config)
             self.assertIn("docs_dir:", projected_config)
 
 

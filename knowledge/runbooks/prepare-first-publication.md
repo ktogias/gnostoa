@@ -191,6 +191,13 @@ with costs and limits, not as unexplained governance volume.
 
 ### Stage 4 — make installation and verification reproducible
 
+Current characterization from 2026-08-14: a wheel built from a clean candidate
+and installed successfully into a fresh environment, but `knowledge validate`
+then failed because the installed distribution did not contain the required
+`schemas/` data. The editable source-checkout route works. This is a concrete
+release blocker and must be fixed and covered by the end-to-end release smoke
+test below; it must not be represented as a released or working wheel path.
+
 1. Build an sdist and wheel from a clean checkout. Install each into a fresh
    environment and run the documented quick start without an editable source
    checkout.
