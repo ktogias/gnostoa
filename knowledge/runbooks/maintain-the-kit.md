@@ -76,10 +76,17 @@ Runtime, distribution and CI changes additionally require a pinned-base check,
 non-root image check, container smoke test, CI-policy validation and inspection
 of provider event/security mappings.
 
-Until the first baseline commit and remote exist, follow the bootstrap exception
-recorded in
-[`Decision 0006`](../decisions/0006-provider-neutral-change-governance.md).
-After publication, absence of repository protection is a failed verification.
+Until the first reviewed source baseline is integrated under effective provider
+protection, follow the bounded bootstrap exception recorded in
+[`Decision 0006`](../decisions/0006-provider-neutral-change-governance.md) and
+the temporary provider limitation and compensating controls in
+[`Decision 0013`](../decisions/0013-defer-provider-enforcement-while-private.md).
+A bootstrap commit or remote does not itself end that state, and the exception
+never authorizes an unprotected merge. If protection remains unavailable while
+the repository is private, the provider capability must become available or a
+separately authorized visibility change and verified protection must precede
+integration. After source publication, absence of repository protection is a
+failed verification.
 
 ## Recovery
 

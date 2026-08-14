@@ -35,8 +35,9 @@ exchange. The metaphor describes an environment in which governed knowledge is
 made usable, rather than a proprietary knowledge object that consuming projects
 must adopt.
 
-This repository has no baseline commit, remote, published package or released
-runtime image. The rename therefore occurs within the bootstrap exception
+When this Decision was prepared, the project had no baseline commit, remote,
+published package or released runtime image. The rename therefore occurred
+within the bootstrap exception
 defined by Decision 0006 and does not require a compatibility alias for a
 released artifact.
 

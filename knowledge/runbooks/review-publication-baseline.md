@@ -31,9 +31,12 @@ x-project-knowledge:
 
 This runbook governs accountable-owner semantic review of one exact private
 pre-publication source-baseline candidate. Its immediate decision is whether
-that candidate may be accepted and integrated into the default branch as a
-private source baseline. It does not itself authorize a repository-visibility
-change, source publication or publication of a package, OCI image or site.
+that candidate may be accepted for protected default-branch integration. When
+effective provider protection is available while the repository is private,
+integration creates a private source baseline. Otherwise a separately
+authorized visibility change and verified protection must precede integration.
+This runbook does not itself authorize a repository-visibility change, source
+publication or publication of a package, OCI image or site.
 
 The publication lifecycle keeps these states distinct:
 
@@ -41,14 +44,24 @@ The publication lifecycle keeps these states distinct:
    a proposed source revision.
 2. **Owner acceptance:** the accountable owner accepts the semantics of one
    exact candidate revision.
-3. **Default-branch integration:** the accepted revision becomes the private
-   integrated source baseline.
+3. **Protected default-branch integration:** with required provider protection
+   already effective, the accepted revision becomes the integrated source
+   baseline.
 4. **Repository visibility and source publication:** a separate authorized
-   provider change makes the selected source revision public.
+   provider change exposes the provider-defined repository surface, not only a
+   selected revision. The source-publication audit therefore covers the exact
+   accepted revision plus the branches, history, Work Items, Change Requests,
+   automation records and settings that the provider will expose.
 5. **Artifact or site publication:** separately verified packages, images or
    documentation projections are released through their own gates.
 
-Completion of one state never implies or authorizes the next.
+The default route completes private integration before visibility changes. If
+the provider cannot enforce required protection while private, state 4 needs
+its own authorization and verified protection before state 3; the candidate
+remains unmerged until protection is effective. In either route, owner
+acceptance does not authorize visibility, visibility does not authorize merge,
+and protection precedes integration. Completion of one state never otherwise
+implies or authorizes the next.
 
 The `Reusable guidance` and `Toolkit self-knowledge` matrices below together
 form the mandatory canonical-source traversal manifest for this review. They

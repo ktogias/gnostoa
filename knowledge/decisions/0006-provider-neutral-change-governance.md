@@ -36,6 +36,8 @@ x-project-knowledge:
     - kind: verified-by
       target: /runbooks/maintain-the-kit.md
     - kind: references
+      target: /decisions/0013-defer-provider-enforcement-while-private.md
+    - kind: references
       target: /decisions/0014-strengthen-gnostoa-self-governance.md
 ---
 
@@ -50,9 +52,12 @@ encourage oversized changes and duplicate information already present in a
 Change Request. Naming GitHub as part of the public contract would also be
 incorrect for GitLab, self-hosted and non-forge environments.
 
-This repository is still an unpublished bootstrap: it has no baseline commit,
-remote or protected integration branch. The workflow being introduced therefore
-cannot govern the commits that precede its own existence.
+When this Decision was prepared, the repository was an unpublished local
+bootstrap with no baseline commit, remote or protected integration branch. The
+workflow being introduced could not govern commits that preceded its own
+existence. A later bootstrap commit or remote does not retroactively change
+that historical exception and does not establish a protected integrated
+baseline.
 
 ## Decision
 
@@ -78,10 +83,16 @@ self-authored change. The accountable maintainer inspects the final diff before
 merge; community contributions receive maintainer review. Specializations can
 add independent approvals, mandatory Decisions and earlier evidence timing.
 
-Treat the current unpublished implementation as the single bootstrap exception.
-The first published baseline must enable repository protection immediately;
-all later changes follow the new policy. The exception does not waive tests,
-bundle validation or a human review of the baseline before publication.
+Treat only the commits that materialize the unpublished first candidate as the
+single bootstrap exception. The exception does not authorize integration
+without effective provider protection. The first reviewed baseline may enter
+the default branch only after required protection is effective. If the provider
+cannot protect the private repository, either that capability must become
+available or a separately authorized visibility change and verified protection
+must precede merge, as recorded in
+[Decision 0013](0013-defer-provider-enforcement-while-private.md). All later
+changes follow the new policy. The exception does not waive tests, bundle
+validation or human review of the baseline before source publication.
 
 ## Consequences
 
