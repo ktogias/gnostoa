@@ -208,6 +208,16 @@ boundary. Supplying `--source-revision <exact-git-object-id>` and
 console commands, license and notice and records a deterministic path-neutral
 JSON manifest. The manifest is unsigned build evidence, not published
 provenance or a replacement for the remaining security and release gates.
+The scheduled/manual extended suite now adds branch-aware `tools/` coverage
+with an initial 65% regression floor, known-vulnerability lookups for both
+exact Python lock files and a no-network heuristic scan of the current
+Git-tracked tree. It uploads the machine-readable reports as short-lived CI
+evidence. This closes only those bounded Stage 4 evidence gaps: coverage is not
+acceptance, vulnerability data is time/provider-bound, the dependency locks do
+not yet use artifact hashes, and the secret scan does not inspect Git history,
+provider metadata, Actions artifacts or logs. The Stage 6 disclosure audit,
+formatting/lint and static-typing gates, third-party license inventory and SBOM
+remain separate open gates.
 
 1. Build an sdist and wheel from a clean checkout. Install each into a fresh
    environment and run the documented quick start without an editable source

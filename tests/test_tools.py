@@ -267,8 +267,11 @@ class PublicationBaselineTests(unittest.TestCase):
 class LicensePolicyTests(unittest.TestCase):
     def test_distribution_declares_one_apache_2_license_contract(self) -> None:
         license_bytes = (ROOT / "LICENSE").read_bytes()
+        expected_license_digest = (
+            "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"  # pragma: allowlist secret -- public LICENSE digest
+        )
         self.assertEqual(
-            "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+            expected_license_digest,
             hashlib.sha256(license_bytes).hexdigest(),
         )
         license_text = license_bytes.decode("utf-8")

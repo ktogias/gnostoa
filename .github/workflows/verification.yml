@@ -136,11 +136,26 @@ jobs:
             --build-arg VCS_REF="${GITHUB_SHA}" \
             --tag "${GNOSTOA_CI_IMAGE}" \
             .
+      - name: Prepare the evidence output
+        run: mkdir -p "${RUNNER_TEMP}/gnostoa-quality-evidence"
       - name: Run extended verification
         run: |
           docker run --rm \
+            --user "$(id -u):$(id -g)" \
             --entrypoint sh \
+            --env HOME=/tmp \
+            --env GNOSTOA_QUALITY_OUTPUT=/evidence \
             --mount type=bind,source="${GITHUB_WORKSPACE}",target=/workspace,readonly \
+            --mount type=bind,source="${RUNNER_TEMP}/gnostoa-quality-evidence",target=/evidence \
             --workdir /workspace \
             "${GNOSTOA_CI_IMAGE}" \
             -ec './ci/verify extended'
+      - name: Upload bounded quality evidence
+        if: ${{ always() }}
+        # actions/upload-artifact v4.6.2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gnostoa-quality-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/gnostoa-quality-evidence
+          if-no-files-found: error
+          retention-days: 14

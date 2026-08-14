@@ -28,4 +28,4 @@ suites:
   extended:
     command: ["./ci/verify", extended]
     timeout_minutes: 30
-    evidence: [artifact]
+    evidence: [artifact, test-report]

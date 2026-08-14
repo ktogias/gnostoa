@@ -1,6 +1,8 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.coverage
+.coverage.*
 .venv/
 site/
 dist/
@@ -9,4 +11,3 @@ dist/
 
 # Generated orientation artifacts are reproducible and must not become truth.
 context-packs/
-
