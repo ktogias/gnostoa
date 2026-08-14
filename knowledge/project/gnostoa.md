@@ -109,6 +109,12 @@ source-publication gates are:
    ruleset on the three branches, so protection must be verified before any
    integration.
 
+A bounded exact-string screening on 2026-08-14 found no obvious collision in
+the accessible GitHub, PyPI, npm or indexed-web results; crates.io remained
+inconclusive. This is not legal or registry clearance. Decision 0009 records
+the official OBI, EUIPO/TMview and WIPO route still required for similar-mark,
+goods-and-services and territory review. Gate 2 therefore remains open.
+
 The PR 2 and Issue 1 provider descriptions are now reconciled to the accepted
 head and completed review. Their exact body SHA-256 values are
 `85e60269c7373183c1d87e396fed6fc2895a982f65fb62d936ede706f04a47a6` and
