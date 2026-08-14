@@ -34,10 +34,11 @@ independent transfer pilot.
 - scalable guided review with low cognitive load; or
 - independent trademark clearance for the working project name.
 
-A clean wheel currently builds and installs, but its installed CLI cannot find
-the required schema data. Editable source execution and the repository-backed
-container route remain the supported evaluation paths until packaging and
-release smoke tests close that blocker.
+A clean wheel currently builds and installs, but its CLI has no verified
+binding to the separate pinned public source and therefore cannot locate the
+required schema data. Editable source execution and the repository-backed
+container route remain the supported evaluation paths until native source
+binding and release smoke tests close that blocker.
 
 ## Current direction
 

@@ -193,10 +193,14 @@ with costs and limits, not as unexplained governance volume.
 
 Current characterization from 2026-08-14: a wheel built from a clean candidate
 and installed successfully into a fresh environment, but `knowledge validate`
-then failed because the installed distribution did not contain the required
-`schemas/` data. The editable source-checkout route works. This is a concrete
-release blocker and must be fixed and covered by the end-to-end release smoke
-test below; it must not be represented as a released or working wheel path.
+then failed because native execution had no verified binding to the separate
+pinned public source and its default root did not contain the required
+`schemas/` data. The editable source-checkout route works. Decision 0005 keeps
+native execution separate from pinned public source/profile assets, so the
+remediation must establish an explicit source binding or deliberately revise
+that contract; it must not silently create a second canonical copy. This is a
+concrete release blocker and must be covered by the end-to-end release smoke
+test below.
 
 1. Build an sdist and wheel from a clean checkout. Install each into a fresh
    environment and run the documented quick start without an editable source

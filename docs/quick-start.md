@@ -48,9 +48,10 @@ Decision and the project root. The context pack is derived orientation only;
 the linked files under `examples/generic/` remain authoritative.
 
 This is deliberately an editable source-checkout installation. The current
-wheel omits required repository data such as schemas and therefore is not a
-supported quick-start path. Release preparation must correct and retest that
-artifact rather than hiding the limitation here.
+wheel installation has no verified binding to the separate pinned public
+source that supplies schemas and profiles, so it is not a supported quick-start
+path. Release preparation must define and retest that binding rather than hide
+the limitation or silently create a second canonical copy.
 
 ## Container route
 

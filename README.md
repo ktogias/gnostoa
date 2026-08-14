@@ -65,8 +65,9 @@ root, while the Markdown files remain canonical. See the
 interpretation and limits of this result.
 
 The editable install is intentional for the current source candidate. A clean
-non-editable wheel is not yet a supported route; packaging the schemas and
-other declared runtime data is a recorded release blocker.
+non-editable wheel is not yet a supported route because its execution has not
+been bound and verified against a separate pinned public-source checkout. That
+native source-binding gap is a recorded release blocker.
 
 ## What works today
 
