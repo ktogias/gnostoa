@@ -3,14 +3,23 @@ from __future__ import annotations
 import importlib
 import hashlib
 import json
-from contextlib import redirect_stdout
+import os
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 import re
 import tempfile
 import tomllib
 import unittest
+import zipfile
+from unittest.mock import patch
 
+from tools.release_smoke import (
+    ReleaseSmokeError,
+    release_smoke,
+    wheel_canonical_payloads,
+)
+from tools import knowledge_common
 from tools.build_context_pack import build_pack
 from tools.build_docs import prepare_projection
 from tools.check_change_policy import check_change_policy, load_change_policy
@@ -1038,6 +1047,101 @@ suites:
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_source_checkout_is_the_default_toolkit_root(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(ROOT, knowledge_common.toolkit_root())
+
+    def test_native_distribution_requires_explicit_public_source_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            installed_module = (
+                Path(directory)
+                / "site-packages"
+                / "tools"
+                / "knowledge_common.py"
+            )
+            with patch.dict(os.environ, {}, clear=True), patch.object(
+                knowledge_common,
+                "__file__",
+                str(installed_module),
+            ):
+                with self.assertRaisesRegex(
+                    KnowledgeFormatError,
+                    "KNOWLEDGE_KIT_ROOT.*pinned Gnostoa public-source root",
+                ):
+                    knowledge_common.toolkit_root()
+
+    def test_explicit_public_source_binding_rejects_wrong_root(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(
+                os.environ,
+                {"KNOWLEDGE_KIT_ROOT": directory},
+                clear=True,
+            ):
+                with self.assertRaisesRegex(
+                    KnowledgeFormatError,
+                    "does not identify a Gnostoa public-source root",
+                ):
+                    knowledge_common.toolkit_root()
+
+    def test_native_cli_reports_source_binding_error_without_traceback(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            commands = (
+                [
+                    "validate",
+                    "--profile",
+                    str(ROOT / "core" / "profile.yaml"),
+                    "--bundle",
+                    str(ROOT / "examples" / "generic"),
+                ],
+                ["self-check"],
+                ["docs-build", "--site-dir", str(Path(directory) / "site")],
+                ["check-guardrails"],
+                ["check-change-policy"],
+                ["check-ci-policy"],
+            )
+            for command in commands:
+                with self.subTest(command=command):
+                    output = StringIO()
+                    with patch.dict(
+                        os.environ,
+                        {"KNOWLEDGE_KIT_ROOT": directory},
+                        clear=True,
+                    ), redirect_stderr(output):
+                        self.assertEqual(2, cli_main(command))
+                    message = output.getvalue()
+                    self.assertIn("KNOWLEDGE_KIT_ROOT", message)
+                    self.assertNotIn("Traceback", message)
+
+    def test_release_smoke_rejects_nonempty_artifact_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "artifacts"
+            output.mkdir()
+            (output / "existing.txt").write_text("keep\n", encoding="utf-8")
+            with self.assertRaisesRegex(
+                ReleaseSmokeError,
+                "artifact output directory is not empty",
+            ):
+                release_smoke(ROOT, output)
+
+    def test_execution_wheel_must_not_duplicate_canonical_source(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            wheel = Path(directory) / "gnostoa-test.whl"
+            with zipfile.ZipFile(wheel, "w") as archive:
+                archive.writestr("tools/cli.py", "")
+                archive.writestr("schemas/profile.schema.json", "{}")
+            self.assertEqual(
+                ["schemas/profile.schema.json"],
+                wheel_canonical_payloads(wheel),
+            )
+
+    def test_release_build_frontend_and_backend_are_pinned(self) -> None:
+        development_lock = (
+            ROOT / "requirements" / "development.lock"
+        ).read_text(encoding="utf-8")
+        self.assertIn("build==1.5.0", development_lock)
+        self.assertIn("pyproject-hooks==1.2.0", development_lock)
+        self.assertIn("setuptools==83.0.0", development_lock)
+
     def test_runtime_lock_requires_pinned_public_surface_digest(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1400,6 +1504,7 @@ class DocumentationTests(unittest.TestCase):
         self.assertIn("No package, image or site has been released yet", readme)
         self.assertIn("navigation projection", quick_start)
         self.assertIn("knowledge validate", quick_start)
+        self.assertIn("KNOWLEDGE_KIT_ROOT", quick_start)
         self.assertIn("navigation projection", status)
         self.assertIn("Pre-release", status)
 

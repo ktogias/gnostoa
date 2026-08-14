@@ -188,6 +188,9 @@ guardrails:
       - requirements/development.lock
       - .devcontainer/devcontainer.json
       - tools/cli.py#main
+      - tools/knowledge_common.py#toolkit_root
+      - tools/release_smoke.py#release_smoke
+      - ci/release_smoke.py
       - guidance/workflows/bootstrap-new-project.md#procedure
     tests:
       - tests/test_tools.py::RuntimeTests.test_runtime_image_contract_is_pinned_and_non_root
@@ -196,6 +199,10 @@ guardrails:
       - tests/test_tools.py::RuntimeTests.test_bootstrap_is_container_first_with_native_fallback
       - tests/test_tools.py::RuntimeTests.test_consumer_ci_templates_use_pinned_runtime_image
       - tests/test_tools.py::RuntimeTests.test_native_ci_is_explicit_fallback
+      - tests/test_tools.py::RuntimeTests.test_native_distribution_requires_explicit_public_source_binding
+      - tests/test_tools.py::RuntimeTests.test_explicit_public_source_binding_rejects_wrong_root
+      - tests/test_tools.py::RuntimeTests.test_execution_wheel_must_not_duplicate_canonical_source
+      - tests/test_tools.py::RuntimeTests.test_release_build_frontend_and_backend_are_pinned
 
   - id: runtime-source-lockstep
     title: Runtime image, toolkit public-surface digest and revisions match

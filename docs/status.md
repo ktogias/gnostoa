@@ -34,11 +34,12 @@ independent transfer pilot.
 - scalable guided review with low cognitive load; or
 - independent trademark clearance for the working project name.
 
-A clean wheel currently builds and installs, but its CLI has no verified
-binding to the separate pinned public source and therefore cannot locate the
-required schema data. Editable source execution and the repository-backed
-container route remain the supported evaluation paths until native source
-binding and release smoke tests close that blocker.
+Clean wheel and source-distribution candidates now build and run against an
+explicit separate public-source binding; an absent or malformed binding fails
+with an actionable diagnostic, and the wheel does not duplicate the canonical
+schemas or profiles. This is release-candidate evidence, not a published
+package claim. Artifact hash pinning, full release gates and publication still
+remain open.
 
 ## Current direction
 

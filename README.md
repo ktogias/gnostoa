@@ -64,10 +64,13 @@ root, while the Markdown files remain canonical. See the
 [five-minute quick start](docs/quick-start.md) for the container route,
 interpretation and limits of this result.
 
-The editable install is intentional for the current source candidate. A clean
-non-editable wheel is not yet a supported route because its execution has not
-been bound and verified against a separate pinned public-source checkout. That
-native source-binding gap is a recorded release blocker.
+The editable install is intentional for evaluating the current source
+candidate. A wheel or source-distribution install supplies execution only: set
+`KNOWLEDGE_KIT_ROOT` to the separate pinned public-source checkout that supplies
+schemas and profiles. Unbound or wrongly bound native execution fails with an
+actionable error instead of treating installed package files as canonical
+source. No artifact has been released yet; consumers must still pin the
+artifact, source revision and public-surface digest together.
 
 ## What works today
 

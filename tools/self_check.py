@@ -107,8 +107,12 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
-    return 0 if self_check(args.repository_root, not args.skip_tests) else 1
+    try:
+        args = _parser().parse_args(argv)
+        return 0 if self_check(args.repository_root, not args.skip_tests) else 1
+    except (KnowledgeFormatError, OSError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

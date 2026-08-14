@@ -81,5 +81,8 @@ read-only for validation. Pin CI images as
 
 Use the Development Container definition when maintaining the toolkit. Use the
 native environment when containers are unavailable, for low-level debugging or
-as an explicit recovery path. Both modes run the same test and validation
-commands.
+as an explicit recovery path. Install the native executable from a hash-pinned
+dependency, set `KNOWLEDGE_KIT_ROOT` to the matching pinned public-source root
+and validate the project lock before use. The source-root binding locates
+canonical assets; it does not authenticate the executable or source by itself.
+Both modes run the same test and validation commands.

@@ -47,11 +47,33 @@ Inspect the output for three concepts: the processing system, its governing
 Decision and the project root. The context pack is derived orientation only;
 the linked files under `examples/generic/` remain authoritative.
 
-This is deliberately an editable source-checkout installation. The current
-wheel installation has no verified binding to the separate pinned public
-source that supplies schemas and profiles, so it is not a supported quick-start
-path. Release preparation must define and retest that binding rather than hide
-the limitation or silently create a second canonical copy.
+This is deliberately an editable source-checkout installation and remains the
+shortest way to evaluate an unreleased revision.
+
+## Artifact-installed native fallback
+
+No artifact has been published yet. For a locally built or future released
+wheel, keep execution separate from the immutable public-source checkout:
+
+```bash
+GNOSTOA_SOURCE=/absolute/path/to/pinned/gnostoa-source
+
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -r "$GNOSTOA_SOURCE/requirements/runtime.lock"
+python -m pip install --no-deps /absolute/path/to/gnostoa-0.1.0-py3-none-any.whl
+
+export KNOWLEDGE_KIT_ROOT="$GNOSTOA_SOURCE"
+knowledge validate \
+  --profile "$KNOWLEDGE_KIT_ROOT/core/profile.yaml" \
+  --bundle "$KNOWLEDGE_KIT_ROOT/examples/generic"
+```
+
+The wheel intentionally does not duplicate canonical schemas, profiles or
+guidance. `KNOWLEDGE_KIT_ROOT` locates those assets; it does not prove their
+identity. A consuming project must also hash-pin the executable artifact and
+validate its `.knowledge/kit.lock.yaml` source revision and public-surface
+digest before use. Missing or malformed bindings fail explicitly.
 
 ## Container route
 
@@ -85,6 +107,7 @@ docker run --rm \
 ## What this proves
 
 - the checkout installs and exposes the declared `knowledge` command;
+- clean wheel and source-distribution installs use an explicit source binding;
 - the generic profile validates a technology-neutral fixture;
 - the same canonical bundle can produce a bounded derived view; and
 - the container can run the repository self-check as a non-root user.

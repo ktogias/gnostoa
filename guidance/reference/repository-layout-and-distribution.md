@@ -84,4 +84,8 @@ runtime image together in `.knowledge/kit.lock.yaml`. Record the deterministic
 toolkit public-surface digest as well as the immutable source revision and image
 digest; a revision label alone is not a transport-independent content identity.
 A native installation supplies execution only and never replaces the pinned
-public source/profile assets.
+public source/profile assets. Point native execution at those assets with
+`KNOWLEDGE_KIT_ROOT`, but do not treat that location binding as identity
+evidence: hash-pin the executable dependency and validate the project lock,
+source revision and public-surface digest before use. An absent or malformed
+source binding must fail rather than fall back to package data or ambient files.

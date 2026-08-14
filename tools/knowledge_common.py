@@ -18,6 +18,11 @@ MARKDOWN_LINK_RE = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
 HEADING_RE = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
 RESERVED_NAMES = {"index.md", "log.md"}
 POLICY_RANK = {"ignore": 0, "warning": 1, "error": 2}
+TOOLKIT_ROOT_MARKERS = (
+    "pyproject.toml",
+    "core/profile.yaml",
+    "schemas/profile.schema.json",
+)
 
 
 class KnowledgeLoader(yaml.SafeLoader):
@@ -41,8 +46,29 @@ class KnowledgeFormatError(ValueError):
 def toolkit_root() -> Path:
     configured = os.environ.get("KNOWLEDGE_KIT_ROOT")
     if configured:
-        return Path(configured).resolve()
-    return Path(__file__).resolve().parent.parent
+        root = Path(configured).expanduser().resolve()
+        missing = [
+            marker
+            for marker in TOOLKIT_ROOT_MARKERS
+            if not (root / marker).is_file()
+        ]
+        if missing:
+            raise KnowledgeFormatError(
+                "KNOWLEDGE_KIT_ROOT does not identify a Gnostoa public-source "
+                f"root ({root}); missing: {', '.join(missing)}"
+            )
+        return root
+
+    root = Path(__file__).resolve().parent.parent
+    if all((root / marker).is_file() for marker in TOOLKIT_ROOT_MARKERS):
+        return root
+
+    markers = ", ".join(TOOLKIT_ROOT_MARKERS)
+    raise KnowledgeFormatError(
+        "Native Gnostoa installation supplies execution only; set "
+        "KNOWLEDGE_KIT_ROOT to a pinned Gnostoa public-source root containing "
+        f"{markers}, then verify its lock before use"
+    )
 
 
 @dataclass(frozen=True)

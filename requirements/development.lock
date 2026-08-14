@@ -1,7 +1,8 @@
-# Exact development resolution: runtime, tests and MkDocs rendering.
+# Exact development resolution: runtime, tests, MkDocs and release builds.
 attrs==26.1.0
 babel==2.18.0
 backrefs==8.0
+build==1.5.0
 certifi==2026.7.22
 charset-normalizer==3.4.9
 click==8.4.2
@@ -24,12 +25,14 @@ pathspec==1.1.1
 platformdirs==4.11.0
 Pygments==2.20.0
 pymdown-extensions==11.0.1
+pyproject-hooks==1.2.0
 python-dateutil==2.9.0.post0
 PyYAML==6.0.3
 pyyaml_env_tag==1.1
 referencing==0.37.0
 requests==2.34.2
 rpds-py==2026.6.3
+setuptools==83.0.0
 six==1.17.0
 typing_extensions==4.16.0
 urllib3==2.7.0

@@ -197,10 +197,13 @@ then failed because native execution had no verified binding to the separate
 pinned public source and its default root did not contain the required
 `schemas/` data. The editable source-checkout route works. Decision 0005 keeps
 native execution separate from pinned public source/profile assets, so the
-remediation must establish an explicit source binding or deliberately revise
-that contract; it must not silently create a second canonical copy. This is a
-concrete release blocker and must be covered by the end-to-end release smoke
-test below.
+remediation establishes an explicit `KNOWLEDGE_KIT_ROOT` binding, validates its
+shape, fails clearly when it is absent or malformed, and keeps canonical assets
+out of the execution-only wheel. The bound location is not identity evidence;
+artifact hashes, source revision and public-surface digest must still be pinned
+and checked. `python ci/release_smoke.py --output-dir <empty-directory>` builds
+and exercises clean wheel and source-distribution installs against this
+boundary.
 
 1. Build an sdist and wheel from a clean checkout. Install each into a fresh
    environment and run the documented quick start without an editable source
