@@ -43,7 +43,14 @@ RUN find . -mindepth 1 \( -type f -o -type l \) \
     && rm -f \
       /tmp/gnostoa-source-files.unsorted \
       /tmp/.gnostoa-source-files
-RUN python -m pip install --no-cache-dir -r requirements/runtime.lock \
+RUN install --directory --owner=kit --group=kit --mode=0555 .evidence \
+    && python -m pip install \
+      --no-cache-dir \
+      --only-binary=:all: \
+      --require-hashes \
+      --report .evidence/runtime-install-report.json \
+      -r requirements/runtime.lock \
+    && chmod 0444 .evidence/runtime-install-report.json \
     && python -m pip install --no-cache-dir --no-deps -e .
 
 FROM base AS runtime
@@ -54,7 +61,13 @@ CMD ["--help"]
 
 FROM base AS development
 USER root
-RUN python -m pip install --no-cache-dir -r requirements/development.lock
+RUN python -m pip install \
+      --no-cache-dir \
+      --only-binary=:all: \
+      --require-hashes \
+      --report .evidence/development-install-report.json \
+      -r requirements/development.lock \
+    && chmod 0444 .evidence/development-install-report.json
 USER kit
 WORKDIR /workspace
 CMD ["sleep", "infinity"]

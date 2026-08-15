@@ -21,8 +21,86 @@ from tools.quality_evidence import (
     locked_requirements,
     secret_findings,
 )
+from tools.requirements_lock import LockFormatError
 
 ROOT = Path(__file__).resolve().parent.parent
+TEST_ARTIFACT_HASH = "a" * 64
+TEST_SELECTION_HASH = "b" * 64
+
+
+def _hashed_example_lock() -> str:
+    return (
+        "--only-binary :all:\n"
+        "--require-hashes\n"
+        "\n"
+        "example==1.0 \\\n"
+        f"    --hash=sha256:{TEST_ARTIFACT_HASH}\n"
+    )
+
+
+def _artifact_selection(lock: Path, *, scope: str) -> dict:
+    return {
+        "schema_version": 1,
+        "scope": scope,
+        "lock": {
+            "path": f"requirements/{lock.name}",
+            **file_evidence(lock),
+        },
+        "installer": {"name": "pip", "version": "26.0.1", "report_version": "1"},
+        "environment": {
+            "implementation_name": "cpython",
+            "platform_machine": "x86_64",
+            "platform_system": "Linux",
+            "python_version": "3.12",
+            "sys_platform": "linux",
+        },
+        "packages": [
+            {
+                "name": "example",
+                "normalized_name": "example",
+                "version": "1.0",
+                "filename": "example-1.0-py3-none-any.whl",
+                "sha256": TEST_ARTIFACT_HASH,
+                "source_host": "files.pythonhosted.org",
+            }
+        ],
+        "selection_sha256": TEST_SELECTION_HASH,
+        "summary": {
+            "packages": 1,
+            "selected_hashes_admitted": 1,
+            "yanked_artifacts": 0,
+        },
+        "limits": [],
+    }
+
+
+def _pip_report() -> dict:
+    return {
+        "version": "1",
+        "pip_version": "26.0.1",
+        "install": [
+            {
+                "download_info": {
+                    "url": (
+                        "https://files.pythonhosted.org/packages/aa/"
+                        "example-1.0-py3-none-any.whl"
+                    ),
+                    "archive_info": {"hashes": {"sha256": TEST_ARTIFACT_HASH}},
+                },
+                "is_direct": False,
+                "is_yanked": False,
+                "metadata": {"name": "example", "version": "1.0"},
+                "requested": True,
+            }
+        ],
+        "environment": {
+            "implementation_name": "cpython",
+            "platform_machine": "x86_64",
+            "platform_system": "Linux",
+            "python_version": "3.12",
+            "sys_platform": "linux",
+        },
+    }
 
 
 class QualityEvidenceParsingTests(unittest.TestCase):
@@ -30,7 +108,14 @@ class QualityEvidenceParsingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             lock = Path(directory) / "runtime.lock"
             lock.write_text(
-                "# exact runtime set\nExample_Name==1.0\nsecond==2.0\n",
+                (
+                    "--only-binary :all:\n"
+                    "--require-hashes\n"
+                    "Example_Name==1.0 \\\n"
+                    f"    --hash=sha256:{TEST_ARTIFACT_HASH}\n"
+                    "second==2.0 \\\n"
+                    f"    --hash=sha256:{'c' * 64}\n"
+                ),
                 encoding="utf-8",
             )
 
@@ -40,22 +125,42 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                         "name": "Example_Name",
                         "normalized_name": "example-name",
                         "version": "1.0",
+                        "artifact_hashes": [TEST_ARTIFACT_HASH],
                     },
                     {
                         "name": "second",
                         "normalized_name": "second",
                         "version": "2.0",
+                        "artifact_hashes": ["c" * 64],
                     },
                 ],
                 locked_requirements(lock),
             )
 
-            lock.write_text("example>=1.0\n", encoding="utf-8")
-            with self.assertRaisesRegex(QualityEvidenceError, "exact name==version"):
+            lock.write_text(
+                (
+                    "--only-binary :all:\n"
+                    "--require-hashes\n"
+                    "example>=1.0 \\\n"
+                    f"    --hash=sha256:{TEST_ARTIFACT_HASH}\n"
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(LockFormatError, "exact name==version"):
                 locked_requirements(lock)
 
-            lock.write_text("example-name==1.0\nexample_name==1.0\n", encoding="utf-8")
-            with self.assertRaisesRegex(QualityEvidenceError, "duplicate"):
+            lock.write_text(
+                (
+                    "--only-binary :all:\n"
+                    "--require-hashes\n"
+                    "example-name==1.0 \\\n"
+                    f"    --hash=sha256:{TEST_ARTIFACT_HASH}\n"
+                    "example_name==1.0 \\\n"
+                    f"    --hash=sha256:{TEST_ARTIFACT_HASH}\n"
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(LockFormatError, "duplicate"):
                 locked_requirements(lock)
 
     def test_license_inventory_binds_installed_versions_and_preserves_metadata(
@@ -63,7 +168,7 @@ class QualityEvidenceParsingTests(unittest.TestCase):
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             lock = Path(directory) / "runtime.lock"
-            lock.write_text("example==1.0\n", encoding="utf-8")
+            lock.write_text(_hashed_example_lock(), encoding="utf-8")
             package_metadata = Message()
             package_metadata["Metadata-Version"] = "2.4"
             package_metadata["Name"] = "example"
@@ -85,6 +190,7 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                     lock,
                     lock_identity="requirements/runtime.lock",
                     scope="runtime",
+                    artifact_selection=_artifact_selection(lock, scope="runtime"),
                 )
 
             self.assertEqual(
@@ -95,6 +201,7 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                     "non_spdx_declarations": 0,
                     "packages": 1,
                     "spdx_expressions": 1,
+                    "artifact_identities": 1,
                 },
                 inventory["summary"],
             )
@@ -120,6 +227,7 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                         lock,
                         lock_identity="requirements/runtime.lock",
                         scope="runtime",
+                        artifact_selection=_artifact_selection(lock, scope="runtime"),
                     )
 
     def test_license_inventory_fails_when_distribution_declares_no_license(
@@ -127,7 +235,7 @@ class QualityEvidenceParsingTests(unittest.TestCase):
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             lock = Path(directory) / "runtime.lock"
-            lock.write_text("example==1.0\n", encoding="utf-8")
+            lock.write_text(_hashed_example_lock(), encoding="utf-8")
             package_metadata = Message()
             package_metadata["Metadata-Version"] = "2.3"
             package_metadata["Name"] = "example"
@@ -142,24 +250,42 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                         lock,
                         lock_identity="requirements/runtime.lock",
                         scope="runtime",
+                        artifact_selection=_artifact_selection(lock, scope="runtime"),
                     )
 
     def test_cyclonedx_sbom_is_deterministic_and_carries_declared_licenses(
         self,
     ) -> None:
         inventory = {
-            "schema_version": 1,
+            "schema_version": 2,
             "scope": "runtime",
             "lock": {
                 "path": "requirements/runtime.lock",
                 "sha256": "a" * 64,
                 "size_bytes": 20,
             },
+            "artifact_selection": {
+                "sha256": TEST_SELECTION_HASH,
+                "environment": {
+                    "implementation_name": "cpython",
+                    "python_version": "3.12",
+                },
+                "installer": {
+                    "name": "pip",
+                    "version": "26.0.1",
+                    "report_version": "1",
+                },
+            },
             "packages": [
                 {
                     "name": "Example",
                     "normalized_name": "example",
                     "version": "1.0",
+                    "artifact": {
+                        "filename": "example-1.0-py3-none-any.whl",
+                        "sha256": TEST_ARTIFACT_HASH,
+                        "source_host": "files.pythonhosted.org",
+                    },
                     "metadata_version": "2.4",
                     "license_files": ["LICENSE"],
                     "license": {
@@ -199,6 +325,10 @@ class QualityEvidenceParsingTests(unittest.TestCase):
         self.assertEqual(
             "pkg:pypi/example@1.0",
             first["components"][0]["purl"],
+        )
+        self.assertEqual(
+            [{"alg": "SHA-256", "content": TEST_ARTIFACT_HASH}],
+            first["components"][0]["hashes"],
         )
 
     def test_secret_findings_expose_location_and_type_but_not_secret_material(
@@ -252,6 +382,39 @@ class QualityEvidenceParsingTests(unittest.TestCase):
             },
             dependency_audit_summary(report),
         )
+        self.assertEqual(
+            {
+                "dependencies": 2,
+                "vulnerabilities": 2,
+                "vulnerability_ids": ["CVE-1", "PYSEC-2"],
+                "lock_entries": 3,
+                "reported_dependencies": 2,
+                "unreported_dependencies": ["installer"],
+            },
+            dependency_audit_summary(
+                report,
+                expected_requirements=[
+                    {
+                        "name": "safe",
+                        "normalized_name": "safe",
+                        "version": "1.0",
+                        "artifact_hashes": [TEST_ARTIFACT_HASH],
+                    },
+                    {
+                        "name": "affected",
+                        "normalized_name": "affected",
+                        "version": "2.0",
+                        "artifact_hashes": [TEST_ARTIFACT_HASH],
+                    },
+                    {
+                        "name": "installer",
+                        "normalized_name": "installer",
+                        "version": "3.0",
+                        "artifact_hashes": [TEST_ARTIFACT_HASH],
+                    },
+                ],
+            ),
+        )
 
     def test_file_evidence_is_content_addressed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -291,7 +454,7 @@ class QualityEvidenceParsingTests(unittest.TestCase):
             (root / "requirements").mkdir(parents=True)
             for name in ("runtime.lock", "development.lock"):
                 (root / "requirements" / name).write_text(
-                    "example==1.0\n",
+                    _hashed_example_lock(),
                     encoding="utf-8",
                 )
             (root / "pyproject.toml").write_text(
@@ -305,7 +468,10 @@ class QualityEvidenceParsingTests(unittest.TestCase):
             distribution = SimpleNamespace(version="1.0", metadata=package_metadata)
 
             def fake_run(command, *, root, environment=None, stdout=None):
-                if command[2] == "ruff":
+                if command[2:4] == ["pip", "install"]:
+                    report = Path(command[command.index("--report") + 1])
+                    report.write_text(json.dumps(_pip_report()), encoding="utf-8")
+                elif command[2] == "ruff":
                     json.dump([], stdout)
                 elif command[2] == "mypy":
                     stdout.write("")
@@ -398,12 +564,14 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                 {
                     "coverage.json",
                     "development-dependency-audit.json",
+                    "development-artifact-selection.json",
                     "development-license-inventory.json",
                     "development-sbom.cdx.json",
                     "mypy.jsonl",
                     "ruff-format.json",
                     "ruff-lint.json",
                     "runtime-dependency-audit.json",
+                    "runtime-artifact-selection.json",
                     "runtime-license-inventory.json",
                     "runtime-sbom.cdx.json",
                     "tracked-tree-secret-scan.json",
@@ -426,7 +594,7 @@ class QualityEvidenceParsingTests(unittest.TestCase):
             (root / "requirements").mkdir(parents=True)
             for name in ("runtime.lock", "development.lock"):
                 (root / "requirements" / name).write_text(
-                    "example==1.0\n",
+                    _hashed_example_lock(),
                     encoding="utf-8",
                 )
             (root / "pyproject.toml").write_text(
@@ -440,7 +608,10 @@ class QualityEvidenceParsingTests(unittest.TestCase):
             distribution = SimpleNamespace(version="1.0", metadata=package_metadata)
 
             def fake_run(command, *, root, environment=None, stdout=None):
-                if command[2] == "ruff":
+                if command[2:4] == ["pip", "install"]:
+                    report = Path(command[command.index("--report") + 1])
+                    report.write_text(json.dumps(_pip_report()), encoding="utf-8")
+                elif command[2] == "ruff":
                     json.dump([], stdout)
                 elif command[2] == "mypy":
                     stdout.write("")

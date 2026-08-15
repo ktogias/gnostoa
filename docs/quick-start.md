@@ -18,7 +18,8 @@ cd gnostoa
 
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install -r requirements/runtime.lock
+python -m pip install --only-binary=:all: --require-hashes \
+  -r requirements/runtime.lock
 python -m pip install --no-deps -e .
 
 knowledge validate \
@@ -60,7 +61,8 @@ GNOSTOA_SOURCE=/absolute/path/to/pinned/gnostoa-source
 
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install -r "$GNOSTOA_SOURCE/requirements/runtime.lock"
+python -m pip install --only-binary=:all: --require-hashes \
+  -r "$GNOSTOA_SOURCE/requirements/runtime.lock"
 python -m pip install --no-deps /absolute/path/to/gnostoa-0.1.0-py3-none-any.whl
 
 export KNOWLEDGE_KIT_ROOT="$GNOSTOA_SOURCE"

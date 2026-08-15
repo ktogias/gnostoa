@@ -41,6 +41,7 @@ from tools.release_smoke import (
     write_release_evidence_manifest,
 )
 from tools.repository_scope import find_text_matches
+from tools.requirements_lock import locked_requirements
 from tools.validate_bundle import validate_bundle
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -1533,15 +1534,11 @@ runtime:
         self.assertNotIn(":latest", dockerfile)
 
         for filename in ("runtime.lock", "development.lock"):
-            lock_lines = [
-                line.strip()
-                for line in (ROOT / "requirements" / filename)
-                .read_text(encoding="utf-8")
-                .splitlines()
-                if line.strip() and not line.startswith("#")
-            ]
-            self.assertTrue(lock_lines)
-            self.assertTrue(all("==" in line for line in lock_lines), lock_lines)
+            requirements = locked_requirements(ROOT / "requirements" / filename)
+            self.assertTrue(requirements)
+            self.assertTrue(
+                all(requirement["artifact_hashes"] for requirement in requirements)
+            )
 
     def test_development_container_uses_development_target(self) -> None:
         definition = json.loads(

@@ -215,16 +215,22 @@ regression floor, performs known-vulnerability lookups for both exact Python
 lock files and runs a no-network heuristic scan of the current Git-tracked
 tree. It uploads the machine-readable reports as short-lived CI evidence. This
 closes only those bounded Stage 4 evidence gaps: static analysis and coverage
-are not acceptance, vulnerability data is time/provider-bound, the dependency
-locks do not yet use artifact hashes, and the secret scan does not inspect Git
-history, provider metadata, Actions artifacts or logs. The same extended suite
-now binds exact installed runtime and development Python lock entries to their
-package-declared license metadata and emits deterministic, strictly validated
-CycloneDX 1.6 JSON SBOMs. Missing distributions, version mismatches and absent
+are not acceptance, vulnerability data is time/provider-bound, and the secret
+scan does not inspect Git history, provider metadata, Actions artifacts or
+logs. The same extended suite now binds exact installed runtime and development
+Python lock entries to their package-declared license metadata and emits
+deterministic, strictly validated CycloneDX 1.6 JSON SBOMs. Both locks now
+enable pip's fail-closed hash-checking mode, admit only non-yanked wheels and
+carry SHA-256 allow-lists for every direct and transitive requirement. A
+sanitized pip installation report records the exact wheel selected for the
+current Python/platform environment; the inventory and SBOM carry that wheel's
+SHA-256. Missing or yanked artifacts, unlisted bytes, undeclared dependencies,
+source-distribution fallback, version mismatches and absent license
 declarations fail the gate; legacy metadata remains visible for human review.
-This closes only the Python-lock inventory/SBOM layer. Base-image and system
-packages, artifact hashes, license compatibility/legal review and the Stage 6
-disclosure audit remain separate open gates.
+This closes the bounded Python wheel-identity and lock inventory/SBOM layer.
+It does not authenticate publishers or supply release provenance. Base-image
+and system packages, license compatibility/legal review, publisher assurance
+and the Stage 6 disclosure audit remain separate open gates.
 
 1. Build an sdist and wheel from a clean checkout. Install each into a fresh
    environment and run the documented quick start without an editable source

@@ -34,7 +34,8 @@ cd gnostoa
 
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install -r requirements/runtime.lock
+python -m pip install --only-binary=:all: --require-hashes \
+  -r requirements/runtime.lock
 python -m pip install --no-deps -e .
 
 knowledge validate \
@@ -143,7 +144,8 @@ The [Development Container](.devcontainer/devcontainer.json) is the recommended
 maintainer environment. The native fallback uses the development lock:
 
 ```bash
-python -m pip install -r requirements/development.lock
+python -m pip install --only-binary=:all: --require-hashes \
+  -r requirements/development.lock
 
 ./ci/verify policy
 ./ci/verify fast
@@ -164,7 +166,9 @@ lookup is time/provider-bound, and the tree scan does not replace the separate
 full history and provider-surface disclosure audit. The inventories and SBOMs
 cover only the exact installed Python distributions named by the runtime and
 development locks. Legacy license metadata remains flagged for human review;
-OS/base-image components, artifact hashes and legal compatibility remain
+the locks now enforce wheel-only SHA-256 verification and the evidence binds
+the wheel selected for the current environment. OS/base-image components,
+publisher assurance, release provenance and legal compatibility remain
 separate release gates. See [Dependency evidence](docs/dependency-evidence.md)
 for report contents and limits.
 

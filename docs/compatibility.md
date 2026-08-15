@@ -81,7 +81,10 @@ or newer release, automated migration tool, deprecation window, support
 lifetime or rollback guarantee. Dependency/security scans and coverage evidence
 are bounded release-candidate signals. Exact-lock Python license inventories and
 CycloneDX 1.6 SBOMs now exist, but they do not cover base-image/system packages,
-do not bind downloadable package artifacts until lock hashes exist, and do not
-constitute legal compatibility review. These limits must be resolved or carried
-explicitly before artifact publication; they must not be inferred from the
-presence of a `0.1.0` version.
+and do not constitute legal compatibility review. The Python locks now admit
+only committed SHA-256 wheel identities, and the evidence records the exact
+wheel selected for the current Python/platform environment. That prevents
+unlisted package bytes but does not authenticate publishers, guarantee index
+availability or establish release provenance. These limits must be resolved or
+carried explicitly before artifact publication; they must not be inferred from
+the presence of a `0.1.0` version.

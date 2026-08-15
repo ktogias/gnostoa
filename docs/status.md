@@ -49,14 +49,18 @@ known-vulnerability audits of both exact Python locks and a no-network
 heuristic scan of the current Git-tracked tree. It also generates
 package-declared license inventories and deterministic, strictly validated
 CycloneDX 1.6 SBOMs for the exact installed Python distributions in both locks.
+Both locks now enforce wheel-only pip hash-checking for every direct and
+transitive requirement. The extended evidence records the exact wheel selected
+for the current Python/platform environment, verifies it against the committed
+SHA-256 allow-list and carries that identity into the inventory and SBOM.
 Those reports are unsigned and bounded evidence: static analysis and coverage
 do not prove acceptance, the package audit does not establish package trust,
 legacy license metadata still requires human review, and neither the inventory
 nor the tree scan covers the OS/base image, Git history or provider artifacts.
 [Dependency evidence](dependency-evidence.md) documents the exact boundary.
-Lock artifact hashes, complete image/system-component inventory, legal review,
-the full exposed history/provider disclosure audit, remaining release gates and
-publication still remain open.
+Complete image/system-component inventory, legal review, publisher and release
+provenance, the full exposed history/provider disclosure audit, remaining
+release gates and publication still remain open.
 
 ## Current direction
 

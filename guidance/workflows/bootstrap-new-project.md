@@ -158,7 +158,8 @@ When an OCI runtime is unavailable, use the supported native fallback:
 ```bash
 python3 -m venv .venv-knowledge
 . .venv-knowledge/bin/activate
-python -m pip install -r ./.knowledge-kit/requirements/runtime.lock
+python -m pip install --only-binary=:all: --require-hashes \
+  -r ./.knowledge-kit/requirements/runtime.lock
 python -m pip install --no-deps -e ./.knowledge-kit
 knowledge surface-digest --root ./.knowledge-kit
 # Verify the exact output matches toolkit.public_surface_digest, then:

@@ -19,7 +19,9 @@ jobs:
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: "3.12"
-      - run: python -m pip install -r ./.knowledge-kit/requirements/runtime.lock
+      - run: >-
+          python -m pip install --only-binary=:all: --require-hashes
+          -r ./.knowledge-kit/requirements/runtime.lock
       - run: python -m pip install --no-deps -e ./.knowledge-kit
       - run: knowledge check-runtime --lock .knowledge/kit.lock.yaml
       - run: knowledge check-change-policy --policy .knowledge/change-control.yaml

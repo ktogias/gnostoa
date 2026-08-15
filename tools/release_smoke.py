@@ -434,6 +434,8 @@ def _exercise_artifact(
             "pip",
             "install",
             "--disable-pip-version-check",
+            "--only-binary=:all:",
+            "--require-hashes",
             "-r",
             str(repository_root / "requirements" / "runtime.lock"),
         ],
