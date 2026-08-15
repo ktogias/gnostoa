@@ -19,7 +19,7 @@
 
 - Work Item:
 - Change Request:
-- Human reviewer:
+- Accountable follow-up owner:
 - Decision or policy correction:
 - Regression reproducer and expected failure:
 - [ ] Post-event checks pass.

@@ -48,16 +48,18 @@ irrelevant context.
     project or module specialization.
 17. The default integration branch is protected from direct push, force push
     and deletion.
-18. Every integrated change uses a short-lived branch, Change Request, required
+18. Every integrated change uses a bounded branch, Change Request, required
     checks and resolved review conversations.
-19. Work Item, Decision and approval requirements follow the highest applicable
-    risk class; a separate Work Item is not mandatory for every mechanical edit.
-20. Agents may author changes but may not self-approve, bypass controls or
-    replace required human semantic review.
-21. Expected observable behavior and verification intent precede
-    implementation.
-22. Executable behavior, defect fixes, policies and contracts use failing
-    pre-change evidence when required by their change class.
+19. A Change Request may be the complete change record. Separate Work Items,
+    Decisions and formal approvals exist only when the effective policy or
+    durable context requires them.
+20. Agents may author changes but may not bypass controls or satisfy a human
+    approval or stable-verification gate.
+21. Expected observable behavior and proportionate verification evidence exist
+    before integration.
+22. Test-first, defect reproduction and characterization evidence are preferred
+    when they materially reduce risk and become mandatory only through the
+    effective change class or a stricter specialization.
 23. Required tests assert observable behavior, are deterministic, and block
     integration when flaky.
 24. Coverage alone is never acceptance evidence; non-executable knowledge uses
@@ -74,7 +76,8 @@ irrelevant context.
 ## Enforcement
 
 Automatable rules are enforced by profiles, schemas, validator tests and CI.
-Semantic rules use CODEOWNERS, required review and the machine-readable
+Semantic rules use accountable ownership, optional required review and the
+machine-readable
 [`policy/guardrails.yaml`](../../policy/guardrails.yaml) coverage manifest.
 Change-flow rules are expressed in inherited `core/change-control.yaml` policy
 and validated against monotonic specializations.
@@ -86,9 +89,10 @@ document into every prompt.
 
 ## Exceptions
 
-An exception requires a reviewed Decision concept containing scope, rationale,
-owner, expiry or reconsideration trigger and compensating control. An exception
-never edits or disables the generic parent policy for unrelated consumers.
+An exception records scope, rationale, owner, expiry or reconsideration trigger
+and compensating control in the Change Request or emergency record. Use a
+Decision when an exception is durable or changes policy. An exception never
+edits or disables the generic parent policy for unrelated consumers.
 Emergency integration additionally requires a scoped authorized human,
 compensating controls and the post-event Work Item and review defined by the
 [change workflow](../workflows/propose-review-merge-change.md).

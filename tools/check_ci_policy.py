@@ -3,8 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from pathlib import Path
 import sys
+from pathlib import Path
 from typing import Any
 
 from jsonschema import Draft202012Validator
@@ -15,7 +15,6 @@ from .knowledge_common import (
     load_yaml,
     toolkit_root,
 )
-
 
 HOOK_RANK = {
     "optional": 0,
@@ -62,6 +61,10 @@ def _nested(mapping: dict[str, Any], path: tuple[str, ...]) -> Any:
     return value
 
 
+def _rank(ranks: dict[str, int], value: object) -> int:
+    return ranks.get(value, -1) if isinstance(value, str) else -1
+
+
 def _assert_monotonic(
     parent: dict[str, Any],
     child: dict[str, Any],
@@ -81,9 +84,8 @@ def _assert_monotonic(
 
     parent_hooks = _nested(parent, ("local_feedback", "hooks"))
     child_hooks = _nested(child, ("local_feedback", "hooks"))
-    if (
-        child_hooks is not None
-        and HOOK_RANK.get(child_hooks, -1) < HOOK_RANK.get(parent_hooks, -1)
+    if child_hooks is not None and HOOK_RANK.get(child_hooks, -1) < HOOK_RANK.get(
+        parent_hooks, -1
     ):
         raise KnowledgeFormatError(
             f"{path} weakens local hook adoption: {parent_hooks} -> {child_hooks}"
@@ -139,20 +141,32 @@ def _assert_monotonic(
 
         parent_gate = baseline.get("gate")
         child_gate = overrides.get("gate")
-        if (
-            child_gate is not None
-            and GATE_RANK.get(child_gate, -1) < GATE_RANK.get(parent_gate, -1)
+        if child_gate is not None and _rank(GATE_RANK, child_gate) < _rank(
+            GATE_RANK,
+            parent_gate,
         ):
             raise KnowledgeFormatError(
-                f"{path} weakens {event_id}.gate: "
-                f"{parent_gate} -> {child_gate}"
+                f"{path} weakens {event_id}.gate: {parent_gate} -> {child_gate}"
             )
 
-        for field in ("latest_revision", "cancel_superseded"):
+        for field in ("latest_revision",):
             if baseline.get(field) is True and overrides.get(field) is False:
                 raise KnowledgeFormatError(
                     f"{path} disables parent rule {event_id}.{field}"
                 )
+
+        parent_cancellation = baseline.get("cancel_superseded")
+        child_cancellation = overrides.get("cancel_superseded")
+        if (
+            isinstance(parent_cancellation, bool)
+            and child_cancellation is not None
+            and child_cancellation != parent_cancellation
+        ):
+            raise KnowledgeFormatError(
+                f"{path} changes inherited event cancellation semantics "
+                f"{event_id}.cancel_superseded: "
+                f"{parent_cancellation} -> {child_cancellation}"
+            )
 
         effective = deep_merge(baseline, overrides)
         for field in ("required_suites", "conditional_suites"):
@@ -182,9 +196,7 @@ def _load_ci_policy(path: Path, stack: tuple[Path, ...]) -> dict[str, Any]:
     if not isinstance(extends, list):
         raise KnowledgeFormatError(f"CI-policy extends must be a list in {path}")
     if len(extends) > 1:
-        raise KnowledgeFormatError(
-            f"CI policy supports one parent at most in {path}"
-        )
+        raise KnowledgeFormatError(f"CI policy supports one parent at most in {path}")
 
     merged: dict[str, Any] = {}
     for reference in extends:
@@ -201,7 +213,10 @@ def _load_ci_policy(path: Path, stack: tuple[Path, ...]) -> dict[str, Any]:
         _assert_monotonic(parent, current, path)
         merged = deep_merge(merged, parent)
 
-    return deep_merge(merged, current)
+    result = deep_merge(merged, current)
+    if not isinstance(result, dict):
+        raise KnowledgeFormatError(f"Merged CI policy must be a mapping in {path}")
+    return result
 
 
 def _schema_issues(value: dict[str, Any], schema_path: Path) -> list[str]:
@@ -246,6 +261,8 @@ def _required_suites(
             if capability and capabilities.get(capability) is True:
                 required.add(suite_id)
 
+    # The provider adapter runs the toolkit-owned policy suite separately from
+    # the project verification runtime and manifest.
     required.discard("policy")
     return required
 
@@ -308,8 +325,7 @@ def _verification_issues(
             expected = ["./ci/verify", suite_id]
             if not isinstance(command, list) or command[:2] != expected:
                 issues.append(
-                    f"suites.{suite_id}.command must use shared command "
-                    f"{expected!r}"
+                    f"suites.{suite_id}.command must use shared command {expected!r}"
                 )
 
     fast = suites.get("fast")
@@ -399,8 +415,8 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
     try:
+        args = _parser().parse_args(argv)
         issues = check_ci_policy(
             args.policy,
             args.verification,
@@ -418,9 +434,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     suffix = (
-        f" and verification manifest {args.verification}"
-        if args.verification
-        else ""
+        f" and verification manifest {args.verification}" if args.verification else ""
     )
     print(f"OK: CI policy is valid ({args.policy}){suffix}")
     return 0

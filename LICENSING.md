@@ -20,6 +20,12 @@ templates, policies, schemas or documentation, remains subject to the
 Apache-2.0 conditions. In particular, redistributions must include the license,
 preserve applicable notices and identify modified files as required by Section
 4. Dependencies and third-party material remain governed by their own licenses.
+The extended verification suite records the package-declared licenses of exact
+Python lock entries and emits CycloneDX SBOMs. Those reports are inventory
+evidence, not legal advice or a compatibility determination. Hash-locked wheel
+identity prevents unlisted Python artifacts from satisfying the declared lock,
+but legacy metadata, base-image/system components, publisher assurance and
+release provenance require separate review before release.
 
 Apache-2.0 grants copyright and patent permissions, but Section 6 does not
 grant permission to use the Gnostoa name, logos or other marks except for

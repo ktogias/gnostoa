@@ -1,16 +1,26 @@
 id: gnostoa-change-control
-version: "0.1.0"
+version: "0.3.0"
 owner: team:gnostoa-maintainers
 extends:
   - ../core/change-control.yaml
 
 change_classes:
-  mechanical:
-    minimum_approvals: 1
-    independent_approval: true
-    human_approval: true
-    auto_merge: false
+  normal:
+    work_item: required
+    decision_record: true
+    verification:
+      evidence_timing: before-implementation
+  normative:
+    work_item: required
+    decision_record: true
+    verification:
+      failing_evidence: required
+      evidence_timing: before-implementation
+  critical:
+    work_item: required
+    decision_record: true
+    verification:
+      failing_evidence: required
+      evidence_timing: before-implementation
   emergency:
-    minimum_approvals: 1
-    independent_approval: true
-    human_approval: true
+    decision_record: true

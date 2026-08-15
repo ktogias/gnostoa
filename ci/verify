@@ -35,6 +35,8 @@ case "${suite}" in
     ;;
   extended)
     site_dir="${TMPDIR:-/tmp}/gnostoa-site"
+    quality_dir="${GNOSTOA_QUALITY_OUTPUT:-${TMPDIR:-/tmp}/gnostoa-quality-evidence}"
+    python ci/quality_evidence.py --output-dir "${quality_dir}"
     knowledge_cli docs-build --site-dir "${site_dir}"
     ;;
   release)

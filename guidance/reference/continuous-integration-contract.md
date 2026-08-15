@@ -64,15 +64,19 @@ Canonical suite IDs:
 | `release` | Artifact and promotion evidence for deployable projects |
 
 The inherited CI policy decides event activation and suite requirement. The
-project verification manifest declares one verification runtime, applicable
-capabilities and an exec-style command array for each required suite. `toolkit`
-runtime means the pinned toolkit image already contains what the suites need.
+toolkit-owned `policy` suite runs separately in the pinned toolkit runtime and
+is not redeclared by the project verification manifest. The manifest declares
+one verification runtime, applicable capabilities and an exec-style command
+array for each required or enabled conditional project suite. `toolkit` runtime
+means the pinned toolkit image already contains what those suites need.
 `project` runtime requires one project verification image pinned by digest.
 
 `./ci/verify <suite>` is the shared adapter used by local hooks and provider
-pipelines. It must execute declared required suites, and may return a clear
-successful `SKIP` only for a conditional capability declared false. It must not
-silently skip `fast` or `regression`.
+pipelines for project-owned suites. It must execute every suite declared in the
+manifest, and may return a clear successful `SKIP` only for a conditional
+capability declared false. It must not silently skip `fast` or `regression`.
+The provider adapter runs the separate `policy` suite before dependent project
+suites.
 The provider's project-runtime variable must match the manifest image exactly.
 
 Provider adapters:
@@ -83,6 +87,8 @@ Provider adapters:
 - cancel obsolete branch work but not integrated or release work;
 - use immutable actions, components and images;
 - grant minimum token permissions;
+- discard checkout credentials after source acquisition unless a separately
+  authorized authenticated source operation requires them;
 - withhold privileged secrets from untrusted changes;
 - retain actionable reports and artifact identity.
 

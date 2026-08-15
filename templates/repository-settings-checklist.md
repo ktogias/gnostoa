@@ -5,8 +5,12 @@
 - [ ] A Change Request is required before integration.
 - [ ] Required CI checks must pass.
 - [ ] Unresolved review conversations block integration.
+- [ ] Required approval count is zero when the repository has one maintainer and
+      the project has not selected a stricter specialization.
 - [ ] CODEOWNER approval is required where the policy declares it.
-- [ ] Author self-approval does not satisfy independent approval.
+- [ ] Community contributions receive accountable maintainer review.
+- [ ] Author or agent self-approval does not satisfy an independent approval
+      required by a stricter specialization.
 - [ ] New reviewable commits invalidate or refresh prior approval.
 - [ ] The latest Change Request and merge candidate report stable required
       policy, fast and regression checks.

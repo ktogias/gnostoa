@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.org/project-knowledge/verification-manifest.schema.json",
+  "$id": "https://ktogias.github.io/gnostoa/schemas/v1/verification-manifest.schema.json",
   "title": "Project verification capability and suite manifest",
   "type": "object",
   "required": [

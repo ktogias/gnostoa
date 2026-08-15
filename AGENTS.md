@@ -21,12 +21,33 @@ keep executable artifacts canonical in their native formats.
 Classify every change through
 `guidance/workflows/propose-review-merge-change.md` and
 `policy/change-control.yaml`. Agents may author changes and evidence, but never
-self-approve, bypass controls or replace required human semantic review.
+self-approve where independent approval is required, bypass controls or replace
+required human semantic review.
+For this repository, every normal, normative or critical change requires a
+linked Work Item and Decision before implementation; an emergency supplies them
+in its mandatory follow-up.
 Before implementation, follow
-`guidance/workflows/develop-verification-first.md` and record expected behavior
-plus the required failing or characterization evidence.
+`guidance/workflows/develop-verification-first.md`; record expected behavior and
+establish the applicable failing or characterization evidence before editing.
+Mechanical changes and emergency follow-up use the timing declared by
+`policy/change-control.yaml`.
 
-Before completion run:
+Before completion, run the applicable suites in the development container by
+default:
+
+```bash
+candidate_ref="${GNOSTOA_CANDIDATE_REF:-working-tree}"
+docker build --target development --build-arg VCS_REF="${candidate_ref}" \
+  --tag gnostoa:development-checkout .
+docker run --rm --mount type=bind,source="$PWD",target=/workspace,readonly \
+  --workdir /workspace --env KNOWLEDGE_KIT_ROOT=/workspace \
+  --env KNOWLEDGE_KIT_REVISION="${candidate_ref}" --env PYTHONPATH=/workspace \
+  gnostoa:development-checkout ./ci/verify extended
+```
+
+Replace `extended` with each required named suite. Use the native commands
+below only as an explicit restricted-environment or parity fallback, and state
+why the container route was not used:
 
 ```bash
 python -m unittest discover -s tests -v

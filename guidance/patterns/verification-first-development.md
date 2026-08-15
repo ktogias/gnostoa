@@ -1,7 +1,7 @@
 ---
 type: Pattern
-title: Verification-first development
-description: Define observable evidence before implementation and apply test-first techniques wherever behavior is executable.
+title: Proportionate verification
+description: Define observable evidence before integration and apply test-first techniques where they provide useful confidence.
 status: draft
 generated:
   by: codex/gpt-5
@@ -34,7 +34,7 @@ x-project-knowledge:
       target: /workflows/propose-review-merge-change.md
 ---
 
-# Verification-first development
+# Proportionate verification
 
 ## Context
 
@@ -46,14 +46,14 @@ do not share one verification surface.
 
 ## Pattern
 
-Before implementation, define:
+Before integration, make explicit:
 
 1. the observable expected behavior or retained invariant;
 2. the smallest evidence that can distinguish success from failure;
-3. the pre-change failure, unmet criterion or characterization baseline;
-4. the verification level, exact command and accountable semantic reviewer.
+3. any useful pre-change failure, unmet criterion or characterization baseline;
+4. the verification level, exact command and accountable semantic owner.
 
-When behavior is executable and automatable, use a short
+When behavior is executable and automatable, prefer a short
 Red-Green-Refactor loop:
 
 - **Red:** run evidence that fails for the intended reason.
@@ -61,10 +61,11 @@ Red-Green-Refactor loop:
 - **Refactor:** improve structure while all relevant evidence remains green.
 
 Use a failing regression reproducer for a defect, characterization tests before
-behavior-preserving refactoring, conformance examples before contract or policy
-implementation, and structural validation plus human verification for
-non-executable knowledge. A test-first exception must name its permitted class,
-rationale and follow-up evidence.
+behavior-preserving refactoring, conformance examples for contracts or policies,
+and structural validation plus human verification for non-executable knowledge
+when those techniques materially improve confidence. A lightweight project does
+not need a formal exception when it produces adequate final evidence without
+test-first chronology.
 
 Reviewers verify that the evidence would fail when behavior is broken. CI
 verifies the integrated outcome. Neither commit order nor coverage percentage
@@ -73,7 +74,7 @@ alone proves test quality.
 ## Consequences
 
 - Expected behavior becomes a compact shared target for developers and agents.
-- Defects and policy changes retain executable regression evidence.
+- Defects and policy changes retain proportionate regression evidence.
 - Refactoring becomes safer because existing behavior is characterized first.
 - Non-executable knowledge avoids artificial tests while retaining human
   accountability.

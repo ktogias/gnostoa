@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 from typing import Any
 
 from jsonschema import Draft202012Validator
@@ -14,7 +14,6 @@ from .knowledge_common import (
     load_yaml,
     toolkit_root,
 )
-
 
 WORK_ITEM_RANK = {
     "optional": 0,
@@ -79,6 +78,10 @@ def _nested(mapping: dict[str, Any], path: tuple[str, ...]) -> Any:
     return value
 
 
+def _rank(ranks: dict[str, int], value: object) -> int:
+    return ranks.get(value, -1) if isinstance(value, str) else -1
+
+
 def _assert_monotonic(
     parent: dict[str, Any],
     child: dict[str, Any],
@@ -87,8 +90,7 @@ def _assert_monotonic(
     for rule_path in REQUIRED_TRUE_PATHS:
         if _nested(parent, rule_path) is True and _nested(child, rule_path) is False:
             raise KnowledgeFormatError(
-                f"{path} disables parent change-control rule "
-                f"{'.'.join(rule_path)}"
+                f"{path} disables parent change-control rule {'.'.join(rule_path)}"
             )
 
     for rule_path in REQUIRED_FALSE_PATHS:
@@ -140,11 +142,10 @@ def _assert_monotonic(
 
         parent_work_item = baseline.get("work_item")
         child_work_item = overrides.get("work_item")
-        if (
-            child_work_item is not None
-            and WORK_ITEM_RANK.get(child_work_item, -1)
-            < WORK_ITEM_RANK.get(parent_work_item, -1)
-        ):
+        if child_work_item is not None and _rank(
+            WORK_ITEM_RANK,
+            child_work_item,
+        ) < _rank(WORK_ITEM_RANK, parent_work_item):
             raise KnowledgeFormatError(
                 f"{path} weakens {class_id}.work_item: "
                 f"{parent_work_item} -> {child_work_item}"
@@ -152,11 +153,10 @@ def _assert_monotonic(
 
         parent_timing = baseline.get("change_request_timing")
         child_timing = overrides.get("change_request_timing")
-        if (
-            child_timing is not None
-            and TIMING_RANK.get(child_timing, -1)
-            < TIMING_RANK.get(parent_timing, -1)
-        ):
+        if child_timing is not None and _rank(
+            TIMING_RANK,
+            child_timing,
+        ) < _rank(TIMING_RANK, parent_timing):
             raise KnowledgeFormatError(
                 f"{path} weakens {class_id}.change_request_timing: "
                 f"{parent_timing} -> {child_timing}"
@@ -201,9 +201,9 @@ def _assert_monotonic(
         for name, ranks in ranked_fields:
             parent_value = parent_verification.get(name)
             child_value = child_verification.get(name)
-            if (
-                child_value is not None
-                and ranks.get(child_value, -1) < ranks.get(parent_value, -1)
+            if child_value is not None and _rank(ranks, child_value) < _rank(
+                ranks,
+                parent_value,
             ):
                 raise KnowledgeFormatError(
                     f"{path} weakens {class_id}.verification.{name}: "
@@ -232,9 +232,7 @@ def _load_change_policy(path: Path, stack: tuple[Path, ...]) -> dict[str, Any]:
     current = load_yaml(path)
     extends = current.get("extends", [])
     if not isinstance(extends, list):
-        raise KnowledgeFormatError(
-            f"Change-control extends must be a list in {path}"
-        )
+        raise KnowledgeFormatError(f"Change-control extends must be a list in {path}")
     if len(extends) > 1:
         raise KnowledgeFormatError(
             f"Change-control policy supports one parent at most in {path}"
@@ -249,14 +247,18 @@ def _load_change_policy(path: Path, stack: tuple[Path, ...]) -> dict[str, Any]:
         parent_path = (path.parent / reference).resolve()
         if not parent_path.is_file():
             raise KnowledgeFormatError(
-                f"Parent change-control policy {reference!r} from {path} "
-                "does not exist"
+                f"Parent change-control policy {reference!r} from {path} does not exist"
             )
         parent = _load_change_policy(parent_path, (*stack, path))
         _assert_monotonic(parent, current, path)
         merged = deep_merge(merged, parent)
 
-    return deep_merge(merged, current)
+    result = deep_merge(merged, current)
+    if not isinstance(result, dict):
+        raise KnowledgeFormatError(
+            f"Merged change-control policy must be a mapping in {path}"
+        )
+    return result
 
 
 def check_change_policy(
@@ -296,8 +298,8 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
     try:
+        args = _parser().parse_args(argv)
         issues = check_change_policy(args.policy, args.schema)
     except (KnowledgeFormatError, OSError, json.JSONDecodeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 from .knowledge_common import KnowledgeFormatError, toolkit_root
-
 
 PROJECTION_SURFACES = (
     "core",
@@ -18,6 +17,15 @@ PROJECTION_SURFACES = (
     "knowledge",
     "policy",
     "templates",
+)
+SCHEMA_PROJECTION_VERSION = "v1"
+NAV_NATIVE_ROOTS = (
+    "docs/",
+    "guidance/",
+    "knowledge/",
+    "policy/",
+    "schemas/",
+    "templates/",
 )
 NAV_DOCUMENT_RE = re.compile(
     r"^(?P<prefix>\s*-\s+[^:\n]+:\s+)(?P<path>[^\s]+\.md)\s*$",
@@ -28,7 +36,7 @@ NAV_DOCUMENT_RE = re.compile(
 def _projection_config(source: str, content: Path, site: Path) -> str:
     def prefix_document(match: re.Match[str]) -> str:
         path = match.group("path")
-        if path.startswith("docs/"):
+        if path.startswith(NAV_NATIVE_ROOTS):
             return match.group(0)
         return f"{match.group('prefix')}docs/{path}"
 
@@ -63,6 +71,16 @@ def prepare_projection(
         else:
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, destination)
+
+    schemas = root / "schemas"
+    if not schemas.is_dir():
+        raise KnowledgeFormatError(
+            f"Documentation projection source does not exist: {schemas}"
+        )
+    shutil.copytree(
+        schemas,
+        content / "schemas" / SCHEMA_PROJECTION_VERSION,
+    )
 
     source_config = (root / "mkdocs.yml").read_text(encoding="utf-8")
     config = staging / "mkdocs.yml"
@@ -101,8 +119,8 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
     try:
+        args = _parser().parse_args(argv)
         return build_docs(
             args.repository_root,
             args.site_dir,

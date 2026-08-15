@@ -1,37 +1,52 @@
 # Gnostoa
 
-This site is a derived human-facing navigation projection. Canonical reusable
-guidance lives in [`guidance/`](../guidance/index.md), while toolkit-only
-self-knowledge lives in [`knowledge/`](../knowledge/index.md).
+This site is a derived human-facing navigation projection. Canonical contracts,
+guidance and project evidence remain in their owning repository surfaces.
 
-The kit defines a small canonical knowledge layer and a strict extension model
-to reduce repeated repository exploration, contradictory documentation and
-oversized agent prompts without introducing a mandatory knowledge service.
+Gnostoa validates Git-native project knowledge for people and software agents.
+It combines structured Markdown, non-weakening profiles, deterministic checks
+and bounded context views without requiring a hosted knowledge service.
+
+> **Pre-release:** the current repository contains a working source prototype,
+> not published package, image or production service. Read
+> [Current status](status.md) for exact claim limits.
+
+## Evaluate in five minutes
+
+The [source quick start](quick-start.md) validates an anonymous bundle and
+builds a bounded context pack. It provides both native and container routes and
+states what the result does—and does not—prove.
+
+## Find the right depth
+
+| Goal | Start here |
+|---|---|
+| See whether the tool runs | [Five-minute quick start](quick-start.md) |
+| Understand the model | [Architecture and layer contract](core/architecture.md) |
+| Introduce it to a project | [Adoption guide](core/adoption.md) |
+| Perform one project task | [Reusable guidance router](../guidance/index.md) |
+| Inspect current maturity | [Current project status](status.md) |
+| See delivery priorities | [Now / Next / Research roadmap](roadmap.md) |
+| Audit the bootstrap evidence | [Self-dogfood assessment](../knowledge/assessments/gnostoa-self-dogfood-bootstrap-assessment.md) |
+| Inspect publication exposure | [Provider audit snapshot](../knowledge/assessments/first-publication-provider-audit.md) |
+| Inspect source-name risk | [Owner-confirmed screening](../knowledge/assessments/gnostoa-source-name-screening.md) |
+
+## Three boundaries
 
 ```mermaid
 flowchart LR
-    C[Core profile] --> P[Project profile]
-    P --> M[Module profile]
-    S[Code, contracts, decisions, source material] --> K[Canonical OKF bundle]
-    C -. validates .-> K
-    P -. validates .-> K
-    M -. validates .-> K
-    K --> H[MkDocs / human navigation]
-    K --> A[Context packs / agents]
-    K --> G[Optional graph index]
-    K --> E[Optional enterprise catalog]
+    C[Generic contracts and tools] --> P[Adopting project profile]
+    P --> M[Optional module specialization]
+    K[Canonical Markdown and YAML] --> V[Replaceable docs and context views]
+    S[Gnostoa self-knowledge] -. never inherited .-> P
 ```
 
-The dependency direction is one-way: module rules can depend on project rules,
-and project rules can depend on core rules. The core must never depend on a
-particular project, organization or implementation stack.
+- `core/`, `schemas/`, `tools/`, `ci/` and `templates/` form the generic public
+  contract and its executable support.
+- `guidance/` contains reusable, task-routed operating knowledge.
+- `knowledge/` and `policy/` describe and govern Gnostoa itself; consumers do
+  not inherit them.
 
-Operational entry points:
-
-- [`guidance/index.md`](../guidance/index.md) routes reusable project workflows.
-- [`knowledge/index.md`](../knowledge/index.md) routes toolkit-only
-  self-knowledge.
-- [`policy/guardrails.yaml`](../policy/guardrails.yaml) maps normative rules to
-  ownership and enforcement.
-- `core/continuous-integration.yaml` defines provider-neutral authoritative CI
-  and advisory local feedback.
+The navigation deliberately foregrounds evaluation, adoption and public
+contracts. Detailed guidance and project evidence remain linkable and
+searchable without becoming the first-reader path.

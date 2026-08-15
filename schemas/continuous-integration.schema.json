@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.org/project-knowledge/continuous-integration.schema.json",
+  "$id": "https://ktogias.github.io/gnostoa/schemas/v1/continuous-integration.schema.json",
   "title": "Provider-neutral continuous-integration policy",
   "type": "object",
   "required": [

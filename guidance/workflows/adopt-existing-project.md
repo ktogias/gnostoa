@@ -35,7 +35,7 @@ The adoption does not attempt a big-bang rewrite of legacy documentation.
 
 ## Preconditions
 
-- A bounded pilot area and its accountable reviewers are selected.
+- A bounded pilot area and its accountable owners are selected.
 - The source repositories and available historical material are accessible.
 - The team agrees to distinguish current state, target state and proposals.
 - A baseline task set exists for measuring searches, tokens, correctness and
@@ -45,8 +45,9 @@ The adoption does not attempt a big-bang rewrite of legacy documentation.
 
 1. Choose embedded placement for one repository or a dedicated knowledge
    repository for a multi-repository program.
-2. Pin the toolkit and create a minimal project profile as in the new-project
-   workflow.
+2. Pin the toolkit revision, deterministic public-surface digest and matching
+   runtime image, then create a minimal project profile and validate the lock as
+   in the new-project workflow.
 3. Inherit the generic change-control and CI policies. Inventory current branch,
    review, hooks, pipelines, test suites, secrets and emergency practices, and
    record gaps without silently treating them as compliant.
@@ -69,8 +70,8 @@ The adoption does not attempt a big-bang rewrite of legacy documentation.
 11. Link to source artifacts rather than copying their contents.
 12. Keep generated or inferred concepts as `draft`; promote them only after
    source-owner review.
-13. Validate the inherited change and CI policies, verification manifest and new
-    bundle strictly. Raw legacy
+13. Validate source/runtime lockstep, the inherited change and CI policies,
+    verification manifest and new bundle strictly. Raw legacy
     Markdown remains outside the bundle unless converted to conforming `Source`
     concepts.
 14. Run the baseline tasks with and without the knowledge slice and compare
@@ -85,8 +86,8 @@ The adoption does not attempt a big-bang rewrite of legacy documentation.
 - Current and target architecture are distinguishable.
 - The pilot answers its selected questions by following concepts to evidence.
 - Measured savings exceed generation and maintenance cost.
-- The pilot change reaches the protected branch only through a passing,
-  appropriately approved Change Request.
+- The pilot change reaches the protected branch only through a passing Change
+  Request and any review required by the project's specialization.
 - Required checks belong to the latest pilot merge candidate; hook success
   alone cannot satisfy integration.
 

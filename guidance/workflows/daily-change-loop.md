@@ -36,17 +36,17 @@ decisions and navigational knowledge mutually traceable.
 
 - The project bundle and applicable profile validate.
 - The task has a concept seed or bounded search scope.
-- Relevant source owners and reviewers are known.
+- Relevant source owners are known.
 
 ## Procedure
 
-1. Classify the change and establish its Work Item, Change Request and approval
-   evidence through the
+1. Classify the change and establish its Change Request plus any additional
+   records required through the
    [change workflow](propose-review-merge-change.md).
 2. Start from the root index or a task-specific context pack.
 3. Open only the relevant concepts.
 4. Follow concept links to native code, schemas, tests and decisions.
-5. Define expected behavior and required pre-change evidence through the
+5. Define expected behavior and proportionate evidence through the
    [verification-first workflow](develop-verification-first.md).
 6. Make the source or implementation change.
 7. Update affected contracts, decisions and knowledge concepts in the same
@@ -56,7 +56,9 @@ decisions and navigational knowledge mutually traceable.
    rationale.
 10. Run profile, bundle, link, change-control, CI-policy and policy-coverage
     checks plus the applicable project verification suites.
-11. Obtain review from the accountable knowledge/source owner.
+11. For community contributions, obtain review from the accountable
+    knowledge/source owner. For self-authored changes, inspect the final
+    semantic diff and satisfy any stricter specialized gates.
 12. Regenerate derived sites, search indexes, graphs and context packs after
     canonical changes merge.
 
@@ -73,5 +75,5 @@ decisions and navigational knowledge mutually traceable.
 ## Recovery
 
 If code and knowledge disagree, do not guess which is authoritative. Revert the
-incorrect change or record an explicit contradiction/open question and request
-the accountable reviewer.
+incorrect change or record an explicit contradiction/open question and involve
+the accountable owner.

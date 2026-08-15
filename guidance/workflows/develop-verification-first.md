@@ -1,7 +1,7 @@
 ---
 type: Workflow
-title: Develop with verification first
-description: Move one bounded change from observable intent through failing evidence to a maintainable verified result.
+title: Develop with proportionate verification
+description: Move one bounded change from observable intent to a maintainable result verified before integration.
 status: draft
 generated:
   by: codex/gpt-5
@@ -21,12 +21,12 @@ x-project-knowledge:
       target: /guardrails/non-negotiable.md
 ---
 
-# Develop with verification first
+# Develop with proportionate verification
 
 ## Outcome
 
-The change has an observable specification, pre-change evidence, the smallest
-coherent implementation and a maintainable verification portfolio.
+The change has an observable specification, the smallest coherent
+implementation and a maintainable verification portfolio before integration.
 
 ## Preconditions
 
@@ -41,19 +41,20 @@ coherent implementation and a maintainable verification portfolio.
    non-goals before implementation.
 2. Select the smallest evidence level that can distinguish the intended result
    from a false positive.
-3. Establish the pre-change state:
+3. When useful or required by a specialization, establish the pre-change state:
    - **Red** for new executable behavior, conformance or a reproduced defect;
    - a green characterization baseline for behavior-preserving refactoring;
    - an unmet structural criterion plus planned human review for
      non-executable knowledge.
-4. Confirm the evidence fails or characterizes behavior for the intended
-   reason. A test that passes before new behavior exists needs justification.
-5. Implement the smallest coherent change needed to reach **Green**.
+4. When using pre-change evidence, confirm it fails or characterizes behavior
+   for the intended reason.
+5. Implement the smallest coherent change needed to satisfy the expected
+   behavior.
 6. Refactor implementation and tests while focused evidence stays green.
 7. Run fast focused checks first, then affected contract, integration, bundle,
    documentation, runtime and smoke checks.
-8. Record exact commands, results and human semantic evidence in the Change
-   Request. Do not use coverage alone as acceptance.
+8. Record exact commands, results and human semantic evidence needed to
+   understand acceptance in the Change Request. Do not use coverage alone.
 9. Review whether tests assert observable behavior, are deterministic, and
    would fail when behavior is broken.
 10. Merge only after the required evidence and broader CI remain green.
@@ -64,14 +65,13 @@ than embedding provider events in test commands.
 
 For an exploratory spike, record the question and time box. Discard it or add
 normal verification before supported integration. For an emergency, restore
-safety first and add the required reproducer and regression evidence in the
+safety first and add the required regression evidence in the
 audited follow-up.
 
 ## Verification
 
-- Expected behavior predates implementation or has a permitted recorded
-  exception.
-- Applicable Red evidence was observed and is linked.
+- Expected behavior and final evidence are present before integration.
+- Applicable Red or characterization evidence is linked when used or required.
 - A refactor has characterization evidence and no intended behavior change.
 - Non-executable knowledge has structural and accountable human verification.
 - Required tests are deterministic, relevant and non-flaky.
@@ -81,6 +81,7 @@ audited follow-up.
 
 If a new test merely mirrors implementation, restate behavior from the consumer
 boundary and replace it. If evidence is flaky, block or quarantine it through a
-reviewed, expiring exception and create a repair Work Item. If pre-change
-evidence cannot be produced, reclassify the change, explain why and obtain the
-required reviewer before implementation continues.
+bounded, expiring exception and create a repair Work Item. If required
+pre-change evidence cannot be produced, follow the stricter specialization's
+exception path or change that specialization through its normal governance
+process.

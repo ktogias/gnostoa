@@ -1,7 +1,7 @@
 ---
 type: Workflow
 title: Propose, review and merge a change
-description: Carry one bounded change from problem statement to protected integration with proportionate evidence.
+description: Carry one bounded change to protected integration with a lightweight trace and proportionate evidence.
 status: draft
 generated:
   by: codex/gpt-5
@@ -27,9 +27,9 @@ x-project-knowledge:
 
 ## Outcome
 
-A small change is integrated through a protected branch with enough linked
-problem, decision, verification and approval evidence for a future developer or
-agent to reconstruct why it happened.
+A small change is integrated through a protected branch with enough rationale,
+diff and verification evidence for a future developer or agent to reconstruct
+why it happened.
 
 ## Preconditions
 
@@ -44,37 +44,40 @@ agent to reconstruct why it happened.
    `emergency`.
 2. Create or link a Work Item when the class requires it. Otherwise ensure the
    Change Request can stand alone as the problem record.
-3. For a normative or critical change, record or link the governing Decision
-   before requesting final approval.
+3. Record or link a Decision only when policy requires it or the rationale must
+   remain discoverable independently of the Change Request.
 4. Create a short-lived branch from the current integration branch.
 5. Open a draft Change Request early when feedback or agent/human handoff is
    useful.
 6. Follow the
-   [verification-first workflow](develop-verification-first.md): record expected
-   behavior, establish required failing evidence or characterization, then make
-   the smallest coherent implementation, contract, test and knowledge update.
+   [proportionate verification workflow](develop-verification-first.md): state expected
+   behavior, make the smallest coherent implementation, and establish
+   proportionate evidence before merge. Prefer failing or characterization
+   evidence first when it materially reduces risk.
 7. Complete the Change Request's class, motivation, scope, impact, evidence,
    rollback and linked
    artifacts. Reclassify upward if scope expands.
 8. Run required validation, including the knowledge profile, bundle, policy
    coverage, change-control policy, CI policy and declared project suites where
    applicable.
-9. Request the required human and CODEOWNER approvals. The author and its
-   delegated agents do not count as independent approval.
+9. Inspect the final diff and semantic impact. For a community contribution,
+   obtain review from an accountable maintainer. Obtain independent human or
+   CODEOWNER approvals only when the project specialization requires them;
+   agents do not satisfy such a gate.
 10. Resolve or explicitly defer every review conversation through a linked Work
     Item.
-11. Merge only when protection rules, the latest merge-candidate required
-    checks and approvals pass.
-    Delete the topic branch and regenerate derived projections after canonical
-    integration.
+11. Merge when protection rules and the latest merge-candidate required checks
+    pass, review conversations are resolved and any specialized approval gates
+    are satisfied. Delete the topic branch and regenerate derived projections
+    after canonical integration.
 
 ## Verification
 
 - The Change Request records its class and verification evidence.
-- Expected behavior and required pre-change evidence precede implementation or
-  carry a permitted explicit exception.
+- Expected behavior and proportionate evidence are present before integration.
 - Required Work Items and Decisions are linked, not duplicated.
-- No author or agent self-approval satisfies an independent-human gate.
+- No agent or author is counted as independent approval when a specialization
+  requires a different human reviewer.
 - The integrated revision passed required checks.
 - Canonical artifacts remain synchronized and derived artifacts reproducible.
 - The branch did not become a parallel long-lived source of truth.
@@ -83,7 +86,7 @@ agent to reconstruct why it happened.
 
 Revert through a new Change Request when an integrated change is incorrect.
 For an emergency, limit the bypass to the affected incident, record the
-authorized human and compensating controls, and create the Work Item and
+accountable human and compensating controls, and create the Work Item and
 follow-up review immediately after service restoration. A repository with no
 baseline commit or remote may record one explicit bootstrap Decision; protection
 becomes mandatory immediately after the baseline is published.

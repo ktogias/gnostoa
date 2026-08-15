@@ -23,10 +23,11 @@ x-project-knowledge:
 
 The repository exposes three independently loadable surfaces:
 
-1. `core/`, schemas, tools and CI implement enforceable generic profile and
-   change-control plus continuous-integration policy.
+1. `core/`, schemas, tools, CI adapters and templates implement the enforceable
+   generic profile plus change-control and continuous-integration policy.
 2. `guidance/` contains reusable patterns and workflows selected by task.
-3. `knowledge/` describes this toolkit and is loaded only for toolkit work.
+3. `knowledge/` describes this toolkit and `policy/` specializes its own
+   operation. Both are loaded only for toolkit work.
 
 Anonymous examples and templates demonstrate the contract without introducing
 a real project's names, taxonomy or architecture.

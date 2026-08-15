@@ -1,0 +1,161 @@
+name: Gnostoa verification
+
+on:
+  pull_request:
+  merge_group:
+    types: [checks_requested]
+  push:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verification-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref != 'refs/heads/main') }}
+
+env:
+  GNOSTOA_CI_IMAGE: gnostoa-ci:${{ github.sha }}
+
+jobs:
+  policy:
+    name: policy
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Build the candidate runtime
+        run: |
+          docker build \
+            --target runtime \
+            --build-arg VCS_REF="${GITHUB_SHA}" \
+            --tag "${GNOSTOA_CI_IMAGE}" \
+            .
+      - name: Run policy verification
+        run: |
+          docker run --rm \
+            --entrypoint sh \
+            --mount type=bind,source="${GITHUB_WORKSPACE}",target=/workspace,readonly \
+            --workdir /workspace \
+            "${GNOSTOA_CI_IMAGE}" \
+            -ec './ci/verify policy'
+
+  fast:
+    name: fast
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Build the candidate runtime
+        run: |
+          docker build \
+            --target runtime \
+            --build-arg VCS_REF="${GITHUB_SHA}" \
+            --tag "${GNOSTOA_CI_IMAGE}" \
+            .
+      - name: Run fast verification
+        run: |
+          docker run --rm \
+            --entrypoint sh \
+            --mount type=bind,source="${GITHUB_WORKSPACE}",target=/workspace,readonly \
+            --workdir /workspace \
+            "${GNOSTOA_CI_IMAGE}" \
+            -ec './ci/verify fast'
+
+  regression:
+    name: regression
+    needs: [policy, fast]
+    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Build the candidate runtime
+        run: |
+          docker build \
+            --target runtime \
+            --build-arg VCS_REF="${GITHUB_SHA}" \
+            --tag "${GNOSTOA_CI_IMAGE}" \
+            .
+      - name: Run regression verification
+        run: |
+          docker run --rm \
+            --entrypoint sh \
+            --mount type=bind,source="${GITHUB_WORKSPACE}",target=/workspace,readonly \
+            --workdir /workspace \
+            "${GNOSTOA_CI_IMAGE}" \
+            -ec './ci/verify regression'
+
+  smoke:
+    name: smoke
+    needs: regression
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Build the candidate runtime
+        run: |
+          docker build \
+            --target runtime \
+            --build-arg VCS_REF="${GITHUB_SHA}" \
+            --tag "${GNOSTOA_CI_IMAGE}" \
+            .
+      - name: Run smoke verification
+        run: |
+          docker run --rm \
+            --entrypoint sh \
+            --mount type=bind,source="${GITHUB_WORKSPACE}",target=/workspace,readonly \
+            --workdir /workspace \
+            "${GNOSTOA_CI_IMAGE}" \
+            -ec './ci/verify smoke'
+
+  extended:
+    name: extended
+    needs: policy
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Build the candidate development runtime
+        run: |
+          docker build \
+            --target development \
+            --build-arg VCS_REF="${GITHUB_SHA}" \
+            --tag "${GNOSTOA_CI_IMAGE}" \
+            .
+      - name: Prepare the evidence output
+        run: mkdir -p "${RUNNER_TEMP}/gnostoa-quality-evidence"
+      - name: Run extended verification
+        run: |
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            --entrypoint sh \
+            --env HOME=/tmp \
+            --env GNOSTOA_QUALITY_OUTPUT=/evidence \
+            --mount type=bind,source="${GITHUB_WORKSPACE}",target=/workspace,readonly \
+            --mount type=bind,source="${RUNNER_TEMP}/gnostoa-quality-evidence",target=/evidence \
+            --workdir /workspace \
+            "${GNOSTOA_CI_IMAGE}" \
+            -ec './ci/verify extended'
+      - name: Upload bounded quality evidence
+        if: ${{ always() }}
+        # actions/upload-artifact v4.6.2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gnostoa-quality-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/gnostoa-quality-evidence
+          if-no-files-found: error
+          retention-days: 14

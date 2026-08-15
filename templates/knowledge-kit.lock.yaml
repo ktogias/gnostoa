@@ -2,6 +2,7 @@ version: 1
 toolkit:
   source: .knowledge-kit
   revision: REPLACE_WITH_IMMUTABLE_TOOLKIT_REVISION
+  public_surface_digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
   profile: .knowledge/profile.yaml
 runtime:
   image: registry.example.org/gnostoa@sha256:0000000000000000000000000000000000000000000000000000000000000000

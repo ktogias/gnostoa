@@ -19,6 +19,9 @@ sources:
   - id: gitlab-protected-branches
     resource: https://docs.gitlab.com/user/project/repository/branches/protected/
     title: GitLab protected branches
+  - id: openssf-scorecard-checks
+    resource: https://github.com/ossf/scorecard/blob/main/docs/checks.md
+    title: OpenSSF Scorecard checks
 x-project-knowledge:
   id: kit.decision.0006.provider-neutral-change-governance
   owners:
@@ -32,6 +35,10 @@ x-project-knowledge:
       target: /requirements/reviewed-change-control.md
     - kind: verified-by
       target: /runbooks/maintain-the-kit.md
+    - kind: references
+      target: /decisions/0013-defer-provider-enforcement-while-private.md
+    - kind: references
+      target: /decisions/0014-strengthen-gnostoa-self-governance.md
 ---
 
 # Adopt provider-neutral risk-based change governance
@@ -45,37 +52,57 @@ encourage oversized changes and duplicate information already present in a
 Change Request. Naming GitHub as part of the public contract would also be
 incorrect for GitLab, self-hosted and non-forge environments.
 
-This repository is still an unpublished bootstrap: it has no baseline commit,
-remote or protected integration branch. The workflow being introduced therefore
-cannot govern the commits that precede its own existence.
+When this Decision was prepared, the repository was an unpublished local
+bootstrap with no baseline commit, remote or protected integration branch. The
+workflow being introduced could not govern commits that preceded its own
+existence. A later bootstrap commit or remote does not retroactively change
+that historical exception and does not establish a protected integrated
+baseline.
 
 ## Decision
 
 Adopt a provider-neutral trunk-based flow with a protected default branch,
-short-lived Change Branches, mandatory Change Requests, required checks,
-resolved conversations and risk-based Work Item and approval requirements.
+bounded Change Branches, mandatory Change Requests, required checks, resolved
+conversations and optional stricter Work Item and approval requirements.
 
-Publish the minimum inheritable policy in `core/change-control.yaml`. Allow
-projects to strengthen but not weaken it. Maintain the stricter toolkit policy
-in `policy/change-control.yaml`; the kit requires one independent human approval
-even for mechanical changes and two for critical changes.
+Publish a community-light inheritable policy in `core/change-control.yaml`.
+Allow projects to strengthen but not weaken it. Keep toolkit-internal
+specialization outside that public contract.
+[Decision 0014](0014-strengthen-gnostoa-self-governance.md) records Gnostoa's
+choice to require a durable issue, Decision and test-first chronology for its
+own normal, normative and critical changes.
 
 Agents may author changes and assemble evidence. They may not approve their own
-work, bypass controls or promote stable knowledge without a human.
+work where an independent gate is configured, bypass controls or promote stable
+knowledge without a human.
 
-Treat the current unpublished implementation as the single bootstrap exception.
-The first published baseline must enable repository protection immediately;
-all later changes follow the new policy. The exception does not waive tests,
-bundle validation or a human review of the baseline before publication.
+The generic baseline requires a protected default branch, Change Request,
+required checks and resolved conversations. It does not require a separate
+issue, formal approval, cooling-off period, owner attestation or Decision for a
+self-authored change. The accountable maintainer inspects the final diff before
+merge; community contributions receive maintainer review. Specializations can
+add independent approvals, mandatory Decisions and earlier evidence timing.
+
+Treat only the commits that materialize the unpublished first candidate as the
+single bootstrap exception. The exception does not authorize integration
+without effective provider protection. The first reviewed baseline may enter
+the default branch only after required protection is effective. If the provider
+cannot protect the private repository, either that capability must become
+available or a separately authorized visibility change and verified protection
+must precede merge, as recorded in
+[Decision 0013](0013-defer-provider-enforcement-while-private.md). All later
+changes follow the new policy. The exception does not waive tests, bundle
+validation or human review of the baseline before source publication.
 
 ## Consequences
 
 - The public contract remains portable across GitHub, GitLab and other forges.
 - Every integrated change has a reviewable evidence envelope.
-- Work Items are required when rationale must outlive a single Change Request,
-  not for every mechanical edit.
+- Work Items and Decisions are used when rationale must outlive a single Change
+  Request, not as mandatory wrappers around routine work.
 - Policy specializations can increase approvals and shorten branch lifetime.
+- Gnostoa's stricter self-policy does not become a consumer requirement.
 - Repository protection settings remain provider-side controls and must be
   configured and audited separately.
-- Small or single-maintainer teams need another accountable human before they
-  can satisfy the toolkit's self-policy.
+- Solo maintainers can use the baseline honestly without fabricated reviewers
+  or recurring exceptions.

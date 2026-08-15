@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import os
-from pathlib import Path
 import re
-from typing import Any, Iterable
+from collections.abc import Iterable
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 import yaml
-
 
 FRONTMATTER_RE = re.compile(
     r"\A---[ \t]*\r?\n(?P<yaml>.*?)\r?\n---[ \t]*(?:\r?\n|$)(?P<body>.*)\Z",
@@ -18,6 +18,11 @@ MARKDOWN_LINK_RE = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
 HEADING_RE = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
 RESERVED_NAMES = {"index.md", "log.md"}
 POLICY_RANK = {"ignore": 0, "warning": 1, "error": 2}
+TOOLKIT_ROOT_MARKERS = (
+    "pyproject.toml",
+    "core/profile.yaml",
+    "schemas/profile.schema.json",
+)
 
 
 class KnowledgeLoader(yaml.SafeLoader):
@@ -41,8 +46,27 @@ class KnowledgeFormatError(ValueError):
 def toolkit_root() -> Path:
     configured = os.environ.get("KNOWLEDGE_KIT_ROOT")
     if configured:
-        return Path(configured).resolve()
-    return Path(__file__).resolve().parent.parent
+        root = Path(configured).expanduser().resolve()
+        missing = [
+            marker for marker in TOOLKIT_ROOT_MARKERS if not (root / marker).is_file()
+        ]
+        if missing:
+            raise KnowledgeFormatError(
+                "KNOWLEDGE_KIT_ROOT does not identify a Gnostoa public-source "
+                f"root ({root}); missing: {', '.join(missing)}"
+            )
+        return root
+
+    root = Path(__file__).resolve().parent.parent
+    if all((root / marker).is_file() for marker in TOOLKIT_ROOT_MARKERS):
+        return root
+
+    markers = ", ".join(TOOLKIT_ROOT_MARKERS)
+    raise KnowledgeFormatError(
+        "Native Gnostoa installation supplies execution only; set "
+        "KNOWLEDGE_KIT_ROOT to a pinned Gnostoa public-source root containing "
+        f"{markers}, then verify its lock before use"
+    )
 
 
 @dataclass(frozen=True)
@@ -108,22 +132,26 @@ def load_concepts(bundle: Path) -> list[Document]:
 
 def deep_merge(parent: Any, child: Any) -> Any:
     if isinstance(parent, dict) and isinstance(child, dict):
-        merged = dict(parent)
+        merged_mapping = dict(parent)
         for key, value in child.items():
-            merged[key] = (
-                deep_merge(merged[key], value) if key in merged else value
+            merged_mapping[key] = (
+                deep_merge(merged_mapping[key], value)
+                if key in merged_mapping
+                else value
             )
-        return merged
+        return merged_mapping
     if isinstance(parent, list) and isinstance(child, list):
-        merged = list(parent)
+        merged_sequence = list(parent)
         for value in child:
-            if value not in merged:
-                merged.append(value)
-        return merged
+            if value not in merged_sequence:
+                merged_sequence.append(value)
+        return merged_sequence
     return child
 
 
-def _assert_monotonic(parent: dict[str, Any], child: dict[str, Any], path: Path) -> None:
+def _assert_monotonic(
+    parent: dict[str, Any], child: dict[str, Any], path: Path
+) -> None:
     parent_rules = parent.get("rules", {})
     child_rules = child.get("rules", {})
     if not isinstance(parent_rules, dict) or not isinstance(child_rules, dict):
@@ -183,7 +211,10 @@ def _load_profile(path: Path, stack: tuple[Path, ...]) -> dict[str, Any]:
         merged = deep_merge(merged, parent)
 
     _assert_monotonic(merged, current, path)
-    return deep_merge(merged, current)
+    result = deep_merge(merged, current)
+    if not isinstance(result, dict):
+        raise KnowledgeFormatError(f"Merged profile must be a mapping in {path}")
+    return result
 
 
 def markdown_links(body: str) -> list[str]:

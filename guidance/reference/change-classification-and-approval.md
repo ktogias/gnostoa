@@ -1,7 +1,7 @@
 ---
 type: Reference
-title: Change classification and approval
-description: Select work-item, review and decision evidence from impact rather than applying one heavyweight path to every diff.
+title: Change classification and review
+description: Select proportionate records, verification and review from impact without imposing a heavyweight path on small projects.
 status: draft
 generated:
   by: codex/gpt-5
@@ -28,12 +28,12 @@ x-project-knowledge:
       target: /workflows/daily-change-loop.md
 ---
 
-# Change classification and approval
+# Change classification and review
 
 ## Purpose
 
-Provide one stable classification that developers, reviewers, agents and CI can
-use to determine required evidence and approval without loading project-specific
+Provide one stable classification that developers, maintainers, agents and CI
+can use to determine proportionate evidence without loading project-specific
 process documentation.
 
 ## Content
@@ -41,13 +41,13 @@ process documentation.
 The generic baseline is canonical in `core/change-control.yaml`. Its classes
 are:
 
-| Class | Typical scope | Work Item | Minimum approval |
+| Class | Typical scope | Separate Work Item | Generic merge gate |
 |---|---|---|---|
 | `mechanical` | Typo, formatting or reproducible generated output with no semantic change | Optional | CI; auto-merge may be allowed |
-| `normal` | Bounded implementation, test, draft knowledge or non-breaking documentation | Optional when the Change Request fully states the problem | One independent human |
-| `normative` | Policy, profile, schema, stable knowledge or public contract behavior | Required | One human CODEOWNER plus Decision |
-| `critical` | Breaking, security, release, runtime or high-blast-radius change | Required | Two human approvals plus Decision |
-| `emergency` | Time-critical restoration when the normal pre-merge path is unsafe | Follow-up required | Break-glass audit and human follow-up review |
+| `normal` | Bounded implementation, test, draft knowledge or non-breaking documentation | Optional when the Change Request states the problem | Passing checks and accountable maintainer review |
+| `normative` | Policy, profile, schema, stable knowledge or public contract behavior | Optional; use one when rationale must outlive the Change Request | Passing checks and accountable semantic review |
+| `critical` | Breaking, security, release, runtime or high-blast-radius change | Optional in the baseline; strongly consider a durable record | Required verification and explicit maintainer review |
+| `emergency` | Time-critical restoration when the normal pre-merge path is unsafe | Follow-up required | Scoped break-glass change and accountable follow-up |
 
 A Work Item describes the problem, desired outcome, scope and acceptance
 criteria. A Change Request describes the chosen solution and its verification.
@@ -57,20 +57,29 @@ Classification follows the highest impact of the diff. A change is not
 `mechanical` if it changes meaning, accepted inputs, generated output semantics,
 authority, policy, dependency trust or a stable claim.
 
-Projects inherit the baseline and may strengthen it. For example, a project may
-require one approval for mechanical changes or three approvals for critical
-changes. It may not enable direct pushes, allow agents to approve their own
-changes or lower inherited approval requirements.
+The generic baseline deliberately supports a solo maintainer: it requires no
+formal approval, cooling-off period, owner attestation or separate issue for a
+self-authored Change Request. The maintainer still inspects the final diff and
+semantic impact before merging. A community contribution should be reviewed by
+an accountable maintainer because author and maintainer are different people.
+
+Projects inherit the baseline and may strengthen it. For example, a
+specialization may require a Decision, one independent CODEOWNER approval for
+normal changes, or two approvals for critical changes. It may not enable direct
+pushes, allow agents to satisfy a required human gate or lower inherited
+requirements.
 
 ## Usage
 
 1. Classify before implementation and record the class in the Change Request.
-2. Create a Work Item before coding when required.
-3. Add a Decision for normative or critical changes.
+2. Create a separate Work Item only when policy requires it or the problem
+   context will not fit cleanly in the Change Request.
+3. Add a Decision when policy requires it or architectural rationale must
+   remain independently discoverable.
 4. Reclassify upward when the diff grows or reveals broader impact.
 5. Apply the strictest class when a change spans several concerns.
-6. Use `emergency` only with an identified incident, authorized human,
-   compensating controls and a required post-event review.
+6. Use `emergency` only with an identified incident, accountable maintainer,
+   bounded impact and a required post-event review.
 
 Validate a project specialization with:
 

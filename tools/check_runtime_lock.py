@@ -4,8 +4,8 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
 import sys
+from pathlib import Path
 from typing import Any
 
 from jsonschema import Draft202012Validator
@@ -16,7 +16,6 @@ from .knowledge_common import (
     load_yaml,
     toolkit_root,
 )
-
 
 UNENFORCED_REVISIONS = {"", "development", "unknown"}
 PUBLIC_SURFACE_PATHS = (
@@ -37,7 +36,10 @@ IGNORED_SUFFIXES = {".pyc", ".pyo"}
 
 
 def _schema(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    schema = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(schema, dict):
+        raise KnowledgeFormatError(f"Schema must be a mapping in {path}")
+    return schema
 
 
 def public_surface_digest(root: Path) -> str:
@@ -48,7 +50,9 @@ def public_surface_digest(root: Path) -> str:
         if path.is_file():
             files.append(path)
         elif path.is_dir():
-            files.extend(candidate for candidate in path.rglob("*") if candidate.is_file())
+            files.extend(
+                candidate for candidate in path.rglob("*") if candidate.is_file()
+            )
 
     digest = hashlib.sha256()
     included = 0
@@ -104,6 +108,7 @@ def check_runtime_lock(
         return sorted(set(issues))
 
     toolkit_revision = toolkit.get("revision")
+    locked_surface_digest = toolkit.get("public_surface_digest")
     runtime_revision = runtime.get("revision")
     if (
         isinstance(toolkit_revision, str)
@@ -153,15 +158,11 @@ def check_runtime_lock(
         try:
             source.relative_to(root)
         except ValueError:
-            issues.append(
-                f"toolkit.source escapes project root: {source_reference!r}"
-            )
+            issues.append(f"toolkit.source escapes project root: {source_reference!r}")
             source = None
         else:
             if not source.is_dir():
-                issues.append(
-                    f"toolkit.source does not exist: {source_reference!r}"
-                )
+                issues.append(f"toolkit.source does not exist: {source_reference!r}")
                 source = None
 
     profile_reference = toolkit.get("profile")
@@ -175,9 +176,7 @@ def check_runtime_lock(
             )
         else:
             if not profile.is_file():
-                issues.append(
-                    f"toolkit.profile does not exist: {profile_reference!r}"
-                )
+                issues.append(f"toolkit.profile does not exist: {profile_reference!r}")
             else:
                 try:
                     load_profile(profile)
@@ -185,15 +184,21 @@ def check_runtime_lock(
                     issues.append(f"toolkit.profile is invalid: {exc}")
 
     if source is not None:
-        executing_root = (
-            runtime_root.resolve() if runtime_root else toolkit_root()
-        )
+        executing_root = runtime_root.resolve() if runtime_root else toolkit_root()
         try:
             source_digest = public_surface_digest(source)
             runtime_digest = public_surface_digest(executing_root)
         except (KnowledgeFormatError, OSError) as exc:
             issues.append(f"cannot compare toolkit public surfaces: {exc}")
         else:
+            if (
+                isinstance(locked_surface_digest, str)
+                and source_digest != locked_surface_digest
+            ):
+                issues.append(
+                    "mounted toolkit public surface does not match locked "
+                    f"digest: {source_digest} != {locked_surface_digest}"
+                )
             if source_digest != runtime_digest:
                 issues.append(
                     "mounted toolkit public surface does not match executing "
@@ -213,6 +218,24 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--expected-image")
     parser.add_argument("--schema", type=Path)
     return parser
+
+
+def _digest_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Compute the deterministic toolkit public-surface digest."
+    )
+    parser.add_argument("--root", type=Path, required=True)
+    return parser
+
+
+def surface_digest_main(argv: list[str] | None = None) -> int:
+    args = _digest_parser().parse_args(argv)
+    try:
+        print(public_surface_digest(args.root))
+    except (KnowledgeFormatError, OSError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

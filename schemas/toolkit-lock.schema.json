@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.org/project-knowledge/toolkit-lock.schema.json",
+  "$id": "https://ktogias.github.io/gnostoa/schemas/v1/toolkit-lock.schema.json",
   "title": "Gnostoa source and runtime lock",
   "type": "object",
   "required": [
@@ -17,6 +17,7 @@
       "required": [
         "source",
         "revision",
+        "public_surface_digest",
         "profile"
       ],
       "properties": {
@@ -27,6 +28,10 @@
         "revision": {
           "type": "string",
           "minLength": 1
+        },
+        "public_surface_digest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
         },
         "profile": {
           "type": "string",

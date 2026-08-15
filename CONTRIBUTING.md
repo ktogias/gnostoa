@@ -8,23 +8,40 @@ and self-knowledge surfaces.
    [change workflow](guidance/workflows/propose-review-merge-change.md).
 2. Use the [maintainer runbook](knowledge/runbooks/maintain-the-kit.md) for
    toolkit-specific verification.
-3. Create the required Work Item and Decision, then work on a short-lived
-   branch and open a Change Request using
+3. Work on a bounded branch and open a Change Request using
    [`templates/change-request.md`](templates/change-request.md).
+   Gnostoa requires a linked Work Item and Decision for every non-mechanical
+   change; an emergency may complete them in its mandatory follow-up.
 4. Follow the
-   [verification-first workflow](guidance/workflows/develop-verification-first.md)
-   before implementation.
+   [proportionate verification workflow](guidance/workflows/develop-verification-first.md)
+   and establish the Gnostoa self-policy's required evidence before
+   implementation, except for the explicit emergency follow-up path.
 5. Run `knowledge self-check`.
 6. For CI or hook changes, follow
    [configure continuous integration](guidance/workflows/configure-continuous-integration.md)
-   and run `./ci/verify policy`.
-7. Do not self-approve or bypass required human/CODEOWNER review.
+   and run `./ci/verify policy`. Run `./ci/verify extended` for changes that
+   affect the maintained Python quality, documentation or release-evidence
+   surfaces.
+7. Inspect the final diff before merge. Community contributions receive
+   maintainer review; satisfy additional approval gates only when the effective
+   specialization requires them.
 
-The repository currently has no published baseline or remote. The one-time
-bootstrap exception is recorded in
-[`Decision 0006`](knowledge/decisions/0006-provider-neutral-change-governance.md).
-Protection is mandatory immediately after the first reviewed baseline is
-published.
+## Historical bootstrap boundary
+
+The large append-only ledger on Issue #12 and PR #2 records Gnostoa's one-time
+B1 self-dogfood bootstrap. It is useful failure and recovery evidence, but it is
+**not the expected contribution workflow**. Contributors are not expected to
+produce content-addressed prose packets or repeated recording approvals.
+Present one compact current Change Request, use provider-native review, ask one
+human decision for each genuine semantic choice and keep verification
+proportionate to the effective policy and actual risk. Detailed deterministic
+evidence should be generated or linked, not copied into a new comment at every
+step. The bounded [B2 experiment](https://github.com/ktogias/gnostoa/issues/24)
+will test this streamlined route explicitly.
+
+The one-time pre-publication provider exception is recorded in
+[`Decision 0013`](knowledge/decisions/0013-defer-provider-enforcement-while-private.md).
+Protection is mandatory when the first baseline is published.
 
 ## Copyright and contribution license
 

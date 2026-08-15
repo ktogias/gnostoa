@@ -1,4 +1,4 @@
-version: "0.6.0"
+version: "0.9.0"
 guardrails:
   - id: monotonic-profile-inheritance
     title: Child profiles do not weaken parent policy
@@ -19,8 +19,10 @@ guardrails:
     guidance: guidance/guardrails/non-negotiable.md#rule
     implementation:
       - tools/validate_bundle.py#validate_bundle
+      - knowledge/runbooks/review-publication-baseline.md
     tests:
       - tests/test_tools.py::BundleTests.test_stable_concept_requires_human_verifier
+      - tests/test_tools.py::PublicationBaselineTests.test_publication_review_matrix_covers_every_canonical_concept
 
   - id: graph-integrity
     title: IDs are unique and links resolve
@@ -35,6 +37,25 @@ guardrails:
       - tests/test_tools.py::BundleTests.test_guidance_bundle_is_valid
       - tests/test_tools.py::BundleTests.test_self_knowledge_bundle_is_valid
       - tests/test_tools.py::DocumentationTests.test_repository_documentation_links_resolve
+
+  - id: stable-public-schema-identity
+    title: Public schemas use unique versioned identifiers under an owned namespace
+    applies_to: [kit]
+    enforcement: automated
+    owner: team:gnostoa-maintainers
+    guidance: knowledge/decisions/0012-use-versioned-public-schema-identifiers.md#decision
+    implementation:
+      - schemas/change-control.schema.json
+      - schemas/continuous-integration.schema.json
+      - schemas/frontmatter.schema.json
+      - schemas/guardrails.schema.json
+      - schemas/profile.schema.json
+      - schemas/toolkit-lock.schema.json
+      - schemas/verification-manifest.schema.json
+      - tools/build_docs.py#prepare_projection
+    tests:
+      - tests/test_tools.py::PublicationBaselineTests.test_schema_ids_use_the_versioned_gnostoa_namespace
+      - tests/test_tools.py::DocumentationTests.test_docs_builder_stages_canonical_surfaces
 
   - id: generated-content-starts-draft
     title: Generated content starts as draft
@@ -101,9 +122,30 @@ guardrails:
     implementation:
       - knowledge/contracts/public-inheritance-surface.md#boundary
       - templates/AGENTS.project.md
+      - templates/change-control.project.yaml
     tests:
       - tests/test_tools.py::GuardrailTests.test_public_profile_does_not_inherit_self_knowledge
+      - tests/test_tools.py::GuardrailTests.test_public_change_control_does_not_inherit_gnostoa_self_policy
       - tests/test_tools.py::GuardrailTests.test_project_agent_router_is_bounded
+
+  - id: generic-scope-isolation
+    title: Gnostoa source contains no downstream specialization vocabulary
+    applies_to: [kit]
+    enforcement: automated
+    owner: team:gnostoa-maintainers
+    guidance: knowledge/contracts/public-inheritance-surface.md#invariants
+    implementation:
+      - knowledge/contracts/public-inheritance-surface.md#invariants
+      - tools/repository_scope.py
+      - Dockerfile
+    tests:
+      - tests/test_tools.py::PublicationBaselineTests.test_repository_contains_no_specialization_vocabulary
+      - tests/test_repository_scope.py::RepositoryCandidateScopeTests.test_only_git_tracked_candidate_files_are_semantic_inputs
+      - tests/test_repository_scope.py::RepositoryCandidateScopeTests.test_forbidden_vocabulary_in_a_tracked_file_is_reported
+      - tests/test_repository_scope.py::RepositoryCandidateScopeTests.test_tracked_symlink_does_not_expose_external_file_content
+      - tests/test_repository_scope.py::RepositoryCandidateScopeTests.test_packaged_candidate_uses_its_build_manifest_without_git
+      - tests/test_repository_scope.py::RepositoryCandidateScopeTests.test_unsafe_build_manifest_entry_is_rejected
+      - tests/test_repository_scope.py::RepositoryCandidateScopeTests.test_container_runtime_declares_both_candidate_sources
 
   - id: legacy-content-quarantine
     title: Unnormalized legacy Markdown remains outside the validated bundle
@@ -128,8 +170,11 @@ guardrails:
     owner: team:gnostoa-maintainers
     guidance: guidance/guardrails/non-negotiable.md#rule
     implementation:
+      - .github/CODEOWNERS
       - templates/CODEOWNERS.project
       - templates/knowledge-change-checklist.md
+    tests:
+      - tests/test_tools.py::PublicationBaselineTests.test_github_provider_surface_is_active_and_owned
 
   - id: container-first-consumer-runtime
     title: Consumer and CI execution is container-first with native fallback
@@ -143,6 +188,9 @@ guardrails:
       - requirements/development.lock
       - .devcontainer/devcontainer.json
       - tools/cli.py#main
+      - tools/knowledge_common.py#toolkit_root
+      - tools/release_smoke.py#release_smoke
+      - ci/release_smoke.py
       - guidance/workflows/bootstrap-new-project.md#procedure
     tests:
       - tests/test_tools.py::RuntimeTests.test_runtime_image_contract_is_pinned_and_non_root
@@ -151,9 +199,13 @@ guardrails:
       - tests/test_tools.py::RuntimeTests.test_bootstrap_is_container_first_with_native_fallback
       - tests/test_tools.py::RuntimeTests.test_consumer_ci_templates_use_pinned_runtime_image
       - tests/test_tools.py::RuntimeTests.test_native_ci_is_explicit_fallback
+      - tests/test_tools.py::RuntimeTests.test_native_distribution_requires_explicit_public_source_binding
+      - tests/test_tools.py::RuntimeTests.test_explicit_public_source_binding_rejects_wrong_root
+      - tests/test_tools.py::RuntimeTests.test_execution_wheel_must_not_duplicate_canonical_source
+      - tests/test_tools.py::RuntimeTests.test_release_build_frontend_and_backend_are_pinned
 
   - id: runtime-source-lockstep
-    title: Runtime image and toolkit source/profile revisions match
+    title: Runtime image, toolkit public-surface digest and revisions match
     applies_to: [kit, adopting-projects]
     enforcement: automated
     owner: team:gnostoa-maintainers
@@ -163,10 +215,13 @@ guardrails:
       - templates/knowledge-kit.lock.yaml
       - tools/check_runtime_lock.py#check_runtime_lock
       - tools/check_runtime_lock.py#public_surface_digest
+      - tools/cli.py#main
     tests:
+      - tests/test_tools.py::RuntimeTests.test_runtime_lock_requires_pinned_public_surface_digest
       - tests/test_tools.py::RuntimeTests.test_runtime_lock_accepts_matching_revisions
       - tests/test_tools.py::RuntimeTests.test_runtime_lock_rejects_image_revision_drift
       - tests/test_tools.py::RuntimeTests.test_runtime_lock_rejects_public_surface_drift
+      - tests/test_tools.py::RuntimeTests.test_runtime_lock_rejects_locked_source_digest_drift
 
   - id: concrete-tools-are-specialized
     title: Concrete implementation and test products stay out of generic guidance
@@ -191,6 +246,7 @@ guardrails:
       - templates/change-control.project.yaml
       - templates/change-request.md
       - templates/repository-settings-checklist.md
+      - knowledge/decisions/0013-defer-provider-enforcement-while-private.md
     tests:
       - tests/test_tools.py::ChangeControlTests.test_generic_baseline_has_protected_change_flow
 
@@ -204,12 +260,27 @@ guardrails:
       - tools/check_change_policy.py#load_change_policy
       - tools/check_change_policy.py#_assert_monotonic
     tests:
-      - tests/test_tools.py::ChangeControlTests.test_toolkit_policy_strengthens_generic_baseline
+      - tests/test_tools.py::ChangeControlTests.test_generic_baseline_is_practical_for_solo_and_community_projects
+      - tests/test_tools.py::ChangeControlTests.test_gnostoa_self_policy_requires_durable_context_and_test_first
       - tests/test_tools.py::ChangeControlTests.test_change_policy_cannot_weaken_parent
       - tests/test_tools.py::ChangeControlTests.test_verification_policy_cannot_weaken_parent
 
+  - id: gnostoa-self-change-discipline
+    title: Gnostoa requires durable context and test-first chronology above the public baseline
+    applies_to: [kit]
+    enforcement: hybrid
+    owner: team:gnostoa-maintainers
+    guidance: knowledge/decisions/0014-strengthen-gnostoa-self-governance.md#decision
+    implementation:
+      - policy/change-control.yaml
+      - AGENTS.md
+      - CONTRIBUTING.md
+      - knowledge/runbooks/maintain-the-kit.md
+    tests:
+      - tests/test_tools.py::ChangeControlTests.test_gnostoa_self_policy_requires_durable_context_and_test_first
+
   - id: human-change-approval-authority
-    title: Agents cannot satisfy required human semantic approval
+    title: Agents cannot satisfy a human gate required by a specialization
     applies_to: [kit, adopting-projects]
     enforcement: hybrid
     owner: team:gnostoa-maintainers
@@ -223,7 +294,7 @@ guardrails:
       - tests/test_tools.py::ChangeControlTests.test_agents_cannot_approve_or_bypass
 
   - id: verification-first-change-evidence
-    title: Expected behavior and proportionate evidence precede implementation
+    title: Expected behavior and proportionate evidence precede integration
     applies_to: [kit, adopting-projects]
     enforcement: hybrid
     owner: team:gnostoa-maintainers
@@ -237,7 +308,7 @@ guardrails:
       - templates/AGENTS.project.md
     tests:
       - tests/test_tools.py::ChangeControlTests.test_generic_policy_requires_verification_first_evidence
-      - tests/test_tools.py::ChangeControlTests.test_change_request_captures_preimplementation_evidence
+      - tests/test_tools.py::ChangeControlTests.test_change_request_captures_proportionate_evidence
       - tests/test_tools.py::ChangeControlTests.test_verification_first_guidance_and_self_route_are_complete
 
   - id: required-test-quality
@@ -309,12 +380,14 @@ guardrails:
     owner: team:gnostoa-maintainers
     guidance: guidance/workflows/configure-continuous-integration.md#procedure
     implementation:
+      - .github/workflows/verification.yml
       - ci/github-actions.yml
       - ci/gitlab-ci.yml
       - .gitlab-ci.yml
       - guidance/reference/continuous-integration-contract.md
     tests:
       - tests/test_tools.py::ContinuousIntegrationTests.test_provider_adapters_cover_candidate_and_integration_events
+      - tests/test_tools.py::PublicationBaselineTests.test_github_provider_surface_is_active_and_owned
 
   - id: conditional-artifact-promotion
     title: Delivery activates for deployable artifacts and promotes the verified artifact

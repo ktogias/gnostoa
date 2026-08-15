@@ -35,8 +35,9 @@ machine-enforceable policy, reusable task-routed guidance and a separate
 toolkit-only OKF bundle. Connect guardrails to their guidance, implementation
 and tests through a coverage manifest checked by CI.
 
-Consuming projects inherit the public policy, consult relevant guidance and
-maintain their own project bundle. They do not inherit toolkit self-knowledge.
+Consuming projects inherit the public core policy, consult relevant guidance
+and maintain their own project bundle. They do not inherit toolkit
+self-knowledge or the Gnostoa-specific files under `policy/`.
 
 ## Consequences
 

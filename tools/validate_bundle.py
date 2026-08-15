@@ -1,18 +1,19 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
 import json
-from pathlib import Path
 import sys
-from typing import Any, Iterable
+from collections.abc import Iterable
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
 from jsonschema import Draft202012Validator
 
 from .knowledge_common import (
+    RESERVED_NAMES,
     Document,
     KnowledgeFormatError,
-    RESERVED_NAMES,
     headings,
     iter_documents,
     load_profile,
@@ -31,7 +32,10 @@ class Issue:
 
 
 def _schema(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    schema = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(schema, dict):
+        raise KnowledgeFormatError(f"Schema must be a mapping in {path}")
+    return schema
 
 
 def _verification_entries(value: Any) -> list[dict[str, Any]]:
@@ -76,11 +80,7 @@ def validate_bundle(
 ) -> tuple[dict[str, Any], list[Issue]]:
     profile_path = profile_path.resolve()
     bundle = bundle_path.resolve()
-    schema_dir = (
-        schema_dir.resolve()
-        if schema_dir
-        else toolkit_root() / "schemas"
-    )
+    schema_dir = schema_dir.resolve() if schema_dir else toolkit_root() / "schemas"
     issues: list[Issue] = []
 
     if not bundle.is_dir():
@@ -88,8 +88,9 @@ def validate_bundle(
 
     profile = load_profile(profile_path)
     profile_errors = sorted(
-        Draft202012Validator(_schema(schema_dir / "profile.schema.json"))
-        .iter_errors(profile),
+        Draft202012Validator(_schema(schema_dir / "profile.schema.json")).iter_errors(
+            profile
+        ),
         key=lambda error: list(error.absolute_path),
     )
     for error in profile_errors:
@@ -163,7 +164,9 @@ def validate_bundle(
 
         for field in required_fields:
             if field not in document.metadata:
-                issues.append(Issue("error", relative, f"missing required field {field}"))
+                issues.append(
+                    Issue("error", relative, f"missing required field {field}")
+                )
 
         concept_type = document.metadata.get("type")
         if concept_type not in known_types:
@@ -187,8 +190,7 @@ def validate_bundle(
                 )
         if status == "stable" and rules.get("stable_requires_human_verification"):
             if not any(
-                isinstance(entry.get("by"), str)
-                and entry["by"].startswith("human:")
+                isinstance(entry.get("by"), str) and entry["by"].startswith("human:")
                 for entry in verification
             ):
                 issues.append(

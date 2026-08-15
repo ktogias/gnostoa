@@ -30,8 +30,9 @@ toolkit's internal concerns.
 
 The public surface consists of the core profile, schemas, supported tools,
 reusable guidance, anonymous templates and documented CI integration.
-`knowledge/`, internal decisions and maintainer runbooks are outside the
-consumer inheritance boundary.
+`knowledge/`, `policy/`, internal decisions and maintainer runbooks are outside
+the consumer inheritance boundary. Adopting projects create their own
+`.knowledge/` policies by extending the public files under `core/`.
 
 ## Invariants
 
@@ -46,13 +47,14 @@ consumer inheritance boundary.
 - A supported native CLI remains available for development and recovery.
 - Runtime image and toolkit source/profile revisions do not drift.
 - The default integration branch is protected and changes arrive through a
-  provider-neutral, risk-classified Change Request flow.
+  provider-neutral, risk-classified Change Request flow that remains practical
+  for a solo maintainer.
 - Child change-control policies strengthen rather than weaken the generic
   baseline.
-- Agents cannot self-approve, bypass controls or replace required human
-  semantic verification.
+- Agents cannot satisfy a required human gate, bypass controls or replace
+  required human semantic verification.
 - Expected behavior and proportionate verification evidence precede
-  implementation, except for an explicitly permitted emergency follow-up.
+  integration, except for an explicitly permitted emergency follow-up.
 - Required tests favor observable behavior, determinism and fast feedback;
   coverage alone does not establish acceptance.
 - Centralized CI is authoritative, validates the latest integration candidate
@@ -68,8 +70,8 @@ Consumers pin a toolkit version and matching runtime-image digest, extend
 needed for the current task. Container execution is the default; native
 execution is a supported fallback.
 
-Maintainers change the public surface through reviewed, versioned changes with
-tests and migration notes when compatibility is affected.
+Maintainers change the public surface through traceable, versioned changes with
+proportionate verification and migration notes when compatibility is affected.
 Projects validate an inherited `.knowledge/change-control.yaml` and map its
 provider-neutral controls to their repository host.
 Projects select stack-specific test tools in specializations while retaining the
