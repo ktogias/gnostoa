@@ -28,7 +28,10 @@ pilot.
 - a self-dogfood publication-baseline review that found and corrected material
   source-scope, lifecycle, drift and disclosure defects; and
 - an explicit assessment of both the value and excessive manual cost of that
-  bootstrap; and
+  bootstrap;
+- a compact [reputation and direction assessment](../knowledge/assessments/first-publication-reputation-and-direction-assessment.md)
+  that separates the credible source candidate from its provider-history debt
+  and records the bounded publication and B2 routes; and
 - an owner-confirmed, source-only
   [name-risk screening](../knowledge/assessments/gnostoa-source-name-screening.md)
   for Greece, the EU and Nice classes 9 and 42.
@@ -45,8 +48,11 @@ pilot.
 ## Publication review status
 
 The cumulative source candidate is a **technical PASS** and repository
-visibility remains **NO-GO** pending the bounded publication cleanup and final
-provider transition. The dated
+visibility remains **NO-GO** pending an exact-current disclosure disposition
+and the bounded visibility, protection and protected-integration transition.
+The publication cleanup has materially improved the current projection; the
+remaining reputation risk is concentrated in the retained historical ledger,
+not in the normal contributor route. The dated
 [provider audit](../knowledge/assessments/first-publication-provider-audit.md)
 found no current high-confidence credential or developer-local-path exposure
 in the inspected remote history, provider records, Actions logs or retained
@@ -120,6 +126,7 @@ Canonical detail:
 
 - [Gnostoa project record](../knowledge/project/gnostoa.md)
 - [Self-dogfood bootstrap assessment](../knowledge/assessments/gnostoa-self-dogfood-bootstrap-assessment.md)
+- [First-publication reputation and direction assessment](../knowledge/assessments/first-publication-reputation-and-direction-assessment.md)
 - [Source-publication name-risk screening](../knowledge/assessments/gnostoa-source-name-screening.md)
 - [First-publication preparation runbook](../knowledge/runbooks/prepare-first-publication.md)
 - [Toolkit evolution lifecycle](../knowledge/lifecycles/toolkit-evolution.md)

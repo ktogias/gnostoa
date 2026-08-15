@@ -181,6 +181,7 @@ attestations for every matrix row.
 | [Toolkit evolution](../lifecycles/toolkit-evolution.md) | Lifecycle stages and drift controls | — | — |
 | [Self-dogfood bootstrap value assessment](../assessments/gnostoa-self-dogfood-bootstrap-assessment.md) | Self-hosting evidence, cost, claim boundaries and transfer limits | — | — |
 | [First-publication provider audit snapshot](../assessments/first-publication-provider-audit.md) | Exposed provider state, disclosure findings and transition gates | — | — |
+| [First-publication reputation and direction assessment](../assessments/first-publication-reputation-and-direction-assessment.md) | Source quality, provider-history debt, direction and bounded publication route | — | — |
 | [Source-publication name-risk screening](../assessments/gnostoa-source-name-screening.md) | Bounded owner disposition, residual risk and repeat triggers | Source-only `CONDITIONAL GO` | `human:ktogias` |
 | [Publication-baseline review drift](../failure-modes/publication-baseline-review-drift.md) | Critical-path containment, authority boundaries and recovery | — | — |
 | [Container-first verification routing bypass](../failure-modes/container-first-verification-routing-bypass.md) | Container-first route recovery, discoverability and bounded tooling follow-up | — | — |

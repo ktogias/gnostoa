@@ -116,6 +116,7 @@ planned streamlined self-hosting and external transfer experiments.
   [continuous-integration workflow](guidance/workflows/configure-continuous-integration.md).
 - **Inspect the evidence:** read the
   [self-dogfood assessment](knowledge/assessments/gnostoa-self-dogfood-bootstrap-assessment.md),
+  [reputation and direction assessment](knowledge/assessments/first-publication-reputation-and-direction-assessment.md),
   [provider audit snapshot](knowledge/assessments/first-publication-provider-audit.md)
   and [first-publication runbook](knowledge/runbooks/prepare-first-publication.md).
 

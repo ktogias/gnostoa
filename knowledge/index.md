@@ -34,6 +34,7 @@ inherited, copied or loaded by adopting projects.
 - [Toolkit evolution](lifecycles/toolkit-evolution.md)
 - [Self-dogfood bootstrap value assessment](assessments/gnostoa-self-dogfood-bootstrap-assessment.md)
 - [First-publication provider audit snapshot](assessments/first-publication-provider-audit.md)
+- [First-publication reputation and direction assessment](assessments/first-publication-reputation-and-direction-assessment.md)
 - [Source-publication name-risk screening](assessments/gnostoa-source-name-screening.md)
 - [Publication-baseline review drift](failure-modes/publication-baseline-review-drift.md)
 - [Container-first verification routing bypass](failure-modes/container-first-verification-routing-bypass.md)
