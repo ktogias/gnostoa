@@ -5,7 +5,7 @@ description: Self-description of Gnostoa, the generic project knowledge toolkit.
 status: draft
 generated:
   by: codex/gpt-5
-  at: "2026-08-14T00:00:00Z"
+  at: "2026-08-15T00:00:00Z"
 sources:
   - id: publication-baseline-change-request
     resource: https://github.com/ktogias/gnostoa/pull/2
@@ -16,6 +16,9 @@ sources:
   - id: source-publication-disclosure-view-v4
     resource: https://github.com/ktogias/gnostoa/pull/2#issuecomment-5296808873
     title: Public-exposure decision view V4
+  - id: cumulative-publication-candidate
+    resource: https://github.com/ktogias/gnostoa/pull/23
+    title: Cumulative first-publication candidate
 x-project-knowledge:
   id: kit.project
   owners:
@@ -39,6 +42,8 @@ x-project-knowledge:
       target: /lifecycles/toolkit-evolution.md
     - kind: references
       target: /assessments/gnostoa-self-dogfood-bootstrap-assessment.md
+    - kind: references
+      target: /assessments/first-publication-provider-audit.md
     - kind: references
       target: /runbooks/prepare-first-publication.md
 ---
@@ -68,13 +73,20 @@ The release should make the implemented validation foundation useful and
 inspectable while presenting the self-dogfood bootstrap, its defect-discovery
 value and its manual process cost honestly.
 
-The exact source-baseline candidate at
-`2b0945c2c2882fb4cf35a5e7e08ad3134addacf6` has completed accountable-owner
-semantic review. Its canonical-target manifest is
+The accountable owner accepted PR #2 head
+`2b0945c2c2882fb4cf35a5e7e08ad3134addacf6` as the inner publication baseline.
+Its canonical-target manifest is
 `94bfefc7bfedec54c83e4edb8986577336fe22403e5cd4bac02d609a6370f02f`.
-This is candidate acceptance for later protected integration, not a merge,
-visibility change, stable-concept promotion or artifact release. The
-repository remains private and PR 2 remains open, draft and unmerged.
+That exact acceptance remains immutable provenance; it was not a merge,
+visibility change, stable-concept promotion or artifact release.
+
+Follow-up publication work was then accumulated through PRs #16–#23. The
+pre-cleanup cumulative review basis is PR #23 head
+`049446b4bfe27103da2d6a9f43531e621cfcbd80`, which contains the accepted PR #2
+head and is 21 commits ahead and 0 behind the current private `main`. Its
+policy, fast, regression, smoke and remote extended checks pass. This is
+correlated technical evidence for a later exact owner review, not acceptance
+of the cumulative source or authorization to integrate or publish it.
 
 ### First-release surface
 
@@ -97,34 +109,53 @@ scope a prerequisite.
 
 ### Current GO gates
 
-As observed after provider-body reconciliation on 2026-08-14, the remaining
-source-publication gates are:
+As observed by the 2026-08-15
+[provider audit](../assessments/first-publication-provider-audit.md), the
+remaining source-publication gates are:
 
-1. an owner disposition on disclosure-set V4, which contains the branch
-   history commit email, reconciled multilingual collaboration history and the
-   explicitly unfinished stacked PR 4;
-2. independent name and trademark clearance for `Gnostoa`;
-3. a separately authorized and verified visibility-and-protection transition.
-   The current private provider plan exposes no effective protection or
-   ruleset on the three branches, so protection must be verified before any
-   integration.
+1. commit and review the publication-cleanup candidate, then reconcile the
+   exact cumulative PR body and Issue #1 with the same final head, scope,
+   evidence and next action;
+2. record an owner disposition on the current disclosure surface, including 11
+   remote branches, 25 reachable commits, 49 Actions runs, four retained
+   artifacts, the maintainer commit identity and the retained multilingual
+   collaboration history;
+3. complete the independent name and trademark review required by Decision
+   0009, with an explicit go, conditional-go or rename result;
+4. authorize the repository visibility change while leaving `main` unchanged,
+   then enable and verify required protection before integration; and
+5. re-run exact-head checks, anonymous-reader links and disclosure scans after
+   the visibility transition and before the cumulative merge.
 
 A bounded exact-string screening on 2026-08-14 found no obvious collision in
 the accessible GitHub, PyPI, npm or indexed-web results; crates.io remained
 inconclusive. This is not legal or registry clearance. Decision 0009 records
 the official OBI, EUIPO/TMview and WIPO route still required for similar-mark,
-goods-and-services and territory review. Gate 2 therefore remains open.
+goods-and-services and territory review. Gate 3 therefore remains open.
 
-The PR 2 and Issue 1 provider descriptions are now reconciled to the accepted
-head and completed review. Their exact body SHA-256 values are
-`85e60269c7373183c1d87e396fed6fc2895a982f65fb62d936ede706f04a47a6` and
-`d91fe04b19da2e7fefe496874b694a3f17e45d9c4d4738021e49f42761f36f5f`
-respectively. That completed projection repair is not another semantic source
-acceptance.
+Disclosure view V4 and the earlier PR #2/Issue #1 summaries remain historical
+records of their exact earlier basis. They are no longer current enough to
+authorize publication: V4 covered only 3 branches, 15 commits, 25 Actions runs
+and no retained artifacts, while the current surface is larger.
 
-PR 4 may be finished, deferred or closed, or it may remain visible only as the
-clearly labelled unfinished work described by an accepted disclosure set. It
-must not appear to be accepted or release-ready accidentally.
+PR #2 and PRs #16–#22 contain useful work and review history. Once an exact
+comparison against the final cumulative candidate succeeds, they should be
+described as **absorbed provenance**, not discarded work: their commits and
+records are carried into one cumulative integration candidate and remain
+linked for reconstruction. Their branches are not deleted before successful
+integration and read-back.
+
+PR #4 remains useful Research input for Issue #3. It is retained outside the
+first-publication baseline because its current head is conflicting and its
+eight review findings remain unresolved. Parking or closing that PR must retain
+its exact head, branch, findings and restart conditions; it is not a rejection
+or deletion of the work.
+
+The source-publication gates above are distinct from package, image and site
+release gates. Package metadata enrichment, authoritative release-smoke CI,
+OS/base-image inventory, legal compatibility review and signed provenance may
+follow a bounded source publication and are not silently represented as
+complete by it.
 
 ### Next validation path
 

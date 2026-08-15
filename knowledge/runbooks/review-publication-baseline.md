@@ -179,6 +179,7 @@ attestations for every matrix row.
 | [Stricter Gnostoa self-governance](../decisions/0014-strengthen-gnostoa-self-governance.md) | Internal issue, Decision and evidence chronology without consumer leakage | — | — |
 | [Toolkit evolution](../lifecycles/toolkit-evolution.md) | Lifecycle stages and drift controls | — | — |
 | [Self-dogfood bootstrap value assessment](../assessments/gnostoa-self-dogfood-bootstrap-assessment.md) | Self-hosting evidence, cost, claim boundaries and transfer limits | — | — |
+| [First-publication provider audit snapshot](../assessments/first-publication-provider-audit.md) | Exposed provider state, disclosure findings and transition gates | — | — |
 | [Publication-baseline review drift](../failure-modes/publication-baseline-review-drift.md) | Critical-path containment, authority boundaries and recovery | — | — |
 | [Gnostoa project](../project/gnostoa.md) | Product purpose and scope | — | — |
 | [Centralized CI verifies candidates](../requirements/centralized-ci-verifies-integration-candidates.md) | Required candidate evidence | — | — |

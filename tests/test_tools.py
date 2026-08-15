@@ -1606,6 +1606,47 @@ runtime:
 
 
 class DocumentationTests(unittest.TestCase):
+    def test_publication_front_door_exposes_support_security_and_roadmap(self) -> None:
+        security_path = ROOT / "SECURITY.md"
+        support_path = ROOT / "SUPPORT.md"
+        self.assertTrue(security_path.is_file())
+        self.assertTrue(support_path.is_file())
+
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        security = security_path.read_text(encoding="utf-8")
+        support = support_path.read_text(encoding="utf-8")
+        roadmap = (ROOT / "docs" / "roadmap.md").read_text(encoding="utf-8")
+        normalized_security = " ".join(security.split())
+
+        self.assertIn("[Security](SECURITY.md)", readme)
+        self.assertIn("[Support](SUPPORT.md)", readme)
+        self.assertIn("No supported release", normalized_security)
+        self.assertIn("private vulnerability reporting", normalized_security)
+        self.assertIn("No response-time guarantee", normalized_security)
+        self.assertIn("GitHub Issues", support)
+        self.assertIn("No support SLA", support)
+        for heading in ("## Now", "## Next", "## Research"):
+            self.assertIn(heading, roadmap)
+        for issue_number in (
+            1,
+            3,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+        ):
+            self.assertIn(
+                f"https://github.com/ktogias/gnostoa/issues/{issue_number}",
+                roadmap,
+            )
+
     def test_public_front_door_exposes_verified_evaluation_path(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         quick_start = (ROOT / "docs" / "quick-start.md").read_text(encoding="utf-8")
@@ -1625,6 +1666,8 @@ class DocumentationTests(unittest.TestCase):
         paths = [
             ROOT / "README.md",
             ROOT / "CONTRIBUTING.md",
+            ROOT / "SECURITY.md",
+            ROOT / "SUPPORT.md",
             *(ROOT / "docs").rglob("*.md"),
         ]
         broken: list[str] = []

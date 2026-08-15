@@ -5,9 +5,10 @@ evidence and publication gates live in the linked self-knowledge records.
 
 ## Pre-release
 
-Gnostoa currently has a reviewed source candidate and working validation
-prototype. It has no public release, package, OCI image, documentation site or
-independent transfer pilot.
+Gnostoa currently has an owner-reviewed inner baseline and a technically
+verified cumulative source candidate. It has no integrated public baseline,
+public release, package, OCI image, documentation site or independent transfer
+pilot.
 
 ### Available from source
 
@@ -21,6 +22,9 @@ independent transfer pilot.
 ### Evidence available
 
 - repository-native policy, unit, regression, smoke and documentation checks;
+- a cumulative PR #23 review basis at
+  `049446b4bfe27103da2d6a9f43531e621cfcbd80`, with 95 of 95 tests and all five
+  declared remote jobs passing;
 - a self-dogfood publication-baseline review that found and corrected material
   source-scope, lifecycle, drift and disclosure defects; and
 - an explicit assessment of both the value and excessive manual cost of that
@@ -33,6 +37,29 @@ independent transfer pilot.
 - independent adoption, net productivity benefit or product-market demand;
 - scalable guided review with low cognitive load; or
 - independent trademark clearance for the working project name.
+
+## Publication review status
+
+The cumulative source candidate is a **technical PASS** and repository
+visibility remains **NO-GO** pending the bounded publication cleanup and final
+provider transition. The dated
+[provider audit](../knowledge/assessments/first-publication-provider-audit.md)
+found no current high-confidence credential or developer-local-path exposure
+in the inspected remote history, provider records, Actions logs or retained
+artifacts. It also found stale provider/canonical projections, an incomplete
+disclosure disposition, no effective branch protection while private and no
+independent name clearance.
+
+PR #2 and PRs #16–#22 are useful absorbed provenance inside the cumulative PR
+#23 ancestry; they are not discarded. PR #4 is retained as Research input for
+Issue #3, outside the publication baseline while its conflicts and eight
+review findings remain unresolved.
+
+The source-publication route is now: complete and verify one cleanup candidate,
+reconcile the final cumulative PR and Issue #1, disposition the exact current
+disclosure and name risk, change visibility with `main` unchanged, enable and
+verify protection, then integrate the exact cumulative candidate. Package,
+image and site publication remain separate effects.
 
 Clean wheel and source-distribution candidates now build and run against an
 explicit separate public-source binding; an absent or malformed binding fails
@@ -59,8 +86,8 @@ legacy license metadata still requires human review, and neither the inventory
 nor the tree scan covers the OS/base image, Git history or provider artifacts.
 [Dependency evidence](dependency-evidence.md) documents the exact boundary.
 Complete image/system-component inventory, legal review, publisher and release
-provenance, the full exposed history/provider disclosure audit, remaining
-release gates and publication still remain open.
+provenance, the final exact-head provider disclosure GO, remaining release
+gates and publication still remain open.
 
 ## Current direction
 
@@ -69,6 +96,9 @@ prototype, not the full open research backlog. After publication, one small
 Gnostoa change will measure a streamlined self-hosting process. Only after that
 process is comprehensible and materially smaller will an independently owned
 project be used for a transfer pilot.
+
+The explicit delivery order and all currently open Work Items are classified
+in the [Now / Next / Research roadmap](roadmap.md).
 
 Canonical detail:
 

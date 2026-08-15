@@ -93,6 +93,7 @@ planned streamlined self-hosting and external transfer experiments.
 
 - **Evaluate:** follow the [quick start](docs/quick-start.md) and
   [current-status page](docs/status.md).
+- **Plan:** inspect the explicit [Now / Next / Research roadmap](docs/roadmap.md).
 - **Understand:** read the [architecture](docs/core/architecture.md),
   [public inheritance contract](knowledge/contracts/public-inheritance-surface.md)
   and [toolchain](docs/core/toolchain.md), then check the current
@@ -103,7 +104,8 @@ planned streamlined self-hosting and external transfer experiments.
 - **Operate changes:** use the [reusable guidance router](guidance/index.md) and
   [continuous-integration workflow](guidance/workflows/configure-continuous-integration.md).
 - **Inspect the evidence:** read the
-  [self-dogfood assessment](knowledge/assessments/gnostoa-self-dogfood-bootstrap-assessment.md)
+  [self-dogfood assessment](knowledge/assessments/gnostoa-self-dogfood-bootstrap-assessment.md),
+  [provider audit snapshot](knowledge/assessments/first-publication-provider-audit.md)
   and [first-publication runbook](knowledge/runbooks/prepare-first-publication.md).
 
 ## Repository surfaces
@@ -176,6 +178,14 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and the
 [maintainer runbook](knowledge/runbooks/maintain-the-kit.md) before changing a
 public contract. Gnostoa uses its own mechanisms during development, but its
 internal review overhead is not exported to adopting projects.
+
+## Support and security
+
+Use [Support](SUPPORT.md) for reproducible defects and bounded usage questions.
+Report vulnerabilities through the private route described in
+[Security](SECURITY.md); do not place unpatched exploit details or sensitive
+project data in a public Issue. Gnostoa is pre-release and currently provides
+neither a support SLA nor a security-response guarantee.
 
 ## License and identity
 

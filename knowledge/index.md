@@ -32,6 +32,7 @@ inherited, copied or loaded by adopting projects.
 - [Centralized CI verifies integration candidates](requirements/centralized-ci-verifies-integration-candidates.md)
 - [Toolkit evolution](lifecycles/toolkit-evolution.md)
 - [Self-dogfood bootstrap value assessment](assessments/gnostoa-self-dogfood-bootstrap-assessment.md)
+- [First-publication provider audit snapshot](assessments/first-publication-provider-audit.md)
 - [Publication-baseline review drift](failure-modes/publication-baseline-review-drift.md)
 - [Maintain the toolkit](runbooks/maintain-the-kit.md)
 - [Prepare the first public repository publication](runbooks/prepare-first-publication.md)

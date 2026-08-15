@@ -44,6 +44,7 @@ nav:
       - Roadmap: roadmap.md
       - Project status: knowledge/project/gnostoa.md
       - Self-dogfood assessment: knowledge/assessments/gnostoa-self-dogfood-bootstrap-assessment.md
+      - Provider audit snapshot: knowledge/assessments/first-publication-provider-audit.md
       - First-publication runbook: knowledge/runbooks/prepare-first-publication.md
   - Decisions:
       - OKF as canonical format: decisions/0001-okf-as-canonical-format.md

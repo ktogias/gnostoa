@@ -26,7 +26,9 @@ states what the result does—and does not—prove.
 | Introduce it to a project | [Adoption guide](core/adoption.md) |
 | Perform one project task | [Reusable guidance router](../guidance/index.md) |
 | Inspect current maturity | [Current project status](status.md) |
+| See delivery priorities | [Now / Next / Research roadmap](roadmap.md) |
 | Audit the bootstrap evidence | [Self-dogfood assessment](../knowledge/assessments/gnostoa-self-dogfood-bootstrap-assessment.md) |
+| Inspect publication exposure | [Provider audit snapshot](../knowledge/assessments/first-publication-provider-audit.md) |
 
 ## Three boundaries
 
