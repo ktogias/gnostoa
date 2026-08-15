@@ -5,10 +5,12 @@ evidence and publication gates live in the linked self-knowledge records.
 
 ## Pre-release
 
-Gnostoa currently has an owner-reviewed inner baseline and a technically
-verified cumulative source candidate. It has no integrated public baseline,
-public release, package, OCI image, documentation site or independent transfer
-pilot.
+Gnostoa currently has an owner-reviewed and technically verified
+first-publication source baseline. The source repository is public, and
+default-branch protection and private vulnerability reporting are effective;
+the live provider records in Issue #1 and PR #23 bind the exact integration
+state. Gnostoa has no public release, package, OCI image, documentation site or
+independent transfer pilot.
 
 ### Available from source
 
@@ -22,9 +24,10 @@ pilot.
 ### Evidence available
 
 - repository-native policy, unit, regression, smoke and documentation checks;
-- a cumulative [PR #23](https://github.com/ktogias/gnostoa/pull/23) review basis
-  with policy, fast, regression and smoke checks passing; its provider body and
-  checks, rather than this self-referential source page, bind the exact head;
+- a cumulative [PR #23](https://github.com/ktogias/gnostoa/pull/23) review and
+  evidence envelope with policy, fast, regression and smoke checks passing;
+  its provider state and checks, rather than this self-referential source page,
+  bind the exact candidate or integrated head;
 - a self-dogfood publication-baseline review that found and corrected material
   source-scope, lifecycle, drift and disclosure defects; and
 - an explicit assessment of both the value and excessive manual cost of that
@@ -47,19 +50,22 @@ pilot.
 
 ## Publication review status
 
-The cumulative source candidate is a **technical PASS** and repository
-visibility remains **NO-GO** pending an exact-current disclosure disposition
-and the bounded visibility, protection and protected-integration transition.
+The first-publication source baseline is a **technical PASS**. Exact disclosure
+V4 was owner-dispositioned, the bounded visibility transition completed, and
+required `main` protection, private vulnerability reporting and anonymous
+public-surface read-back passed. Protected integration of the exact verified
+revision is a separate provider effect; Issue #1 and PR #23 carry its exact
+current result, and this source page does not substitute for that read-back.
+
 The publication cleanup has materially improved the current projection; the
 remaining reputation risk is concentrated in the retained historical ledger,
 not in the normal contributor route. The dated
 [provider audit](../knowledge/assessments/first-publication-provider-audit.md)
-found no current high-confidence credential or developer-local-path exposure
-in the inspected remote history, provider records, Actions logs or retained
-artifacts. It also found stale provider/canonical projections, an incomplete
-disclosure disposition and no effective branch protection while private. The
-later owner-confirmed name-risk assessment closed the bounded source-name gate
-without claiming trade-mark clearance or authorizing visibility.
+found no high-confidence credential or developer-local-path exposure in the
+inspected remote history, provider records, Actions logs or retained artifacts.
+Its pre-transition gaps were reconciled through the exact V4 provider record;
+the later owner-confirmed name-risk assessment closed the bounded source-name
+gate without claiming trade-mark clearance or authorizing artifact publication.
 
 PR #2 and PRs #16–#22 are useful absorbed provenance inside the cumulative PR
 #23 ancestry; they are not discarded. PR #4 is retained as Research input for
@@ -75,12 +81,11 @@ handoff and checkpoint implementation. The broad Issue #12 guided-review
 platform is deferred Research rather than a publication gate, as recorded by
 [Decision 0016](../knowledge/decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md).
 
-The source-publication route is now: complete and verify one cleanup candidate,
-reconcile the final cumulative PR and Issue #1, disposition the exact current
-disclosure, change visibility with `main` unchanged, enable and verify
-protection, then integrate the exact cumulative candidate. The bounded name-
-risk disposition is complete. Package, image and site publication remain
-separate effects.
+The source-publication route keeps exact disclosure, visibility with `main`
+unchanged, protection, anonymous read-back and protected integration as
+separate effects. The first four completed under V4; Issue #1 and PR #23 bind
+the current integration result. Package, image and site publication remain
+separate later effects.
 
 Clean wheel and source-distribution candidates now build and run against an
 explicit separate public-source binding; an absent or malformed binding fails
@@ -107,8 +112,9 @@ legacy license metadata still requires human review, and neither the inventory
 nor the tree scan covers the OS/base image, Git history or provider artifacts.
 [Dependency evidence](dependency-evidence.md) documents the exact boundary.
 Complete image/system-component inventory, legal review, publisher and release
-provenance, the final exact-head provider disclosure GO, remaining release
-gates and publication still remain open.
+provenance and the remaining artifact-release gates remain open. The exact
+source-publication disposition, protection and integration state remains in
+the linked provider records.
 
 ## Current direction
 
