@@ -260,9 +260,11 @@ wheel, container and documentation artifacts with recorded digests.
    workflow.
 2. Define `Next` as B2 workflow compression, packaging hardening and the first
    independently owned adoption fixture.
-3. Keep guided review engines, durable workflow orchestration, monitoring,
-   generalized recovery and broader authority automation in `Research` until a
-   measured repeated need justifies them.
+3. Keep complete guided-review engines, durable workflow orchestration,
+   monitoring, generalized recovery and broader authority automation outside
+   the publication path. B1 demonstrated the capability need; B2 selects and
+   measures the smallest post-publication implementation slices under
+   [Decision 0016](../decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md).
 4. For every roadmap item, record the user, problem, falsifiable outcome,
    dependency and explicit non-goal. Avoid solution-first Issues whose product
    value is not yet shown.
@@ -317,7 +319,9 @@ publication each have an exact actor, revision, result and read-back record.
 
 ### Stage 8 — run B2, then earn B3
 
-1. Use one small Gnostoa change to compare B2 with the B1 baseline.
+1. Use one small Gnostoa change to dogfood the minimum task-envelope,
+   current-projection and checkpoint/resume slice from Decision 0016 and
+   compare B2 with the B1 baseline.
 2. Measure time to orient, owner decision time, evidence amplification, review
    rounds, defects caught, false blocks, recovery behavior and escaped defects.
 3. Retain exactness and safe recovery while reducing foreground evidence and

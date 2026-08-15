@@ -63,9 +63,11 @@ review findings remain unresolved.
 Issue #12 and PR #2 also retain the large B1 provider ledger as historical
 self-dogfood evidence. That ledger is not the expected contributor workflow.
 The active [B2 experiment](https://github.com/ktogias/gnostoa/issues/24) uses one
-bounded change to measure a smaller provider-native review route; the broad
-Issue #12 guided-review platform is deferred Research rather than a publication
-gate.
+bounded change to measure a smaller provider-native review route. The workflow
+need has already been demonstrated; B2 selects the minimum task-context,
+handoff and checkpoint implementation. The broad Issue #12 guided-review
+platform is deferred Research rather than a publication gate, as recorded by
+[Decision 0016](../knowledge/decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md).
 
 The source-publication route is now: complete and verify one cleanup candidate,
 reconcile the final cumulative PR and Issue #1, disposition the exact current
@@ -107,9 +109,9 @@ gates and publication still remain open.
 The first publication exposes a bounded validation and knowledge-architecture
 prototype, not the full open research backlog. After publication,
 [Issue #24](https://github.com/ktogias/gnostoa/issues/24) will use one small
-Gnostoa change to measure a streamlined self-hosting process. Only after that
-process is comprehensible and materially smaller will an independently owned
-project be used for a transfer pilot.
+Gnostoa change to implement and measure the smallest durable self-hosting
+slice. Only after that process is comprehensible and materially smaller will
+an independently owned project be used for a transfer pilot.
 
 The explicit delivery order and all currently open Work Items are classified
 in the [Now / Next / Research roadmap](roadmap.md).

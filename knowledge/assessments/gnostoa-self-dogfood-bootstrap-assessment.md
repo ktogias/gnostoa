@@ -324,6 +324,26 @@ deterministic mechanics as one possible response. The response should be
 admitted only if it reduces the measured cost without weakening the useful
 assurance outcomes.
 
+### 6. Demonstrated need, experimental implementation boundary
+
+B1 already demonstrates the need for guided review, durable task context,
+bounded execution plans, explicit human-agent handoffs, checkpoint/resume and
+safe restart without transcript replay. It does not demonstrate that the broad
+Issue #12 design or the exact PR #4 branch is the minimum sufficient solution.
+
+[Decision 0016](../decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md)
+therefore separates capability intent from publication sequencing: publish the
+bounded validation foundation, then use B2 to implement and measure the
+smallest end-to-end task-envelope/current-projection/checkpoint slice. This is
+planned product evolution, not a new first-publication prerequisite.
+
+The later
+[container-first verification routing incident](../failure-modes/container-first-verification-routing-bypass.md)
+adds a smaller operational example: container capability already existed, but
+the shell route made an ad-hoc native repair easier to select. The correction
+improves the current front door and routes any one-command wrapper experiment
+to B2 rather than expanding the publication critical path.
+
 ## What the self-dogfood pilot does not demonstrate
 
 | Claim | Current status |
@@ -449,9 +469,10 @@ Those claims should be added only when their named evidence exists.
    and not duplicated into new prose events.
 4. Record B1 measurements from the existing history, including elapsed time,
    review rounds, comment amplification, defects caught and remediations.
-5. Select one small post-baseline Gnostoa change as B2. Predeclare a bounded
-   evidence budget and current-state projection, while preserving an explicit
-   escape when safety requires more evidence.
+5. Select one small post-baseline Gnostoa change as B2. Use it to dogfood the
+   smallest task-envelope, current-projection and checkpoint/resume slice;
+   predeclare a bounded evidence budget while preserving an explicit escape
+   when safety requires more evidence.
 6. Admit automation from Issue 15 only for B1 mechanics that are repeated,
    deterministic and measurably costly. Do not implement a general workflow
    engine merely because the manual process was large.
@@ -459,6 +480,10 @@ Those claims should be added only when their named evidence exists.
    its documented install, pin, validate and upgrade path.
 8. Run B3 on one independently owned project after B2 demonstrates a smaller
    and comprehensible self-hosted process.
+
+The detailed sequencing, publication boundary, resume contract and WIP rule are
+canonical in
+[Decision 0016](../decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md).
 
 The executable cleanup, provider and release sequence is maintained in
 [Prepare Gnostoa for its first public repository publication](../runbooks/prepare-first-publication.md).

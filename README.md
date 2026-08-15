@@ -89,7 +89,11 @@ evidence; it is **not the expected contribution workflow**. Normal changes use
 the compact route in [CONTRIBUTING.md](CONTRIBUTING.md), ordinary Pull Request
 review and proportionate evidence. [B2](https://github.com/ktogias/gnostoa/issues/24)
 will measure whether the useful B1 controls can be preserved with materially
-less owner effort and evidence amplification.
+less owner effort and evidence amplification. B1 has already demonstrated the
+need for guided review, durable task context, bounded plans, explicit handoffs
+and safe resume; the [bootstrap Decision](knowledge/decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md)
+selects incremental post-publication implementation because the full workflow
+platform is not a publication prerequisite.
 
 Gnostoa is not yet a hosted service, a workflow engine, a general-purpose graph
 database or a production-ready release. It does not claim reduced engineering
@@ -150,7 +154,31 @@ templates—not installable artifact claims.
 ## Develop and verify
 
 The [Development Container](.devcontainer/devcontainer.json) is the recommended
-maintainer environment. The native fallback uses the development lock:
+maintainer environment. From a shell, build the exact checkout and run a named
+suite through the same `development` target before selecting the native
+fallback:
+
+```bash
+candidate_ref="${GNOSTOA_CANDIDATE_REF:-working-tree}"
+docker build \
+  --target development \
+  --build-arg VCS_REF="${candidate_ref}" \
+  --tag gnostoa:development-checkout \
+  .
+
+docker run --rm \
+  --mount type=bind,source="$PWD",target=/workspace,readonly \
+  --workdir /workspace \
+  --env KNOWLEDGE_KIT_ROOT=/workspace \
+  --env KNOWLEDGE_KIT_REVISION="${candidate_ref}" \
+  --env PYTHONPATH=/workspace \
+  gnostoa:development-checkout \
+  ./ci/verify extended
+```
+
+Replace `extended` with the required named suite. Use the native fallback only
+when the container route is unavailable or when explicitly checking native
+parity, and record that reason. The fallback uses the development lock:
 
 ```bash
 python -m pip install --only-binary=:all: --require-hashes \

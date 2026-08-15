@@ -72,6 +72,23 @@ Run the unit tests, validate anonymous examples, validate both the reusable
 guidance and self-knowledge bundles, and check guardrail coverage. Review the
 diff for real project names and accidental duplicated authority.
 
+Use the development container as the default maintainer and agent route:
+
+```bash
+candidate_ref="${GNOSTOA_CANDIDATE_REF:-working-tree}"
+docker build --target development --build-arg VCS_REF="${candidate_ref}" \
+  --tag gnostoa:development-checkout .
+docker run --rm --mount type=bind,source="$PWD",target=/workspace,readonly \
+  --workdir /workspace --env KNOWLEDGE_KIT_ROOT=/workspace \
+  --env KNOWLEDGE_KIT_REVISION="${candidate_ref}" --env PYTHONPATH=/workspace \
+  gnostoa:development-checkout ./ci/verify extended
+```
+
+Run each applicable named suite through the same image. Use the native
+development-lock route only when the container path is unavailable or for an
+explicit parity check, and record the reason. Do not repair a missing host
+package before first attempting the declared container route.
+
 Runtime, distribution and CI changes additionally require a pinned-base check,
 non-root image check, container smoke test, CI-policy validation and inspection
 of provider event/security mappings.

@@ -1623,12 +1623,9 @@ class DocumentationTests(unittest.TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
         owner_control = (
-            "accept-source-name-conditional-go: "
-            "GNOSTOA/SOURCE-PUBLICATION/2026-08-15"
+            "accept-source-name-conditional-go: GNOSTOA/SOURCE-PUBLICATION/2026-08-15"
         )
-        approved_artifact = (
-            "a7848a000d2618919cf6a247da64f9464bedf1474216bfdaa942e35910fc73ec"
-        )
+        approved_artifact = "a7848a000d2618919cf6a247da64f9464bedf1474216bfdaa942e35910fc73ec"  # pragma: allowlist secret
         self.assertIn(owner_control, assessment)
         self.assertIn(approved_artifact, assessment)
         self.assertIn("source-only `CONDITIONAL GO`", assessment)
@@ -1729,6 +1726,93 @@ class DocumentationTests(unittest.TestCase):
                 f"issuecomment-{comment_id}",
                 assessment,
             )
+
+    def test_human_agent_workflow_need_is_planned_without_blocking_publication(
+        self,
+    ) -> None:
+        decision_path = (
+            ROOT
+            / "knowledge"
+            / "decisions"
+            / "0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md"
+        )
+        self.assertTrue(decision_path.is_file())
+
+        decision = decision_path.read_text(encoding="utf-8")
+        roadmap = (ROOT / "docs" / "roadmap.md").read_text(encoding="utf-8")
+        status = (ROOT / "docs" / "status.md").read_text(encoding="utf-8")
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        normalized_readme = " ".join(readme.split())
+        assessment = (
+            ROOT
+            / "knowledge"
+            / "assessments"
+            / "gnostoa-self-dogfood-bootstrap-assessment.md"
+        ).read_text(encoding="utf-8")
+
+        for required in (
+            "## Resume card",
+            "The need is demonstrated; the minimum sufficient implementation is not.",
+            "not a first-publication prerequisite",
+            "one active delivery item and one active enabling slice",
+            "task envelope",
+            "checkpoint/resume",
+            "current projection",
+            "https://github.com/ktogias/gnostoa/issues/24",
+        ):
+            self.assertIn(required, decision)
+
+        decision_name = (
+            "0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md"
+        )
+        for projection in (roadmap, status, readme, assessment):
+            self.assertIn(decision_name, projection)
+
+        self.assertIn("planned post-publication capabilities", roadmap)
+        self.assertIn("need has already been demonstrated", status)
+        self.assertIn(
+            "full workflow platform is not a publication prerequisite",
+            normalized_readme,
+        )
+
+    def test_container_first_verification_bypass_is_recorded_and_routed(
+        self,
+    ) -> None:
+        incident_path = (
+            ROOT
+            / "knowledge"
+            / "failure-modes"
+            / "container-first-verification-routing-bypass.md"
+        )
+        self.assertTrue(incident_path.is_file())
+
+        incident = incident_path.read_text(encoding="utf-8")
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        maintainer_runbook = (
+            ROOT / "knowledge" / "runbooks" / "maintain-the-kit.md"
+        ).read_text(encoding="utf-8")
+        agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        index = (ROOT / "knowledge" / "index.md").read_text(encoding="utf-8")
+
+        for required in (
+            "## Resume card",
+            "routing error",
+            "discoverability and enforcement gap",
+            "no false PASS",
+            "development container",
+            "one-command wrapper",
+            "https://github.com/ktogias/gnostoa/issues/24",
+        ):
+            self.assertIn(required, incident)
+
+        incident_name = "container-first-verification-routing-bypass.md"
+        self.assertIn(incident_name, index)
+        self.assertIn("--target development", readme)
+        self.assertIn("--target development", maintainer_runbook)
+        self.assertIn("--target development", agents)
+        self.assertIn("./ci/verify extended", readme)
+        self.assertIn("./ci/verify extended", maintainer_runbook)
+        self.assertIn("./ci/verify extended", agents)
 
     def test_public_front_door_exposes_verified_evaluation_path(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")

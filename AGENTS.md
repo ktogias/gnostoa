@@ -32,7 +32,22 @@ establish the applicable failing or characterization evidence before editing.
 Mechanical changes and emergency follow-up use the timing declared by
 `policy/change-control.yaml`.
 
-Before completion run:
+Before completion, run the applicable suites in the development container by
+default:
+
+```bash
+candidate_ref="${GNOSTOA_CANDIDATE_REF:-working-tree}"
+docker build --target development --build-arg VCS_REF="${candidate_ref}" \
+  --tag gnostoa:development-checkout .
+docker run --rm --mount type=bind,source="$PWD",target=/workspace,readonly \
+  --workdir /workspace --env KNOWLEDGE_KIT_ROOT=/workspace \
+  --env KNOWLEDGE_KIT_REVISION="${candidate_ref}" --env PYTHONPATH=/workspace \
+  gnostoa:development-checkout ./ci/verify extended
+```
+
+Replace `extended` with each required named suite. Use the native commands
+below only as an explicit restricted-environment or parity fallback, and state
+why the container route was not used:
 
 ```bash
 python -m unittest discover -s tests -v

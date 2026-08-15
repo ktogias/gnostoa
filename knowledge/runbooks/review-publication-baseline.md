@@ -177,11 +177,13 @@ attestations for every matrix row.
 | [Versioned schema identifiers](../decisions/0012-use-versioned-public-schema-identifiers.md) | Permanence, ownership and version policy | — | — |
 | [Deferred private-repository enforcement](../decisions/0013-defer-provider-enforcement-while-private.md) | Provider limitation, expiry and compensating controls | — | — |
 | [Stricter Gnostoa self-governance](../decisions/0014-strengthen-gnostoa-self-governance.md) | Internal issue, Decision and evidence chronology without consumer leakage | — | — |
+| [Bounded self-hosted workflow evolution](../decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md) | Demonstrated workflow need, publication boundary, resume route and incremental WIP | — | — |
 | [Toolkit evolution](../lifecycles/toolkit-evolution.md) | Lifecycle stages and drift controls | — | — |
 | [Self-dogfood bootstrap value assessment](../assessments/gnostoa-self-dogfood-bootstrap-assessment.md) | Self-hosting evidence, cost, claim boundaries and transfer limits | — | — |
 | [First-publication provider audit snapshot](../assessments/first-publication-provider-audit.md) | Exposed provider state, disclosure findings and transition gates | — | — |
 | [Source-publication name-risk screening](../assessments/gnostoa-source-name-screening.md) | Bounded owner disposition, residual risk and repeat triggers | Source-only `CONDITIONAL GO` | `human:ktogias` |
 | [Publication-baseline review drift](../failure-modes/publication-baseline-review-drift.md) | Critical-path containment, authority boundaries and recovery | — | — |
+| [Container-first verification routing bypass](../failure-modes/container-first-verification-routing-bypass.md) | Container-first route recovery, discoverability and bounded tooling follow-up | — | — |
 | [Gnostoa project](../project/gnostoa.md) | Product purpose and scope | — | — |
 | [Centralized CI verifies candidates](../requirements/centralized-ci-verifies-integration-candidates.md) | Required candidate evidence | — | — |
 | [Prevent policy drift](../requirements/prevent-policy-drift.md) | Mechanical and semantic enforcement | — | — |

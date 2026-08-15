@@ -15,6 +15,8 @@ x-project-knowledge:
   relations:
     - kind: governed-by
       target: /contracts/public-inheritance-surface.md
+    - kind: governed-by
+      target: /decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md
     - kind: references
       target: /runbooks/maintain-the-kit.md
 ---
@@ -43,3 +45,21 @@ Further evolution is evidence-gated:
 
 Promotion depends on correctness, token use, repository exploration, human
 review time and maintenance cost. Optional derived layers remain disposable.
+
+## Human-agent workflow bootstrap
+
+B1 demonstrated the need for durable task context, explicit handoffs, bounded
+plans, checkpoint/resume, safe restart and guided semantic review. It did not
+validate a complete workflow-platform architecture. Decision 0016 therefore
+keeps that full platform outside the first-publication gate and evolves it
+through bounded self-hosted slices:
+
+1. task envelope and one current projection;
+2. checkpoint/resume and explicit handoff;
+3. bounded execution plan and precise invalidation;
+4. guided-review contracts; and
+5. provider adapters only after the portable contract is useful.
+
+Each slice must preserve B1's material defect detection and recovery while
+reducing owner work, evidence amplification and resume cost. One delivery item
+and one enabling slice may be active at a time.
