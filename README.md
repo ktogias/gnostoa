@@ -197,4 +197,6 @@ separate treatment of trademarks.
 
 `Gnostoa` is the working project identity. Preliminary exact-string screening
 is recorded in [Decision 0009](knowledge/decisions/0009-adopt-gnostoa-project-name.md),
-but independent trademark clearance remains a first-publication gate.
+but a documented owner screening and source-only conditional-go remain a
+first-publication gate. Independent or professional clearance remains required
+before stable artifact branding or commercial reliance.

@@ -186,7 +186,7 @@ or retroactively attribute new owner approval to an earlier PR.
 | PR #23 claims 67.72% coverage while its exact uploaded report records 67.59723964868256% | Correct the provider summary to 67.60% or the exact value |
 | Earlier disclosure V4 covers only 3 branches, 15 commits, 25 runs and no artifacts | Replace it with an owner-reviewed disclosure bound to the current counts and final exact candidate |
 | PR #4 has no clean first-publication disposition | Park it explicitly as retained Research work or complete its independent rework; do not merge it accidentally |
-| Repository name has only preliminary exact-string screening | Complete Decision 0009's independent OBI, EUIPO/TMview and WIPO review with an explicit go, conditional-go or rename result |
+| Repository name has only preliminary exact-string screening | Complete Decision 0009's bounded owner OBI, EUIPO/TMview and WIPO screening and record a source-only conditional-go or rename result; retain independent or professional review for stable branding or commercial reliance |
 | Protection is unavailable while private | Keep `main` unchanged; after an authorized visibility change, enable and verify protection and private vulnerability reporting before the cumulative merge |
 
 Package metadata enrichment, authoritative release-smoke CI, OS/base-image
@@ -206,7 +206,7 @@ when:
 3. every exposed branch and open PR has a clear retained, absorbed, active or
    parked status; and
 4. the owner has dispositioned the exact disclosure and Decision 0009's
-   required independent name-review result is recorded.
+   required bounded source-only name-risk result is recorded.
 
 That result does not itself authorize visibility. After a separate visibility
 authorization, keep `main` unchanged while the provider transition is read

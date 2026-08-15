@@ -120,8 +120,8 @@ remaining source-publication gates are:
    remote branches, 25 reachable commits, 49 Actions runs, four retained
    artifacts, the maintainer commit identity and the retained multilingual
    collaboration history;
-3. complete the independent name and trademark review required by Decision
-   0009, with an explicit go, conditional-go or rename result;
+3. complete the bounded owner name-risk screening required by Decision 0009
+   and record an explicit source-only conditional-go or rename result;
 4. authorize the repository visibility change while leaving `main` unchanged,
    then enable and verify required protection before integration; and
 5. re-run exact-head checks, anonymous-reader links and disclosure scans after
@@ -131,7 +131,10 @@ A bounded exact-string screening on 2026-08-14 found no obvious collision in
 the accessible GitHub, PyPI, npm or indexed-web results; crates.io remained
 inconclusive. This is not legal or registry clearance. Decision 0009 records
 the official OBI, EUIPO/TMview and WIPO route still required for similar-mark,
-goods-and-services and territory review. Gate 3 therefore remains open.
+goods-and-services and territory review. Its bounded owner disposition may
+unlock source visibility only; independent or professional review still gates
+stable artifact branding or commercial reliance. Gate 3 therefore remains
+open.
 
 Disclosure view V4 and the earlier PR #2/Issue #1 summaries remain historical
 records of their exact earlier basis. They are no longer current enough to

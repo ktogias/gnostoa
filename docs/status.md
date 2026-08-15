@@ -36,7 +36,8 @@ pilot.
 - production readiness, security certification or service operation;
 - independent adoption, net productivity benefit or product-market demand;
 - scalable guided review with low cognitive load; or
-- independent trademark clearance for the working project name.
+- formal or independent trademark clearance for stable branding or commercial
+  reliance on the working project name.
 
 ## Publication review status
 
@@ -48,7 +49,7 @@ found no current high-confidence credential or developer-local-path exposure
 in the inspected remote history, provider records, Actions logs or retained
 artifacts. It also found stale provider/canonical projections, an incomplete
 disclosure disposition, no effective branch protection while private and no
-independent name clearance.
+documented source-only name-risk disposition.
 
 PR #2 and PRs #16–#22 are useful absorbed provenance inside the cumulative PR
 #23 ancestry; they are not discarded. PR #4 is retained as Research input for
