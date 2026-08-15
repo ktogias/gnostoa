@@ -19,6 +19,9 @@ sources:
   - id: streamlined-self-hosting-experiment
     resource: https://github.com/ktogias/gnostoa/issues/24
     title: Run one bounded B2 streamlined self-hosting experiment
+  - id: human-agent-governance-source
+    resource: ../assessments/human-agent-governance-scope-and-evolution.md
+    title: Human-agent governance scope and evolution assessment
   - id: agile-principles
     resource: https://agilemanifesto.org/principles
     title: Principles behind the Agile Manifesto
@@ -44,6 +47,10 @@ x-project-knowledge:
     - kind: references
       target: /failure-modes/container-first-verification-routing-bypass.md
     - kind: references
+      target: /failure-modes/reverse-centaur-review-overload.md
+    - kind: references
+      target: /assessments/human-agent-governance-scope-and-evolution.md
+    - kind: references
       target: /runbooks/prepare-first-publication.md
 ---
 
@@ -57,8 +64,10 @@ x-project-knowledge:
 | Evidence | B1 demonstrated material need for guided review, durable task context, bounded plans, explicit handoffs, checkpoint/resume and safe restart. |
 | Uncertainty | The need is demonstrated; the minimum sufficient implementation is not. |
 | Publication rule | The full workflow platform is not a first-publication prerequisite. Only a concrete security, legal, correctness or exposure failure may promote one of its slices into that critical path. |
-| Active delivery | Finish the bounded source-publication baseline in Issue #1 without another workflow-platform expansion. |
-| Next experiment | [Issue #24](https://github.com/ktogias/gnostoa/issues/24) runs B2 and selects the smallest useful enabling slice. |
+| Active delivery | Run B2/P1 on the protected public baseline in [Issue #24](https://github.com/ktogias/gnostoa/issues/24): one validated task envelope and current projection. |
+| Human-control boundary | A human gate is meaningful only when the owner can explain the bounded delta, consequence and uncertainty and can pause, reject or correct it. |
+| Attention budget | Declare and measure the owner-facing review surface; non-understanding yields clarification, splitting or `blocked`, never ceremonial approval. |
+| Current experiment | Issue #24 selects and dogfoods the smallest useful enabling slice. |
 | First candidate slice | A validated task envelope, one current projection, explicit handoff, checkpoint/resume and stale-state detection; no database, general event-sourcing platform or interactive wizard. |
 | WIP policy | Permit one active delivery item and one active enabling slice. Queue other findings unless they prove an immediate safety or correctness blocker. |
 | Resume route | Read this card, the current roadmap projection and the active Issue/PR body. Load the B1 ledger only for a named unresolved question. |
@@ -99,30 +108,32 @@ merge candidate.
 5. Preserve semantic decisions and corrections append-only, but maintain one
    compact replaceable current projection. Detailed evidence remains linked
    and expandable rather than foregrounded or copied into every checkpoint.
-6. Ask for one human decision per genuine semantic choice. Deterministic
-   recording, read-back, projection and reconstruction of that exact effect do
-   not create another approval gate.
+6. Ask for one human decision per genuine semantic choice. Human participation
+   counts as control only when the bounded delta, consequences and strongest
+   uncertainty are understandable and the owner can pause, reject or correct
+   the effect. Deterministic recording, read-back, projection and
+   reconstruction of that exact effect do not create another approval gate.
 7. Keep work pull-based and bounded: one active delivery item and one active
    enabling slice. A new finding changes the active scope only when it names a
    failed property that cannot be mitigated safely inside the current slice.
 
-## Publication gate
+## Completed first-publication boundary
 
-The first source publication is blocked only by evidence of an unsafe public
+The first source publication was blocked only by evidence of an unsafe public
 effect: credential or private-data exposure, unresolved license or identity
 risk, incorrect or unreconstructable source, materially misleading public
 documentation, failed required verification, missing provider protection or
 an unsafe visibility transition.
 
 The absence of a general guided-review engine, durable workflow service,
-execution-plan orchestrator, event store, GitHub adapter, TUI or web wizard is
-not a first-publication prerequisite. The current compact provider projection,
+execution-plan orchestrator, event store, GitHub adapter, TUI or web wizard
+was not a first-publication prerequisite. The compact provider projection,
 exact candidate binding, required checks, explicit owner control and read-back
-form a bounded temporary publication harness.
+formed the bounded temporary publication harness completed through PR #23 on
+2026-08-16.
 
-If that harness exposes a new unmitigable publication risk, implement only the
-minimum safety shim needed to clear the named failure. Do not promote the rest
-of the workflow roadmap with it.
+That boundary remains historical evidence, not an active gate or authority for
+another integration or publication effect.
 
 ## B2 walking skeleton
 
@@ -133,18 +144,29 @@ checkpoints in the same bounded change.
 The first candidate contract contains:
 
 - a stable task ID, objective, owner, class and explicit non-goals;
-- exact base, candidate and dependency identities;
+- exact base and dependency identities plus an immutable caller-observed
+  candidate identity;
 - current state: `ready`, `active`, `blocked`, `complete` or `superseded`;
 - completed work, the single next action and named blocker, if any;
 - semantic Decision and evidence references without duplicating their bodies;
 - an explicit handoff naming what the next actor must read and verify;
 - checkpoint/resume with idempotent reconstruction;
-- stale-head, changed-dependency and conflicting-update detection; and
+- declared-base, changed-dependency and checkpoint-conflict detection against
+  refreshed caller observations; and
 - one current projection generated from the durable state.
 
 It excludes automated human approval, transcript storage, hidden reasoning,
 general branching workflows, a hosted database and provider-specific authority
 from the generic core.
+
+Portable state, policy and receipts belong in the generic contract. Concrete
+runtime or provider adapters own effect mediation and enforcement. A recorded
+rule is not evidence that an external effect was mediated.
+
+B2 also declares an owner-attention and foreground-review budget. If the owner
+cannot state the semantic choice and principal consequence within that budget,
+the task becomes `blocked` for clarification or splitting; the process must not
+infer feedback completion or acceptance.
 
 ## Increment sequence
 
@@ -163,8 +185,8 @@ baseline rather than treating its old branch as accepted wholesale.
 
 The container-verification routing incident is a candidate B2 input: test a
 small repository-root-aware wrapper only if it measurably prevents native-route
-drift. It is not permission to build a general environment orchestrator or to
-delay the first source publication.
+drift. It does not permit a general environment orchestrator or reopen the
+completed first source publication.
 
 ## Agent and developer resume contract
 
@@ -183,10 +205,11 @@ exact provider/source identities and regenerate the affected projection.
 
 ## Measures and stop rules
 
-Every B2 slice records owner review time, total cycle time, review rounds,
+Every B2 slice records active owner review time, total cycle time, review
+rounds, approval prompts per genuine semantic decision, foreground words and
 evidence words per changed normative line, recovery time after interruption,
-defects caught before integration, escaped defects, false-ready/false-block
-outcomes and new maintenance surface.
+defects caught before integration, corrections caused by misunderstood scope,
+escaped defects, false-ready/false-block outcomes and new maintenance surface.
 
 Continue expanding the workflow surface only when the slice retains B1's
 material defect detection and safe recovery while reducing foreground evidence

@@ -14,23 +14,29 @@ dependency.
 
 | Work | User and problem | Falsifiable outcome | Dependencies | Explicit non-goal |
 |---|---|---|---|---|
-| [#1 — First public source baseline](https://github.com/ktogias/gnostoa/issues/1) | A new evaluator needs one trustworthy repository rather than a stacked internal review ledger. | One protected public `main` exposes the bounded source candidate, a working five-minute path, truthful status and a current disclosure record. | Publication cleanup, exact cumulative review, name-risk disposition, provider-surface GO and protection before merge. | Publishing packages, images or a hosted service. |
+| [#24 — B2 streamlined self-hosting](https://github.com/ktogias/gnostoa/issues/24) | A developer or agent must resume one bounded change without replaying the B1 ledger or losing human control. | One validated task envelope and deterministic current projection fail closed when declared identities differ from supplied authoritative observations and recover exactly after interruption, while owner attention and evidence amplification are measured. | Public protected baseline `cda51dad6a719da43d8465a3f0f270021c357d96`, Decision 0016 and one bounded PR. | Workflow engine, provider adapter, database or automatic approval. |
+
+## Completed boundary
+
+[Issue #1](https://github.com/ktogias/gnostoa/issues/1) and cumulative PR #23
+completed the protected public source baseline on 2026-08-16 at
+`cda51dad6a719da43d8465a3f0f270021c357d96`. No package, image, documentation
+site or hosted service was released by that effect.
 
 ## Next
 
-The next experiment is B2: use one small Gnostoa change to preserve the current
-assurance while materially reducing owner time, review rounds and evidence
-amplification. B1 has already demonstrated the need for guided review, durable
-task context, bounded plans, explicit handoffs and safe resume. These are
-planned post-publication capabilities; B2 selects the minimum sufficient
-implementation rather than asking whether the need exists. Only after B2 is
-comprehensible does B3 test transfer into an independently owned project. See
+Active B2/P1 uses one small Gnostoa change to preserve the current assurance
+while materially reducing owner time, review rounds and evidence amplification.
+B1 has already demonstrated the need for guided review, durable task context,
+bounded plans, explicit handoffs and safe resume. Following P1, only a measured
+bottleneck may activate a later B2 slice. Once B2 is comprehensible, B3 tests
+transfer into an independently owned project. See
 [Decision 0016](../knowledge/decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md).
 
 | Work Items | Problem addressed | Completion signal | Non-goal |
 |---|---|---|---|
-| [#24 — B2 streamlined self-hosting](https://github.com/ktogias/gnostoa/issues/24) | B1 found real defects and demonstrated workflow/recovery needs, but required 407 comments across its two main ledger threads. | One small predeclared Gnostoa change dogfoods the smallest task-envelope/current-projection/checkpoint slice and completes with exact recovery and no escaped defect while owner actions, review rounds and evidence amplification fall materially below B1. | Automating the historical ledger or building the complete workflow platform. |
-| [#6](https://github.com/ktogias/gnostoa/issues/6), [#9](https://github.com/ktogias/gnostoa/issues/9), [#13](https://github.com/ktogias/gnostoa/issues/13) | Admission, context selection and canonical-language handling need bounded contracts only where B2 demonstrates actual need. | B2 identifies a concrete repeated failure or dependency and a smallest enforceable contract. | Making every proposed contract an implementation prerequisite for B2. |
+| [Later B2 slices](https://github.com/ktogias/gnostoa/issues/24) | Handoff, bounded execution plans and invalidation need implementation only where P1 demonstrates a measurable bottleneck. | P1 retains defect detection and recovery while reducing owner effort; the next slice has one named failed property. | Expanding the complete workflow roadmap by default. |
+| [#6](https://github.com/ktogias/gnostoa/issues/6), [#9](https://github.com/ktogias/gnostoa/issues/9), [#13](https://github.com/ktogias/gnostoa/issues/13) | Admission, effect gating, context selection and canonical-language handling need bounded contracts only where B2 demonstrates actual need. | B2 identifies a concrete repeated failure or dependency and a smallest enforceable contract. | Making every proposed contract an implementation prerequisite for B2. |
 | [#7](https://github.com/ktogias/gnostoa/issues/7) | External evaluation needs a safe, reproducible workspace boundary. | One anonymous adoption fixture runs with declared ownership, hermetic inputs and no host-data leakage. | Claiming broad external adoption or production isolation from a single fixture. |
 
 ## Research

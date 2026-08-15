@@ -33,6 +33,8 @@ knowledge-check-ci-policy = "tools.check_ci_policy:main"
 knowledge-check-guardrails = "tools.check_guardrails:main"
 knowledge-check-runtime = "tools.check_runtime_lock:main"
 knowledge-surface-digest = "tools.check_runtime_lock:surface_digest_main"
+knowledge-task-validate = "tools.task_envelope:validate_main"
+knowledge-task-project = "tools.task_envelope:project_main"
 knowledge-self-check = "tools.self_check:main"
 
 [tool.setuptools]

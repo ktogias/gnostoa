@@ -30,9 +30,10 @@ toolkit's internal concerns.
 
 The public surface consists of the core profile, schemas, supported tools,
 reusable guidance, anonymous templates and documented CI integration.
-`knowledge/`, `policy/`, internal decisions and maintainer runbooks are outside
-the consumer inheritance boundary. Adopting projects create their own
-`.knowledge/` policies by extending the public files under `core/`.
+`knowledge/`, `policy/`, `tasks/`, internal decisions and maintainer runbooks
+are outside the consumer inheritance boundary. Adopting projects create their
+own `.knowledge/` policies by extending the public files under `core/`, and
+their own task envelopes from the public schema and template.
 
 ## Invariants
 

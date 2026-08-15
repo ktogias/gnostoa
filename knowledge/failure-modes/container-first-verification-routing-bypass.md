@@ -43,7 +43,7 @@ x-project-knowledge:
 | Immediate correction | Stop the native installation path, build the exact checkout with the `development` container target and run the required suite inside that image. |
 | Durable correction | README, `AGENTS.md` and the maintainer runbook now put the exact development-container command before the explicitly bounded native fallback. |
 | Tooling finding | A project-owned one-command wrapper that resolves the repository root, builds/pins the development image and runs a named suite is a valid B2 candidate, not a first-publication prerequisite. |
-| Resume route | Run the container command in the maintainer runbook, record the exact result, then return to the current publication gate. Route wrapper automation through [Issue #24](https://github.com/ktogias/gnostoa/issues/24). |
+| Resume route | For active B2 work, run the container command in the maintainer runbook and record the exact result. Route wrapper automation through [Issue #24](https://github.com/ktogias/gnostoa/issues/24) only if the measured P1 route still needs it. |
 
 ## Event
 

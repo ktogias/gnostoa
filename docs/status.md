@@ -7,10 +7,10 @@ evidence and publication gates live in the linked self-knowledge records.
 
 Gnostoa currently has an owner-reviewed and technically verified
 first-publication source baseline. The source repository is public, and
-default-branch protection and private vulnerability reporting are effective;
-the live provider records in Issue #1 and PR #23 bind the exact integration
-state. Gnostoa has no public release, package, OCI image, documentation site or
-independent transfer pilot.
+default-branch protection and private vulnerability reporting are effective.
+PR #23 is integrated, Issue #1 is closed and protected `main` is exact commit
+`cda51dad6a719da43d8465a3f0f270021c357d96`. Gnostoa has no public release,
+package, OCI image, documentation site or independent transfer pilot.
 
 ### Available from source
 
@@ -24,10 +24,9 @@ independent transfer pilot.
 ### Evidence available
 
 - repository-native policy, unit, regression, smoke and documentation checks;
-- a cumulative [PR #23](https://github.com/ktogias/gnostoa/pull/23) review and
-  evidence envelope with policy, fast, regression and smoke checks passing;
-  its provider state and checks, rather than this self-referential source page,
-  bind the exact candidate or integrated head;
+- an integrated cumulative [PR #23](https://github.com/ktogias/gnostoa/pull/23)
+  review and evidence envelope with policy, fast, regression and smoke checks
+  passing; its provider records bind the exact integrated head;
 - a self-dogfood publication-baseline review that found and corrected material
   source-scope, lifecycle, drift and disclosure defects; and
 - an explicit assessment of both the value and excessive manual cost of that
@@ -50,12 +49,11 @@ independent transfer pilot.
 
 ## Publication review status
 
-The first-publication source baseline is a **technical PASS**. Exact disclosure
-V4 was owner-dispositioned, the bounded visibility transition completed, and
-required `main` protection, private vulnerability reporting and anonymous
-public-surface read-back passed. Protected integration of the exact verified
-revision is a separate provider effect; Issue #1 and PR #23 carry its exact
-current result, and this source page does not substitute for that read-back.
+The first-publication source baseline is complete. Exact disclosure V4 was
+owner-dispositioned; the bounded visibility transition, required `main`
+protection, private vulnerability reporting, anonymous public-surface
+read-back and protected PR #23 integration all completed. Issue #1 and PR #23
+carry the exact provider result; this derived page does not substitute for it.
 
 The publication cleanup has materially improved the current projection; the
 remaining reputation risk is concentrated in the retained historical ledger,
@@ -81,10 +79,10 @@ handoff and checkpoint implementation. The broad Issue #12 guided-review
 platform is deferred Research rather than a publication gate, as recorded by
 [Decision 0016](../knowledge/decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md).
 
-The source-publication route keeps exact disclosure, visibility with `main`
+The source-publication route treated exact disclosure, visibility with `main`
 unchanged, protection, anonymous read-back and protected integration as
-separate effects. The first four completed under V4; Issue #1 and PR #23 bind
-the current integration result. Package, image and site publication remain
+separate effects. All completed for the source baseline; Issue #1 and PR #23
+bind the current integration result. Package, image and site publication remain
 separate later effects.
 
 Clean wheel and source-distribution candidates now build and run against an
@@ -119,11 +117,11 @@ the linked provider records.
 ## Current direction
 
 The first publication exposes a bounded validation and knowledge-architecture
-prototype, not the full open research backlog. After publication,
-[Issue #24](https://github.com/ktogias/gnostoa/issues/24) will use one small
-Gnostoa change to implement and measure the smallest durable self-hosting
-slice. Only after that process is comprehensible and materially smaller will
-an independently owned project be used for a transfer pilot.
+prototype, not the full open research backlog.
+[Issue #24](https://github.com/ktogias/gnostoa/issues/24) now uses one small
+Gnostoa change to implement and measure the smallest durable self-hosting slice.
+Only after that process is comprehensible and materially smaller will an
+independently owned project be used for a transfer pilot.
 
 The explicit delivery order and all currently open Work Items are classified
 in the [Now / Next / Research roadmap](roadmap.md).
@@ -134,5 +132,7 @@ Canonical detail:
 - [Self-dogfood bootstrap assessment](../knowledge/assessments/gnostoa-self-dogfood-bootstrap-assessment.md)
 - [First-publication reputation and direction assessment](../knowledge/assessments/first-publication-reputation-and-direction-assessment.md)
 - [Source-publication name-risk screening](../knowledge/assessments/gnostoa-source-name-screening.md)
+- [Human-agent governance scope assessment](../knowledge/assessments/human-agent-governance-scope-and-evolution.md)
+- [Reverse-centaur review overload](../knowledge/failure-modes/reverse-centaur-review-overload.md)
 - [First-publication preparation runbook](../knowledge/runbooks/prepare-first-publication.md)
 - [Toolkit evolution lifecycle](../knowledge/lifecycles/toolkit-evolution.md)

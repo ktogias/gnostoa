@@ -228,22 +228,21 @@ class PublicationBaselineTests(unittest.TestCase):
         ):
             self.assertIn(owned_path, codeowners)
 
-    def test_publication_review_matrix_covers_every_canonical_concept(self) -> None:
-        matrix = ROOT / "knowledge" / "runbooks" / "review-publication-baseline.md"
-        self.assertTrue(matrix.is_file())
-
-        linked = {
-            resolved
-            for target in markdown_links(matrix.read_text(encoding="utf-8"))
-            if (resolved := resolve_target(ROOT, matrix, target)) is not None
-        }
-        expected = {
-            path.resolve()
-            for surface in ("guidance", "knowledge")
-            for path in (ROOT / surface).rglob("*.md")
-            if path.name not in {"index.md", matrix.name}
-        }
-        self.assertEqual(set(), expected - linked)
+    def test_current_indexes_cover_every_canonical_concept(self) -> None:
+        for surface in ("guidance", "knowledge"):
+            with self.subTest(surface=surface):
+                index = ROOT / surface / "index.md"
+                linked = {
+                    resolved
+                    for target in markdown_links(index.read_text(encoding="utf-8"))
+                    if (resolved := resolve_target(ROOT, index, target)) is not None
+                }
+                expected = {
+                    path.resolve()
+                    for path in (ROOT / surface).rglob("*.md")
+                    if path.name != "index.md"
+                }
+                self.assertEqual(set(), expected - linked)
 
 
 class LicensePolicyTests(unittest.TestCase):
@@ -1768,7 +1767,8 @@ class DocumentationTests(unittest.TestCase):
         for projection in (roadmap, status, readme, assessment):
             self.assertIn(decision_name, projection)
 
-        self.assertIn("planned post-publication capabilities", roadmap)
+        self.assertIn("Active B2/P1", roadmap)
+        self.assertIn("Following P1", roadmap)
         self.assertIn("need has already been demonstrated", status)
         self.assertIn(
             "full workflow platform is not a publication prerequisite",

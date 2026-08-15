@@ -1,0 +1,72 @@
+schema_version: "0.1"
+task:
+  id: GNOSTOA/B2/P1
+  objective: >-
+    Make one bounded Gnostoa change resumable from validated durable state and
+    one compact current projection without replaying the B1 ledger.
+  owner: team:gnostoa-maintainers
+  change_class: normative
+scope:
+  included:
+    - a portable task-envelope schema, validator and deterministic projector
+    - exact stale-base, dependency and checkpoint conflict detection
+    - an explicit handoff and one current task projection
+    - compact recording of the human-control findings used as B2 input
+    - reconciliation of stale post-publication current-state projections
+  excluded:
+    - a workflow engine, database or general event store
+    - provider-specific authority or automatic human approval
+    - raw conversation or hidden-reasoning storage
+    - implementation of later Issue 3, 5-15 research surfaces
+state:
+  status: active
+  completed:
+    - Bound Issue 24 and Decision 0016 to protected public main.
+    - Recorded the human-control assessment and reverse-centaur failure mode.
+    - Established focused RED evidence before adding the task commands.
+    - Implemented the bounded schema, validator, projector and focused tests.
+    - Local focused, policy, fast, regression, smoke and extended container verification passed before review.
+  next_action: Review the compact current projection and focused Pull Request diff.
+  blocker: null
+identities:
+  base:
+    kind: git-commit
+    value: git:cda51dad6a719da43d8465a3f0f270021c357d96
+  dependencies:
+    - id: decision-0016
+      kind: file-sha256
+      value: sha256:2ee58de9f91f2bdd23c56da2389bd7130072a142ba43080c8bbca710dbd1896c
+    - id: issue-24
+      kind: provider-body-sha256
+      value: sha256:adb02bc2aa254e97ea9fd931da0ae467b640a031fdb9143b255a74f199b5c5c6
+references:
+  decisions:
+    - id: decision-0016
+      resource: knowledge/decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md
+  evidence:
+    - id: issue-24
+      resource: https://github.com/ktogias/gnostoa/issues/24
+    - id: human-agent-governance-assessment
+      resource: knowledge/assessments/human-agent-governance-scope-and-evolution.md
+    - id: reverse-centaur-review-overload
+      resource: knowledge/failure-modes/reverse-centaur-review-overload.md
+handoff:
+  actor: accountable maintainer
+  read:
+    - the generated current task projection
+    - the focused Pull Request diff
+    - linked detail only for an unresolved question
+  verify:
+    - the exact semantic and executable delta is understandable
+    - declared identities that differ from supplied observations fail before projection
+    - container evidence is green for the exact candidate
+recording:
+  actor: agent:codex
+  at: "2026-08-15T23:08:00Z"
+review:
+  projection_characters: 6000
+  owner_minutes: 20
+  on_exceed: block
+checkpoint:
+  sequence: 1
+  previous: null

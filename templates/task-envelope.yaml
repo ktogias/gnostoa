@@ -1,0 +1,40 @@
+schema_version: "0.1"
+task:
+  id: PROJECT/TASK/P1
+  objective: State one observable bounded outcome.
+  owner: team:project-maintainers
+  change_class: normal
+scope:
+  included:
+    - the smallest coherent change
+  excluded:
+    - unrelated workflow expansion
+state:
+  status: ready
+  completed: []
+  next_action: Establish the required pre-change evidence.
+  blocker: null
+identities:
+  base:
+    kind: git-commit
+    value: git:replace-with-an-exact-commit
+  dependencies: []
+references:
+  decisions: []
+  evidence: []
+handoff:
+  actor: accountable maintainer
+  read:
+    - this task envelope
+  verify:
+    - the exact candidate and required evidence
+recording:
+  actor: human-or-agent:replace-me
+  at: "2026-01-01T00:00:00Z" # Replace with the actual UTC recording time.
+review:
+  projection_characters: 5000
+  owner_minutes: 20
+  on_exceed: block
+checkpoint:
+  sequence: 1
+  previous: null
