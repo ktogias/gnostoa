@@ -1675,14 +1675,59 @@ class DocumentationTests(unittest.TestCase):
             9,
             10,
             11,
-            12,
             13,
             14,
             15,
+            24,
         ):
             self.assertIn(
                 f"https://github.com/ktogias/gnostoa/issues/{issue_number}",
                 roadmap,
+            )
+
+    def test_historical_bootstrap_ledger_is_bounded_and_routed(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        contributing = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+        roadmap = (ROOT / "docs" / "roadmap.md").read_text(encoding="utf-8")
+        assessment = (
+            ROOT
+            / "knowledge"
+            / "assessments"
+            / "gnostoa-self-dogfood-bootstrap-assessment.md"
+        ).read_text(encoding="utf-8")
+
+        boundary = "not the expected contribution workflow"
+        self.assertIn(boundary, readme)
+        self.assertIn(boundary, contributing)
+        self.assertIn("## Historical provider ledger", assessment)
+        self.assertIn("2,580,461", assessment)
+
+        next_section = roadmap.split("## Next", maxsplit=1)[1].split(
+            "## Research", maxsplit=1
+        )[0]
+        research_section = roadmap.split("## Research", maxsplit=1)[1]
+        self.assertIn("https://github.com/ktogias/gnostoa/issues/24", next_section)
+        self.assertNotIn("https://github.com/ktogias/gnostoa/issues/12", next_section)
+        self.assertIn("https://github.com/ktogias/gnostoa/issues/12", research_section)
+
+        for comment_id in (
+            5136593706,
+            5136603642,
+            5136719584,
+            5136937206,
+            5210352156,
+            5221535175,
+            5225850683,
+            5284129277,
+            5287954039,
+            5288022522,
+            5288102848,
+            5288213713,
+            5288289068,
+        ):
+            self.assertIn(
+                f"issuecomment-{comment_id}",
+                assessment,
             )
 
     def test_public_front_door_exposes_verified_evaluation_path(self) -> None:

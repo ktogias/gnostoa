@@ -169,10 +169,12 @@ complete by it.
 
 ### Next validation path
 
-After the first release, B2 applies the same toolkit to one small, predeclared
-Gnostoa change with a bounded evidence budget. It compares assurance,
-decision time, review rounds, evidence amplification, owner effort, recovery
-and escaped defects with the measured B1 manual bootstrap. B3 then tests one
-bounded adoption in an independently owned project. External value claims are
-earned from B3 evidence rather than inferred from the size of Gnostoa's own
-ledger.
+After the first release,
+[Issue #24](https://github.com/ktogias/gnostoa/issues/24) applies the same
+toolkit to one small, predeclared Gnostoa change with a bounded evidence budget.
+It compares assurance, decision time, review rounds, evidence amplification,
+owner effort, recovery and escaped defects with the measured B1 manual
+bootstrap. The raw Issue #12 and PR #2 ledger remains historical evidence, not
+the expected contributor workflow. B3 then tests one bounded adoption in an
+independently owned project. External value claims are earned from B3 evidence
+rather than inferred from the size of Gnostoa's own ledger.

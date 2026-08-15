@@ -84,6 +84,13 @@ artifact, source revision and public-surface digest together.
 | Run through one command surface | Native CLI plus a pinned, non-root OCI build route |
 | Apply the model to Gnostoa itself | Recorded self-dogfood assessment and publication-baseline review |
 
+The raw Issue #12 and PR #2 ledger is retained as one-time B1 self-dogfood
+evidence; it is **not the expected contribution workflow**. Normal changes use
+the compact route in [CONTRIBUTING.md](CONTRIBUTING.md), ordinary Pull Request
+review and proportionate evidence. [B2](https://github.com/ktogias/gnostoa/issues/24)
+will measure whether the useful B1 controls can be preserved with materially
+less owner effort and evidence amplification.
+
 Gnostoa is not yet a hosted service, a workflow engine, a general-purpose graph
 database or a production-ready release. It does not claim reduced engineering
 cost, easy external adoption or independent assurance. Those claims require the

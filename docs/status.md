@@ -22,9 +22,9 @@ pilot.
 ### Evidence available
 
 - repository-native policy, unit, regression, smoke and documentation checks;
-- a cumulative PR #23 review basis at
-  `049446b4bfe27103da2d6a9f43531e621cfcbd80`, with 95 of 95 tests and all five
-  declared remote jobs passing;
+- a cumulative [PR #23](https://github.com/ktogias/gnostoa/pull/23) review basis
+  with policy, fast, regression and smoke checks passing; its provider body and
+  checks, rather than this self-referential source page, bind the exact head;
 - a self-dogfood publication-baseline review that found and corrected material
   source-scope, lifecycle, drift and disclosure defects; and
 - an explicit assessment of both the value and excessive manual cost of that
@@ -59,6 +59,13 @@ PR #2 and PRs #16–#22 are useful absorbed provenance inside the cumulative PR
 #23 ancestry; they are not discarded. PR #4 is retained as Research input for
 Issue #3, outside the publication baseline while its conflicts and eight
 review findings remain unresolved.
+
+Issue #12 and PR #2 also retain the large B1 provider ledger as historical
+self-dogfood evidence. That ledger is not the expected contributor workflow.
+The active [B2 experiment](https://github.com/ktogias/gnostoa/issues/24) uses one
+bounded change to measure a smaller provider-native review route; the broad
+Issue #12 guided-review platform is deferred Research rather than a publication
+gate.
 
 The source-publication route is now: complete and verify one cleanup candidate,
 reconcile the final cumulative PR and Issue #1, disposition the exact current
@@ -98,8 +105,9 @@ gates and publication still remain open.
 ## Current direction
 
 The first publication exposes a bounded validation and knowledge-architecture
-prototype, not the full open research backlog. After publication, one small
-Gnostoa change will measure a streamlined self-hosting process. Only after that
+prototype, not the full open research backlog. After publication,
+[Issue #24](https://github.com/ktogias/gnostoa/issues/24) will use one small
+Gnostoa change to measure a streamlined self-hosting process. Only after that
 process is comprehensible and materially smaller will an independently owned
 project be used for a transfer pilot.
 

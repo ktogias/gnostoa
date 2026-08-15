@@ -25,6 +25,9 @@ sources:
   - id: deterministic-workflow-work-item
     resource: https://github.com/ktogias/gnostoa/issues/15
     title: Automate deterministic knowledge-workflow mechanics without weakening assurance
+  - id: streamlined-self-hosting-experiment
+    resource: https://github.com/ktogias/gnostoa/issues/24
+    title: Run one bounded B2 streamlined self-hosting experiment
   - id: final-publication-baseline-disposition
     resource: https://github.com/ktogias/gnostoa/pull/2#issuecomment-5294119830
     title: Final exact-head owner disposition for PR 2
@@ -115,6 +118,59 @@ defects can mean that dogfooding is effective; generating many review objects
 can also mean that the mechanism creates avoidable work. Value must be judged
 from outcomes and counterfactuals rather than record count.
 
+## Historical provider ledger and canonical-language index
+
+The two primary B1 threads are retained, but their lifecycle is now explicit.
+An exact provider extraction on 2026-08-15 found:
+
+| Historical surface | Comments | Comment-body characters | Role now |
+|---|---:|---:|---|
+| [Issue #12](https://github.com/ktogias/gnostoa/issues/12) | 342 | 2,165,561 | Closed B1 design and dogfood evidence; broad platform deferred to Research |
+| [PR #2](https://github.com/ktogias/gnostoa/pull/2) | 65 | 414,900 | Absorbed publication-baseline provenance inside cumulative PR #23 |
+| **Combined** | **407** | **2,580,461** | About 2.58 million characters of historical evidence |
+
+The comments are not deleted, rewritten or hidden. They preserve owner inputs,
+failed projections, corrections, source selections and reconstruction evidence.
+They are also **not the expected contribution workflow** and are not the
+current-state interface. The canonical current routes are this assessment, the
+compact Issue and Pull Request bodies, the repository policy and the bounded
+[B2 successor](https://github.com/ktogias/gnostoa/issues/24). A contributor
+should not replay the ledger to discover what to do next.
+
+Thirteen comments contain Greek text. Some are owner inputs; others are
+agent-authored views that embedded a suggested Greek control or supplied a
+Greek clarification. The original bytes remain historical evidence. The table
+below is an English navigation index, not a silent edit or a new owner
+translation. Where an approved or admitted canonical-language record exists,
+the index links it. Otherwise it labels the English interpretation as
+facilitator analysis and does not give it owner authority.
+
+<details>
+<summary>Canonical-language navigation for all 13 multilingual comments</summary>
+
+| Original record | Type and bounded meaning | Canonical English route |
+|---|---|---|
+| [PR #2 / 5136593706](https://github.com/ktogias/gnostoa/pull/2#issuecomment-5136593706) | Owner `needs-change`: show exact bytes, preserve submitted comments and re-review integrated wording until convergence. | [D-03](https://github.com/ktogias/gnostoa/issues/12#issuecomment-5136603642) records the English facilitator-derived requirements; the source owner bytes remain authoritative. |
+| [Issue #12 / 5136603642](https://github.com/ktogias/gnostoa/issues/12#issuecomment-5136603642) | D-03 repeats the exact Greek owner input and separates it from English agent analysis. | The same record's `Derived requirements` section is the admitted English navigation, not an owner-approved translation. |
+| [PR #2 / 5136719584](https://github.com/ktogias/gnostoa/pull/2#issuecomment-5136719584) | Exact-source packet carrying the earlier Greek question and owner input as immutable review history. | D-03 above is the compact English result; the packet is superseded as a current review interface. |
+| [PR #2 / 5136937206](https://github.com/ktogias/gnostoa/pull/2#issuecomment-5136937206) | Facilitator clarification of pinning, inheritance, acquisition and current product limits; no owner disposition. | Current English consumer behavior is maintained in the [adoption guide](../../docs/core/adoption.md) and public front door; this pre-D-04 response remains historical analysis. |
+| [Issue #12 / 5210352156](https://github.com/ktogias/gnostoa/issues/12#issuecomment-5210352156) | Owner activation plus a request for readable multiline presentation. | [XR1/038/T1](https://github.com/ktogias/gnostoa/issues/12#issuecomment-5210378033) supplies the admitted English representation. |
+| [Issue #12 / 5221535175](https://github.com/ktogias/gnostoa/issues/12#issuecomment-5221535175) | Owner direction to continue while preserving recorded, resumable inter-agent work. | [XR1/039/T1](https://github.com/ktogias/gnostoa/issues/12#issuecomment-5221538006) supplies the admitted English representation. |
+| [Issue #12 / 5225850683](https://github.com/ktogias/gnostoa/issues/12#issuecomment-5225850683) | Owner reports cognitive overload, asks for the concrete decision and returns the interface to short text. | [XR1/040/T1](https://github.com/ktogias/gnostoa/issues/12#issuecomment-5225851875) supplies the admitted English representation. |
+| [Issue #12 / 5284129277](https://github.com/ktogias/gnostoa/issues/12#issuecomment-5284129277) | Owner rejects duplicate approvals for one change and directs faithful recording. | The same XR1/079 record states the bounded English operational rule, explicitly as agent-prepared application rather than an owner-approved translation. |
+| [PR #2 / 5287954039](https://github.com/ktogias/gnostoa/pull/2#issuecomment-5287954039) | Unit 1 owner disposition. | [Canonical-language reconciliation R1](https://github.com/ktogias/gnostoa/pull/2#issuecomment-5291416591) carries the exact approved English representation. |
+| [PR #2 / 5288022522](https://github.com/ktogias/gnostoa/pull/2#issuecomment-5288022522) | Batch A owner disposition. | Canonical-language reconciliation R1 carries the exact approved English representation. |
+| [PR #2 / 5288102848](https://github.com/ktogias/gnostoa/pull/2#issuecomment-5288102848) | Agent-authored Batch B view with a suggested Greek response; not owner input. | Canonical-language reconciliation R1 corrects the suggested response and points to the actual disposition. |
+| [PR #2 / 5288213713](https://github.com/ktogias/gnostoa/pull/2#issuecomment-5288213713) | Batch B/P1 owner disposition and applied result. | Canonical-language reconciliation R1 carries the exact approved English representation. |
+| [PR #2 / 5288289068](https://github.com/ktogias/gnostoa/pull/2#issuecomment-5288289068) | Superseded Batch C V1 view with a suggested Greek response; not owner input. | Canonical-language reconciliation R1 routes to English-only V2 and the later English owner disposition. |
+
+</details>
+
+This index is deliberately finite. New collaboration uses English on the
+provider surface. A translation or correction remains separately attributed;
+neither an index nor facilitator prose retroactively replaces the exact source
+record.
+
 ## Technical quality finding
 
 The codebase is not low-quality filler. Its strongest qualities are:
@@ -186,14 +242,18 @@ first provider surface seen by a reviewer. This demonstrated the need for a
 compact current projection and showed that the existing process had not yet
 solved that problem.
 
-The provider projection was reconciled later on 2026-08-14. PR 2 now binds the
-accepted head, manifest, completed semantic review and remaining gates in a
-compact body with SHA-256
+The provider projection was first reconciled later on 2026-08-14. PR 2 bound
+the accepted head, manifest, completed semantic review and remaining gates in
+a compact body with SHA-256
 `85e60269c7373183c1d87e396fed6fc2895a982f65fb62d936ede706f04a47a6`;
 Issue 1 carries the matching current-state body with SHA-256
 `d91fe04b19da2e7fefe496874b694a3f17e45d9c4d4738021e49f42761f36f5f`.
-This fixes the current projection without erasing the drift finding or its
-historical evidence.
+That fixed the initial projection without erasing the drift finding or its
+historical evidence. The later publication cleanup marks PR 2 as absorbed
+provenance and keeps the cumulative PR 23 and Issue 1 as the compact current
+provider projections; their provider-managed bodies own their current exact
+head rather than embedding a self-invalidating future commit in this source
+assessment.
 
 ### Delivery maturity
 

@@ -26,6 +26,19 @@ and self-knowledge surfaces.
    maintainer review; satisfy additional approval gates only when the effective
    specialization requires them.
 
+## Historical bootstrap boundary
+
+The large append-only ledger on Issue #12 and PR #2 records Gnostoa's one-time
+B1 self-dogfood bootstrap. It is useful failure and recovery evidence, but it is
+**not the expected contribution workflow**. Contributors are not expected to
+produce content-addressed prose packets or repeated recording approvals.
+Present one compact current Change Request, use provider-native review, ask one
+human decision for each genuine semantic choice and keep verification
+proportionate to the effective policy and actual risk. Detailed deterministic
+evidence should be generated or linked, not copied into a new comment at every
+step. The bounded [B2 experiment](https://github.com/ktogias/gnostoa/issues/24)
+will test this streamlined route explicitly.
+
 The one-time pre-publication provider exception is recorded in
 [`Decision 0013`](knowledge/decisions/0013-defer-provider-enforcement-while-private.md).
 Protection is mandatory when the first baseline is published.
