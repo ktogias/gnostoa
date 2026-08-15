@@ -28,7 +28,10 @@ pilot.
 - a self-dogfood publication-baseline review that found and corrected material
   source-scope, lifecycle, drift and disclosure defects; and
 - an explicit assessment of both the value and excessive manual cost of that
-  bootstrap.
+  bootstrap; and
+- an owner-confirmed, source-only
+  [name-risk screening](../knowledge/assessments/gnostoa-source-name-screening.md)
+  for Greece, the EU and Nice classes 9 and 42.
 
 ### Not established
 
@@ -48,8 +51,9 @@ provider transition. The dated
 found no current high-confidence credential or developer-local-path exposure
 in the inspected remote history, provider records, Actions logs or retained
 artifacts. It also found stale provider/canonical projections, an incomplete
-disclosure disposition, no effective branch protection while private and no
-documented source-only name-risk disposition.
+disclosure disposition and no effective branch protection while private. The
+later owner-confirmed name-risk assessment closed the bounded source-name gate
+without claiming trade-mark clearance or authorizing visibility.
 
 PR #2 and PRs #16–#22 are useful absorbed provenance inside the cumulative PR
 #23 ancestry; they are not discarded. PR #4 is retained as Research input for
@@ -58,9 +62,10 @@ review findings remain unresolved.
 
 The source-publication route is now: complete and verify one cleanup candidate,
 reconcile the final cumulative PR and Issue #1, disposition the exact current
-disclosure and name risk, change visibility with `main` unchanged, enable and
-verify protection, then integrate the exact cumulative candidate. Package,
-image and site publication remain separate effects.
+disclosure, change visibility with `main` unchanged, enable and verify
+protection, then integrate the exact cumulative candidate. The bounded name-
+risk disposition is complete. Package, image and site publication remain
+separate effects.
 
 Clean wheel and source-distribution candidates now build and run against an
 explicit separate public-source binding; an absent or malformed binding fails
@@ -105,5 +110,6 @@ Canonical detail:
 
 - [Gnostoa project record](../knowledge/project/gnostoa.md)
 - [Self-dogfood bootstrap assessment](../knowledge/assessments/gnostoa-self-dogfood-bootstrap-assessment.md)
+- [Source-publication name-risk screening](../knowledge/assessments/gnostoa-source-name-screening.md)
 - [First-publication preparation runbook](../knowledge/runbooks/prepare-first-publication.md)
 - [Toolkit evolution lifecycle](../knowledge/lifecycles/toolkit-evolution.md)

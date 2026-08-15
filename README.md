@@ -195,8 +195,10 @@ license of an adopting project's independent material. See
 [Licensing](LICENSING.md) for scope, copied templates, contributions and the
 separate treatment of trademarks.
 
-`Gnostoa` is the working project identity. Preliminary exact-string screening
-is recorded in [Decision 0009](knowledge/decisions/0009-adopt-gnostoa-project-name.md),
-but a documented owner screening and source-only conditional-go remain a
-first-publication gate. Independent or professional clearance remains required
-before stable artifact branding or commercial reliance.
+`Gnostoa` is the working project identity. Decision 0009's bounded
+[owner-confirmed name-risk screening](knowledge/assessments/gnostoa-source-name-screening.md)
+records a source-only conditional-go for Greece, the EU and Nice classes 9 and
+42. It is not trade-mark clearance and does not authorize package, image, site
+or commercial publication. Independent or professional clearance remains
+required before stable artifact branding, trade-mark filing or commercial
+reliance.

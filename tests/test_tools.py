@@ -1606,6 +1606,44 @@ runtime:
 
 
 class DocumentationTests(unittest.TestCase):
+    def test_source_name_conditional_go_is_durably_projected(self) -> None:
+        assessment_path = (
+            ROOT / "knowledge" / "assessments" / "gnostoa-source-name-screening.md"
+        )
+        self.assertTrue(assessment_path.is_file())
+
+        assessment = assessment_path.read_text(encoding="utf-8")
+        decision = (
+            ROOT / "knowledge" / "decisions" / "0009-adopt-gnostoa-project-name.md"
+        ).read_text(encoding="utf-8")
+        project = (ROOT / "knowledge" / "project" / "gnostoa.md").read_text(
+            encoding="utf-8"
+        )
+        status = (ROOT / "docs" / "status.md").read_text(encoding="utf-8")
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+        owner_control = (
+            "accept-source-name-conditional-go: "
+            "GNOSTOA/SOURCE-PUBLICATION/2026-08-15"
+        )
+        approved_artifact = (
+            "a7848a000d2618919cf6a247da64f9464bedf1474216bfdaa942e35910fc73ec"
+        )
+        self.assertIn(owner_control, assessment)
+        self.assertIn(approved_artifact, assessment)
+        self.assertIn("source-only `CONDITIONAL GO`", assessment)
+        for residual in ("JOTSON", "NEOTOA", "crates.io"):
+            self.assertIn(residual, assessment)
+
+        assessment_name = "gnostoa-source-name-screening.md"
+        for projection in (decision, project, status, readme):
+            self.assertIn(assessment_name, projection)
+        self.assertNotIn("Gate 3 therefore remains open.", project)
+        self.assertNotIn(
+            "source-only conditional-go remain a first-publication gate",
+            readme,
+        )
+
     def test_publication_front_door_exposes_support_security_and_roadmap(self) -> None:
         security_path = ROOT / "SECURITY.md"
         support_path = ROOT / "SUPPORT.md"

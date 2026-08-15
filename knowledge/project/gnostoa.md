@@ -19,6 +19,9 @@ sources:
   - id: cumulative-publication-candidate
     resource: https://github.com/ktogias/gnostoa/pull/23
     title: Cumulative first-publication candidate
+  - id: source-name-screening
+    resource: ../assessments/gnostoa-source-name-screening.md
+    title: Gnostoa source-publication name-risk screening
 x-project-knowledge:
   id: kit.project
   owners:
@@ -44,6 +47,8 @@ x-project-knowledge:
       target: /assessments/gnostoa-self-dogfood-bootstrap-assessment.md
     - kind: references
       target: /assessments/first-publication-provider-audit.md
+    - kind: references
+      target: /assessments/gnostoa-source-name-screening.md
     - kind: references
       target: /runbooks/prepare-first-publication.md
 ---
@@ -120,21 +125,23 @@ remaining source-publication gates are:
    remote branches, 25 reachable commits, 49 Actions runs, four retained
    artifacts, the maintainer commit identity and the retained multilingual
    collaboration history;
-3. complete the bounded owner name-risk screening required by Decision 0009
-   and record an explicit source-only conditional-go or rename result;
+3. **complete:** the owner-confirmed Decision 0009
+   [name-risk screening](../assessments/gnostoa-source-name-screening.md)
+   records a source-only `CONDITIONAL GO` for Greece, the EU and Nice classes
+   9 and 42;
 4. authorize the repository visibility change while leaving `main` unchanged,
    then enable and verify required protection before integration; and
 5. re-run exact-head checks, anonymous-reader links and disclosure scans after
    the visibility transition and before the cumulative merge.
 
-A bounded exact-string screening on 2026-08-14 found no obvious collision in
-the accessible GitHub, PyPI, npm or indexed-web results; crates.io remained
-inconclusive. This is not legal or registry clearance. Decision 0009 records
-the official OBI, EUIPO/TMview and WIPO route still required for similar-mark,
-goods-and-services and territory review. Its bounded owner disposition may
-unlock source visibility only; independent or professional review still gates
-stable artifact branding or commercial reliance. Gate 3 therefore remains
-open.
+The completed 2026-08-15 screening found no exact `GNOSTOA` register result or
+relevant exact third-party software identity in the bounded search. It retained
+active `JOTSON` and `NEOTOA` records as differentiated residual risks and kept
+crates.io inconclusive. This is explicit owner risk acceptance for source
+visibility only, not legal or registry clearance. Independent or professional
+review still gates stable artifact branding, trade-mark filing and commercial
+reliance. Gate 3 is complete; it grants none of the remaining publication
+effects.
 
 Disclosure view V4 and the earlier PR #2/Issue #1 summaries remain historical
 records of their exact earlier basis. They are no longer current enough to

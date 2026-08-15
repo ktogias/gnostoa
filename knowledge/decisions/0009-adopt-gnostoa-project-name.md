@@ -30,6 +30,8 @@ x-project-knowledge:
       target: /project/gnostoa.md
     - kind: references
       target: /contracts/public-inheritance-surface.md
+    - kind: verified-by
+      target: /assessments/gnostoa-source-name-screening.md
 ---
 
 # Adopt Gnostoa as the project name
@@ -69,7 +71,7 @@ project rename does not justify changing persistent knowledge identities.
 Coordinate any unpublished downstream checkout or specialization migration in
 its owning repository when the public repository location is created.
 
-## Preliminary availability screening
+## Availability screening
 
 A bounded exact-string screening was performed on 2026-08-14 before first
 publication. A GitHub repository search returned only the current private
@@ -78,33 +80,32 @@ returned `404` from PyPI and npm. An indexed web search found no obvious exact
 collision. The crates.io API response was inconclusive and is not counted as
 evidence of availability.
 
-These observations are weak negative evidence, not trademark clearance. They
-do not cover similar spellings or pronunciations, unregistered rights, every
+Those observations were weak negative evidence, not trademark clearance. They
+did not cover similar spellings or pronunciations, unregistered rights, every
 relevant territory, or the goods and services that may overlap downloadable
 software, hosted software, software development, documentation or training.
-The official sources recommend searching identical and similar marks in the
-relevant national, EU and international registers before filing or relying on
-a name.
 
-Before first source-repository visibility, the accountable owner may record a
-bounded `conditional go` for the working identity after manually completing
-and reading back OBI, EUIPO/TMview and WIPO searches. The record must bind the
-search date, Greece and EU territory scope, the relevant class 9 and 42 goods
-and services, class 41 when branded education or training is in scope, exact
-and confusingly similar queries, retained results, unregistered-use screening,
-residual risk and a rename or escalation trigger. A material or unresolved
-similarity keeps source visibility blocked until it is resolved, independently
-reviewed or renamed. This route is explicit owner risk acceptance for a
-pre-release source repository, not trade-mark clearance.
+On 2026-08-15 the accountable owner completed and confirmed the required OBI,
+EUIPO/TMview and WIPO screening and recorded a bounded source-only
+`CONDITIONAL GO`. The durable
+[screening assessment](../assessments/gnostoa-source-name-screening.md) binds
+the Greece and EU territory scope, Nice classes 9 and 42, exact and similarity
+queries, rendered results, evidence digests, web and software-registry checks,
+material residuals and repeat or escalation triggers. No exact `GNOSTOA` mark
+or relevant exact third-party software identity surfaced. Active `JOTSON` and
+`NEOTOA` records remain explicit residuals, but neither was assessed as an
+obvious blocker for first visibility of the non-commercial source repository.
 
-Independent or qualified professional review remains required before a
-trade-mark filing, stable package, OCI-image or site branding, paid or
-commercial services, or other material reliance on the identity, and whenever
-the bounded screening is ambiguous. Until the source-only `conditional go` is
-recorded this Decision remains `draft`, and the project may prepare under the
-working name but must not claim that `Gnostoa` is cleared or registrable. The
-screening must be repeated when the name, territory, goods or services,
-material search results or intended reliance changes.
+This disposition closes only the bounded source-name gate. It does not claim
+that `Gnostoa` is cleared, registrable or free of unregistered rights, and it
+does not authorize the repository visibility change itself. Independent or
+qualified professional review remains required before a trade-mark filing,
+stable package, OCI-image or site branding, paid or commercial services, or
+other material reliance on the identity, and whenever the bounded screening is
+ambiguous. The screening must be repeated when the name, territory, goods or
+services, material search results or intended reliance changes. This Decision
+remains `draft` with the pre-release knowledge corpus; the recorded owner
+disposition is not a stable-concept promotion.
 
 ## Consequences
 

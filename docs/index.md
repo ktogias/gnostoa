@@ -29,6 +29,7 @@ states what the result does—and does not—prove.
 | See delivery priorities | [Now / Next / Research roadmap](roadmap.md) |
 | Audit the bootstrap evidence | [Self-dogfood assessment](../knowledge/assessments/gnostoa-self-dogfood-bootstrap-assessment.md) |
 | Inspect publication exposure | [Provider audit snapshot](../knowledge/assessments/first-publication-provider-audit.md) |
+| Inspect source-name risk | [Owner-confirmed screening](../knowledge/assessments/gnostoa-source-name-screening.md) |
 
 ## Three boundaries
 
