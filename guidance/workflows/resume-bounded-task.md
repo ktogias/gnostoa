@@ -80,6 +80,31 @@ and replaceable.
 7. Keep the derived projection on standard output or in a disposable review
    artifact. Never use `--output` to replace the canonical envelope.
 
+## Identity kinds
+
+Every declared identity names a `kind`. A `kind` is a versioned contract over
+an exact byte sequence, not a hint. Define those bytes where the kind is
+introduced, and version the name so that a later change to the rule becomes a
+new kind instead of a silent reinterpretation of already recorded digests. The
+portable core compares declared and observed values literally: it never trims,
+re-encodes or normalizes them, and it never fetches them.
+
+Gnostoa's own task state uses one provider-specific kind as the worked example.
+`github-issue-body-utf8-sha256-v1` is the SHA-256 of the exact Unicode string
+returned in the GitHub REST API `body` field, encoded directly as UTF-8, with
+no trimming, no insertion or removal of a trailing newline, no line-ending
+normalization, no Unicode normalization and no Markdown rendering:
+
+```bash
+gh api repos/OWNER/REPO/issues/NUMBER | python3 -c \
+  'import hashlib,json,sys; print("sha256:" + hashlib.sha256(
+   json.load(sys.stdin)["body"].encode("utf-8")).hexdigest())'
+```
+
+Read the authoritative record, not a rendered page. A shell pipeline that adds
+or strips a trailing newline yields a different digest, which is exactly what
+the versioned name exists to keep unambiguous.
+
 ## Verification
 
 - Identical semantic YAML and observations reproduce byte-identical output.

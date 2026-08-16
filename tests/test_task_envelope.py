@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import tempfile
+import unicodedata
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
@@ -555,6 +556,51 @@ class TaskEnvelopeTests(unittest.TestCase):
         result, output, error = inherited
         self.assertEqual((1, ""), (result, error))
         self.assertIn("reference does not exist", output)
+
+    def test_recorded_issue_digest_reproduces_without_any_transformation(self) -> None:
+        """`github-issue-body-utf8-sha256-v1` covers the exact API body bytes.
+
+        The fixture holds the byte sequence that produced the digest recorded
+        for Issue #24, so the recorded value stays reproducible offline.
+        """
+
+        envelope = yaml.safe_load(
+            (ROOT / "tasks" / "issue-24-b2-p1.yaml").read_text(encoding="utf-8")
+        )
+        declared = next(
+            item
+            for item in envelope["identities"]["dependencies"]
+            if item["id"] == "issue-24"
+        )
+        self.assertEqual("github-issue-body-utf8-sha256-v1", declared["kind"])
+
+        body = (ROOT / "tests" / "fixtures" / "github-issue-24-body.md").read_bytes()
+        self.assertEqual(
+            "sha256:" + hashlib.sha256(body).hexdigest(),
+            declared["value"],
+        )
+
+        text = body.decode("utf-8")
+        for label, variant in (
+            ("stripped trailing newline", text.rstrip("\n")),
+            ("added trailing newline", text + "\n"),
+            ("windows line endings", text.replace("\n", "\r\n")),
+        ):
+            with self.subTest(variant=label):
+                self.assertNotEqual(
+                    declared["value"],
+                    "sha256:" + hashlib.sha256(variant.encode("utf-8")).hexdigest(),
+                )
+
+        # The recorded body is ASCII, so pin the no-normalization clause on
+        # input where composition actually changes the bytes.
+        composed = "café\n"
+        self.assertNotEqual(
+            hashlib.sha256(composed.encode("utf-8")).hexdigest(),
+            hashlib.sha256(
+                unicodedata.normalize("NFD", composed).encode("utf-8")
+            ).hexdigest(),
+        )
 
     def test_b2_dogfood_envelope_validates_against_recorded_observations(self) -> None:
         path = ROOT / "tasks" / "issue-24-b2-p1.yaml"

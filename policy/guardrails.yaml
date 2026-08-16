@@ -36,6 +36,7 @@ guardrails:
       - tests/test_tools.py::BundleTests.test_guidance_bundle_is_valid
       - tests/test_tools.py::BundleTests.test_self_knowledge_bundle_is_valid
       - tests/test_tools.py::DocumentationTests.test_repository_documentation_links_resolve
+      - tests/test_tools.py::PublicationBaselineTests.test_current_indexes_cover_every_canonical_concept
 
   - id: stable-public-schema-identity
     title: Public schemas use unique versioned identifiers under an owned namespace
@@ -131,6 +132,7 @@ guardrails:
       - tests/test_task_envelope.py::TaskEnvelopeTests.test_candidate_is_immutable_and_projection_cannot_overwrite_envelope
       - tests/test_task_envelope.py::TaskEnvelopeTests.test_projection_budget_and_single_line_structure_fail_closed
       - tests/test_task_envelope.py::TaskEnvelopeTests.test_declared_repository_root_resolves_references_independently_of_cwd
+      - tests/test_task_envelope.py::TaskEnvelopeTests.test_recorded_issue_digest_reproduces_without_any_transformation
 
   - id: self-knowledge-boundary
     title: Adopting projects do not inherit toolkit self-knowledge

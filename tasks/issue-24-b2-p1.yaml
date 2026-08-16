@@ -13,6 +13,7 @@ scope:
     - an explicit handoff and one current task projection
     - compact recording of the human-control findings used as B2 input
     - reconciliation of stale post-publication current-state projections
+    - the B2/P1 measurement record compared with the recorded B1 baseline
   excluded:
     - a workflow engine, database or general event store
     - provider-specific authority or automatic human approval
@@ -28,7 +29,11 @@ state:
     - Passed the focused, policy, fast, regression, smoke and extended suites in the development container.
     - Ran the declared runtime-target gate, which failed one working-directory-dependent required test.
     - Made required task-envelope evidence depend on the declared repository root rather than the caller working directory.
-  next_action: Review the compact current projection and focused Pull Request diff, including the runtime-gate correction.
+    - Mapped the renamed index-coverage test to graph integrity and kept the publication runbook mapping on evidence.
+    - Replaced the ambiguous provider identity kind with github-issue-body-utf8-sha256-v1 and pinned it with offline evidence.
+    - Recorded the B2/P1 measurements against the B1 baseline, with owner review time left pending.
+    - Reported a commit-metadata provenance finding without rewriting published history.
+  next_action: Review the compact current projection, the focused Pull Request diff and the recorded measurements.
   blocker: null
 identities:
   base:
@@ -39,7 +44,7 @@ identities:
       kind: file-sha256
       value: sha256:2ee58de9f91f2bdd23c56da2389bd7130072a142ba43080c8bbca710dbd1896c
     - id: issue-24
-      kind: provider-body-sha256
+      kind: github-issue-body-utf8-sha256-v1
       value: sha256:adb02bc2aa254e97ea9fd931da0ae467b640a031fdb9143b255a74f199b5c5c6
 references:
   decisions:
@@ -52,6 +57,8 @@ references:
       resource: knowledge/assessments/human-agent-governance-scope-and-evolution.md
     - id: reverse-centaur-review-overload
       resource: knowledge/failure-modes/reverse-centaur-review-overload.md
+    - id: b2-p1-measurements
+      resource: knowledge/assessments/b2-p1-streamlined-self-hosting-measurements.md
 handoff:
   actor: accountable maintainer
   read:
@@ -65,11 +72,11 @@ handoff:
     - the runtime target passes self-check from a working directory outside the toolkit
 recording:
   actor: agent:claude-opus-5
-  at: "2026-08-16T00:18:42Z"
+  at: "2026-08-16T00:52:00Z"
 review:
   projection_characters: 6000
   owner_minutes: 20
   on_exceed: block
 checkpoint:
-  sequence: 2
-  previous: sha256:c7d35ac7517753edff5f7778599baed9f706a282f7a09dbcfc4d17ea90f88eed
+  sequence: 3
+  previous: sha256:091049e7420d35d2a1c1ce3b873d750f8fe17d89a4ae568ed7e08cafe3daa04d
