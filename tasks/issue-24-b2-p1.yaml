@@ -76,7 +76,7 @@ handoff:
     - B2/P1 has no remaining action; Issue 24 continues separately through P2
 recording:
   actor: agent:claude-opus-5
-  at: "2026-08-17T09:12:00Z"
+  at: "2026-08-16T21:37:05Z"
 review:
   projection_characters: 6000
   owner_minutes: 20

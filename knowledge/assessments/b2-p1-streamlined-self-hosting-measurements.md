@@ -1,11 +1,11 @@
 ---
 type: Source
 title: B2/P1 streamlined self-hosting measurements
-description: Mechanically derived measurements for the first B2 slice, compared with the recorded B1 self-dogfood baseline, with owner review time left pending.
+description: Mechanically derived measurements for the first B2 slice, compared with the recorded B1 self-dogfood baseline, including the recorded owner review time and disposition.
 status: draft
 generated:
   by: agent:claude-opus-5
-  at: "2026-08-16T21:10:00Z"
+  at: "2026-08-16T21:37:05Z"
 sources:
   - id: streamlined-self-hosting-experiment
     resource: https://github.com/ktogias/gnostoa/issues/24
@@ -54,8 +54,8 @@ Two different surfaces are measured here, and they are not interchangeable:
   body, against the exact head.
 
 Every figure below is mechanically derived from the repository and the provider
-API. One required metric, active owner review time, cannot be derived and is
-left explicitly pending. It is not estimated.
+API, except active owner review time, which cannot be derived. That value is
+now reported by the maintainer rather than estimated, and is recorded below.
 
 ## Recorded B1 baseline
 
@@ -87,7 +87,7 @@ From the exact provider extraction on 2026-08-15 recorded in the
 | — tests | 2 files, +1,197 / −17 | — |
 | — documentation and packaging | 4 files, +43 / −34 | — |
 | Commits on the candidate branch | 8 | — |
-| Completed owner review rounds | **5** untimed pre-review rounds, one an independent read-only audit; timed disposition pending | 0 formal reviews |
+| Completed owner review rounds | **5** untimed pre-review rounds, one an independent read-only audit, plus one timed disposition | 0 formal reviews |
 | Semantic decisions requested / answered | 2 / 2 | not separately recorded |
 | Effect authorizations requested / granted | 4 / 4 | not separately recorded |
 | Material defects caught before integration | **8** defect families | multiple |
@@ -95,7 +95,7 @@ From the exact provider extraction on 2026-08-15 recorded in the
 | Known escaped defects | **0 known before integration; post-integration observation pending** | — |
 | False-ready outcomes | **5** | not separately recorded |
 | False-block outcomes | 0 | not separately recorded |
-| Elapsed to checkpoint 8 | see note below | ~17 days (provider-visible) |
+| Elapsed to checkpoint 9 | see note below | ~17 days (provider-visible) |
 | Integrated | yes, squashed to `31266ff` | yes |
 
 ### Why two figures moved out of this record
@@ -118,7 +118,7 @@ against a B1 baseline that used provider-visible wall-clock time:
 |---|---:|---:|
 | Provider-visible elapsed, first candidate commit to current head | see the Change Request | ~17 days |
 | Active work time | not instrumented | not instrumented |
-| Final timed disposition | pending | not applicable |
+| Final timed disposition | ~27–32 min active, of which <12 min orientation | not applicable |
 
 Only the first row is comparable with B1. The other two were never
 instrumented, and this record does not reconstruct them.
@@ -128,7 +128,7 @@ comment corpus by total repository text; B2/P1 divides foreground evidence by
 the words this change actually added to normative surfaces. The directly
 comparable figure is the provider comment count: 407 against 0.
 
-## Pending human entry
+## Recorded human entry
 
 - `active_owner_review_minutes`: **recorded**. The maintainer performed the
   timed semantic review of candidate `c5fff8c5…` and reported:
@@ -231,12 +231,19 @@ This contradicted both the envelope's JSON-shaped schema and digest model and
 the claimed fail-closed, no-traceback command contract. Caught in owner review
 of the exact candidate.
 
-The traversal now tracks the active path to reject cycles and remembers
-completed nodes so a shared subgraph is inspected once. Acyclic aliases remain
-ordinary supported YAML. A measured side effect: on a 22-level acyclic alias
-document the previous traversal exceeded a three-million-node-visit budget,
-while the corrected traversal completes immediately. That is a consequence of
-visiting each node once, not a claim of general YAML hardening.
+The traversal was changed to track the active path to reject cycles and to
+remember completed nodes so a shared subgraph is inspected once. A measured
+side effect: on a 22-level acyclic alias document the previous traversal
+exceeded a three-million-node-visit budget, while the corrected traversal
+completes immediately. That is a consequence of visiting each node once, not a
+claim of general YAML hardening.
+
+**Temporal status.** At that checkpoint acyclic aliases were still supported
+YAML, and this section described the state as it then stood. Family 6 later
+withdrew that allowance by owner disposition, after alias amplification was
+measured: anchors and aliases are now refused while scanning, before
+construction. The correction above remains historically accurate for its
+checkpoint; it is not the current contract.
 
 **Material defect family 4 — the CLI error boundary was narrower than the
 input it accepted.** An independent read-only robustness audit of the exact
@@ -280,6 +287,14 @@ date-, bool- or numeric-shaped key names, prevents every demonstrated case from
 silently overriding a valid schema-relevant property. This is recorded as a
 bounded follow-up, and the wording in the code and the public workflow no
 longer claims that all semantically ambiguous YAML is rejected.
+
+**Temporal status.** This finding has since been split by Family 6. The
+**merge-key portion is closed**: merge keys are now rejected while composing,
+before construction, so merged properties can no longer be invisible to the
+check. The **constructed-key semantic collision portion remains deferred**:
+detection still compares composed key nodes while construction keys on
+constructed Python values, and two source keys whose values collide are still
+not flagged. Only the second half is outstanding follow-up work.
 
 **Material defect family 5 — the checked bytes were not the constructed
 bytes.** A focused review found that `load_task_envelope` re-read the path with
