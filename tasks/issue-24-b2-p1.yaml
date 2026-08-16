@@ -33,7 +33,11 @@ state:
     - Replaced the ambiguous provider identity kind with github-issue-body-utf8-sha256-v1 and pinned it with offline evidence.
     - Recorded the B2/P1 measurements against the B1 baseline, with owner review time left pending.
     - Reported a commit-metadata provenance finding without rewriting published history.
-  next_action: Review the compact current projection, the focused Pull Request diff and the recorded measurements.
+    - Reconciled the review-surface accounting with the exact provider-reported head.
+    - Corrected the candidate-authority wording; the envelope does not carry the candidate.
+    - Made the provider digest fixture invariant under checkout line-ending normalization.
+    - Rewrote the unmerged branch commit metadata under explicit owner authorization.
+  next_action: Review the compact current projection, the focused Pull Request diff and the recorded measurements in one timed review.
   blocker: null
 identities:
   base:
@@ -70,13 +74,14 @@ handoff:
     - declared identities that differ from supplied observations fail before projection
     - container evidence is green for the exact candidate
     - the runtime target passes self-check from a working directory outside the toolkit
+    - the reported review surface matches the provider count for the exact head
 recording:
   actor: agent:claude-opus-5
-  at: "2026-08-16T00:52:00Z"
+  at: "2026-08-16T01:34:00Z"
 review:
   projection_characters: 6000
   owner_minutes: 20
   on_exceed: block
 checkpoint:
-  sequence: 3
-  previous: sha256:091049e7420d35d2a1c1ce3b873d750f8fe17d89a4ae568ed7e08cafe3daa04d
+  sequence: 4
+  previous: sha256:7f24f3035b2c5f9422614fadfa7a8171b8cb312a0b3ab9034b26e1db6512fe67

@@ -560,8 +560,10 @@ class TaskEnvelopeTests(unittest.TestCase):
     def test_recorded_issue_digest_reproduces_without_any_transformation(self) -> None:
         """`github-issue-body-utf8-sha256-v1` covers the exact API body bytes.
 
-        The fixture holds the byte sequence that produced the digest recorded
-        for Issue #24, so the recorded value stays reproducible offline.
+        The fixture stores the provider response as JSON so that every line
+        break inside the body is an escape sequence. A checkout that rewrites
+        the file's line endings therefore cannot change the parsed body, and
+        the digest recorded for Issue #24 stays reproducible offline.
         """
 
         envelope = yaml.safe_load(
@@ -574,13 +576,18 @@ class TaskEnvelopeTests(unittest.TestCase):
         )
         self.assertEqual("github-issue-body-utf8-sha256-v1", declared["kind"])
 
-        body = (ROOT / "tests" / "fixtures" / "github-issue-24-body.md").read_bytes()
+        fixture = (ROOT / "tests" / "fixtures" / "github-issue-24.json").read_bytes()
+        text = json.loads(fixture)["body"]
         self.assertEqual(
-            "sha256:" + hashlib.sha256(body).hexdigest(),
+            "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest(),
             declared["value"],
         )
 
-        text = body.decode("utf-8")
+        # The stored bytes must survive checkout line-ending normalization.
+        self.assertNotIn(b"\r", fixture)
+        normalized = json.loads(fixture.replace(b"\n", b"\r\n"))["body"]
+        self.assertEqual(text, normalized)
+
         for label, variant in (
             ("stripped trailing newline", text.rstrip("\n")),
             ("added trailing newline", text + "\n"),
