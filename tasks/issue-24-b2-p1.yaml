@@ -20,7 +20,7 @@ scope:
     - raw conversation or hidden-reasoning storage
     - implementation of later Issue 3, 5-15 research surfaces
 state:
-  status: active
+  status: complete
   completed:
     - Bound Issue 24 and Decision 0016 to protected public main.
     - Recorded the human-control assessment and reverse-centaur failure mode.
@@ -42,7 +42,7 @@ state:
     - Converted the five audited boundary exceptions into the documented bounded diagnostics.
     - Added the explicit repository root to both public workflow examples.
     - Loaded, bounded and constructed the envelope and any supplied schema from one immutable snapshot.
-  next_action: Run the final closed-scope verification-only pass over the corrected candidate before the timed review.
+  next_action: null
   blocker: null
 identities:
   base:
@@ -86,11 +86,11 @@ handoff:
     - anchors, aliases, merge keys and non-local schema references are refused before construction
 recording:
   actor: agent:claude-opus-5
-  at: "2026-08-16T06:02:00Z"
+  at: "2026-08-16T21:10:00Z"
 review:
   projection_characters: 6000
   owner_minutes: 20
   on_exceed: block
 checkpoint:
-  sequence: 8
-  previous: sha256:bf09cf1f9bdb2c3258007e3ed235a075ba4e29a619f8c0eb43ad7c41379061ca
+  sequence: 9
+  previous: sha256:1266c7276362298cc604c71e3f1c812cc6e49d676933582d6f8bfddb2d2d53df

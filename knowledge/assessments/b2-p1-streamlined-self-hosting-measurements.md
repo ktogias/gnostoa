@@ -5,7 +5,7 @@ description: Mechanically derived measurements for the first B2 slice, compared 
 status: draft
 generated:
   by: agent:claude-opus-5
-  at: "2026-08-16T06:02:00Z"
+  at: "2026-08-16T21:10:00Z"
 sources:
   - id: streamlined-self-hosting-experiment
     resource: https://github.com/ktogias/gnostoa/issues/24
@@ -34,7 +34,7 @@ x-project-knowledge:
 
 This record covers **B2/P1** only: the first increment of the Decision 0016
 sequence, delivered as PR #25 and durably tracked by the `GNOSTOA/B2/P1` task
-envelope at checkpoint 8. It does not cover B2 as a whole, and it is not an
+envelope at checkpoint 9. It does not cover B2 as a whole, and it is not an
 acceptance record.
 
 The task envelope does **not** contain the candidate identity. A committed
@@ -72,7 +72,7 @@ From the exact provider extraction on 2026-08-15 recorded in the
 | Formal Change Request reviews and inline review comments | 0 |
 | Elapsed span | ~17 days (2026-07-30 → 2026-08-15) |
 
-## B2/P1 measurements at checkpoint 8
+## B2/P1 measurements at checkpoint 9
 
 | Metric | B2/P1 | B1 comparison |
 |---|---:|---|
@@ -96,7 +96,7 @@ From the exact provider extraction on 2026-08-15 recorded in the
 | False-ready outcomes | **5** | not separately recorded |
 | False-block outcomes | 0 | not separately recorded |
 | Elapsed to checkpoint 8 | see note below | ~17 days (provider-visible) |
-| Integrated | no | yes |
+| Integrated | yes, squashed to `31266ff` | yes |
 
 ### Why two figures moved out of this record
 
@@ -130,9 +130,20 @@ comparable figure is the provider comment count: 407 against 0.
 
 ## Pending human entry
 
-- `active_owner_review_minutes`: **pending**. The envelope declares a 20-minute
-  budget and a 6,000-character projection budget; whether the real review fits
-  inside them is the primary open result of this slice.
+- `active_owner_review_minutes`: **recorded**. The maintainer performed the
+  timed semantic review of candidate `c5fff8c5…` and reported:
+
+  | Activity | Minutes |
+  |---|---:|
+  | Orientation from the current projection | **< 12** |
+  | Implementation diff scan | ~15–20 |
+  | **Total active** | **~27–32** |
+
+  The declared 20-minute budget covers final semantic orientation and
+  disposition. That part was met with margin. The total exceeded it because
+  this round also required an implementation review of 3,073 changed lines,
+  which the budget never claimed to cover. One field proved insufficient: the
+  measurement needs the two rows above, not a single number.
 
 The 20 minutes budget final human semantic orientation and disposition over one
 exact candidate. They are not a claim that a reviewer inspects every generated
@@ -142,9 +153,50 @@ and strongest remaining uncertainty, and can still pause, reject or require a
 split. If any of those is out of reach, the budget is exceeded regardless of
 the clock.
 
-Until that value exists, this record cannot state whether B2/P1 reduced owner
-effort. It only shows that the foreground evidence surface and provider comment
-volume are materially smaller.
+### The measured object was the wrong one
+
+The maintainer identified a confound during the timed review, and it is the
+most important result of this slice.
+
+**This round reviewed the Change Request that builds the envelope, not a change
+reviewed through the envelope.** The projection is designed to make orientation
+cheap, and it did: under 12 minutes for a fresh, accurate picture of where the
+task stood. The 3,073-line implementation delta is the construction of the
+tool. Those are different objects, and only the first is what B2 claims to
+improve.
+
+Therefore B2's headline claim — the same assurance for materially less owner
+effort — **is not yet tested**. What is established:
+
+- foreground evidence and provider comment volume are materially smaller than
+  B1, by a wide margin; and
+- orientation from a bounded projection fits comfortably inside a 20-minute
+  budget.
+
+What is not established is the comparison the experiment set out to make.
+Owner interaction cannot be compared with B1 at all, because B1's owner time
+was never instrumented. Only the next change, reviewed *through* the envelope
+with owner time instrumented from minute zero, can close Issue #24's sixth
+acceptance criterion.
+
+### The resume surface saturated before the slice closed
+
+`state.completed` reached its 20-item maximum while work was still being
+recorded. The final three defect families and the integration itself could not
+be written into the durable envelope, and had to live in this record and the
+Change Request body instead. A durable resume surface that cannot record the
+work it describes is a design limit, not a nuisance, and it is direct input to
+the P2 schema.
+
+### Disposition
+
+The accountable maintainer accepted candidate
+`c5fff8c5f5e22e14008e0d064f22f2671fdb7948` for integration. It was squashed to
+`31266ff`, and the integrated tree is byte-identical to the accepted candidate.
+The provider approval record is absent because GitHub refuses self-approval and
+branch protection requires none; the disposition is recorded in the Change
+Request body and in this record. Issue #24 remains open on its sixth
+criterion.
 
 ## Defects, recovery and negative results
 

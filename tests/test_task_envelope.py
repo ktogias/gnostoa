@@ -1171,9 +1171,14 @@ class TaskEnvelopeTests(unittest.TestCase):
         self.assertIn("`GNOSTOA/B2/P1`", output)
         self.assertIn("## Next action", output)
         # Compare through the module's own escaping so a wording change to the
-        # canonical envelope does not need a matching edit here.
+        # canonical envelope does not need a matching edit here. A completed
+        # task carries no next action, and the projection says so explicitly.
+        next_action = envelope["state"]["next_action"]
         self.assertIn(
-            task_envelope._markdown_text(envelope["state"]["next_action"]), output
+            task_envelope._markdown_text(next_action)
+            if next_action
+            else "No active next action.",
+            output,
         )
 
 
