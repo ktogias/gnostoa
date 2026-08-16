@@ -69,24 +69,14 @@ references:
     - id: b2-p1-measurements
       resource: knowledge/assessments/b2-p1-streamlined-self-hosting-measurements.md
 handoff:
-  actor: accountable maintainer
+  actor: no active actor; B2/P1 is complete
   read:
-    - the generated current task projection
-    - the focused Pull Request diff
-    - linked detail only for an unresolved question
+    - the final B2/P1 measurement record for historical context
   verify:
-    - the exact semantic and executable delta is understandable
-    - declared identities that differ from supplied observations fail before projection
-    - container evidence is green for the exact candidate
-    - the runtime target passes self-check from a working directory outside the toolkit
-    - the reported review surface matches the provider count for the exact head
-    - malformed and recursive envelope input fails closed without a traceback
-    - envelope input is bounded by byte size and nesting depth before parsing
-    - the constructed envelope derives from the one bounded snapshot that was checked
-    - anchors, aliases, merge keys and non-local schema references are refused before construction
+    - B2/P1 has no remaining action; Issue 24 continues separately through P2
 recording:
   actor: agent:claude-opus-5
-  at: "2026-08-16T21:10:00Z"
+  at: "2026-08-17T09:12:00Z"
 review:
   projection_characters: 6000
   owner_minutes: 20
