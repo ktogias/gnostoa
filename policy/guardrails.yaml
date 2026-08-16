@@ -138,6 +138,9 @@ guardrails:
       - tests/test_task_envelope.py::TaskEnvelopeTests.test_declared_input_bounds_reject_only_what_exceeds_them
       - tests/test_task_envelope.py::TaskEnvelopeTests.test_malformed_reference_url_is_a_validation_issue
       - tests/test_task_envelope.py::TaskEnvelopeTests.test_a_failed_projection_writes_no_output_artifact
+      - tests/test_task_envelope.py::TaskEnvelopeTests.test_envelope_is_built_from_one_bounded_snapshot
+      - tests/test_task_envelope.py::TaskEnvelopeTests.test_multibyte_envelope_within_the_source_bound_is_accepted
+      - tests/test_task_envelope.py::TaskEnvelopeTests.test_custom_schema_source_is_bounded_and_fails_closed
 
   - id: self-knowledge-boundary
     title: Adopting projects do not inherit toolkit self-knowledge

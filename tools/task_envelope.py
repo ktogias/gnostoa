@@ -23,14 +23,18 @@ from yaml.tokens import (
     FlowSequenceStartToken,
 )
 
-from .knowledge_common import KnowledgeFormatError, load_yaml, toolkit_root
+from .knowledge_common import KnowledgeFormatError, KnowledgeLoader, toolkit_root
 
 IMMUTABLE_GIT_IDENTITY = re.compile(r"^git:[0-9a-f]{40}$")
 
-# A schema-maximal envelope — every array at its `maxItems` and every string at
-# its `maxLength` — serialises to about 74 KB, so 128 KiB accepts any valid
-# envelope with headroom while refusing input that has no schema-legal reading.
-MAX_ENVELOPE_BYTES = 131_072
+# An additional operational bound on the YAML *source representation*, not a
+# claim that every JSON-Schema-valid spelling of an envelope is accepted. The
+# schema bounds code points, while comments, anchors, quoting and multibyte
+# characters all cost bytes, so a schema-valid envelope can still exceed this.
+MAX_ENVELOPE_BYTES = 524_288
+
+# The same operational bound for a caller-supplied schema source.
+MAX_SCHEMA_BYTES = 524_288
 
 # The schema nests at most four levels (root, `identities`, `dependencies`, one
 # dependency), which is also the depth of the current Gnostoa envelope. Thirty-two
@@ -51,20 +55,43 @@ class ProjectionBudgetError(ValueError):
     """A valid envelope would exceed its declared review surface."""
 
 
-def _schema(path: Path) -> dict[str, Any]:
+def _read_bounded_text(path: Path, limit: int, label: str) -> str:
+    """Capture one bounded immutable snapshot of a source file.
+
+    At most `limit + 1` bytes are read, so an over-large file is refused
+    without pulling its whole content into memory. Every later step works on
+    the returned string, never on the path again, so a source that changes
+    afterwards cannot alter what was checked.
+    """
+
     try:
-        text = path.read_bytes().decode("utf-8")
+        with path.open("rb") as handle:
+            raw = handle.read(limit + 1)
     except OSError as exc:
-        raise KnowledgeFormatError(f"Cannot read schema {path}: {exc}") from exc
+        raise KnowledgeFormatError(f"Cannot read {label} {path}: {exc}") from exc
+    if len(raw) > limit:
+        raise KnowledgeFormatError(
+            f"{label} source is larger than the {limit}-byte bound: {path}"
+        )
+    try:
+        return raw.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise KnowledgeFormatError(
-            f"Schema is not valid UTF-8 in {path}: {exc}"
+            f"{label} is not valid UTF-8 in {path}: {exc}"
         ) from exc
+
+
+def _schema(path: Path) -> dict[str, Any]:
+    text = _read_bounded_text(path, MAX_SCHEMA_BYTES, "Schema")
     try:
         value = json.loads(text)
     except json.JSONDecodeError as exc:
         raise KnowledgeFormatError(
             f"Schema is not valid JSON in {path}: {exc}"
+        ) from exc
+    except RecursionError as exc:
+        raise KnowledgeFormatError(
+            f"Schema nesting exhausted the JSON parser in {path}"
         ) from exc
     if not isinstance(value, dict):
         raise KnowledgeFormatError(f"Schema must be a mapping in {path}")
@@ -74,27 +101,11 @@ def _schema(path: Path) -> dict[str, Any]:
         raise KnowledgeFormatError(
             f"Schema is not a valid Draft 2020-12 schema in {path}: {exc.message}"
         ) from exc
-    return value
-
-
-def _read_envelope_text(path: Path) -> str:
-    """Bound the input before any parser sees it."""
-
-    try:
-        raw = path.read_bytes()
-    except OSError as exc:
-        raise KnowledgeFormatError(f"Cannot read {path}: {exc}") from exc
-    if len(raw) > MAX_ENVELOPE_BYTES:
+    except RecursionError as exc:
         raise KnowledgeFormatError(
-            f"Task envelope is larger than the {MAX_ENVELOPE_BYTES}-byte bound: "
-            f"{len(raw)} bytes"
-        )
-    try:
-        return raw.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise KnowledgeFormatError(
-            f"Task envelope is not valid UTF-8 in {path}: {exc}"
+            f"Schema nesting exhausted the schema checker in {path}"
         ) from exc
+    return value
 
 
 def _assert_bounded_depth(text: str, path: Path) -> None:
@@ -195,17 +206,28 @@ def _reject_duplicate_keys(text: str, path: Path) -> None:
     visit(root, "")
 
 
-def load_task_envelope(path: Path) -> dict[str, Any]:
-    resolved = path.resolve()
-    text = _read_envelope_text(resolved)
-    _assert_bounded_depth(text, resolved)
-    _reject_duplicate_keys(text, resolved)
+def _construct_envelope(text: str, path: Path) -> dict[str, Any]:
+    """Build the envelope from the captured snapshot, not from the path."""
+
     try:
-        envelope = load_yaml(resolved)
+        value = yaml.load(text, Loader=KnowledgeLoader)
+    except yaml.YAMLError as exc:
+        raise KnowledgeFormatError(f"Cannot load YAML file {path}: {exc}") from exc
     except RecursionError as exc:
         raise KnowledgeFormatError(
-            f"Task envelope nesting exhausted the YAML constructor in {resolved}"
+            f"Task envelope nesting exhausted the YAML constructor in {path}"
         ) from exc
+    if not isinstance(value, dict):
+        raise KnowledgeFormatError(f"Expected a YAML mapping in {path}")
+    return value
+
+
+def load_task_envelope(path: Path) -> dict[str, Any]:
+    resolved = path.resolve()
+    text = _read_bounded_text(resolved, MAX_ENVELOPE_BYTES, "Task envelope")
+    _assert_bounded_depth(text, resolved)
+    _reject_duplicate_keys(text, resolved)
+    envelope = _construct_envelope(text, resolved)
     _assert_json_compatible(envelope, resolved)
     return envelope
 

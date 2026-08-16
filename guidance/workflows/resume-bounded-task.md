@@ -87,6 +87,14 @@ and replaceable.
 6. Pause as `blocked` when the owner cannot explain the bounded change,
    consequence or uncertainty inside the declared review budget. Clarification
    is safer than ceremonial approval.
+
+   `review.owner_minutes` budgets final human semantic orientation and
+   disposition over one exact candidate. It does not claim exhaustive
+   line-by-line inspection of every generated test and evidence artifact. What
+   it does require is that, within it, the owner can state the semantic choice,
+   the intended effect, the principal consequence and the strongest remaining
+   uncertainty — and can pause, reject or ask for a split. If any of those is
+   out of reach, the budget has been exceeded even if time remains.
 7. Keep the derived projection on standard output or in a disposable review
    artifact. Never use `--output` to replace the canonical envelope.
 
@@ -117,11 +125,22 @@ the versioned name exists to keep unambiguous.
 
 ## Input bounds
 
-An envelope is bounded input, not an arbitrary document. Both commands enforce
-a maximum byte size and a maximum structural nesting depth before the YAML
-parser runs, so an over-large or over-deep file is a concise diagnostic rather
-than an exhausted interpreter stack. Recursive anchor cycles are rejected the
-same way; ordinary acyclic anchors and aliases remain supported.
+An envelope is bounded input, not an arbitrary document. Both commands capture
+one bounded snapshot of the source, reading at most the limit plus one byte, and
+then decode, scan, compose, construct, validate and digest that same captured
+text. The file is never read a second time, so a source that changes afterwards
+cannot alter what was checked.
+
+The limits are an operational bound on the YAML **source representation**, not
+a claim that every schema-valid spelling of an envelope is accepted. The schema
+bounds code points, while comments, anchors, quoting and multibyte characters
+all cost bytes, so a schema-valid envelope written verbosely can still exceed
+the source limit. A caller-supplied `--schema` is bounded the same way,
+including its nesting.
+
+Over-large, over-deep and recursive input becomes a concise diagnostic rather
+than an exhausted interpreter stack. Ordinary acyclic anchors and aliases remain
+supported.
 
 Duplicate scalar keys are rejected by comparing composed key nodes. Keys whose
 source text differs but whose constructed values collide are not yet covered,

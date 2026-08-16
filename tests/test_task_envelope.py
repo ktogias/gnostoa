@@ -9,9 +9,11 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
+from unittest import mock
 
 import yaml
 
+from tools import task_envelope
 from tools.cli import main as cli_main
 from tools.task_envelope import MAX_ENVELOPE_BYTES, MAX_ENVELOPE_DEPTH
 
@@ -567,6 +569,148 @@ class TaskEnvelopeTests(unittest.TestCase):
         self.assertNotIn("Traceback", error)
         return error
 
+    def test_envelope_is_built_from_one_bounded_snapshot(self) -> None:
+        """What is checked is what is constructed, read once and bounded."""
+
+        original = _envelope()
+        original_task = original["task"]
+        assert isinstance(original_task, dict)
+        original_task["id"] = "ORIGINAL/SNAPSHOT"
+        swapped = _envelope()
+        swapped_task = swapped["task"]
+        assert isinstance(swapped_task, dict)
+        swapped_task["id"] = "SWAPPED/AFTER-PREFLIGHT"
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._write(Path(directory), original, "snapshot.yaml")
+            genuine = task_envelope._assert_bounded_depth
+
+            def rewrite_after_preflight(text: str, checked: Path) -> None:
+                genuine(text, checked)
+                self._write(Path(directory), swapped, "snapshot.yaml")
+
+            with mock.patch.object(
+                task_envelope, "_assert_bounded_depth", rewrite_after_preflight
+            ):
+                envelope = task_envelope.load_task_envelope(path)
+
+            # The source on disk changed, but the captured snapshot did not.
+            self.assertEqual("ORIGINAL/SNAPSHOT", envelope["task"]["id"])
+            self.assertIn("SWAPPED/AFTER-PREFLIGHT", path.read_text(encoding="utf-8"))
+
+            opened: list[str] = []
+            requested: list[int | None] = []
+            genuine_open = Path.open
+
+            def counting_open(self_path: Path, *args: object, **kwargs: object):  # type: ignore[no-untyped-def]
+                if self_path.name == "snapshot.yaml":
+                    opened.append(self_path.name)
+                handle = genuine_open(self_path, *args, **kwargs)  # type: ignore[arg-type]
+                genuine_read = handle.read
+
+                def counting_read(size: int | None = None):  # type: ignore[no-untyped-def]
+                    requested.append(size)
+                    return genuine_read(size)
+
+                handle.read = counting_read  # type: ignore[method-assign]
+                return handle
+
+            def refuse(*args: object, **kwargs: object) -> None:
+                raise AssertionError("the envelope path was read a second time")
+
+            with (
+                mock.patch.object(Path, "open", counting_open),
+                mock.patch.object(Path, "read_bytes", refuse),
+                mock.patch.object(Path, "read_text", refuse),
+            ):
+                task_envelope.load_task_envelope(path)
+
+        self.assertEqual(["snapshot.yaml"], opened)
+        self.assertEqual([task_envelope.MAX_ENVELOPE_BYTES + 1], requested)
+
+    def test_multibyte_envelope_within_the_source_bound_is_accepted(self) -> None:
+        """The bound is on source bytes, and multibyte text costs more of them."""
+
+        glyph = "\U0001d11e"  # four UTF-8 bytes, one code point
+
+        def line(tag: str) -> str:
+            return glyph * (500 - len(tag)) + tag
+
+        envelope = _envelope()
+        task = envelope["task"]
+        scope = envelope["scope"]
+        state = envelope["state"]
+        handoff = envelope["handoff"]
+        assert isinstance(task, dict)
+        assert isinstance(scope, dict)
+        assert isinstance(state, dict)
+        assert isinstance(handoff, dict)
+        task["objective"] = line("o")
+        scope["included"] = [line(f"i{index}") for index in range(12)]
+        scope["excluded"] = [line(f"e{index}") for index in range(12)]
+        state["completed"] = [line(f"c{index}") for index in range(20)]
+        handoff["read"] = [line(f"r{index}") for index in range(12)]
+        handoff["verify"] = [line(f"v{index}") for index in range(12)]
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._write(Path(directory), envelope, "multibyte.yaml")
+            size = len(path.read_bytes())
+            self.assertGreater(size, 131_072)
+            self.assertLess(size, task_envelope.MAX_ENVELOPE_BYTES)
+            result, output, error = self._run(
+                [
+                    "task-validate",
+                    "--envelope",
+                    str(path),
+                    "--repository-root",
+                    str(ROOT),
+                ]
+            )
+        self.assertEqual((0, ""), (result, error))
+        self.assertIn("task envelope is valid", output)
+
+    def test_custom_schema_source_is_bounded_and_fails_closed(self) -> None:
+        """A supplied schema is bounded input too, including its nesting."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            oversized = root / "oversized.json"
+            oversized.write_text(
+                json.dumps({"type": "object", "description": "x" * 600_000}),
+                encoding="utf-8",
+            )
+
+            nested_keywords: dict[str, object] = {"type": "object"}
+            for _ in range(300):
+                nested_keywords = {"items": nested_keywords}
+            deep_keywords = root / "deep-keywords.json"
+            deep_keywords.write_text(json.dumps(nested_keywords), encoding="utf-8")
+
+            deep_json = root / "deep-json.json"
+            deep_json.write_text("[" * 200_000 + "]" * 200_000, encoding="utf-8")
+
+            for path, expected in (
+                (oversized, "source is larger than"),
+                (deep_keywords, "exhausted the schema checker"),
+                (deep_json, "exhausted the JSON parser"),
+            ):
+                with self.subTest(schema=path.name):
+                    self.assertIn(
+                        expected,
+                        self._bounded_failure(
+                            [
+                                "task-validate",
+                                "--envelope",
+                                str(ROOT / "tasks" / "issue-24-b2-p1.yaml"),
+                                "--repository-root",
+                                str(ROOT),
+                                "--schema",
+                                str(path),
+                            ]
+                        ),
+                    )
+
     def test_unsupported_input_uses_the_bounded_error_path(self) -> None:
         """Input the commands cannot process exits 2 on stderr, never crashes."""
 
@@ -864,8 +1008,11 @@ class TaskEnvelopeTests(unittest.TestCase):
         self.assertEqual((0, ""), (result, error))
         self.assertIn("`GNOSTOA/B2/P1`", output)
         self.assertIn("## Next action", output)
-        # The projection escapes Markdown, so match a punctuation-free fragment.
-        self.assertIn("Run an independent verification", output)
+        # Compare through the module's own escaping so a wording change to the
+        # canonical envelope does not need a matching edit here.
+        self.assertIn(
+            task_envelope._markdown_text(envelope["state"]["next_action"]), output
+        )
 
 
 if __name__ == "__main__":

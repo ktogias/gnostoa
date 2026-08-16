@@ -5,7 +5,7 @@ description: Mechanically derived measurements for the first B2 slice, compared 
 status: draft
 generated:
   by: agent:claude-opus-5
-  at: "2026-08-16T03:26:00Z"
+  at: "2026-08-16T04:41:00Z"
 sources:
   - id: streamlined-self-hosting-experiment
     resource: https://github.com/ktogias/gnostoa/issues/24
@@ -34,7 +34,7 @@ x-project-knowledge:
 
 This record covers **B2/P1** only: the first increment of the Decision 0016
 sequence, delivered as PR #25 and durably tracked by the `GNOSTOA/B2/P1` task
-envelope at checkpoint 6. It does not cover B2 as a whole, and it is not an
+envelope at checkpoint 7. It does not cover B2 as a whole, and it is not an
 acceptance record.
 
 The task envelope does **not** contain the candidate identity. A committed
@@ -72,30 +72,30 @@ From the exact provider extraction on 2026-08-15 recorded in the
 | Formal Change Request reviews and inline review comments | 0 |
 | Elapsed span | ~17 days (2026-07-30 → 2026-08-15) |
 
-## B2/P1 measurements at checkpoint 6
+## B2/P1 measurements at checkpoint 7
 
 | Metric | B2/P1 | B1 comparison |
 |---|---:|---|
 | Provider comments on the change | **0** | 407 |
-| Current task projection words | **618** | — |
+| Current task projection words | **647** | — |
 | Change Request body words | reported in the Change Request against the exact head | — |
 | Foreground evidence words | sum of the two rows above, reported in the Change Request | ~289,449 comment words |
-| Changed normative words added | 6,338 | — |
+| Changed normative words added | 6,669 | — |
 | Evidence amplification (foreground words ÷ changed normative words) | reported in the Change Request | ~7.2 : 1 on a different denominator |
-| Implementation delta | 22 files, +2,618 / −149 | — |
-| — normative surfaces | 16 files, +1,686 / −98 | — |
-| — tests | 2 files, +889 / −17 | — |
+| Implementation delta | 22 files, +2,811 / −149 | — |
+| — normative surfaces | 16 files, +1,732 / −98 | — |
+| — tests | 2 files, +1,036 / −17 | — |
 | — documentation and packaging | 4 files, +43 / −34 | — |
-| Commits on the candidate branch | 6 | — |
-| Completed owner review rounds | **3** untimed pre-review rounds, one an independent read-only audit; timed disposition pending | 0 formal reviews |
+| Commits on the candidate branch | 7 | — |
+| Completed owner review rounds | **4** untimed pre-review rounds, one an independent read-only audit; timed disposition pending | 0 formal reviews |
 | Semantic decisions requested / answered | 2 / 2 | not separately recorded |
 | Effect authorizations requested / granted | 4 / 4 | not separately recorded |
-| Material defects caught before integration | **4** defect families | multiple |
-| Evidence defects corrected in owner review | **2** | not separately recorded |
+| Material defects caught before integration | **5** defect families | multiple |
+| Evidence defects corrected in owner review | **3** | not separately recorded |
 | Known escaped defects | **0 known before integration; post-integration observation pending** | — |
-| False-ready outcomes | **4** | not separately recorded |
+| False-ready outcomes | **5** | not separately recorded |
 | False-block outcomes | 0 | not separately recorded |
-| Elapsed to checkpoint 6 | see note below | ~17 days (provider-visible) |
+| Elapsed to checkpoint 7 | see note below | ~17 days (provider-visible) |
 | Integrated | no | yes |
 
 ### Why two figures moved out of this record
@@ -133,6 +133,14 @@ comparable figure is the provider comment count: 407 against 0.
 - `active_owner_review_minutes`: **pending**. The envelope declares a 20-minute
   budget and a 6,000-character projection budget; whether the real review fits
   inside them is the primary open result of this slice.
+
+The 20 minutes budget final human semantic orientation and disposition over one
+exact candidate. They are not a claim that a reviewer inspects every generated
+test and evidence artifact line by line. The test is whether, inside that time,
+the owner can state the semantic choice, intended effect, principal consequence
+and strongest remaining uncertainty, and can still pause, reject or require a
+split. If any of those is out of reach, the budget is exceeded regardless of
+the clock.
 
 Until that value exists, this record cannot state whether B2/P1 reduced owner
 effort. It only shows that the foreground evidence surface and provider comment
@@ -221,7 +229,40 @@ silently overriding a valid schema-relevant property. This is recorded as a
 bounded follow-up, and the wording in the code and the public workflow no
 longer claims that all semantically ambiguous YAML is rejected.
 
-**Evidence defects corrected in owner review (2).** The review packet reported
+**Material defect family 5 — the checked bytes were not the constructed
+bytes.** A focused review found that `load_task_envelope` re-read the path with
+`load_yaml(path)` after preflight, so size, depth and duplicate-key checks
+applied to one snapshot while the object was constructed from whatever the file
+contained at construction time. A demonstration that rewrote the file between
+preflight and construction produced an envelope carrying the *replacement*
+content while reporting that the *original* had been checked. The same read
+also pulled the entire file into memory before comparing it with the byte
+bound: rejecting a 600 KB envelope first read all 600 KB.
+
+Manifestations of the one root cause — a source read that was neither single
+nor bounded — also covered the caller-supplied `--schema`, which had no size
+bound at all and no conversion for recursion raised inside `json.loads` or
+`Draft202012Validator.check_schema`. A schema of 300 nested `items` produced a
+traceback.
+
+Loading now captures one bounded immutable snapshot: the file is opened once in
+binary mode, at most the limit plus one byte is read, and decode, scan, compose,
+construct, validate and digest all run on that captured text. The path is never
+read again, so a source that changes afterwards cannot alter what was checked.
+The same helper bounds a supplied schema, and both recursion sites are
+converted.
+
+**Contract correction, not a product defect — the source bound rationale.** The
+previous 128 KiB bound was justified by an ASCII serialization of a
+schema-maximal envelope measuring about 74 KB. That reasoning was wrong: the
+schema bounds code points, not bytes, so a schema-valid envelope written in
+multibyte characters exceeded the bound while remaining entirely legal. A valid
+envelope of 179,664 bytes was refused. The bound is now 512 KiB and is
+documented as an operational limit on the YAML **source representation**, with
+no claim that every schema-valid spelling fits. This is recorded as an evidence
+and contract correction rather than a third product defect.
+
+**Evidence defects corrected in owner review (3).** The review packet reported
 a review surface measured before the measurement artifacts existed, which did
 not match the provider's count for the exact head; and this record stated that
 the task envelope carries the candidate identity, which it does not and cannot.
@@ -232,8 +273,9 @@ misinformed a timed review.
 while its own declared pre-merge gate was still unrun. A second packet was
 presented for timed review with stale surface accounting. A third was presented
 while the recursive-alias blocker was still present. A fourth was presented
-while the wider error-boundary family was still present. None reached
-integration, but all four ready signals were wrong when issued.
+while the wider error-boundary family was still present. A fifth was presented
+while the source snapshot was neither single nor bounded. None reached
+integration, but all five ready signals were wrong when issued.
 
 The pattern matters more than the count: every required suite was green each
 time. Green checks were a necessary and repeatedly insufficient condition for
@@ -263,9 +305,9 @@ exactly specified byte sequence and offline evidence.
 
 P1 as a whole adds: one JSON Schema, one public template, one tool module, two
 CLI commands, one test module, one guidance workflow, one durable state file
-and one test fixture. Checkpoints 5 and 6 corrected the validator traversal and
-established the pre-parse input contract; the other post-review checkpoints
-added no product code — only
+and one test fixture. Checkpoints 5 to 7 corrected the validator traversal and
+established the bounded single-snapshot input contract; the other post-review
+checkpoints added no product code — only
 tests, a fixture, documentation and this record.
 
 This is the surface that must keep earning its place. Decision 0016's stop rule
