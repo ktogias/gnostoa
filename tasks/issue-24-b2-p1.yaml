@@ -83,13 +83,14 @@ handoff:
     - malformed and recursive envelope input fails closed without a traceback
     - envelope input is bounded by byte size and nesting depth before parsing
     - the constructed envelope derives from the one bounded snapshot that was checked
+    - anchors, aliases, merge keys and non-local schema references are refused before construction
 recording:
   actor: agent:claude-opus-5
-  at: "2026-08-16T04:41:00Z"
+  at: "2026-08-16T06:02:00Z"
 review:
   projection_characters: 6000
   owner_minutes: 20
   on_exceed: block
 checkpoint:
-  sequence: 7
-  previous: sha256:23fad5e2cca428fcac6747266c9c9042fd413e04b70a9a7c7c5a3ce021bbd40a
+  sequence: 8
+  previous: sha256:bf09cf1f9bdb2c3258007e3ed235a075ba4e29a619f8c0eb43ad7c41379061ca

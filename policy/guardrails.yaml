@@ -133,7 +133,10 @@ guardrails:
       - tests/test_task_envelope.py::TaskEnvelopeTests.test_projection_budget_and_single_line_structure_fail_closed
       - tests/test_task_envelope.py::TaskEnvelopeTests.test_declared_repository_root_resolves_references_independently_of_cwd
       - tests/test_task_envelope.py::TaskEnvelopeTests.test_recorded_issue_digest_reproduces_without_any_transformation
-      - tests/test_task_envelope.py::TaskEnvelopeTests.test_recursive_yaml_aliases_fail_closed_without_a_traceback
+      - tests/test_task_envelope.py::TaskEnvelopeTests.test_yaml_anchors_aliases_and_merge_keys_are_unsupported
+      - tests/test_task_envelope.py::TaskEnvelopeTests.test_scalar_literals_the_parsers_refuse_are_bounded
+      - tests/test_task_envelope.py::TaskEnvelopeTests.test_custom_schema_references_stay_local_and_offline
+      - tests/test_task_envelope.py::TaskEnvelopeTests.test_https_references_require_a_host
       - tests/test_task_envelope.py::TaskEnvelopeTests.test_unsupported_input_uses_the_bounded_error_path
       - tests/test_task_envelope.py::TaskEnvelopeTests.test_declared_input_bounds_reject_only_what_exceeds_them
       - tests/test_task_envelope.py::TaskEnvelopeTests.test_malformed_reference_url_is_a_validation_issue

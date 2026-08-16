@@ -138,14 +138,29 @@ all cost bytes, so a schema-valid envelope written verbosely can still exceed
 the source limit. A caller-supplied `--schema` is bounded the same way,
 including its nesting.
 
-Over-large, over-deep and recursive input becomes a concise diagnostic rather
-than an exhausted interpreter stack. Ordinary acyclic anchors and aliases remain
-supported.
+Over-large and over-deep input becomes a concise diagnostic rather than an
+exhausted interpreter stack.
+
+**Task envelopes do not support YAML anchors, aliases or merge keys.** Task
+state is a canonical JSON-shaped document that happens to be written in YAML,
+and those features have no JSON meaning. They are also an amplification
+hazard: twenty doubling alias levels fit in 434 source bytes and expand to
+about 22 MB once the document is serialised for its digest. Anchors and aliases
+are refused while scanning, and merge keys while composing, before anything is
+constructed. Write the explicit mapping or sequence instead.
 
 Duplicate scalar keys are rejected by comparing composed key nodes. Keys whose
 source text differs but whose constructed values collide are not yet covered,
 so this is not a claim that every semantically ambiguous YAML document is
 refused.
+
+A caller-supplied `--schema` is a bounded local input, never a retrieval root.
+Only same-document fragment references (`#/$defs/...`) are supported. A `$ref`
+with any other form — `file:`, `http:`, `https:` — is refused locally before
+resolution is attempted, `$dynamicRef` is not supported in this portable mode,
+and an unresolvable local fragment or a self-recursive reference such as
+`{"$ref": "#"}` becomes a bounded diagnostic. No filesystem or network
+retrieval takes place.
 
 ## Verification
 

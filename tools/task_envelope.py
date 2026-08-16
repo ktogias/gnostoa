@@ -12,8 +12,12 @@ from urllib.parse import urlsplit
 import yaml
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
+from referencing import Registry
+from referencing.exceptions import NoSuchResource, Unresolvable, Unretrievable
 from yaml.nodes import MappingNode, Node, ScalarNode
 from yaml.tokens import (
+    AliasToken,
+    AnchorToken,
     BlockEndToken,
     BlockMappingStartToken,
     BlockSequenceStartToken,
@@ -49,6 +53,12 @@ _DEPTH_OPENING = (
     FlowSequenceStartToken,
 )
 _DEPTH_CLOSING = (BlockEndToken, FlowMappingEndToken, FlowSequenceEndToken)
+
+# Task state is a canonical JSON-shaped document that happens to be written in
+# YAML. Anchors and aliases have no JSON meaning, and a very small alias graph
+# expands exponentially once the document is serialised or validated, so they
+# are refused in the source rather than accounted for later.
+MERGE_TAG = "tag:yaml.org,2002:merge"
 
 
 class ProjectionBudgetError(ValueError):
@@ -93,8 +103,13 @@ def _schema(path: Path) -> dict[str, Any]:
         raise KnowledgeFormatError(
             f"Schema nesting exhausted the JSON parser in {path}"
         ) from exc
+    except ValueError as exc:
+        raise KnowledgeFormatError(
+            f"Schema holds a literal the JSON parser refuses in {path}: {exc}"
+        ) from exc
     if not isinstance(value, dict):
         raise KnowledgeFormatError(f"Schema must be a mapping in {path}")
+    _assert_local_references(value, path)
     try:
         Draft202012Validator.check_schema(value)
     except SchemaError as exc:
@@ -108,17 +123,62 @@ def _schema(path: Path) -> dict[str, Any]:
     return value
 
 
-def _assert_bounded_depth(text: str, path: Path) -> None:
-    """Reject over-deep input using the iterative scanner, before composition.
+def _assert_local_references(schema: dict[str, Any], path: Path) -> None:
+    """A supplied schema is a bounded local input, not a retrieval root.
+
+    Only same-document fragment references are supported, so validation can
+    never reach the filesystem or the network. The walk is iterative because a
+    supplied schema is bounded by size but not by depth.
+    """
+
+    pending: list[Any] = [schema]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, dict):
+            if "$dynamicRef" in node:
+                raise KnowledgeFormatError(
+                    f"Schema uses $dynamicRef, which the portable custom-schema "
+                    f"mode does not support, in {path}"
+                )
+            reference = node.get("$ref")
+            if isinstance(reference, str) and not reference.startswith("#"):
+                raise KnowledgeFormatError(
+                    f"Schema reference is not a local fragment in {path}: {reference}"
+                )
+            pending.extend(node.values())
+        elif isinstance(node, list):
+            pending.extend(node)
+
+
+def _offline_registry() -> Registry[Any]:
+    """An empty registry, whose default retrieval refuses every request.
+
+    `referencing` fails closed by default, so no filesystem or network client
+    is reachable from schema validation. Non-fragment references are already
+    refused before this point; the registry is the second barrier.
+    """
+
+    return Registry()
+
+
+def _assert_bounded_source(text: str, path: Path) -> None:
+    """Bound depth and refuse unsupported YAML features, before composition.
 
     `yaml.compose` recurses per level and exhausts the interpreter stack at
     roughly five hundred levels; `yaml.scan` is a token state machine and stays
-    bounded, so the depth is measured here rather than discovered by crashing.
+    bounded, so both the depth and the anchors and aliases are measured here
+    rather than discovered by crashing or by expanding.
     """
 
     depth = 0
     try:
         for token in yaml.scan(text, Loader=yaml.SafeLoader):
+            if isinstance(token, (AnchorToken, AliasToken)):
+                feature = "anchor" if isinstance(token, AnchorToken) else "alias"
+                raise KnowledgeFormatError(
+                    f"Task envelopes do not support YAML anchors, aliases or "
+                    f"merge keys: {feature} at line {token.start_mark.line + 1}"
+                )
             if isinstance(token, _DEPTH_OPENING):
                 depth += 1
                 if depth > MAX_ENVELOPE_DEPTH:
@@ -182,6 +242,12 @@ def _reject_duplicate_keys(text: str, path: Path) -> None:
         if isinstance(node, MappingNode):
             seen: set[tuple[str, str]] = set()
             for key_node, value_node in node.value:
+                if key_node.tag == MERGE_TAG:
+                    raise KnowledgeFormatError(
+                        f"Task envelopes do not support YAML anchors, aliases or "
+                        f"merge keys: merge key at line "
+                        f"{key_node.start_mark.line + 1}"
+                    )
                 if isinstance(key_node, ScalarNode):
                     key = (key_node.tag, key_node.value)
                     if key in seen:
@@ -217,6 +283,12 @@ def _construct_envelope(text: str, path: Path) -> dict[str, Any]:
         raise KnowledgeFormatError(
             f"Task envelope nesting exhausted the YAML constructor in {path}"
         ) from exc
+    except ValueError as exc:
+        # The scalar parsers reject values such as an integer literal above the
+        # interpreter's integer-string conversion limit.
+        raise KnowledgeFormatError(
+            f"Task envelope holds a scalar the YAML parser refuses in {path}: {exc}"
+        ) from exc
     if not isinstance(value, dict):
         raise KnowledgeFormatError(f"Expected a YAML mapping in {path}")
     return value
@@ -225,7 +297,7 @@ def _construct_envelope(text: str, path: Path) -> dict[str, Any]:
 def load_task_envelope(path: Path) -> dict[str, Any]:
     resolved = path.resolve()
     text = _read_bounded_text(resolved, MAX_ENVELOPE_BYTES, "Task envelope")
-    _assert_bounded_depth(text, resolved)
+    _assert_bounded_source(text, resolved)
     _reject_duplicate_keys(text, resolved)
     envelope = _construct_envelope(text, resolved)
     _assert_json_compatible(envelope, resolved)
@@ -301,6 +373,8 @@ def _reference_issues(envelope: dict[str, Any], repository_root: Path) -> list[s
                     issues.append(
                         f"reference uses unsupported external scheme: {resource}"
                     )
+                elif not parsed.netloc:
+                    issues.append(f"https reference has no host: {resource}")
                 continue
             if parsed.netloc or not parsed.path:
                 issues.append(f"reference is not a portable relative path: {resource}")
@@ -327,10 +401,20 @@ def validate_task_envelope(
         if schema_path
         else toolkit_root() / "schemas" / "task-envelope.schema.json"
     )
-    errors = sorted(
-        Draft202012Validator(_schema(schema)).iter_errors(envelope),
-        key=lambda error: (list(error.absolute_path), error.message),
-    )
+    validator = Draft202012Validator(_schema(schema), registry=_offline_registry())
+    try:
+        errors = sorted(
+            validator.iter_errors(envelope),
+            key=lambda error: (list(error.absolute_path), error.message),
+        )
+    except (Unresolvable, NoSuchResource, Unretrievable) as exc:
+        raise KnowledgeFormatError(
+            f"Schema reference does not resolve locally in {schema}: {exc}"
+        ) from exc
+    except RecursionError as exc:
+        raise KnowledgeFormatError(
+            f"Schema references recurse without termination in {schema}"
+        ) from exc
     issues = [f"{_location(error)}: {error.message}" for error in errors]
 
     identities = envelope.get("identities")

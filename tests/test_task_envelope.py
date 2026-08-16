@@ -583,14 +583,14 @@ class TaskEnvelopeTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             path = self._write(Path(directory), original, "snapshot.yaml")
-            genuine = task_envelope._assert_bounded_depth
+            genuine = task_envelope._assert_bounded_source
 
             def rewrite_after_preflight(text: str, checked: Path) -> None:
                 genuine(text, checked)
                 self._write(Path(directory), swapped, "snapshot.yaml")
 
             with mock.patch.object(
-                task_envelope, "_assert_bounded_depth", rewrite_after_preflight
+                task_envelope, "_assert_bounded_source", rewrite_after_preflight
             ):
                 envelope = task_envelope.load_task_envelope(path)
 
@@ -861,20 +861,36 @@ class TaskEnvelopeTests(unittest.TestCase):
             self.assertFalse(output_path.exists())
             self.assertFalse(output_path.parent.exists())
 
-    def test_recursive_yaml_aliases_fail_closed_without_a_traceback(self) -> None:
-        """A cyclic alias graph is a bounded validation error, not a crash."""
+    def test_yaml_anchors_aliases_and_merge_keys_are_unsupported(self) -> None:
+        """Task state is JSON-shaped; alias graphs have no JSON meaning."""
 
-        shapes = {
-            "sequence": "recursive: &recursive\n  - *recursive\n",
-            "mapping": "recursive: &recursive\n  self: *recursive\n",
+        unsupported = {
+            "ordinary alias": "shared: &shared\n  - one\n  - two\nread: *shared\n",
+            "recursive alias": "recursive: &recursive\n  - *recursive\n",
+            "merge by alias": (
+                "defaults: &defaults\n  owner: team:x\n"
+                "mapping:\n  <<: *defaults\n  owner: team:y\n"
+            ),
+            "inline merge key": "mapping:\n  <<: {owner: team:x}\n  owner: team:y\n",
         }
+        # Twenty doubling levels: 434 source bytes become about 22 MB of JSON.
+        levels = 20
+        graph = ['a0: &a0 ["x", "x"]']
+        graph.extend(
+            f"a{index}: &a{index} [*a{index - 1}, *a{index - 1}]"
+            for index in range(1, levels)
+        )
+        unsupported["exponential alias graph"] = (
+            "\n".join(graph) + f"\namplified: *a{levels - 1}\n"
+        )
+
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for shape, document in shapes.items():
-                path = root / f"recursive-{shape}.yaml"
+            for label, document in unsupported.items():
+                path = root / f"{label.replace(' ', '-')}.yaml"
                 path.write_text(document, encoding="utf-8")
                 for command in ("task-validate", "task-project"):
-                    with self.subTest(shape=shape, command=command):
+                    with self.subTest(case=label, command=command):
                         arguments = [
                             command,
                             "--envelope",
@@ -889,20 +905,19 @@ class TaskEnvelopeTests(unittest.TestCase):
                                 "--observed-base",
                                 BASE,
                             ]
-                        result, output, error = self._run(arguments)
-                        self.assertEqual((2, ""), (result, output))
-                        self.assertIn("Recursive YAML alias", error)
-                        self.assertNotIn("Traceback", error)
+                        self.assertIn(
+                            "do not support YAML anchors, aliases or merge keys",
+                            self._bounded_failure(arguments),
+                        )
 
-            # An acyclic alias graph is ordinary YAML and stays supported.
+            # The explicit JSON-shaped equivalent stays valid.
             envelope = _envelope()
             handoff = envelope["handoff"]
             assert isinstance(handoff, dict)
-            repeated = ["one semantic choice", "container evidence"]
-            handoff["read"] = repeated
-            handoff["verify"] = repeated
-            path = self._write(root, envelope, "shared-alias.yaml")
-            self.assertIn("*id", path.read_text(encoding="utf-8"))
+            handoff["read"] = ["one", "two"]
+            handoff["verify"] = ["one", "two"]
+            path = self._write(root, envelope, "explicit.yaml")
+            self.assertNotIn("&", path.read_text(encoding="utf-8"))
             result, output, error = self._run(
                 [
                     "task-validate",
@@ -914,6 +929,153 @@ class TaskEnvelopeTests(unittest.TestCase):
             )
             self.assertEqual((0, ""), (result, error))
             self.assertIn("task envelope is valid", output)
+
+    def test_scalar_literals_the_parsers_refuse_are_bounded(self) -> None:
+        """An integer above the interpreter conversion limit is input, not a crash."""
+
+        oversized = "9" * 5000
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            envelope = self._write(root, _envelope(), "task.yaml")
+            envelope.write_text(
+                envelope.read_text(encoding="utf-8") + f"oversized: {oversized}\n",
+                encoding="utf-8",
+            )
+            schema = root / "oversized-literal.json"
+            schema.write_text(
+                '{"type":"object","const":' + oversized + "}", encoding="utf-8"
+            )
+
+            for label, extra, expected in (
+                ("yaml", [], "scalar the YAML parser refuses"),
+                (
+                    "json schema",
+                    ["--schema", str(schema)],
+                    "literal the JSON parser refuses",
+                ),
+            ):
+                for command in ("task-validate", "task-project"):
+                    with self.subTest(case=label, command=command):
+                        target = (
+                            ROOT / "tasks" / "issue-24-b2-p1.yaml"
+                            if extra
+                            else envelope
+                        )
+                        arguments = [
+                            command,
+                            "--envelope",
+                            str(target),
+                            "--repository-root",
+                            str(ROOT),
+                            *extra,
+                        ]
+                        if command == "task-project":
+                            arguments += [
+                                "--candidate",
+                                CANDIDATE,
+                                "--observed-base",
+                                BASE,
+                            ]
+                        self.assertIn(expected, self._bounded_failure(arguments))
+
+    def test_custom_schema_references_stay_local_and_offline(self) -> None:
+        """A supplied schema never reaches the filesystem or the network."""
+
+        cases = {
+            "self recursive": ({"$ref": "#"}, "recurse without termination"),
+            "unresolved fragment": (
+                {"$ref": "#/$defs/absent"},
+                "does not resolve locally",
+            ),
+            "file scheme": (
+                {"$ref": "file:///etc/passwd"},
+                "not a local fragment",
+            ),
+            "http scheme": (
+                {"$ref": "http://example.invalid/s.json"},
+                "not a local fragment",
+            ),
+            "https scheme": (
+                {"$ref": "https://example.invalid/s.json"},
+                "not a local fragment",
+            ),
+            "dynamic reference": ({"$dynamicRef": "#meta"}, "$dynamicRef"),
+        }
+
+        def refuse_network(*args: object, **kwargs: object) -> None:
+            raise AssertionError("a retrieval function was called")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            envelope = str(ROOT / "tasks" / "issue-24-b2-p1.yaml")
+
+            with mock.patch("urllib.request.urlopen", refuse_network):
+                for label, (schema, expected) in cases.items():
+                    path = root / f"{label.replace(' ', '-')}.json"
+                    path.write_text(json.dumps(schema), encoding="utf-8")
+                    for command in ("task-validate", "task-project"):
+                        with self.subTest(case=label, command=command):
+                            arguments = [
+                                command,
+                                "--envelope",
+                                envelope,
+                                "--repository-root",
+                                str(ROOT),
+                                "--schema",
+                                str(path),
+                            ]
+                            if command == "task-project":
+                                arguments += [
+                                    "--candidate",
+                                    CANDIDATE,
+                                    "--observed-base",
+                                    BASE,
+                                ]
+                            self.assertIn(expected, self._bounded_failure(arguments))
+
+            # A local fragment into $defs is the supported shape.
+            local = root / "local.json"
+            local.write_text(
+                json.dumps({"$defs": {"ok": {"type": "object"}}, "$ref": "#/$defs/ok"}),
+                encoding="utf-8",
+            )
+            result, output, error = self._run(
+                [
+                    "task-validate",
+                    "--envelope",
+                    envelope,
+                    "--repository-root",
+                    str(ROOT),
+                    "--schema",
+                    str(local),
+                ]
+            )
+            self.assertEqual((0, ""), (result, error))
+            self.assertIn("task envelope is valid", output)
+
+    def test_https_references_require_a_host(self) -> None:
+        """An https reference without an authority cannot name anything."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for index, resource in enumerate(("https://", "https:///path")):
+                with self.subTest(resource=resource):
+                    envelope = _envelope()
+                    references = envelope["references"]
+                    assert isinstance(references, dict)
+                    references["evidence"] = [{"id": "bad", "resource": resource}]
+                    path = self._write(root, envelope, f"hostless-{index}.yaml")
+                    result, output, error = self._run(
+                        [
+                            "task-validate",
+                            "--envelope",
+                            str(path),
+                            "--repository-root",
+                            str(ROOT),
+                        ]
+                    )
+                    self.assertEqual((1, ""), (result, error))
+                    self.assertIn("https reference has no host", output)
 
     def test_recorded_issue_digest_reproduces_without_any_transformation(self) -> None:
         """`github-issue-body-utf8-sha256-v1` covers the exact API body bytes.

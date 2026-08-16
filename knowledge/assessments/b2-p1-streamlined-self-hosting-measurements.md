@@ -5,7 +5,7 @@ description: Mechanically derived measurements for the first B2 slice, compared 
 status: draft
 generated:
   by: agent:claude-opus-5
-  at: "2026-08-16T04:41:00Z"
+  at: "2026-08-16T06:02:00Z"
 sources:
   - id: streamlined-self-hosting-experiment
     resource: https://github.com/ktogias/gnostoa/issues/24
@@ -34,7 +34,7 @@ x-project-knowledge:
 
 This record covers **B2/P1** only: the first increment of the Decision 0016
 sequence, delivered as PR #25 and durably tracked by the `GNOSTOA/B2/P1` task
-envelope at checkpoint 7. It does not cover B2 as a whole, and it is not an
+envelope at checkpoint 8. It does not cover B2 as a whole, and it is not an
 acceptance record.
 
 The task envelope does **not** contain the candidate identity. A committed
@@ -72,30 +72,30 @@ From the exact provider extraction on 2026-08-15 recorded in the
 | Formal Change Request reviews and inline review comments | 0 |
 | Elapsed span | ~17 days (2026-07-30 → 2026-08-15) |
 
-## B2/P1 measurements at checkpoint 7
+## B2/P1 measurements at checkpoint 8
 
 | Metric | B2/P1 | B1 comparison |
 |---|---:|---|
 | Provider comments on the change | **0** | 407 |
-| Current task projection words | **647** | — |
+| Current task projection words | **660** | — |
 | Change Request body words | reported in the Change Request against the exact head | — |
 | Foreground evidence words | sum of the two rows above, reported in the Change Request | ~289,449 comment words |
-| Changed normative words added | 6,669 | — |
+| Changed normative words added | 7,217 | — |
 | Evidence amplification (foreground words ÷ changed normative words) | reported in the Change Request | ~7.2 : 1 on a different denominator |
-| Implementation delta | 22 files, +2,811 / −149 | — |
-| — normative surfaces | 16 files, +1,732 / −98 | — |
-| — tests | 2 files, +1,036 / −17 | — |
+| Implementation delta | 22 files, +3,073 / −149 | — |
+| — normative surfaces | 16 files, +1,833 / −98 | — |
+| — tests | 2 files, +1,197 / −17 | — |
 | — documentation and packaging | 4 files, +43 / −34 | — |
-| Commits on the candidate branch | 7 | — |
-| Completed owner review rounds | **4** untimed pre-review rounds, one an independent read-only audit; timed disposition pending | 0 formal reviews |
+| Commits on the candidate branch | 8 | — |
+| Completed owner review rounds | **5** untimed pre-review rounds, one an independent read-only audit; timed disposition pending | 0 formal reviews |
 | Semantic decisions requested / answered | 2 / 2 | not separately recorded |
 | Effect authorizations requested / granted | 4 / 4 | not separately recorded |
-| Material defects caught before integration | **5** defect families | multiple |
+| Material defects caught before integration | **8** defect families | multiple |
 | Evidence defects corrected in owner review | **3** | not separately recorded |
 | Known escaped defects | **0 known before integration; post-integration observation pending** | — |
 | False-ready outcomes | **5** | not separately recorded |
 | False-block outcomes | 0 | not separately recorded |
-| Elapsed to checkpoint 7 | see note below | ~17 days (provider-visible) |
+| Elapsed to checkpoint 8 | see note below | ~17 days (provider-visible) |
 | Integrated | no | yes |
 
 ### Why two figures moved out of this record
@@ -262,6 +262,49 @@ documented as an operational limit on the YAML **source representation**, with
 no claim that every schema-valid spelling fits. This is recorded as an evidence
 and contract correction rather than a third product defect.
 
+**Material defect families 6, 7 and 8 — the remaining input boundaries.** A
+focused review confirmed three further families, each recorded as one family
+rather than one defect per probe.
+
+*Family 6 — YAML anchors, aliases and merge keys.* These have no JSON meaning
+in a canonical JSON-shaped document, and a very small alias graph amplifies
+enormously: twenty doubling levels occupy 434 source bytes and expand to
+22,020,183 characters of JSON, about 50,700 times the source, during the
+compatibility check, schema validation and digest. Ordinary aliases were
+accepted, merge-by-alias and inline merge keys passed structurally, and
+recursive aliases were caught only by a separate cycle check. The previous
+requirement to preserve valid acyclic aliases is therefore **withdrawn by owner
+disposition**: anchors and aliases are now refused while scanning and merge keys
+while composing, before construction and before serialisation. Explicit
+JSON-shaped mappings and sequences are unaffected.
+
+*Family 7 — scalar literals the parsers refuse.* An unquoted integer above the
+interpreter's integer-string conversion limit raised an uncaught `ValueError`
+from `yaml.load`, and the same literal in a supplied JSON schema raised one from
+`json.loads`. Both are converted narrowly at their own call sites; no global
+`ValueError` catch was added around application logic.
+
+*Family 8 — custom schema references reached outward.* A supplied schema with
+`$ref` values of `file:`, `http:` or `https:` form, an unresolvable local
+fragment, a self-recursive `{"$ref": "#"}` or a `$dynamicRef` all produced
+tracebacks, and nothing prevented retrieval. Custom schemas are now bounded
+local inputs: only same-document fragment references are supported, other forms
+are refused before resolution, `$dynamicRef` is explicitly unsupported in this
+portable mode, and validation runs against an offline registry whose retrieval
+function refuses every request. The built-in schema and ordinary `$defs`
+references are unaffected. A test asserts that no retrieval function is called.
+
+Also corrected: an `https` reference with no authority, such as `https://` or
+`https:///path`, was accepted. It is now an ordinary exit-1 envelope validation
+issue. No network resolution or availability checking was added.
+
+**A note on the false-ready counter.** It is unchanged at 5. The previous
+candidate was published with an explicit statement that it was *not* ready for
+timed review and that a verification pass would decide. Under this project's
+recorded definition a false-ready outcome is a readiness signal that was wrong
+when issued; no such signal was issued, so finding further defects in a
+candidate already labelled unready does not increment the counter.
+
 **Evidence defects corrected in owner review (3).** The review packet reported
 a review surface measured before the measurement artifacts existed, which did
 not match the provider's count for the exact head; and this record stated that
@@ -305,9 +348,9 @@ exactly specified byte sequence and offline evidence.
 
 P1 as a whole adds: one JSON Schema, one public template, one tool module, two
 CLI commands, one test module, one guidance workflow, one durable state file
-and one test fixture. Checkpoints 5 to 7 corrected the validator traversal and
-established the bounded single-snapshot input contract; the other post-review
-checkpoints added no product code — only
+and one test fixture. Checkpoints 5 to 8 corrected the validator traversal,
+established the bounded single-snapshot input contract and closed the remaining
+input boundaries; the other post-review checkpoints added no product code — only
 tests, a fixture, documentation and this record.
 
 This is the surface that must keep earning its place. Decision 0016's stop rule
