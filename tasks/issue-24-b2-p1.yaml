@@ -25,8 +25,10 @@ state:
     - Recorded the human-control assessment and reverse-centaur failure mode.
     - Established focused RED evidence before adding the task commands.
     - Implemented the bounded schema, validator, projector and focused tests.
-    - Local focused, policy, fast, regression, smoke and extended container verification passed before review.
-  next_action: Review the compact current projection and focused Pull Request diff.
+    - Passed the focused, policy, fast, regression, smoke and extended suites in the development container.
+    - Ran the declared runtime-target gate, which failed one working-directory-dependent required test.
+    - Made required task-envelope evidence depend on the declared repository root rather than the caller working directory.
+  next_action: Review the compact current projection and focused Pull Request diff, including the runtime-gate correction.
   blocker: null
 identities:
   base:
@@ -60,13 +62,14 @@ handoff:
     - the exact semantic and executable delta is understandable
     - declared identities that differ from supplied observations fail before projection
     - container evidence is green for the exact candidate
+    - the runtime target passes self-check from a working directory outside the toolkit
 recording:
-  actor: agent:codex
-  at: "2026-08-15T23:08:00Z"
+  actor: agent:claude-opus-5
+  at: "2026-08-16T00:18:42Z"
 review:
   projection_characters: 6000
   owner_minutes: 20
   on_exceed: block
 checkpoint:
-  sequence: 1
-  previous: null
+  sequence: 2
+  previous: sha256:c7d35ac7517753edff5f7778599baed9f706a282f7a09dbcfc4d17ea90f88eed

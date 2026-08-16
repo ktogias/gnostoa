@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -409,7 +410,13 @@ class TaskEnvelopeTests(unittest.TestCase):
             oversized_state["completed"] = [f"Completed item {i}." for i in range(21)]
             path = self._write(root, oversized, "oversized.yaml")
             result, output, error = self._run(
-                ["task-validate", "--envelope", str(path)]
+                [
+                    "task-validate",
+                    "--envelope",
+                    str(path),
+                    "--repository-root",
+                    str(ROOT),
+                ]
             )
             self.assertEqual((1, ""), (result, error))
             self.assertIn("is too long", output)
@@ -434,7 +441,13 @@ class TaskEnvelopeTests(unittest.TestCase):
                 encoding="utf-8",
             )
             result, output, error = self._run(
-                ["task-validate", "--envelope", str(duplicate)]
+                [
+                    "task-validate",
+                    "--envelope",
+                    str(duplicate),
+                    "--repository-root",
+                    str(ROOT),
+                ]
             )
             self.assertEqual((2, ""), (result, output))
             self.assertIn("Duplicate YAML key", error)
@@ -455,7 +468,13 @@ class TaskEnvelopeTests(unittest.TestCase):
                     ]
                     path = self._write(root, envelope, f"reference-{index}.yaml")
                     result, output, error = self._run(
-                        ["task-validate", "--envelope", str(path)]
+                        [
+                            "task-validate",
+                            "--envelope",
+                            str(path),
+                            "--repository-root",
+                            str(ROOT),
+                        ]
                     )
                     self.assertEqual((1, ""), (result, error))
                     self.assertRegex(output, r"not a portable|unsupported external")
@@ -468,7 +487,13 @@ class TaskEnvelopeTests(unittest.TestCase):
             decisions[0]["resource"] += "#decision"
             path = self._write(root, envelope, "fragment.yaml")
             result, output, error = self._run(
-                ["task-validate", "--envelope", str(path)]
+                [
+                    "task-validate",
+                    "--envelope",
+                    str(path),
+                    "--repository-root",
+                    str(ROOT),
+                ]
             )
             self.assertEqual((0, ""), (result, error))
             self.assertIn("task envelope is valid", output)
@@ -483,12 +508,53 @@ class TaskEnvelopeTests(unittest.TestCase):
             malformed = Path(directory) / "malformed.yaml"
             malformed.write_text("task: [\n", encoding="utf-8")
             result, output, error = self._run(
-                ["task-validate", "--envelope", str(malformed)]
+                [
+                    "task-validate",
+                    "--envelope",
+                    str(malformed),
+                    "--repository-root",
+                    str(ROOT),
+                ]
             )
         self.assertEqual(2, result)
         self.assertEqual("", output)
         self.assertIn("ERROR:", error)
         self.assertNotIn("Traceback", error)
+
+    def test_declared_repository_root_resolves_references_independently_of_cwd(
+        self,
+    ) -> None:
+        """`self-check` runs from any working directory, including the packaged
+        runtime image, so required evidence must never depend on the caller's
+        current directory."""
+
+        envelope = _envelope()
+        with tempfile.TemporaryDirectory() as directory:
+            unrelated = Path(directory)
+            path = self._write(unrelated, envelope, "cwd-independent.yaml")
+            previous = Path.cwd()
+            os.chdir(unrelated)
+            try:
+                declared = self._run(
+                    [
+                        "task-validate",
+                        "--envelope",
+                        str(path),
+                        "--repository-root",
+                        str(ROOT),
+                    ]
+                )
+                inherited = self._run(["task-validate", "--envelope", str(path)])
+            finally:
+                os.chdir(previous)
+
+        result, output, error = declared
+        self.assertEqual((0, ""), (result, error))
+        self.assertIn("task envelope is valid", output)
+
+        result, output, error = inherited
+        self.assertEqual((1, ""), (result, error))
+        self.assertIn("reference does not exist", output)
 
     def test_b2_dogfood_envelope_validates_against_recorded_observations(self) -> None:
         path = ROOT / "tasks" / "issue-24-b2-p1.yaml"
