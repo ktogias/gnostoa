@@ -156,14 +156,17 @@ a reviewable candidate, not owner acceptance, integration or publication.
 
 ## Residual state
 
-The immediate critical-path drift is contained at candidate level. It is not
-fully closed until the accountable owner accepts an exact revision and the
-private baseline is integrated. F-REV-01's proposed numerical effort bounds and
-agent-routing change were not adopted by this correction and require their own
-normal governance if pursued. Issue #12 and WI-DET-01 remain queued,
-non-admitted implementation work. Repository visibility and every artifact or
-site publication remain separate future effects.
+The B1 publication critical-path drift closed on 2026-08-16 when cumulative PR
+#23 integrated through protected public `main` at
+`cda51dad6a719da43d8465a3f0f270021c357d96`. This closure does not erase or
+reinterpret the earlier event. The general risk of evidence amplification and
+loss of meaningful human control remains active as
+[reverse-centaur review overload](reverse-centaur-review-overload.md) and is
+tested by Issue #24.
+
+F-REV-01's proposed numerical bounds were not adopted as policy. Package,
+image and site publication remain separate future effects.
 
 This retrospective preserves the earlier append-only records and does not
-reinterpret them as owner approval, authorize a merge or publication, or make
-any queued Work Item effective.
+reinterpret them as owner approval, authorize another integration or
+publication effect, or make any queued Work Item effective.

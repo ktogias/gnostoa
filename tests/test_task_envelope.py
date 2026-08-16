@@ -1,0 +1,1181 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import tempfile
+import unicodedata
+import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
+from pathlib import Path
+from unittest import mock
+
+import yaml
+
+from tools import task_envelope
+from tools.cli import main as cli_main
+from tools.task_envelope import MAX_ENVELOPE_BYTES, MAX_ENVELOPE_DEPTH
+
+ROOT = Path(__file__).resolve().parents[1]
+BASE = "git:cda51dad6a719da43d8465a3f0f270021c357d96"
+CANDIDATE = "git:1111111111111111111111111111111111111111"
+DEPENDENCY = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+
+
+def _envelope() -> dict[str, object]:
+    return {
+        "schema_version": "0.1",
+        "task": {
+            "id": "GNOSTOA/B2/P1",
+            "objective": "Validate one bounded task envelope and current projection.",
+            "owner": "team:gnostoa-maintainers",
+            "change_class": "normative",
+        },
+        "scope": {
+            "included": ["task envelope validation", "current projection"],
+            "excluded": ["workflow engine", "provider authority"],
+        },
+        "state": {
+            "status": "active",
+            "completed": ["Bound Issue #24 and Decision 0016."],
+            "next_action": "Review the focused implementation diff.",
+            "blocker": None,
+        },
+        "identities": {
+            "base": {"kind": "git-commit", "value": BASE},
+            "dependencies": [
+                {
+                    "id": "issue-24",
+                    "kind": "record-digest",
+                    "value": DEPENDENCY,
+                }
+            ],
+        },
+        "references": {
+            "decisions": [
+                {
+                    "id": "decision-0016",
+                    "resource": (
+                        "knowledge/decisions/"
+                        "0016-evolve-human-agent-workflow-through-bounded-"
+                        "self-hosted-slices.md"
+                    ),
+                }
+            ],
+            "evidence": [
+                {
+                    "id": "issue-24",
+                    "resource": "https://github.com/ktogias/gnostoa/issues/24",
+                }
+            ],
+        },
+        "handoff": {
+            "actor": "accountable maintainer",
+            "read": ["this projection", "the focused diff"],
+            "verify": ["one semantic choice", "container evidence"],
+        },
+        "recording": {
+            "actor": "agent:test-fixture",
+            "at": "2026-08-16T00:00:00Z",
+        },
+        "review": {
+            "projection_characters": 5000,
+            "owner_minutes": 20,
+            "on_exceed": "block",
+        },
+        "checkpoint": {"sequence": 1, "previous": None},
+    }
+
+
+class TaskEnvelopeTests(unittest.TestCase):
+    def _write(
+        self, root: Path, value: dict[str, object], name: str = "task.yaml"
+    ) -> Path:
+        path = root / name
+        path.write_text(
+            yaml.safe_dump(value, sort_keys=False, allow_unicode=True),
+            encoding="utf-8",
+        )
+        return path
+
+    def _run(self, arguments: list[str]) -> tuple[int, str, str]:
+        stdout = StringIO()
+        stderr = StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            result = cli_main(arguments)
+        return result, stdout.getvalue(), stderr.getvalue()
+
+    def _current_arguments(self, path: Path) -> list[str]:
+        return [
+            "--envelope",
+            str(path),
+            "--repository-root",
+            str(ROOT),
+            "--candidate",
+            CANDIDATE,
+            "--observed-base",
+            BASE,
+            "--observed-dependency",
+            f"issue-24={DEPENDENCY}",
+        ]
+
+    def test_valid_envelope_projects_one_deterministic_current_view(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = self._write(root, _envelope(), "first.yaml")
+            reordered = json.loads(json.dumps(_envelope(), sort_keys=True))
+            second = self._write(root, reordered, "second.yaml")
+
+            first_result, first_output, first_error = self._run(
+                ["task-project", *self._current_arguments(first)]
+            )
+            second_result, second_output, second_error = self._run(
+                ["task-project", *self._current_arguments(second)]
+            )
+
+        self.assertEqual((0, ""), (first_result, first_error))
+        self.assertEqual((0, ""), (second_result, second_error))
+        self.assertEqual(first_output, second_output)
+        self.assertIn("# Current task projection", first_output)
+        self.assertIn("`GNOSTOA/B2/P1`", first_output)
+        self.assertIn("Review the focused implementation diff.", first_output)
+        self.assertEqual(1, first_output.count("## Next action"))
+        self.assertRegex(first_output, r"sha256:[0-9a-f]{64}")
+        self.assertIn(CANDIDATE, first_output)
+        self.assertIn("decision-0016", first_output)
+        self.assertIn("- evidence `issue-24`:", first_output)
+        self.assertIn("accountable maintainer", first_output)
+        self.assertIn("not refresh or mediate provider HEAD", first_output)
+        self.assertIn(
+            "grants no acceptance, integration or external effect", first_output
+        )
+        self.assertNotIn(directory, first_output)
+
+    def test_invalid_state_combinations_are_rejected(self) -> None:
+        cases = (
+            ("blocked", None, "Resolve the blocker."),
+            ("active", "Unexpected blocker", "Continue."),
+            ("complete", None, "Still active."),
+            ("unknown", None, "Continue."),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for index, (status, blocker, next_action) in enumerate(cases):
+                with self.subTest(status=status, blocker=blocker):
+                    envelope = _envelope()
+                    envelope["state"] = {
+                        "status": status,
+                        "completed": [],
+                        "next_action": next_action,
+                        "blocker": blocker,
+                    }
+                    path = self._write(root, envelope, f"invalid-{index}.yaml")
+                    result, output, error = self._run(
+                        [
+                            "task-validate",
+                            "--envelope",
+                            str(path),
+                            "--repository-root",
+                            str(ROOT),
+                        ]
+                    )
+                    self.assertEqual(1, result)
+                    self.assertEqual("", error)
+                    self.assertIn("ERROR:", output)
+
+    def test_references_remain_links_not_duplicated_bodies(self) -> None:
+        envelope = _envelope()
+        references = envelope["references"]
+        assert isinstance(references, dict)
+        evidence = references["evidence"]
+        assert isinstance(evidence, list)
+        evidence[0]["body"] = "A copied transcript or evidence body."
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._write(Path(directory), envelope)
+            result, output, error = self._run(
+                [
+                    "task-validate",
+                    "--envelope",
+                    str(path),
+                    "--repository-root",
+                    str(ROOT),
+                ]
+            )
+
+        self.assertEqual(1, result)
+        self.assertEqual("", error)
+        self.assertIn("Additional properties are not allowed", output)
+        self.assertIn("body", output)
+
+    def test_stale_identities_fail_closed_with_precise_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._write(Path(directory), _envelope())
+            base_arguments = self._current_arguments(path)
+
+            result, _, error = self._run(["task-project", *base_arguments])
+            self.assertEqual((0, ""), (result, error))
+
+            stale_base = [
+                "wrong-base" if value == BASE else value for value in base_arguments
+            ]
+            result, output, _ = self._run(["task-project", *stale_base])
+            self.assertEqual(1, result)
+            self.assertIn("base identity mismatch", output)
+
+            missing_dependency = base_arguments[:-2]
+            result, output, _ = self._run(["task-project", *missing_dependency])
+            self.assertEqual(1, result)
+            self.assertIn("missing observed dependency: issue-24", output)
+
+            changed_dependency = [
+                "issue-24=changed" if value.startswith("issue-24=") else value
+                for value in base_arguments
+            ]
+            result, output, _ = self._run(["task-project", *changed_dependency])
+            self.assertEqual(1, result)
+            self.assertIn("dependency identity mismatch: issue-24", output)
+
+    def test_checkpoint_resume_is_idempotent_and_detects_conflict(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._write(Path(directory), _envelope())
+            arguments = self._current_arguments(path)
+            result, first, error = self._run(["task-project", *arguments])
+            self.assertEqual((0, ""), (result, error))
+            digest_line = next(
+                line for line in first.splitlines() if line.startswith("- Checkpoint:")
+            )
+            digest = digest_line.split("`", 2)[1]
+
+            result, resumed, error = self._run(
+                [
+                    "task-project",
+                    *arguments,
+                    "--expected-checkpoint",
+                    digest,
+                ]
+            )
+            self.assertEqual((0, ""), (result, error))
+            self.assertEqual(first, resumed)
+
+            changed = _envelope()
+            changed_state = changed["state"]
+            assert isinstance(changed_state, dict)
+            changed_state["completed"] = ["A later deterministic checkpoint."]
+            self._write(Path(directory), changed)
+            result, output, _ = self._run(
+                [
+                    "task-project",
+                    *arguments,
+                    "--expected-checkpoint",
+                    digest,
+                ]
+            )
+            self.assertEqual(1, result)
+            self.assertIn("checkpoint conflict", output)
+
+            successor = _envelope()
+            successor["checkpoint"] = {"sequence": 2, "previous": digest}
+            self._write(Path(directory), successor)
+            result, _, error = self._run(
+                [
+                    "task-project",
+                    *arguments,
+                    "--expected-previous-checkpoint",
+                    digest,
+                ]
+            )
+            self.assertEqual((0, ""), (result, error))
+
+            result, output, _ = self._run(
+                [
+                    "task-project",
+                    *arguments,
+                    "--expected-previous-checkpoint",
+                    "sha256:" + "f" * 64,
+                ]
+            )
+            self.assertEqual(1, result)
+            self.assertIn("previous checkpoint mismatch", output)
+
+    def test_checkpoint_sequence_requires_the_matching_predecessor_shape(self) -> None:
+        invalid = (
+            {"sequence": 1, "previous": "sha256:" + "a" * 64},
+            {"sequence": 2, "previous": None},
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for index, checkpoint in enumerate(invalid):
+                with self.subTest(checkpoint=checkpoint):
+                    envelope = _envelope()
+                    envelope["checkpoint"] = checkpoint
+                    path = self._write(root, envelope, f"checkpoint-{index}.yaml")
+                    result, output, error = self._run(
+                        [
+                            "task-validate",
+                            "--envelope",
+                            str(path),
+                            "--repository-root",
+                            str(ROOT),
+                        ]
+                    )
+                    self.assertEqual((1, ""), (result, error))
+                    self.assertIn("checkpoint.previous", output)
+
+    def test_candidate_is_immutable_and_projection_cannot_overwrite_envelope(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._write(Path(directory), _envelope())
+            arguments = self._current_arguments(path)
+            invalid_candidate = [
+                "git:working-tree" if value == CANDIDATE else value
+                for value in arguments
+            ]
+            result, output, error = self._run(["task-project", *invalid_candidate])
+            self.assertEqual((1, ""), (result, error))
+            self.assertIn("candidate must be an immutable Git identity", output)
+
+            before = path.read_bytes()
+            result, output, error = self._run(
+                ["task-project", *arguments, "--output", str(path)]
+            )
+            self.assertEqual((2, ""), (result, output))
+            self.assertIn("refusing to overwrite", error)
+            self.assertEqual(before, path.read_bytes())
+
+            invalid_base = _envelope()
+            identities = invalid_base["identities"]
+            assert isinstance(identities, dict)
+            identities["base"] = {
+                "kind": "git-commit",
+                "value": "git:replace-with-an-exact-commit",
+            }
+            invalid_base_path = self._write(Path(directory), invalid_base)
+            result, output, error = self._run(
+                [
+                    "task-validate",
+                    "--envelope",
+                    str(invalid_base_path),
+                    "--repository-root",
+                    str(ROOT),
+                ]
+            )
+            self.assertEqual((1, ""), (result, error))
+            self.assertIn("does not match", output)
+
+    def test_projection_budget_and_single_line_structure_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            injected = _envelope()
+            state = injected["state"]
+            assert isinstance(state, dict)
+            state["next_action"] = "Review.\n## Next action\nForged."
+            path = self._write(root, injected, "injected.yaml")
+            result, output, error = self._run(
+                ["task-project", *self._current_arguments(path)]
+            )
+            self.assertEqual((1, ""), (result, error))
+            self.assertNotIn("# Current task projection", output)
+
+            heading = _envelope()
+            heading_state = heading["state"]
+            assert isinstance(heading_state, dict)
+            heading_state["next_action"] = "## Forged `owner` state"
+            path = self._write(root, heading, "heading.yaml")
+            result, output, error = self._run(
+                ["task-project", *self._current_arguments(path)]
+            )
+            self.assertEqual((0, ""), (result, error))
+            self.assertEqual(1, output.count("## Next action"))
+            self.assertNotIn("\n## Forged", output)
+            self.assertIn(r"\#\# Forged \`owner\` state", output)
+
+            structural = _envelope()
+            structural_state = structural["state"]
+            assert isinstance(structural_state, dict)
+            structural_state["next_action"] = "~~~ + - ! | {#forged} (link)"
+            path = self._write(root, structural, "structural.yaml")
+            result, output, error = self._run(
+                ["task-project", *self._current_arguments(path)]
+            )
+            self.assertEqual((0, ""), (result, error))
+            self.assertNotIn("- ~~~", output)
+            self.assertIn(
+                r"\~\~\~ \+ \- \! \| \{\#forged\} \(link\)",
+                output,
+            )
+
+            oversized = _envelope()
+            oversized_state = oversized["state"]
+            assert isinstance(oversized_state, dict)
+            oversized_state["completed"] = [f"Completed item {i}." for i in range(21)]
+            path = self._write(root, oversized, "oversized.yaml")
+            result, output, error = self._run(
+                [
+                    "task-validate",
+                    "--envelope",
+                    str(path),
+                    "--repository-root",
+                    str(ROOT),
+                ]
+            )
+            self.assertEqual((1, ""), (result, error))
+            self.assertIn("is too long", output)
+
+            over_budget = _envelope()
+            review = over_budget["review"]
+            assert isinstance(review, dict)
+            review["projection_characters"] = 1000
+            path = self._write(root, over_budget, "over-budget.yaml")
+            result, output, error = self._run(
+                ["task-project", *self._current_arguments(path)]
+            )
+            self.assertEqual((1, ""), (result, error))
+            self.assertIn("exceeds its declared character budget", output)
+
+    def test_duplicate_keys_and_nonportable_references_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            duplicate = root / "duplicate.yaml"
+            duplicate.write_text(
+                "schema_version: '0.1'\nschema_version: '0.1'\n",
+                encoding="utf-8",
+            )
+            result, output, error = self._run(
+                [
+                    "task-validate",
+                    "--envelope",
+                    str(duplicate),
+                    "--repository-root",
+                    str(ROOT),
+                ]
+            )
+            self.assertEqual((2, ""), (result, output))
+            self.assertIn("Duplicate YAML key", error)
+
+            for index, resource in enumerate(
+                (
+                    "/home/user/private.md",
+                    "file:///home/user/private.md",
+                    "C:\\Users\\private.md",
+                )
+            ):
+                with self.subTest(resource=resource):
+                    envelope = _envelope()
+                    references = envelope["references"]
+                    assert isinstance(references, dict)
+                    references["evidence"] = [
+                        {"id": "nonportable", "resource": resource}
+                    ]
+                    path = self._write(root, envelope, f"reference-{index}.yaml")
+                    result, output, error = self._run(
+                        [
+                            "task-validate",
+                            "--envelope",
+                            str(path),
+                            "--repository-root",
+                            str(ROOT),
+                        ]
+                    )
+                    self.assertEqual((1, ""), (result, error))
+                    self.assertRegex(output, r"not a portable|unsupported external")
+
+            envelope = _envelope()
+            references = envelope["references"]
+            assert isinstance(references, dict)
+            decisions = references["decisions"]
+            assert isinstance(decisions, list)
+            decisions[0]["resource"] += "#decision"
+            path = self._write(root, envelope, "fragment.yaml")
+            result, output, error = self._run(
+                [
+                    "task-validate",
+                    "--envelope",
+                    str(path),
+                    "--repository-root",
+                    str(ROOT),
+                ]
+            )
+            self.assertEqual((0, ""), (result, error))
+            self.assertIn("task envelope is valid", output)
+
+    def test_cli_contract_and_exit_codes(self) -> None:
+        result, output, error = self._run(["--help"])
+        self.assertEqual((0, ""), (result, error))
+        self.assertIn("task-validate", output)
+        self.assertIn("task-project", output)
+
+        with tempfile.TemporaryDirectory() as directory:
+            malformed = Path(directory) / "malformed.yaml"
+            malformed.write_text("task: [\n", encoding="utf-8")
+            result, output, error = self._run(
+                [
+                    "task-validate",
+                    "--envelope",
+                    str(malformed),
+                    "--repository-root",
+                    str(ROOT),
+                ]
+            )
+        self.assertEqual(2, result)
+        self.assertEqual("", output)
+        self.assertIn("ERROR:", error)
+        self.assertNotIn("Traceback", error)
+
+    def test_declared_repository_root_resolves_references_independently_of_cwd(
+        self,
+    ) -> None:
+        """`self-check` runs from any working directory, including the packaged
+        runtime image, so required evidence must never depend on the caller's
+        current directory."""
+
+        envelope = _envelope()
+        with tempfile.TemporaryDirectory() as directory:
+            unrelated = Path(directory)
+            path = self._write(unrelated, envelope, "cwd-independent.yaml")
+            previous = Path.cwd()
+            os.chdir(unrelated)
+            try:
+                declared = self._run(
+                    [
+                        "task-validate",
+                        "--envelope",
+                        str(path),
+                        "--repository-root",
+                        str(ROOT),
+                    ]
+                )
+                inherited = self._run(["task-validate", "--envelope", str(path)])
+            finally:
+                os.chdir(previous)
+
+        result, output, error = declared
+        self.assertEqual((0, ""), (result, error))
+        self.assertIn("task envelope is valid", output)
+
+        result, output, error = inherited
+        self.assertEqual((1, ""), (result, error))
+        self.assertIn("reference does not exist", output)
+
+    def _bounded_failure(self, arguments: list[str]) -> str:
+        """Run one command and assert the documented unprocessable-input path."""
+
+        result, output, error = self._run(arguments)
+        self.assertEqual((2, ""), (result, output))
+        self.assertIn("ERROR:", error)
+        self.assertNotIn("Traceback", error)
+        return error
+
+    def test_envelope_is_built_from_one_bounded_snapshot(self) -> None:
+        """What is checked is what is constructed, read once and bounded."""
+
+        original = _envelope()
+        original_task = original["task"]
+        assert isinstance(original_task, dict)
+        original_task["id"] = "ORIGINAL/SNAPSHOT"
+        swapped = _envelope()
+        swapped_task = swapped["task"]
+        assert isinstance(swapped_task, dict)
+        swapped_task["id"] = "SWAPPED/AFTER-PREFLIGHT"
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._write(Path(directory), original, "snapshot.yaml")
+            genuine = task_envelope._assert_bounded_source
+
+            def rewrite_after_preflight(text: str, checked: Path) -> None:
+                genuine(text, checked)
+                self._write(Path(directory), swapped, "snapshot.yaml")
+
+            with mock.patch.object(
+                task_envelope, "_assert_bounded_source", rewrite_after_preflight
+            ):
+                envelope = task_envelope.load_task_envelope(path)
+
+            # The source on disk changed, but the captured snapshot did not.
+            self.assertEqual("ORIGINAL/SNAPSHOT", envelope["task"]["id"])
+            self.assertIn("SWAPPED/AFTER-PREFLIGHT", path.read_text(encoding="utf-8"))
+
+            opened: list[str] = []
+            requested: list[int | None] = []
+            genuine_open = Path.open
+
+            def counting_open(self_path: Path, *args: object, **kwargs: object):  # type: ignore[no-untyped-def]
+                if self_path.name == "snapshot.yaml":
+                    opened.append(self_path.name)
+                handle = genuine_open(self_path, *args, **kwargs)  # type: ignore[arg-type]
+                genuine_read = handle.read
+
+                def counting_read(size: int | None = None):  # type: ignore[no-untyped-def]
+                    requested.append(size)
+                    return genuine_read(size)
+
+                handle.read = counting_read  # type: ignore[method-assign]
+                return handle
+
+            def refuse(*args: object, **kwargs: object) -> None:
+                raise AssertionError("the envelope path was read a second time")
+
+            with (
+                mock.patch.object(Path, "open", counting_open),
+                mock.patch.object(Path, "read_bytes", refuse),
+                mock.patch.object(Path, "read_text", refuse),
+            ):
+                task_envelope.load_task_envelope(path)
+
+        self.assertEqual(["snapshot.yaml"], opened)
+        self.assertEqual([task_envelope.MAX_ENVELOPE_BYTES + 1], requested)
+
+    def test_multibyte_envelope_within_the_source_bound_is_accepted(self) -> None:
+        """The bound is on source bytes, and multibyte text costs more of them."""
+
+        glyph = "\U0001d11e"  # four UTF-8 bytes, one code point
+
+        def line(tag: str) -> str:
+            return glyph * (500 - len(tag)) + tag
+
+        envelope = _envelope()
+        task = envelope["task"]
+        scope = envelope["scope"]
+        state = envelope["state"]
+        handoff = envelope["handoff"]
+        assert isinstance(task, dict)
+        assert isinstance(scope, dict)
+        assert isinstance(state, dict)
+        assert isinstance(handoff, dict)
+        task["objective"] = line("o")
+        scope["included"] = [line(f"i{index}") for index in range(12)]
+        scope["excluded"] = [line(f"e{index}") for index in range(12)]
+        state["completed"] = [line(f"c{index}") for index in range(20)]
+        handoff["read"] = [line(f"r{index}") for index in range(12)]
+        handoff["verify"] = [line(f"v{index}") for index in range(12)]
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._write(Path(directory), envelope, "multibyte.yaml")
+            size = len(path.read_bytes())
+            self.assertGreater(size, 131_072)
+            self.assertLess(size, task_envelope.MAX_ENVELOPE_BYTES)
+            result, output, error = self._run(
+                [
+                    "task-validate",
+                    "--envelope",
+                    str(path),
+                    "--repository-root",
+                    str(ROOT),
+                ]
+            )
+        self.assertEqual((0, ""), (result, error))
+        self.assertIn("task envelope is valid", output)
+
+    def test_custom_schema_source_is_bounded_and_fails_closed(self) -> None:
+        """A supplied schema is bounded input too, including its nesting."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            oversized = root / "oversized.json"
+            oversized.write_text(
+                json.dumps({"type": "object", "description": "x" * 600_000}),
+                encoding="utf-8",
+            )
+
+            nested_keywords: dict[str, object] = {"type": "object"}
+            for _ in range(300):
+                nested_keywords = {"items": nested_keywords}
+            deep_keywords = root / "deep-keywords.json"
+            deep_keywords.write_text(json.dumps(nested_keywords), encoding="utf-8")
+
+            deep_json = root / "deep-json.json"
+            deep_json.write_text("[" * 200_000 + "]" * 200_000, encoding="utf-8")
+
+            for path, expected in (
+                (oversized, "source is larger than"),
+                (deep_keywords, "exhausted the schema checker"),
+                (deep_json, "exhausted the JSON parser"),
+            ):
+                with self.subTest(schema=path.name):
+                    self.assertIn(
+                        expected,
+                        self._bounded_failure(
+                            [
+                                "task-validate",
+                                "--envelope",
+                                str(ROOT / "tasks" / "issue-24-b2-p1.yaml"),
+                                "--repository-root",
+                                str(ROOT),
+                                "--schema",
+                                str(path),
+                            ]
+                        ),
+                    )
+
+    def test_unsupported_input_uses_the_bounded_error_path(self) -> None:
+        """Input the commands cannot process exits 2 on stderr, never crashes."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            invalid_utf8 = root / "invalid-utf8.yaml"
+            invalid_utf8.write_bytes(b'schema_version: "0.1"\ntask:\n  id: \xff\xfe\n')
+
+            deep = root / "deep.yaml"
+            levels = 500
+            deep.write_text(
+                "deep: " + "[" * levels + "]" * levels + "\n", encoding="utf-8"
+            )
+
+            non_json = root / "non-json.yaml"
+            non_json.write_text(
+                "schema_version: '0.1'\nbinary: !!binary |\n  R0lGODlhAQABAA==\n",
+                encoding="utf-8",
+            )
+
+            invalid_schema = root / "invalid-schema.json"
+            invalid_schema.write_text('{"type": "not-a-real-type"}', encoding="utf-8")
+
+            cases = {
+                "invalid utf-8": ([str(invalid_utf8)], [], "not valid UTF-8"),
+                "over-deep": ([str(deep)], [], "nests deeper than"),
+                "non-JSON state": ([str(non_json)], [], "not JSON-compatible"),
+                "invalid schema": (
+                    [str(ROOT / "tasks" / "issue-24-b2-p1.yaml")],
+                    ["--schema", str(invalid_schema)],
+                    "not a valid Draft 2020-12 schema",
+                ),
+            }
+            for label, (envelope, extra, expected) in cases.items():
+                for command in ("task-validate", "task-project"):
+                    with self.subTest(case=label, command=command):
+                        arguments = [
+                            command,
+                            "--envelope",
+                            *envelope,
+                            "--repository-root",
+                            str(ROOT),
+                            *extra,
+                        ]
+                        if command == "task-project":
+                            arguments += [
+                                "--candidate",
+                                CANDIDATE,
+                                "--observed-base",
+                                BASE,
+                            ]
+                        self.assertIn(expected, self._bounded_failure(arguments))
+
+    def test_malformed_reference_url_is_a_validation_issue(self) -> None:
+        """A parsable envelope with an unparsable URL is invalid, not unreadable."""
+
+        envelope = _envelope()
+        references = envelope["references"]
+        assert isinstance(references, dict)
+        references["evidence"] = [{"id": "bad", "resource": "https://["}]
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._write(Path(directory), envelope, "bad-url.yaml")
+            result, output, error = self._run(
+                [
+                    "task-validate",
+                    "--envelope",
+                    str(path),
+                    "--repository-root",
+                    str(ROOT),
+                ]
+            )
+        self.assertEqual((1, ""), (result, error))
+        self.assertIn("not a parsable URL or path", output)
+
+    def test_declared_input_bounds_reject_only_what_exceeds_them(self) -> None:
+        """The size and depth bounds fire above their limit and not at it."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            at_depth = root / "at-depth.yaml"
+            at_depth.write_text(
+                "[" * MAX_ENVELOPE_DEPTH + "]" * MAX_ENVELOPE_DEPTH + "\n",
+                encoding="utf-8",
+            )
+            over_depth = root / "over-depth.yaml"
+            over_depth.write_text(
+                "[" * (MAX_ENVELOPE_DEPTH + 1) + "]" * (MAX_ENVELOPE_DEPTH + 1) + "\n",
+                encoding="utf-8",
+            )
+
+            at_size = root / "at-size.yaml"
+            filler = "# " + "p" * 61 + "\n"
+            body = "schema_version: '0.1'\n"
+            at_size.write_bytes(
+                (body + filler * ((MAX_ENVELOPE_BYTES - len(body)) // len(filler)))
+                .ljust(MAX_ENVELOPE_BYTES, "\n")
+                .encode("utf-8")
+            )
+            over_size = root / "over-size.yaml"
+            over_size.write_bytes(at_size.read_bytes() + b"\n")
+
+            self.assertEqual(MAX_ENVELOPE_BYTES, len(at_size.read_bytes()))
+
+            for path, fires, marker in (
+                (at_depth, False, "nests deeper than"),
+                (over_depth, True, "nests deeper than"),
+                (at_size, False, "larger than the"),
+                (over_size, True, "larger than the"),
+            ):
+                with self.subTest(fixture=path.name):
+                    _, _, error = self._run(
+                        [
+                            "task-validate",
+                            "--envelope",
+                            str(path),
+                            "--repository-root",
+                            str(ROOT),
+                        ]
+                    )
+                    self.assertNotIn("Traceback", error)
+                    self.assertEqual(fires, marker in error)
+
+    def test_a_failed_projection_writes_no_output_artifact(self) -> None:
+        """A rejected candidate must not leave a partial review artifact."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = self._write(root, _envelope(), "task.yaml")
+            output_path = root / "generated" / "projection.md"
+            result, _, _ = self._run(
+                [
+                    "task-project",
+                    "--envelope",
+                    str(path),
+                    "--repository-root",
+                    str(ROOT),
+                    "--candidate",
+                    CANDIDATE,
+                    "--observed-base",
+                    "git:0000000000000000000000000000000000000000",
+                    "--output",
+                    str(output_path),
+                ]
+            )
+            self.assertEqual(1, result)
+            self.assertFalse(output_path.exists())
+            self.assertFalse(output_path.parent.exists())
+
+    def test_yaml_anchors_aliases_and_merge_keys_are_unsupported(self) -> None:
+        """Task state is JSON-shaped; alias graphs have no JSON meaning."""
+
+        unsupported = {
+            "ordinary alias": "shared: &shared\n  - one\n  - two\nread: *shared\n",
+            "recursive alias": "recursive: &recursive\n  - *recursive\n",
+            "merge by alias": (
+                "defaults: &defaults\n  owner: team:x\n"
+                "mapping:\n  <<: *defaults\n  owner: team:y\n"
+            ),
+            "inline merge key": "mapping:\n  <<: {owner: team:x}\n  owner: team:y\n",
+        }
+        # Twenty doubling levels: 434 source bytes become about 22 MB of JSON.
+        levels = 20
+        graph = ['a0: &a0 ["x", "x"]']
+        graph.extend(
+            f"a{index}: &a{index} [*a{index - 1}, *a{index - 1}]"
+            for index in range(1, levels)
+        )
+        unsupported["exponential alias graph"] = (
+            "\n".join(graph) + f"\namplified: *a{levels - 1}\n"
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for label, document in unsupported.items():
+                path = root / f"{label.replace(' ', '-')}.yaml"
+                path.write_text(document, encoding="utf-8")
+                for command in ("task-validate", "task-project"):
+                    with self.subTest(case=label, command=command):
+                        arguments = [
+                            command,
+                            "--envelope",
+                            str(path),
+                            "--repository-root",
+                            str(ROOT),
+                        ]
+                        if command == "task-project":
+                            arguments += [
+                                "--candidate",
+                                CANDIDATE,
+                                "--observed-base",
+                                BASE,
+                            ]
+                        self.assertIn(
+                            "do not support YAML anchors, aliases or merge keys",
+                            self._bounded_failure(arguments),
+                        )
+
+            # The explicit JSON-shaped equivalent stays valid.
+            envelope = _envelope()
+            handoff = envelope["handoff"]
+            assert isinstance(handoff, dict)
+            handoff["read"] = ["one", "two"]
+            handoff["verify"] = ["one", "two"]
+            path = self._write(root, envelope, "explicit.yaml")
+            self.assertNotIn("&", path.read_text(encoding="utf-8"))
+            result, output, error = self._run(
+                [
+                    "task-validate",
+                    "--envelope",
+                    str(path),
+                    "--repository-root",
+                    str(ROOT),
+                ]
+            )
+            self.assertEqual((0, ""), (result, error))
+            self.assertIn("task envelope is valid", output)
+
+    def test_scalar_literals_the_parsers_refuse_are_bounded(self) -> None:
+        """An integer above the interpreter conversion limit is input, not a crash."""
+
+        oversized = "9" * 5000
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            envelope = self._write(root, _envelope(), "task.yaml")
+            envelope.write_text(
+                envelope.read_text(encoding="utf-8") + f"oversized: {oversized}\n",
+                encoding="utf-8",
+            )
+            schema = root / "oversized-literal.json"
+            schema.write_text(
+                '{"type":"object","const":' + oversized + "}", encoding="utf-8"
+            )
+
+            for label, extra, expected in (
+                ("yaml", [], "scalar the YAML parser refuses"),
+                (
+                    "json schema",
+                    ["--schema", str(schema)],
+                    "literal the JSON parser refuses",
+                ),
+            ):
+                for command in ("task-validate", "task-project"):
+                    with self.subTest(case=label, command=command):
+                        target = (
+                            ROOT / "tasks" / "issue-24-b2-p1.yaml"
+                            if extra
+                            else envelope
+                        )
+                        arguments = [
+                            command,
+                            "--envelope",
+                            str(target),
+                            "--repository-root",
+                            str(ROOT),
+                            *extra,
+                        ]
+                        if command == "task-project":
+                            arguments += [
+                                "--candidate",
+                                CANDIDATE,
+                                "--observed-base",
+                                BASE,
+                            ]
+                        self.assertIn(expected, self._bounded_failure(arguments))
+
+    def test_custom_schema_references_stay_local_and_offline(self) -> None:
+        """A supplied schema never reaches the filesystem or the network."""
+
+        cases = {
+            "self recursive": ({"$ref": "#"}, "recurse without termination"),
+            "unresolved fragment": (
+                {"$ref": "#/$defs/absent"},
+                "does not resolve locally",
+            ),
+            "file scheme": (
+                {"$ref": "file:///etc/passwd"},
+                "not a local fragment",
+            ),
+            "http scheme": (
+                {"$ref": "http://example.invalid/s.json"},
+                "not a local fragment",
+            ),
+            "https scheme": (
+                {"$ref": "https://example.invalid/s.json"},
+                "not a local fragment",
+            ),
+            "dynamic reference": ({"$dynamicRef": "#meta"}, "$dynamicRef"),
+        }
+
+        def refuse_network(*args: object, **kwargs: object) -> None:
+            raise AssertionError("a retrieval function was called")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            envelope = str(ROOT / "tasks" / "issue-24-b2-p1.yaml")
+
+            with mock.patch("urllib.request.urlopen", refuse_network):
+                for label, (schema, expected) in cases.items():
+                    path = root / f"{label.replace(' ', '-')}.json"
+                    path.write_text(json.dumps(schema), encoding="utf-8")
+                    for command in ("task-validate", "task-project"):
+                        with self.subTest(case=label, command=command):
+                            arguments = [
+                                command,
+                                "--envelope",
+                                envelope,
+                                "--repository-root",
+                                str(ROOT),
+                                "--schema",
+                                str(path),
+                            ]
+                            if command == "task-project":
+                                arguments += [
+                                    "--candidate",
+                                    CANDIDATE,
+                                    "--observed-base",
+                                    BASE,
+                                ]
+                            self.assertIn(expected, self._bounded_failure(arguments))
+
+            # A local fragment into $defs is the supported shape.
+            local = root / "local.json"
+            local.write_text(
+                json.dumps({"$defs": {"ok": {"type": "object"}}, "$ref": "#/$defs/ok"}),
+                encoding="utf-8",
+            )
+            result, output, error = self._run(
+                [
+                    "task-validate",
+                    "--envelope",
+                    envelope,
+                    "--repository-root",
+                    str(ROOT),
+                    "--schema",
+                    str(local),
+                ]
+            )
+            self.assertEqual((0, ""), (result, error))
+            self.assertIn("task envelope is valid", output)
+
+    def test_https_references_require_a_host(self) -> None:
+        """An https reference without an authority cannot name anything."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for index, resource in enumerate(("https://", "https:///path")):
+                with self.subTest(resource=resource):
+                    envelope = _envelope()
+                    references = envelope["references"]
+                    assert isinstance(references, dict)
+                    references["evidence"] = [{"id": "bad", "resource": resource}]
+                    path = self._write(root, envelope, f"hostless-{index}.yaml")
+                    result, output, error = self._run(
+                        [
+                            "task-validate",
+                            "--envelope",
+                            str(path),
+                            "--repository-root",
+                            str(ROOT),
+                        ]
+                    )
+                    self.assertEqual((1, ""), (result, error))
+                    self.assertIn("https reference has no host", output)
+
+    def test_recorded_issue_digest_reproduces_without_any_transformation(self) -> None:
+        """`github-issue-body-utf8-sha256-v1` covers the exact API body bytes.
+
+        The fixture stores the provider response as JSON so that every line
+        break inside the body is an escape sequence. A checkout that rewrites
+        the file's line endings therefore cannot change the parsed body, and
+        the digest recorded for Issue #24 stays reproducible offline.
+        """
+
+        envelope = yaml.safe_load(
+            (ROOT / "tasks" / "issue-24-b2-p1.yaml").read_text(encoding="utf-8")
+        )
+        declared = next(
+            item
+            for item in envelope["identities"]["dependencies"]
+            if item["id"] == "issue-24"
+        )
+        self.assertEqual("github-issue-body-utf8-sha256-v1", declared["kind"])
+
+        fixture = (ROOT / "tests" / "fixtures" / "github-issue-24.json").read_bytes()
+        text = json.loads(fixture)["body"]
+        self.assertEqual(
+            "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            declared["value"],
+        )
+
+        # The stored bytes must survive checkout line-ending normalization.
+        self.assertNotIn(b"\r", fixture)
+        normalized = json.loads(fixture.replace(b"\n", b"\r\n"))["body"]
+        self.assertEqual(text, normalized)
+
+        for label, variant in (
+            ("stripped trailing newline", text.rstrip("\n")),
+            ("added trailing newline", text + "\n"),
+            ("windows line endings", text.replace("\n", "\r\n")),
+        ):
+            with self.subTest(variant=label):
+                self.assertNotEqual(
+                    declared["value"],
+                    "sha256:" + hashlib.sha256(variant.encode("utf-8")).hexdigest(),
+                )
+
+        # The recorded body is ASCII, so pin the no-normalization clause on
+        # input where composition actually changes the bytes.
+        composed = "café\n"
+        self.assertNotEqual(
+            hashlib.sha256(composed.encode("utf-8")).hexdigest(),
+            hashlib.sha256(
+                unicodedata.normalize("NFD", composed).encode("utf-8")
+            ).hexdigest(),
+        )
+
+    def test_b2_dogfood_envelope_validates_against_recorded_observations(self) -> None:
+        path = ROOT / "tasks" / "issue-24-b2-p1.yaml"
+        envelope = yaml.safe_load(path.read_text(encoding="utf-8"))
+        dependencies = envelope["identities"]["dependencies"]
+        decision = next(item for item in dependencies if item["id"] == "decision-0016")
+        decision_path = (
+            ROOT
+            / "knowledge"
+            / "decisions"
+            / "0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md"
+        )
+        self.assertEqual(
+            "sha256:" + hashlib.sha256(decision_path.read_bytes()).hexdigest(),
+            decision["value"],
+        )
+        result, output, error = self._run(
+            [
+                "task-project",
+                "--envelope",
+                str(path),
+                "--repository-root",
+                str(ROOT),
+                "--candidate",
+                CANDIDATE,
+                "--observed-base",
+                "git:cda51dad6a719da43d8465a3f0f270021c357d96",
+                "--observed-dependency",
+                (
+                    "decision-0016=sha256:"
+                    "2ee58de9f91f2bdd23c56da2389bd7130072a142ba43080c8bbca710dbd1896c"  # pragma: allowlist secret
+                ),
+                "--observed-dependency",
+                (
+                    "issue-24=sha256:"
+                    "adb02bc2aa254e97ea9fd931da0ae467b640a031fdb9143b255a74f199b5c5c6"  # pragma: allowlist secret
+                ),
+            ]
+        )
+        self.assertEqual((0, ""), (result, error))
+        self.assertIn("`GNOSTOA/B2/P1`", output)
+        self.assertIn("## Next action", output)
+        # Compare through the module's own escaping so a wording change to the
+        # canonical envelope does not need a matching edit here.
+        self.assertIn(
+            task_envelope._markdown_text(envelope["state"]["next_action"]), output
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

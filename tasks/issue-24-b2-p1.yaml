@@ -1,0 +1,96 @@
+schema_version: "0.1"
+task:
+  id: GNOSTOA/B2/P1
+  objective: >-
+    Make one bounded Gnostoa change resumable from validated durable state and
+    one compact current projection without replaying the B1 ledger.
+  owner: team:gnostoa-maintainers
+  change_class: normative
+scope:
+  included:
+    - a portable task-envelope schema, validator and deterministic projector
+    - exact stale-base, dependency and checkpoint conflict detection
+    - an explicit handoff and one current task projection
+    - compact recording of the human-control findings used as B2 input
+    - reconciliation of stale post-publication current-state projections
+    - the B2/P1 measurement record compared with the recorded B1 baseline
+  excluded:
+    - a workflow engine, database or general event store
+    - provider-specific authority or automatic human approval
+    - raw conversation or hidden-reasoning storage
+    - implementation of later Issue 3, 5-15 research surfaces
+state:
+  status: active
+  completed:
+    - Bound Issue 24 and Decision 0016 to protected public main.
+    - Recorded the human-control assessment and reverse-centaur failure mode.
+    - Established focused RED evidence before adding the task commands.
+    - Implemented the bounded schema, validator, projector and focused tests.
+    - Passed the focused, policy, fast, regression, smoke and extended suites in the development container.
+    - Ran the declared runtime-target gate, which failed one working-directory-dependent required test.
+    - Made required task-envelope evidence depend on the declared repository root rather than the caller working directory.
+    - Mapped the renamed index-coverage test to graph integrity and kept the publication runbook mapping on evidence.
+    - Replaced the ambiguous provider identity kind with github-issue-body-utf8-sha256-v1 and pinned it with offline evidence.
+    - Recorded the B2/P1 measurements against the B1 baseline, with owner review time left pending.
+    - Reported a commit-metadata provenance finding without rewriting published history.
+    - Reconciled the review-surface accounting with the exact provider-reported head.
+    - Corrected the candidate-authority wording; the envelope does not carry the candidate.
+    - Made the provider digest fixture invariant under checkout line-ending normalization.
+    - Rewrote the unmerged branch commit metadata under explicit owner authorization.
+    - Rejected recursive YAML alias graphs with a bounded error instead of an uncaught RecursionError.
+    - Bounded envelope input by byte size and nesting depth before the YAML parser runs.
+    - Converted the five audited boundary exceptions into the documented bounded diagnostics.
+    - Added the explicit repository root to both public workflow examples.
+    - Loaded, bounded and constructed the envelope and any supplied schema from one immutable snapshot.
+  next_action: Run the final closed-scope verification-only pass over the corrected candidate before the timed review.
+  blocker: null
+identities:
+  base:
+    kind: git-commit
+    value: git:cda51dad6a719da43d8465a3f0f270021c357d96
+  dependencies:
+    - id: decision-0016
+      kind: file-sha256
+      value: sha256:2ee58de9f91f2bdd23c56da2389bd7130072a142ba43080c8bbca710dbd1896c
+    - id: issue-24
+      kind: github-issue-body-utf8-sha256-v1
+      value: sha256:adb02bc2aa254e97ea9fd931da0ae467b640a031fdb9143b255a74f199b5c5c6
+references:
+  decisions:
+    - id: decision-0016
+      resource: knowledge/decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md
+  evidence:
+    - id: issue-24
+      resource: https://github.com/ktogias/gnostoa/issues/24
+    - id: human-agent-governance-assessment
+      resource: knowledge/assessments/human-agent-governance-scope-and-evolution.md
+    - id: reverse-centaur-review-overload
+      resource: knowledge/failure-modes/reverse-centaur-review-overload.md
+    - id: b2-p1-measurements
+      resource: knowledge/assessments/b2-p1-streamlined-self-hosting-measurements.md
+handoff:
+  actor: accountable maintainer
+  read:
+    - the generated current task projection
+    - the focused Pull Request diff
+    - linked detail only for an unresolved question
+  verify:
+    - the exact semantic and executable delta is understandable
+    - declared identities that differ from supplied observations fail before projection
+    - container evidence is green for the exact candidate
+    - the runtime target passes self-check from a working directory outside the toolkit
+    - the reported review surface matches the provider count for the exact head
+    - malformed and recursive envelope input fails closed without a traceback
+    - envelope input is bounded by byte size and nesting depth before parsing
+    - the constructed envelope derives from the one bounded snapshot that was checked
+    - anchors, aliases, merge keys and non-local schema references are refused before construction
+recording:
+  actor: agent:claude-opus-5
+  at: "2026-08-16T06:02:00Z"
+review:
+  projection_characters: 6000
+  owner_minutes: 20
+  on_exceed: block
+checkpoint:
+  sequence: 8
+  previous: sha256:bf09cf1f9bdb2c3258007e3ed235a075ba4e29a619f8c0eb43ad7c41379061ca

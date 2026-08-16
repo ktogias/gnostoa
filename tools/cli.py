@@ -12,6 +12,7 @@ from . import (
     check_guardrails,
     check_runtime_lock,
     self_check,
+    task_envelope,
     validate_bundle,
 )
 
@@ -38,6 +39,14 @@ COMMANDS: dict[str, tuple[str, Callable[[list[str] | None], int]]] = {
     "surface-digest": (
         "compute the deterministic toolkit public-surface digest",
         check_runtime_lock.surface_digest_main,
+    ),
+    "task-validate": (
+        "validate a bounded task envelope",
+        task_envelope.validate_main,
+    ),
+    "task-project": (
+        "render a validated current task projection",
+        task_envelope.project_main,
     ),
     "self-check": ("run the toolkit self-check", self_check.main),
 }

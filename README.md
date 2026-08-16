@@ -5,7 +5,7 @@ usable by both people and software agents. It validates structured Markdown and
 YAML, enforces non-weakening project profiles and policy boundaries, and builds
 bounded orientation packs without requiring a hosted knowledge service.
 
-> **Status: pre-release source candidate.** The validator, examples, policy
+> **Status: pre-release public source baseline.** The validator, examples, policy
 > checks, context-pack builder and documentation projection run from this
 > repository. No package, image or site has been released yet, and independent
 > adoption has not been demonstrated.
@@ -88,7 +88,7 @@ The raw Issue #12 and PR #2 ledger is retained as one-time B1 self-dogfood
 evidence; it is **not the expected contribution workflow**. Normal changes use
 the compact route in [CONTRIBUTING.md](CONTRIBUTING.md), ordinary Pull Request
 review and proportionate evidence. [B2](https://github.com/ktogias/gnostoa/issues/24)
-will measure whether the useful B1 controls can be preserved with materially
+now measures whether the useful B1 controls can be preserved with materially
 less owner effort and evidence amplification. B1 has already demonstrated the
 need for guided review, durable task context, bounded plans, explicit handoffs
 and safe resume; the [bootstrap Decision](knowledge/decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md)
@@ -128,6 +128,7 @@ planned streamlined self-hosting and external transfer experiments.
 | `guidance/` | Project-independent workflows and reference material | Load the route for the current task |
 | `examples/` | Anonymous conformance and learning fixtures | Inspect or copy deliberately |
 | `knowledge/`, `policy/` | Gnostoa architecture, evidence and stricter self-policy | Do not inherit into consuming projects |
+| `tasks/` | Gnostoa's own bounded dogfood task state | Do not inherit; create project-owned envelopes from the public template |
 | `docs/` | Curated human navigation projection | Read as a view, not a second authority |
 
 An adopting project extends `core/profile.yaml` and owns its own knowledge

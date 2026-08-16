@@ -17,6 +17,7 @@ Load only the route that matches the current task.
 - [Daily knowledge change loop](workflows/daily-change-loop.md)
 - [Propose, review and merge a change](workflows/propose-review-merge-change.md)
 - [Develop with proportionate verification](workflows/develop-verification-first.md)
+- [Resume a bounded task](workflows/resume-bounded-task.md)
 - [Configure continuous integration](workflows/configure-continuous-integration.md)
 - [Change classification and review](reference/change-classification-and-approval.md)
 - [Testing and verification strategy](reference/testing-and-verification-strategy.md)

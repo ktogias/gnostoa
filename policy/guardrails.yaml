@@ -1,4 +1,4 @@
-version: "0.9.0"
+version: "0.10.0"
 guardrails:
   - id: monotonic-profile-inheritance
     title: Child profiles do not weaken parent policy
@@ -22,7 +22,6 @@ guardrails:
       - knowledge/runbooks/review-publication-baseline.md
     tests:
       - tests/test_tools.py::BundleTests.test_stable_concept_requires_human_verifier
-      - tests/test_tools.py::PublicationBaselineTests.test_publication_review_matrix_covers_every_canonical_concept
 
   - id: graph-integrity
     title: IDs are unique and links resolve
@@ -37,6 +36,7 @@ guardrails:
       - tests/test_tools.py::BundleTests.test_guidance_bundle_is_valid
       - tests/test_tools.py::BundleTests.test_self_knowledge_bundle_is_valid
       - tests/test_tools.py::DocumentationTests.test_repository_documentation_links_resolve
+      - tests/test_tools.py::PublicationBaselineTests.test_current_indexes_cover_every_canonical_concept
 
   - id: stable-public-schema-identity
     title: Public schemas use unique versioned identifiers under an owned namespace
@@ -50,6 +50,7 @@ guardrails:
       - schemas/frontmatter.schema.json
       - schemas/guardrails.schema.json
       - schemas/profile.schema.json
+      - schemas/task-envelope.schema.json
       - schemas/toolkit-lock.schema.json
       - schemas/verification-manifest.schema.json
       - tools/build_docs.py#prepare_projection
@@ -112,6 +113,37 @@ guardrails:
     tests:
       - tests/test_tools.py::GuardrailTests.test_project_agent_router_is_bounded
       - tests/test_tools.py::BundleTests.test_guidance_context_pack_excludes_toolkit_self_knowledge
+
+  - id: bounded-task-resume
+    title: Current task projections fail closed on stale declared identities
+    applies_to: [kit, adopting-projects]
+    enforcement: hybrid
+    owner: team:gnostoa-maintainers
+    guidance: guidance/workflows/resume-bounded-task.md#procedure
+    implementation:
+      - schemas/task-envelope.schema.json
+      - templates/task-envelope.yaml
+      - tools/task_envelope.py
+      - tools/cli.py
+    tests:
+      - tests/test_task_envelope.py::TaskEnvelopeTests.test_valid_envelope_projects_one_deterministic_current_view
+      - tests/test_task_envelope.py::TaskEnvelopeTests.test_stale_identities_fail_closed_with_precise_diagnostics
+      - tests/test_task_envelope.py::TaskEnvelopeTests.test_checkpoint_resume_is_idempotent_and_detects_conflict
+      - tests/test_task_envelope.py::TaskEnvelopeTests.test_candidate_is_immutable_and_projection_cannot_overwrite_envelope
+      - tests/test_task_envelope.py::TaskEnvelopeTests.test_projection_budget_and_single_line_structure_fail_closed
+      - tests/test_task_envelope.py::TaskEnvelopeTests.test_declared_repository_root_resolves_references_independently_of_cwd
+      - tests/test_task_envelope.py::TaskEnvelopeTests.test_recorded_issue_digest_reproduces_without_any_transformation
+      - tests/test_task_envelope.py::TaskEnvelopeTests.test_yaml_anchors_aliases_and_merge_keys_are_unsupported
+      - tests/test_task_envelope.py::TaskEnvelopeTests.test_scalar_literals_the_parsers_refuse_are_bounded
+      - tests/test_task_envelope.py::TaskEnvelopeTests.test_custom_schema_references_stay_local_and_offline
+      - tests/test_task_envelope.py::TaskEnvelopeTests.test_https_references_require_a_host
+      - tests/test_task_envelope.py::TaskEnvelopeTests.test_unsupported_input_uses_the_bounded_error_path
+      - tests/test_task_envelope.py::TaskEnvelopeTests.test_declared_input_bounds_reject_only_what_exceeds_them
+      - tests/test_task_envelope.py::TaskEnvelopeTests.test_malformed_reference_url_is_a_validation_issue
+      - tests/test_task_envelope.py::TaskEnvelopeTests.test_a_failed_projection_writes_no_output_artifact
+      - tests/test_task_envelope.py::TaskEnvelopeTests.test_envelope_is_built_from_one_bounded_snapshot
+      - tests/test_task_envelope.py::TaskEnvelopeTests.test_multibyte_envelope_within_the_source_bound_is_accepted
+      - tests/test_task_envelope.py::TaskEnvelopeTests.test_custom_schema_source_is_bounded_and_fails_closed
 
   - id: self-knowledge-boundary
     title: Adopting projects do not inherit toolkit self-knowledge

@@ -1,0 +1,459 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ktogias.github.io/gnostoa/schemas/v1/task-envelope.schema.json",
+  "title": "Gnostoa bounded task envelope v0.1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "task",
+    "scope",
+    "state",
+    "identities",
+    "references",
+    "handoff",
+    "recording",
+    "review",
+    "checkpoint"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1"
+    },
+    "task": {
+      "type": "object",
+      "required": [
+        "id",
+        "objective",
+        "owner",
+        "change_class"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "objective": {
+          "$ref": "#/$defs/line"
+        },
+        "owner": {
+          "$ref": "#/$defs/shortLine"
+        },
+        "change_class": {
+          "enum": [
+            "mechanical",
+            "normal",
+            "normative",
+            "critical",
+            "emergency"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "scope": {
+      "type": "object",
+      "required": [
+        "included",
+        "excluded"
+      ],
+      "properties": {
+        "included": {
+          "$ref": "#/$defs/nonEmptyStrings"
+        },
+        "excluded": {
+          "$ref": "#/$defs/nonEmptyStrings"
+        }
+      },
+      "additionalProperties": false
+    },
+    "state": {
+      "type": "object",
+      "required": [
+        "status",
+        "completed",
+        "next_action",
+        "blocker"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "ready",
+            "active",
+            "blocked",
+            "complete",
+            "superseded"
+          ]
+        },
+        "completed": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/line"
+          },
+          "maxItems": 20,
+          "uniqueItems": true
+        },
+        "next_action": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/line"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "blocker": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/line"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "ready",
+                  "active"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "next_action": {
+                "$ref": "#/$defs/line"
+              },
+              "blocker": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "blocked"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "next_action": {
+                "$ref": "#/$defs/line"
+              },
+              "blocker": {
+                "$ref": "#/$defs/line"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "complete",
+                  "superseded"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "next_action": {
+                "type": "null"
+              },
+              "blocker": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "identities": {
+      "type": "object",
+      "required": [
+        "base",
+        "dependencies"
+      ],
+      "properties": {
+        "base": {
+          "$ref": "#/$defs/gitIdentity"
+        },
+        "dependencies": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/namedIdentity"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "references": {
+      "type": "object",
+      "required": [
+        "decisions",
+        "evidence"
+      ],
+      "properties": {
+        "decisions": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/reference"
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/reference"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "handoff": {
+      "type": "object",
+      "required": [
+        "actor",
+        "read",
+        "verify"
+      ],
+      "properties": {
+        "actor": {
+          "$ref": "#/$defs/shortLine"
+        },
+        "read": {
+          "$ref": "#/$defs/nonEmptyStrings"
+        },
+        "verify": {
+          "$ref": "#/$defs/nonEmptyStrings"
+        }
+      },
+      "additionalProperties": false
+    },
+    "recording": {
+      "type": "object",
+      "required": [
+        "actor",
+        "at"
+      ],
+      "properties": {
+        "actor": {
+          "$ref": "#/$defs/shortLine"
+        },
+        "at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "review": {
+      "type": "object",
+      "required": [
+        "projection_characters",
+        "owner_minutes",
+        "on_exceed"
+      ],
+      "properties": {
+        "projection_characters": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 12000
+        },
+        "owner_minutes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 120
+        },
+        "on_exceed": {
+          "const": "block"
+        }
+      },
+      "additionalProperties": false
+    },
+    "checkpoint": {
+      "type": "object",
+      "required": [
+        "sequence",
+        "previous"
+      ],
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "previous": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "sequence": {
+                "const": 1
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "previous": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "sequence": {
+                "minimum": 2
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "previous": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "nonEmptyStrings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/line"
+      },
+      "minItems": 1,
+      "maxItems": 12,
+      "uniqueItems": true
+    },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$"
+    },
+    "shortLine": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^(?=.*\\S)[^`\\r\\n]+$"
+    },
+    "line": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "pattern": "^(?=.*\\S)[^\\r\\n]+$"
+    },
+    "identityValue": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300,
+      "pattern": "^(?=.*\\S)[^`\\r\\n]+$"
+    },
+    "resource": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "pattern": "^(?=.*\\S)[^`\\r\\n]+$"
+    },
+    "identity": {
+      "type": "object",
+      "required": [
+        "kind",
+        "value"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/identifier"
+        },
+        "value": {
+          "$ref": "#/$defs/identityValue"
+        }
+      },
+      "additionalProperties": false
+    },
+    "gitIdentity": {
+      "type": "object",
+      "required": [
+        "kind",
+        "value"
+      ],
+      "properties": {
+        "kind": {
+          "const": "git-commit"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^git:[0-9a-f]{40}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "namedIdentity": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "value"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "kind": {
+          "$ref": "#/$defs/identifier"
+        },
+        "value": {
+          "$ref": "#/$defs/identityValue"
+        }
+      },
+      "additionalProperties": false
+    },
+    "reference": {
+      "type": "object",
+      "required": [
+        "id",
+        "resource"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "resource": {
+          "$ref": "#/$defs/resource"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

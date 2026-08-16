@@ -19,6 +19,9 @@ sources:
   - id: cumulative-publication-candidate
     resource: https://github.com/ktogias/gnostoa/pull/23
     title: Cumulative first-publication candidate
+  - id: public-source-baseline
+    resource: https://github.com/ktogias/gnostoa/commit/cda51dad6a719da43d8465a3f0f270021c357d96
+    title: Integrated protected public source baseline
   - id: source-name-screening
     resource: ../assessments/gnostoa-source-name-screening.md
     title: Gnostoa source-publication name-risk screening
@@ -50,6 +53,8 @@ x-project-knowledge:
     - kind: references
       target: /assessments/gnostoa-source-name-screening.md
     - kind: references
+      target: /assessments/human-agent-governance-scope-and-evolution.md
+    - kind: references
       target: /runbooks/prepare-first-publication.md
 ---
 
@@ -70,13 +75,16 @@ equally normative.
 Its internal design history and maintenance procedures stay in this
 self-knowledge bundle so consumers do not pay for irrelevant context.
 
-## Current first-publication milestone
+## Current public source baseline
 
-The first publication target is a bounded `v0.1.0` source, CLI, container and
-documentation release. It is not the completion of the wider workflow vision.
-The release should make the implemented validation foundation useful and
-inspectable while presenting the self-dogfood bootstrap, its defect-discovery
-value and its manual process cost honestly.
+On 2026-08-16 the first source-publication Work Item completed. Public,
+protected `main` is at exact commit
+`cda51dad6a719da43d8465a3f0f270021c357d96`; cumulative PR #23 is integrated
+and Issue #1 is closed. The repository exposes a bounded pre-release source
+baseline, not a package, OCI image, documentation-site release, stable concept
+promotion or production-readiness claim.
+
+### Publication provenance
 
 The accountable owner accepted PR #2 head
 `2b0945c2c2882fb4cf35a5e7e08ad3134addacf6` as the inner publication baseline.
@@ -85,13 +93,10 @@ Its canonical-target manifest is
 That exact acceptance remains immutable provenance; it was not a merge,
 visibility change, stable-concept promotion or artifact release.
 
-Follow-up publication work was then accumulated through PRs #16–#23. The
-pre-cleanup cumulative review basis is PR #23 head
-`049446b4bfe27103da2d6a9f43531e621cfcbd80`, which contains the accepted PR #2
-head and is 21 commits ahead and 0 behind the current private `main`. Its
-policy, fast, regression, smoke and remote extended checks pass. This is
-correlated technical evidence for a later exact owner review, not acceptance
-of the cumulative source or authorization to integrate or publish it.
+Follow-up publication work accumulated through PRs #16–#23 and was reconciled
+into the protected public baseline above. PR #2 and PRs #16–#22 remain absorbed
+provenance: useful review and implementation history carried into PR #23, not
+discarded branches or independent current release candidates.
 
 ### First-release surface
 
@@ -112,48 +117,19 @@ knowledge corpus. Issues 5–15 are not automatically first-publication blockers
 only a concrete security, legal, correctness or exposure defect can make their
 scope a prerequisite.
 
-### Current GO gates
+### Completed source-publication boundary
 
-As observed by the 2026-08-15
-[provider audit](../assessments/first-publication-provider-audit.md), the
-remaining source-publication gates are:
+The publication cleanup, exact cumulative review, bounded name-risk
+disposition, disclosure, visibility transition, protection, anonymous
+read-back and protected integration are complete for the source baseline at
+`cda51dad6a719da43d8465a3f0f270021c357d96`. The dated
+[provider audit](../assessments/first-publication-provider-audit.md), disclosure
+views and PR records remain immutable evidence of their observed stages; they
+are not current gates.
 
-1. commit and review the publication-cleanup candidate, then reconcile the
-   exact cumulative PR body and Issue #1 with the same final head, scope,
-   evidence and next action;
-2. record an owner disposition on the current disclosure surface, including 11
-   remote branches, 25 reachable commits, 49 Actions runs, four retained
-   artifacts, the maintainer commit identity and the retained multilingual
-   collaboration history;
-3. **complete:** the owner-confirmed Decision 0009
-   [name-risk screening](../assessments/gnostoa-source-name-screening.md)
-   records a source-only `CONDITIONAL GO` for Greece, the EU and Nice classes
-   9 and 42;
-4. authorize the repository visibility change while leaving `main` unchanged,
-   then enable and verify required protection before integration; and
-5. re-run exact-head checks, anonymous-reader links and disclosure scans after
-   the visibility transition and before the cumulative merge.
-
-The completed 2026-08-15 screening found no exact `GNOSTOA` register result or
-relevant exact third-party software identity in the bounded search. It retained
-active `JOTSON` and `NEOTOA` records as differentiated residual risks and kept
-crates.io inconclusive. This is explicit owner risk acceptance for source
-visibility only, not legal or registry clearance. Independent or professional
-review still gates stable artifact branding, trade-mark filing and commercial
-reliance. Gate 3 is complete; it grants none of the remaining publication
-effects.
-
-Disclosure view V4 and the earlier PR #2/Issue #1 summaries remain historical
-records of their exact earlier basis. They are no longer current enough to
-authorize publication: V4 covered only 3 branches, 15 commits, 25 Actions runs
-and no retained artifacts, while the current surface is larger.
-
-PR #2 and PRs #16–#22 contain useful work and review history. Once an exact
-comparison against the final cumulative candidate succeeds, they should be
-described as **absorbed provenance**, not discarded work: their commits and
-records are carried into one cumulative integration candidate and remain
-linked for reconstruction. Their branches are not deleted before successful
-integration and read-back.
+The source-only name-risk disposition is not legal or registry clearance.
+Independent or professional review still gates stable artifact branding,
+trade-mark filing and commercial reliance.
 
 PR #4 remains useful Research input for Issue #3. It is retained outside the
 first-publication baseline because its current head is conflicting and its
@@ -161,17 +137,15 @@ eight review findings remain unresolved. Parking or closing that PR must retain
 its exact head, branch, findings and restart conditions; it is not a rejection
 or deletion of the work.
 
-The source-publication gates above are distinct from package, image and site
-release gates. Package metadata enrichment, authoritative release-smoke CI,
-OS/base-image inventory, legal compatibility review and signed provenance may
-follow a bounded source publication and are not silently represented as
-complete by it.
+Package, image and site release remain separate. OS/base-image inventory,
+legal compatibility review, publisher identity and signed provenance are not
+silently represented as complete by source publication.
 
 ### Next validation path
 
-After the first release,
-[Issue #24](https://github.com/ktogias/gnostoa/issues/24) applies the same
-toolkit to one small, predeclared Gnostoa change with a bounded evidence budget.
+[Issue #24](https://github.com/ktogias/gnostoa/issues/24) now applies the toolkit
+to one small, predeclared Gnostoa change with a bounded evidence and human
+attention budget.
 The need for durable context, handoffs, bounded plans and safe resume is already
 demonstrated. [Decision 0016](../decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md)
 uses B2 to select and dogfood the minimum task-envelope/current-projection
@@ -181,3 +155,7 @@ manual bootstrap. The raw Issue #12 and PR #2 ledger remains historical
 evidence, not the expected contributor workflow. B3 then tests one bounded
 adoption in an independently owned project. External value claims are earned
 from B3 evidence rather than inferred from the size of Gnostoa's own ledger.
+
+The bounded findings and scope interpretation from the external shared
+conversation are recorded in the
+[human-agent governance assessment](../assessments/human-agent-governance-scope-and-evolution.md).
