@@ -37,9 +37,24 @@ def _reject_duplicate_keys(path: Path) -> None:
     except (OSError, yaml.YAMLError) as exc:
         raise KnowledgeFormatError(f"Cannot load YAML {path}: {exc}") from exc
 
+    # Aliases may make the composed node graph cyclic or repeat a shared
+    # subgraph. Track the active path to reject cycles, and remember completed
+    # nodes so a shared subgraph is inspected exactly once.
+    active: set[int] = set()
+    completed: set[int] = set()
+
     def visit(node: Node | None, location: str) -> None:
         if node is None:
             return
+        identity = id(node)
+        if identity in active:
+            raise KnowledgeFormatError(
+                f"Recursive YAML alias at {location or '<root>'} "
+                f"line {node.start_mark.line + 1}"
+            )
+        if identity in completed:
+            return
+        active.add(identity)
         if isinstance(node, MappingNode):
             seen: set[tuple[str, str]] = set()
             for key_node, value_node in node.value:
@@ -61,6 +76,8 @@ def _reject_duplicate_keys(path: Path) -> None:
         elif isinstance(node, yaml.nodes.SequenceNode):
             for index, child_node in enumerate(node.value):
                 visit(child_node, f"{location}[{index}]")
+        active.discard(identity)
+        completed.add(identity)
 
     visit(root, "")
 

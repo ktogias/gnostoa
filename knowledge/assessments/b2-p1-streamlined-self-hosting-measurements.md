@@ -5,7 +5,7 @@ description: Mechanically derived measurements for the first B2 slice, compared 
 status: draft
 generated:
   by: agent:claude-opus-5
-  at: "2026-08-16T01:34:00Z"
+  at: "2026-08-16T02:11:00Z"
 sources:
   - id: streamlined-self-hosting-experiment
     resource: https://github.com/ktogias/gnostoa/issues/24
@@ -34,7 +34,7 @@ x-project-knowledge:
 
 This record covers **B2/P1** only: the first increment of the Decision 0016
 sequence, delivered as PR #25 and durably tracked by the `GNOSTOA/B2/P1` task
-envelope at checkpoint 3. It does not cover B2 as a whole, and it is not an
+envelope at checkpoint 5. It does not cover B2 as a whole, and it is not an
 acceptance record.
 
 The task envelope does **not** contain the candidate identity. A committed
@@ -72,7 +72,7 @@ From the exact provider extraction on 2026-08-15 recorded in the
 | Formal Change Request reviews and inline review comments | 0 |
 | Elapsed span | ~17 days (2026-07-30 → 2026-08-15) |
 
-## B2/P1 measurements at checkpoint 4
+## B2/P1 measurements at checkpoint 5
 
 | Metric | B2/P1 | B1 comparison |
 |---|---:|---|
@@ -80,22 +80,22 @@ From the exact provider extraction on 2026-08-15 recorded in the
 | Foreground evidence words | **1,093** | ~289,449 comment words |
 | — Change Request body | 680 | — |
 | — Current task projection | 413 | — |
-| Changed normative words added | 5,469 | — |
+| Changed normative words added | 5,570 | — |
 | Evidence amplification (foreground words ÷ changed normative words) | **~0.20 : 1** | ~7.2 : 1 on a different denominator |
-| Implementation delta | 22 files, +2,223 / −149 | — |
-| — normative surfaces | 16 files, +1,507 / −98 | — |
-| — tests | 2 files, +673 / −17 | — |
+| Implementation delta | 22 files, +2,297 / −149 | — |
+| — normative surfaces | 16 files, +1,527 / −98 | — |
+| — tests | 2 files, +727 / −17 | — |
 | — documentation and packaging | 4 files, +43 / −34 | — |
-| Commits on the candidate branch | 4 | — |
-| Completed owner review rounds | **1** untimed reconciliation; timed disposition pending | 0 formal reviews |
+| Commits on the candidate branch | 5 | — |
+| Completed owner review rounds | **2** untimed pre-review rounds; timed disposition pending | 0 formal reviews |
 | Semantic decisions requested / answered | 2 / 2 | not separately recorded |
 | Effect authorizations requested / granted | 4 / 4 | not separately recorded |
-| Material defects caught before integration | **2** | multiple |
+| Material defects caught before integration | **3** | multiple |
 | Evidence defects corrected in owner review | **2** | not separately recorded |
-| Known escaped defects | **0** | — |
-| False-ready outcomes | **2** | not separately recorded |
+| Known escaped defects | **0 known before integration; post-integration observation pending** | — |
+| False-ready outcomes | **3** | not separately recorded |
 | False-block outcomes | 0 | not separately recorded |
-| Elapsed to checkpoint 4 | ~2 hours | ~17 days |
+| Elapsed to checkpoint 5 | ~3 hours | ~17 days |
 | Integrated | no | yes |
 
 The amplification denominators are **not** the same measurement. B1 divided its
@@ -132,6 +132,27 @@ Caught in owner review; the fixture is now JSON, so every line break inside the
 body is an escape sequence and the parsed body is invariant under file
 line-ending normalization. The test asserts that invariance directly.
 
+**Material defect 3 — unbounded recursive alias traversal.** The duplicate-key
+visitor walked the composed YAML node graph without cycle detection. A document
+whose alias forms a cycle raised an uncaught `RecursionError` with a full
+traceback and exit code 1, instead of the documented bounded validation error:
+
+```yaml
+recursive: &recursive
+  - *recursive
+```
+
+This contradicted both the envelope's JSON-shaped schema and digest model and
+the claimed fail-closed, no-traceback command contract. Caught in owner review
+of the exact candidate.
+
+The traversal now tracks the active path to reject cycles and remembers
+completed nodes so a shared subgraph is inspected once. Acyclic aliases remain
+ordinary supported YAML. A measured side effect: on a 22-level acyclic alias
+document the previous traversal exceeded a three-million-node-visit budget,
+while the corrected traversal completes immediately. That is a consequence of
+visiting each node once, not a claim of general YAML hardening.
+
 **Evidence defects corrected in owner review (2).** The review packet reported
 a review surface measured before the measurement artifacts existed, which did
 not match the provider's count for the exact head; and this record stated that
@@ -139,10 +160,16 @@ the task envelope carries the candidate identity, which it does not and cannot.
 Both were evidence errors rather than product defects, and both would have
 misinformed a timed review.
 
-**False-ready outcomes (2).** An earlier candidate was presented as review-ready
+**False-ready outcomes (3).** An earlier candidate was presented as review-ready
 while its own declared pre-merge gate was still unrun. A later packet was
-presented for timed review with stale surface accounting. Neither reached
-integration, but both ready signals were wrong when issued.
+presented for timed review with stale surface accounting. A third was presented
+for timed review while the recursive-alias blocker was still present. None
+reached integration, but all three ready signals were wrong when issued.
+
+The pattern matters more than the count: every required suite was green each
+time. Green checks were a necessary and repeatedly insufficient condition for
+readiness, and each defect was found by a human or by a gate that the automated
+suites did not run.
 
 **Route asymmetry, recorded as a durable failure mode.** The development
 container binds the source at `/workspace`, so it always supplies a repository
@@ -167,7 +194,8 @@ exactly specified byte sequence and offline evidence.
 
 P1 as a whole adds: one JSON Schema, one public template, one tool module, two
 CLI commands, one test module, one guidance workflow, one durable state file
-and one test fixture. Checkpoints 3 and 4 added no new product code — only
+and one test fixture. Checkpoint 5 corrected the validator traversal; the
+other post-review checkpoints added no product code — only
 tests, a fixture, documentation and this record.
 
 This is the surface that must keep earning its place. Decision 0016's stop rule

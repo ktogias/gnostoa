@@ -133,6 +133,7 @@ guardrails:
       - tests/test_task_envelope.py::TaskEnvelopeTests.test_projection_budget_and_single_line_structure_fail_closed
       - tests/test_task_envelope.py::TaskEnvelopeTests.test_declared_repository_root_resolves_references_independently_of_cwd
       - tests/test_task_envelope.py::TaskEnvelopeTests.test_recorded_issue_digest_reproduces_without_any_transformation
+      - tests/test_task_envelope.py::TaskEnvelopeTests.test_recursive_yaml_aliases_fail_closed_without_a_traceback
 
   - id: self-knowledge-boundary
     title: Adopting projects do not inherit toolkit self-knowledge

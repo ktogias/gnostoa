@@ -557,6 +557,60 @@ class TaskEnvelopeTests(unittest.TestCase):
         self.assertEqual((1, ""), (result, error))
         self.assertIn("reference does not exist", output)
 
+    def test_recursive_yaml_aliases_fail_closed_without_a_traceback(self) -> None:
+        """A cyclic alias graph is a bounded validation error, not a crash."""
+
+        shapes = {
+            "sequence": "recursive: &recursive\n  - *recursive\n",
+            "mapping": "recursive: &recursive\n  self: *recursive\n",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for shape, document in shapes.items():
+                path = root / f"recursive-{shape}.yaml"
+                path.write_text(document, encoding="utf-8")
+                for command in ("task-validate", "task-project"):
+                    with self.subTest(shape=shape, command=command):
+                        arguments = [
+                            command,
+                            "--envelope",
+                            str(path),
+                            "--repository-root",
+                            str(ROOT),
+                        ]
+                        if command == "task-project":
+                            arguments += [
+                                "--candidate",
+                                CANDIDATE,
+                                "--observed-base",
+                                BASE,
+                            ]
+                        result, output, error = self._run(arguments)
+                        self.assertEqual((2, ""), (result, output))
+                        self.assertIn("Recursive YAML alias", error)
+                        self.assertNotIn("Traceback", error)
+
+            # An acyclic alias graph is ordinary YAML and stays supported.
+            envelope = _envelope()
+            handoff = envelope["handoff"]
+            assert isinstance(handoff, dict)
+            repeated = ["one semantic choice", "container evidence"]
+            handoff["read"] = repeated
+            handoff["verify"] = repeated
+            path = self._write(root, envelope, "shared-alias.yaml")
+            self.assertIn("*id", path.read_text(encoding="utf-8"))
+            result, output, error = self._run(
+                [
+                    "task-validate",
+                    "--envelope",
+                    str(path),
+                    "--repository-root",
+                    str(ROOT),
+                ]
+            )
+            self.assertEqual((0, ""), (result, error))
+            self.assertIn("task envelope is valid", output)
+
     def test_recorded_issue_digest_reproduces_without_any_transformation(self) -> None:
         """`github-issue-body-utf8-sha256-v1` covers the exact API body bytes.
 

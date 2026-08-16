@@ -37,6 +37,7 @@ state:
     - Corrected the candidate-authority wording; the envelope does not carry the candidate.
     - Made the provider digest fixture invariant under checkout line-ending normalization.
     - Rewrote the unmerged branch commit metadata under explicit owner authorization.
+    - Rejected recursive YAML alias graphs with a bounded error instead of an uncaught RecursionError.
   next_action: Review the compact current projection, the focused Pull Request diff and the recorded measurements in one timed review.
   blocker: null
 identities:
@@ -75,13 +76,14 @@ handoff:
     - container evidence is green for the exact candidate
     - the runtime target passes self-check from a working directory outside the toolkit
     - the reported review surface matches the provider count for the exact head
+    - malformed and recursive envelope input fails closed without a traceback
 recording:
   actor: agent:claude-opus-5
-  at: "2026-08-16T01:34:00Z"
+  at: "2026-08-16T02:11:00Z"
 review:
   projection_characters: 6000
   owner_minutes: 20
   on_exceed: block
 checkpoint:
-  sequence: 4
-  previous: sha256:7f24f3035b2c5f9422614fadfa7a8171b8cb312a0b3ab9034b26e1db6512fe67
+  sequence: 5
+  previous: sha256:5b2baa7c9d7db23f9c63d59024dd61603e82d84298226a3f7daad9cb1b5716fc
