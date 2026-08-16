@@ -13,6 +13,7 @@ from pathlib import Path
 import yaml
 
 from tools.cli import main as cli_main
+from tools.task_envelope import MAX_ENVELOPE_BYTES, MAX_ENVELOPE_DEPTH
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = "git:cda51dad6a719da43d8465a3f0f270021c357d96"
@@ -557,6 +558,165 @@ class TaskEnvelopeTests(unittest.TestCase):
         self.assertEqual((1, ""), (result, error))
         self.assertIn("reference does not exist", output)
 
+    def _bounded_failure(self, arguments: list[str]) -> str:
+        """Run one command and assert the documented unprocessable-input path."""
+
+        result, output, error = self._run(arguments)
+        self.assertEqual((2, ""), (result, output))
+        self.assertIn("ERROR:", error)
+        self.assertNotIn("Traceback", error)
+        return error
+
+    def test_unsupported_input_uses_the_bounded_error_path(self) -> None:
+        """Input the commands cannot process exits 2 on stderr, never crashes."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            invalid_utf8 = root / "invalid-utf8.yaml"
+            invalid_utf8.write_bytes(b'schema_version: "0.1"\ntask:\n  id: \xff\xfe\n')
+
+            deep = root / "deep.yaml"
+            levels = 500
+            deep.write_text(
+                "deep: " + "[" * levels + "]" * levels + "\n", encoding="utf-8"
+            )
+
+            non_json = root / "non-json.yaml"
+            non_json.write_text(
+                "schema_version: '0.1'\nbinary: !!binary |\n  R0lGODlhAQABAA==\n",
+                encoding="utf-8",
+            )
+
+            invalid_schema = root / "invalid-schema.json"
+            invalid_schema.write_text('{"type": "not-a-real-type"}', encoding="utf-8")
+
+            cases = {
+                "invalid utf-8": ([str(invalid_utf8)], [], "not valid UTF-8"),
+                "over-deep": ([str(deep)], [], "nests deeper than"),
+                "non-JSON state": ([str(non_json)], [], "not JSON-compatible"),
+                "invalid schema": (
+                    [str(ROOT / "tasks" / "issue-24-b2-p1.yaml")],
+                    ["--schema", str(invalid_schema)],
+                    "not a valid Draft 2020-12 schema",
+                ),
+            }
+            for label, (envelope, extra, expected) in cases.items():
+                for command in ("task-validate", "task-project"):
+                    with self.subTest(case=label, command=command):
+                        arguments = [
+                            command,
+                            "--envelope",
+                            *envelope,
+                            "--repository-root",
+                            str(ROOT),
+                            *extra,
+                        ]
+                        if command == "task-project":
+                            arguments += [
+                                "--candidate",
+                                CANDIDATE,
+                                "--observed-base",
+                                BASE,
+                            ]
+                        self.assertIn(expected, self._bounded_failure(arguments))
+
+    def test_malformed_reference_url_is_a_validation_issue(self) -> None:
+        """A parsable envelope with an unparsable URL is invalid, not unreadable."""
+
+        envelope = _envelope()
+        references = envelope["references"]
+        assert isinstance(references, dict)
+        references["evidence"] = [{"id": "bad", "resource": "https://["}]
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._write(Path(directory), envelope, "bad-url.yaml")
+            result, output, error = self._run(
+                [
+                    "task-validate",
+                    "--envelope",
+                    str(path),
+                    "--repository-root",
+                    str(ROOT),
+                ]
+            )
+        self.assertEqual((1, ""), (result, error))
+        self.assertIn("not a parsable URL or path", output)
+
+    def test_declared_input_bounds_reject_only_what_exceeds_them(self) -> None:
+        """The size and depth bounds fire above their limit and not at it."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            at_depth = root / "at-depth.yaml"
+            at_depth.write_text(
+                "[" * MAX_ENVELOPE_DEPTH + "]" * MAX_ENVELOPE_DEPTH + "\n",
+                encoding="utf-8",
+            )
+            over_depth = root / "over-depth.yaml"
+            over_depth.write_text(
+                "[" * (MAX_ENVELOPE_DEPTH + 1) + "]" * (MAX_ENVELOPE_DEPTH + 1) + "\n",
+                encoding="utf-8",
+            )
+
+            at_size = root / "at-size.yaml"
+            filler = "# " + "p" * 61 + "\n"
+            body = "schema_version: '0.1'\n"
+            at_size.write_bytes(
+                (body + filler * ((MAX_ENVELOPE_BYTES - len(body)) // len(filler)))
+                .ljust(MAX_ENVELOPE_BYTES, "\n")
+                .encode("utf-8")
+            )
+            over_size = root / "over-size.yaml"
+            over_size.write_bytes(at_size.read_bytes() + b"\n")
+
+            self.assertEqual(MAX_ENVELOPE_BYTES, len(at_size.read_bytes()))
+
+            for path, fires, marker in (
+                (at_depth, False, "nests deeper than"),
+                (over_depth, True, "nests deeper than"),
+                (at_size, False, "larger than the"),
+                (over_size, True, "larger than the"),
+            ):
+                with self.subTest(fixture=path.name):
+                    _, _, error = self._run(
+                        [
+                            "task-validate",
+                            "--envelope",
+                            str(path),
+                            "--repository-root",
+                            str(ROOT),
+                        ]
+                    )
+                    self.assertNotIn("Traceback", error)
+                    self.assertEqual(fires, marker in error)
+
+    def test_a_failed_projection_writes_no_output_artifact(self) -> None:
+        """A rejected candidate must not leave a partial review artifact."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = self._write(root, _envelope(), "task.yaml")
+            output_path = root / "generated" / "projection.md"
+            result, _, _ = self._run(
+                [
+                    "task-project",
+                    "--envelope",
+                    str(path),
+                    "--repository-root",
+                    str(ROOT),
+                    "--candidate",
+                    CANDIDATE,
+                    "--observed-base",
+                    "git:0000000000000000000000000000000000000000",
+                    "--output",
+                    str(output_path),
+                ]
+            )
+            self.assertEqual(1, result)
+            self.assertFalse(output_path.exists())
+            self.assertFalse(output_path.parent.exists())
+
     def test_recursive_yaml_aliases_fail_closed_without_a_traceback(self) -> None:
         """A cyclic alias graph is a bounded validation error, not a crash."""
 
@@ -703,7 +863,9 @@ class TaskEnvelopeTests(unittest.TestCase):
         )
         self.assertEqual((0, ""), (result, error))
         self.assertIn("`GNOSTOA/B2/P1`", output)
-        self.assertIn("Review the compact current projection", output)
+        self.assertIn("## Next action", output)
+        # The projection escapes Markdown, so match a punctuation-free fragment.
+        self.assertIn("Run an independent verification", output)
 
 
 if __name__ == "__main__":

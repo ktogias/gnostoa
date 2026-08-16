@@ -46,8 +46,17 @@ and replaceable.
 2. Validate the envelope:
 
    ```bash
-   knowledge task-validate --envelope path/to/task.yaml
+   knowledge task-validate \
+     --envelope path/to/task.yaml \
+     --repository-root .
    ```
+
+   Repository-relative references resolve against `--repository-root`, which
+   defaults to the current working directory. Here `.` is the adopting
+   project's repository root, so run the command from that root. A caller
+   running anywhere else — a packaged image, a hook, a scheduler — must pass
+   the exact root instead, or the same envelope will validate differently
+   depending on where it was invoked.
 
 3. Refresh the base and every declared dependency from their authoritative
    sources. Render a current view only with those observed identities and the
@@ -56,6 +65,7 @@ and replaceable.
    ```bash
    knowledge task-project \
      --envelope path/to/task.yaml \
+     --repository-root . \
      --candidate git:EXACT_CANDIDATE \
      --observed-base git:EXACT_BASE \
      --observed-dependency dependency-id=EXACT_VALUE
@@ -104,6 +114,19 @@ gh api repos/OWNER/REPO/issues/NUMBER | python3 -c \
 Read the authoritative record, not a rendered page. A shell pipeline that adds
 or strips a trailing newline yields a different digest, which is exactly what
 the versioned name exists to keep unambiguous.
+
+## Input bounds
+
+An envelope is bounded input, not an arbitrary document. Both commands enforce
+a maximum byte size and a maximum structural nesting depth before the YAML
+parser runs, so an over-large or over-deep file is a concise diagnostic rather
+than an exhausted interpreter stack. Recursive anchor cycles are rejected the
+same way; ordinary acyclic anchors and aliases remain supported.
+
+Duplicate scalar keys are rejected by comparing composed key nodes. Keys whose
+source text differs but whose constructed values collide are not yet covered,
+so this is not a claim that every semantically ambiguous YAML document is
+refused.
 
 ## Verification
 

@@ -11,11 +11,40 @@ from urllib.parse import urlsplit
 
 import yaml
 from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError
 from yaml.nodes import MappingNode, Node, ScalarNode
+from yaml.tokens import (
+    BlockEndToken,
+    BlockMappingStartToken,
+    BlockSequenceStartToken,
+    FlowMappingEndToken,
+    FlowMappingStartToken,
+    FlowSequenceEndToken,
+    FlowSequenceStartToken,
+)
 
 from .knowledge_common import KnowledgeFormatError, load_yaml, toolkit_root
 
 IMMUTABLE_GIT_IDENTITY = re.compile(r"^git:[0-9a-f]{40}$")
+
+# A schema-maximal envelope — every array at its `maxItems` and every string at
+# its `maxLength` — serialises to about 74 KB, so 128 KiB accepts any valid
+# envelope with headroom while refusing input that has no schema-legal reading.
+MAX_ENVELOPE_BYTES = 131_072
+
+# The schema nests at most four levels (root, `identities`, `dependencies`, one
+# dependency), which is also the depth of the current Gnostoa envelope. Thirty-two
+# leaves room for schema growth and stays far below the roughly five hundred
+# levels at which `yaml.compose` exhausts the interpreter stack.
+MAX_ENVELOPE_DEPTH = 32
+
+_DEPTH_OPENING = (
+    BlockMappingStartToken,
+    BlockSequenceStartToken,
+    FlowMappingStartToken,
+    FlowSequenceStartToken,
+)
+_DEPTH_CLOSING = (BlockEndToken, FlowMappingEndToken, FlowSequenceEndToken)
 
 
 class ProjectionBudgetError(ValueError):
@@ -23,19 +52,103 @@ class ProjectionBudgetError(ValueError):
 
 
 def _schema(path: Path) -> dict[str, Any]:
-    value = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        text = path.read_bytes().decode("utf-8")
+    except OSError as exc:
+        raise KnowledgeFormatError(f"Cannot read schema {path}: {exc}") from exc
+    except UnicodeDecodeError as exc:
+        raise KnowledgeFormatError(
+            f"Schema is not valid UTF-8 in {path}: {exc}"
+        ) from exc
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise KnowledgeFormatError(
+            f"Schema is not valid JSON in {path}: {exc}"
+        ) from exc
     if not isinstance(value, dict):
         raise KnowledgeFormatError(f"Schema must be a mapping in {path}")
+    try:
+        Draft202012Validator.check_schema(value)
+    except SchemaError as exc:
+        raise KnowledgeFormatError(
+            f"Schema is not a valid Draft 2020-12 schema in {path}: {exc.message}"
+        ) from exc
     return value
 
 
-def _reject_duplicate_keys(path: Path) -> None:
-    """Reject ambiguous YAML before safe loading can discard an earlier value."""
+def _read_envelope_text(path: Path) -> str:
+    """Bound the input before any parser sees it."""
 
     try:
-        root = yaml.compose(path.read_text(encoding="utf-8"), Loader=yaml.SafeLoader)
-    except (OSError, yaml.YAMLError) as exc:
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise KnowledgeFormatError(f"Cannot read {path}: {exc}") from exc
+    if len(raw) > MAX_ENVELOPE_BYTES:
+        raise KnowledgeFormatError(
+            f"Task envelope is larger than the {MAX_ENVELOPE_BYTES}-byte bound: "
+            f"{len(raw)} bytes"
+        )
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise KnowledgeFormatError(
+            f"Task envelope is not valid UTF-8 in {path}: {exc}"
+        ) from exc
+
+
+def _assert_bounded_depth(text: str, path: Path) -> None:
+    """Reject over-deep input using the iterative scanner, before composition.
+
+    `yaml.compose` recurses per level and exhausts the interpreter stack at
+    roughly five hundred levels; `yaml.scan` is a token state machine and stays
+    bounded, so the depth is measured here rather than discovered by crashing.
+    """
+
+    depth = 0
+    try:
+        for token in yaml.scan(text, Loader=yaml.SafeLoader):
+            if isinstance(token, _DEPTH_OPENING):
+                depth += 1
+                if depth > MAX_ENVELOPE_DEPTH:
+                    raise KnowledgeFormatError(
+                        f"Task envelope nests deeper than the "
+                        f"{MAX_ENVELOPE_DEPTH}-level bound at line "
+                        f"{token.start_mark.line + 1}"
+                    )
+            elif isinstance(token, _DEPTH_CLOSING):
+                depth -= 1
+    except yaml.YAMLError as exc:
+        raise KnowledgeFormatError(f"Cannot scan YAML {path}: {exc}") from exc
+
+
+def _assert_json_compatible(envelope: dict[str, Any], path: Path) -> None:
+    """Canonical task state is JSON-shaped, because its digest is JSON text."""
+
+    try:
+        json.dumps(envelope, ensure_ascii=False, sort_keys=True)
+    except (TypeError, ValueError) as exc:
+        raise KnowledgeFormatError(
+            f"Task envelope holds state that is not JSON-compatible in {path}: {exc}"
+        ) from exc
+
+
+def _reject_duplicate_keys(text: str, path: Path) -> None:
+    """Reject repeated scalar keys before safe loading discards an earlier value.
+
+    This compares composed key nodes, so keys whose text differs but whose
+    constructed values collide are outside its current reach; see the deferred
+    finding in the B2/P1 measurement record.
+    """
+
+    try:
+        root = yaml.compose(text, Loader=yaml.SafeLoader)
+    except yaml.YAMLError as exc:
         raise KnowledgeFormatError(f"Cannot load YAML {path}: {exc}") from exc
+    except RecursionError as exc:
+        raise KnowledgeFormatError(
+            f"Task envelope nesting exhausted the YAML composer in {path}"
+        ) from exc
 
     # Aliases may make the composed node graph cyclic or repeat a shared
     # subgraph. Track the active path to reject cycles, and remember completed
@@ -84,17 +197,31 @@ def _reject_duplicate_keys(path: Path) -> None:
 
 def load_task_envelope(path: Path) -> dict[str, Any]:
     resolved = path.resolve()
-    _reject_duplicate_keys(resolved)
-    return load_yaml(resolved)
+    text = _read_envelope_text(resolved)
+    _assert_bounded_depth(text, resolved)
+    _reject_duplicate_keys(text, resolved)
+    try:
+        envelope = load_yaml(resolved)
+    except RecursionError as exc:
+        raise KnowledgeFormatError(
+            f"Task envelope nesting exhausted the YAML constructor in {resolved}"
+        ) from exc
+    _assert_json_compatible(envelope, resolved)
+    return envelope
 
 
 def checkpoint_digest(envelope: dict[str, Any]) -> str:
-    payload = json.dumps(
-        envelope,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
+    try:
+        payload = json.dumps(
+            envelope,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise KnowledgeFormatError(
+            f"Task envelope holds state that is not JSON-compatible: {exc}"
+        ) from exc
     return f"sha256:{hashlib.sha256(payload).hexdigest()}"
 
 
@@ -135,7 +262,11 @@ def _reference_issues(envelope: dict[str, Any], repository_root: Path) -> list[s
             resource = item.get("resource")
             if not isinstance(resource, str):
                 continue
-            parsed = urlsplit(resource)
+            try:
+                parsed = urlsplit(resource)
+            except ValueError:
+                issues.append(f"reference is not a parsable URL or path: {resource}")
+                continue
             if (
                 resource.startswith(("/", "~"))
                 or PureWindowsPath(resource).is_absolute()
@@ -422,7 +553,11 @@ def validate_main(argv: list[str] | None = None) -> int:
             args.repository_root,
             args.schema,
         )
-        if args.expected_checkpoint:
+        # A checkpoint describes a schema-valid envelope, so it is neither
+        # compared nor reported for one that already failed validation.
+        if not issues and (
+            args.expected_checkpoint or args.expected_previous_checkpoint
+        ):
             issues.extend(
                 checkpoint_observation_issues(
                     envelope,
@@ -430,20 +565,13 @@ def validate_main(argv: list[str] | None = None) -> int:
                     args.expected_previous_checkpoint,
                 )
             )
-        elif args.expected_previous_checkpoint:
-            issues.extend(
-                checkpoint_observation_issues(
-                    envelope,
-                    None,
-                    args.expected_previous_checkpoint,
-                )
-            )
+        if issues:
+            return _print_issues(sorted(set(issues)))
+        digest = checkpoint_digest(envelope)
     except (KnowledgeFormatError, OSError, json.JSONDecodeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
-    if issues:
-        return _print_issues(sorted(set(issues)))
-    print(f"OK: task envelope is valid ({checkpoint_digest(envelope)})")
+    print(f"OK: task envelope is valid ({digest})")
     return 0
 
 

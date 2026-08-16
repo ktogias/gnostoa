@@ -5,7 +5,7 @@ description: Mechanically derived measurements for the first B2 slice, compared 
 status: draft
 generated:
   by: agent:claude-opus-5
-  at: "2026-08-16T02:11:00Z"
+  at: "2026-08-16T03:26:00Z"
 sources:
   - id: streamlined-self-hosting-experiment
     resource: https://github.com/ktogias/gnostoa/issues/24
@@ -34,7 +34,7 @@ x-project-knowledge:
 
 This record covers **B2/P1** only: the first increment of the Decision 0016
 sequence, delivered as PR #25 and durably tracked by the `GNOSTOA/B2/P1` task
-envelope at checkpoint 5. It does not cover B2 as a whole, and it is not an
+envelope at checkpoint 6. It does not cover B2 as a whole, and it is not an
 acceptance record.
 
 The task envelope does **not** contain the candidate identity. A committed
@@ -72,31 +72,56 @@ From the exact provider extraction on 2026-08-15 recorded in the
 | Formal Change Request reviews and inline review comments | 0 |
 | Elapsed span | ~17 days (2026-07-30 → 2026-08-15) |
 
-## B2/P1 measurements at checkpoint 5
+## B2/P1 measurements at checkpoint 6
 
 | Metric | B2/P1 | B1 comparison |
 |---|---:|---|
 | Provider comments on the change | **0** | 407 |
-| Foreground evidence words | **1,093** | ~289,449 comment words |
-| — Change Request body | 680 | — |
-| — Current task projection | 413 | — |
-| Changed normative words added | 5,570 | — |
-| Evidence amplification (foreground words ÷ changed normative words) | **~0.20 : 1** | ~7.2 : 1 on a different denominator |
-| Implementation delta | 22 files, +2,297 / −149 | — |
-| — normative surfaces | 16 files, +1,527 / −98 | — |
-| — tests | 2 files, +727 / −17 | — |
+| Current task projection words | **618** | — |
+| Change Request body words | reported in the Change Request against the exact head | — |
+| Foreground evidence words | sum of the two rows above, reported in the Change Request | ~289,449 comment words |
+| Changed normative words added | 6,338 | — |
+| Evidence amplification (foreground words ÷ changed normative words) | reported in the Change Request | ~7.2 : 1 on a different denominator |
+| Implementation delta | 22 files, +2,618 / −149 | — |
+| — normative surfaces | 16 files, +1,686 / −98 | — |
+| — tests | 2 files, +889 / −17 | — |
 | — documentation and packaging | 4 files, +43 / −34 | — |
-| Commits on the candidate branch | 5 | — |
-| Completed owner review rounds | **2** untimed pre-review rounds; timed disposition pending | 0 formal reviews |
+| Commits on the candidate branch | 6 | — |
+| Completed owner review rounds | **3** untimed pre-review rounds, one an independent read-only audit; timed disposition pending | 0 formal reviews |
 | Semantic decisions requested / answered | 2 / 2 | not separately recorded |
 | Effect authorizations requested / granted | 4 / 4 | not separately recorded |
-| Material defects caught before integration | **3** | multiple |
+| Material defects caught before integration | **4** defect families | multiple |
 | Evidence defects corrected in owner review | **2** | not separately recorded |
 | Known escaped defects | **0 known before integration; post-integration observation pending** | — |
-| False-ready outcomes | **3** | not separately recorded |
+| False-ready outcomes | **4** | not separately recorded |
 | False-block outcomes | 0 | not separately recorded |
-| Elapsed to checkpoint 5 | ~3 hours | ~17 days |
+| Elapsed to checkpoint 6 | see note below | ~17 days (provider-visible) |
 | Integrated | no | yes |
+
+### Why two figures moved out of this record
+
+Earlier revisions stated a Change Request body word count and the foreground
+sum inside this record. Both are self-referential: this record is part of the
+change, so writing the totals here changes them, and the figures went stale
+twice. They are now reported only in the Change Request, against the exact
+head, using one stated method — whitespace-delimited tokens (`wc -w`) over the
+Markdown source of the Change Request body and over the generated projection.
+The projection word count is not self-referential and stays here.
+
+### Elapsed time is three different measurements
+
+Provider-visible elapsed time, active work time and final review time are not
+interchangeable, and the earlier single "~3 hours" figure conflated them
+against a B1 baseline that used provider-visible wall-clock time:
+
+| Measurement | B2/P1 | B1 |
+|---|---:|---:|
+| Provider-visible elapsed, first candidate commit to current head | see the Change Request | ~17 days |
+| Active work time | not instrumented | not instrumented |
+| Final timed disposition | pending | not applicable |
+
+Only the first row is comparable with B1. The other two were never
+instrumented, and this record does not reconstruct them.
 
 The amplification denominators are **not** the same measurement. B1 divided its
 comment corpus by total repository text; B2/P1 divides foreground evidence by
@@ -153,6 +178,49 @@ document the previous traversal exceeded a three-million-node-visit budget,
 while the corrected traversal completes immediately. That is a consequence of
 visiting each node once, not a claim of general YAML hardening.
 
+**Material defect family 4 — the CLI error boundary was narrower than the
+input it accepted.** An independent read-only robustness audit of the exact
+candidate confirmed five manifestations of one root cause: `validate_main` and
+`project_main` caught only `KnowledgeFormatError`, `OSError` and
+`json.JSONDecodeError`, while the code beneath them could raise four other
+exception types. Each produced a full traceback and exit code 1 instead of the
+documented bounded path.
+
+| # | Input | Escaping exception | Raised in |
+|---|---|---|---|
+| A1 | invalid UTF-8 envelope bytes | `UnicodeDecodeError` | source decoding |
+| A2 | ~500 nested levels in a 1 KB file | `RecursionError` | PyYAML's composer, before any project code |
+| A3 | `resource: "https://["` | `ValueError` | `urlsplit()` |
+| A4 | a `!!binary` value with checkpoint validation | `TypeError` | `json.dumps()` in the digest |
+| A5 | valid JSON that is not a valid schema | `SchemaError` | JSON Schema construction |
+
+These are counted as **one defect family**, not five defects. A2 is the reason
+the earlier recursive-alias fix was insufficient on its own: the recursion
+happens inside the parser, so no detector running after composition can reach
+it.
+
+The correction establishes a pre-parse input contract — an explicit byte-size
+bound and an explicit nesting-depth bound measured with YAML's iterative
+scanner before composition — and converts each demonstrated boundary exception
+into a bounded diagnostic. A1, A2, A4 and A5 now exit 2 on stderr. A3 is
+deliberately different: a malformed URL inside an otherwise parsable envelope
+is a validation issue, so it exits 1 through the validation path. No
+`except Exception` was added.
+
+**Deferred finding — loader-semantic and merge-key gap (Family C).** The same
+audit confirmed, and this slice does not fix, that duplicate-key detection and
+object construction do not share fully equivalent key semantics: detection
+compares composed key nodes under `SafeLoader`, while construction uses
+`KnowledgeLoader`, which drops the timestamp resolver, and keys on constructed
+Python values. Keys whose source text differs but whose constructed values
+collide are therefore not flagged, and YAML merge keys (`<<`) are not
+prohibited, so merged properties are invisible to the check. The fixed task
+envelope schema, with `additionalProperties: false` throughout and no
+date-, bool- or numeric-shaped key names, prevents every demonstrated case from
+silently overriding a valid schema-relevant property. This is recorded as a
+bounded follow-up, and the wording in the code and the public workflow no
+longer claims that all semantically ambiguous YAML is rejected.
+
 **Evidence defects corrected in owner review (2).** The review packet reported
 a review surface measured before the measurement artifacts existed, which did
 not match the provider's count for the exact head; and this record stated that
@@ -160,11 +228,12 @@ the task envelope carries the candidate identity, which it does not and cannot.
 Both were evidence errors rather than product defects, and both would have
 misinformed a timed review.
 
-**False-ready outcomes (3).** An earlier candidate was presented as review-ready
-while its own declared pre-merge gate was still unrun. A later packet was
+**False-ready outcomes (4).** An earlier candidate was presented as review-ready
+while its own declared pre-merge gate was still unrun. A second packet was
 presented for timed review with stale surface accounting. A third was presented
-for timed review while the recursive-alias blocker was still present. None
-reached integration, but all three ready signals were wrong when issued.
+while the recursive-alias blocker was still present. A fourth was presented
+while the wider error-boundary family was still present. None reached
+integration, but all four ready signals were wrong when issued.
 
 The pattern matters more than the count: every required suite was green each
 time. Green checks were a necessary and repeatedly insufficient condition for
@@ -194,8 +263,9 @@ exactly specified byte sequence and offline evidence.
 
 P1 as a whole adds: one JSON Schema, one public template, one tool module, two
 CLI commands, one test module, one guidance workflow, one durable state file
-and one test fixture. Checkpoint 5 corrected the validator traversal; the
-other post-review checkpoints added no product code — only
+and one test fixture. Checkpoints 5 and 6 corrected the validator traversal and
+established the pre-parse input contract; the other post-review checkpoints
+added no product code — only
 tests, a fixture, documentation and this record.
 
 This is the surface that must keep earning its place. Decision 0016's stop rule
