@@ -1132,17 +1132,25 @@ class TaskEnvelopeTests(unittest.TestCase):
     def test_b2_dogfood_envelope_validates_against_recorded_observations(self) -> None:
         path = ROOT / "tasks" / "issue-24-b2-p1.yaml"
         envelope = yaml.safe_load(path.read_text(encoding="utf-8"))
-        dependencies = envelope["identities"]["dependencies"]
-        decision = next(item for item in dependencies if item["id"] == "decision-0016")
-        decision_path = (
-            ROOT
-            / "knowledge"
-            / "decisions"
-            / "0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md"
-        )
+        # B2/P1 is permanently frozen, so its envelope records the exact
+        # observations under which P1 completed. Those recorded values must stay
+        # constant; they are deliberately *not* compared with the current
+        # contents of a mutable Decision file, which later work may change. The
+        # live-versus-declared comparison is what stale-identity detection does
+        # for *active* tasks, and it is covered separately.
+        recorded = {
+            item["id"]: item["value"] for item in envelope["identities"]["dependencies"]
+        }
         self.assertEqual(
-            "sha256:" + hashlib.sha256(decision_path.read_bytes()).hexdigest(),
-            decision["value"],
+            {
+                "decision-0016": (
+                    "sha256:2ee58de9f91f2bdd23c56da2389bd7130072a142ba43080c8bbca710dbd1896c"  # pragma: allowlist secret
+                ),
+                "issue-24": (
+                    "sha256:adb02bc2aa254e97ea9fd931da0ae467b640a031fdb9143b255a74f199b5c5c6"  # pragma: allowlist secret
+                ),
+            },
+            recorded,
         )
         result, output, error = self._run(
             [

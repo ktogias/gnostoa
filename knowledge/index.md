@@ -35,6 +35,7 @@ inherited, copied or loaded by adopting projects.
 - [Self-dogfood bootstrap value assessment](assessments/gnostoa-self-dogfood-bootstrap-assessment.md)
 - [Human-agent governance scope and evolution assessment](assessments/human-agent-governance-scope-and-evolution.md)
 - [B2/P1 streamlined self-hosting measurements](assessments/b2-p1-streamlined-self-hosting-measurements.md)
+- [B2/P2 fresh-session resume and effect-authority findings](assessments/b2-p2-fresh-session-and-effect-authority-findings.md)
 - [First-publication provider audit snapshot](assessments/first-publication-provider-audit.md)
 - [First-publication reputation and direction assessment](assessments/first-publication-reputation-and-direction-assessment.md)
 - [Source-publication name-risk screening](assessments/gnostoa-source-name-screening.md)

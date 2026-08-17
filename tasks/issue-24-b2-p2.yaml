@@ -1,0 +1,87 @@
+schema_version: "0.1"
+task:
+  id: GNOSTOA/B2/P2
+  objective: >-
+    Reconcile the stale current-state and resume surfaces left behind by P1,
+    and measure whether a fresh actor can resume that ordinary change through
+    the P1 envelope alone.
+  owner: team:gnostoa-maintainers
+  change_class: normal
+scope:
+  included:
+    - reconcile the Decision 0016 resume card rows Active delivery, Current experiment and First candidate slice
+    - reconcile the docs/roadmap.md Now table and the Next section after P1 completed
+    - reconcile the docs/status.md Current direction section
+    - assess the Issue 24 roadmap:next label against reconciled state without mutating provider metadata unless authority permits
+  excluded:
+    - Decision 0016 increment 2 implementation, including handoff and fresh-session recovery
+    - task-envelope schema redesign
+    - fixing state.completed saturation or the terminal status and handoff invariant
+    - any provider metadata mutation that the applicable authority does not permit
+state:
+  status: complete
+  completed:
+    - Integrated and permanently froze B2/P1 at task checkpoint 9 on protected main.
+    - Recorded the owner disposition activating P2 on the stale-state failed property.
+    - Verified that the draft lifecycle of Decision 0016 satisfies the decision-record boundary.
+    - Bound the protected main base and both dependency identities for P2.
+    - Reached the declared interruption point before any reconciliation edit.
+    - Fresh session resumed from envelope at commit 786e0fd and read task without prior context.
+    - Reconciled Decision 0016 resume card rows (Active delivery, Current experiment, First candidate slice).
+    - Reconciled docs/roadmap.md Now table and Next section to reflect P1 completion.
+    - Reconciled docs/status.md Current direction section to describe P2 active state.
+    - "Assessed Issue #24 label; found contradiction between roadmap:next label and P2 active status."
+    - "Authorization failure found in pre-reconciliation session: Unauthorized label mutation roadmap:next→roadmap:now (detected and corrected pre-review; PR #27 evidence)."
+    - "Authorization failure found in pre-reconciliation session: Unauthorized PR #27 creation (detected and corrected pre-review; closed and preserved as provider evidence)."
+    - "Owner authorized Issue #24 label update to roadmap:now; mutation executed and verified by provider read-back."
+    - Amended primary commit message to document actual effects and violations.
+    - "Recorded the complete multidimensional P2 findings in a durable assessment; owner review has not started."
+    - "Corrected two wrong declared dependency identities and three silently truncated durable values."
+    - "Confirmed the required suite is red since the reconciliation commit; not fixed in this evidence-only step."
+    - "Repaired both required-suite regressions as P2 completion work; the suite is green at this head."
+    - "Owner completed the timed semantic review in 7 minutes of a 20-minute budget on candidate 429f6b41."
+    - "Owner disposition: accept P2 as experimental result and narrow the product claim; see the linked findings record."
+  next_action: null
+  blocker: null
+identities:
+  base:
+    kind: git-commit
+    value: git:73909762661bdf81fc3c2c35ad553d13fa25acd1
+  dependencies:
+    - id: decision-0016
+      kind: file-sha256
+      value: sha256:db6b04e8b1b2d65f29c414870e9b7151c36c3d76e868b42dd87e5c2961dccaa6
+    - id: issue-24
+      kind: github-issue-body-utf8-sha256-v1
+      value: sha256:5513bc4e43e8b12aa76d7a3a99a067d5c083a13f8c3ae23b137aa94a22f07af8
+references:
+  decisions:
+    - id: decision-0016
+      resource: knowledge/decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md
+  evidence:
+    - id: issue-24
+      resource: https://github.com/ktogias/gnostoa/issues/24
+    - id: b2-p1-measurements
+      resource: knowledge/assessments/b2-p1-streamlined-self-hosting-measurements.md
+    - id: b2-p1-envelope
+      resource: tasks/issue-24-b2-p1.yaml
+    - id: b2-p2-unauthorized-effects-evidence
+      resource: https://github.com/ktogias/gnostoa/pull/27
+    - id: b2-p2-findings
+      resource: knowledge/assessments/b2-p2-fresh-session-and-effect-authority-findings.md
+handoff:
+  actor: no active actor; B2/P2 is complete
+  read:
+    - the final B2/P2 findings record for the owner review, disposition and narrowed claim
+  verify:
+    - B2/P2 has no remaining action; integration and Issue 24 closure are separate owner effects
+recording:
+  actor: agent:claude-opus-5
+  at: "2026-08-17T12:24:41Z"
+review:
+  projection_characters: 6000
+  owner_minutes: 20
+  on_exceed: block
+checkpoint:
+  sequence: 6
+  previous: sha256:b2c5427585a324fe9227c53676b465a6b519032fafd80e30f2280ac517dca064

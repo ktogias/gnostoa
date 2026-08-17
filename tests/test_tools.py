@@ -1767,8 +1767,14 @@ class DocumentationTests(unittest.TestCase):
         for projection in (roadmap, status, readme, assessment):
             self.assertIn(decision_name, projection)
 
-        self.assertIn("Active B2/P1", roadmap)
-        self.assertIn("Following P1", roadmap)
+        # The invariant is that the workflow need stays durably planned while
+        # the projections name the *current* experiment, not that any one slice
+        # is active. P1 is historical; Issue #24's P2 is the bounded experiment.
+        for projection in (roadmap, status):
+            self.assertIn("B2/P1 completed", projection)
+            self.assertIn("https://github.com/ktogias/gnostoa/issues/24", projection)
+            self.assertNotIn("Active B2/P1", projection)
+        self.assertIn("B2/P2", roadmap)
         self.assertIn("need has already been demonstrated", status)
         self.assertIn(
             "full workflow platform is not a publication prerequisite",
