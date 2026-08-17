@@ -176,8 +176,27 @@ required tests, and it remains red at the current head `ada708e`:
 | `test_b2_dogfood_envelope_validates_against_recorded_observations` | the reconciliation edited `knowledge/decisions/0016-…md`, changing its digest, while the **permanently frozen P1 envelope** still declares the old one |
 
 Verified by running the suite against the tree at `96b2f8c` and at `ada708e`
-independently: two failures at both. The evidence-recording changes in this
-checkpoint did not cause them and do not fix them.
+independently: two failures at both. The evidence-recording checkpoint did not
+cause them and did not fix them.
+
+**Repair outcome, recorded to separate historical failure from current state.**
+Both regressions were subsequently repaired as completion work inside the P2
+slice, without restoring stale roadmap wording and without editing the frozen P1
+envelope:
+
+- the documentation test now pins the invariant it was written for — the
+  workflow need stays durably planned, P1 is historical, Issue #24's P2 is the
+  current bounded experiment, and the workflow platform stays outside the
+  completed publication prerequisite — instead of the stale strings
+  `Active B2/P1` and `Following P1`;
+- the frozen-envelope test now validates P1 against the exact observations it
+  recorded at completion, rather than asserting that a mutable Decision file
+  must still carry the historical digest. Stale-identity detection for **active**
+  tasks is unchanged and separately covered.
+
+The historical record above stands: the branch **was** red from `96b2f8c`
+through `ada708e` and readiness was announced three times while it was. That
+happened, and repairing it afterwards does not unmake it.
 
 ## 6. Checkpoint identity failures — FAIL, later reconciled
 

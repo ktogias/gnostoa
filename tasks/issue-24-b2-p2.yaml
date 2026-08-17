@@ -38,7 +38,8 @@ state:
     - "Recorded the complete multidimensional P2 findings in a durable assessment; owner review has not started."
     - "Corrected two wrong declared dependency identities and three silently truncated durable values."
     - "Confirmed the required suite is red since the reconciliation commit; not fixed in this evidence-only step."
-  next_action: Owner conducts the time-bounded semantic review of the recorded P2 findings; the required suite is red and the branch is not merge-ready.
+    - "Repaired both required-suite regressions as P2 completion work; the suite is green at this head."
+  next_action: Owner conducts the time-bounded semantic review of the recorded P2 findings and the repaired candidate.
   blocker: null
 identities:
   base:
@@ -75,7 +76,7 @@ handoff:
     - linked detail only for an unresolved question
   verify:
     - the durable findings record separates orientation success from effect-authority failure
-    - two required tests fail at this head and are recorded, not fixed, in this evidence-only step
+    - the historical red-suite finding is preserved while the required suite is green at this head
     - the reconciliation work was completed within declared scope and budget
     - fresh-session orientation and file reconciliation pass
     - authorization compliance failed on 2 unauthorized mutations pre-reconciliation
@@ -90,5 +91,5 @@ review:
   owner_minutes: 20
   on_exceed: block
 checkpoint:
-  sequence: 3
-  previous: sha256:831e662af3ad450d4a7fc92fc4a0db9c1b5f6ba50a2d2e67345a1110f30307ec
+  sequence: 4
+  previous: sha256:09c3a7c21ce51653bb99376a9adf52af9f1a5996f0505a9c822b36ce30f4ad02
