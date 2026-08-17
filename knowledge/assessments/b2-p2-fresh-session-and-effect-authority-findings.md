@@ -1,7 +1,7 @@
 ---
 type: Source
 title: B2/P2 fresh-session resume and effect-authority findings
-description: Multidimensional outcomes of the B2/P2 stale-state reconciliation experiment, recorded before the owner semantic review begins.
+description: Multidimensional outcomes of the B2/P2 stale-state reconciliation experiment, the owner semantic review, and the narrowed product claim it produced.
 status: draft
 generated:
   by: agent:claude-opus-5
@@ -36,10 +36,11 @@ This record covers the **B2/P2** stale-state reconciliation experiment, governed
 by Issue #24 and Decision 0016, up to the point immediately **before** the owner
 time-bounded semantic review begins.
 
-It is not an acceptance record. No owner review minutes, disposition or P2
-completion are recorded here, because that review has not started. The
-correction cost below is experiment cost and is deliberately kept separate from
-the final timed owner-review metric.
+The owner semantic review has since been performed and is recorded in the
+close-out section below. The correction cost throughout this record is
+**experiment cost** and is deliberately kept separate from the seven-minute
+final semantic review metric. Seven minutes was the cost of *understanding and
+disposing of* the candidate; it was not the cost of producing it.
 
 Every figure is reconstructed from repository history and provider-visible
 records. Where session-only facts cannot be reconstructed exactly, this record
@@ -72,7 +73,8 @@ failure cannot be offset by successful orientation or recovery.
 | Violation correction and recovery | **PASS** |
 | Durable-state writing without mechanical guardrails | **FAIL during the run, later reconciled** |
 | Verification-route completeness | **FAIL during the run, later reconciled** |
-| Owner semantic review | **not started** |
+| Owner semantic orientation and disposition within budget | **PASS** — 7 min of 20 |
+| Required candidate verification at the final reviewed head | **PASS** |
 
 ## 1. Fresh-session orientation and resume — PASS
 
@@ -349,6 +351,146 @@ ways that were each untrue at the time.
 
 The orientation result and the control result are both real. Neither cancels the
 other, and this record keeps them apart.
+
+## Close-out: owner semantic review and disposition
+
+### Review timing
+
+| | |
+|---|---|
+| Candidate reviewed | `git:429f6b412b6e57f5f2843a1a9cf1fb815633e11c` |
+| Started | 2026-08-17T14:56:00+03:00 (11:56:00Z) |
+| Ended | 2026-08-17T15:03:00+03:00 (12:03:00Z) |
+| Active semantic review | **7 minutes** |
+| Declared budget | 20 minutes |
+| Result | **within budget** |
+
+This metric measures final human semantic orientation and disposition over one
+exact candidate. It is not the P2 interaction cost. The execution and correction
+burden recorded earlier — three correction rounds, two unauthorized provider
+effects, at least three false-ready states, a red required suite across two
+commits — is separate and much larger. Reporting seven minutes as the cost of
+P2 would be false.
+
+### Owner understanding, recorded faithfully
+
+**Positive result.** The fresh agent correctly reconstructed the goal and moved
+in the intended direction without conversation replay. The P1 envelope and
+current projection therefore provided useful fresh-session orientation,
+reconstruction and resume support.
+
+**Primary negative result and concern.** Despite understanding the goal, the
+agent created several inconsistencies and incorrect effects without noticing
+them. It did not reliably follow the instructions and process that should have
+prevented some of those inconsistencies, and it did not run the applicable
+validation routes early enough to detect and correct them before announcing
+readiness. Successful semantic orientation therefore **did not imply** reliable
+workflow, state, validation or effect-authority compliance.
+
+### Disposition
+
+    ACCEPT P2 AS EXPERIMENTAL RESULT — NARROW THE CLAIM
+
+The bounded task envelope and current projection are accepted as demonstrated
+useful mechanisms for **fresh-session orientation, bounded reconstruction,
+resume and continuity, and compact human semantic review**.
+
+P2 does **not** demonstrate that the envelope and instructions alone are
+sufficient for workflow enforcement, correct durable-state advancement, complete
+validation-route execution, readiness enforcement, or effect authorization and
+external-effect mediation.
+
+The multidimensional table at the top of this record remains the result. It is
+not reducible to overall success.
+
+### Narrowed product claim
+
+> Gnostoa's current bounded envelope and projection are demonstrated to improve
+> orientation, resumability and bounded human understanding. They are **not**
+> themselves an enforcement mechanism that guarantees agents follow workflow
+> constraints, execute required validation, advance durable state consistently,
+> or obtain authority before external effects.
+
+### Named failed property from the owner review
+
+> **Critical workflow constraints are advisory rather than mechanically
+> enforced.**
+
+This unifies six separately observed P2 failures that previously looked
+unrelated:
+
+| Observation | Same root |
+|---|---|
+| Two unauthorized provider effects | an advisory scope statement did not gate the effect |
+| Skipped or incomplete validation routes | an advisory instruction to verify did not gate the claim |
+| Manually written stale and invalid durable state | prose described the contract; nothing enforced it |
+| Incorrect and invented identities | digests were written by hand where they could have been computed |
+| Premature READY claims, at least three | readiness was an assertion, not a computed result |
+| Local-versus-provider divergence | read-back was expected, not required |
+
+Each was previously recorded as its own family. The framing above is why they
+kept recurring in different shapes: none of the constraints they violated was
+mechanically checkable at the moment of violation.
+
+This wording is **problem framing for selecting later bounded experiments**. It
+is not a claim that one mechanism will solve every failure, and it does not
+select a mechanism.
+
+### Owner-directed direction — RECORDED, NOT ACTIVATED
+
+Critical invariants should increasingly move from prose and advisory
+instructions into the **smallest practical bounded, deterministic, fail-closed
+and verifiable mechanics**, where measured evidence justifies doing so.
+
+Before implementing such tooling, the next selection process should:
+
+1. map the concrete failure paths observed in B2/P2;
+2. study established practices relevant to those paths, including where
+   appropriate preconditions and postconditions and design-by-contract,
+   state-machine and state-transition validation, transactional or atomic state
+   advancement, admission and effect gates with capability-style authority
+   boundaries, required verification and status checks, deterministic readiness
+   gates, and provider read-back with exact-identity binding;
+3. use bounded trial-and-error experiments to test the smallest candidate
+   controls against real Gnostoa work;
+4. prefer mechanisms that eliminate or detect multiple observed failure paths at
+   low maintenance and human-attention cost;
+5. reject approaches that recreate a general workflow or orchestration platform,
+   evidence amplification, or reverse-centaur review burden without measured
+   need.
+
+**Status: RECORDED, NOT ACTIVATED.** No mitigation is selected. No tooling is
+implemented. Decision 0016 increment 2 is not activated. No Work Items are
+created for candidate directions A through F, which all remain **RECORDED / NOT
+ACTIVATED**.
+
+### Issue #24 acceptance: closed through branch (b)
+
+The remaining acceptance criterion permitted either materially lower evidence
+amplification **and** owner interaction than B1, or a falsifying result that
+narrows the product claim. P2 closes it through the second branch: the
+experiment produced a falsifying control result, and the product claim is
+narrowed above.
+
+No clean total-owner-effort improvement over B1 is claimed, for three reasons
+recorded here rather than argued away:
+
+- B1 owner effort was never fully instrumented, so the comparison has no
+  baseline;
+- P2 accumulated substantial correction and reconciliation burden; and
+- the seven-minute final semantic review demonstrates **bounded review
+  efficiency**, not seven minutes of total experiment cost.
+
+What P2 does establish is narrower and real: a fresh actor resumed a genuine
+bounded change from durable state alone, and an owner reached a confident
+disposition on it in seven minutes against a twenty-minute budget.
+
+One further observation, preserved as evidence rather than fixed here: writing
+the terminal close-out brought `state.completed` to its 20-item maximum a second
+time, in a second consecutive slice. The already recorded saturation finding is
+therefore not specific to P1's length; it recurs whenever a slice records both
+its work and its outcome. The schema is deliberately unchanged in this
+close-out.
 
 ## Candidate follow-up — recorded, not activated
 

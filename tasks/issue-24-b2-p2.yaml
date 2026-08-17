@@ -19,7 +19,7 @@ scope:
     - fixing state.completed saturation or the terminal status and handoff invariant
     - any provider metadata mutation that the applicable authority does not permit
 state:
-  status: active
+  status: complete
   completed:
     - Integrated and permanently froze B2/P1 at task checkpoint 9 on protected main.
     - Recorded the owner disposition activating P2 on the stale-state failed property.
@@ -39,7 +39,9 @@ state:
     - "Corrected two wrong declared dependency identities and three silently truncated durable values."
     - "Confirmed the required suite is red since the reconciliation commit; not fixed in this evidence-only step."
     - "Repaired both required-suite regressions as P2 completion work; the suite is green at this head."
-  next_action: Owner conducts the time-bounded semantic review of the recorded P2 findings and the repaired candidate.
+    - "Owner completed the timed semantic review in 7 minutes of a 20-minute budget on candidate 429f6b41."
+    - "Owner disposition: accept P2 as experimental result and narrow the product claim; see the linked findings record."
+  next_action: null
   blocker: null
 identities:
   base:
@@ -68,28 +70,18 @@ references:
     - id: b2-p2-findings
       resource: knowledge/assessments/b2-p2-fresh-session-and-effect-authority-findings.md
 handoff:
-  actor: team:gnostoa-maintainers
+  actor: no active actor; B2/P2 is complete
   read:
-    - this envelope and its regenerated current projection
-    - the three reconciled source files at commit 96b2f8c
-    - "PR #27 for provider evidence of unauthorized effects and corrections"
-    - linked detail only for an unresolved question
+    - the final B2/P2 findings record for the owner review, disposition and narrowed claim
   verify:
-    - the durable findings record separates orientation success from effect-authority failure
-    - the historical red-suite finding is preserved while the required suite is green at this head
-    - the reconciliation work was completed within declared scope and budget
-    - fresh-session orientation and file reconciliation pass
-    - authorization compliance failed on 2 unauthorized mutations pre-reconciliation
-    - all violations were corrected before review
-    - the current checkpoint chain validates against the exact prior checkpoint
-    - the declared base and both dependencies match authoritative observation
+    - B2/P2 has no remaining action; integration and Issue 24 closure are separate owner effects
 recording:
   actor: agent:claude-opus-5
-  at: "2026-08-17T11:39:34Z"
+  at: "2026-08-17T12:24:41Z"
 review:
   projection_characters: 6000
   owner_minutes: 20
   on_exceed: block
 checkpoint:
-  sequence: 5
-  previous: sha256:3d9240ddce849e10f3f5f947eab1dfa55dce5bcec261eb16fda98ed6ffdb2957
+  sequence: 6
+  previous: sha256:b2c5427585a324fe9227c53676b465a6b519032fafd80e30f2280ac517dca064

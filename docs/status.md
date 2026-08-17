@@ -117,7 +117,7 @@ the linked provider records.
 ## Current direction
 
 The first publication exposes a bounded validation and knowledge-architecture
-prototype, not the full open research backlog. B2/P1 completed 2026-08-16 ([PR #25–26](https://github.com/ktogias/gnostoa/pull/26)) with one validated task envelope and deterministic current projection delivered. [Issue #24](https://github.com/ktogias/gnostoa/issues/24) P2 now reconciles stale current-state and resume surfaces, measuring whether a fresh actor can resume from the envelope alone. Only after that recovery is demonstrated and comprehensible will an independently owned project be used for a transfer pilot.
+prototype, not the full open research backlog. B2/P1 completed 2026-08-16 ([PR #25–26](https://github.com/ktogias/gnostoa/pull/26)) with one validated task envelope and deterministic current projection delivered. [Issue #24](https://github.com/ktogias/gnostoa/issues/24) P2 completed 2026-08-17: a fresh actor resumed the work from the task envelope alone, and the owner accepted the experimental result while narrowing the product claim. The envelope and projection are demonstrated to improve orientation, resumability and bounded human understanding; they are not an enforcement mechanism. Only after the next bounded control experiments are selected and measured will an independently owned project be used for a transfer pilot.
 
 The explicit delivery order and all currently open Work Items are classified
 in the [Now / Next / Research roadmap](roadmap.md).
