@@ -1,0 +1,97 @@
+schema_version: "0.1"
+task:
+  id: GNOSTOA/B2/C4-v0
+  objective: >-
+    Test whether READY can become a deterministic, fail-closed, read-only result
+    over existing evidence that rejects the recorded false-ready states without
+    unacceptable false blocks, maintenance surface or human-attention cost.
+  owner: team:gnostoa-maintainers
+  change_class: normal
+scope:
+  included:
+    - record the owner boundary Decision placing C4-v0 in Gnostoa self-hosting
+    - reconstruct the recorded false-ready states and owner-accepted states as replayable controls
+    - derive the minimum precondition set from the controls and implement the predicate under tests/
+    - replay every control, measure the result and record it in a durable assessment
+    - reconcile the current-state projections that the closed Work Items left stale
+  excluded:
+    - any change to the public inherited surface, including tools, schemas, policy, guidance and consumer CI
+    - promotion of C4-v0 to a supported tool, inherited schema, generic guardrail or adopter contract
+    - Decision 0016 increment 2 activation, and implementation of controls C2 or C3
+    - task-envelope schema redesign, including a locally recorded provider witness
+    - producing new verification-receipt or measurement-binding evidence classes
+    - opening a Change Request, integrating the candidate or recording an owner disposition
+state:
+  status: active
+  completed:
+    - "Bound the base at protected main 4c84c0bb and confirmed Work Items 24, 29 and 31 closed with no open Change Request."
+    - "Verified empirically that tests/, tasks/, knowledge/ and docs/ lie outside the pinned public-surface digest."
+    - "Opened Work Item 33 as the sole roadmap:now item, scoped to one bounded experiment."
+    - "Recorded Decision 0017 placing C4-v0 in Gnostoa self-hosting, outside the public inherited surface."
+    - "Reclassified the actual diff as normal: no policy, profile, schema, stable knowledge or public contract behaviour changes."
+    - "Bound the admission requirements for normal under the effective self-policy and satisfied each before implementing."
+    - "Reconstructed the five recorded B2/P1 and three recorded B2/P2 false-ready states as replayable commits."
+    - "Reconstructed four owner-accepted candidates as positive controls."
+    - "Derived a minimum set of four preconditions, each from a control that actually violated it."
+    - "Excluded a fifth candidate precondition that would have matched prose without adding coverage."
+    - "Established RED evidence before implementation: twelve control errors with no predicate present."
+    - "Implemented the three-valued fail-closed predicate under tests/, reusing tools.task_envelope for schema and digest work."
+    - "Replayed all twelve controls: three of eight false-ready states rejected, none called ready, no owner-accepted candidate blocked."
+    - "Measured that no candidate in project history reaches READY, because every one declares a provider identity no local evidence resolves."
+    - "Found that squash-merge integration erases the checkpoint chain on protected main."
+    - "Found and repaired a guard that silently skipped every control in the container while the route reported OK."
+    - "Recorded the experiment, its negative verdict and its four findings in a durable assessment."
+    - "Reconciled the Decision 0016 resume card, docs/roadmap.md and docs/status.md to the state that exists."
+    - "Confirmed the pinned public-surface digest is byte-identical to protected main after the full implementation."
+  next_action: Owner reviews the recorded experimental result and records a disposition on C4-v0
+  blocker: null
+identities:
+  base:
+    kind: git-commit
+    value: git:4c84c0bb4161020b8dbfaecc77f524ef1a0e870f
+  dependencies:
+    - id: decision-0016
+      kind: file-sha256
+      value: sha256:c4b902db8a2d63705d67508e6e2fb448a6ef0c4f408846f668d473bcf1d4475e
+    - id: decision-0017
+      kind: file-sha256
+      value: sha256:3b91ada0a417e411133cc560eed43a0dc8112887a86d0497f6ea335f1f7a97f5
+    - id: control-selection-map
+      kind: file-sha256
+      value: sha256:2cbbc771922744db0d20a82a852296fd9f717ea3464ba56fab84b4fb2c5d83fe
+references:
+  decisions:
+    - id: decision-0016
+      resource: knowledge/decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md
+    - id: decision-0017
+      resource: knowledge/decisions/0017-scope-the-readiness-predicate-experiment-to-gnostoa-self-hosting.md
+  evidence:
+    - id: issue-33
+      resource: https://github.com/ktogias/gnostoa/issues/33
+    - id: control-selection-map
+      resource: knowledge/assessments/b2-control-selection-and-failure-path-map.md
+    - id: c4v0-experiment
+      resource: knowledge/assessments/b2-c4v0-readiness-predicate-experiment.md
+    - id: b2-p1-measurements
+      resource: knowledge/assessments/b2-p1-streamlined-self-hosting-measurements.md
+    - id: b2-p2-findings
+      resource: knowledge/assessments/b2-p2-fresh-session-and-effect-authority-findings.md
+handoff:
+  actor: owner; the experiment has reported and the next step is a semantic disposition
+  read:
+    - the C4-v0 experiment assessment, whose verdict is negative on the hypothesis as posed
+    - Decision 0017, which keeps C4-v0 out of the public inherited surface regardless of outcome
+  verify:
+    - "the pinned public-surface digest is unchanged: python3 -m tools.cli surface-digest"
+    - "the controls actually run rather than skip: ./ci/verify fast reports 132 tests with no skips"
+    - a negative result is a valid outcome and this candidate does not require rescue
+recording:
+  actor: agent:claude-opus-5
+  at: "2026-08-17T23:30:00Z"
+review:
+  projection_characters: 6000
+  owner_minutes: 20
+  on_exceed: block
+checkpoint:
+  sequence: 1
+  previous: null

@@ -79,7 +79,10 @@ Issue #12 and PR #2 also retain the large B1 provider ledger as historical
 self-dogfood evidence. That ledger is not the expected contributor workflow.
 The [B2 experiment](https://github.com/ktogias/gnostoa/issues/24) used two
 bounded changes to measure a smaller provider-native review route and is now
-complete; no successor B2 experiment is selected. The workflow
+complete. The selected successor control, C4-v0, is under bounded experiment in
+[Issue #33](https://github.com/ktogias/gnostoa/issues/33), scoped by
+[Decision 0017](../knowledge/decisions/0017-scope-the-readiness-predicate-experiment-to-gnostoa-self-hosting.md)
+to Gnostoa self-hosting and outside the public inherited surface. The workflow
 need has already been demonstrated, and B2 narrowed what the current mechanisms
 are shown to provide. The broad Issue #12 guided-review
 platform is deferred Research rather than a publication gate, as recorded by
@@ -123,7 +126,7 @@ the linked provider records.
 ## Current direction
 
 The first publication exposes a bounded validation and knowledge-architecture
-prototype, not the full open research backlog. B2/P1 completed 2026-08-16 ([PR #25–26](https://github.com/ktogias/gnostoa/pull/26)) with one validated task envelope and deterministic current projection delivered. [Issue #24](https://github.com/ktogias/gnostoa/issues/24) P2 completed 2026-08-17: a fresh actor resumed the work from the task envelope alone, and the owner accepted the experimental result while narrowing the product claim. The envelope and projection are demonstrated to improve orientation, resumability and bounded human understanding; they are not an enforcement mechanism. Only after the next bounded control experiments are selected and measured will an independently owned project be used for a transfer pilot.
+prototype, not the full open research backlog. B2/P1 completed 2026-08-16 ([PR #25–26](https://github.com/ktogias/gnostoa/pull/26)) with one validated task envelope and deterministic current projection delivered. [Issue #24](https://github.com/ktogias/gnostoa/issues/24) P2 completed 2026-08-17: a fresh actor resumed the work from the task envelope alone, and the owner accepted the experimental result while narrowing the product claim. The envelope and projection are demonstrated to improve orientation, resumability and bounded human understanding; they are not an enforcement mechanism. The first bounded control experiment ([Issue #33](https://github.com/ktogias/gnostoa/issues/33)) is selected and under way; only after such experiments are measured and dispositioned by the owner will an independently owned project be used for a transfer pilot.
 
 The explicit delivery order and all currently open Work Items are classified
 in the [Now / Next / Research roadmap](roadmap.md).
