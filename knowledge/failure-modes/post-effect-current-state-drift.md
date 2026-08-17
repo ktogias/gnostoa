@@ -97,6 +97,27 @@ constraints are advisory rather than mechanically enforced; post-effect
 reconciliation is one more constraint that is currently advisory, and it failed
 in the very act of closing the experiment that recorded the framing.
 
+### The repair reproduced the failure once, in miniature
+
+The first candidate for this record's own Work Item, #29, prematurely projected
+the expected **post-#29** state — a resume card and roadmap both asserting that
+no active delivery item existed — while #29 was still OPEN and labelled
+`roadmap:now`. The same page then named #29 as the current repair, so the
+candidate contradicted itself.
+
+Automated verification stayed **green** on that candidate: every required route
+passed, all surfaces validated, and the declared bound held. **Human semantic
+verification caught the temporal contradiction before a Change Request was
+opened.**
+
+This reinforces the failure mode rather than creating a new one. The candidate
+was not describing the authoritative present; it was anticipating its own future
+closure, which is the same pre-effect versus post-effect confusion recorded
+above, observed this time inside the repair that documents it. It is also a
+second datum for the B2/P2 named failed property: the constraint violated —
+*describe the state that exists, not the state a future effect will create* —
+was advisory, and nothing mechanical noticed.
+
 ## Research hypothesis — RECORDED / NOT ACTIVATED
 
     human disposition
