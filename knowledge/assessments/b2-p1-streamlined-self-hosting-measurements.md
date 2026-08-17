@@ -77,11 +77,12 @@ From the exact provider extraction on 2026-08-15 recorded in the
 | Metric | B2/P1 | B1 comparison |
 |---|---:|---|
 | Provider comments on the change | **0** | 407 |
-| Current task projection words | **550** | — |
-| Change Request body words | reported in the Change Request against the exact head | — |
-| Foreground evidence words | sum of the two rows above, reported in the Change Request | ~289,449 comment words |
+| Review-time Change Request body words (PR #25, accepted state) | **1,163** | — |
+| Review-time projection words (checkpoint 8) | **660** | — |
+| **Review-time foreground evidence words** | **1,823** | ~289,449 comment words |
 | Changed normative words added | 7,217 | — |
-| Evidence amplification (foreground words ÷ changed normative words) | reported in the Change Request | ~7.2 : 1 on a different denominator |
+| **Review-time evidence amplification** (foreground ÷ changed normative words) | **~0.25 : 1** | ~7.2 : 1 on a different denominator |
+| Terminal projection words (checkpoint 9, post-integration observation) | 550 | — |
 | Implementation delta | 22 files, +3,073 / −149 | — |
 | — normative surfaces | 16 files, +1,833 / −98 | — |
 | — tests | 2 files, +1,197 / −17 | — |
@@ -98,15 +99,30 @@ From the exact provider extraction on 2026-08-15 recorded in the
 | Elapsed to checkpoint 9 | see note below | ~17 days (provider-visible) |
 | Integrated | yes, squashed to `31266ff` | yes |
 
-### Why two figures moved out of this record
+### Which foreground evidence was measured, and when
 
-Earlier revisions stated a Change Request body word count and the foreground
-sum inside this record. Both are self-referential: this record is part of the
-change, so writing the totals here changes them, and the figures went stale
-twice. They are now reported only in the Change Request, against the exact
-head, using one stated method — whitespace-delimited tokens (`wc -w`) over the
-Markdown source of the Change Request body and over the generated projection.
-The projection word count is not self-referential and stays here.
+Every foreground figure above is a **review-time** measurement: the evidence
+actually in front of the maintainer at the moment the human disposition was
+made. That is **Pull Request #25 in its accepted checkpoint-8 review state**,
+not this follow-up Change Request, and not PR #25's body as it reads today —
+that body was afterwards amended to carry the acceptance record, which was not
+present when the review happened.
+
+Method: whitespace-delimited tokens (`wc -w`) over the Markdown source of the
+Change Request body and over the generated projection.
+
+While the review was still pending, these figures were deliberately held
+outside this record, because a record that is part of the change it measures
+changes its own totals when it states them. That constraint ended when PR #25
+was accepted and integrated: its review-time body is now frozen history, so the
+figures are recorded here directly.
+
+The terminal projection at checkpoint 9 measures 550 words. That is a separate
+**post-integration observation** showing how much smaller the resume surface
+becomes once a task closes and its handoff empties. It is not the evidence the
+maintainer reviewed, and it does not replace the 660-word review-time figure.
+Using it as the experimental measurement would retroactively shrink the
+evidence the human actually read.
 
 ### Elapsed time is three different measurements
 
@@ -125,9 +141,10 @@ instrumented and reported. Overall active work time across the slice remains
 uninstrumented, and this record does not reconstruct it.
 
 The amplification denominators are **not** the same measurement. B1 divided its
-comment corpus by total repository text; B2/P1 divides foreground evidence by
-the words this change actually added to normative surfaces. The directly
-comparable figure is the provider comment count: 407 against 0.
+comment corpus by total repository text; B2/P1 divides review-time foreground
+evidence by the words PR #25 added to normative surfaces at its accepted
+checkpoint-8 state. The directly comparable figure is the provider comment
+count: 407 against 0.
 
 ## Recorded human entry
 
