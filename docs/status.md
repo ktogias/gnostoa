@@ -8,9 +8,14 @@ evidence and publication gates live in the linked self-knowledge records.
 Gnostoa currently has an owner-reviewed and technically verified
 first-publication source baseline. The source repository is public, and
 default-branch protection and private vulnerability reporting are effective.
-PR #23 is integrated, Issue #1 is closed and protected `main` is exact commit
-`cda51dad6a719da43d8465a3f0f270021c357d96`. Gnostoa has no public release,
-package, OCI image, documentation site or independent transfer pilot.
+PR #23 is integrated and Issue #1 is closed. The **historical
+first-publication source-baseline identity** is the immutable commit
+`cda51dad6a719da43d8465a3f0f270021c357d96`; that fact does not change. Protected
+`main` has advanced past it since, and this page deliberately does not restate a
+current branch head, because any value written here goes stale at the next merge.
+Read the exact current head from the provider or from `git rev-parse origin/main`.
+Gnostoa has no public release, package, OCI image, documentation site or
+independent transfer pilot.
 
 ### Available from source
 
@@ -72,10 +77,11 @@ review findings remain unresolved.
 
 Issue #12 and PR #2 also retain the large B1 provider ledger as historical
 self-dogfood evidence. That ledger is not the expected contributor workflow.
-The active [B2 experiment](https://github.com/ktogias/gnostoa/issues/24) uses one
-bounded change to measure a smaller provider-native review route. The workflow
-need has already been demonstrated; B2 selects the minimum task-context,
-handoff and checkpoint implementation. The broad Issue #12 guided-review
+The [B2 experiment](https://github.com/ktogias/gnostoa/issues/24) used two
+bounded changes to measure a smaller provider-native review route and is now
+complete; no successor B2 experiment is selected. The workflow
+need has already been demonstrated, and B2 narrowed what the current mechanisms
+are shown to provide. The broad Issue #12 guided-review
 platform is deferred Research rather than a publication gate, as recorded by
 [Decision 0016](../knowledge/decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md).
 

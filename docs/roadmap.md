@@ -12,9 +12,25 @@ dependency.
 
 ## Now
 
-| Work | User and problem | Falsifiable outcome | Dependencies | Explicit non-goal |
-|---|---|---|---|---|
-| [#24 — B2/P2 stale-state reconciliation](https://github.com/ktogias/gnostoa/issues/24) | A fresh session or agent must resume bounded work without task state loss or context drift, and an owner must reach a confident disposition inside a declared budget. | Complete. A fresh session resumed from the task envelope alone and finished the reconciliation; the owner disposed of the exact candidate in 7 minutes of a 20-minute budget, accepted P2 as an experimental result and narrowed the product claim. Integration and Work Item closure remain separate owner effects. | P1 completed at commit 7390976 ([PR #25–26](https://github.com/ktogias/gnostoa/pull/26)); the [B2/P2 findings record](../knowledge/assessments/b2-p2-fresh-session-and-effect-authority-findings.md) carries the multidimensional result. | B2 increment 2 implementation, task-envelope schema redesign, selecting the next mitigation. |
+No successor B2 experiment or mitigation is selected, and none is nominated here.
+
+B2/P1 and B2/P2 are both complete. [Issue #24](https://github.com/ktogias/gnostoa/issues/24)
+was integrated through [PR #28](https://github.com/ktogias/gnostoa/pull/28) and
+closed as completed; its integration and closure are done, not pending.
+
+One bounded repair is tracked:
+[#29 — post-effect current-state drift](https://github.com/ktogias/gnostoa/issues/29),
+reconciling projections left one provider effect behind by that integration.
+**Provider state is authoritative for whether #29 remains open and current**;
+this page does not assert its lifecycle. An active repair is not a successor
+experiment, and #29 selects no mitigation.
+
+This static projection cannot atomically observe its own future merge or
+Work Item closure. It therefore describes the state that exists when it is
+written, and defers to the provider for anything a later effect will change.
+
+Later directions, including the P2 candidate directions and Decision 0016
+increment 2, remain recorded and **not activated**.
 
 ## Completed boundary
 
