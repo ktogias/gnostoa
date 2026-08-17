@@ -407,7 +407,13 @@ def _combine(checks: tuple[Check, ...]) -> Verdict:
 
 
 def evaluate(repository: Path, commit: str, envelope_path: str) -> Result:
-    """Decide whether `envelope_path` at `commit` may be presented as ready."""
+    """Decide whether `envelope_path` at `commit` may be presented as ready.
+
+    `commit` accepts the repository's canonical `git:<sha>` identity form, which
+    is what `identities.base` records, as well as any ordinary Git revision.
+    """
+    if commit.startswith("git:"):
+        commit = commit[len("git:") :]
     resolved = _git(repository, "rev-parse", f"{commit}^{{commit}}")
     commit = resolved.decode("utf-8").strip()
     tracked = _tracked_paths(repository, commit)

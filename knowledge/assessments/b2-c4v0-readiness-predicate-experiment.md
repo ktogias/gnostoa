@@ -216,7 +216,7 @@ necessary and repeatedly insufficient condition for readiness.
 
 ## Finding 5: READY is reachable, and the predicate rewards declaring less
 
-This experiment's own first candidate, `95525baa9e9afd428e398482f142fd93b822e140`,
+This experiment's own first candidate, `git:95525baa9e9afd428e398482f142fd93b822e140`,
 evaluates to **READY** — all four preconditions decided satisfied. It is the
 first candidate in this project's history to reach that verdict.
 
@@ -236,6 +236,24 @@ The verdict also does not mean the candidate is fit to accept. READY here means
 four mechanical preconditions hold. Whether the experiment was worth running, and
 whether its result is sound, is exactly the semantic judgement the predicate
 cannot make — which is the same boundary B2/P2 recorded.
+
+### It then caught a real defect in this candidate
+
+A later commit in this same branch trimmed the envelope so the derived projection
+would fit its declared 6000-character budget, and did not advance the checkpoint.
+Re-evaluating returned **BLOCKED** on `checkpoint-chain-recomputes`: the recorded
+`previous` no longer matched the version it followed.
+
+That is the predicate rejecting a genuine defect in the work that produced it,
+found mechanically rather than by review, and it is the clearest positive
+evidence in this experiment. The chain was then advanced properly.
+
+Two bounds were reached while recording all this: `state.completed` saturated at
+its 20-item maximum — the third slice in a row to do so — and the derived
+projection exceeded its owner attention budget at 6099 characters and was
+refused. Neither is a defect in the predicate; both are the same signal the
+post-effect drift record already noted, that a current projection is being asked
+to carry event history.
 
 ## Cost
 

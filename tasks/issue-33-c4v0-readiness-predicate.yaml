@@ -88,11 +88,11 @@ handoff:
     - a negative result is a valid outcome and this candidate does not require rescue
 recording:
   actor: agent:claude-opus-5
-  at: "2026-08-17T23:55:00Z"
+  at: "2026-08-18T00:20:00Z"
 review:
   projection_characters: 6000
   owner_minutes: 20
   on_exceed: block
 checkpoint:
-  sequence: 2
-  previous: sha256:f5b118629e26952506231c900f368003014818a589f2cf7742d3bd9674c67bef
+  sequence: 3
+  previous: sha256:3e1ff7cbbad6204c436cf7d2b470f7e08685236dbc3e74b4cc47ed947137f62a
