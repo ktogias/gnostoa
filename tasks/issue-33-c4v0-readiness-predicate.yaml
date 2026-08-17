@@ -24,26 +24,26 @@ scope:
 state:
   status: active
   completed:
-    - "Bound the base at protected main 4c84c0bb and confirmed Work Items 24, 29 and 31 closed with no open Change Request."
+    - "Bound the base at protected main 4c84c0bb with Work Items 24, 29 and 31 closed and no open Change Request."
     - "Verified empirically that tests/, tasks/, knowledge/ and docs/ lie outside the pinned public-surface digest."
     - "Opened Work Item 33 as the sole roadmap:now item, scoped to one bounded experiment."
     - "Recorded Decision 0017 placing C4-v0 in Gnostoa self-hosting, outside the public inherited surface."
-    - "Reclassified the actual diff as normal: no policy, profile, schema, stable knowledge or public contract behaviour changes."
-    - "Bound the admission requirements for normal under the effective self-policy and satisfied each before implementing."
+    - "Reclassified the actual diff as normal: no policy, profile, schema, stable knowledge or public contract change."
+    - "Bound the admission requirements for normal and satisfied each before implementing."
     - "Reconstructed the five recorded B2/P1 and three recorded B2/P2 false-ready states as replayable commits."
     - "Reconstructed four owner-accepted candidates as positive controls."
     - "Derived a minimum set of four preconditions, each from a control that actually violated it."
     - "Excluded a fifth candidate precondition that would have matched prose without adding coverage."
     - "Established RED evidence before implementation: twelve control errors with no predicate present."
-    - "Implemented the three-valued fail-closed predicate under tests/, reusing tools.task_envelope for schema and digest work."
-    - "Replayed all twelve controls: three of eight false-ready states rejected, none called ready, no owner-accepted candidate blocked."
+    - "Implemented the three-valued fail-closed predicate under tests/, reusing tools.task_envelope."
+    - "Replayed twelve controls: three of eight false-ready states rejected, none called ready, none falsely blocked."
     - "Measured that no candidate in project history reaches READY, because every one declares a provider identity no local evidence resolves."
     - "Found that squash-merge integration erases the checkpoint chain on protected main."
     - "Found and repaired a guard that silently skipped every control in the container while the route reported OK."
     - "Recorded the experiment, its negative verdict and its five findings in a durable assessment."
     - "Reconciled the Decision 0016 resume card, docs/roadmap.md and docs/status.md to the state that exists."
     - "Confirmed the pinned public-surface digest is byte-identical to protected main after the full implementation."
-    - "Evaluated the predicate on this candidate at 95525baa: READY, and recorded that it reaches READY only by declaring no provider identity."
+    - "Evaluated the predicate on candidate 95525baa: READY, reached only by declaring no provider identity."
   next_action: Owner reviews the recorded experimental result and records a disposition on C4-v0
   blocker: null
 identities:
