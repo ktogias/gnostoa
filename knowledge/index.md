@@ -42,6 +42,7 @@ inherited, copied or loaded by adopting projects.
 - [Publication-baseline review drift](failure-modes/publication-baseline-review-drift.md)
 - [Container-first verification routing bypass](failure-modes/container-first-verification-routing-bypass.md)
 - [Reverse-centaur review overload](failure-modes/reverse-centaur-review-overload.md)
+- [Post-effect current-state drift](failure-modes/post-effect-current-state-drift.md)
 - [Maintain the toolkit](runbooks/maintain-the-kit.md)
 - [Prepare the first public repository publication](runbooks/prepare-first-publication.md)
 - [Review the publication baseline](runbooks/review-publication-baseline.md)
