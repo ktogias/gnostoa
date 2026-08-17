@@ -77,7 +77,7 @@ From the exact provider extraction on 2026-08-15 recorded in the
 | Metric | B2/P1 | B1 comparison |
 |---|---:|---|
 | Provider comments on the change | **0** | 407 |
-| Current task projection words | **660** | — |
+| Current task projection words | **550** | — |
 | Change Request body words | reported in the Change Request against the exact head | — |
 | Foreground evidence words | sum of the two rows above, reported in the Change Request | ~289,449 comment words |
 | Changed normative words added | 7,217 | — |
@@ -92,7 +92,7 @@ From the exact provider extraction on 2026-08-15 recorded in the
 | Effect authorizations requested / granted | 4 / 4 | not separately recorded |
 | Material defects caught before integration | **8** defect families | multiple |
 | Evidence defects corrected in owner review | **3** | not separately recorded |
-| Known escaped defects | **0 known before integration; post-integration observation pending** | — |
+| Known escaped defects | **0 known through the checkpoint-9 post-integration reconciliation** | — |
 | False-ready outcomes | **5** | not separately recorded |
 | False-block outcomes | 0 | not separately recorded |
 | Elapsed to checkpoint 9 | see note below | ~17 days (provider-visible) |
@@ -120,8 +120,9 @@ against a B1 baseline that used provider-visible wall-clock time:
 | Active work time | not instrumented | not instrumented |
 | Final timed disposition | ~27–32 min active, of which <12 min orientation | not applicable |
 
-Only the first row is comparable with B1. The other two were never
-instrumented, and this record does not reconstruct them.
+Only the first row is comparable with B1. The final timed disposition is now
+instrumented and reported. Overall active work time across the slice remains
+uninstrumented, and this record does not reconstruct it.
 
 The amplification denominators are **not** the same measurement. B1 divided its
 comment corpus by total repository text; B2/P1 divides foreground evidence by
@@ -379,7 +380,7 @@ the task envelope carries the candidate identity, which it does not and cannot.
 Both were evidence errors rather than product defects, and both would have
 misinformed a timed review.
 
-**False-ready outcomes (4).** An earlier candidate was presented as review-ready
+**False-ready outcomes (5).** An earlier candidate was presented as review-ready
 while its own declared pre-merge gate was still unrun. A second packet was
 presented for timed review with stale surface accounting. A third was presented
 while the recursive-alias blocker was still present. A fourth was presented
@@ -433,6 +434,16 @@ represented as human acceptance; a fresh reviewer can identify status, question
 and next action from one bounded projection; both positive and negative results
 are reported here.
 
-Not yet satisfied: owner interaction cost is unmeasured until the review
-happens, so the criterion that evidence amplification **and** owner interaction
-fall materially below B1 is only half-evidenced.
+Not yet satisfied: the sixth criterion, that evidence amplification **and**
+owner interaction fall materially below B1. Three things stand between P1 and
+that criterion:
+
+- P1 measured what it could: semantic orientation from the projection and the
+  final timed disposition. Both are recorded above.
+- B1's owner time was never instrumented, so a direct owner-effort comparison
+  is unavailable and cannot be reconstructed.
+- More importantly, P1 **built** the envelope rather than reviewing an ordinary
+  change **through** it, so the object measured was not the object the claim is
+  about.
+
+P2 is therefore the first valid test of B2's headline claim.
