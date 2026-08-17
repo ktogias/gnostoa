@@ -1172,9 +1172,19 @@ class TaskEnvelopeTests(unittest.TestCase):
         self.assertIn("## Next action", output)
         # Compare through the module's own escaping so a wording change to the
         # canonical envelope does not need a matching edit here.
-        self.assertIn(
-            task_envelope._markdown_text(envelope["state"]["next_action"]), output
-        )
+        next_action = envelope["state"]["next_action"]
+        if next_action:
+            self.assertIn(task_envelope._markdown_text(next_action), output)
+        else:
+            # A terminal task states both halves: no remaining action, and no
+            # actor still carrying a review obligation. One without the other
+            # is a contradictory projection.
+            self.assertIn("No active next action.", output)
+            handoff = output[output.index("## Handoff") :]
+            self.assertIn("no active actor", handoff)
+            self.assertNotIn("accountable maintainer", handoff)
+            self.assertNotIn("Pull Request diff", handoff)
+            self.assertIn("no remaining action", handoff)
 
 
 if __name__ == "__main__":

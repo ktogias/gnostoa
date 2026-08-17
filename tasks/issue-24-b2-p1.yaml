@@ -20,7 +20,7 @@ scope:
     - raw conversation or hidden-reasoning storage
     - implementation of later Issue 3, 5-15 research surfaces
 state:
-  status: active
+  status: complete
   completed:
     - Bound Issue 24 and Decision 0016 to protected public main.
     - Recorded the human-control assessment and reverse-centaur failure mode.
@@ -42,7 +42,7 @@ state:
     - Converted the five audited boundary exceptions into the documented bounded diagnostics.
     - Added the explicit repository root to both public workflow examples.
     - Loaded, bounded and constructed the envelope and any supplied schema from one immutable snapshot.
-  next_action: Run the final closed-scope verification-only pass over the corrected candidate before the timed review.
+  next_action: null
   blocker: null
 identities:
   base:
@@ -69,28 +69,18 @@ references:
     - id: b2-p1-measurements
       resource: knowledge/assessments/b2-p1-streamlined-self-hosting-measurements.md
 handoff:
-  actor: accountable maintainer
+  actor: no active actor; B2/P1 is complete
   read:
-    - the generated current task projection
-    - the focused Pull Request diff
-    - linked detail only for an unresolved question
+    - the final B2/P1 measurement record for historical context
   verify:
-    - the exact semantic and executable delta is understandable
-    - declared identities that differ from supplied observations fail before projection
-    - container evidence is green for the exact candidate
-    - the runtime target passes self-check from a working directory outside the toolkit
-    - the reported review surface matches the provider count for the exact head
-    - malformed and recursive envelope input fails closed without a traceback
-    - envelope input is bounded by byte size and nesting depth before parsing
-    - the constructed envelope derives from the one bounded snapshot that was checked
-    - anchors, aliases, merge keys and non-local schema references are refused before construction
+    - B2/P1 has no remaining action; Issue 24 continues separately through P2
 recording:
   actor: agent:claude-opus-5
-  at: "2026-08-16T06:02:00Z"
+  at: "2026-08-16T21:37:05Z"
 review:
   projection_characters: 6000
   owner_minutes: 20
   on_exceed: block
 checkpoint:
-  sequence: 8
-  previous: sha256:bf09cf1f9bdb2c3258007e3ed235a075ba4e29a619f8c0eb43ad7c41379061ca
+  sequence: 9
+  previous: sha256:1266c7276362298cc604c71e3f1c812cc6e49d676933582d6f8bfddb2d2d53df
