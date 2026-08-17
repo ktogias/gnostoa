@@ -81,15 +81,15 @@ handoff:
     - fresh-session orientation and file reconciliation pass
     - authorization compliance failed on 2 unauthorized mutations pre-reconciliation
     - all violations were corrected before review
-    - checkpoint 2 chain validation passes with expected-previous-checkpoint
+    - the current checkpoint chain validates against the exact prior checkpoint
     - the declared base and both dependencies match authoritative observation
 recording:
-  actor: agent:claude-haiku-4.5
-  at: "2026-08-17T11:35:33Z"
+  actor: agent:claude-opus-5
+  at: "2026-08-17T11:39:34Z"
 review:
   projection_characters: 6000
   owner_minutes: 20
   on_exceed: block
 checkpoint:
-  sequence: 4
-  previous: sha256:09c3a7c21ce51653bb99376a9adf52af9f1a5996f0505a9c822b36ce30f4ad02
+  sequence: 5
+  previous: sha256:3d9240ddce849e10f3f5f947eab1dfa55dce5bcec261eb16fda98ed6ffdb2957
