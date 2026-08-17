@@ -1,0 +1,73 @@
+schema_version: "0.1"
+task:
+  id: GNOSTOA/B2/P2
+  objective: >-
+    Reconcile the stale current-state and resume surfaces left behind by P1,
+    and measure whether a fresh actor can resume that ordinary change through
+    the P1 envelope alone.
+  owner: team:gnostoa-maintainers
+  change_class: normal
+scope:
+  included:
+    - reconcile the Decision 0016 resume card rows Active delivery, Current experiment and First candidate slice
+    - reconcile the docs/roadmap.md Now table and the Next section after P1 completed
+    - reconcile the docs/status.md Current direction section
+    - assess the Issue 24 roadmap:next label against reconciled state without mutating provider metadata unless authority permits
+  excluded:
+    - Decision 0016 increment 2 implementation, including handoff and fresh-session recovery
+    - task-envelope schema redesign
+    - fixing state.completed saturation or the terminal status and handoff invariant
+    - any provider metadata mutation that the applicable authority does not permit
+state:
+  status: active
+  completed:
+    - Integrated and permanently froze B2/P1 at task checkpoint 9 on protected main.
+    - Recorded the owner disposition activating P2 on the stale-state failed property.
+    - Verified that the draft lifecycle of Decision 0016 satisfies the decision-record boundary.
+    - Bound the protected main base and both dependency identities for P2.
+    - Reached the declared interruption point before any reconciliation edit.
+  next_action: A fresh session or agent resumes from this envelope alone and performs the four reconciliations.
+  blocker: null
+identities:
+  base:
+    kind: git-commit
+    value: git:73909762661bdf81fc3c2c35ad553d13fa25acd1
+  dependencies:
+    - id: decision-0016
+      kind: file-sha256
+      value: sha256:2ee58de9f91f2bdd23c56da2389bd7130072a142ba43080c8bbca710dbd1896c
+    - id: issue-24
+      kind: github-issue-body-utf8-sha256-v1
+      value: sha256:5513bc4e43e8b12aa76d7a3a99a067d5c083a13f8c3ae23b137aa94a22f07af8
+references:
+  decisions:
+    - id: decision-0016
+      resource: knowledge/decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md
+  evidence:
+    - id: issue-24
+      resource: https://github.com/ktogias/gnostoa/issues/24
+    - id: b2-p1-measurements
+      resource: knowledge/assessments/b2-p1-streamlined-self-hosting-measurements.md
+    - id: b2-p1-envelope
+      resource: tasks/issue-24-b2-p1.yaml
+handoff:
+  actor: a fresh session or agent with no conversation history
+  read:
+    - this envelope and its generated current projection
+    - the four stale sources named in scope, as they stand at the declared base
+    - linked detail only for an unresolved question
+  verify:
+    - the failed property activating P2 is stale and contradictory current-state surfaces after P1 completed
+    - increment 2 implementation and envelope schema redesign are deferred, not in scope
+    - the declared base and both dependencies match authoritative observation before any edit
+    - the reconciliation stays within roughly 300 to 500 changed lines
+recording:
+  actor: agent:claude-opus-5
+  at: "2026-08-17T02:37:15Z"
+review:
+  projection_characters: 6000
+  owner_minutes: 20
+  on_exceed: block
+checkpoint:
+  sequence: 1
+  previous: null
