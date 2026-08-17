@@ -136,17 +136,17 @@ requires a future experiment.
 
 | Path | C1 | C2 | C3 | C4 | C5 | C6 | C7 |
 |---|---|---|---|---|---|---|---|
-| CF-1 | PREVENTS **[P]** | DETECTS_AFTER_EFFECT **[G]** | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT |
+| CF-1 | PREVENTS **[P]** | DETECTS_AFTER_EFFECT **[P]** | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT |
 | CF-2 | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | DETECTS_BEFORE_EFFECT **[P]** | PREVENTS **[P]** | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT |
 | CF-3 | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | PARTIALLY_MITIGATES **[X]** | PARTIALLY_MITIGATES **[X]** | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT |
-| CF-4 | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | PARTIALLY_MITIGATES **[P]** | DETECTS_BEFORE_EFFECT **[G]** | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT |
-| CF-5 | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | PREVENTS **[G]** | DETECTS_BEFORE_EFFECT **[G]** | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT |
+| CF-4 | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | PARTIALLY_MITIGATES **[P]** | DETECTS_BEFORE_EFFECT **[P]** | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT |
+| CF-5 | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | PREVENTS **[P]** | DETECTS_BEFORE_EFFECT **[P]** | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT |
 | CF-6 | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | UNKNOWN | PARTIALLY_MITIGATES **[X]** | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT |
 | CF-7 | NO_EXPECTED_EFFECT | PARTIALLY_MITIGATES **[P]** | PARTIALLY_MITIGATES **[P]** | DETECTS_BEFORE_EFFECT **[P]** | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT |
 | CF-8 | NO_EXPECTED_EFFECT | PARTIALLY_MITIGATES **[P]** | PARTIALLY_MITIGATES **[P]** | PREVENTS **[P]** | PARTIALLY_MITIGATES **[P]** | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT |
 | CF-9 | NO_EXPECTED_EFFECT | PREVENTS **[P]** | NO_EXPECTED_EFFECT | DETECTS_BEFORE_EFFECT **[P]** | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT |
 | CF-10 | NO_EXPECTED_EFFECT | DETECTS_AFTER_EFFECT **[P]** | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT |
-| CF-11 | NO_EXPECTED_EFFECT | UNKNOWN | NO_EXPECTED_EFFECT | UNKNOWN | NO_EXPECTED_EFFECT | UNKNOWN | PARTIALLY_MITIGATES **[X]** |
+| CF-11 | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN |
 | CF-12 | PARTIALLY_MITIGATES **[P]** | PREVENTS **[G]** | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT |
 | CF-13 | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | PARTIALLY_MITIGATES **[X]** | NO_EXPECTED_EFFECT | PREVENTS **[P]** | NO_EXPECTED_EFFECT |
 | CF-14 | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | NO_EXPECTED_EFFECT | PARTIALLY_MITIGATES **[X]** | NO_EXPECTED_EFFECT |
@@ -162,10 +162,28 @@ requires a future experiment.
 - **Schema validity is not semantic truth.** CF-11 was schema-valid, green and
   false. This is the one path where the honest entry is `UNKNOWN` for every
   mechanical candidate, and the only demonstrated detector is a human.
-- **Two [G] entries only.** C3 preventing CF-5 is [G] because
-  `checkpoint_digest` already computes correct digests — the failure was not
-  calling it. C2 preventing CF-12 is [G] because read-before-retry demonstrably
-  prevented a duplicate Change Request.
+### Exactly one [G] relation exists
+
+**[G]** means the *same mechanism* has already been empirically demonstrated in
+Gnostoa. A relation is **not** [G] because an underlying validator existed,
+because a human later noticed the failure, because a related mechanism could have
+noticed it, or because the candidate would compose checks that already exist. An
+earlier revision of this assessment marked five cells [G] while claiming two; the
+audit below reduces the count to **one**, and the narrative now agrees with the
+matrix.
+
+| Relation | Was | Now | Why |
+|---|---|---|---|
+| C2 → CF-12 | [G] | **[G]** | Read-before-retry was *actually performed* on the ambiguous PR-creation outcome and demonstrably prevented a duplicate Change Request. Same mechanism, same boundary, observed result. |
+| C2 → CF-1 | [G] | **[P]** | No read-back control existed. The agent noticed its own violation. Self-noticing is not the mechanism. |
+| C3 → CF-5 | [G] | **[P]** | `checkpoint_digest` existed as a *function*, but the control "identities are computed, never accepted as written" did not exist at that boundary — the digests were hand-written past it. This is precisely the "underlying validator existed" exclusion. |
+| C4 → CF-4 | [G] | **[P]** | No readiness predicate existed. Schema validation demonstrably rejects that state *when run*, but the relation under test is the predicate, not one of its future components. |
+| C4 → CF-5 | [G] | **[P]** | Same distinction as C4 → CF-4. |
+
+The correction lowers the apparent evidence behind Alternative 2 and leaves
+Alternative 3 holding the only demonstrated relation in the matrix. That shift is
+reported rather than smoothed over; evidence strength was not raised anywhere to
+make an alternative look better.
 
 ## Phase 3 — established practice
 
@@ -207,8 +225,16 @@ implements these patterns.
 | One small primitive | no | plausible | **yes** | **plausible** | plausible | plausible | **yes** |
 | Falsifiable self-test | yes | yes | **yes** | **yes** | yes | yes | weak |
 | Cleanly removable | hard | yes | **yes** | **yes** | yes | yes | yes |
-| Observed recurrence addressed | 2 | 3 | 3 | **≥ 11** | 2 | 3 | 1 |
+| Historical manifestations of the paths it *hypothetically* relates to | 2 | 3 | 3 | ≥ 11 | 2 | 3 | 1 |
 | Blast radius if absent | high | medium | medium | **high** | medium | medium | low |
+
+The historical-manifestation row counts **observed occurrences of the failure
+paths** a candidate is *hypothesised* to relate to. It is not a measure of
+demonstrated control effectiveness, and it must not be read as one: with exactly
+one [G] relation in the matrix, no candidate has demonstrated effectiveness
+against any path except C2 against CF-12. Recurrence, relation type, evidence
+strength, blast radius, maintenance cost and human-attention cost are kept as
+separate dimensions above and are deliberately not combined into a score.
 
 **C1 is the highest-risk candidate despite addressing a serious path.** It adds
 human approval prompts and pulls provider-specific authority into the portable
@@ -230,6 +256,14 @@ Three alternatives. Each meets the admission bar, or is stated as not meeting it
   not stop invalid state being written — only promoted.
 - **Surface:** one predicate over existing artifacts. No new mutable state, no
   provider abstraction, no extra human prompt.
+- **Narrow experimental form — C4-v0.** The candidate under consideration is
+  **not a general workflow engine**. C4-v0 is a deterministic, **read-only**
+  `READY` predicate over existing evidence. It creates no canonical state,
+  advances no state, performs no external effect, grants no authority and adds no
+  human approval prompt. It returns `READY` only when its declared existing
+  preconditions are satisfied, and otherwise returns one bounded blocking reason.
+  This is research framing only; **C4-v0 remains NOT SELECTED / NOT ACTIVATED**
+  until the owner disposition, and no implementation fixtures are created here.
 - **Falsifiable test:** replay P1's five and P2's three false-ready states; the
   predicate must refuse each, and must not refuse the states that were genuinely
   ready.
@@ -239,9 +273,11 @@ Three alternatives. Each meets the admission bar, or is stated as not meeting it
 
 - **Primary failed property:** CF-5, an identity written where it could be
   computed, three values.
-- **Strongest benefit:** the only candidate with a demonstrated **[G]** prevention
-  relation whose mechanism already exists — `checkpoint_digest` computes correct
-  digests today and was simply not called. Smallest possible surface.
+- **Strongest benefit:** the smallest possible implementation surface. The
+  primitive already exists — `checkpoint_digest` computes correct digests today
+  and was simply not called — so the change is to route identities through it
+  rather than to build anything. This is a **surface** argument, not an evidence
+  argument: after the [G] audit the relation C3 → CF-5 is **[P]**, a hypothesis.
 - **Strongest limitation:** narrow. Leaves CF-8 and every effect path untouched.
 - **Falsifiable test:** the two 61-character digests and the wrong dependency
   value must become impossible to express, not merely rejected.
@@ -272,9 +308,14 @@ and corrected in both observed episodes.
 
 ### CF-11 has no mechanical candidate
 
-The one path that survived every automated route has `UNKNOWN` against every
-candidate. No alternative above claims to address it. Recording that honestly is
-more useful than assigning it to a control that would not catch it.
+The one path that survived every automated route has `UNKNOWN` against **every**
+candidate, including C7. An earlier revision gave C7 a `PARTIALLY_MITIGATES`
+relation here, which contradicted this section; the conservative resolution is
+`UNKNOWN`, because no exact evidence supports a mechanical relation.
+
+CF-11 was **schema-valid and green on every automated route, and human semantic
+review was the only demonstrated detector.** No alternative above claims to
+address it, and this Work Item does not invent one.
 
 ## Uncertainties
 
@@ -282,6 +323,6 @@ more useful than assigning it to a control that would not catch it.
   claims leave no repository or provider trace.
 - CF-9's exact moment is not reconstructable.
 - Every **[P]** relation is an engineering-principle hypothesis, not a Gnostoa
-  result. Only two **[G]** relations exist in the whole matrix.
+  result. Exactly **one [G]** relation exists in the whole matrix.
 - Recurrence counts measure *observation*, not frequency: paths that no route
   could see are under-counted by construction, which is precisely CF-3's point.
