@@ -117,11 +117,7 @@ the linked provider records.
 ## Current direction
 
 The first publication exposes a bounded validation and knowledge-architecture
-prototype, not the full open research backlog.
-[Issue #24](https://github.com/ktogias/gnostoa/issues/24) now uses one small
-Gnostoa change to implement and measure the smallest durable self-hosting slice.
-Only after that process is comprehensible and materially smaller will an
-independently owned project be used for a transfer pilot.
+prototype, not the full open research backlog. B2/P1 completed 2026-08-16 ([PR #25–26](https://github.com/ktogias/gnostoa/pull/26)) with one validated task envelope and deterministic current projection delivered. [Issue #24](https://github.com/ktogias/gnostoa/issues/24) P2 now reconciles stale current-state and resume surfaces, measuring whether a fresh actor can resume from the envelope alone. Only after that recovery is demonstrated and comprehensible will an independently owned project be used for a transfer pilot.
 
 The explicit delivery order and all currently open Work Items are classified
 in the [Now / Next / Research roadmap](roadmap.md).

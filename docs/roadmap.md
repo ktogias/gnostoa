@@ -14,7 +14,7 @@ dependency.
 
 | Work | User and problem | Falsifiable outcome | Dependencies | Explicit non-goal |
 |---|---|---|---|---|
-| [#24 — B2 streamlined self-hosting](https://github.com/ktogias/gnostoa/issues/24) | A developer or agent must resume one bounded change without replaying the B1 ledger or losing human control. | One validated task envelope and deterministic current projection fail closed when declared identities differ from supplied authoritative observations and recover exactly after interruption, while owner attention and evidence amplification are measured. | Public protected baseline `cda51dad6a719da43d8465a3f0f270021c357d96`, Decision 0016 and one bounded PR. | Workflow engine, provider adapter, database or automatic approval. |
+| [#24 — B2/P2 stale-state reconciliation](https://github.com/ktogias/gnostoa/issues/24) | A fresh session or agent must resume P2 work without task state loss or context drift after P1 completion. | Decision 0016 resume card, docs/roadmap.md Now/Next sections and docs/status.md Current direction reconciled to reflect P1 completion at commit 7390976; Issue 24 roadmap:next label assessed for accuracy. Complete reconciliation fits 300–500 changed lines, verifying fresh-actor resume from task envelope alone. | P1 completed at commit 7390976 ([PR #25–26](https://github.com/ktogias/gnostoa/pull/26)); Task envelope `tasks/issue-24-b2-p2.yaml` at declared interruption point. | B2 increment 2 implementation, task-envelope schema redesign, provider metadata mutation. |
 
 ## Completed boundary
 
@@ -25,13 +25,7 @@ site or hosted service was released by that effect.
 
 ## Next
 
-Active B2/P1 uses one small Gnostoa change to preserve the current assurance
-while materially reducing owner time, review rounds and evidence amplification.
-B1 has already demonstrated the need for guided review, durable task context,
-bounded plans, explicit handoffs and safe resume. Following P1, only a measured
-bottleneck may activate a later B2 slice. Once B2 is comprehensible, B3 tests
-transfer into an independently owned project. See
-[Decision 0016](../knowledge/decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md).
+B2/P1 completed 2026-08-16 ([PR #25–26](https://github.com/ktogias/gnostoa/pull/26)) with one validated task envelope and deterministic current projection delivered. P2 reconciles stale current-state and resume surfaces, measuring whether a fresh actor can resume from the envelope alone. Following P2, only a measured bottleneck may activate a later B2 slice. Once B2 is comprehensible, B3 tests transfer into an independently owned project. See [Decision 0016](../knowledge/decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md).
 
 | Work Items | Problem addressed | Completion signal | Non-goal |
 |---|---|---|---|

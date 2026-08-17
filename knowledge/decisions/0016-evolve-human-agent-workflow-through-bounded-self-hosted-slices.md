@@ -64,11 +64,11 @@ x-project-knowledge:
 | Evidence | B1 demonstrated material need for guided review, durable task context, bounded plans, explicit handoffs, checkpoint/resume and safe restart. |
 | Uncertainty | The need is demonstrated; the minimum sufficient implementation is not. |
 | Publication rule | The full workflow platform is not a first-publication prerequisite. Only a concrete security, legal, correctness or exposure failure may promote one of its slices into that critical path. |
-| Active delivery | Run B2/P1 on the protected public baseline in [Issue #24](https://github.com/ktogias/gnostoa/issues/24): one validated task envelope and current projection. |
+| Active delivery | B2/P1 completed 2026-08-16 at commit 7390976 ([PR #25–26](https://github.com/ktogias/gnostoa/pull/26)): delivered one validated task envelope and deterministic current projection with stale-state detection. P2 reconciles stale current-state and resume surfaces left behind by P1 completion ([Issue #24](https://github.com/ktogias/gnostoa/issues/24)). |
 | Human-control boundary | A human gate is meaningful only when the owner can explain the bounded delta, consequence and uncertainty and can pause, reject or correct it. |
 | Attention budget | Declare and measure the owner-facing review surface; non-understanding yields clarification, splitting or `blocked`, never ceremonial approval. |
-| Current experiment | Issue #24 selects and dogfoods the smallest useful enabling slice. |
-| First candidate slice | A validated task envelope, one current projection, explicit handoff, checkpoint/resume and stale-state detection; no database, general event-sourcing platform or interactive wizard. |
+| Current experiment | P2 stale-state reconciliation: refresh Decision 0016 resume card, docs/roadmap.md Now table, docs/status.md Current direction and assess Issue 24 roadmap:next label against reconciled state. |
+| First candidate slice | A validated task envelope, one current projection, explicit handoff, checkpoint/resume and stale-state detection; no database, general event-sourcing platform or interactive wizard. P1 delivered this contract; P2 measures its practical recovery from interruption and reconciles supporting documentation. |
 | WIP policy | Permit one active delivery item and one active enabling slice. Queue other findings unless they prove an immediate safety or correctness blocker. |
 | Resume route | Read this card, the current roadmap projection and the active Issue/PR body. Load the B1 ledger only for a named unresolved question. |
 
