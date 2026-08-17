@@ -241,7 +241,7 @@ human approval prompts and pulls provider-specific authority into the portable
 core — the two costs Decision 0016 and the reverse-centaur failure mode single
 out.
 
-## Owner selection
+## Alternatives presented for selection
 
 Three alternatives. Each meets the admission bar, or is stated as not meeting it.
 
@@ -316,6 +316,99 @@ relation here, which contradicted this section; the conservative resolution is
 CF-11 was **schema-valid and green on every automated route, and human semantic
 review was the only demonstrated detector.** No alternative above claims to
 address it, and this Work Item does not invent one.
+
+## Owner selection
+
+### Exact disposition
+
+    A. SELECT C4-v0 FOR A SEPARATELY ADMITTED BOUNDED EXPERIMENT.
+
+Selected: a **deterministic, read-only `READY` predicate over existing
+evidence**. Primary failed property:
+
+> **Readiness can be asserted while required preconditions are false.**
+
+The selection is **experimental**. It is **not** acceptance of C4 as the final
+architecture, not evidence that C4 works, not activation of implementation, not
+authorization to create product code, and not authorization to build a state
+machine or workflow engine.
+
+Every C4 relation in the matrix above remains **[P]** or **[X]**. Owner
+preference is not empirical evidence, and no evidence strength was promoted.
+**The matrix still contains exactly one [G] relation, and it belongs to C2, not
+to the selected candidate.**
+
+### Rationale
+
+1. **CF-8 is the most recurrent reconstructed control failure**: P1 recorded 5
+   false-ready outcomes and P2 at least 3 reconstructable ones.
+2. C4-v0 permits a strong falsifiable experiment **without first introducing** new
+   canonical workflow state, state advancement, external-effect mediation,
+   provider authority abstractions, or additional human approval prompts.
+3. Its useful claim is narrow: `READY` becomes a **computed fail-closed result
+   over existing evidence** rather than an agent assertion.
+4. **C2 remains important** and holds the only currently demonstrated [G]
+   relation, but its strongest *observed* role is effect observation and
+   reconciliation after or around ambiguous effects, rather than prevention of
+   the recurrent false-ready property.
+5. **C3 remains the smaller precursor**, but its expected impact is narrower and
+   may not move a meaningful measured workflow outcome.
+
+This rationale makes no aggregate-coverage claim and does not assert that C4
+"covers the most failures".
+
+### C4-v0 boundary
+
+If separately admitted, the primitive must:
+
+- create no canonical state;
+- modify no canonical state;
+- advance no workflow state;
+- perform no external or provider effect;
+- grant no capability or authority;
+- request no additional human approval;
+- inspect only explicitly declared existing evidence;
+- return `READY` only when all declared preconditions hold;
+- otherwise return one bounded fail-closed blocking result.
+
+It must **not** become a general state machine, workflow engine, capability
+broker, provider adapter layer or orchestration framework.
+
+### Future falsifiable experiment contract — recorded, not implemented
+
+**Historical replay:** all **5** recorded P1 false-ready states must be refused,
+and all **3** reconstructable P2 false-ready states must be refused.
+
+**Positive controls:** genuinely ready historical and current states must remain
+`READY`.
+
+**Measure:** false-ready rejection; false-block rate; implementation size;
+maintenance surface; additional foreground evidence; human-attention cost.
+
+**Stop, remove or redesign rule:** if those outcomes cannot be achieved with one
+small deterministic read-only primitive over existing evidence, **simplify,
+redesign or reject C4-v0 rather than expanding it into a broader workflow
+system.**
+
+No replay fixtures or implementation code exist in this Work Item.
+
+### Status of the other alternatives
+
+The selection of C4-v0 does not erase or reject the other research findings.
+
+| Candidate | Status |
+|---|---|
+| C2 post-effect read-back and reconciliation | **RECORDED / NOT SELECTED / NOT ACTIVATED** |
+| C3 computed state advancement | **RECORDED / NOT SELECTED / NOT ACTIVATED** |
+| C1, C5, C6, C7 and candidate directions A–F | **RECORDED / NOT ACTIVATED** |
+| CF-11 | still `UNKNOWN` against every candidate; no mechanism proposed |
+
+### Implementation admission remains separate
+
+This Work Item records a selection. **Implementation of C4-v0 is not admitted.**
+No implementation Work Item exists, Decision 0016 increment 2 is not activated,
+and the next implementation-admission decision is a separate owner effect after
+this Work Item is integrated and closed.
 
 ## Uncertainties
 
