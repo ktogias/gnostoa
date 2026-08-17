@@ -214,6 +214,29 @@ can reject a state whose evidence is uniformly green and whose defect is real.
 This is the same ceiling B2/P2 recorded from the other side: green checks are a
 necessary and repeatedly insufficient condition for readiness.
 
+## Finding 5: READY is reachable, and the predicate rewards declaring less
+
+This experiment's own first candidate, `95525baa9e9afd428e398482f142fd93b822e140`,
+evaluates to **READY** — all four preconditions decided satisfied. It is the
+first candidate in this project's history to reach that verdict.
+
+It reaches it for one reason: its envelope declares three `file-sha256`
+dependencies and no provider-side identity. Nothing about the work is more
+verified than P1's or P2's was. The predicate simply had less to be undecided
+about.
+
+That is an adverse incentive, and it is inherent to fail-closed evaluation over
+*declared* identities: **declaring fewer dependencies makes READY easier to
+obtain.** An envelope that honestly declares the Issue body it depends on is
+punished relative to one that omits it. The experiment does not resolve this. Any
+future version of this control would have to reckon with it, because the cheapest
+way to satisfy the predicate is to declare less rather than to verify more.
+
+The verdict also does not mean the candidate is fit to accept. READY here means
+four mechanical preconditions hold. Whether the experiment was worth running, and
+whether its result is sound, is exactly the semantic judgement the predicate
+cannot make — which is the same boundary B2/P2 recorded.
+
 ## Cost
 
 | Measurement | Value |
@@ -257,6 +280,8 @@ and one declaring dependency identities that do not match the files it names.
 - Not that the experiment is admitted, integrated, reviewed or accepted. This
   record is a candidate.
 - Not that anything here changes what adopting projects inherit.
+- Not that this candidate's own READY verdict is evidence the experiment
+  succeeded, or that the candidate should be accepted.
 
 ## Uncertainties
 
@@ -267,6 +292,9 @@ and one declaring dependency identities that do not match the files it names.
   all, or whether that is an accepted consequence of squash-merging.
 - Whether 3 of 8 coverage justifies keeping 677 lines of self-hosted control, or
   whether the two worst rejected states are better addressed some other way.
+- Whether the incentive in Finding 5 — declaring fewer identities makes READY
+  cheaper — can be removed at all without making declaration mandatory, which
+  would be an envelope schema change and therefore public surface.
 - Whether the two evidence classes that do not exist — gate receipts bound to a
   candidate, and measurements bound to their subject — are worth creating, which
   is a much larger question than this experiment.

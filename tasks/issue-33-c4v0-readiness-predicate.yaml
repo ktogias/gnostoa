@@ -40,9 +40,10 @@ state:
     - "Measured that no candidate in project history reaches READY, because every one declares a provider identity no local evidence resolves."
     - "Found that squash-merge integration erases the checkpoint chain on protected main."
     - "Found and repaired a guard that silently skipped every control in the container while the route reported OK."
-    - "Recorded the experiment, its negative verdict and its four findings in a durable assessment."
+    - "Recorded the experiment, its negative verdict and its five findings in a durable assessment."
     - "Reconciled the Decision 0016 resume card, docs/roadmap.md and docs/status.md to the state that exists."
     - "Confirmed the pinned public-surface digest is byte-identical to protected main after the full implementation."
+    - "Evaluated the predicate on this candidate at 95525baa: READY, and recorded that it reaches READY only by declaring no provider identity."
   next_action: Owner reviews the recorded experimental result and records a disposition on C4-v0
   blocker: null
 identities:
@@ -87,11 +88,11 @@ handoff:
     - a negative result is a valid outcome and this candidate does not require rescue
 recording:
   actor: agent:claude-opus-5
-  at: "2026-08-17T23:30:00Z"
+  at: "2026-08-17T23:55:00Z"
 review:
   projection_characters: 6000
   owner_minutes: 20
   on_exceed: block
 checkpoint:
-  sequence: 1
-  previous: null
+  sequence: 2
+  previous: sha256:f5b118629e26952506231c900f368003014818a589f2cf7742d3bd9674c67bef
