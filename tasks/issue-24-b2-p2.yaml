@@ -30,12 +30,15 @@ state:
     - Reconciled Decision 0016 resume card rows (Active delivery, Current experiment, First candidate slice).
     - Reconciled docs/roadmap.md Now table and Next section to reflect P1 completion.
     - Reconciled docs/status.md Current direction section to describe P2 active state.
-    - Assessed Issue #24 label; found contradiction between roadmap:next label and P2 active status.
+    - "Assessed Issue #24 label; found contradiction between roadmap:next label and P2 active status."
     - "Authorization failure found in pre-reconciliation session: Unauthorized label mutation roadmap:next→roadmap:now (detected and corrected pre-review; PR #27 evidence)."
     - "Authorization failure found in pre-reconciliation session: Unauthorized PR #27 creation (detected and corrected pre-review; closed and preserved as provider evidence)."
-    - Owner authorized Issue #24 label update to roadmap:now; mutation executed and verified by provider read-back.
+    - "Owner authorized Issue #24 label update to roadmap:now; mutation executed and verified by provider read-back."
     - Amended primary commit message to document actual effects and violations.
-  next_action: Owner performs time-bounded review of current projection and branch reconciliation.
+    - "Recorded the complete multidimensional P2 findings in a durable assessment; owner review has not started."
+    - "Corrected two wrong declared dependency identities and three silently truncated durable values."
+    - "Confirmed the required suite is red since the reconciliation commit; not fixed in this evidence-only step."
+  next_action: Owner conducts the time-bounded semantic review of the recorded P2 findings; the required suite is red and the branch is not merge-ready.
   blocker: null
 identities:
   base:
@@ -44,10 +47,10 @@ identities:
   dependencies:
     - id: decision-0016
       kind: file-sha256
-      value: sha256:2ee58de9f91f2bdd23c56da2389bd7130072a142ba43080c8bbca710dbd1896c
+      value: sha256:db6b04e8b1b2d65f29c414870e9b7151c36c3d76e868b42dd87e5c2961dccaa6
     - id: issue-24
       kind: github-issue-body-utf8-sha256-v1
-      value: sha256:d6a03ec1a5627e4877b20560b2af49708d55a78025930a5ef8944b97a546a5ba
+      value: sha256:5513bc4e43e8b12aa76d7a3a99a067d5c083a13f8c3ae23b137aa94a22f07af8
 references:
   decisions:
     - id: decision-0016
@@ -61,15 +64,19 @@ references:
       resource: tasks/issue-24-b2-p1.yaml
     - id: b2-p2-unauthorized-effects-evidence
       resource: https://github.com/ktogias/gnostoa/pull/27
+    - id: b2-p2-findings
+      resource: knowledge/assessments/b2-p2-fresh-session-and-effect-authority-findings.md
 handoff:
   actor: team:gnostoa-maintainers
   read:
     - this envelope and its regenerated current projection
     - the three reconciled source files at commit 96b2f8c
-    - PR #27 for provider evidence of unauthorized effects and corrections
+    - "PR #27 for provider evidence of unauthorized effects and corrections"
     - linked detail only for an unresolved question
   verify:
-    - the reconciliation work was completed within declared scope and budget (64 lines)
+    - the durable findings record separates orientation success from effect-authority failure
+    - two required tests fail at this head and are recorded, not fixed, in this evidence-only step
+    - the reconciliation work was completed within declared scope and budget
     - fresh-session orientation and file reconciliation pass
     - authorization compliance failed on 2 unauthorized mutations pre-reconciliation
     - all violations were corrected before review
@@ -83,5 +90,5 @@ review:
   owner_minutes: 20
   on_exceed: block
 checkpoint:
-  sequence: 2
-  previous: sha256:0b4a5f1609a81b6575420f6dc1deb1ce1b2c713dfccc7b11a598112d188ec683
+  sequence: 3
+  previous: sha256:831e662af3ad450d4a7fc92fc4a0db9c1b5f6ba50a2d2e67345a1110f30307ec
