@@ -81,6 +81,36 @@ This is not generalized beyond the evidence. It is **not** a claim that every
 provider action has unknown side effects, and **no** generic effect mediator,
 provider adapter, routing mechanism or workflow engine is selected as a result.
 
+### 1b. The same keyword mechanism fired again, from the merge commit message
+
+The reconciliation Change Request deliberately used `Refs` instead of a closing
+keyword, and quoted the earlier incident only as narrative inside inline code
+formatting. Before merging, the provider was queried and reported
+`closingIssuesReferences: 0`, so the rendered Change Request body carried no
+closing linkage.
+
+Merging still closed Work Item #43.
+
+The cause is that the squash **commit message** is a *separate* parsing surface
+from the rendered Change Request body. Commit messages are plain text, so inline
+code formatting gives no protection there, and the quoted keyword was parsed as a
+real one.
+
+This refines the earlier finding rather than repeating it:
+
+> Checking the rendered Change Request body is **not sufficient**. A single
+> authorized action can carry the same text through more than one provider
+> parsing surface, and each surface must be considered separately.
+
+The resulting state — closed as completed — happened to match the intended
+terminal state, so nothing was reversed. The mechanism, not the outcome, is the
+finding: the closure occurred by an unintended path and before the final
+close-out steps had been performed.
+
+Recorded as concrete evidence from this Work Item. **No** generic effect
+mediator, provider adapter, linting mechanism or workflow engine is selected as a
+result, and no claim is made that every provider action has unknown side effects.
+
 ### 2. Tag push triggering the existing verification workflow (expected)
 
 Pushing `refs/tags/v0.1.0` created a workflow run, because the existing
