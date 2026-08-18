@@ -12,18 +12,38 @@ dependency.
 
 ## Now
 
-No successor B2 experiment or mitigation is selected, and none is nominated here.
+The bounded C4-v0 experiment
+([#33](https://github.com/ktogias/gnostoa/issues/33)) has **completed with a
+negative result**, and the owner has **rejected C4-v0 as a readiness predicate**.
+The strict hypothesis was refuted: 3 of 8 reconstructed false-ready states were
+mechanically rejected, none was wrongly called ready, and all 4 owner-accepted
+positive controls failed to reach READY. **Provider state remains authoritative
+for #33's lifecycle**; this page does not assert or predict it.
+
+One narrower result is retained as evidence: deterministic consistency checks
+over existing evidence can detect some important state and identity defects
+before human review. It is **recorded and not activated**, and it is not a
+replacement control. The rejected implementation is not retained;
+[Decision 0017](../knowledge/decisions/0017-scope-the-readiness-predicate-experiment-to-gnostoa-self-hosting.md),
+which kept the whole experiment outside the public inherited surface, remains in
+force.
+
+**No successor control experiment or mitigation is selected.**
 
 B2/P1 and B2/P2 are both complete. [Issue #24](https://github.com/ktogias/gnostoa/issues/24)
 was integrated through [PR #28](https://github.com/ktogias/gnostoa/pull/28) and
-closed as completed; its integration and closure are done, not pending.
+closed as completed; its integration and closure are done, not pending. The
+post-effect reconciliation ([#29](https://github.com/ktogias/gnostoa/issues/29),
+[PR #30](https://github.com/ktogias/gnostoa/pull/30)) and the control-selection
+research ([#31](https://github.com/ktogias/gnostoa/issues/31),
+[PR #32](https://github.com/ktogias/gnostoa/pull/32)) are likewise closed.
+**Provider state is authoritative for every Work Item lifecycle**; this page
+asserts none.
 
-One bounded repair is tracked:
-[#29 — post-effect current-state drift](https://github.com/ktogias/gnostoa/issues/29),
-reconciling projections left one provider effect behind by that integration.
-**Provider state is authoritative for whether #29 remains open and current**;
-this page does not assert its lifecycle. An active repair is not a successor
-experiment, and #29 selects no mitigation.
+Selecting a control was not admitting an implementation, and the measured result
+was not success. A negative result is a valid outcome, and #33 is not reopened,
+rescued or expanded because of it. Nothing here promotes anything to the public
+inherited surface, which would require a separate owner Decision.
 
 This static projection cannot atomically observe its own future merge or
 Work Item closure. It therefore describes the state that exists when it is
@@ -41,11 +61,11 @@ site or hosted service was released by that effect.
 
 ## Next
 
-B2/P1 completed 2026-08-16 ([PR #25–26](https://github.com/ktogias/gnostoa/pull/26)) with one validated task envelope and deterministic current projection delivered. B2/P2 completed 2026-08-17 under the closed [B2 experiment Work Item](https://github.com/ktogias/gnostoa/issues/24): a fresh actor resumed from the envelope alone, and the owner accepted the result while narrowing the product claim. That Work Item is the completed evidence base, not the container for later slices. Its named failed property is that critical workflow constraints are advisory rather than mechanically enforced. B2 reduced foreground evidence and provider-comment amplification, and orientation and final semantic review fit their bounded budgets in the measured cases; a total owner-effort improvement over B1 was **not** established. That framing is recorded, not activated; no later B2 slice is selected yet. Once B2 is comprehensible, B3 tests transfer into an independently owned project. See [Decision 0016](../knowledge/decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md).
+B2/P1 completed 2026-08-16 ([PR #25–26](https://github.com/ktogias/gnostoa/pull/26)) with one validated task envelope and deterministic current projection delivered. B2/P2 completed 2026-08-17 under the closed [B2 experiment Work Item](https://github.com/ktogias/gnostoa/issues/24): a fresh actor resumed from the envelope alone, and the owner accepted the result while narrowing the product claim. That Work Item is the completed evidence base, not the container for later slices. Its named failed property is that critical workflow constraints are advisory rather than mechanically enforced. B2 reduced foreground evidence and provider-comment amplification, and orientation and final semantic review fit their bounded budgets in the measured cases; a total owner-effort improvement over B1 was **not** established. That framing is recorded, not activated. C4-v0 was experimented with under [#33](https://github.com/ktogias/gnostoa/issues/33) and rejected as a readiness predicate; no successor control is selected. Once B2 is comprehensible, B3 tests transfer into an independently owned project. See [Decision 0016](../knowledge/decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md).
 
 | Work Items | Problem addressed | Completion signal | Non-goal |
 |---|---|---|---|
-| Selected experiment, implementation not admitted | Critical workflow constraints remain advisory rather than mechanically enforced. The most recurrent observed path is readiness asserted while required preconditions are false. | **C4-v0 has been selected for a separately admitted bounded experiment**: a deterministic, read-only `READY` predicate over existing evidence. **No implementation Work Item has yet been admitted.** Admission of implementation is a separate owner effect, and the experiment succeeds only if it refuses the recorded false-ready states without blocking genuinely ready ones. | Treating selection as activation, expanding C4-v0 into a state machine, workflow engine, capability broker or provider adapter layer, or nominating further controls before the experiment reports. |
+| [#33](https://github.com/ktogias/gnostoa/issues/33) | Critical workflow constraints remain advisory rather than mechanically enforced. The most recurrent observed path is readiness asserted while required preconditions are false. | **Reported.** The C4-v0 experiment ran under [Decision 0017](../knowledge/decisions/0017-scope-the-readiness-predicate-experiment-to-gnostoa-self-hosting.md) and its strict hypothesis was refuted; the owner accepted the experimental result and **rejected C4-v0 as a readiness predicate**. Retained as evidence only: deterministic consistency checks over existing evidence can detect some state and identity defects before human review — recorded, not activated. The failed property itself is unmitigated and no successor is selected. | Treating an experimental result as adoption, promoting C4-v0 to the public inherited surface without a separate owner Decision, expanding it into a state machine, workflow engine, capability broker or provider adapter layer, or nominating further controls before the experiment reports. |
 | [#6](https://github.com/ktogias/gnostoa/issues/6), [#9](https://github.com/ktogias/gnostoa/issues/9), [#13](https://github.com/ktogias/gnostoa/issues/13) | Admission, effect gating, context selection and canonical-language handling need bounded contracts only where B2 demonstrates actual need. | B2 identifies a concrete repeated failure or dependency and a smallest enforceable contract. | Making every proposed contract an implementation prerequisite for B2. |
 | [#7](https://github.com/ktogias/gnostoa/issues/7) | External evaluation needs a safe, reproducible workspace boundary. | One anonymous adoption fixture runs with declared ownership, hermetic inputs and no host-data leakage. | Claiming broad external adoption or production isolation from a single fixture. |
 
@@ -67,8 +87,10 @@ B1 design and dogfood ledger. Its 342 comments remain inspectable evidence of
 both defect discovery and excessive amplification; the broad guided-review
 platform is deferred to Research and is not the contributor interface or an
 active publication prerequisite. The capability direction remains planned by
-[Decision 0016](../knowledge/decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md),
-and Issue #24 is the bounded implementation route.
+[Decision 0016](../knowledge/decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md).
+Issue #24 is the completed B2 evidence base, and [Issue #33](https://github.com/ktogias/gnostoa/issues/33)
+is the completed C4-v0 experiment whose control was rejected. No bounded route is
+currently selected.
 
 The work in PR #4 is retained here as an exact research input for #3. It is not
 discarded, accepted or part of the first-publication baseline while its review

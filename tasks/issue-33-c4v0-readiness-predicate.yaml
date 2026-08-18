@@ -1,0 +1,100 @@
+schema_version: "0.1"
+task:
+  id: GNOSTOA/B2/C4-v0
+  objective: >-
+    Test whether READY can become a deterministic, fail-closed, read-only result
+    over existing evidence that rejects the recorded false-ready states without
+    unacceptable false blocks, maintenance surface or human-attention cost.
+  owner: team:gnostoa-maintainers
+  change_class: normal
+scope:
+  included:
+    - record the owner boundary Decision for C4-v0
+    - reconstruct the false-ready and owner-accepted states as replayable controls
+    - derive the minimum precondition set and implement the predicate under tests/
+    - replay every control, measure the result and record it in a durable assessment
+    - reconcile the stale current-state projections
+  excluded:
+    - any change to the public inherited surface, including tools, schemas, policy and consumer CI
+    - promotion of C4-v0 to a supported tool, inherited schema, guardrail or adopter contract
+    - Decision 0016 increment 2 activation, and implementation of controls C2 or C3
+    - task-envelope schema redesign, including a locally recorded provider witness
+    - producing new verification-receipt or measurement-binding evidence classes
+    - opening a Change Request or integrating the candidate
+state:
+  status: complete
+  completed:
+    - "Bound the base at protected main 4c84c0bb; Work Items 24, 29 and 31 closed, no open Change Request."
+    - "Verified that tests/, tasks/, knowledge/ and docs/ lie outside the pinned public-surface digest."
+    - "Opened Work Item 33 as the sole roadmap:now item."
+    - "Recorded Decision 0017 placing C4-v0 in Gnostoa self-hosting, outside the public inherited surface."
+    - "Reclassified the diff as normal: no policy, profile, schema, stable-knowledge or public-contract change."
+    - "Satisfied every admission requirement for normal before implementing."
+    - "Reconstructed the five B2/P1 and three B2/P2 false-ready states as replayable commits."
+    - "Reconstructed four owner-accepted candidates as positive controls."
+    - "Derived four preconditions, each from a control that violated it."
+    - "Excluded a fifth precondition that would match prose without adding coverage."
+    - "Established RED evidence before implementation: twelve control errors, no predicate present."
+    - "Implemented the three-valued fail-closed predicate under tests/."
+    - "Replayed twelve controls: three of eight false-ready states were BLOCKED, none of eight was called READY, and all four owner-accepted positive controls were INDETERMINATE and therefore failed to reach READY under the strict experimental contract."
+    - "Measured that no candidate in project history reaches READY: each declares an unresolvable provider identity."
+    - "Found that squash-merge integration erases the checkpoint chain on main."
+    - "Repaired a guard that silently skipped every control while the route reported OK."
+    - "Recorded the experiment, its verdict and five findings in a durable assessment."
+    - "Reconciled the Decision 0016 resume card, docs/roadmap.md and docs/status.md."
+    - "Confirmed the public-surface digest is byte-identical to protected main."
+    - "Evaluated the predicate on candidate 95525baa: READY, only by declaring no provider identity."
+  next_action: null
+  blocker: null
+identities:
+  base:
+    kind: git-commit
+    value: git:4c84c0bb4161020b8dbfaecc77f524ef1a0e870f
+  dependencies:
+    - id: decision-0016
+      kind: file-sha256
+      value: sha256:a36b0fbb7892c5ab85700061bdcdc477094ec9323a3abad506c32938a4bf83c1
+    - id: decision-0017
+      kind: file-sha256
+      value: sha256:3b91ada0a417e411133cc560eed43a0dc8112887a86d0497f6ea335f1f7a97f5
+    - id: control-selection-map
+      kind: file-sha256
+      value: sha256:2cbbc771922744db0d20a82a852296fd9f717ea3464ba56fab84b4fb2c5d83fe
+references:
+  decisions:
+    - id: decision-0016
+      resource: knowledge/decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md
+    - id: decision-0017
+      resource: knowledge/decisions/0017-scope-the-readiness-predicate-experiment-to-gnostoa-self-hosting.md
+  evidence:
+    - id: issue-33
+      resource: https://github.com/ktogias/gnostoa/issues/33
+    - id: control-selection-map
+      resource: knowledge/assessments/b2-control-selection-and-failure-path-map.md
+    - id: c4v0-experiment
+      resource: knowledge/assessments/b2-c4v0-readiness-predicate-experiment.md
+    - id: b2-p1-measurements
+      resource: knowledge/assessments/b2-p1-streamlined-self-hosting-measurements.md
+    - id: b2-p2-findings
+      resource: knowledge/assessments/b2-p2-fresh-session-and-effect-authority-findings.md
+handoff:
+  actor: no active actor; B2/C4-v0 is complete
+  read:
+    - "the owner disposition in the C4-v0 experiment assessment: the strict hypothesis is refuted, accept the experimental result, reject C4-v0 as a READY predicate"
+    - "the seven preserved negative findings, and the narrower consistency-checking result: recorded, not activated"
+    - "state.completed was already at its 20-item maximum, so the disposition is held here and in the assessment rather than appended"
+    - Decision 0017, which kept the experiment outside the public inherited surface
+  verify:
+    - "no successor control experiment or mitigation is selected or activated, and Decision 0016 increment 2 remains not activated"
+    - "the rejected predicate and replay controls are absent; the experiment stays reconstructable from candidate 4acb3578"
+    - "the public-surface digest is unchanged and the P1 and P2 envelopes are byte-identical"
+recording:
+  actor: agent:claude-opus-5
+  at: "2026-08-18T01:40:00Z"
+review:
+  projection_characters: 6000
+  owner_minutes: 20
+  on_exceed: block
+checkpoint:
+  sequence: 5
+  previous: sha256:fc57f844b5d85b416885cf9f05433758a71991faa78823ab9a1b8a128f216407
