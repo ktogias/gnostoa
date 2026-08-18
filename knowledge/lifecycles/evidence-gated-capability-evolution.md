@@ -158,14 +158,46 @@ rejected them, and counting them as coverable would have been false coverage.
 
 ### 2. Does an existing deterministic mechanism already check the property?
 
-If yes, **prefer reuse over a new primitive**. Do not create a second mechanism
-because the existing one was not routed correctly.
+If **no**, only then investigate whether a smaller mechanism is justified.
+
+If **yes**, **prefer reuse over a new primitive** — but do **not** assume that
+having a checker means its required observations are authoritatively obtainable.
+Do not create a second mechanism because the existing one was not routed
+correctly.
 
 *Why recorded:* during the #33 close-out a stale declared Decision digest passed
-ordinary task validation, and the existing projection recomputation caught it the
-moment it was invoked. Nothing was missing except the invocation.
+ordinary task validation, and the existing deterministic recomputation detected
+the mismatch **once it was supplied the correct observation**. For that specific
+incident no new primitive was required.
 
-### 3. Is the existing mechanism reliably executed at the relevant boundary?
+*Later qualification:* the #39 fresh-agent experiment showed that reusable,
+unavoidable checking could **not** be reduced to invocation alone. Authoritative
+observation acquisition and binding, and the review-boundary enforcement point,
+were not already defined. Reuse is still the first thing to try — but "a checker
+exists" does not mean its inputs are obtainable.
+
+### 3. Are the checker's required observations authoritatively acquired and bound?
+
+Determine what observation the checker requires; where that value comes from;
+what contract makes that source authoritative; what subject or candidate the
+observation is bound to; and whether the derivation is already defined or would
+create new semantics.
+
+If this is unresolved, classify an **OBSERVATION ACQUISITION / BINDING GAP**. Do
+not call it merely a routing problem, and do not invent a solution inside the
+classification step.
+
+*Why recorded:* the #39 fresh-agent entrance experiment found
+`identities.dependencies` and `references.*` structurally independent, no contract
+binding dependency ID to reference to observation source, and an existing checker
+that consumes caller-supplied observations rather than deriving them. Deriving
+them automatically would have been new semantics, not routing — which is what
+refuted the routing-only precursor before any implementation.
+
+### 4. Is the mechanism reliably executed at the relevant boundary?
+
+Ask this **only after** its required observations are actually available and
+bound.
 
 If no, investigate **routing, invocation and admission** before inventing new
 evidence.
@@ -181,20 +213,20 @@ insufficient for a change touching the CLI. GitHub's protected-branch semantics
 likewise accept a skipped required check as satisfying it, so this is a property
 of the standard mechanism, not a local defect.
 
-### 4. Only if evidence is genuinely missing, consider a new evidence primitive
+### 5. Only if evidence or observation capability is genuinely missing, consider a new evidence primitive
 
-Before creating one, establish: which real observed undecidability it changes;
-how the evidence is acquired; how it is bound to its subject or candidate;
-whether it survives integration; public-surface impact; human-attention cost;
-evidence-amplification risk; and its removal condition.
+Before selecting one, establish: which observed undecidability it changes;
+acquisition semantics; subject or candidate binding; integration survival;
+public-surface impact; human-attention cost; evidence-amplification risk;
+adverse incentives; and its removal condition.
 
-**Do not create evidence infrastructure merely because a rejected experiment
-asked a question the current system could not answer.**
+**Do not create a primitive merely because a rejected experiment needed an input
+the current contract does not define.**
 
 *Why recorded:* the post-C4 research compared three candidate primitives, found
 none demonstrated at its own boundary, and the owner selected none of them.
 
-### 5. Compose larger controls only after smaller mechanics demonstrate value
+### 6. Compose larger controls only after smaller mechanics demonstrate value
 
 Do not jump from a prose rule to a readiness gate, capability broker, state
 machine, workflow engine or evidence platform. Require measured need.
@@ -202,7 +234,7 @@ machine, workflow engine or evidence platform. Require measured need.
 *Why recorded:* C4-v0 went from a named failed property to a readiness predicate
 in one step and was refuted; its implementation was removed rather than retained.
 
-### 6. Preserve bounded human semantic judgement for oracle limits
+### 7. Preserve bounded human semantic judgement for oracle limits
 
 Mechanical evidence cannot prove a fact that no available oracle can establish.
 **Human semantic review is not a temporary defect the architecture must
@@ -210,20 +242,44 @@ eliminate.** For semantic, current-truth and unknown-defect classes, preserve a
 bounded human decision boundary.
 
 Human semantic judgement remains necessary for oracle-limit and semantic classes.
-Other failures may be detected by human review, by direct inspection, or by a
-deterministic mechanism once the appropriate mechanism actually runs.
+**Humans are not the sole detector of every non-oracle failure:** direct
+inspection and deterministic mechanisms may detect other classes once the proper
+observations exist and the mechanism is actually invoked.
 
-Keep three classes apart — collapsing them is how a routing problem gets
-misdiagnosed as a missing primitive:
+Keep **four** classes apart. Collapsing any of them is how a routing problem gets
+misdiagnosed as a missing primitive — or how an undefined observation gets
+misdiagnosed as a routing problem.
 
-| | Class | What it means | Right response |
-|---|---|---|---|
-| **A** | fact and evidence exist, and an existing deterministic checker can establish it | the mechanism is available | run it; prefer reuse |
-| **B** | the fact may be observable, but the correct mechanism or its routing did not execute | a routing or invocation problem | fix routing before inventing evidence |
-| **C** | no available oracle can establish the fact | an **oracle limit** | bounded human judgement; do not simulate certainty |
+**A — DECIDABLE WITH BOUND EVIDENCE.** The fact is observable, the required
+observation is authoritatively acquired and bound, and an existing deterministic
+mechanism can decide the property.
+→ *Execute or reuse the existing mechanism. Do not invent another primitive.*
 
-**An existing mechanical mechanism that was not routed is fundamentally different
-from an oracle limit.**
+**B — OBSERVATION ACQUISITION / BINDING GAP.** The fact is in principle
+observable and a deterministic checker may already exist, but the checker
+requires an observation whose authoritative source, derivation or binding to the
+subject or candidate is not defined.
+→ *Classify the observation and binding boundary **before** discussing routing.
+Investigate whether an existing authoritative contract already supplies the
+observation.* Do **not** infer `dependency ID → reference ID → resource →
+observation source` merely because identifiers happen to match, and do **not**
+conclude that a new primitive or schema is needed. **This class names a missing
+boundary; it does not select its solution.**
+
+**C — ROUTING / ENFORCEMENT GAP.** The required observation is already
+authoritatively available and bound, and an existing mechanism can decide the
+property, but the relevant review, effect or admission boundary does not reliably
+invoke it.
+→ *Investigate the smallest reliable routing or enforcement point.* A test that
+invokes the checker is not automatically the real boundary; a green route does
+not prove the intended mechanism executed; skipped, empty or bypassed invocation
+is not execution.
+
+**D — ORACLE LIMIT.** No available observation or oracle can establish the fact.
+→ *Preserve bounded human semantic judgement. Do not simulate mechanical
+certainty by adding receipts, bindings or routing.*
+
+> **observation-binding gap ≠ routing gap ≠ oracle limit.**
 
 *Why recorded, by class:* the #33 stale declared Decision digest was class A/B —
 detected by the **existing deterministic dependency recomputation** once that
@@ -284,10 +340,25 @@ promoting this record to `stable` would be a distinct human verification choice
 under the repository's own rules, and has not been made. The record stays `draft`
 while the semantic method is owner-adopted.
 
-## Next falsifiable dogfood check
+## Dogfood status
 
-Canonicalization is a **claim**, not a result. It is falsified or supported by
-one fresh-agent continuation test, to be run **after** this record is integrated.
+Canonicalization was recorded as a **claim**, not a result. The first fresh-agent
+continuation test has now been run; see
+[Fresh-agent dogfood and routing-precursor result](../assessments/fresh-agent-dogfood-and-routing-precursor-result.md)
+and [Decision 0019](../decisions/0019-accept-fresh-agent-dogfood-support-and-reject-the-routing-precursor.md).
+
+Bounded outcome: the canonical route **supports** repository discovery, bounded
+orientation, reconstruction of selection versus admission, entrance-gate
+discovery and **stop-before-implementation** behaviour. It does **not** establish
+autonomous semantic correctness — bounded owner semantic review remained
+materially necessary, correcting surface classification, historical-control
+interpretation and routing-versus-new-semantics confusion. The routing precursor
+that the test was carrying was **refuted at its entrance gate before
+implementation**. Both agents operated on Gnostoa itself, so nothing there
+establishes transfer to an independently owned project.
+
+The method remains `draft` and Gnostoa-self only. The test specification below is
+retained as the standing shape of this check.
 
 **Setup.** A fresh agent receives only ordinary orientation: root `AGENTS.md`,
 repository `main`, the current roadmap, and the active precursor Work Item once

@@ -562,6 +562,16 @@ Exactly three. Nothing here is a recommendation.
   Most gaps have one or two reconstructable instances. EG-1 is the exception at
   12 of 12.
 
+## Later result
+
+A later fresh-agent entrance experiment refuted the **route-level**
+generalization that only routing was missing for a reliable reusable pre-review
+check. The **incident-level** EG-8 finding recorded above — that the existing
+deterministic mechanism caught that specific mismatch once supplied the
+observation — is unaffected and remains supported. Nothing above is rewritten;
+see
+[Fresh-agent dogfood and routing-precursor result](fresh-agent-dogfood-and-routing-precursor-result.md).
+
 ## Owner selection
 
 Recorded from the accountable maintainer's semantic review of research head
