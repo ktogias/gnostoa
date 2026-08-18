@@ -31,6 +31,7 @@ inherited, copied or loaded by adopting projects.
 - [Adopt evidence-gated capability evolution for Gnostoa self-governance](decisions/0018-adopt-evidence-gated-capability-evolution-for-gnostoa-self-governance.md)
 - [Accept fresh-agent dogfood support and reject the routing precursor](decisions/0019-accept-fresh-agent-dogfood-support-and-reject-the-routing-precursor.md)
 - [Establish v0.1.0 as the first source-only pre-stable release identity](decisions/0020-establish-v0-1-0-as-the-first-source-only-pre-stable-release-identity.md)
+- [Adopt the observed source-only release procedure](decisions/0021-adopt-the-observed-source-only-release-procedure-for-gnostoa-self-governance.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Verification precedes integration](requirements/verification-precedes-implementation.md)
@@ -57,6 +58,7 @@ inherited, copied or loaded by adopting projects.
 - [Maintain the toolkit](runbooks/maintain-the-kit.md)
 - [Prepare the first public repository publication](runbooks/prepare-first-publication.md)
 - [Review the publication baseline](runbooks/review-publication-baseline.md)
+- [Publish a source-only release](runbooks/publish-source-only-release.md)
 
 For project-independent operating guidance, route through
 [`guidance/index.md`](../guidance/index.md).
