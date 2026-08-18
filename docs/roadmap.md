@@ -30,6 +30,14 @@ force.
 
 **No successor control experiment or mitigation is selected.**
 
+Post-C4 evidence-boundary selection research is active
+([#35](https://github.com/ktogias/gnostoa/issues/35)): a bounded research and
+selection slice asking whether one small missing evidence primitive deserves a
+separately admitted experiment, after C4-v0 showed a readiness predicate cannot
+decide enough from existing evidence. It implements nothing and selects nothing;
+**no evidence-primitive experiment yet** is an explicitly valid outcome, and the
+selection is the owner's.
+
 B2/P1 and B2/P2 are both complete. [Issue #24](https://github.com/ktogias/gnostoa/issues/24)
 was integrated through [PR #28](https://github.com/ktogias/gnostoa/pull/28) and
 closed as completed; its integration and closure are done, not pending. The
@@ -65,6 +73,7 @@ B2/P1 completed 2026-08-16 ([PR #25–26](https://github.com/ktogias/gnostoa/pul
 
 | Work Items | Problem addressed | Completion signal | Non-goal |
 |---|---|---|---|
+| [#35](https://github.com/ktogias/gnostoa/issues/35) | The C4-v0 falsification left open whether any small missing evidence primitive would convert one materially important observed undecidability into reproducible, candidate-bound evidence. | Research and selection only. The slice reconstructs the evidence gaps C4-v0 exposed, separates them from fundamental oracle limits, compares at most three candidate primitives, and ends with at most three owner alternatives — one of which is selecting none. It authorizes no implementation. | Implementing any evidence primitive, changing schemas, tools, CI or public policy, adding provider adapters or receipts, nominating a successor before owner selection, or activating C2, C3 or Decision 0016 increment 2. |
 | [#33](https://github.com/ktogias/gnostoa/issues/33) | Critical workflow constraints remain advisory rather than mechanically enforced. The most recurrent observed path is readiness asserted while required preconditions are false. | **Reported.** The C4-v0 experiment ran under [Decision 0017](../knowledge/decisions/0017-scope-the-readiness-predicate-experiment-to-gnostoa-self-hosting.md) and its strict hypothesis was refuted; the owner accepted the experimental result and **rejected C4-v0 as a readiness predicate**. Retained as evidence only: deterministic consistency checks over existing evidence can detect some state and identity defects before human review — recorded, not activated. The failed property itself is unmitigated and no successor is selected. | Treating an experimental result as adoption, promoting C4-v0 to the public inherited surface without a separate owner Decision, expanding it into a state machine, workflow engine, capability broker or provider adapter layer, or nominating further controls before the experiment reports. |
 | [#6](https://github.com/ktogias/gnostoa/issues/6), [#9](https://github.com/ktogias/gnostoa/issues/9), [#13](https://github.com/ktogias/gnostoa/issues/13) | Admission, effect gating, context selection and canonical-language handling need bounded contracts only where B2 demonstrates actual need. | B2 identifies a concrete repeated failure or dependency and a smallest enforceable contract. | Making every proposed contract an implementation prerequisite for B2. |
 | [#7](https://github.com/ktogias/gnostoa/issues/7) | External evaluation needs a safe, reproducible workspace boundary. | One anonymous adoption fixture runs with declared ownership, hermetic inputs and no host-data leakage. | Claiming broad external adoption or production isolation from a single fixture. |

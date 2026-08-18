@@ -39,6 +39,7 @@ inherited, copied or loaded by adopting projects.
 - [B2/P2 fresh-session resume and effect-authority findings](assessments/b2-p2-fresh-session-and-effect-authority-findings.md)
 - [B2 control selection and failure-path map](assessments/b2-control-selection-and-failure-path-map.md)
 - [C4-v0 readiness predicate experiment](assessments/b2-c4v0-readiness-predicate-experiment.md)
+- [Post-C4 evidence boundary selection](assessments/post-c4-evidence-boundary-selection.md)
 - [First-publication provider audit snapshot](assessments/first-publication-provider-audit.md)
 - [First-publication reputation and direction assessment](assessments/first-publication-reputation-and-direction-assessment.md)
 - [Source-publication name-risk screening](assessments/gnostoa-source-name-screening.md)
