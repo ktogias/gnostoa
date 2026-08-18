@@ -9,14 +9,14 @@ task:
   change_class: normal
 scope:
   included:
-    - record the owner boundary Decision placing C4-v0 in Gnostoa self-hosting
-    - reconstruct the recorded false-ready states and owner-accepted states as replayable controls
-    - derive the minimum precondition set from the controls and implement the predicate under tests/
+    - record the owner boundary Decision for C4-v0
+    - reconstruct the false-ready and owner-accepted states as replayable controls
+    - derive the minimum precondition set and implement the predicate under tests/
     - replay every control, measure the result and record it in a durable assessment
-    - reconcile the current-state projections that the closed Work Items left stale
+    - reconcile the stale current-state projections
   excluded:
-    - any change to the public inherited surface, including tools, schemas, policy, guidance and consumer CI
-    - promotion of C4-v0 to a supported tool, inherited schema, generic guardrail or adopter contract
+    - any change to the public inherited surface, including tools, schemas, policy and consumer CI
+    - promotion of C4-v0 to a supported tool, inherited schema, guardrail or adopter contract
     - Decision 0016 increment 2 activation, and implementation of controls C2 or C3
     - task-envelope schema redesign, including a locally recorded provider witness
     - producing new verification-receipt or measurement-binding evidence classes
@@ -24,26 +24,26 @@ scope:
 state:
   status: complete
   completed:
-    - "Bound the base at protected main 4c84c0bb with Work Items 24, 29 and 31 closed and no open Change Request."
-    - "Verified empirically that tests/, tasks/, knowledge/ and docs/ lie outside the pinned public-surface digest."
-    - "Opened Work Item 33 as the sole roadmap:now item, scoped to one bounded experiment."
+    - "Bound the base at protected main 4c84c0bb; Work Items 24, 29 and 31 closed, no open Change Request."
+    - "Verified that tests/, tasks/, knowledge/ and docs/ lie outside the pinned public-surface digest."
+    - "Opened Work Item 33 as the sole roadmap:now item."
     - "Recorded Decision 0017 placing C4-v0 in Gnostoa self-hosting, outside the public inherited surface."
-    - "Reclassified the actual diff as normal: no policy, profile, schema, stable knowledge or public contract change."
-    - "Bound the admission requirements for normal and satisfied each before implementing."
-    - "Reconstructed the five recorded B2/P1 and three recorded B2/P2 false-ready states as replayable commits."
+    - "Reclassified the diff as normal: no policy, profile, schema, stable-knowledge or public-contract change."
+    - "Satisfied every admission requirement for normal before implementing."
+    - "Reconstructed the five B2/P1 and three B2/P2 false-ready states as replayable commits."
     - "Reconstructed four owner-accepted candidates as positive controls."
-    - "Derived a minimum set of four preconditions, each from a control that actually violated it."
-    - "Excluded a fifth candidate precondition that would have matched prose without adding coverage."
-    - "Established RED evidence before implementation: twelve control errors with no predicate present."
-    - "Implemented the three-valued fail-closed predicate under tests/, reusing tools.task_envelope."
-    - "Replayed twelve controls: three of eight false-ready states rejected, none called ready, none falsely blocked."
-    - "Measured that no candidate in project history reaches READY, because every one declares a provider identity no local evidence resolves."
-    - "Found that squash-merge integration erases the checkpoint chain on protected main."
-    - "Found and repaired a guard that silently skipped every control in the container while the route reported OK."
-    - "Recorded the experiment, its negative verdict and its five findings in a durable assessment."
-    - "Reconciled the Decision 0016 resume card, docs/roadmap.md and docs/status.md to the state that exists."
-    - "Confirmed the pinned public-surface digest is byte-identical to protected main after the full implementation."
-    - "Evaluated the predicate on candidate 95525baa: READY, reached only by declaring no provider identity."
+    - "Derived four preconditions, each from a control that violated it."
+    - "Excluded a fifth precondition that would match prose without adding coverage."
+    - "Established RED evidence before implementation: twelve control errors, no predicate present."
+    - "Implemented the three-valued fail-closed predicate under tests/."
+    - "Replayed twelve controls: three of eight false-ready states were BLOCKED, none of eight was called READY, and all four owner-accepted positive controls were INDETERMINATE and therefore failed to reach READY under the strict experimental contract."
+    - "Measured that no candidate in project history reaches READY: each declares an unresolvable provider identity."
+    - "Found that squash-merge integration erases the checkpoint chain on main."
+    - "Repaired a guard that silently skipped every control while the route reported OK."
+    - "Recorded the experiment, its verdict and five findings in a durable assessment."
+    - "Reconciled the Decision 0016 resume card, docs/roadmap.md and docs/status.md."
+    - "Confirmed the public-surface digest is byte-identical to protected main."
+    - "Evaluated the predicate on candidate 95525baa: READY, only by declaring no provider identity."
   next_action: null
   blocker: null
 identities:
@@ -53,7 +53,7 @@ identities:
   dependencies:
     - id: decision-0016
       kind: file-sha256
-      value: sha256:c4b902db8a2d63705d67508e6e2fb448a6ef0c4f408846f668d473bcf1d4475e
+      value: sha256:a36b0fbb7892c5ab85700061bdcdc477094ec9323a3abad506c32938a4bf83c1
     - id: decision-0017
       kind: file-sha256
       value: sha256:3b91ada0a417e411133cc560eed43a0dc8112887a86d0497f6ea335f1f7a97f5
@@ -80,21 +80,21 @@ references:
 handoff:
   actor: no active actor; B2/C4-v0 is complete
   read:
-    - "the owner disposition in the C4-v0 experiment assessment: accept the experimental result, reject C4-v0 as a READY predicate"
-    - "the seven preserved negative findings and the narrower consistency-checking result, which is recorded and not activated"
-    - "the constraint recorded at close-out: state.completed was already at its 20-item maximum, so the disposition is held in this handoff and in the assessment rather than appended"
-    - Decision 0017, which kept the experiment outside the public inherited surface and remains in force
+    - "the owner disposition in the C4-v0 experiment assessment: the strict hypothesis is refuted, accept the experimental result, reject C4-v0 as a READY predicate"
+    - "the seven preserved negative findings, and the narrower consistency-checking result: recorded, not activated"
+    - "state.completed was already at its 20-item maximum, so the disposition is held here and in the assessment rather than appended"
+    - Decision 0017, which kept the experiment outside the public inherited surface
   verify:
     - "no successor control experiment or mitigation is selected or activated, and Decision 0016 increment 2 remains not activated"
-    - "the rejected predicate and its replay controls are absent from the final tree; the experiment stays reconstructable from candidate 4acb3578"
-    - "the pinned public-surface digest is unchanged and the P1 and P2 terminal envelopes are byte-identical"
+    - "the rejected predicate and replay controls are absent; the experiment stays reconstructable from candidate 4acb3578"
+    - "the public-surface digest is unchanged and the P1 and P2 envelopes are byte-identical"
 recording:
   actor: agent:claude-opus-5
-  at: "2026-08-18T01:05:00Z"
+  at: "2026-08-18T01:40:00Z"
 review:
   projection_characters: 6000
   owner_minutes: 20
   on_exceed: block
 checkpoint:
-  sequence: 4
-  previous: sha256:e03c3dd0ef94e73d8ef0618c0052197ae81d039811db9c6c1171697e490968c3
+  sequence: 5
+  previous: sha256:fc57f844b5d85b416885cf9f05433758a71991faa78823ab9a1b8a128f216407
