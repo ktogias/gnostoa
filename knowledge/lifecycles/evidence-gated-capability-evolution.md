@@ -285,7 +285,7 @@ certainty by adding receipts, bindings or routing.*
 detected by the **existing deterministic dependency recomputation** once that
 stronger mechanism was actually invoked, not by human reading. The C4-v0
 container skip was found by **direct inspection of what actually executed**. The
-three latent product defects behind uniformly green evidence were class C and
+three latent product defects behind uniformly green evidence were class D and
 were found by **human semantic review**, because no oracle of the time could
 establish them.
 
