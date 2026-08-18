@@ -13,10 +13,12 @@ Start with `README.md`. Load only the route required by the task.
   read `knowledge/lifecycles/evidence-gated-capability-evolution.md`,
   Decision 0016, the current roadmap and the active Work Item before
   proposing implementation. Before introducing a new primitive, determine
-  (1) whether the fact or evidence exists, (2) whether an existing
-  deterministic mechanism already checks it, and (3) whether that mechanism
-  is reliably routed at the relevant boundary. Only then consider a new
-  evidence primitive. Selection is not implementation admission.
+  (1) whether the fact is observable and evidence exists, (2) whether an
+  existing deterministic mechanism already checks it, (3) whether that
+  mechanism's required observations are authoritatively acquired and bound to
+  the relevant subject or candidate, and (4) whether the mechanism is reliably
+  routed at the relevant boundary. Only then consider a new primitive.
+  Selection is not implementation admission.
 - Anonymous examples: use only generic vocabulary and never treat examples as
   approved project facts.
 

@@ -228,6 +228,13 @@ architecture:
 
 No solution is inferred from either.
 
+The canonical method was refined to keep these apart: the
+[evidence-gated capability-evolution lifecycle](../lifecycles/evidence-gated-capability-evolution.md)
+now separates **observation acquisition/binding** from **routing/enforcement** as
+distinct classes, and asks whether a checker's required observations are
+authoritatively acquired and bound **before** asking whether it is routed.
+Refining the method names the boundaries; it selects nothing.
+
 ## H. Non-conclusions
 
 This experiment does **not** show that:
