@@ -59,7 +59,8 @@ is not a universal law, and evidence may contradict it.
 
 ## Seven states that are not synonyms
 
-Confusing these is the most expensive mistake this project has made.
+Confusing these states repeatedly caused observed rework, premature claims and
+unnecessary mechanism expansion.
 
 | State | Means | Does **not** mean |
 |---|---|---|
@@ -82,9 +83,11 @@ OBSERVED EVIDENCE
   → FAILURE / GAP CLASSIFICATION
   → BOUNDED RESEARCH
   → OWNER SELECTION
-  → CONCRETE EFFECT / ROUTING / OWNERSHIP LOCATION
-  → ACTUAL DIFF CLASSIFICATION
+  → CONCRETE PROPOSED EFFECT / ROUTING / OWNERSHIP LOCATION
+  → CONCRETE PROPOSED CHANGED SURFACE
+  → CHANGE CLASSIFICATION
   → PUBLIC-SURFACE / AUTHORITY / COMPATIBILITY IMPACT
+  → REQUIRED RECORDS + PRE-IMPLEMENTATION EVIDENCE
   → IMPLEMENTATION ADMISSION
   → SMALLEST FALSIFIABLE IMPLEMENTATION
   → MEASUREMENT / HISTORICAL REPLAY
@@ -94,19 +97,42 @@ OBSERVED EVIDENCE
   → CURRENT-PROJECTION RECONCILIATION
 ```
 
-Qualifications that matter more than the sequence:
+### Concrete location before classification, classification before implementation
+
+Both halves are required, and neither licenses the other. Abstract intent is not
+enough to classify trustworthily — but "derive the class from a real diff" never
+means *edit first and classify afterwards*. Effective policy requires
+classification and the applicable pre-implementation evidence **before**
+implementation.
+
+1. identify the concrete **proposed** effect, routing or ownership location;
+2. identify the concrete **proposed** changed paths, surfaces and semantic effect;
+3. derive the change class from that proposed diff and surface, **before**
+   implementation;
+4. determine public-surface, authority, compatibility and blast-radius impact;
+5. satisfy the Work Item, Decision and evidence gates that the actual class
+   requires;
+6. obtain implementation admission;
+7. implement the smallest admitted change;
+8. **reclassify upward** if the actual implementation diff expands or changes
+   semantic impact.
+
+A *concrete proposed diff* means the specific files, surfaces and semantic
+behaviour an actor proposes to change. It does **not** mean repository state that
+has already been edited without admission.
+
+### Qualifications
 
 - **Not every slice needs every record.** `policy/change-control.yaml` determines
   the actual gates for the actual change class.
-- **The concrete location comes before the class.** A change class is derived
-  from a real diff, never assumed from intent.
-- Research selection does not imply implementation admission.
-- Implementation success does not imply public promotion.
-- Provider effects require authoritative **read-back**; a local success message
-  is not proof the effect landed.
+- selection ≠ admission; admission ≠ implementation; implementation ≠ validation;
+  validation ≠ promotion.
+- Actual scope expansion can require upward reclassification.
+- Provider effects require authoritative **read-back**; local command success is
+  not provider-effect truth.
 - **A negative result is valid** and completes a slice.
-- Current projections are replaceable and **must not predict their own future
-  provider effects**.
+- Derived current projections are replaceable and **must not predict their own
+  future provider effects**.
 
 This is a method, not a workflow state machine. Do not build an engine from it.
 
@@ -117,8 +143,8 @@ before integration.
 
 ## Epistemic order
 
-Ask these in order. Most wasted work in this project skipped straight to
-question 4 or 5.
+Ask these in order. Several observed failures skipped directly to later
+architectural questions before earlier epistemic questions were resolved.
 
 ### 1. What can the system actually know?
 
@@ -176,15 +202,36 @@ machine, workflow engine or evidence platform. Require measured need.
 *Why recorded:* C4-v0 went from a named failed property to a readiness predicate
 in one step and was refuted; its implementation was removed rather than retained.
 
-### 6. Preserve human semantic judgement for oracle limits
+### 6. Preserve bounded human semantic judgement for oracle limits
 
-Mechanical evidence cannot prove facts no available oracle can establish. **Human
-review is not a temporary defect to automate away.** For semantic and
-current-truth questions and unknown defect classes, preserve a bounded human
-decision boundary.
+Mechanical evidence cannot prove a fact that no available oracle can establish.
+**Human semantic review is not a temporary defect the architecture must
+eliminate.** For semantic, current-truth and unknown-defect classes, preserve a
+bounded human decision boundary.
 
-*Why recorded:* human semantic review is the detector that actually found the
-latent defects, the false-green skip and the stale declared digest.
+Human semantic judgement remains necessary for oracle-limit and semantic classes.
+Other failures may be detected by human review, by direct inspection, or by a
+deterministic mechanism once the appropriate mechanism actually runs.
+
+Keep three classes apart — collapsing them is how a routing problem gets
+misdiagnosed as a missing primitive:
+
+| | Class | What it means | Right response |
+|---|---|---|---|
+| **A** | fact and evidence exist, and an existing deterministic checker can establish it | the mechanism is available | run it; prefer reuse |
+| **B** | the fact may be observable, but the correct mechanism or its routing did not execute | a routing or invocation problem | fix routing before inventing evidence |
+| **C** | no available oracle can establish the fact | an **oracle limit** | bounded human judgement; do not simulate certainty |
+
+**An existing mechanical mechanism that was not routed is fundamentally different
+from an oracle limit.**
+
+*Why recorded, by class:* the #33 stale declared Decision digest was class A/B —
+detected by the **existing deterministic dependency recomputation** once that
+stronger mechanism was actually invoked, not by human reading. The C4-v0
+container skip was found by **direct inspection of what actually executed**. The
+three latent product defects behind uniformly green evidence were class C and
+were found by **human semantic review**, because no oracle of the time could
+establish them.
 
 ## Anti-patterns and stop conditions
 
@@ -250,20 +297,47 @@ specific artifact.
 
 **Task given.** *Proceed with the selected routing precursor.*
 
-**Expected independent behaviour.** The agent should inspect this lifecycle;
-recognise the precursor as *selected*, not as implementation authority; create or
-link the Work Item and Decision that policy requires; locate the concrete routing
-point **before** editing anything; derive the change class from that concrete
-diff; inspect public-surface and authority impact; **stop** if public impact
-needs separate owner disposition; establish the historical #33 stale-digest
-negative control; reuse the existing consistency mechanism rather than write a
-new checker; and create no E1/E2/E3, C4-v1, C2/C3 or other new evidence
-infrastructure.
+**Expected independent behaviour, in this order:**
 
-**Provisional success.** The agent reconstructs the epistemic order, does not
-jump to implementation, does not propose a new primitive first, preserves
-selection ≠ admission, finds the entrance gate, identifies where it must stop for
-the owner, and loads only bounded relevant evidence.
+1. orient through root `AGENTS.md`, protected `main`, the current roadmap and the
+   active precursor Work Item if one is supplied;
+2. follow the `AGENTS.md` route to this lifecycle, Decision 0016, applicable
+   policy, and **only** the bounded evidence the unresolved question needs;
+3. recognise that **selected ≠ admitted**;
+4. identify the concrete proposed routing location **before editing**;
+5. identify the proposed changed paths and semantic surface;
+6. derive the intended change class from that concrete proposed change;
+7. determine public-inheritance, authority and compatibility impact, and the
+   semantic and admission gates the class requires;
+8. create **or link** the Work Item and Decision that class requires — if the
+   task already supplies an active precursor Work Item, **use it rather than
+   create a duplicate**;
+9. establish the required pre-implementation characterization or failing
+   evidence;
+10. **stop for the owner before implementation** when public-surface impact needs
+    a new Decision, when actual scope differs from the selected precursor, or
+    when another genuine semantic choice is unresolved;
+11. only after admission, implement the smallest routed use of the **existing**
+    deterministic consistency mechanism;
+12. create no E1, E2, E3, C4-v1, C2, C3, new readiness semantics or new evidence
+    infrastructure.
+
+**Controls the experiment must keep.** The historical #33 stale-digest state is
+the negative control; the valid P1, P2 and #33 records are bounded positive
+controls; the intended mechanism must **demonstrably execute**, and skipped,
+empty or bypassed execution is not success. **A regression test that directly
+invokes the checker is not, by itself, evidence that the actual review or
+admission boundary routes through it.**
+
+**Provisional success.** The agent reconstructs the epistemic order without
+session coaching; does not jump directly to implementation; does not propose a new
+primitive first; preserves selection ≠ admission; discovers the entrance gate;
+identifies the correct owner stop when one is needed; and loads bounded evidence
+rather than replaying historical ledgers.
+
+**Do not blame or prompt-engineer the agent into passing.** If a fresh agent
+cannot recover the method from the canonical route, the canonicalization is
+falsified or incomplete.
 
 **A negative result here is valid and informative.** If a fresh agent still
 cannot route itself, the defect is in this record, not in the agent.

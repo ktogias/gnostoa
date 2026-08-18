@@ -50,24 +50,20 @@ review time and maintenance cost. Optional derived layers remain disposable.
 
 B1 demonstrated the need for durable task context, explicit handoffs, bounded
 plans, checkpoint/resume, safe restart and guided semantic review. It did not
-validate a complete workflow-platform architecture. Decision 0016 therefore
-keeps that full platform outside the first-publication gate and evolves it
-through bounded self-hosted slices:
+validate a complete workflow-platform architecture.
+[Decision 0016](../decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md)
+therefore keeps that full platform outside the first-publication gate and evolves
+it through bounded self-hosted slices.
 
-1. task envelope and one current projection;
-2. checkpoint/resume and explicit handoff;
-3. bounded execution plan and precise invalidation;
-4. guided-review contracts; and
-5. provider adapters only after the portable contract is useful.
+**Decision 0016 owns the authoritative numbered increment sequence.** It is not
+restated here; read it there, so there is only one authority for it.
+
+The operating method by which each bounded slice moves from evidence through
+research, selection, admission, experiment and disposition is canonical in
+[Evidence-gated capability evolution](evidence-gated-capability-evolution.md),
+adopted for Gnostoa self-governance by
+[Decision 0018](../decisions/0018-adopt-evidence-gated-capability-evolution-for-gnostoa-self-governance.md).
 
 Each slice must preserve B1's material defect detection and recovery while
 reducing owner work, evidence amplification and resume cost. One delivery item
 and one enabling slice may be active at a time.
-
-The operating method used to run those slices — how observed failure becomes
-bounded research, owner selection, admission and falsifiable implementation — is
-canonical in
-[Evidence-gated capability evolution](evidence-gated-capability-evolution.md),
-adopted for Gnostoa self-governance by
-[Decision 0018](../decisions/0018-adopt-evidence-gated-capability-evolution-for-gnostoa-self-governance.md).
-Decision 0016 remains the governing capability-loop Decision.
