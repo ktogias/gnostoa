@@ -6,8 +6,11 @@ a release promise.
 
 ## Current baseline
 
-`0.1.0` is selected as a **source-only, pre-stable release identity**
-([Decision 0020](../knowledge/decisions/0020-establish-v0-1-0-as-the-first-source-only-pre-stable-release-identity.md)).
+`v0.1.0` is the **first source-only, pre-stable release identity**
+([Decision 0020](../knowledge/decisions/0020-establish-v0-1-0-as-the-first-source-only-pre-stable-release-identity.md)),
+naming the immutable commit `ee808572d3930ec3dc50d350ae1ed25a0236bb6b` with
+public-surface digest
+`sha256:021f18107feb93be2d4c6e5d8dca7d73bf2247871fc100859ba576089f55772b`.
 It is **not** an established compatibility baseline. Whether a corresponding tag,
 Release or artifact exists externally is provider-authoritative and is not
 restated here; a version label alone is never sufficient identity. No package,

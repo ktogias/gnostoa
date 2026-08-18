@@ -46,6 +46,7 @@ inherited, copied or loaded by adopting projects.
 - [Post-C4 evidence boundary selection](assessments/post-c4-evidence-boundary-selection.md)
 - [Fresh-agent dogfood and routing-precursor result](assessments/fresh-agent-dogfood-and-routing-precursor-result.md)
 - [First source-only release pre-effect state](assessments/first-source-only-release-pre-effect-state.md)
+- [First source-only release result](assessments/first-source-only-release-result.md)
 - [First-publication provider audit snapshot](assessments/first-publication-provider-audit.md)
 - [First-publication reputation and direction assessment](assessments/first-publication-reputation-and-direction-assessment.md)
 - [Source-publication name-risk screening](assessments/gnostoa-source-name-screening.md)

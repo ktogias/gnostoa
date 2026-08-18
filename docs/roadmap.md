@@ -73,13 +73,14 @@ selects nothing.
 
 Separately,
 [Decision 0020](../knowledge/decisions/0020-establish-v0-1-0-as-the-first-source-only-pre-stable-release-identity.md)
-selects **`v0.1.0` as the source-only pre-stable release identity**, naming one
-exact commit and its deterministic public-surface digest.
-[Work Item #43](https://github.com/ktogias/gnostoa/issues/43) owns its provider
-effect and the reconciliation that follows. Provider tag and Release state is
-authoritative and is intentionally not restated in this static roadmap. No
-package, OCI-image or documentation-site publication is coupled to that
-selection.
+selected **`v0.1.0` as the source-only pre-stable release identity**, and it was
+executed through the authorized provider effect under
+[Work Item #43](https://github.com/ktogias/gnostoa/issues/43): `v0.1.0` names the
+immutable commit `ee808572d3930ec3dc50d350ae1ed25a0236bb6b`. Mutable provider
+Release metadata stays authoritative at the provider and is intentionally not
+restated in this static roadmap. **No package, OCI-image or documentation-site
+publication accompanied it**, and each remains a separate unperformed effect. See
+the [release result](../knowledge/assessments/first-source-only-release-result.md).
 
 B2/P1 and B2/P2 are both complete. [Issue #24](https://github.com/ktogias/gnostoa/issues/24)
 was integrated through [PR #28](https://github.com/ktogias/gnostoa/pull/28) and
