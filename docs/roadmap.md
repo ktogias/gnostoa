@@ -71,6 +71,13 @@ observation acquisition and binding, and review-boundary routing and enforcement
 **No successor mechanism is selected or activated**, and naming the boundaries
 selects nothing.
 
+Separately, a **source-only `v0.1.0` release identity is selected and pending
+explicit provider authorization** ([#43](https://github.com/ktogias/gnostoa/issues/43)).
+It would name one exact commit and its public-surface digest and publishes no
+package, OCI image or documentation site. **No tag or Release exists yet**, and
+the outward effect is `critical` and separately authorized. Provider state
+remains authoritative.
+
 B2/P1 and B2/P2 are both complete. [Issue #24](https://github.com/ktogias/gnostoa/issues/24)
 was integrated through [PR #28](https://github.com/ktogias/gnostoa/pull/28) and
 closed as completed; its integration and closure are done, not pending. The
