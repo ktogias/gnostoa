@@ -19,6 +19,11 @@ Provider publication state is authoritative and can change without a source
 commit, so this page deliberately does not restate tag or Release existence as a
 timeless fact. Read it from the provider.
 
+`v0.1.0` is the first source-only, pre-stable release identity, naming the
+immutable commit `ee808572d3930ec3dc50d350ae1ed25a0236bb6b`. It publishes no
+artifact: package, OCI-image and documentation-site publication each remain
+separate unperformed effects.
+
 This source snapshot itself establishes no package, OCI-image,
 documentation-site, compatibility, production-readiness or independent-transfer
 claim.
