@@ -90,6 +90,11 @@ adopts it as the **draft default for future source-only releases**, encoded in
 It is self-only, promotes nothing to adopter guidance, selects no mechanism, and
 authorizes no further release or artifact publication.
 
+The active item is [#50](https://github.com/ktogias/gnostoa/issues/50), defining
+the first OCI runtime security and residual-risk publication boundary. It records
+an owner security/release semantic choice and **authorizes no publication and no
+remediation**; provider state remains authoritative for its lifecycle.
+
 B2/P1 and B2/P2 are both complete. [Issue #24](https://github.com/ktogias/gnostoa/issues/24)
 was integrated through [PR #28](https://github.com/ktogias/gnostoa/pull/28) and
 closed as completed; its integration and closure are done, not pending. The
