@@ -6,10 +6,14 @@ a release promise.
 
 ## Current baseline
 
-No Gnostoa package, image or documentation site has been released. The source
-currently identifies itself as `0.1.0`, but that version is still a release
-candidate rather than an established compatibility baseline. Evaluation must
-therefore pin all of the following together:
+`0.1.0` is selected as a **source-only, pre-stable release identity**
+([Decision 0020](../knowledge/decisions/0020-establish-v0-1-0-as-the-first-source-only-pre-stable-release-identity.md)).
+It is **not** an established compatibility baseline. Whether a corresponding tag,
+Release or artifact exists externally is provider-authoritative and is not
+restated here; a version label alone is never sufficient identity. No package,
+OCI image or documentation site is published by this source snapshot.
+
+Evaluation must therefore pin all of the following together:
 
 - the exact source revision;
 - the deterministic public-surface digest;

@@ -3,7 +3,7 @@
 This page is a derived navigation projection. Canonical project status,
 evidence and publication gates live in the linked self-knowledge records.
 
-## Pre-release
+## Source and publication status
 
 Gnostoa currently has an owner-reviewed and technically verified
 first-publication source baseline. The source repository is public, and
@@ -14,8 +14,14 @@ first-publication source-baseline identity** is the immutable commit
 `main` has advanced past it since, and this page deliberately does not restate a
 current branch head, because any value written here goes stale at the next merge.
 Read the exact current head from the provider or from `git rev-parse origin/main`.
-Gnostoa has no public release, package, OCI image, documentation site or
-independent transfer pilot.
+
+Provider publication state is authoritative and can change without a source
+commit, so this page deliberately does not restate tag or Release existence as a
+timeless fact. Read it from the provider.
+
+This source snapshot itself establishes no package, OCI-image,
+documentation-site, compatibility, production-readiness or independent-transfer
+claim.
 
 ### Available from source
 

@@ -88,9 +88,11 @@ release, a production release or a compatibility baseline.
 
 ## Consequences
 
-- The release candidate is defined as **the exact protected-main commit after
-  the preparation Change Request integrates** — not the research base
-  `85766e8df2add27dc2234792547e6ce078228d04`. That candidate must have `policy`,
+- The release candidate is defined as **the exact protected-main commit after all
+  admitted pre-effect preparation for Work Item #43 is integrated** — not the
+  research base `85766e8df2add27dc2234792547e6ce078228d04`, and not any earlier
+  candidate superseded by a later admitted pre-effect correction. That candidate
+  must have `policy`,
   `fast`, `regression`, `smoke`, `extended` and the runtime `self-check` passing,
   a clean repository state, and its public-surface digest recomputed and
   recorded, before any provider effect.
