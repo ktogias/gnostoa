@@ -63,3 +63,11 @@ through bounded self-hosted slices:
 Each slice must preserve B1's material defect detection and recovery while
 reducing owner work, evidence amplification and resume cost. One delivery item
 and one enabling slice may be active at a time.
+
+The operating method used to run those slices — how observed failure becomes
+bounded research, owner selection, admission and falsifiable implementation — is
+canonical in
+[Evidence-gated capability evolution](evidence-gated-capability-evolution.md),
+adopted for Gnostoa self-governance by
+[Decision 0018](../decisions/0018-adopt-evidence-gated-capability-evolution-for-gnostoa-self-governance.md).
+Decision 0016 remains the governing capability-loop Decision.
