@@ -1833,7 +1833,7 @@ class DocumentationTests(unittest.TestCase):
         self.assertIn("knowledge validate", quick_start)
         self.assertIn("KNOWLEDGE_KIT_ROOT", quick_start)
         self.assertIn("navigation projection", status)
-        self.assertIn("Pre-release", status)
+        self.assertIn("Source and publication status", status)
 
     def test_repository_documentation_links_resolve(self) -> None:
         paths = [
