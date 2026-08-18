@@ -1,7 +1,7 @@
 ---
 type: Source
 title: Post-C4 evidence boundary selection
-description: Reconstructs the undecidability boundaries the C4-v0 falsification exposed, separates addressable evidence gaps from fundamental oracle limits, and compares three candidate evidence primitives without selecting one.
+description: Reconstructs the undecidability boundaries the C4-v0 falsification exposed, separates addressable evidence gaps from fundamental oracle limits, compares three candidate evidence primitives, and records the owner's selection of a smaller precursor experiment over any of them.
 status: draft
 generated:
   by: agent:claude-opus-5
@@ -53,14 +53,17 @@ x-project-knowledge:
 
 ## Recording boundary
 
-This is research and selection input. It implements nothing, selects nothing and
-activates nothing. C4-v0 remains **rejected as a readiness predicate**; C2, C3,
+This is research and selection input. It **implements nothing and activates
+nothing**. The owner has selected Alternative B — a smaller precursor experiment
+— as the next thing to try; that selection is recorded at the end of this record,
+and **implementation of it is not admitted**. C4-v0 remains **rejected as a readiness predicate**; C2, C3,
 the narrower consistency-checking finding and Decision 0016 increment 2 all
 remain **recorded and not activated**.
 
-**No evidence-primitive experiment yet is a valid outcome.** More evidence
-infrastructure is not assumed to be desirable, and nothing here argues that
-Gnostoa should acquire more of it.
+**No evidence-primitive experiment yet is a valid outcome, and it is what the
+owner chose.** No evidence primitive was selected. More evidence infrastructure
+is not assumed to be desirable, and nothing here argues that Gnostoa should
+acquire more of it.
 
 No aggregate coverage score appears anywhere in this record, deliberately. The
 C4-v0 result showed that counting how many failure paths a mechanism *touches*
@@ -221,7 +224,9 @@ This entry is recorded for completeness and is deliberately **not counted toward
 any candidate**. It is evidence *against* needing a new primitive for this class:
 the reusable consistency check the C4-v0 close-out identified as its narrower
 finding already exists, already lives in the public tool surface, and already
-worked the moment it was invoked.
+worked the moment it was invoked. That says nothing about what it would cost to
+make its execution reliably unavoidable: the routing location has not been
+selected, so the surface impact of routing it is unknown.
 
 ## Phase 2 — Addressable gaps versus fundamental limits
 
@@ -491,14 +496,27 @@ Exactly three. Nothing here is a recommendation.
 ### B — Select a smaller precursor: complete the routing of checks that already exist
 
 - **Primary gap:** EG-8, with EG-6 as a secondary observation.
-- **Strongest benefit:** requires **no new primitive, no schema change and no
-  public-surface change**. The mechanism already exists, is already public, and
-  already worked when invoked. This directly tests C4-v0's own narrower finding —
-  that deterministic consistency checks over existing evidence catch real state
-  and identity defects before human review — without building anything.
+- **Strongest benefit:** requires **no new evidence primitive and no new
+  validation semantics**. The detecting mechanism already exists, is already
+  public, and already worked when invoked. This directly tests C4-v0's own
+  narrower finding — that deterministic consistency checks over existing evidence
+  catch real state and identity defects before human review — without building
+  anything new.
 - **Strongest limitation:** it addresses none of EG-1 through EG-5, so strict
   readiness stays exactly as undecidable as C4-v0 found it.
-- **Surface impact:** none expected; verification routing only.
+- **Surface impact: UNKNOWN.** The mechanism exists, but *the location required
+  to make its execution reliably mechanical has not been selected*, and the
+  concrete diff is what determines surface impact. Routing that touches `ci/`,
+  policy, a public guardrail or supported-tool semantics would itself change the
+  public inherited surface. A self-hosted, non-public routing path is preferable
+  but **must not be assumed**. The impact stays unknown until the separately
+  admitted precursor experiment identifies the smallest concrete routing location
+  and reclassifies that actual diff.
+- **Stop condition:** if reliable mechanical routing of the existing consistency
+  check requires a public CI, policy, schema or supported-tool contract change,
+  **STOP before implementation** and return the actual impact for owner
+  disposition, rather than silently treating the precursor as surface-free. The
+  precursor must not be broadened merely to preserve that assumption.
 - **Human attention:** neutral to lower.
 - **Historical test:** the #33 close-out is a real negative control — a candidate
   reported as verified while carrying a stale declared identity. Routed
@@ -506,8 +524,8 @@ Exactly three. Nothing here is a recommendation.
   frozen P1, P2 and #33 terminal records.
 - **Strongest uncertainty:** whether one recorded instance justifies any slice
   at all.
-- **Non-goals:** new checks, new evidence classes, schema change, readiness
-  semantics.
+- **Non-goals:** new checks, new evidence classes, new validation semantics,
+  readiness semantics, and any assumption that the routing is surface-free.
 
 ### C — Select none: no evidence-primitive experiment yet
 
@@ -546,5 +564,104 @@ Exactly three. Nothing here is a recommendation.
 
 ## Owner selection
 
-**Not recorded.** This slice presents alternatives and selects nothing. Silence
-is not selection, and a decision to select none is a complete and valid outcome.
+Recorded from the accountable maintainer's semantic review of research head
+`git:64bb68f11dcd88f789958aad1ec6414d4fff5d29`, after that review found and
+required the conservative correction to Alternative B's surface claim recorded
+above.
+
+> **B. SELECT A SMALLER PRECURSOR EXPERIMENT.**
+
+**Meaning.** Test whether Gnostoa can reliably route its already-existing
+deterministic declared-identity/source-binding consistency check before owner
+review, with **no new evidence primitive and no new validation semantics**.
+
+**Primary observed failure.** During the #33 close-out, ordinary task validation
+passed while the declared Decision 0016 digest was stale; the existing stronger
+projection/dependency recomputation detected the defect only when it was actually
+invoked.
+
+**Why selected.**
+
+- it acts on a real recorded defect, independent of resurrecting C4-v0;
+- the detecting mechanism already exists;
+- it tests the narrower finding retained from C4-v0;
+- it can establish whether better use of existing evidence is sufficient before
+  adding receipts, witnesses or obligation machinery.
+
+**This selection is an owner preference about what to try next. It is not
+evidence, and it makes nothing true about any candidate.** No relation strength
+in this record changes because of it, and no candidate becomes `[G]`.
+
+**This does not select** E1, E2, E3, C2, C3, a readiness predicate, or Decision
+0016 increment 2. **Implementation is not admitted.**
+
+### Future precursor experiment contract — RECORDED, NOT IMPLEMENTED
+
+Recorded here so the future experiment can be admitted against a fixed contract.
+Nothing below is built by this slice.
+
+**Primary question.** Can an already-existing deterministic identity/source-binding
+check be made reliably unavoidable at the appropriate Gnostoa self-hosting review
+boundary, catching the historical #33 stale-identity defect before owner review,
+without adding a new evidence primitive or unacceptable workflow cost?
+
+**Historical negative control.** The #33 close-out candidate where
+`task-validate` passed with the stale declared Decision 0016 digest, and
+projection regeneration later rejected it.
+
+**Positive controls.** The valid current and frozen task records for P1, P2 and
+#33, limited to the exact consistency properties the routed check claims to
+verify.
+
+**Required observable outcomes.**
+
+1. the historical stale-identity control is rejected **before owner review**;
+2. valid controls are not falsely rejected;
+3. the intended consistency check **demonstrably executes** — a skipped, empty or
+   bypassed invocation does not count as success;
+4. no new evidence class, receipt, witness, schema or readiness semantics is
+   introduced;
+5. no additional human approval prompt is introduced;
+6. added execution time and foreground evidence remain bounded.
+
+Outcome 3 is not ceremonial. C4-v0's own controls skipped entirely inside the
+container while the route reported `OK (skipped=5)`, and GitHub's protected-branch
+semantics accept a skipped required check as satisfying the requirement. A
+precursor that cannot show its check ran has reproduced the defect it exists to
+prevent.
+
+**Mandatory entrance gate.** Before implementation the experiment must identify
+the exact proposed routing location, derive the actual change class from that
+concrete diff, and determine whether it changes the public inherited surface.
+
+> If the smallest reliable mechanical route requires changes to public CI,
+> policy, schema, guardrail or supported-tool contract: **STOP BEFORE
+> IMPLEMENTATION** and return that fact for a separate owner disposition. Do not
+> broaden the precursor merely to preserve the assumption that it is
+> surface-free.
+
+**Falsification and stop rules.** Routing cannot guarantee the intended check
+actually executed; the change only adds advisory prose; implementation requires
+new consistency semantics rather than routing the existing mechanism; valid
+controls false-block; public-surface impact appears without separate admission;
+or human-attention and maintenance cost is disproportionate to the single
+observed failure.
+
+**A negative result is valid.**
+
+### Status of E1, E2 and E3 after the selection
+
+All three remain **RECORDED / NOT ACTIVATED** research alternatives. Their typed
+relations and evidence strengths are unchanged by the selection; none is `[G]`.
+
+**E2 remains the strongest candidate evidence primitive produced by this
+research, and is NOT SELECTED.** One qualification must travel with it:
+
+> EG-1's 12-of-12 recurrence was observed **inside the rejected C4-v0 evaluation
+> corpus**. It measures how often that corpus declared a provider identity no
+> local evidence resolves — not how often an independent operational outcome was
+> harmed.
+
+From that recurrence alone it does **not** follow that E2 currently improves any
+independent measured operational outcome. A later E2 experiment would need its
+own value proposition, established without reviving C4-v0 readiness.
