@@ -284,10 +284,25 @@ promoting this record to `stable` would be a distinct human verification choice
 under the repository's own rules, and has not been made. The record stays `draft`
 while the semantic method is owner-adopted.
 
-## Next falsifiable dogfood check
+## Dogfood status
 
-Canonicalization is a **claim**, not a result. It is falsified or supported by
-one fresh-agent continuation test, to be run **after** this record is integrated.
+Canonicalization was recorded as a **claim**, not a result. The first fresh-agent
+continuation test has now been run; see
+[Fresh-agent dogfood and routing-precursor result](../assessments/fresh-agent-dogfood-and-routing-precursor-result.md)
+and [Decision 0019](../decisions/0019-accept-fresh-agent-dogfood-support-and-reject-the-routing-precursor.md).
+
+Bounded outcome: the canonical route **supports** repository discovery, bounded
+orientation, reconstruction of selection versus admission, entrance-gate
+discovery and **stop-before-implementation** behaviour. It does **not** establish
+autonomous semantic correctness — bounded owner semantic review remained
+materially necessary, correcting surface classification, historical-control
+interpretation and routing-versus-new-semantics confusion. The routing precursor
+that the test was carrying was **refuted at its entrance gate before
+implementation**. Both agents operated on Gnostoa itself, so nothing there
+establishes transfer to an independently owned project.
+
+The method remains `draft` and Gnostoa-self only. The test specification below is
+retained as the standing shape of this check.
 
 **Setup.** A fresh agent receives only ordinary orientation: root `AGENTS.md`,
 repository `main`, the current roadmap, and the active precursor Work Item once
