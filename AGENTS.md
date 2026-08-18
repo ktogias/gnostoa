@@ -9,6 +9,14 @@ Start with `README.md`. Load only the route required by the task.
 - CI policy, provider adapters or hooks: read
   `guidance/workflows/configure-continuous-integration.md`.
 - Toolkit architecture or rationale: route through `knowledge/index.md`.
+- Gnostoa workflow, governance, evidence or control capability evolution:
+  read `knowledge/lifecycles/evidence-gated-capability-evolution.md`,
+  Decision 0016, the current roadmap and the active Work Item before
+  proposing implementation. Before introducing a new primitive, determine
+  (1) whether the fact or evidence exists, (2) whether an existing
+  deterministic mechanism already checks it, and (3) whether that mechanism
+  is reliably routed at the relevant boundary. Only then consider a new
+  evidence primitive. Selection is not implementation admission.
 - Anonymous examples: use only generic vocabulary and never treat examples as
   approved project facts.
 

@@ -46,6 +46,14 @@ The three researched evidence primitives — an exact-candidate verification
 receipt, a reproducible external-dependency witness, and bounded obligation
 completeness — remain **recorded and not activated**.
 
+Before that precursor is attempted, one bounded Gnostoa-self slice
+([#37](https://github.com/ktogias/gnostoa/issues/37)) canonicalizes the operating
+method the project learned from its own failures, so a fresh agent can find it
+through the ordinary entry route instead of synthesizing it from several records.
+It adds one self-knowledge lifecycle and one routing entry, promotes nothing to
+adopter guidance, and **implements no capability**. The routing precursor remains
+selected and **not admitted**, and no precursor implementation Work Item exists.
+
 B2/P1 and B2/P2 are both complete. [Issue #24](https://github.com/ktogias/gnostoa/issues/24)
 was integrated through [PR #28](https://github.com/ktogias/gnostoa/pull/28) and
 closed as completed; its integration and closure are done, not pending. The
