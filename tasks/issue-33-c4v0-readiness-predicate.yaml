@@ -20,9 +20,9 @@ scope:
     - Decision 0016 increment 2 activation, and implementation of controls C2 or C3
     - task-envelope schema redesign, including a locally recorded provider witness
     - producing new verification-receipt or measurement-binding evidence classes
-    - opening a Change Request, integrating the candidate or recording an owner disposition
+    - opening a Change Request or integrating the candidate
 state:
-  status: active
+  status: complete
   completed:
     - "Bound the base at protected main 4c84c0bb with Work Items 24, 29 and 31 closed and no open Change Request."
     - "Verified empirically that tests/, tasks/, knowledge/ and docs/ lie outside the pinned public-surface digest."
@@ -44,7 +44,7 @@ state:
     - "Reconciled the Decision 0016 resume card, docs/roadmap.md and docs/status.md to the state that exists."
     - "Confirmed the pinned public-surface digest is byte-identical to protected main after the full implementation."
     - "Evaluated the predicate on candidate 95525baa: READY, reached only by declaring no provider identity."
-  next_action: Owner reviews the recorded experimental result and records a disposition on C4-v0
+  next_action: null
   blocker: null
 identities:
   base:
@@ -78,21 +78,23 @@ references:
     - id: b2-p2-findings
       resource: knowledge/assessments/b2-p2-fresh-session-and-effect-authority-findings.md
 handoff:
-  actor: owner; the experiment has reported and the next step is a semantic disposition
+  actor: no active actor; B2/C4-v0 is complete
   read:
-    - the C4-v0 experiment assessment, whose verdict is negative on the hypothesis as posed
-    - Decision 0017, which keeps C4-v0 out of the public inherited surface regardless of outcome
+    - "the owner disposition in the C4-v0 experiment assessment: accept the experimental result, reject C4-v0 as a READY predicate"
+    - "the seven preserved negative findings and the narrower consistency-checking result, which is recorded and not activated"
+    - "the constraint recorded at close-out: state.completed was already at its 20-item maximum, so the disposition is held in this handoff and in the assessment rather than appended"
+    - Decision 0017, which kept the experiment outside the public inherited surface and remains in force
   verify:
-    - "the pinned public-surface digest is unchanged: python3 -m tools.cli surface-digest"
-    - "the controls actually run rather than skip: ./ci/verify fast reports 132 tests with no skips"
-    - a negative result is a valid outcome and this candidate does not require rescue
+    - "no successor control experiment or mitigation is selected or activated, and Decision 0016 increment 2 remains not activated"
+    - "the rejected predicate and its replay controls are absent from the final tree; the experiment stays reconstructable from candidate 4acb3578"
+    - "the pinned public-surface digest is unchanged and the P1 and P2 terminal envelopes are byte-identical"
 recording:
   actor: agent:claude-opus-5
-  at: "2026-08-18T00:20:00Z"
+  at: "2026-08-18T01:05:00Z"
 review:
   projection_characters: 6000
   owner_minutes: 20
   on_exceed: block
 checkpoint:
-  sequence: 3
-  previous: sha256:3e1ff7cbbad6204c436cf7d2b470f7e08685236dbc3e74b4cc47ed947137f62a
+  sequence: 4
+  previous: sha256:e03c3dd0ef94e73d8ef0618c0052197ae81d039811db9c6c1171697e490968c3

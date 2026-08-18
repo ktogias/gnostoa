@@ -1,7 +1,7 @@
 ---
 type: Source
 title: C4-v0 readiness predicate experiment
-description: Replay of twelve historical controls against a deterministic read-only READY predicate, measuring how much of the recorded false-ready history existing evidence can actually decide.
+description: Replay of twelve historical controls against a deterministic read-only READY predicate; the strict hypothesis was refuted and the owner rejected C4-v0 as a readiness predicate, retaining only the narrower consistency-checking finding as evidence.
 status: draft
 generated:
   by: agent:claude-opus-5
@@ -137,8 +137,14 @@ verdicts so a later change cannot silently alter the recorded result.
 |---|---|
 | False-ready states rejected | **3 of 8** |
 | False-ready states called READY | **0 of 8** |
-| Owner-accepted candidates blocked | **0 of 4** |
 | Owner-accepted candidates reaching READY | **0 of 4** |
+| Owner-accepted candidates **failing the experimental contract** | **4 of 4** |
+| Owner-accepted candidates BLOCKED, as distinct from INDETERMINATE | 0 of 4 |
+
+The experimental contract required legitimate ready states to **remain READY**.
+All four fail it. The last row is therefore not a success statement, and this
+result must never be reported as "no false blocks" without stating in the same
+breath that **4 of 4 positive controls fail to reach READY**.
 
 ## Finding 1: no candidate in Gnostoa's history can reach READY
 
@@ -257,19 +263,47 @@ to carry event history.
 
 ## Cost
 
+These figures describe the **experimental implementation used to obtain the
+evidence**, which is not retained. See *Experimental implementation versus
+retained surface* below.
+
 | Measurement | Value |
 |---|---|
-| Predicate | 433 lines, `tests/experimental_readiness_v0.py` |
-| Controls | 244 lines, `tests/test_experimental_readiness_v0.py` |
+| Predicate | 433 lines, `tests/experimental_readiness_v0.py` (removed at close-out) |
+| Controls | 244 lines, `tests/test_experimental_readiness_v0.py` (removed at close-out) |
 | Public surface added | **none**; the pinned digest is unchanged |
 | Fast route, protected main | 124 tests, 3.868 s |
 | Fast route, with the experiment | 132 tests, 10.840 s |
 | Added verification time | ~7 s against a 10-minute fast-feedback target |
 | Human-attention cost when a state is refused | one line per unsatisfied precondition, naming the commit, the declared value and the recomputed value |
 
-Maintenance surface is confined to four preconditions and one three-valued
-combination rule. The predicate reuses `tools.task_envelope` for all schema and
-digest work rather than restating it, so schema evolution does not fork.
+Maintenance surface during the experiment was confined to four preconditions and
+one three-valued combination rule, reusing `tools.task_envelope` for all schema
+and digest work rather than restating it. After the owner disposition that
+maintenance surface is **zero**, because the implementation is not retained.
+
+## Experimental implementation versus retained surface
+
+These are deliberately different things, and the distinction is the point of the
+close-out.
+
+| | Experimental implementation | Retained after disposition |
+|---|---|---|
+| `tests/experimental_readiness_v0.py` | 433 lines, the predicate | **removed** |
+| `tests/test_experimental_readiness_v0.py` | 244 lines, the twelve controls | **removed** |
+| This assessment | the measured evidence | **retained** |
+| [Decision 0017](../decisions/0017-scope-the-readiness-predicate-experiment-to-gnostoa-self-hosting.md) | the self-hosting boundary | **retained** |
+| `tasks/issue-33-c4v0-readiness-predicate.yaml` | the task record | **retained, terminal** |
+
+The experiment was run, and every number in this record was measured by running
+it. The code that produced those numbers is removed because the control was
+rejected, and 677 lines of executable maintenance surface are not justified by
+evidence alone. Removing it changes no measured result recorded here.
+
+The experiment remains exactly reconstructable from the immutable candidate
+`git:4acb357864434abc8b9ef625ec14838847f541aa`, this assessment,
+[Issue #33](https://github.com/ktogias/gnostoa/issues/33) and the Change Request
+history.
 
 ## Verdict against the hypothesis
 
@@ -280,12 +314,17 @@ over existing evidence, because existing evidence cannot decide the provider-sid
 identity that every candidate declares. Strict fail-closed blocks every candidate
 this project has produced.
 
-What the experiment did establish is narrower and real: a four-precondition
-predicate over existing evidence rejects **3 of 8** recorded false-ready states
-with **no false blocks and no false readies** on the part it can decide, in ~7
-seconds, with no public surface. Two of the three rejected states were the worst
-recorded ones — an envelope contradicting its own schema with invented digests,
-and one declaring dependency identities that do not match the files it names.
+The strict contract fails in both directions at once: **4 of 4** owner-accepted
+positive controls do not reach READY, and **5 of 8** false-ready states are not
+rejected. That none of the four is BLOCKED rather than INDETERMINATE is a
+distinction about *why* they fail, not evidence that they pass.
+
+What the experiment did establish is narrower and real: deterministic
+consistency checks over existing evidence rejected **3 of 8** recorded
+false-ready states, and called none of the eight READY, in ~7 seconds with no
+public surface. Two of the three were the worst recorded states — an envelope
+contradicting its own schema with invented digests, and one declaring dependency
+identities that do not match the files it names.
 
 ## What is not claimed
 
@@ -295,8 +334,8 @@ and one declaring dependency identities that do not match the files it names.
 - Not that 3 of 8 is a good result. It is the measured result.
 - Not that the P1 control mapping is authoritative; it is inferred from commit
   subjects, as stated above.
-- Not that the experiment is admitted, integrated, reviewed or accepted. This
-  record is a candidate.
+- Not that the *predicate* was accepted. The owner accepted the experimental
+  result and rejected C4-v0 as a readiness predicate; see Owner disposition.
 - Not that anything here changes what adopting projects inherit.
 - Not that this candidate's own READY verdict is evidence the experiment
   succeeded, or that the candidate should be accepted.
@@ -308,8 +347,10 @@ and one declaring dependency identities that do not match the files it names.
   the schema is public surface and would need its own Decision.
 - Whether the checkpoint chain should be verifiable after squash integration at
   all, or whether that is an accepted consequence of squash-merging.
-- Whether 3 of 8 coverage justifies keeping 677 lines of self-hosted control, or
-  whether the two worst rejected states are better addressed some other way.
+- ~~Whether 3 of 8 coverage justifies keeping 677 lines of self-hosted
+  control.~~ **Resolved by the owner disposition: it does not.** Whether the two
+  worst rejected states are better addressed some other way remains open, and no
+  successor is selected.
 - Whether the incentive in Finding 5 — declaring fewer identities makes READY
   cheaper — can be removed at all without making declaration mandatory, which
   would be an envelope schema change and therefore public surface.
@@ -319,6 +360,67 @@ and one declaring dependency identities that do not match the files it names.
 
 ## Owner disposition
 
-**Not recorded.** The experiment reports a result; keeping, narrowing,
-redesigning or rejecting C4-v0 is the maintainer's decision, and a negative
-result is a valid outcome that does not require rescue.
+Recorded from the accountable maintainer's review of the exact experiment
+candidate `git:4acb357864434abc8b9ef625ec14838847f541aa`.
+
+> **ACCEPT EXPERIMENTAL RESULT — REJECT C4-v0 AS A READY PREDICATE.**
+
+The selected hypothesis is refuted as posed. Existing Gnostoa evidence is
+insufficient to compute a useful strict fail-closed `READY` result:
+
+- 3 of 8 reconstructed historical false-ready states are mechanically rejected;
+- 0 of 8 false-ready states are incorrectly called READY;
+- all 4 historically owner-accepted positive controls remain INDETERMINATE and
+  therefore **fail to reach READY** under strict fail-closed semantics.
+
+This must not be reported as "0 false blocks" without also stating that 4 of 4
+positive controls fail to reach READY. The experimental contract required
+legitimate ready states to remain READY.
+
+### The narrower demonstrated result
+
+> Deterministic consistency checks over existing evidence can detect some
+> important state and identity defects before human review.
+
+The evidence includes the predicate catching a real stale checkpoint-chain
+defect in the experiment's own branch, mechanically and before review.
+
+**This narrower result is evidence only. It does not activate a replacement
+control.**
+
+### C4-v0 is not to be rescued
+
+The experiment is not to be expanded by adding provider witness fields,
+task-envelope schema changes, verification receipt schemas, CI-result evidence
+classes, mandatory dependency declarations, provider adapters, checkpoint
+persistence redesign or public-surface changes. Each is a separate architectural
+choice requiring its own evidence and its own Decision.
+
+### Negative findings preserved by the disposition
+
+1. Existing local evidence cannot resolve provider-side identities required by
+   historical accepted candidates.
+2. Some historical false-ready states correspond to latent product defects for
+   which all recorded evidence was green; no predicate over existing evidence can
+   infer an unrecorded defect.
+3. Squash integration makes historical `checkpoint.previous` chains undecidable
+   at authoritative integrated commits.
+4. A predicate over declared dependencies creates an adverse incentive:
+   declaring fewer dependencies makes READY easier to obtain.
+5. The experiment's container guard initially skipped the entire experiment while
+   the route reported success; direct inspection caught the false-green result.
+6. `state.completed` reached 20/20 for the third consecutive slice.
+7. The current projection exceeded its 6000-character attention budget and was
+   correctly refused before being reduced.
+
+### Final implementation disposition
+
+| Item | Disposition |
+|---|---|
+| C4-v0 | **REJECTED AS READY PREDICATE** |
+| Narrow consistency-checking finding | RECORDED / NOT ACTIVATED |
+| C2 | RECORDED / NOT ACTIVATED |
+| C3 | RECORDED / NOT ACTIVATED |
+| Decision 0016 increment 2 | NOT ACTIVATED |
+
+**No successor experiment is selected in this close-out.**
