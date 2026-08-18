@@ -66,6 +66,9 @@ x-project-knowledge:
     maintainer review; satisfy independent approvals only when a future
     specialization requires them.
 
+For a Gnostoa source-only release, follow
+[Publish a source-only release](publish-source-only-release.md).
+
 ## Verification
 
 Run the unit tests, validate anonymous examples, validate both the reusable

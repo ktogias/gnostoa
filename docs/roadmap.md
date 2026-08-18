@@ -82,6 +82,14 @@ restated in this static roadmap. **No package, OCI-image or documentation-site
 publication accompanied it**, and each remains a separate unperformed effect. See
 the [release result](../knowledge/assessments/first-source-only-release-result.md).
 
+That lifecycle is now captured as a bounded Gnostoa-self procedure
+([#48](https://github.com/ktogias/gnostoa/issues/48)):
+[Decision 0021](../knowledge/decisions/0021-adopt-the-observed-source-only-release-procedure-for-gnostoa-self-governance.md)
+adopts it as the **draft default for future source-only releases**, encoded in
+[Publish a source-only release](../knowledge/runbooks/publish-source-only-release.md).
+It is self-only, promotes nothing to adopter guidance, selects no mechanism, and
+authorizes no further release or artifact publication.
+
 B2/P1 and B2/P2 are both complete. [Issue #24](https://github.com/ktogias/gnostoa/issues/24)
 was integrated through [PR #28](https://github.com/ktogias/gnostoa/pull/28) and
 closed as completed; its integration and closure are done, not pending. The
