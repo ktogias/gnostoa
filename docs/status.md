@@ -139,10 +139,36 @@ the linked provider records.
 ## Current direction
 
 The first publication exposes a bounded validation and knowledge-architecture
-prototype, not the full open research backlog. B2/P1 completed 2026-08-16 ([PR #25–26](https://github.com/ktogias/gnostoa/pull/26)) with one validated task envelope and deterministic current projection delivered. [Issue #24](https://github.com/ktogias/gnostoa/issues/24) P2 completed 2026-08-17: a fresh actor resumed the work from the task envelope alone, and the owner accepted the experimental result while narrowing the product claim. The envelope and projection are demonstrated to improve orientation, resumability and bounded human understanding; they are not an enforcement mechanism. The first bounded control experiment ([Issue #33](https://github.com/ktogias/gnostoa/issues/33)) has been measured and dispositioned: its control was rejected, and only the narrower finding that deterministic consistency checks can detect some state and identity defects before human review is retained as evidence, recorded and not activated. The operating method was then canonicalized for Gnostoa self-governance and its fresh-agent dogfood has now run: the canonical route supports discovery, selection-versus-admission reconstruction and stop-before-implementation behaviour, while autonomous semantic correctness is not established and bounded owner review remained necessary. The routing precursor selected after C4-v0 was refuted at its entrance gate before implementation. No successor control experiment is selected, and a transfer pilot in an independently owned project remains later work.
+prototype, not the full open research backlog. The durable direction is to evolve
+that prototype through bounded, evidence-gated self-hosted slices, each of which
+must earn its own admission
+([Decision 0016](../knowledge/decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md),
+[evidence-gated capability evolution](../knowledge/lifecycles/evidence-gated-capability-evolution.md)).
 
-The explicit delivery order and all currently open Work Items are classified
-in the [Now / Next / Research roadmap](roadmap.md).
+Two durable results bound what that direction currently claims. B2/P1 completed
+the first validated task envelope and deterministic current projection, and
+[Issue #24](https://github.com/ktogias/gnostoa/issues/24) narrowed the product
+claim: the envelope and projection are demonstrated to improve orientation,
+resumability and bounded human understanding, and are **not** an enforcement
+mechanism. The failed property that follows from it — critical workflow
+constraints are advisory rather than mechanically enforced — remains
+**unmitigated**, and **no successor control experiment or mitigation is
+selected**. Independent transfer into an externally owned project remains later
+work.
+
+This page deliberately does not restate delivery chronology, live Work Item
+lifecycle or candidate-bound measured outcomes, because each of those changes
+independently of any source commit. Read instead:
+
+- **delivery navigation and what each completed slice established** — the
+  [Now / Next / Research roadmap](roadmap.md);
+- **live Work Item lifecycle and which Work Item is currently selected** — the
+  provider, where the selected item carries the `roadmap:now` label;
+- **candidate-bound measured outcomes** — the linked result records under
+  [self-knowledge](../knowledge/index.md), each scoped to one candidate at one
+  observation time;
+- **immutable historical source identity** — the exact commit and public-surface
+  digest recorded with the release identity, never a version label alone.
 
 Canonical detail:
 

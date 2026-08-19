@@ -168,10 +168,13 @@ boundary**, with no new evidence primitive and no new validation semantics.
 5. Frozen P1, P2 and #33 terminal records are **historical records** and must not
    be rejected merely because main later changes.
 6. The exact historical negative control is the pre-correction candidate
-   `50250b3ad95e6845f72b7c5608d84d66cc200b35`, where ordinary task validation
+   `bd5307f48199949c85e81223e3c49e5b4486d6fb`, where ordinary task validation
    passed while the declared Decision-0016 digest was stale **for that
    candidate**, and the existing stronger caller-supplied dependency
-   recomputation rejected it once supplied the correct observation.
+   recomputation rejected it once supplied the correct observation. Its
+   **correcting successor** is
+   `50250b3ad95e6845f72b7c5608d84d66cc200b35`, the direct child that recorded the
+   recomputed value. See the identity correction below.
 7. The repository currently exposes **no existing non-public review or admission
    boundary** that makes this consistency mechanism unavoidable.
 8. Placing an invocation in a regression test **does not** establish that the real
@@ -209,6 +212,37 @@ The progression, kept intact rather than harmonised:
    refuted.
 3. **Current state** — observation binding and review-boundary enforcement remain
    unresolved, with no successor selected.
+
+### Identity correction — the negative control is `bd5307f`, not `50250b3`
+
+This record originally named `50250b3ad95e6845f72b7c5608d84d66cc200b35` as the
+pre-correction candidate. That commit is the **correction**, not the defect. The
+[current-state drift retrospective](current-state-drift-retrospective.md)
+reproduced the exact replay read-only:
+
+| Candidate | Declared `decision-0016` | Actual blob at that candidate | Result |
+|---|---|---|---|
+| `bd5307f48199949c85e81223e3c49e5b4486d6fb` | `sha256:c4b902db8a2d63705d67508e6e2fb448a6ef0c4f408846f668d473bcf1d4475e` | `sha256:a36b0fbb7892c5ab85700061bdcdc477094ec9323a3abad506c32938a4bf83c1` | **MISMATCH** |
+| `50250b3ad95e6845f72b7c5608d84d66cc200b35` | `sha256:a36b0fbb7892c5ab85700061bdcdc477094ec9323a3abad506c32938a4bf83c1` | `sha256:a36b0fbb7892c5ab85700061bdcdc477094ec9323a3abad506c32938a4bf83c1` | MATCH |
+
+`50250b3`'s parent is `bd5307f`, and `50250b3`'s own commit message records the
+repair: *"the close-out commit edited the Decision 0016 resume card after the
+envelope had declared that file's digest, so decision-0016 was declared as
+c4b902db while the file hashed to a36b0fbb."*
+
+Two mechanical facts, both reproduced against `bd5307f`:
+
+- `knowledge task-validate` returns `OK: task envelope is valid`, because
+  **structural validity is not dependency-observation reconciliation**;
+- `knowledge task-project`, given the correct caller-supplied observation, returns
+  `ERROR: dependency identity mismatch: decision-0016: expected
+  sha256:c4b902db…, observed sha256:a36b0fbb…`.
+
+**Nothing above changes the disposition.** Incident-level deterministic detection
+remains **SUPPORTED**; routing-only reusable enforcement remains **REFUTED**; the
+Decision 0019 outcome is unchanged. Only the commit identity of the historical
+negative control is corrected, so that any later replay binds the candidate that
+actually exhibits the property rather than the one that fixed it.
 
 ## G. New failed property
 
