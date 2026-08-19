@@ -152,6 +152,32 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
             dockerfile.index("python -m pip install"),
         )
 
+    def test_container_runtime_pins_the_admitted_util_linux_security_versions(
+        self,
+    ) -> None:
+        dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        for argument in (
+            "ARG UTIL_LINUX_VERSION=",
+            "ARG UTIL_LINUX_BSDUTILS_VERSION=",
+            "ARG UTIL_LINUX_LOGIN_VERSION=",
+        ):
+            self.assertIn(argument, dockerfile)
+        for package in (
+            '"bsdutils=${UTIL_LINUX_BSDUTILS_VERSION}"',
+            '"libblkid1=${UTIL_LINUX_VERSION}"',
+            '"liblastlog2-2=${UTIL_LINUX_VERSION}"',
+            '"libmount1=${UTIL_LINUX_VERSION}"',
+            '"libsmartcols1=${UTIL_LINUX_VERSION}"',
+            '"libuuid1=${UTIL_LINUX_VERSION}"',
+            '"login=${UTIL_LINUX_LOGIN_VERSION}"',
+            '"mount=${UTIL_LINUX_VERSION}"',
+            '"util-linux=${UTIL_LINUX_VERSION}"',
+        ):
+            self.assertIn(package, dockerfile)
+        self.assertIn("--only-upgrade", dockerfile)
+        for forbidden in ("apt-get upgrade", "dist-upgrade", "full-upgrade"):
+            self.assertNotIn(forbidden, dockerfile)
+
     def test_container_build_context_excludes_local_analysis_state(self) -> None:
         exclusions = set(
             (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
