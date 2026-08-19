@@ -111,6 +111,20 @@ complete OCI readiness or image security, and Decision 0023 authorizes **no OCI
 publication**. Every other OCI gate named in Decision 0022 remains untouched.
 Provider state remains authoritative for Work Item lifecycle.
 
+Under [Work Item #58](https://github.com/ktogias/gnostoa/issues/58),
+[Decision 0025](../knowledge/decisions/0025-define-supported-update-channel-semantics-for-base-bundled-oci-components.md)
+supplemented Decision 0022 for a fact pattern it did not resolve explicitly: a
+non-dpkg component delivered through an official base bundle whose maintainer
+offers a different, also officially supported, fixing route. It selects the
+**component-maintainer supported-update reading** under seven qualifying criteria,
+and records that the measured `pip 25.0.1` fact pattern **triggers Decision
+0022/D**, so that measured candidate is not admitted for first publication absent
+remediation or a separately authorized explicit exception. Its candidate-bound
+[evidence record](../knowledge/assessments/pip-security-provenance-and-update-channel-evidence.md)
+holds the provenance, advisory and channel observations. **Decision 0025 selects no
+remediation shape, grants no security exception and authorizes no OCI
+publication.** Provider state remains authoritative for Work Item lifecycle.
+
 A bounded read-only
 [current-state drift retrospective](../knowledge/assessments/current-state-drift-retrospective.md)
 then reconstructed the observed drift incidents, near-misses, triggers and
