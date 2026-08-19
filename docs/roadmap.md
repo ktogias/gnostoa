@@ -125,6 +125,20 @@ holds the provenance, advisory and channel observations. **Decision 0025 selects
 remediation shape, grants no security exception and authorizes no OCI
 publication.** Provider state remains authoritative for Work Item lifecycle.
 
+Under [Work Item #60](https://github.com/ktogias/gnostoa/issues/60),
+[Decision 0026](../knowledge/decisions/0026-define-effective-runtime-component-presence-for-layered-oci-publication.md)
+supplemented Decisions 0022 and 0025 with the layered-image component-presence
+semantics they left implicit. It selects **effective merged-runtime component
+state**: a component counts as shipped when its affected code is present in the
+merged filesystem of the published runtime image after normal OCI layer
+application. Bytes retained only in ancestor layers are recorded separately as an
+**OCI layer-history residual** — neither claimed absent nor claimed safe, and not
+by itself a component-presence blocker. Its
+[evidence record](../knowledge/assessments/oci-layer-history-and-component-presence-evidence.md)
+holds the measured divergence between the two states. **Decision 0026 selects no
+remediation shape, grants no security exception, authorizes no OCI publication,
+and adds no flattening stage.**
+
 A bounded read-only
 [current-state drift retrospective](../knowledge/assessments/current-state-drift-retrospective.md)
 then reconstructed the observed drift incidents, near-misses, triggers and
