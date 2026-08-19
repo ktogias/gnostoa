@@ -12,6 +12,12 @@ dependency.
 
 ## Now
 
+**Which Work Item is currently selected, if any, is provider state — not a
+statement on this page.** Read it from the provider: the open Work Item carrying
+the `roadmap:now` label, of which there may be none. This page records what each
+completed slice established; it never asserts that a Work Item is active, open or
+pending.
+
 The bounded C4-v0 experiment
 ([#33](https://github.com/ktogias/gnostoa/issues/33)) has **completed with a
 negative result**, and the owner has **rejected C4-v0 as a readiness predicate**.
@@ -32,15 +38,15 @@ force.
 
 Post-C4 evidence-boundary selection research
 ([#35](https://github.com/ktogias/gnostoa/issues/35)) has reported. **No evidence
-primitive was selected.** The owner selected a **smaller precursor experiment**:
-test whether Gnostoa can reliably route its already-existing deterministic
-declared-identity consistency check before owner review, with no new evidence
-primitive and no new validation semantics. **Implementation is not admitted**,
-and no implementation Work Item exists. That precursor's public-surface impact is
-**unknown** until it identifies its concrete routing location and reclassifies
-the actual diff; if reliable routing requires a public CI, policy, schema or
-supported-tool change, it stops before implementation for a separate owner
-disposition.
+primitive was selected.** The owner instead selected a **smaller precursor
+experiment**: test whether Gnostoa can reliably route its already-existing
+deterministic declared-identity consistency check before owner review, with no new
+evidence primitive and no new validation semantics. That precursor was **never
+admitted for implementation**, and no implementation Work Item was ever created.
+Its public-surface impact was never determined, because it was **refuted at its
+entrance gate** before it identified a concrete routing location — see below. That
+#35 selection is therefore spent: it authorizes nothing further, and no successor
+may proceed under it.
 
 The three researched evidence primitives — an exact-candidate verification
 receipt, a reproducible external-dependency witness, and bounded obligation
@@ -90,17 +96,34 @@ adopts it as the **draft default for future source-only releases**, encoded in
 It is self-only, promotes nothing to adopter guidance, selects no mechanism, and
 authorizes no further release or artifact publication.
 
-[Work Item #50](https://github.com/ktogias/gnostoa/issues/50) completed the first
-OCI runtime security and residual-risk publication boundary through
+[Work Item #50](https://github.com/ktogias/gnostoa/issues/50) established the
+first OCI runtime security and residual-risk publication boundary through
 [Decision 0022](../knowledge/decisions/0022-define-the-security-boundary-for-the-first-gnostoa-oci-publication.md),
-which **authorizes no OCI publication and granted no security exception**. Under
-its vendor-fixed-component rule the current measured OCI candidate is **not
-admitted** for publication until the demonstrated blocker is remediated or a
-separate explicit exception is authorized. Bounded remediation of that
-blocker is tracked by [Work Item #54](https://github.com/ktogias/gnostoa/issues/54)
-under [Decision 0023](../knowledge/decisions/0023-apply-the-supported-debian-util-linux-security-update-to-the-oci-runtime.md),
-which authorizes **no OCI publication**. Provider state remains authoritative for
-that Work Item's lifecycle.
+which **authorizes no OCI publication and granted no security exception**.
+[Work Item #54](https://github.com/ktogias/gnostoa/issues/54) subsequently
+completed the bounded util-linux remediation under
+[Decision 0023](../knowledge/decisions/0023-apply-the-supported-debian-util-linux-security-update-to-the-oci-runtime.md).
+Its candidate-bound
+[remediation result](../knowledge/assessments/util-linux-security-remediation-result.md)
+records that the demonstrated vendor-fixed util-linux blocker **was cleared for
+the measured `linux/amd64` candidate**. That measured result establishes **no**
+complete OCI readiness or image security, and Decision 0023 authorizes **no OCI
+publication**. Every other OCI gate named in Decision 0022 remains untouched.
+Provider state remains authoritative for Work Item lifecycle.
+
+A bounded read-only
+[current-state drift retrospective](../knowledge/assessments/current-state-drift-retrospective.md)
+then reconstructed the observed drift incidents, near-misses, triggers and
+controls across the durable repository and provider record. Its measured result is
+that **lifecycle and outcome projection drift recur**, while identity, resume,
+verification-expectation and observation drift are **separate families** that one
+mechanism should not try to unify.
+[Decision 0024](../knowledge/decisions/0024-separate-stable-navigation-from-volatile-state.md)
+records the resulting Gnostoa-self authoring discipline: stable navigation is kept
+separate from volatile lifecycle and unbound current-outcome state. **Decision 0024
+selects no checker, freshness engine, audit script, projection engine or
+enforcement route**, and the read-only audit the retrospective proposed was **not
+admitted with it**; that remains a separate owner disposition.
 
 B2/P1 and B2/P2 are both complete. [Issue #24](https://github.com/ktogias/gnostoa/issues/24)
 was integrated through [PR #28](https://github.com/ktogias/gnostoa/pull/28) and
