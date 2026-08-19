@@ -178,6 +178,63 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
         for forbidden in ("apt-get upgrade", "dist-upgrade", "full-upgrade"):
             self.assertNotIn(forbidden, dockerfile)
 
+    @staticmethod
+    def _dockerfile_stages() -> dict[str, str]:
+        """Split the Dockerfile into its named build stages.
+
+        The pip/ensurepip removal is only correct in the published `runtime`
+        stage. Splitting by stage keeps the assertions semantic instead of
+        counting occurrences across the whole file, where a `base`-stage match
+        would be indistinguishable from a `runtime`-stage one.
+        """
+        stages: dict[str, str] = {}
+        name = ""
+        for line in (ROOT / "Dockerfile").read_text(encoding="utf-8").splitlines():
+            match = re.match(r"^FROM\s+\S+(?:\s+AS\s+(\S+))?\s*$", line)
+            if match:
+                name = match.group(1) or ""
+                stages[name] = ""
+                continue
+            if name:
+                stages[name] += line + "\n"
+        return stages
+
+    def test_container_runtime_removes_the_affected_pip_component(self) -> None:
+        stages = self._dockerfile_stages()
+        for required in ("base", "runtime", "development"):
+            self.assertIn(required, stages)
+
+        runtime = stages["runtime"]
+        base = stages["base"]
+
+        # The published runtime must drop both shipped pip component copies:
+        # the installed distribution with its console scripts, and the wheel
+        # bundled under ensurepip that an uninstall alone cannot reach.
+        self.assertIn("pip uninstall", runtime)
+        self.assertIn("ensurepip", runtime)
+        self.assertIn("USER root", runtime)
+        # Privilege is dropped again before the runtime is handed to a consumer.
+        self.assertLess(runtime.index("USER root"), runtime.rindex("USER kit"))
+
+        # The base stage still needs pip to install the runtime lock and the
+        # editable source, so the removal must not migrate into it.
+        self.assertIn("python -m pip install", base)
+        self.assertNotIn("pip uninstall", base)
+        self.assertNotIn("ensurepip", base)
+
+        # Development branches from the shared base, not from the cleaned
+        # runtime, so maintainers keep pip and the development lock.
+        dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        self.assertIn("FROM base AS development", dockerfile)
+        self.assertNotIn("FROM runtime AS development", dockerfile)
+        self.assertNotIn("pip uninstall", stages["development"])
+
+        # R1 was not selected: no replacement pip is fetched or pinned.
+        for forbidden in ("get-pip", "--upgrade pip", "pip install --upgrade"):
+            self.assertNotIn(forbidden, dockerfile)
+        # Flattening was not selected.
+        self.assertNotIn("FROM scratch", dockerfile)
+
     def test_container_build_context_excludes_local_analysis_state(self) -> None:
         exclusions = set(
             (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()

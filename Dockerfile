@@ -74,6 +74,16 @@ RUN install --directory --owner=kit --group=kit --mode=0555 .evidence \
     && python -m pip install --no-cache-dir --no-deps -e .
 
 FROM base AS runtime
+# The published runtime does not use pip: the base stage has already installed
+# the runtime lock and the editable source, and no documented runtime command
+# imports or invokes pip. Both shipped copies are removed, because uninstalling
+# the distribution leaves the wheel bundled under ensurepip, which is a separate
+# copy of the same component and can reinstall it.
+USER root
+RUN set -eux; \
+    python -m pip uninstall --yes pip; \
+    rm -rf "$(python -c 'import sysconfig; print(sysconfig.get_paths()["stdlib"])')/ensurepip"; \
+    rm -f /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.12
 USER kit
 WORKDIR /workspace
 ENTRYPOINT ["knowledge"]

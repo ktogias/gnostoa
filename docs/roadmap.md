@@ -139,6 +139,23 @@ holds the measured divergence between the two states. **Decision 0026 selects no
 remediation shape, grants no security exception, authorizes no OCI publication,
 and adds no flattening stage.**
 
+[Work Item #62](https://github.com/ktogias/gnostoa/issues/62) then completed the
+bounded pip and `ensurepip` runtime removal under
+[Decision 0027](../knowledge/decisions/0027-remove-pip-and-ensurepip-from-the-published-gnostoa-oci-runtime.md),
+which changes the published `runtime` target only and introduces no replacement
+package channel. Its candidate-bound
+[remediation result](../knowledge/assessments/pip-runtime-removal-remediation-result.md)
+records that the established pip Decision 0022/D blocker **was cleared for the
+measured `linux/amd64` effective runtime**, that the documented runtime contract
+and the separate development target were preserved, and that historical affected
+bytes retained in inherited layers remain an **OCI layer-history residual** under
+Decision 0026 — neither claimed absent nor claimed safe. That result establishes
+**neither complete OCI readiness nor artifact-byte hygiene**, and Decision 0027
+authorizes **no publication**. Before any eventual publication, a public security
+statement must distinguish effective-runtime component hygiene from
+layer-history hygiene. Provider state remains authoritative for Work Item
+lifecycle.
+
 A bounded read-only
 [current-state drift retrospective](../knowledge/assessments/current-state-drift-retrospective.md)
 then reconstructed the observed drift incidents, near-misses, triggers and
