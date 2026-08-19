@@ -5,9 +5,29 @@ FROM ${PYTHON_BASE_IMAGE} AS base
 
 ARG GIT_PACKAGE_VERSION=1:2.47.3-0+deb13u1
 
+# Debian security update for the util-linux source package already present in the
+# pinned base image. Every version below is pinned explicitly because the binary
+# packages use three different version forms for the same source build: plain,
+# epoch-bearing (bsdutils) and "+really" (login). Only already-installed packages
+# are upgraded; no package is added or removed and no unrelated package moves.
+ARG UTIL_LINUX_VERSION=2.41.5-0+deb13u1
+ARG UTIL_LINUX_BSDUTILS_VERSION=1:2.41.5-0+deb13u1
+ARG UTIL_LINUX_LOGIN_VERSION=1:4.16.0-2+really2.41.5-0+deb13u1
+
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
       "git=${GIT_PACKAGE_VERSION}" \
+    && DEBIAN_FRONTEND=noninteractive apt-get install --yes --only-upgrade \
+      --no-install-recommends \
+      "bsdutils=${UTIL_LINUX_BSDUTILS_VERSION}" \
+      "libblkid1=${UTIL_LINUX_VERSION}" \
+      "liblastlog2-2=${UTIL_LINUX_VERSION}" \
+      "libmount1=${UTIL_LINUX_VERSION}" \
+      "libsmartcols1=${UTIL_LINUX_VERSION}" \
+      "libuuid1=${UTIL_LINUX_VERSION}" \
+      "login=${UTIL_LINUX_LOGIN_VERSION}" \
+      "mount=${UTIL_LINUX_VERSION}" \
+      "util-linux=${UTIL_LINUX_VERSION}" \
     && rm -rf /var/lib/apt/lists/*
 
 ARG KIT_VERSION=0.1.0

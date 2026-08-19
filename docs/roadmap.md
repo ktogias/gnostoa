@@ -96,9 +96,11 @@ OCI runtime security and residual-risk publication boundary through
 which **authorizes no OCI publication and granted no security exception**. Under
 its vendor-fixed-component rule the current measured OCI candidate is **not
 admitted** for publication until the demonstrated blocker is remediated or a
-separate explicit exception is authorized. **No remediation slice or
-OCI-publication slice is currently selected.** Provider state remains
-authoritative for Work Item lifecycle.
+separate explicit exception is authorized. Bounded remediation of that
+blocker is tracked by [Work Item #54](https://github.com/ktogias/gnostoa/issues/54)
+under [Decision 0023](../knowledge/decisions/0023-apply-the-supported-debian-util-linux-security-update-to-the-oci-runtime.md),
+which authorizes **no OCI publication**. Provider state remains authoritative for
+that Work Item's lifecycle.
 
 B2/P1 and B2/P2 are both complete. [Issue #24](https://github.com/ktogias/gnostoa/issues/24)
 was integrated through [PR #28](https://github.com/ktogias/gnostoa/pull/28) and
