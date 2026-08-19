@@ -90,10 +90,15 @@ adopts it as the **draft default for future source-only releases**, encoded in
 It is self-only, promotes nothing to adopter guidance, selects no mechanism, and
 authorizes no further release or artifact publication.
 
-The active item is [#50](https://github.com/ktogias/gnostoa/issues/50), defining
-the first OCI runtime security and residual-risk publication boundary. It records
-an owner security/release semantic choice and **authorizes no publication and no
-remediation**; provider state remains authoritative for its lifecycle.
+[Work Item #50](https://github.com/ktogias/gnostoa/issues/50) completed the first
+OCI runtime security and residual-risk publication boundary through
+[Decision 0022](../knowledge/decisions/0022-define-the-security-boundary-for-the-first-gnostoa-oci-publication.md),
+which **authorizes no OCI publication and granted no security exception**. Under
+its vendor-fixed-component rule the current measured OCI candidate is **not
+admitted** for publication until the demonstrated blocker is remediated or a
+separate explicit exception is authorized. **No remediation slice or
+OCI-publication slice is currently selected.** Provider state remains
+authoritative for Work Item lifecycle.
 
 B2/P1 and B2/P2 are both complete. [Issue #24](https://github.com/ktogias/gnostoa/issues/24)
 was integrated through [PR #28](https://github.com/ktogias/gnostoa/pull/28) and
