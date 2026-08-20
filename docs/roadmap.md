@@ -179,6 +179,15 @@ its physical public surface** and a non-ignored extra public file there is a sou
 modification by design. A declared authority that cannot be read fails rather than
 falling back.
 
+The measured official Python 3.12 base refresh moved the first-party runtime from
+CPython 3.12.13 to the released supported 3.12.14 security base under
+[Decision 0030](../knowledge/decisions/0030-refresh-the-official-python-312-base-for-cpython-security-fixes.md).
+Its
+[refresh result](../knowledge/assessments/cpython-312-security-base-refresh-result.md)
+records the exact candidate, the bundled-Expat move from 2.7.4 to 2.8.3, the
+unchanged Debian package inventory, and the remaining post-release CPython
+residuals that have no released supported 3.12 fix.
+
 A bounded read-only
 [current-state drift retrospective](../knowledge/assessments/current-state-drift-retrospective.md)
 then reconstructed the observed drift incidents, near-misses, triggers and
