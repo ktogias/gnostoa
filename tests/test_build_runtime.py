@@ -95,13 +95,19 @@ class BuildRuntimeMaterialisationTests(unittest.TestCase):
             self.assertEqual(0, result.returncode, result.stderr)
 
             raw = subprocess.run(
-                ["git", "-C", str(source), "ls-files", "--cached",
-                 "--deduplicate", "-z"],
-                check=True, capture_output=True,
+                [
+                    "git",
+                    "-C",
+                    str(source),
+                    "ls-files",
+                    "--cached",
+                    "--deduplicate",
+                    "-z",
+                ],
+                check=True,
+                capture_output=True,
             ).stdout
-            expected = {
-                os.fsdecode(record) for record in raw.split(b"\0") if record
-            }
+            expected = {os.fsdecode(record) for record in raw.split(b"\0") if record}
             payload = destination / "source"
             actual = {
                 os.path.relpath(os.path.join(parent, name), payload)
@@ -159,9 +165,7 @@ class BuildRuntimeMaterialisationTests(unittest.TestCase):
             self.assertEqual(sorted(entries), entries)
             self.assertIn(b".gitignore", entries)
             self.assertIn(b"with\nnewline.txt", entries)
-            self.assertEqual(
-                1, sum(1 for entry in entries if b"\n" in entry)
-            )
+            self.assertEqual(1, sum(1 for entry in entries if b"\n" in entry))
             self.assertTrue(hashlib.sha256(manifest).hexdigest())
 
     def test_missing_tracked_path_fails_closed(self) -> None:
