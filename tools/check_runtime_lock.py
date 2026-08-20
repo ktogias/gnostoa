@@ -16,6 +16,7 @@ from .knowledge_common import (
     load_yaml,
     toolkit_root,
 )
+from .repository_scope import SOURCE_MANIFEST, RepositoryScopeError, candidate_paths
 
 UNENFORCED_REVISIONS = {"", "development", "unknown"}
 PUBLIC_SURFACE_PATHS = (
@@ -31,7 +32,9 @@ PUBLIC_SURFACE_PATHS = (
     "Dockerfile",
     "pyproject.toml",
 )
-IGNORED_PARTS = {"__pycache__", ".pytest_cache"}
+# Generated state that is never public source. Each entry is here because it was
+# measured drifting the digest, not because it looked like a cache.
+IGNORED_PARTS = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
 IGNORED_SUFFIXES = {".pyc", ".pyo"}
 
 
@@ -42,8 +45,55 @@ def _schema(path: Path) -> dict[str, Any]:
     return schema
 
 
-def public_surface_digest(root: Path) -> str:
-    root = root.resolve()
+def _declares_candidate(root: Path) -> bool:
+    """Report whether the root declares an authoritative candidate.
+
+    Presence is decided by the marker alone, never by whether reading it
+    succeeds. A marker that is present but unusable is a broken authoritative
+    source, and must fail rather than be mistaken for a metadata-free one.
+    """
+
+    for marker in (".git", SOURCE_MANIFEST):
+        try:
+            (root / marker).lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise KnowledgeFormatError(
+                f"Cannot inspect toolkit source authority {root / marker}: {exc}"
+            ) from exc
+        return True
+    return False
+
+
+def _within_public_surface(relative: Path) -> bool:
+    posix = relative.as_posix()
+    return any(
+        posix == reference or posix.startswith(f"{reference}/")
+        for reference in PUBLIC_SURFACE_PATHS
+    )
+
+
+def _declared_surface_paths(root: Path) -> list[Path]:
+    """Public-surface membership taken from the declared candidate."""
+
+    try:
+        declared = candidate_paths(root)
+    except RepositoryScopeError as exc:
+        raise KnowledgeFormatError(
+            f"Cannot read the declared toolkit source candidate in {root}: {exc}"
+        ) from exc
+    return [relative for relative in declared if _within_public_surface(relative)]
+
+
+def _physical_surface_paths(root: Path) -> list[Path]:
+    """Public-surface membership taken from the extracted files themselves.
+
+    Used only when the root declares no candidate. Nothing then distinguishes an
+    original release member from a later local file, so every non-ignored file
+    under the declared public surface counts as source presented for validation.
+    """
+
     files: list[Path] = []
     for reference in PUBLIC_SURFACE_PATHS:
         path = root / reference
@@ -53,15 +103,31 @@ def public_surface_digest(root: Path) -> str:
             files.extend(
                 candidate for candidate in path.rglob("*") if candidate.is_file()
             )
+    return [path.relative_to(root) for path in files]
+
+
+def public_surface_digest(root: Path) -> str:
+    root = root.resolve()
+    declared = _declares_candidate(root)
+    selected = (
+        _declared_surface_paths(root) if declared else _physical_surface_paths(root)
+    )
 
     digest = hashlib.sha256()
     included = 0
-    for path in sorted(set(files), key=lambda item: item.relative_to(root).as_posix()):
-        relative = path.relative_to(root)
+    for relative in sorted(set(selected), key=lambda item: item.as_posix()):
         if any(part in IGNORED_PARTS for part in relative.parts):
             continue
-        if path.suffix.casefold() in IGNORED_SUFFIXES:
+        if relative.suffix.casefold() in IGNORED_SUFFIXES:
             continue
+        path = root / relative
+        if declared and not path.is_file():
+            # The candidate says this path is public source. Digesting the rest
+            # under the same identity would assert a source that is not present.
+            raise KnowledgeFormatError(
+                f"Declared toolkit public-surface path is missing or unreadable: "
+                f"{relative.as_posix()}"
+            )
         encoded_path = relative.as_posix().encode("utf-8")
         content = path.read_bytes()
         digest.update(len(encoded_path).to_bytes(8, "big"))

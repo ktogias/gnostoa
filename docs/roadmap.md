@@ -165,8 +165,19 @@ records that the packaged manifest and the runtime's Gnostoa source are both
 derived from `git ls-files`, using current tracked working-tree contents, so
 measured untracked or ignored host-local files cannot enter the runtime source and
 import surface. **The development image keeps the ordinary local build context and
-is deliberately outside that guarantee.** Deterministic public-surface-digest input
-remains separately unresolved, and Decision 0028 authorizes **no OCI publication**.
+is deliberately outside that guarantee.** Decision 0028 authorizes **no OCI
+publication**.
+
+[Decision 0029](../knowledge/decisions/0029-define-authoritative-source-membership-for-the-public-surface-digest.md)
+then resolved the deterministic public-surface-digest input that Decision 0028
+left open. Its
+[source-authority result](../knowledge/assessments/deterministic-public-surface-digest-source-authority-result.md)
+records that a Git-backed or manifest-backed toolkit root now takes public-surface
+membership from its declared candidate, so ignored or untracked host-local files no
+longer move the contract identity, while a **metadata-free vendored source presents
+its physical public surface** and a non-ignored extra public file there is a source
+modification by design. A declared authority that cannot be read fails rather than
+falling back.
 
 A bounded read-only
 [current-state drift retrospective](../knowledge/assessments/current-state-drift-retrospective.md)

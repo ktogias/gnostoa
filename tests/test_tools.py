@@ -1604,6 +1604,248 @@ runtime:
         self.assertIn("persist-credentials: false", github)
 
 
+def _toolkit_surface(root: Path) -> None:
+    """Write a minimal tree covering both public-surface entry shapes."""
+
+    (root / "tools").mkdir(parents=True, exist_ok=True)
+    (root / "tools" / "widget.py").write_text("WIDGET = 1\n", encoding="utf-8")
+    (root / "core").mkdir(parents=True, exist_ok=True)
+    (root / "core" / "profile.yaml").write_text("id: fixture\n", encoding="utf-8")
+    (root / "pyproject.toml").write_text('[project]\nname = "f"\n', encoding="utf-8")
+    # Outside the public surface: must never reach the digest either way.
+    (root / "knowledge").mkdir(parents=True, exist_ok=True)
+    (root / "knowledge" / "note.md").write_text("note\n", encoding="utf-8")
+
+
+def _git(root: Path, *arguments: str) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
+        ["git", "-c", f"safe.directory={root}", "-C", str(root), *arguments],
+        check=True,
+        capture_output=True,
+    )
+
+
+def _git_toolkit(root: Path) -> None:
+    subprocess.run(
+        ["git", "init", "--quiet", str(root)], check=True, capture_output=True
+    )
+    _git(root, "config", "user.email", "fixture@example.invalid")
+    _git(root, "config", "user.name", "Fixture")
+    _toolkit_surface(root)
+    _git(root, "add", "-A")
+    _git(root, "commit", "--quiet", "-m", "fixture")
+
+
+class PublicSurfaceDigestSourceAuthorityTests(unittest.TestCase):
+    """Public-surface membership by source form.
+
+    A declared candidate (Git metadata or a packaged manifest) is authoritative
+    for membership. A toolkit root that declares neither is a vendored source
+    whose physical public surface is what it presents for validation.
+    """
+
+    def test_declared_candidate_ignores_local_noncandidate_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "kit"
+            root.mkdir()
+            _git_toolkit(root)
+            clean = public_surface_digest(root)
+
+            # Every host-local class that is not candidate source.
+            (root / "tools" / "untracked.py").write_text("x\n", encoding="utf-8")
+            for cache in (".mypy_cache", ".ruff_cache", "__pycache__"):
+                (root / "tools" / cache).mkdir()
+                (root / "tools" / cache / "entry").write_text("c\n", encoding="utf-8")
+            (root / "tools" / "stale.pyc").write_bytes(b"stale")
+
+            self.assertEqual(clean, public_surface_digest(root))
+
+    def test_declared_candidate_follows_tracked_content_and_membership(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "kit"
+            root.mkdir()
+            _git_toolkit(root)
+            clean = public_surface_digest(root)
+
+            # Content authority stays the working tree, not committed blobs.
+            (root / "tools" / "widget.py").write_text("WIDGET = 2\n", encoding="utf-8")
+            self.assertNotEqual(clean, public_surface_digest(root))
+            (root / "tools" / "widget.py").write_text("WIDGET = 1\n", encoding="utf-8")
+            self.assertEqual(clean, public_surface_digest(root))
+
+            (root / "tools" / "added.py").write_text("A = 1\n", encoding="utf-8")
+            _git(root, "add", "tools/added.py")
+            staged = public_surface_digest(root)
+            self.assertNotEqual(clean, staged)
+
+            _git(root, "rm", "--quiet", "-f", "tools/added.py")
+            self.assertEqual(clean, public_surface_digest(root))
+
+    def test_index_removal_is_observed_even_when_the_file_remains(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "kit"
+            root.mkdir()
+            _git_toolkit(root)
+            clean = public_surface_digest(root)
+
+            # The path leaves the candidate but stays on disk. Membership, not
+            # the filesystem, decides what the public contract contains.
+            _git(root, "rm", "--quiet", "--cached", "tools/widget.py")
+            self.assertTrue((root / "tools" / "widget.py").is_file())
+            self.assertNotEqual(clean, public_surface_digest(root))
+
+    def test_declared_candidate_path_missing_from_the_tree_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "kit"
+            root.mkdir()
+            _git_toolkit(root)
+            (root / "tools" / "widget.py").unlink()
+
+            with self.assertRaises(KnowledgeFormatError) as raised:
+                public_surface_digest(root)
+            self.assertIn("tools/widget.py", str(raised.exception))
+
+    def test_submodule_gitdir_file_is_a_declared_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "kit"
+            root.mkdir()
+            _git_toolkit(root)
+            expected = public_surface_digest(root)
+
+            parent = Path(directory) / "parent"
+            parent.mkdir()
+            subprocess.run(
+                ["git", "init", "--quiet", str(parent)], check=True, capture_output=True
+            )
+            _git(parent, "config", "user.email", "fixture@example.invalid")
+            _git(parent, "config", "user.name", "Fixture")
+            (parent / "README.md").write_text("parent\n", encoding="utf-8")
+            _git(parent, "add", "-A")
+            _git(parent, "commit", "--quiet", "-m", "parent")
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "protocol.file.allow=always",
+                    "-C",
+                    str(parent),
+                    "submodule",
+                    "--quiet",
+                    "add",
+                    str(root),
+                    ".knowledge-kit",
+                ],
+                check=True,
+                capture_output=True,
+            )
+
+            pinned = parent / ".knowledge-kit"
+            # A submodule's .git is a gitdir file, not a directory.
+            self.assertTrue((pinned / ".git").is_file())
+            (pinned / "tools" / "local.py").write_text("L = 1\n", encoding="utf-8")
+            self.assertEqual(expected, public_surface_digest(pinned))
+
+    def test_packaged_manifest_is_a_declared_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "kit"
+            root.mkdir()
+            _git_toolkit(root)
+            expected = public_surface_digest(root)
+
+            packaged = Path(directory) / "packaged"
+            packaged.mkdir()
+            _toolkit_surface(packaged)
+            manifest = b"\0".join(
+                sorted(
+                    path.relative_to(root).as_posix().encode("utf-8")
+                    for path in root.rglob("*")
+                    if path.is_file() and ".git" not in path.relative_to(root).parts
+                )
+            )
+            (packaged / ".gnostoa-source-files").write_bytes(manifest + b"\0")
+
+            # Not a manifest member, so not public source.
+            (packaged / "tools" / "extra.py").write_text("E = 1\n", encoding="utf-8")
+            self.assertEqual(expected, public_surface_digest(packaged))
+
+    def test_broken_declared_authority_never_degrades_to_the_filesystem(self) -> None:
+        for label, prepare in (
+            ("unsafe manifest entry", lambda p: (p / ".gnostoa-source-files")
+                .write_bytes(b"tools/widget.py\0../escape.txt\0")),
+            ("manifest is a symlink", lambda p: (p / ".gnostoa-source-files")
+                .symlink_to("elsewhere")),
+            ("git metadata is unusable", lambda p: (p / ".git")
+                .write_text("gitdir: /nonexistent\n", encoding="utf-8")),
+        ):
+            with self.subTest(label):
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory) / "kit"
+                    root.mkdir()
+                    _toolkit_surface(root)
+                    prepare(root)
+                    # A declaration that cannot be read must never be treated as
+                    # no declaration: that would make broken authority weaker
+                    # than absent authority.
+                    with self.assertRaises(KnowledgeFormatError):
+                        public_surface_digest(root)
+
+    def test_metadata_free_vendored_source_presents_its_physical_surface(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            vendored = Path(directory) / ".knowledge-kit"
+            vendored.mkdir()
+            _toolkit_surface(vendored)
+            self.assertFalse((vendored / ".git").exists())
+            self.assertFalse((vendored / ".gnostoa-source-files").exists())
+            clean = public_surface_digest(vendored)
+
+            # Generated state is excluded by the digest contract.
+            for cache in (".mypy_cache", ".ruff_cache", "__pycache__"):
+                (vendored / "tools" / cache).mkdir()
+                (vendored / "tools" / cache / "e").write_text("c\n", encoding="utf-8")
+            (vendored / "tools" / "stale.pyc").write_bytes(b"stale")
+            self.assertEqual(clean, public_surface_digest(vendored))
+
+            # An extra non-ignored public file is a source modification. Nothing
+            # here can prove it was not part of the vendored source.
+            extra = vendored / "tools" / "extra.py"
+            extra.write_text("E = 1\n", encoding="utf-8")
+            self.assertNotEqual(clean, public_surface_digest(vendored))
+            extra.unlink()
+            self.assertEqual(clean, public_surface_digest(vendored))
+
+            (vendored / "tools" / "widget.py").write_text("W = 2\n", encoding="utf-8")
+            self.assertNotEqual(clean, public_surface_digest(vendored))
+            (vendored / "tools" / "widget.py").unlink()
+            self.assertNotEqual(clean, public_surface_digest(vendored))
+
+    def test_clean_source_forms_agree_for_one_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "kit"
+            root.mkdir()
+            _git_toolkit(root)
+
+            vendored = Path(directory) / "vendored"
+            vendored.mkdir()
+            _toolkit_surface(vendored)
+
+            packaged = Path(directory) / "packaged"
+            packaged.mkdir()
+            _toolkit_surface(packaged)
+            members = sorted(
+                path.relative_to(packaged).as_posix().encode("utf-8")
+                for path in packaged.rglob("*")
+                if path.is_file()
+            )
+            (packaged / ".gnostoa-source-files").write_bytes(b"\0".join(members) + b"\0")
+
+            self.assertEqual(
+                public_surface_digest(root), public_surface_digest(vendored)
+            )
+            self.assertEqual(
+                public_surface_digest(root), public_surface_digest(packaged)
+            )
+
+
 class DocumentationTests(unittest.TestCase):
     def test_source_name_conditional_go_is_durably_projected(self) -> None:
         assessment_path = (
