@@ -1,0 +1,133 @@
+#!/bin/sh
+# Prove that the published runtime's Gnostoa source is the Git candidate.
+#
+# Explicit, container-dependent evidence for the source-binding property. Not
+# wired into any named verification suite: it builds real images and is invoked
+# deliberately. Gnostoa-self build plumbing, not a supported command.
+#
+# Usage: ci/x3_conformance
+set -eu
+
+ROOT=$(git rev-parse --show-toplevel)
+cd "$ROOT"
+
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/gnostoa-x3.XXXXXX")
+CLEAN="$WORK/clean"
+DIRTY="$WORK/dirty"
+trap 'rm -rf "$WORK"; docker rmi -f gnostoa:x3-clean gnostoa:x3-dirty gnostoa:x3-dev >/dev/null 2>&1 || true' EXIT INT TERM
+
+failures=0
+check() {
+    if [ "$2" = "$3" ]; then
+        echo "  OK    $1 = $2"
+    else
+        echo "  FAIL  $1: got '$2' want '$3'"
+        failures=$((failures + 1))
+    fi
+}
+
+REF=$(git rev-parse HEAD)
+git clone --quiet --local --no-hardlinks "$ROOT" "$CLEAN"
+git -C "$CLEAN" checkout --quiet --detach "$REF"
+cp -a "$CLEAN" "$DIRTY"
+
+# Every host-local class the source-binding property has to exclude: ignored
+# bytecode and tool caches, an arbitrary untracked file, a root sitecustomize,
+# a module inside the installed package, and a pip shadow that would otherwise
+# take over the build's dependency installation.
+mkdir -p "$DIRTY/tools/nested/__pycache__" "$DIRTY/tools/.mypy_cache/3.12"
+printf 'bytecode\n' > "$DIRTY/tools/nested/__pycache__/stale.cpython-312.pyc"
+printf 'cache\n' > "$DIRTY/tools/.mypy_cache/3.12/cache.json"
+printf 'untracked\n' > "$DIRTY/x3-untracked-sentinel.txt"
+printf 'import sys; sys.stderr.write("X3-SITECUSTOMIZE-RAN\\n")\n' > "$DIRTY/sitecustomize.py"
+printf 'X3_LOCAL_SENTINEL = "present"\n' > "$DIRTY/tools/x3_local_sentinel.py"
+printf 'import sys\nsys.stderr.write("X3-PIP-SHADOW-RAN\\n")\nraise SystemExit(97)\n' > "$DIRTY/pip.py"
+
+echo "== candidate =="
+check "tracked source identical" \
+    "$(git -C "$CLEAN" ls-files --cached --deduplicate | sha256sum | cut -c1-16)" \
+    "$(git -C "$DIRTY" ls-files --cached --deduplicate | sha256sum | cut -c1-16)"
+
+s1=$(git -C "$CLEAN" ls-files --cached --deduplicate | wc -l)
+
+for variant in clean dirty; do
+    case "$variant" in
+        clean) tree="$CLEAN" ;;
+        dirty) tree="$DIRTY" ;;
+    esac
+    echo "== $variant checkout =="
+    log="$WORK/$variant.log"
+    ( cd "$tree" && GNOSTOA_CANDIDATE_REF="$REF" "$ROOT/ci/build-runtime" \
+        --tag "gnostoa:x3-$variant" ) > "$log" 2>&1 \
+        || { echo "  FAIL  build failed"; tail -5 "$log"; failures=$((failures + 1)); continue; }
+
+    check "build-time pip shadow executions" "$(grep -c 'X3-PIP-SHADOW-RAN' "$log" || true)" "0"
+    check "build-time sitecustomize executions" "$(grep -c 'X3-SITECUSTOMIZE-RAN' "$log" || true)" "0"
+
+    docker run --rm --entrypoint sh "gnostoa:x3-$variant" -c '
+        cd /opt/gnostoa
+        printf "%s\n" "$(tr -cd "\0" < .gnostoa-source-files | wc -c)"
+        printf "%s\n" "$(tr "\0" "\n" < .gnostoa-source-files | grep -c "^.gitignore$" || true)"
+        printf "%s\n" "$(tr "\0" "\n" < .gnostoa-source-files | grep -c "^.dockerignore$" || true)"
+        printf "%s\n" "$([ -e tools/x3_local_sentinel.py ] && echo present || echo absent)"
+        printf "%s\n" "$([ -e pip.py ] && echo present || echo absent)"
+        printf "%s\n" "$([ -e x3-untracked-sentinel.txt ] && echo present || echo absent)"
+        printf "%s\n" "$(python3 -c "import tools.x3_local_sentinel" 2>&1 | grep -c ModuleNotFound || true)"
+        printf "%s\n" "$(python3 -c "import tools,pkgutil;print(\"x3_local_sentinel\" in [m.name for m in pkgutil.iter_modules(tools.__path__)])")"
+        printf "%s\n" "$(python3 -c "import pip" 2>&1 | grep -c ModuleNotFound || true)"
+        printf "%s\n" "$(python3 -c "import ensurepip" 2>&1 | grep -c ModuleNotFound || true)"
+    ' > "$WORK/$variant.state"
+
+    check "S4 == S1"                 "$(sed -n 1p "$WORK/$variant.state")" "$s1"
+    check ".gitignore in manifest"   "$(sed -n 2p "$WORK/$variant.state")" "1"
+    check ".dockerignore in manifest" "$(sed -n 3p "$WORK/$variant.state")" "1"
+    check "local module in payload"  "$(sed -n 4p "$WORK/$variant.state")" "absent"
+    check "pip shadow in payload"    "$(sed -n 5p "$WORK/$variant.state")" "absent"
+    check "untracked file in payload" "$(sed -n 6p "$WORK/$variant.state")" "absent"
+    check "local module unimportable" "$(sed -n 7p "$WORK/$variant.state")" "1"
+    check "local module in pkgutil"  "$(sed -n 8p "$WORK/$variant.state")" "False"
+    check "pip absent"               "$(sed -n 9p "$WORK/$variant.state")" "1"
+    check "ensurepip absent"         "$(sed -n 10p "$WORK/$variant.state")" "1"
+    check "runtime self-check" \
+        "$(docker run --rm "gnostoa:x3-$variant" self-check 2>&1 | grep -c '^OK$' || true)" "1"
+done
+
+echo "== fail-closed =="
+manifest=$(mktemp -d "$WORK/ctx.XXXXXX")
+mkdir -p "$manifest/source" "$manifest/meta"
+( cd "$CLEAN" && git ls-files --cached --deduplicate -z | LC_ALL=C sort -z ) \
+    > "$manifest/meta/.gnostoa-source-files"
+( cd "$CLEAN" && tar -cf - --null --no-recursion \
+    --files-from="$manifest/meta/.gnostoa-source-files" ) \
+    | tar -xf - -C "$manifest/source"
+
+docker build --target runtime --build-context "candidate=$manifest" \
+    --build-arg MANIFEST_SHA256=0000000000000000000000000000000000000000000000000000000000000000 \
+    --build-arg VCS_REF="$REF" --tag gnostoa:x3-clean "$CLEAN" > "$WORK/wrong.log" 2>&1 \
+    && check "wrong manifest digest rejected" "accepted" "rejected" \
+    || check "wrong manifest digest rejected" "rejected" "rejected"
+
+rm -f "$manifest/source/AGENTS.md"
+digest=$(sha256sum "$manifest/meta/.gnostoa-source-files" | cut -d' ' -f1)
+docker build --target runtime --build-context "candidate=$manifest" \
+    --build-arg "MANIFEST_SHA256=$digest" \
+    --build-arg VCS_REF="$REF" --tag gnostoa:x3-clean "$CLEAN" > "$WORK/mismatch.log" 2>&1 \
+    && check "payload/manifest mismatch rejected" "accepted" "rejected" \
+    || check "payload/manifest mismatch rejected" "rejected" "rejected"
+
+# Development keeps the ordinary context, so it builds without a candidate
+# context - and remains as trustworthy as the checkout it is built from. The
+# contaminated tree is deliberately not used here: that residual is recorded in
+# the Decision, not asserted away.
+echo "== development target, no candidate context =="
+docker build --target development --build-arg VCS_REF=development \
+    --tag gnostoa:x3-dev "$CLEAN" > "$WORK/dev.log" 2>&1 \
+    && check "development builds" "yes" "yes" \
+    || { check "development builds" "no" "yes"; tail -5 "$WORK/dev.log"; }
+
+if [ "$failures" -eq 0 ]; then
+    echo "RESULT: PASS"
+else
+    echo "RESULT: FAIL ($failures)"
+    exit 1
+fi

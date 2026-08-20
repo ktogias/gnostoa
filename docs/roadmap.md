@@ -156,6 +156,18 @@ statement must distinguish effective-runtime component hygiene from
 layer-history hygiene. Provider state remains authoritative for Work Item
 lifecycle.
 
+Under [Work Item #64](https://github.com/ktogias/gnostoa/issues/64),
+[Decision 0028](../knowledge/decisions/0028-bind-the-published-oci-runtime-source-to-the-git-candidate.md)
+bound the measured first-party runtime source payload and packaged candidate to
+the authoritative Git candidate. Its candidate-bound
+[binding result](../knowledge/assessments/oci-git-candidate-source-binding-result.md)
+records that the packaged manifest and the runtime's Gnostoa source are both
+derived from `git ls-files`, using current tracked working-tree contents, so
+measured untracked or ignored host-local files cannot enter the runtime source and
+import surface. **The development image keeps the ordinary local build context and
+is deliberately outside that guarantee.** Deterministic public-surface-digest input
+remains separately unresolved, and Decision 0028 authorizes **no OCI publication**.
+
 A bounded read-only
 [current-state drift retrospective](../knowledge/assessments/current-state-drift-retrospective.md)
 then reconstructed the observed drift incidents, near-misses, triggers and

@@ -137,14 +137,12 @@ consumer domain vocabulary.
 
 ## Container route
 
-Build and test the current checkout without publishing an image:
+Build and test the current checkout without publishing an image. The helper
+materialises exactly the Git-tracked files, using their current working-tree
+contents, so untracked or ignored local files never become runtime source:
 
 ```bash
-docker build \
-  --target runtime \
-  --build-arg VCS_REF=source-checkout \
-  --tag gnostoa:source-checkout \
-  .
+ci/build-runtime --tag gnostoa:source-checkout
 
 docker run --rm gnostoa:source-checkout self-check
 ```

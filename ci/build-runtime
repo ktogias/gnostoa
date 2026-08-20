@@ -1,0 +1,107 @@
+#!/bin/sh
+# Build the published Gnostoa runtime image from the authoritative Git candidate.
+#
+# The runtime image must not inherit host-local files that are not part of the
+# Git candidate: they would otherwise become importable Gnostoa source, shadow
+# the Python commands that install the runtime, or enter the packaged candidate
+# manifest. This script materialises exactly the tracked candidate paths, using
+# their current working-tree contents, into a throwaway context and hands that
+# to the build together with the manifest the image will ship.
+#
+# Gnostoa-self build plumbing. Not a supported command, not adopter guidance.
+#
+# Usage: ci/build-runtime [--tag TAG] [--target TARGET] [docker build args...]
+set -eu
+
+VCS_REF="${GNOSTOA_CANDIDATE_REF:-}"
+KIT_VERSION="${GNOSTOA_KIT_VERSION:-development}"
+TAG="gnostoa:source-checkout"
+TARGET="runtime"
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --tag) TAG="$2"; shift 2 ;;
+        --target) TARGET="$2"; shift 2 ;;
+        *) break ;;
+    esac
+done
+
+ROOT=$(git rev-parse --show-toplevel)
+cd "$ROOT"
+
+if [ -z "$VCS_REF" ]; then
+    VCS_REF=$(git rev-parse HEAD)
+fi
+
+CONTEXT=$(mktemp -d "${TMPDIR:-/tmp}/gnostoa-candidate.XXXXXX")
+trap 'rm -rf "$CONTEXT"' EXIT INT TERM
+mkdir -p "$CONTEXT/source" "$CONTEXT/meta"
+
+# The candidate context is already filtered. A .dockerignore at its root would
+# silently remove authoritative paths while the manifest still claimed them, so
+# the repository's own tracked .dockerignore must only ever appear under source/.
+if [ -e "$CONTEXT/.dockerignore" ]; then
+    echo "candidate context root must not contain .dockerignore" >&2
+    exit 2
+fi
+
+# Only these index modes have defined packaging semantics here. Gitlinks and
+# anything else fail closed rather than being given invented behaviour.
+unsupported=$(git ls-files --stage | awk '$1!="100644" && $1!="100755" && $1!="120000" {print $1" "$4}')
+if [ -n "$unsupported" ]; then
+    echo "unsupported Git index entry mode in candidate:" >&2
+    echo "$unsupported" >&2
+    exit 3
+fi
+
+# The manifest is the authority for both the source payload and the packaged
+# candidate. LC_ALL=C keeps the order independent of the builder's locale; the
+# same ordering is recomputed inside the image and compared byte for byte.
+git ls-files --cached --deduplicate -z \
+    | LC_ALL=C sort -z > "$CONTEXT/meta/.gnostoa-source-files"
+
+missing=0
+while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    # -e follows symlinks, so a symlink whose target is absent reads as missing.
+    if [ ! -e "$path" ] && [ ! -L "$path" ]; then
+        echo "missing tracked working-tree path: $path" >&2
+        missing=1
+    fi
+done <<EOF
+$(tr '\0' '\n' < "$CONTEXT/meta/.gnostoa-source-files")
+EOF
+[ "$missing" -eq 0 ] || exit 4
+
+# --no-recursion keeps the archive to exactly the listed paths; entering the
+# root first keeps every listed path relative and avoids GNU tar's positional
+# option handling. Symlinks are archived as symlinks, never dereferenced.
+tar -cf - --null --no-recursion \
+    --files-from="$CONTEXT/meta/.gnostoa-source-files" \
+    | tar -xf - -C "$CONTEXT/source"
+
+# The Git index, not the local filesystem, decides which entries are executable.
+drift=$(git ls-files --stage | while read -r mode _ _ path; do
+    case "$mode" in
+        100755) [ -x "$CONTEXT/source/$path" ] || echo "expected executable: $path" ;;
+        100644) [ ! -x "$CONTEXT/source/$path" ] || echo "expected non-executable: $path" ;;
+        120000) [ -L "$CONTEXT/source/$path" ] || echo "expected symlink: $path" ;;
+    esac
+done)
+if [ -n "$drift" ]; then
+    echo "materialised mode disagrees with the Git index:" >&2
+    echo "$drift" >&2
+    exit 5
+fi
+
+MANIFEST_SHA256=$(sha256sum "$CONTEXT/meta/.gnostoa-source-files" | cut -d' ' -f1)
+
+exec docker build \
+    --target "$TARGET" \
+    --build-context "candidate=$CONTEXT" \
+    --build-arg "MANIFEST_SHA256=$MANIFEST_SHA256" \
+    --build-arg "VCS_REF=$VCS_REF" \
+    --build-arg "KIT_VERSION=$KIT_VERSION" \
+    --tag "$TAG" \
+    "$@" \
+    "$ROOT"

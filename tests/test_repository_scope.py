@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 import re
 import subprocess
 import tempfile
@@ -201,7 +202,7 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
 
     def test_container_runtime_removes_the_affected_pip_component(self) -> None:
         stages = self._dockerfile_stages()
-        for required in ("base", "runtime", "development"):
+        for required in ("base", "runtime-build", "runtime", "development"):
             self.assertIn(required, stages)
 
         runtime = stages["runtime"]
@@ -216,24 +217,65 @@ class RepositoryCandidateScopeTests(unittest.TestCase):
         # Privilege is dropped again before the runtime is handed to a consumer.
         self.assertLess(runtime.index("USER root"), runtime.rindex("USER kit"))
 
-        # The base stage still needs pip to install the runtime lock and the
-        # editable source, so the removal must not migrate into it.
-        self.assertIn("python -m pip install", base)
+        # Both branches install through pip; the removal must stay in the
+        # published runtime and out of the shared base and of development.
+        self.assertIn("python -m pip install", stages["runtime-build"])
         self.assertNotIn("pip uninstall", base)
         self.assertNotIn("ensurepip", base)
-
-        # Development branches from the shared base, not from the cleaned
-        # runtime, so maintainers keep pip and the development lock.
-        dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
-        self.assertIn("FROM base AS development", dockerfile)
-        self.assertNotIn("FROM runtime AS development", dockerfile)
         self.assertNotIn("pip uninstall", stages["development"])
 
+        dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
         # R1 was not selected: no replacement pip is fetched or pinned.
         for forbidden in ("get-pip", "--upgrade pip", "pip install --upgrade"):
             self.assertNotIn(forbidden, dockerfile)
         # Flattening was not selected.
         self.assertNotIn("FROM scratch", dockerfile)
+
+    def test_container_runtime_source_comes_from_the_git_candidate(self) -> None:
+        """The runtime's Gnostoa source must come from the filtered candidate.
+
+        Copying the ordinary build context into the runtime would let untracked
+        host-local files become importable Gnostoa source and shadow the pip
+        commands that install it, so the filtered source and its manifest check
+        have to be in place before any source-sensitive Python runs.
+        """
+        stages = self._dockerfile_stages()
+        runtime_build = stages["runtime-build"]
+        dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+        # Source arrives only from the named candidate context, never from the
+        # ordinary context that carries whatever the builder happens to have.
+        self.assertIn("COPY --from=candidate", runtime_build)
+        self.assertNotIn("COPY --chown=kit:kit . .", runtime_build)
+
+        # The manifest is bound to exact bytes and the payload is proven to
+        # match it, both before the first Python install in this stage.
+        self.assertIn("MANIFEST_SHA256", runtime_build)
+        self.assertIn("sha256sum -c -", runtime_build)
+        self.assertIn("cmp -s", runtime_build)
+        self.assertLess(
+            runtime_build.index("cmp -s"),
+            runtime_build.index("python -m pip install"),
+        )
+        # Ordering must not depend on the builder's locale.
+        self.assertIn("LC_ALL=C sort -z", runtime_build)
+
+        # Development keeps the ordinary context and must not require the
+        # candidate context, so `docker build --target development` still works
+        # and the devcontainer needs no extra input.
+        development_build = stages["development-build"]
+        self.assertIn("COPY --chown=kit:kit . .", development_build)
+        self.assertNotIn("candidate", development_build)
+        self.assertNotIn("candidate", stages["development"])
+        self.assertIn("FROM base AS development-build", dockerfile)
+
+        # The helper is self-owned build plumbing, not a supported command.
+        helper = ROOT / "ci" / "build-runtime"
+        self.assertTrue(helper.is_file())
+        self.assertTrue(os.access(helper, os.X_OK))
+        self.assertNotIn(
+            "build-runtime", (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        )
 
     def test_container_build_context_excludes_local_analysis_state(self) -> None:
         exclusions = set(
