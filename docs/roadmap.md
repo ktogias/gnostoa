@@ -188,6 +188,17 @@ records the exact candidate, the bundled-Expat move from 2.7.4 to 2.8.3, the
 unchanged Debian package inventory, and the remaining post-release CPython
 residuals that have no released supported 3.12 fix.
 
+A bounded Debian materiality triage then classified the shipped source packages
+that carry no Debian Security Tracker vulnerability rows, and
+[Decision 0031](../knowledge/decisions/0031-accept-bounded-material-debian-security-uncertainty-for-the-first-oci-candidate.md)
+dispositioned the five material unknowns for the measured `linux/amd64`
+first-publication boundary. Its
+[triage result](../knowledge/assessments/debian-material-unknown-triage-and-disposition-result.md)
+records the corrected tracker measurement, the runtime materiality evidence and
+the accepted bounded residual. The result does not call those components safe or
+unaffected and remains candidate-time evidence subject to Decision 0022/J
+freshness.
+
 A bounded read-only
 [current-state drift retrospective](../knowledge/assessments/current-state-drift-retrospective.md)
 then reconstructed the observed drift incidents, near-misses, triggers and
