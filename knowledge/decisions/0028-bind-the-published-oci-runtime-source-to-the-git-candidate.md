@@ -187,6 +187,13 @@ R, and is unchanged.
   until they did.
 - Locally built runtime images now report `development` where they previously
   reported a commit id. That is a deliberate loss of a claim that was not true.
+  It has one inherited side effect: `development` is already in the runtime
+  lock's `UNENFORCED_REVISIONS`, so an unasserted local build no longer enforces
+  the public-surface digest match. That enforcement was previously running
+  against a revision label that could be false, so it was checking a real digest
+  under a false identity. Provider verification is unaffected — it asserts the
+  checked-out revision — and a maintainer who wants the enforced path locally
+  gets it the same way, by asserting the revision.
 - Four correctness requirements are load-bearing rather than stylistic:
   locale-independent (`LC_ALL=C`) ordering on both sides, a presence guard that
   does not follow symlinks, a wrapper root free of `.dockerignore`, and NUL-safe
