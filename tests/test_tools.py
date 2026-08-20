@@ -259,9 +259,28 @@ class LicensePolicyTests(unittest.TestCase):
         project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         self.assertEqual("Apache-2.0", project["project"]["license"])
         self.assertEqual(["LICENSE", "NOTICE"], project["project"]["license-files"])
+
+    def test_composite_image_publishes_no_image_wide_license_expression(self) -> None:
+        """The first-party licence is not an image-wide licence expression.
+
+        `org.opencontainers.image.licenses` describes the licence(s) under which
+        the *contained* software is distributed, as an SPDX expression. The
+        image contains CPython, MIT-licensed distributions and Debian packages
+        under many licence families, so Gnostoa's own Apache-2.0 does not
+        describe it. The annotation is optional, and omitting it is truthful
+        where a partial value would not be.
+
+        This asserts the current selection, not a permanent rule: a later
+        Decision may select a real image-wide expression, and this test is then
+        the thing to change.
+        """
+
+        dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        self.assertNotIn("org.opencontainers.image.licenses", dockerfile)
+        # The first-party declaration stays exactly where it belongs.
+        self.assertIn('org.opencontainers.image.title="Gnostoa"', dockerfile)
         self.assertIn(
-            'org.opencontainers.image.licenses="Apache-2.0"',
-            (ROOT / "Dockerfile").read_text(encoding="utf-8"),
+            'org.opencontainers.image.authors="Konstantinos Togias"', dockerfile
         )
 
     def test_license_scope_is_explicit_for_adopting_projects(self) -> None:

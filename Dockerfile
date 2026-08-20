@@ -37,7 +37,6 @@ ARG BUILD_DATE=unknown
 LABEL org.opencontainers.image.title="Gnostoa" \
       org.opencontainers.image.description="Technology-neutral OKF validation and context tooling" \
       org.opencontainers.image.authors="Konstantinos Togias" \
-      org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.version="${KIT_VERSION}" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.created="${BUILD_DATE}"
