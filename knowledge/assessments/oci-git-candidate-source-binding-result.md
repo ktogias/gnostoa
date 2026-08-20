@@ -123,6 +123,23 @@ is **rejected** before any Python installation. A missing candidate context or
 missing digest fails the build. A candidate path absent from the working tree fails
 the helper and names the path. An unsupported Git index entry mode fails the helper.
 
+## Named-context substitution
+
+`COPY --from=candidate` is an image reference when no named context supplies it.
+Measured, with a decoy image literally named `candidate:latest` in the local
+image store carrying its own self-consistent source and manifest:
+
+| route | outcome |
+|---|---|
+| provider verification before the call sites moved | failed pulling `docker.io/library/candidate:latest` |
+| raw `docker build --target runtime .`, decoy present | **rejected** at the in-build check |
+| `ci/build-runtime`, decoy present | **builds correctly** — decoy absent, `S4 == S1 == 219`, self-check `OK` |
+
+The explicitly supplied named context takes precedence over a same-named image,
+so the documented route is unaffected. The unsupported raw route fails, and it
+fails at the in-build equality and digest checks rather than at the substitution
+itself. This is why that check is inside the build.
+
 ## Working-tree and path-set semantics
 
 An uncommitted edit to a tracked file **reaches the artifact**: source content is

@@ -185,6 +185,17 @@ R, and is unchanged.
   to move: the four provider jobs that built the published runtime raw were a
   real dependency of this change, not an optional follow-up, and they failed
   until they did.
+- That failure mode was measured rather than assumed, and it is not a clean
+  error. Without `--build-context candidate=…`, BuildKit reads `--from=candidate`
+  as an *image reference*: provider verification failed while attempting to pull
+  `docker.io/library/candidate:latest`. A local image of that name is therefore
+  substituted silently at that step. Measured consequences, both ways: a raw
+  `docker build --target runtime .` with such an image present is still rejected,
+  by the clause N in-build check and by the absent `MANIFEST_SHA256`; and an
+  explicitly supplied named context takes precedence over the same-named image,
+  so the documented helper route is unaffected. This is the clearest available
+  argument that clause N must stay a build-time check rather than a helper-side
+  one — the substitution it catches happens after the helper has finished.
 - Locally built runtime images now report `development` where they previously
   reported a commit id. That is a deliberate loss of a claim that was not true.
   It has one inherited side effect: `development` is already in the runtime
