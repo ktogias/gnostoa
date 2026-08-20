@@ -42,6 +42,9 @@ def fixture_repository(root: Path) -> None:
     (root / "nested").mkdir()
     (root / "nested" / "deep.txt").write_text("deep\n", encoding="utf-8")
     (root / "link.txt").symlink_to("plain.txt")
+    # A literal newline is legal in a Git pathname. It is created here, not
+    # emulated, because the whole point is that no step splits on lines.
+    (root / "with\nnewline.txt").write_text("newline\n", encoding="utf-8")
     git(root, "add", "-A")
     git(root, "commit", "--quiet", "-m", "fixture")
 
@@ -91,12 +94,13 @@ class BuildRuntimeMaterialisationTests(unittest.TestCase):
             result = self.materialise(source, destination)
             self.assertEqual(0, result.returncode, result.stderr)
 
+            raw = subprocess.run(
+                ["git", "-C", str(source), "ls-files", "--cached",
+                 "--deduplicate", "-z"],
+                check=True, capture_output=True,
+            ).stdout
             expected = {
-                line
-                for line in git(
-                    source, "ls-files", "--cached", "--deduplicate"
-                ).stdout.splitlines()
-                if line
+                os.fsdecode(record) for record in raw.split(b"\0") if record
             }
             payload = destination / "source"
             actual = {
@@ -112,6 +116,7 @@ class BuildRuntimeMaterialisationTests(unittest.TestCase):
             }
             self.assertEqual(expected, actual)
             self.assertIn(".gitignore", actual)
+            self.assertIn("with\nnewline.txt", actual)
             for excluded in ("untracked.txt", "ignored/cache.txt", "nested/stale.pyc"):
                 self.assertNotIn(excluded, actual)
 
@@ -145,13 +150,18 @@ class BuildRuntimeMaterialisationTests(unittest.TestCase):
             self.assertEqual(0, self.materialise(source, destination).returncode)
             manifest = (destination / "meta" / ".gnostoa-source-files").read_bytes()
 
-            self.assertNotIn(b"\n", manifest)
+            # NUL separates candidate records. A newline inside a record is
+            # ordinary pathname content, not a record boundary.
             self.assertTrue(manifest.endswith(b"\0"))
             entries = [entry for entry in manifest.split(b"\0") if entry]
-            # C ordering, not the builder's locale: an in-build check recomputes
-            # this ordering and compares the bytes.
+            # C ordering over whole records: an in-build check recomputes this
+            # ordering and compares the bytes.
             self.assertEqual(sorted(entries), entries)
             self.assertIn(b".gitignore", entries)
+            self.assertIn(b"with\nnewline.txt", entries)
+            self.assertEqual(
+                1, sum(1 for entry in entries if b"\n" in entry)
+            )
             self.assertTrue(hashlib.sha256(manifest).hexdigest())
 
     def test_missing_tracked_path_fails_closed(self) -> None:
@@ -164,7 +174,6 @@ class BuildRuntimeMaterialisationTests(unittest.TestCase):
             destination = Path(directory) / "candidate"
             result = self.materialise(source, destination)
             self.assertNotEqual(0, result.returncode)
-            self.assertIn("missing tracked working-tree path", result.stderr)
             self.assertIn("plain.txt", result.stderr)
 
     def test_dangling_symlink_is_not_reported_as_missing(self) -> None:

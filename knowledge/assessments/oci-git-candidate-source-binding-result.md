@@ -153,6 +153,25 @@ fourth produced a silent one:
 4. **NUL-safe comparison.** A line-based comparison reports a false mismatch on a
    path containing a newline.
 
+## Revision identity
+
+The image labels a commit only when the build verified that its source is that
+commit's source. Measured behaviour of the six cases:
+
+| case | asserted ref | outcome | `image.revision` |
+|---|---|---|---|
+| local build, clean tree | none | builds | `development` |
+| local build, edited tracked file | none | builds | `development` |
+| exact revision, clean tree | current `HEAD` | builds | the exact SHA |
+| exact revision, edited tracked file | current `HEAD` | **exit 7** | — |
+| unresolvable revision | `deadbeef…` | **exit 7** | — |
+| resolvable revision that is not `HEAD` | an ancestor | **exit 7** | — |
+
+An unasserted build is labelled `development` rather than resolved to `HEAD`,
+because the source is the working tree and tracked files may carry uncommitted
+edits. A failed assertion is a build failure; it never degrades to `development`
+under the same command.
+
 ## Runtime parity
 
 Against the pre-change baseline, with only the intended source-authority
@@ -196,6 +215,47 @@ paths, and the in-image value was required to match the clean candidate value.
 **This establishes nothing about digest determinism.** The separately measured
 defect — the digest can vary because ignored local caches exist under surface paths
 — is untouched and remains the next expected disposition.
+
+## How this was reached
+
+Recorded because several steps here were corrections to this work, and a result
+that hides them is a worse guide to the next slice than one that does not.
+
+1. A read-only study established the S1→S4 chain and measured that the packaged
+   manifest was a filesystem enumeration, not the candidate.
+2. A read-only route precursor compared six implementation shapes and selected a
+   pre-generated Git manifest over a secret-transported one, because build-secret
+   contents do not participate in cache invalidation.
+3. A read-only falsification tested whether manifest exclusion bounded the
+   runtime import surface. It did not: the editable install maps a directory.
+   One probe — a root `sitecustomize.py` — did **not** execute, and that negative
+   result was recorded as a negative result.
+4. Implementation proceeded under the filtered-source route. Four requirements
+   surfaced as real failures: locale collation, symlink-following presence, tar
+   argument order, and a NUL byte written literally into a generated Dockerfile.
+5. An early reading of the wrapper-root `.dockerignore` hazard concluded there
+   was no hazard. That reading was wrong — it used patterns that happen not to
+   match under `source/`. A sharper test reduced a payload from 214 to 197 paths.
+   The in-build equality check exists because of this, and is not optional.
+6. A first assertion script sent stderr into captured stdout and prepended a
+   traceback to a result string. Both the RED and GREEN measurements were retaken
+   with the corrected instrument rather than reasoned about.
+7. The conformance harness initially measured the pre-change source, because a
+   local clone carries committed state; and it asserted a property of the
+   development image that the Decision explicitly does not claim. Both were
+   corrected — the second by recording the residual instead of asserting it away.
+8. Provider verification then failed: four jobs still built the published runtime
+   with raw `docker build`, which now fails closed. That was a genuine missing
+   dependency of the change. Work stopped rather than editing an unadmitted path.
+9. The owner re-admitted the slice with that one path, and on read-back found two
+   defects this work had missed: NUL-safety was incomplete in three constructs
+   that still reasoned in lines, and the revision label defaulted to `HEAD` —
+   claiming a commit identity for a working-tree build.
+10. Both were corrected. The line-oriented constructs were removed rather than
+    patched, three of them by asking Git or `tar` for the guarantee directly. A
+    tracked pathname containing a literal newline became a test fixture.
+11. The property was then re-measured end to end, and the provider route was
+    moved onto the helper.
 
 ## Maximum claim
 

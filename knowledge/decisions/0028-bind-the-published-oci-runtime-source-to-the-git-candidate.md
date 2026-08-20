@@ -146,17 +146,59 @@ supplies one concrete narrow result; it takes no authority for workspace
 ownership, cleanup ownership, read/write roots, sandboxing or generic hermetic
 execution.
 
+**AB. Revision identity is a verified claim, never a label.** An image may carry
+a commit in `org.opencontainers.image.revision` and `KNOWLEDGE_KIT_REVISION` only
+when the build has checked that the source it used is that commit's source.
+Writing a commit id that was merely supplied would reproduce, in the metadata,
+exactly the defect this Decision exists to remove.
+
+**AC. Without that assertion the build is labelled `development`.** Clause I
+selects current working-tree contents, so tracked files may legitimately carry
+uncommitted edits and a bare local build cannot honestly name a commit. The
+absence of an asserted revision is therefore recorded as `development` rather
+than resolved to `HEAD`. An unlabelled build is a smaller defect than a
+mislabelled one.
+
+**AD. The assertion is verified fail-closed, and never downgraded.** When
+`GNOSTOA_CANDIDATE_REF` is supplied, all four conditions must hold: the ref
+resolves to a commit; that commit is `HEAD`; there is no tracked working-tree or
+staged difference against it; and the candidate path set equals that revision's
+path set. Untracked and ignored paths are excluded from this comparison, because
+clause K already excludes them from the source. Any failure fails the build. A
+failed assertion must not silently fall back to `development` — the caller asked
+for a revision-identified artifact and must not receive an unidentified one under
+the same command.
+
+**AE. The helper is the route for every published-runtime build, including the
+provider's.** The verification jobs that build the published `runtime` target
+invoke the helper and assert the checked-out revision, so provider-built images
+are bound and identified on the same terms as local ones. The `extended` job
+continues to build the development target from the ordinary context under clause
+R, and is unchanged.
+
 ## Consequences
 
 - The runtime build now needs the helper. A bare `docker build --target runtime`
   no longer supplies a candidate context and fails closed rather than silently
   falling back to the builder's directory — which is the point, but it does mean
-  the documented route is the helper, not raw Docker.
+  the documented route is the helper, not raw Docker. Every existing caller had
+  to move: the four provider jobs that built the published runtime raw were a
+  real dependency of this change, not an optional follow-up, and they failed
+  until they did.
+- Locally built runtime images now report `development` where they previously
+  reported a commit id. That is a deliberate loss of a claim that was not true.
 - Four correctness requirements are load-bearing rather than stylistic:
   locale-independent (`LC_ALL=C`) ordering on both sides, a presence guard that
   does not follow symlinks, a wrapper root free of `.dockerignore`, and NUL-safe
   path handling throughout. Each of the first, second and fourth produced a real
   failure during development; the third produced a silent one.
+- NUL-safety is an end-to-end property, not a per-command one. A single
+  line-oriented step anywhere in the chain — a mode gate, a drift check, an
+  evidence hash, a record count — reintroduces the defect the rest of the chain
+  avoids, and does so silently on repositories that happen to contain no such
+  path. Candidate reasoning is therefore NUL-framed from `git` output to the
+  in-image comparison, and a tracked pathname containing a literal newline is
+  carried as a test fixture rather than assumed absent.
 - The Dockerfile gains a stage split. The shared base keeps system state; the two
   branches differ only in where their source comes from. The cost is one
   duplicated install block, accepted so the devcontainer needs no change.

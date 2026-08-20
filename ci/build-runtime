@@ -8,12 +8,20 @@
 # their current working-tree contents, into a throwaway context and hands that
 # to the build together with the manifest the image will ship.
 #
+# Candidate pathnames are NUL-delimited from end to end. A Git pathname may
+# contain a newline, so no step here may treat a line as a path record.
+#
 # Gnostoa-self build plumbing. Not a supported command, not adopter guidance.
 #
 # Usage: ci/build-runtime [--tag TAG] [--target TARGET] [docker build args...]
+#
+# GNOSTOA_CANDIDATE_REF asserts that the tracked candidate is exactly one
+# revision. It is verified before the build and written into image identity.
+# Without it the build is a working-tree build and is labelled `development`,
+# because tracked files may legitimately carry uncommitted edits.
 set -eu
 
-VCS_REF="${GNOSTOA_CANDIDATE_REF:-}"
+CANDIDATE_REF="${GNOSTOA_CANDIDATE_REF:-}"
 KIT_VERSION="${GNOSTOA_KIT_VERSION:-development}"
 TAG="gnostoa:source-checkout"
 TARGET="runtime"
@@ -29,10 +37,6 @@ done
 ROOT=$(git rev-parse --show-toplevel)
 cd "$ROOT"
 
-if [ -z "$VCS_REF" ]; then
-    VCS_REF=$(git rev-parse HEAD)
-fi
-
 CONTEXT=$(mktemp -d "${TMPDIR:-/tmp}/gnostoa-candidate.XXXXXX")
 trap 'rm -rf "$CONTEXT"' EXIT INT TERM
 mkdir -p "$CONTEXT/source" "$CONTEXT/meta"
@@ -46,8 +50,11 @@ if [ -e "$CONTEXT/.dockerignore" ]; then
 fi
 
 # Only these index modes have defined packaging semantics here. Gitlinks and
-# anything else fail closed rather than being given invented behaviour.
-unsupported=$(git ls-files --stage | awk '$1!="100644" && $1!="100755" && $1!="120000" {print $1" "$4}')
+# anything else fail closed rather than being given invented behaviour. Asking
+# Git for modes alone keeps pathnames out of this comparison entirely.
+unsupported=$(git ls-files --cached --format='%(objectmode)' \
+    | LC_ALL=C sort -u \
+    | grep -v -x -e 100644 -e 100755 -e 120000 || true)
 if [ -n "$unsupported" ]; then
     echo "unsupported Git index entry mode in candidate:" >&2
     echo "$unsupported" >&2
@@ -60,39 +67,58 @@ fi
 git ls-files --cached --deduplicate -z \
     | LC_ALL=C sort -z > "$CONTEXT/meta/.gnostoa-source-files"
 
-missing=0
-while IFS= read -r path; do
-    [ -n "$path" ] || continue
-    # -e follows symlinks, so a symlink whose target is absent reads as missing.
-    if [ ! -e "$path" ] && [ ! -L "$path" ]; then
-        echo "missing tracked working-tree path: $path" >&2
-        missing=1
+if [ -n "$CANDIDATE_REF" ]; then
+    # An exact revision was asserted. Verify it rather than trusting it: the
+    # metadata it produces is a claim about which source built the image.
+    resolved=$(git rev-parse --verify --quiet "${CANDIDATE_REF}^{commit}") || {
+        echo "candidate revision does not resolve locally: $CANDIDATE_REF" >&2
+        exit 7
+    }
+    head=$(git rev-parse --verify HEAD)
+    if [ "$resolved" != "$head" ]; then
+        echo "candidate revision $resolved is not HEAD $head" >&2
+        exit 7
     fi
-done <<EOF
-$(tr '\0' '\n' < "$CONTEXT/meta/.gnostoa-source-files")
-EOF
-[ "$missing" -eq 0 ] || exit 4
+    # Tracked divergence only. Ignored and untracked files are excluded from the
+    # runtime source by construction, so they cannot make this assertion false.
+    if ! git diff --quiet "$resolved" -- || ! git diff --cached --quiet "$resolved" -- ; then
+        echo "tracked candidate differs from asserted revision $resolved" >&2
+        exit 7
+    fi
+    git ls-tree -r --name-only -z "$resolved" | LC_ALL=C sort -z > "$CONTEXT/meta/.revision-paths"
+    if ! cmp -s "$CONTEXT/meta/.revision-paths" "$CONTEXT/meta/.gnostoa-source-files"; then
+        echo "candidate path set differs from asserted revision $resolved" >&2
+        exit 7
+    fi
+    rm -f "$CONTEXT/meta/.revision-paths"
+    VCS_REF="$resolved"
+else
+    VCS_REF="development"
+fi
 
-# --no-recursion keeps the archive to exactly the listed paths; entering the
-# root first keeps every listed path relative and avoids GNU tar's positional
-# option handling. Symlinks are archived as symlinks, never dereferenced.
+# --no-recursion keeps the archive to exactly the listed paths. tar fails when a
+# listed path is missing, and archives a symlink without following it, so it
+# already supplies both required presence semantics without a pathname loop.
 tar -cf - --null --no-recursion \
     --files-from="$CONTEXT/meta/.gnostoa-source-files" \
     | tar -xf - -C "$CONTEXT/source"
 
-# The Git index, not the local filesystem, decides which entries are executable.
-drift=$(git ls-files --stage | while read -r mode _ _ path; do
-    case "$mode" in
-        100755) [ -x "$CONTEXT/source/$path" ] || echo "expected executable: $path" ;;
-        100644) [ ! -x "$CONTEXT/source/$path" ] || echo "expected non-executable: $path" ;;
-        120000) [ -L "$CONTEXT/source/$path" ] || echo "expected symlink: $path" ;;
-    esac
-done)
-if [ -n "$drift" ]; then
-    echo "materialised mode disagrees with the Git index:" >&2
-    echo "$drift" >&2
+# The Git index, not the local filesystem, decides an entry's type and mode.
+# Both sides are built as NUL-delimited `mode<TAB>path` records and compared as
+# whole records, so a pathname containing a newline cannot split or reorder.
+git ls-files --cached -z --format='%(objectmode)%x09%(path)' \
+    | LC_ALL=C sort -z > "$CONTEXT/meta/.expected-modes"
+(
+    cd "$CONTEXT/source"
+    find . -mindepth 1 -type l -printf '120000\t%P\0'
+    find . -mindepth 1 -type f -perm -u+x -printf '100755\t%P\0'
+    find . -mindepth 1 -type f ! -perm -u+x -printf '100644\t%P\0'
+) | LC_ALL=C sort -z > "$CONTEXT/meta/.actual-modes"
+if ! cmp -s "$CONTEXT/meta/.expected-modes" "$CONTEXT/meta/.actual-modes"; then
+    echo "materialised type or mode disagrees with the Git index" >&2
     exit 5
 fi
+rm -f "$CONTEXT/meta/.expected-modes" "$CONTEXT/meta/.actual-modes"
 
 MANIFEST_SHA256=$(sha256sum "$CONTEXT/meta/.gnostoa-source-files" | cut -d' ' -f1)
 

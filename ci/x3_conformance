@@ -43,12 +43,15 @@ printf 'import sys; sys.stderr.write("X3-SITECUSTOMIZE-RAN\\n")\n' > "$DIRTY/sit
 printf 'X3_LOCAL_SENTINEL = "present"\n' > "$DIRTY/tools/x3_local_sentinel.py"
 printf 'import sys\nsys.stderr.write("X3-PIP-SHADOW-RAN\\n")\nraise SystemExit(97)\n' > "$DIRTY/pip.py"
 
+# Candidate identity and counts are taken over NUL records, never lines: a Git
+# pathname may contain a newline, and a line-based hash or count would then be
+# reporting something other than the candidate.
 echo "== candidate =="
 check "tracked source identical" \
-    "$(git -C "$CLEAN" ls-files --cached --deduplicate | sha256sum | cut -c1-16)" \
-    "$(git -C "$DIRTY" ls-files --cached --deduplicate | sha256sum | cut -c1-16)"
+    "$(git -C "$CLEAN" ls-files --cached --deduplicate -z | sha256sum | cut -c1-16)" \
+    "$(git -C "$DIRTY" ls-files --cached --deduplicate -z | sha256sum | cut -c1-16)"
 
-s1=$(git -C "$CLEAN" ls-files --cached --deduplicate | wc -l)
+s1=$(git -C "$CLEAN" ls-files --cached --deduplicate -z | tr -cd '\0' | wc -c)
 
 for variant in clean dirty; do
     case "$variant" in
@@ -67,8 +70,8 @@ for variant in clean dirty; do
     docker run --rm --entrypoint sh "gnostoa:x3-$variant" -c '
         cd /opt/gnostoa
         printf "%s\n" "$(tr -cd "\0" < .gnostoa-source-files | wc -c)"
-        printf "%s\n" "$(tr "\0" "\n" < .gnostoa-source-files | grep -c "^.gitignore$" || true)"
-        printf "%s\n" "$(tr "\0" "\n" < .gnostoa-source-files | grep -c "^.dockerignore$" || true)"
+        printf "%s\n" "$(grep -zc "^\.gitignore$" < .gnostoa-source-files || true)"
+        printf "%s\n" "$(grep -zc "^\.dockerignore$" < .gnostoa-source-files || true)"
         printf "%s\n" "$([ -e tools/x3_local_sentinel.py ] && echo present || echo absent)"
         printf "%s\n" "$([ -e pip.py ] && echo present || echo absent)"
         printf "%s\n" "$([ -e x3-untracked-sentinel.txt ] && echo present || echo absent)"
@@ -101,29 +104,39 @@ mkdir -p "$manifest/source" "$manifest/meta"
     --files-from="$manifest/meta/.gnostoa-source-files" ) \
     | tar -xf - -C "$manifest/source"
 
-docker build --target runtime --build-context "candidate=$manifest" \
+if docker build --target runtime --build-context "candidate=$manifest" \
     --build-arg MANIFEST_SHA256=0000000000000000000000000000000000000000000000000000000000000000 \
-    --build-arg VCS_REF="$REF" --tag gnostoa:x3-clean "$CLEAN" > "$WORK/wrong.log" 2>&1 \
-    && check "wrong manifest digest rejected" "accepted" "rejected" \
-    || check "wrong manifest digest rejected" "rejected" "rejected"
+    --build-arg VCS_REF="$REF" --tag gnostoa:x3-clean "$CLEAN" > "$WORK/wrong.log" 2>&1
+then
+    check "wrong manifest digest rejected" "accepted" "rejected"
+else
+    check "wrong manifest digest rejected" "rejected" "rejected"
+fi
 
 rm -f "$manifest/source/AGENTS.md"
 digest=$(sha256sum "$manifest/meta/.gnostoa-source-files" | cut -d' ' -f1)
-docker build --target runtime --build-context "candidate=$manifest" \
+if docker build --target runtime --build-context "candidate=$manifest" \
     --build-arg "MANIFEST_SHA256=$digest" \
-    --build-arg VCS_REF="$REF" --tag gnostoa:x3-clean "$CLEAN" > "$WORK/mismatch.log" 2>&1 \
-    && check "payload/manifest mismatch rejected" "accepted" "rejected" \
-    || check "payload/manifest mismatch rejected" "rejected" "rejected"
+    --build-arg VCS_REF="$REF" --tag gnostoa:x3-clean "$CLEAN" > "$WORK/mismatch.log" 2>&1
+then
+    check "payload/manifest mismatch rejected" "accepted" "rejected"
+else
+    check "payload/manifest mismatch rejected" "rejected" "rejected"
+fi
 
 # Development keeps the ordinary context, so it builds without a candidate
 # context - and remains as trustworthy as the checkout it is built from. The
 # contaminated tree is deliberately not used here: that residual is recorded in
 # the Decision, not asserted away.
 echo "== development target, no candidate context =="
-docker build --target development --build-arg VCS_REF=development \
-    --tag gnostoa:x3-dev "$CLEAN" > "$WORK/dev.log" 2>&1 \
-    && check "development builds" "yes" "yes" \
-    || { check "development builds" "no" "yes"; tail -5 "$WORK/dev.log"; }
+if docker build --target development --build-arg VCS_REF=development \
+    --tag gnostoa:x3-dev "$CLEAN" > "$WORK/dev.log" 2>&1
+then
+    check "development builds" "yes" "yes"
+else
+    check "development builds" "no" "yes"
+    tail -5 "$WORK/dev.log"
+fi
 
 if [ "$failures" -eq 0 ]; then
     echo "RESULT: PASS"
