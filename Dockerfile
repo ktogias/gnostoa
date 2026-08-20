@@ -53,10 +53,44 @@ RUN groupadd --gid 10001 kit \
     && useradd --uid 10001 --gid 10001 --create-home --shell /bin/sh kit
 
 WORKDIR ${KNOWLEDGE_KIT_ROOT}
+
+# The published runtime takes its Gnostoa source from `ci/build-runtime`, which
+# materialises exactly the Git-tracked candidate paths into a throwaway context.
+# Copying the ordinary build context here instead would let host-local files
+# become importable Gnostoa source and shadow the pip invocations below, so the
+# filtered source must be in place before any source-sensitive Python runs.
+FROM base AS runtime-build
+ARG MANIFEST_SHA256
+COPY --from=candidate --chown=kit:kit source/ .
+RUN --mount=from=candidate,type=bind,source=meta/.gnostoa-source-files,target=/tmp/candidate-manifest \
+    set -eux; \
+    test -n "${MANIFEST_SHA256}"; \
+    echo "${MANIFEST_SHA256}  /tmp/candidate-manifest" | sha256sum -c -; \
+    find . -mindepth 1 \( -type f -o -type l \) -printf '%P\0' \
+      | LC_ALL=C sort -z > /tmp/candidate-payload; \
+    cmp -s /tmp/candidate-payload /tmp/candidate-manifest \
+      || { echo "source payload does not match the candidate manifest" >&2; exit 6; }; \
+    install --owner=kit --group=kit --mode=0444 \
+      /tmp/candidate-manifest .gnostoa-source-files; \
+    rm -f /tmp/candidate-payload
+RUN install --directory --owner=kit --group=kit --mode=0555 .evidence \
+    && python -m pip install \
+      --no-cache-dir \
+      --only-binary=:all: \
+      --require-hashes \
+      --report .evidence/runtime-install-report.json \
+      -r requirements/runtime.lock \
+    && chmod 0444 .evidence/runtime-install-report.json \
+    && python -m pip install --no-cache-dir --no-deps -e .
+
+# Development keeps the ordinary local context so uncommitted work is usable and
+# the devcontainer needs no extra build context. It is deliberately outside the
+# filtered-source guarantee above.
+FROM base AS development-build
 COPY --chown=kit:kit . .
 RUN find . -mindepth 1 \( -type f -o -type l \) \
       -printf '%P\0' > /tmp/gnostoa-source-files.unsorted \
-    && sort --zero-terminated /tmp/gnostoa-source-files.unsorted \
+    && LC_ALL=C sort --zero-terminated /tmp/gnostoa-source-files.unsorted \
       > /tmp/.gnostoa-source-files \
     && install --owner=kit --group=kit --mode=0444 \
       /tmp/.gnostoa-source-files .gnostoa-source-files \
@@ -73,7 +107,7 @@ RUN install --directory --owner=kit --group=kit --mode=0555 .evidence \
     && chmod 0444 .evidence/runtime-install-report.json \
     && python -m pip install --no-cache-dir --no-deps -e .
 
-FROM base AS runtime
+FROM runtime-build AS runtime
 # The published runtime does not use pip: the base stage has already installed
 # the runtime lock and the editable source, and no documented runtime command
 # imports or invokes pip. Both shipped copies are removed, because uninstalling
@@ -89,7 +123,7 @@ WORKDIR /workspace
 ENTRYPOINT ["knowledge"]
 CMD ["--help"]
 
-FROM base AS development
+FROM development-build AS development
 USER root
 RUN python -m pip install \
       --no-cache-dir \

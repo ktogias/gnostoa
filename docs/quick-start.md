@@ -81,15 +81,16 @@ digest before use. Missing or malformed bindings fail explicitly.
 
 Requirements: Git and a Docker-compatible container runtime.
 
+`ci/build-runtime` supplies the image with exactly the Git-tracked candidate
+files at their current working-tree contents, so a local scratch file cannot
+become runtime source. It needs a Git checkout: a plain source archive has no
+candidate to read.
+
 ```bash
 git clone https://github.com/ktogias/gnostoa.git
 cd gnostoa
 
-docker build \
-  --target runtime \
-  --build-arg VCS_REF=source-checkout \
-  --tag gnostoa:source-checkout \
-  .
+ci/build-runtime --tag gnostoa:source-checkout
 
 docker run --rm gnostoa:source-checkout self-check
 ```

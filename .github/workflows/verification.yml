@@ -30,11 +30,8 @@ jobs:
           persist-credentials: false
       - name: Build the candidate runtime
         run: |
-          docker build \
-            --target runtime \
-            --build-arg VCS_REF="${GITHUB_SHA}" \
-            --tag "${GNOSTOA_CI_IMAGE}" \
-            .
+          GNOSTOA_CANDIDATE_REF="${GITHUB_SHA}" \
+            ./ci/build-runtime --tag "${GNOSTOA_CI_IMAGE}"
       - name: Run policy verification
         run: |
           docker run --rm \
@@ -54,11 +51,8 @@ jobs:
           persist-credentials: false
       - name: Build the candidate runtime
         run: |
-          docker build \
-            --target runtime \
-            --build-arg VCS_REF="${GITHUB_SHA}" \
-            --tag "${GNOSTOA_CI_IMAGE}" \
-            .
+          GNOSTOA_CANDIDATE_REF="${GITHUB_SHA}" \
+            ./ci/build-runtime --tag "${GNOSTOA_CI_IMAGE}"
       - name: Run fast verification
         run: |
           docker run --rm \
@@ -80,11 +74,8 @@ jobs:
           persist-credentials: false
       - name: Build the candidate runtime
         run: |
-          docker build \
-            --target runtime \
-            --build-arg VCS_REF="${GITHUB_SHA}" \
-            --tag "${GNOSTOA_CI_IMAGE}" \
-            .
+          GNOSTOA_CANDIDATE_REF="${GITHUB_SHA}" \
+            ./ci/build-runtime --tag "${GNOSTOA_CI_IMAGE}"
       - name: Run regression verification
         run: |
           docker run --rm \
@@ -105,11 +96,8 @@ jobs:
           persist-credentials: false
       - name: Build the candidate runtime
         run: |
-          docker build \
-            --target runtime \
-            --build-arg VCS_REF="${GITHUB_SHA}" \
-            --tag "${GNOSTOA_CI_IMAGE}" \
-            .
+          GNOSTOA_CANDIDATE_REF="${GITHUB_SHA}" \
+            ./ci/build-runtime --tag "${GNOSTOA_CI_IMAGE}"
       - name: Run smoke verification
         run: |
           docker run --rm \

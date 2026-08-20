@@ -1,0 +1,133 @@
+#!/bin/sh
+# Build the published Gnostoa runtime image from the authoritative Git candidate.
+#
+# The runtime image must not inherit host-local files that are not part of the
+# Git candidate: they would otherwise become importable Gnostoa source, shadow
+# the Python commands that install the runtime, or enter the packaged candidate
+# manifest. This script materialises exactly the tracked candidate paths, using
+# their current working-tree contents, into a throwaway context and hands that
+# to the build together with the manifest the image will ship.
+#
+# Candidate pathnames are NUL-delimited from end to end. A Git pathname may
+# contain a newline, so no step here may treat a line as a path record.
+#
+# Gnostoa-self build plumbing. Not a supported command, not adopter guidance.
+#
+# Usage: ci/build-runtime [--tag TAG] [--target TARGET] [docker build args...]
+#
+# GNOSTOA_CANDIDATE_REF asserts that the tracked candidate is exactly one
+# revision. It is verified before the build and written into image identity.
+# Without it the build is a working-tree build and is labelled `development`,
+# because tracked files may legitimately carry uncommitted edits.
+set -eu
+
+CANDIDATE_REF="${GNOSTOA_CANDIDATE_REF:-}"
+KIT_VERSION="${GNOSTOA_KIT_VERSION:-development}"
+TAG="gnostoa:source-checkout"
+TARGET="runtime"
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --tag) TAG="$2"; shift 2 ;;
+        --target) TARGET="$2"; shift 2 ;;
+        *) break ;;
+    esac
+done
+
+ROOT=$(git rev-parse --show-toplevel)
+cd "$ROOT"
+
+CONTEXT=$(mktemp -d "${TMPDIR:-/tmp}/gnostoa-candidate.XXXXXX")
+trap 'rm -rf "$CONTEXT"' EXIT INT TERM
+mkdir -p "$CONTEXT/source" "$CONTEXT/meta"
+
+# The candidate context is already filtered. A .dockerignore at its root would
+# silently remove authoritative paths while the manifest still claimed them, so
+# the repository's own tracked .dockerignore must only ever appear under source/.
+if [ -e "$CONTEXT/.dockerignore" ]; then
+    echo "candidate context root must not contain .dockerignore" >&2
+    exit 2
+fi
+
+# Only these index modes have defined packaging semantics here. Gitlinks and
+# anything else fail closed rather than being given invented behaviour. Asking
+# Git for modes alone keeps pathnames out of this comparison entirely.
+unsupported=$(git ls-files --cached --format='%(objectmode)' \
+    | LC_ALL=C sort -u \
+    | grep -v -x -e 100644 -e 100755 -e 120000 || true)
+if [ -n "$unsupported" ]; then
+    echo "unsupported Git index entry mode in candidate:" >&2
+    echo "$unsupported" >&2
+    exit 3
+fi
+
+# The manifest is the authority for both the source payload and the packaged
+# candidate. LC_ALL=C keeps the order independent of the builder's locale; the
+# same ordering is recomputed inside the image and compared byte for byte.
+git ls-files --cached --deduplicate -z \
+    | LC_ALL=C sort -z > "$CONTEXT/meta/.gnostoa-source-files"
+
+if [ -n "$CANDIDATE_REF" ]; then
+    # An exact revision was asserted. Verify it rather than trusting it: the
+    # metadata it produces is a claim about which source built the image.
+    resolved=$(git rev-parse --verify --quiet "${CANDIDATE_REF}^{commit}") || {
+        echo "candidate revision does not resolve locally: $CANDIDATE_REF" >&2
+        exit 7
+    }
+    head=$(git rev-parse --verify HEAD)
+    if [ "$resolved" != "$head" ]; then
+        echo "candidate revision $resolved is not HEAD $head" >&2
+        exit 7
+    fi
+    # Tracked divergence only. Ignored and untracked files are excluded from the
+    # runtime source by construction, so they cannot make this assertion false.
+    if ! git diff --quiet "$resolved" -- || ! git diff --cached --quiet "$resolved" -- ; then
+        echo "tracked candidate differs from asserted revision $resolved" >&2
+        exit 7
+    fi
+    git ls-tree -r --name-only -z "$resolved" | LC_ALL=C sort -z > "$CONTEXT/meta/.revision-paths"
+    if ! cmp -s "$CONTEXT/meta/.revision-paths" "$CONTEXT/meta/.gnostoa-source-files"; then
+        echo "candidate path set differs from asserted revision $resolved" >&2
+        exit 7
+    fi
+    rm -f "$CONTEXT/meta/.revision-paths"
+    VCS_REF="$resolved"
+else
+    VCS_REF="development"
+fi
+
+# --no-recursion keeps the archive to exactly the listed paths. tar fails when a
+# listed path is missing, and archives a symlink without following it, so it
+# already supplies both required presence semantics without a pathname loop.
+tar -cf - --null --no-recursion \
+    --files-from="$CONTEXT/meta/.gnostoa-source-files" \
+    | tar -xf - -C "$CONTEXT/source"
+
+# The Git index, not the local filesystem, decides an entry's type and mode.
+# Both sides are built as NUL-delimited `mode<TAB>path` records and compared as
+# whole records, so a pathname containing a newline cannot split or reorder.
+git ls-files --cached -z --format='%(objectmode)%x09%(path)' \
+    | LC_ALL=C sort -z > "$CONTEXT/meta/.expected-modes"
+(
+    cd "$CONTEXT/source"
+    find . -mindepth 1 -type l -printf '120000\t%P\0'
+    find . -mindepth 1 -type f -perm -u+x -printf '100755\t%P\0'
+    find . -mindepth 1 -type f ! -perm -u+x -printf '100644\t%P\0'
+) | LC_ALL=C sort -z > "$CONTEXT/meta/.actual-modes"
+if ! cmp -s "$CONTEXT/meta/.expected-modes" "$CONTEXT/meta/.actual-modes"; then
+    echo "materialised type or mode disagrees with the Git index" >&2
+    exit 5
+fi
+rm -f "$CONTEXT/meta/.expected-modes" "$CONTEXT/meta/.actual-modes"
+
+MANIFEST_SHA256=$(sha256sum "$CONTEXT/meta/.gnostoa-source-files" | cut -d' ' -f1)
+
+exec docker build \
+    --target "$TARGET" \
+    --build-context "candidate=$CONTEXT" \
+    --build-arg "MANIFEST_SHA256=$MANIFEST_SHA256" \
+    --build-arg "VCS_REF=$VCS_REF" \
+    --build-arg "KIT_VERSION=$KIT_VERSION" \
+    --tag "$TAG" \
+    "$@" \
+    "$ROOT"
