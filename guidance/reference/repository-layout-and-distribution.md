@@ -89,3 +89,13 @@ public source/profile assets. Point native execution at those assets with
 evidence: hash-pin the executable dependency and validate the project lock,
 source revision and public-surface digest before use. An absent or malformed
 source binding must fail rather than fall back to package data or ambient files.
+
+The public-surface digest reads its membership from whatever the toolkit root
+declares. For a Git-backed or manifest-backed root, public-surface membership is
+taken from that declared candidate, so local files outside it do not affect the
+digest. For a metadata-free vendored source, the extracted physical public
+surface is the source presented for digest verification, after the toolkit's
+explicit generated-state exclusions; adding or removing another non-ignored
+public file therefore changes the vendored source digest. A root that declares
+an authority which cannot be read fails rather than being treated as declaring
+none.
