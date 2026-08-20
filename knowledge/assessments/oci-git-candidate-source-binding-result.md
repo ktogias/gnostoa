@@ -34,6 +34,7 @@ publication.
 |---|---|
 | Pre-change source | `11dea1f3a0421232f2db1f385d4347f4e3bbbcdb` |
 | Pre-change public-surface digest | `sha256:06bd57bd36aedaa6f5ccade414eefdc960d00e2d2982e4325bd4b2f7a7676ff6` |
+| Post-change public-surface digest | `sha256:2b4b5b358b6a9436d4c2d5007bbacac1d8fe29bba754495b6c80ccd81ad2863c` |
 | Route bound | the published `runtime` target only |
 | Interpreter, base image | unchanged |
 
@@ -211,6 +212,11 @@ The digest changes, because the build definition and the helper are inside the
 pinned surface. Both the pre-change and post-change values were computed from
 **fresh clean materialisations** with no ignored local cache beneath the surface
 paths, and the in-image value was required to match the clean candidate value.
+
+The clean-candidate value and the in-image value were measured and are equal:
+`sha256:2b4b5b35…`. The value is unaffected by this record, because `knowledge/`
+is not a surface path. The pre-change value is not pinned in any enforced file,
+so nothing required updating.
 
 **This establishes nothing about digest determinism.** The separately measured
 defect — the digest can vary because ignored local caches exist under surface paths
