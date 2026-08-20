@@ -199,6 +199,18 @@ the accepted bounded residual. The result does not call those components safe or
 unaffected and remains candidate-time evidence subject to Decision 0022/J
 freshness.
 
+A bounded licence and attribution measurement then compared the image's
+standardized licence annotation against the software the image actually contains.
+[Decision 0032](../knowledge/decisions/0032-omit-composite-oci-licence-annotation-until-an-image-wide-expression-is-selected.md)
+omitted the optional composite `org.opencontainers.image.licenses` annotation
+rather than retain a partial image-wide claim or fabricate an aggregate SPDX
+expression, while Gnostoa first-party source and package metadata continue to
+declare Apache-2.0. Its
+[metadata and attribution result](../knowledge/assessments/oci-licence-metadata-and-cpython-attribution-result.md)
+records the measured evidence coverage and retains the CPython
+incorporated-software attribution gap as a qualified legal-review residual. No
+legal clearance is claimed.
+
 A bounded read-only
 [current-state drift retrospective](../knowledge/assessments/current-state-drift-retrospective.md)
 then reconstructed the observed drift incidents, near-misses, triggers and
