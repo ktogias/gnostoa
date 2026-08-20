@@ -1770,12 +1770,22 @@ class PublicSurfaceDigestSourceAuthorityTests(unittest.TestCase):
 
     def test_broken_declared_authority_never_degrades_to_the_filesystem(self) -> None:
         for label, prepare in (
-            ("unsafe manifest entry", lambda p: (p / ".gnostoa-source-files")
-                .write_bytes(b"tools/widget.py\0../escape.txt\0")),
-            ("manifest is a symlink", lambda p: (p / ".gnostoa-source-files")
-                .symlink_to("elsewhere")),
-            ("git metadata is unusable", lambda p: (p / ".git")
-                .write_text("gitdir: /nonexistent\n", encoding="utf-8")),
+            (
+                "unsafe manifest entry",
+                lambda p: (p / ".gnostoa-source-files").write_bytes(
+                    b"tools/widget.py\0../escape.txt\0"
+                ),
+            ),
+            (
+                "manifest is a symlink",
+                lambda p: (p / ".gnostoa-source-files").symlink_to("elsewhere"),
+            ),
+            (
+                "git metadata is unusable",
+                lambda p: (p / ".git").write_text(
+                    "gitdir: /nonexistent\n", encoding="utf-8"
+                ),
+            ),
         ):
             with self.subTest(label):
                 with tempfile.TemporaryDirectory() as directory:
@@ -1836,7 +1846,9 @@ class PublicSurfaceDigestSourceAuthorityTests(unittest.TestCase):
                 for path in packaged.rglob("*")
                 if path.is_file()
             )
-            (packaged / ".gnostoa-source-files").write_bytes(b"\0".join(members) + b"\0")
+            (packaged / ".gnostoa-source-files").write_bytes(
+                b"\0".join(members) + b"\0"
+            )
 
             self.assertEqual(
                 public_surface_digest(root), public_surface_digest(vendored)
