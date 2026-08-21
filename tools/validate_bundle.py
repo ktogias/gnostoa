@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import stat
 import sys
+from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,11 +18,11 @@ from .knowledge_common import (
     Document,
     KnowledgeFormatError,
     headings,
+    is_external_target,
     iter_documents,
     load_profile,
     markdown_links,
     relation_target_document,
-    resolve_target,
     toolkit_root,
 )
 
@@ -54,16 +57,167 @@ def _policy_issue(
     issues.append(Issue(policy, str(path.relative_to(bundle)), message))
 
 
+def _within(root: Path, candidate: Path) -> bool:
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def _lexical_in_root(root: Path, base: Path, reference: Path) -> Path | None:
+    """Join and normalise a path without consulting the filesystem.
+
+    Returning ``None`` on the first attempt to leave ``root`` prevents an
+    out-and-back reference from probing an intermediate outside directory.
+    ``root`` and ``base`` are already absolute paths supplied by the supported
+    validation route.
+    """
+
+    if reference.is_absolute():
+        try:
+            parts = reference.relative_to(root).parts
+        except ValueError:
+            return None
+        stack: list[str] = []
+    else:
+        try:
+            stack = list(base.relative_to(root).parts)
+        except ValueError:
+            return None
+        parts = reference.parts
+
+    for part in parts:
+        if part in {"", "."}:
+            continue
+        if part == "..":
+            if not stack:
+                return None
+            stack.pop()
+            continue
+        stack.append(part)
+
+    candidate = root.joinpath(*stack)
+    return candidate if _within(root, candidate) else None
+
+
+def _canonicalise_markdown_target(root: Path, candidate: Path) -> tuple[Path, bool]:
+    """Resolve symlinks while observing only path objects inside ``root``.
+
+    The boolean reports an authority escape. Missing in-root components remain
+    as an in-root unresolved path so the existing broken-link check can handle
+    them. This is a bounded validation ordering property, not a general
+    race-free filesystem capability.
+    """
+
+    pending = deque(candidate.relative_to(root).parts)
+    resolved = root
+    followed = 0
+
+    while pending:
+        component = pending.popleft()
+        current = resolved / component
+        try:
+            metadata = current.lstat()
+        except OSError:
+            return current.joinpath(*pending), False
+
+        if not stat.S_ISLNK(metadata.st_mode):
+            resolved = current
+            continue
+
+        followed += 1
+        if followed > 40:
+            return current.joinpath(*pending), False
+
+        try:
+            declared_target = Path(os.readlink(current))
+        except OSError:
+            return current.joinpath(*pending), False
+
+        symlink_target = _lexical_in_root(
+            root,
+            current.parent,
+            declared_target,
+        )
+        if symlink_target is None:
+            return current, True
+
+        pending = deque((*symlink_target.relative_to(root).parts, *pending))
+        resolved = root
+
+    return resolved, False
+
+
+def _resolve_markdown_target(
+    bundle: Path,
+    source: Path,
+    target: str,
+    project_root: Path,
+) -> tuple[Path | None, bool]:
+    """Resolve one local Markdown target within the explicit project root."""
+
+    clean_target = target.split("#", 1)[0].split("?", 1)[0]
+    if not clean_target or is_external_target(clean_target):
+        return None, False
+
+    if clean_target.startswith("/"):
+        base = bundle
+        reference = Path(clean_target.lstrip("/"))
+    else:
+        base = source.parent
+        reference = Path(clean_target)
+
+    lexical_target = _lexical_in_root(project_root, base, reference)
+    if lexical_target is None:
+        return None, True
+
+    resolved, escaped = _canonicalise_markdown_target(
+        project_root,
+        lexical_target,
+    )
+    if escaped:
+        return None, True
+
+    if resolved.is_dir():
+        index_target = _lexical_in_root(project_root, resolved, Path("index.md"))
+        if index_target is None:
+            return None, True
+        resolved, escaped = _canonicalise_markdown_target(
+            project_root,
+            index_target,
+        )
+        if escaped:
+            return None, True
+
+    return resolved, False
+
+
 def _validate_links(
     documents: Iterable[Document],
     bundle: Path,
     policy: str,
     issues: list[Issue],
+    *,
+    project_root: Path,
 ) -> None:
     for document in documents:
         for target in markdown_links(document.body):
-            resolved = resolve_target(bundle, document.path, target)
-            if resolved is not None and not resolved.exists():
+            resolved, escaped = _resolve_markdown_target(
+                bundle,
+                document.path,
+                target,
+                project_root,
+            )
+            if escaped:
+                _policy_issue(
+                    issues,
+                    policy,
+                    document.path,
+                    f"local Markdown link {target!r} escapes project root",
+                    bundle,
+                )
+            elif resolved is not None and not resolved.exists():
                 _policy_issue(
                     issues,
                     policy,
@@ -82,6 +236,7 @@ def validate_bundle(
 ) -> tuple[dict[str, Any], list[Issue]]:
     profile_path = profile_path.resolve()
     bundle = bundle_path.resolve()
+    project_root = project_root.resolve()
     schema_dir = schema_dir.resolve() if schema_dir else toolkit_root() / "schemas"
     issues: list[Issue] = []
 
@@ -281,6 +436,7 @@ def validate_bundle(
         bundle,
         rules.get("broken_links", "error"),
         issues,
+        project_root=project_root,
     )
     return profile, sorted(issues)
 
