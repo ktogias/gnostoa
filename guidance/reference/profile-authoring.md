@@ -46,6 +46,15 @@ rules:
 type_rules: {}
 ```
 
+`extends` entries are filesystem references relative to the profile that
+declares them. They may traverse parent directories — the project-to-toolkit
+example above does — but the resolved target, after symlinks are followed, must
+stay inside the project root the running command is bound to. Absolute parent
+references are rejected, and a relative or symlinked reference whose canonical
+target leaves the project root is rejected before the file is opened. Supported
+commands bind that root themselves; it defaults to the working directory, which
+is the project root in the documented container and native routes.
+
 A module profile extends its project profile:
 
 ```yaml

@@ -77,6 +77,8 @@ def validate_bundle(
     profile_path: Path,
     bundle_path: Path,
     schema_dir: Path | None = None,
+    *,
+    project_root: Path,
 ) -> tuple[dict[str, Any], list[Issue]]:
     profile_path = profile_path.resolve()
     bundle = bundle_path.resolve()
@@ -86,7 +88,7 @@ def validate_bundle(
     if not bundle.is_dir():
         raise KnowledgeFormatError(f"Bundle directory does not exist: {bundle}")
 
-    profile = load_profile(profile_path)
+    profile = load_profile(profile_path, project_root=project_root)
     profile_errors = sorted(
         Draft202012Validator(_schema(schema_dir / "profile.schema.json")).iter_errors(
             profile
@@ -290,6 +292,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--profile", required=True, type=Path)
     parser.add_argument("--bundle", required=True, type=Path)
     parser.add_argument("--schema-dir", type=Path)
+    parser.add_argument("--project-root", type=Path, default=Path.cwd())
     parser.add_argument(
         "--strict-warnings",
         action="store_true",
@@ -305,6 +308,7 @@ def main(argv: list[str] | None = None) -> int:
             args.profile,
             args.bundle,
             args.schema_dir,
+            project_root=args.project_root,
         )
     except (KnowledgeFormatError, OSError, json.JSONDecodeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

@@ -184,11 +184,37 @@ def _assert_monotonic(
         )
 
 
-def load_profile(path: Path) -> dict[str, Any]:
-    return _load_profile(path.resolve(), ())
+def _within(root: Path, candidate: Path) -> bool:
+    """Report whether a canonical path lies inside a canonical root."""
+
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return False
+    return True
 
 
-def _load_profile(path: Path, stack: tuple[Path, ...]) -> dict[str, Any]:
+def load_profile(path: Path, *, project_root: Path) -> dict[str, Any]:
+    """Load a profile, bounding its inheritance chain by the project root.
+
+    `extends` is project-controlled input, so a parent reference must not be
+    able to reach outside the authority the caller bound. Programmatic callers
+    must supply that authority explicitly; supported command-line interfaces
+    acquire it from ``--project-root``.
+    """
+
+    resolved = path.resolve()
+    root = project_root.resolve()
+    if not root.is_dir():
+        raise KnowledgeFormatError(f"Project root {root} is not a directory")
+    if not _within(root, resolved):
+        raise KnowledgeFormatError(
+            f"Profile {resolved} is outside the project root {root}"
+        )
+    return _load_profile(resolved, (), root)
+
+
+def _load_profile(path: Path, stack: tuple[Path, ...], root: Path) -> dict[str, Any]:
     if path in stack:
         chain = " -> ".join(str(item) for item in (*stack, path))
         raise KnowledgeFormatError(f"Profile inheritance cycle: {chain}")
@@ -202,12 +228,25 @@ def _load_profile(path: Path, stack: tuple[Path, ...]) -> dict[str, Any]:
     for reference in extends:
         if not isinstance(reference, str):
             raise KnowledgeFormatError(f"Profile reference must be a string in {path}")
-        parent_path = (path.parent / reference).resolve()
+        candidate = Path(reference)
+        if candidate.is_absolute():
+            raise KnowledgeFormatError(
+                f"Parent profile {reference!r} from {path} must be relative"
+            )
+        # Canonicalise first, so a symlink cannot pass a check its target fails,
+        # and refuse before the parent is opened: a rejected reference must not
+        # leak the bytes it points at.
+        parent_path = (path.parent / candidate).resolve()
+        if not _within(root, parent_path):
+            raise KnowledgeFormatError(
+                f"Parent profile {reference!r} from {path} escapes "
+                f"the project root {root}"
+            )
         if not parent_path.is_file():
             raise KnowledgeFormatError(
                 f"Parent profile {reference!r} from {path} does not exist"
             )
-        parent = _load_profile(parent_path, (*stack, path))
+        parent = _load_profile(parent_path, (*stack, path), root)
         merged = deep_merge(merged, parent)
 
     _assert_monotonic(merged, current, path)
