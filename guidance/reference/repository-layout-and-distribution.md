@@ -90,6 +90,18 @@ evidence: hash-pin the executable dependency and validate the project lock,
 source revision and public-surface digest before use. An absent or malformed
 source binding must fail rather than fall back to package data or ambient files.
 
+Local Markdown links are validated within the explicitly selected project root.
+They may use `..` to cross bundles or repository surfaces inside that project;
+`/...` remains relative to the current validated bundle. Canonical symlinks that
+stay inside the project root are permitted, while a relative or symlink target
+that would leave it is invalid and is refused without probing the outside
+target. External URIs remain external and receive no liveness check.
+
+Previously accepted local links that intentionally traversed outside the
+project root may therefore fail. Move or pin the referenced artifact inside the
+project and use an in-project relative link, or use an explicit external,
+commit-aware URI for genuinely external material.
+
 The public-surface digest reads its membership from whatever the toolkit root
 declares. For a Git-backed or manifest-backed root, public-surface membership is
 taken from that declared candidate, so local files outside it do not affect the

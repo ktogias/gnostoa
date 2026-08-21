@@ -24,6 +24,7 @@ from tools.check_guardrails import check_guardrails
 from tools.check_runtime_lock import check_runtime_lock, public_surface_digest
 from tools.cli import main as cli_main
 from tools.knowledge_common import (
+    Document,
     KnowledgeFormatError,
     load_profile,
     load_yaml,
@@ -42,7 +43,7 @@ from tools.release_smoke import (
 )
 from tools.repository_scope import find_text_matches
 from tools.requirements_lock import locked_requirements
-from tools.validate_bundle import validate_bundle
+from tools.validate_bundle import Issue, _validate_links, validate_bundle
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -769,6 +770,282 @@ runtime:
                         self.assertEqual(0, status, output)
             finally:
                 os.chdir(previous_cwd)
+
+
+class MarkdownReferenceAuthorityTests(unittest.TestCase):
+    """Local Markdown validation must not observe outside-root targets."""
+
+    CANARY = "G3-MARKDOWN-TARGET-CANARY-76"
+
+    def _fixture(self, directory: str) -> tuple[Path, Path, Path, Path]:
+        sandbox = Path(directory)
+        project = sandbox / "project"
+        bundle = project / "guidance"
+        outside = sandbox / "outside"
+        bundle.mkdir(parents=True)
+        outside.mkdir()
+        source = bundle / "source.md"
+        source.write_text("source\n", encoding="utf-8")
+        return project, bundle, source, outside
+
+    def _validate_target(
+        self,
+        project: Path,
+        bundle: Path,
+        source: Path,
+        target: str,
+    ) -> tuple[list[Issue], list[tuple[str, Path]], list[Path]]:
+        issues: list[Issue] = []
+        observations: list[tuple[str, Path]] = []
+        content_reads: list[Path] = []
+        document = Document(source, source.relative_to(bundle), {}, f"[x]({target})")
+
+        original_lstat = os.lstat
+        original_stat = os.stat
+        original_readlink = os.readlink
+        original_resolve = Path.resolve
+        original_read_text = Path.read_text
+
+        def observed_path(value: object) -> Path | None:
+            if isinstance(value, int):
+                return None
+            try:
+                return Path(value)  # type: ignore[arg-type]
+            except TypeError:
+                return None
+
+        def observe_lstat(
+            path: object, *args: object, **kwargs: object
+        ) -> os.stat_result:
+            candidate = observed_path(path)
+            if candidate is not None:
+                observations.append(("lstat", candidate))
+            return original_lstat(path, *args, **kwargs)  # type: ignore[arg-type]
+
+        def observe_stat(
+            path: object, *args: object, **kwargs: object
+        ) -> os.stat_result:
+            candidate = observed_path(path)
+            if candidate is not None:
+                observations.append(("stat", candidate))
+            return original_stat(path, *args, **kwargs)  # type: ignore[arg-type]
+
+        def observe_readlink(path: object, *args: object, **kwargs: object) -> str:
+            candidate = observed_path(path)
+            if candidate is not None:
+                observations.append(("readlink", candidate))
+            return original_readlink(path, *args, **kwargs)  # type: ignore[arg-type]
+
+        def observe_resolve(path: Path, *args: object, **kwargs: object) -> Path:
+            observations.append(("resolve", path))
+            return original_resolve(path, *args, **kwargs)
+
+        def observe_read_text(path: Path, *args: object, **kwargs: object) -> str:
+            content_reads.append(path)
+            return original_read_text(path, *args, **kwargs)
+
+        with (
+            patch("os.lstat", side_effect=observe_lstat),
+            patch("os.stat", side_effect=observe_stat),
+            patch("os.readlink", side_effect=observe_readlink),
+            patch.object(Path, "resolve", autospec=True, side_effect=observe_resolve),
+            patch.object(
+                Path, "read_text", autospec=True, side_effect=observe_read_text
+            ),
+        ):
+            _validate_links(
+                [document],
+                bundle,
+                "error",
+                issues,
+                project_root=project,
+            )
+        return issues, observations, content_reads
+
+    def _assert_only_in_root_observations(
+        self, project: Path, observations: list[tuple[str, Path]]
+    ) -> None:
+        for operation, path in observations:
+            with self.subTest(operation=operation, path=path):
+                self.assertTrue(path.is_absolute())
+                path.relative_to(project)
+
+    def _authority_issue(
+        self, target: str, *, source_path: str = "source.md"
+    ) -> list[Issue]:
+        return [
+            Issue(
+                "error",
+                source_path,
+                f"local Markdown link {target!r} escapes project root",
+            )
+        ]
+
+    def test_outside_lexical_variants_are_indistinguishable_and_unobserved(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, bundle, source, outside = self._fixture(directory)
+            target = "../../outside/probe"
+            probe = outside / "probe"
+
+            results = []
+            results.append(self._validate_target(project, bundle, source, target))
+            probe.write_text(self.CANARY, encoding="utf-8")
+            results.append(self._validate_target(project, bundle, source, target))
+            probe.unlink()
+            probe.mkdir()
+            results.append(self._validate_target(project, bundle, source, target))
+            (probe / "index.md").write_text(self.CANARY, encoding="utf-8")
+            results.append(self._validate_target(project, bundle, source, target))
+
+            expected = self._authority_issue(target)
+            for issues, observations, content_reads in results:
+                self.assertEqual(expected, issues)
+                self.assertEqual([], observations)
+                self.assertEqual([], content_reads)
+
+    def test_outside_symlink_target_is_not_observed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, bundle, source, outside = self._fixture(directory)
+            target = "outside-link.md"
+            external = outside / "target.md"
+            link = bundle / target
+            link.symlink_to(external)
+
+            absent = self._validate_target(project, bundle, source, target)
+            external.write_text(self.CANARY, encoding="utf-8")
+            present = self._validate_target(project, bundle, source, target)
+
+            expected = self._authority_issue(target)
+            for issues, observations, content_reads in (absent, present):
+                self.assertEqual(expected, issues)
+                self._assert_only_in_root_observations(project, observations)
+                self.assertIn(("readlink", link), observations)
+                self.assertEqual([], content_reads)
+
+    def test_in_project_reference_classes_remain_supported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, bundle, source, _ = self._fixture(directory)
+            peer = bundle / "peer.md"
+            peer.write_text("peer\n", encoding="utf-8")
+            templates = project / "templates"
+            templates.mkdir()
+            (templates / "example.md").write_text("example\n", encoding="utf-8")
+            (bundle / "peer-link.md").symlink_to(peer)
+
+            controls = {
+                "M0": "peer.md",
+                "M2": "../templates/example.md",
+                "M7": "/peer.md",
+                "M8": "https://example.invalid/path",
+                "M9": "#section",
+                "M10": "peer-link.md",
+            }
+            for control, target in controls.items():
+                with self.subTest(control=control):
+                    issues, observations, content_reads = self._validate_target(
+                        project, bundle, source, target
+                    )
+                    self.assertEqual([], issues)
+                    self._assert_only_in_root_observations(project, observations)
+                    if control in {"M8", "M9"}:
+                        self.assertEqual([], observations)
+                    self.assertEqual([], content_reads)
+
+            issues, observations, content_reads = self._validate_target(
+                project, bundle, source, "missing.md"
+            )
+            self.assertEqual(
+                [Issue("error", "source.md", "broken Markdown link 'missing.md'")],
+                issues,
+            )
+            self._assert_only_in_root_observations(project, observations)
+            self.assertEqual([], content_reads)
+
+    def test_in_root_directory_index_is_safely_resolved_twice(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, bundle, source, outside = self._fixture(directory)
+            target = "section"
+            section = bundle / target
+            section.mkdir()
+            index = section / "index.md"
+            peer = bundle / "peer.md"
+            peer.write_text("peer\n", encoding="utf-8")
+
+            index.write_text("index\n", encoding="utf-8")
+            direct = self._validate_target(project, bundle, source, target)
+            index.unlink()
+            index.symlink_to(peer)
+            in_root_link = self._validate_target(project, bundle, source, target)
+
+            for issues, observations, content_reads in (direct, in_root_link):
+                self.assertEqual([], issues)
+                self._assert_only_in_root_observations(project, observations)
+                self.assertEqual([], content_reads)
+
+            index.unlink()
+            index.symlink_to(outside / "index.md")
+            outside_index = self._validate_target(project, bundle, source, target)
+            self.assertEqual(self._authority_issue(target), outside_index[0])
+            self._assert_only_in_root_observations(project, outside_index[1])
+            self.assertEqual([], outside_index[2])
+
+    def test_local_query_and_fragment_suffixes_keep_existing_cleaning(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, bundle, source, _ = self._fixture(directory)
+            (bundle / "page.md").write_text("page\n", encoding="utf-8")
+            for target in (
+                "page.md#section",
+                "page.md?x=y",
+                "page.md?x=y#section",
+            ):
+                with self.subTest(target=target):
+                    issues, observations, content_reads = self._validate_target(
+                        project, bundle, source, target
+                    )
+                    self.assertEqual([], issues)
+                    self._assert_only_in_root_observations(project, observations)
+                    self.assertEqual([], content_reads)
+
+    def test_supported_validation_route_applies_the_markdown_project_root(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            sandbox = Path(directory)
+            project = sandbox / "project"
+            bundle = project / "knowledge"
+            outside = sandbox / "outside"
+            bundle.mkdir(parents=True)
+            outside.mkdir()
+            profile = project / "profile.yaml"
+            profile.write_bytes((ROOT / "core" / "profile.yaml").read_bytes())
+            target = "../../outside/probe.md"
+            index = bundle / "index.md"
+            index.write_text(
+                f'---\nokf_version: "0.2"\n---\n\n# Project\n\n[outside]({target})\n',
+                encoding="utf-8",
+            )
+
+            _, absent = validate_bundle(
+                profile,
+                bundle,
+                ROOT / "schemas",
+                project_root=project,
+            )
+            (outside / "probe.md").write_text(self.CANARY, encoding="utf-8")
+            _, present = validate_bundle(
+                profile,
+                bundle,
+                ROOT / "schemas",
+                project_root=project,
+            )
+
+            expected = self._authority_issue(target, source_path="index.md")
+            self.assertEqual(expected, absent)
+            self.assertEqual(expected, present)
+            self.assertNotIn(self.CANARY, repr(absent))
+            self.assertNotIn(self.CANARY, repr(present))
 
 
 class BundleTests(unittest.TestCase):
