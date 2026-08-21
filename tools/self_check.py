@@ -33,7 +33,7 @@ def self_check(repository_root: Path, run_tests: bool = True) -> bool:
         passed = result.wasSuccessful() and passed
 
     for name, profile, bundle in BUNDLES:
-        _, issues = validate_bundle(root / profile, root / bundle)
+        _, issues = validate_bundle(root / profile, root / bundle, project_root=root)
         errors = [issue for issue in issues if issue.severity == "error"]
         if errors:
             passed = False

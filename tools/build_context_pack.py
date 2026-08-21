@@ -104,8 +104,10 @@ def build_pack(
     seeds: list[str],
     depth: int = 1,
     max_tokens: int = 1600,
+    *,
+    project_root: Path,
 ) -> str:
-    _, issues = validate_bundle(profile_path, bundle_path)
+    _, issues = validate_bundle(profile_path, bundle_path, project_root=project_root)
     errors = [issue for issue in issues if issue.severity == "error"]
     if errors:
         preview = "; ".join(f"{issue.path}: {issue.message}" for issue in errors[:5])
@@ -113,7 +115,7 @@ def build_pack(
             f"Refusing to build context from an invalid bundle: {preview}"
         )
 
-    profile = load_profile(profile_path.resolve())
+    profile = load_profile(profile_path.resolve(), project_root=project_root)
     bundle = bundle_path.resolve()
     concepts = load_concepts(bundle)
     by_id = {
@@ -200,6 +202,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", required=True, action="append")
     parser.add_argument("--depth", type=int, default=1)
     parser.add_argument("--max-tokens", type=int, default=1600)
+    parser.add_argument("--project-root", type=Path, default=Path.cwd())
     parser.add_argument("--output", type=Path)
     return parser
 
@@ -218,6 +221,7 @@ def main(argv: list[str] | None = None) -> int:
             args.seed,
             args.depth,
             args.max_tokens,
+            project_root=args.project_root,
         )
     except (KnowledgeFormatError, OSError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

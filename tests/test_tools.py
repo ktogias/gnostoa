@@ -350,7 +350,8 @@ class ProfileTests(unittest.TestCase):
             / "profiles"
             / "example-project"
             / "example-module"
-            / "profile.yaml"
+            / "profile.yaml",
+            project_root=ROOT,
         )
         self.assertIn("System", profile["concept_types"])
         self.assertIn("Module", profile["concept_types"])
@@ -393,7 +394,381 @@ type_rules: {}
                 encoding="utf-8",
             )
             with self.assertRaises(KnowledgeFormatError):
-                load_profile(child)
+                load_profile(child, project_root=root)
+
+
+class ProfileReadBoundaryTests(unittest.TestCase):
+    """Profile inheritance may not read outside the bound project root.
+
+    `extends` is project-controlled input. Before this boundary existed, a
+    profile could name an absolute path, traverse out of the project, or point
+    through a symlink, and the parent was read and merged. The canary below is
+    the evidence that matters: rejection must happen before the outside file is
+    opened, so its bytes reach neither the result nor the diagnostic.
+    """
+
+    CANARY = "G3-PROFILE-CANARY-8f31c2"
+
+    def _project(self, directory: str) -> tuple[Path, Path, Path]:
+        root = Path(directory)
+        project = root / "project"
+        (project / ".knowledge").mkdir(parents=True)
+        (project / ".knowledge-kit" / "core").mkdir(parents=True)
+        (project / ".knowledge-kit" / "core" / "profile.yaml").write_text(
+            "id: kit\nversion: '1'\n", encoding="utf-8"
+        )
+        outside = root / "outside.yaml"
+        outside.write_text(f"id: outside\ncanary: {self.CANARY}\n", encoding="utf-8")
+        return root, project, outside
+
+    def _assert_refused(self, child: Path, project: Path) -> str:
+        with self.assertRaises(KnowledgeFormatError) as raised:
+            load_profile(child, project_root=project)
+        message = str(raised.exception)
+        self.assertNotIn(self.CANARY, message)
+        return message
+
+    def _run_cli(self, arguments: list[str]) -> tuple[int, str]:
+        output = StringIO()
+        with redirect_stdout(output), redirect_stderr(output):
+            status = cli_main(arguments)
+        return status, output.getvalue()
+
+    def _compatibility_project(self, directory: str) -> tuple[Path, Path, Path]:
+        root = Path(directory)
+        project = root / "project"
+        profile = project / ".knowledge" / "profile.yaml"
+        toolkit_profile = project / ".knowledge-kit" / "core" / "profile.yaml"
+        toolkit_profile.parent.mkdir(parents=True)
+        toolkit_profile.write_bytes((ROOT / "core" / "profile.yaml").read_bytes())
+        profile.parent.mkdir(parents=True)
+        profile.write_text(
+            f"# {self.CANARY}\n"
+            "id: compatibility-project\n"
+            "extends: ['../.knowledge-kit/core/profile.yaml']\n",
+            encoding="utf-8",
+        )
+
+        bundle = project / "knowledge"
+        for source in (ROOT / "examples" / "generic").rglob("*"):
+            target = bundle / source.relative_to(ROOT / "examples" / "generic")
+            if source.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(source.read_bytes())
+        return project, profile, bundle
+
+    def _compatibility_commands(
+        self, profile: Path, bundle: Path, *, project_root: Path | None = None
+    ) -> tuple[tuple[str, list[str]], ...]:
+        root_arguments = (
+            ["--project-root", str(project_root)] if project_root is not None else []
+        )
+        return (
+            (
+                "validate",
+                [
+                    "validate",
+                    "--profile",
+                    str(profile),
+                    "--bundle",
+                    str(bundle),
+                    *root_arguments,
+                ],
+            ),
+            (
+                "context-pack",
+                [
+                    "context-pack",
+                    "--profile",
+                    str(profile),
+                    "--bundle",
+                    str(bundle),
+                    "--seed",
+                    "example.system.processing",
+                    *root_arguments,
+                ],
+            ),
+        )
+
+    def test_programmatic_loader_requires_an_explicit_project_root(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, project, _ = self._project(directory)
+            child = project / ".knowledge" / "profile.yaml"
+            child.write_text("id: child\n", encoding="utf-8")
+            with self.assertRaises(TypeError):
+                load_profile(child)  # type: ignore[call-arg]
+
+    def test_profile_without_a_parent_still_loads(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, project, _ = self._project(directory)
+            child = project / ".knowledge" / "profile.yaml"
+            child.write_text("id: child\n", encoding="utf-8")
+            self.assertEqual("child", load_profile(child, project_root=project)["id"])
+
+    def test_relative_traversal_out_of_the_project_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, project, _ = self._project(directory)
+            child = project / ".knowledge" / "profile.yaml"
+            child.write_text(
+                "id: child\nextends: ['../../outside.yaml']\n", encoding="utf-8"
+            )
+            self.assertIn("escapes", self._assert_refused(child, project))
+
+    def test_absolute_parent_reference_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, project, outside = self._project(directory)
+            child = project / ".knowledge" / "profile.yaml"
+            child.write_text(f"id: child\nextends: ['{outside}']\n", encoding="utf-8")
+            self.assertIn("must be relative", self._assert_refused(child, project))
+
+    def test_symlinked_parent_leaving_the_project_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, project, outside = self._project(directory)
+            link = project / ".knowledge" / "parent.yaml"
+            link.symlink_to(outside)
+            child = project / ".knowledge" / "profile.yaml"
+            child.write_text("id: child\nextends: ['parent.yaml']\n", encoding="utf-8")
+            # The reference itself looks in-project; only the canonical target
+            # escapes, which is why containment is checked after resolution.
+            self.assertIn("escapes", self._assert_refused(child, project))
+
+    def test_outside_file_is_not_opened_even_when_it_is_not_yaml(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root, project, _ = self._project(directory)
+            (root / "notyaml.txt").write_text(
+                f"broken: [{self.CANARY}\n", encoding="utf-8"
+            )
+            child = project / ".knowledge" / "profile.yaml"
+            child.write_text(
+                "id: child\nextends: ['../../notyaml.txt']\n", encoding="utf-8"
+            )
+            # A parser error here would prove the file was read.
+            self.assertIn("escapes", self._assert_refused(child, project))
+
+    def test_etc_hostname_is_rejected_before_the_parent_is_loaded(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, project, _ = self._project(directory)
+            child = project / ".knowledge" / "profile.yaml"
+            child.write_text(
+                "id: child\nextends: ['/etc/hostname']\n", encoding="utf-8"
+            )
+            loaded: list[Path] = []
+            original = knowledge_common.load_yaml
+
+            def observe(path: Path) -> dict[str, object]:
+                loaded.append(path)
+                return original(path)
+
+            with patch("tools.knowledge_common.load_yaml", side_effect=observe):
+                message = self._assert_refused(child, project)
+            self.assertIn("must be relative", message)
+            self.assertNotIn(Path("/etc/hostname"), loaded)
+
+    def test_profile_outside_the_bound_root_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, project, outside = self._project(directory)
+            with self.assertRaises(KnowledgeFormatError) as raised:
+                load_profile(outside, project_root=project)
+            self.assertIn("outside the project root", str(raised.exception))
+
+    def test_documented_and_module_inheritance_still_load(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, project, _ = self._project(directory)
+            (project / "profile.yaml").write_text(
+                "id: project\nversion: '1'\n", encoding="utf-8"
+            )
+            # The documented adopting-project shape: .knowledge reaches the
+            # pinned toolkit through `..`, which stays inside the project root.
+            child = project / ".knowledge" / "profile.yaml"
+            child.write_text(
+                "id: child\nextends: ['../.knowledge-kit/core/profile.yaml']\n",
+                encoding="utf-8",
+            )
+            self.assertEqual("child", load_profile(child, project_root=project)["id"])
+
+            module = project / "module"
+            module.mkdir()
+            module_profile = module / "profile.yaml"
+            module_profile.write_text(
+                "id: module\nextends: ['../profile.yaml']\n", encoding="utf-8"
+            )
+            self.assertEqual(
+                "module", load_profile(module_profile, project_root=project)["id"]
+            )
+
+    def test_in_root_symlink_remains_supported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, project, _ = self._project(directory)
+            link = project / ".knowledge" / "pinned.yaml"
+            link.symlink_to(project / ".knowledge-kit" / "core" / "profile.yaml")
+            child = project / ".knowledge" / "profile.yaml"
+            child.write_text("id: child\nextends: ['pinned.yaml']\n", encoding="utf-8")
+            # Containment is about where a link lands, not about links as such.
+            self.assertEqual("child", load_profile(child, project_root=project)["id"])
+
+    def test_in_root_multi_hop_inheritance_still_loads(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, project, _ = self._project(directory)
+            parent = project / "profile.yaml"
+            parent.write_text(
+                "id: project\nextends: ['.knowledge-kit/core/profile.yaml']\n",
+                encoding="utf-8",
+            )
+            child = project / ".knowledge" / "profile.yaml"
+            child.write_text(
+                "id: child\nextends: ['../profile.yaml']\n", encoding="utf-8"
+            )
+            profile = load_profile(child, project_root=project)
+            self.assertEqual("child", profile["id"])
+            self.assertEqual("1", profile["version"])
+
+    def test_inheritance_cycles_remain_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, project, _ = self._project(directory)
+            first = project / ".knowledge" / "a.yaml"
+            second = project / ".knowledge" / "b.yaml"
+            first.write_text("id: a\nextends: ['b.yaml']\n", encoding="utf-8")
+            second.write_text("id: b\nextends: ['a.yaml']\n", encoding="utf-8")
+            with self.assertRaises(KnowledgeFormatError) as raised:
+                load_profile(first, project_root=project)
+            self.assertIn("cycle", str(raised.exception))
+
+    def test_supported_cli_routes_refuse_the_relative_escape(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, project, _ = self._project(directory)
+            child = project / ".knowledge" / "profile.yaml"
+            child.write_text(
+                "id: child\nextends: ['../../outside.yaml']\n", encoding="utf-8"
+            )
+            bundle = project / "knowledge"
+            bundle.mkdir()
+
+            source = project / "source"
+            (source / "core").mkdir(parents=True)
+            (source / "core" / "marker.txt").write_text(
+                "runtime source\n", encoding="utf-8"
+            )
+            lock = project / "kit.lock.yaml"
+            lock.write_text(
+                f"""
+version: 1
+toolkit:
+  source: source
+  revision: test-revision
+  public_surface_digest: {public_surface_digest(source)}
+  profile: .knowledge/profile.yaml
+runtime:
+  image: registry.example/kit@sha256:{"a" * 64}
+  revision: test-revision
+""".lstrip(),
+                encoding="utf-8",
+            )
+
+            commands = (
+                (
+                    "validate",
+                    [
+                        "validate",
+                        "--project-root",
+                        str(project),
+                        "--profile",
+                        str(child),
+                        "--bundle",
+                        str(bundle),
+                    ],
+                    2,
+                ),
+                (
+                    "context-pack",
+                    [
+                        "context-pack",
+                        "--project-root",
+                        str(project),
+                        "--profile",
+                        str(child),
+                        "--bundle",
+                        str(bundle),
+                        "--seed",
+                        "unused",
+                    ],
+                    2,
+                ),
+                (
+                    "check-runtime",
+                    [
+                        "check-runtime",
+                        "--project-root",
+                        str(project),
+                        "--lock",
+                        str(lock),
+                    ],
+                    1,
+                ),
+            )
+            for route, command, expected_status in commands:
+                with self.subTest(route=route):
+                    status, output = self._run_cli(command)
+                    self.assertEqual(expected_status, status, output)
+                    self.assertIn("escapes", output)
+                    self.assertNotIn(self.CANARY, output)
+
+    def test_c0_documented_cwd_uses_the_default_project_root(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, profile, bundle = self._compatibility_project(directory)
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(project)
+                for route, command in self._compatibility_commands(profile, bundle):
+                    with self.subTest(route=route):
+                        status, output = self._run_cli(command)
+                        self.assertEqual(0, status, output)
+            finally:
+                os.chdir(previous_cwd)
+
+    def test_c1_external_cwd_without_a_root_fails_before_profile_read(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, profile, bundle = self._compatibility_project(directory)
+            operator_cwd = Path(directory) / "operator-cwd"
+            operator_cwd.mkdir()
+            loaded: list[Path] = []
+            original = knowledge_common.load_yaml
+
+            def observe(path: Path) -> dict[str, object]:
+                loaded.append(path)
+                return original(path)
+
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(operator_cwd)
+                with patch("tools.knowledge_common.load_yaml", side_effect=observe):
+                    for route, command in self._compatibility_commands(profile, bundle):
+                        with self.subTest(route=route):
+                            status, output = self._run_cli(command)
+                            self.assertEqual(2, status, output)
+                            self.assertIn("outside the project root", output)
+                            self.assertNotIn(self.CANARY, output)
+            finally:
+                os.chdir(previous_cwd)
+            self.assertEqual([], loaded)
+
+    def test_c2_external_cwd_accepts_an_explicit_project_root(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, profile, bundle = self._compatibility_project(directory)
+            operator_cwd = Path(directory) / "operator-cwd"
+            operator_cwd.mkdir()
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(operator_cwd)
+                for route, command in self._compatibility_commands(
+                    profile, bundle, project_root=project
+                ):
+                    with self.subTest(route=route):
+                        status, output = self._run_cli(command)
+                        self.assertEqual(0, status, output)
+            finally:
+                os.chdir(previous_cwd)
 
 
 class BundleTests(unittest.TestCase):
@@ -401,6 +776,7 @@ class BundleTests(unittest.TestCase):
         _, issues = validate_bundle(
             ROOT / "core" / "profile.yaml",
             ROOT / "examples" / "generic",
+            project_root=ROOT,
         )
         self.assertEqual([], issues)
 
@@ -413,6 +789,7 @@ class BundleTests(unittest.TestCase):
             / "example-module"
             / "profile.yaml",
             ROOT / "examples" / "example-project-module",
+            project_root=ROOT,
         )
         self.assertEqual([], issues)
 
@@ -420,6 +797,7 @@ class BundleTests(unittest.TestCase):
         _, issues = validate_bundle(
             ROOT / "guidance" / "profile.yaml",
             ROOT / "guidance",
+            project_root=ROOT,
         )
         self.assertEqual([], issues)
 
@@ -427,6 +805,7 @@ class BundleTests(unittest.TestCase):
         _, issues = validate_bundle(
             ROOT / "knowledge" / "profile.yaml",
             ROOT / "knowledge",
+            project_root=ROOT,
         )
         self.assertEqual([], issues)
 
@@ -456,7 +835,9 @@ x-project-knowledge:
 """.lstrip(),
                 encoding="utf-8",
             )
-            _, issues = validate_bundle(ROOT / "core" / "profile.yaml", bundle)
+            _, issues = validate_bundle(
+                ROOT / "core" / "profile.yaml", bundle, project_root=ROOT
+            )
             messages = [issue.message for issue in issues]
             self.assertIn("stable concept has no human: verifier", messages)
 
@@ -472,6 +853,7 @@ x-project-knowledge:
             ["example.module.sample"],
             depth=2,
             max_tokens=2000,
+            project_root=ROOT,
         )
         self.assertIn("Example module", pack)
         self.assertIn("Example extension point", pack)
@@ -485,6 +867,7 @@ x-project-knowledge:
             ["guidance.workflow.bootstrap-new-project"],
             depth=1,
             max_tokens=800,
+            project_root=ROOT,
         )
         self.assertIn("Bootstrap a new project", pack)
         self.assertIn("derived orientation only", pack)

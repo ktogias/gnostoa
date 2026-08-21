@@ -245,7 +245,7 @@ def check_runtime_lock(
                 issues.append(f"toolkit.profile does not exist: {profile_reference!r}")
             else:
                 try:
-                    load_profile(profile)
+                    load_profile(profile, project_root=root)
                 except KnowledgeFormatError as exc:
                     issues.append(f"toolkit.profile is invalid: {exc}")
 
