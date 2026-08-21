@@ -55,6 +55,11 @@ target leaves the project root is rejected before the file is opened. Supported
 commands bind that root themselves; it defaults to the working directory, which
 is the project root in the documented container and native routes.
 
+Run supported commands from the project root, or pass `--project-root`
+explicitly. Running from another directory without that option may fail by
+design: absolute `--profile` or `--bundle` paths neither widen the selected
+filesystem authority nor cause a project root to be inferred from those paths.
+
 A module profile extends its project profile:
 
 ```yaml

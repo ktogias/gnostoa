@@ -434,6 +434,64 @@ class ProfileReadBoundaryTests(unittest.TestCase):
             status = cli_main(arguments)
         return status, output.getvalue()
 
+    def _compatibility_project(self, directory: str) -> tuple[Path, Path, Path]:
+        root = Path(directory)
+        project = root / "project"
+        profile = project / ".knowledge" / "profile.yaml"
+        toolkit_profile = project / ".knowledge-kit" / "core" / "profile.yaml"
+        toolkit_profile.parent.mkdir(parents=True)
+        toolkit_profile.write_bytes((ROOT / "core" / "profile.yaml").read_bytes())
+        profile.parent.mkdir(parents=True)
+        profile.write_text(
+            f"# {self.CANARY}\n"
+            "id: compatibility-project\n"
+            "extends: ['../.knowledge-kit/core/profile.yaml']\n",
+            encoding="utf-8",
+        )
+
+        bundle = project / "knowledge"
+        for source in (ROOT / "examples" / "generic").rglob("*"):
+            target = bundle / source.relative_to(ROOT / "examples" / "generic")
+            if source.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(source.read_bytes())
+        return project, profile, bundle
+
+    def _compatibility_commands(
+        self, profile: Path, bundle: Path, *, project_root: Path | None = None
+    ) -> tuple[tuple[str, list[str]], ...]:
+        root_arguments = (
+            ["--project-root", str(project_root)] if project_root is not None else []
+        )
+        return (
+            (
+                "validate",
+                [
+                    "validate",
+                    "--profile",
+                    str(profile),
+                    "--bundle",
+                    str(bundle),
+                    *root_arguments,
+                ],
+            ),
+            (
+                "context-pack",
+                [
+                    "context-pack",
+                    "--profile",
+                    str(profile),
+                    "--bundle",
+                    str(bundle),
+                    "--seed",
+                    "example.system.processing",
+                    *root_arguments,
+                ],
+            ),
+        )
+
     def test_programmatic_loader_requires_an_explicit_project_root(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             _, project, _ = self._project(directory)
@@ -655,6 +713,62 @@ runtime:
                     self.assertEqual(expected_status, status, output)
                     self.assertIn("escapes", output)
                     self.assertNotIn(self.CANARY, output)
+
+    def test_c0_documented_cwd_uses_the_default_project_root(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, profile, bundle = self._compatibility_project(directory)
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(project)
+                for route, command in self._compatibility_commands(profile, bundle):
+                    with self.subTest(route=route):
+                        status, output = self._run_cli(command)
+                        self.assertEqual(0, status, output)
+            finally:
+                os.chdir(previous_cwd)
+
+    def test_c1_external_cwd_without_a_root_fails_before_profile_read(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, profile, bundle = self._compatibility_project(directory)
+            operator_cwd = Path(directory) / "operator-cwd"
+            operator_cwd.mkdir()
+            loaded: list[Path] = []
+            original = knowledge_common.load_yaml
+
+            def observe(path: Path) -> dict[str, object]:
+                loaded.append(path)
+                return original(path)
+
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(operator_cwd)
+                with patch("tools.knowledge_common.load_yaml", side_effect=observe):
+                    for route, command in self._compatibility_commands(profile, bundle):
+                        with self.subTest(route=route):
+                            status, output = self._run_cli(command)
+                            self.assertEqual(2, status, output)
+                            self.assertIn("outside the project root", output)
+                            self.assertNotIn(self.CANARY, output)
+            finally:
+                os.chdir(previous_cwd)
+            self.assertEqual([], loaded)
+
+    def test_c2_external_cwd_accepts_an_explicit_project_root(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, profile, bundle = self._compatibility_project(directory)
+            operator_cwd = Path(directory) / "operator-cwd"
+            operator_cwd.mkdir()
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(operator_cwd)
+                for route, command in self._compatibility_commands(
+                    profile, bundle, project_root=project
+                ):
+                    with self.subTest(route=route):
+                        status, output = self._run_cli(command)
+                        self.assertEqual(0, status, output)
+            finally:
+                os.chdir(previous_cwd)
 
 
 class BundleTests(unittest.TestCase):
