@@ -15,18 +15,26 @@ first-publication source-baseline identity** is the immutable commit
 current branch head, because any value written here goes stale at the next merge.
 Read the exact current head from the provider or from `git rev-parse origin/main`.
 
-Provider publication state is authoritative and can change without a source
-commit, so this page deliberately does not restate tag or Release existence as a
-timeless fact. Read it from the provider.
+Mutable provider presentation and access state is authoritative and can change
+without a source commit, so this page does not freeze it as timeless truth. Read
+current visibility, permissions and Release presentation from the provider;
+the immutable identities below remain durable historical results.
 
-`v0.1.0` is the first source-only, pre-stable release identity, naming the
-immutable commit `ee808572d3930ec3dc50d350ae1ed25a0236bb6b`. It publishes no
-artifact: package, OCI-image and documentation-site publication each remain
-separate unperformed effects.
+`v0.1.0` remains the historical first source-only identity. The current
+pre-stable source identity is [`v0.1.1`](https://github.com/ktogias/gnostoa/releases/tag/v0.1.1),
+an annotated tag naming commit
+`84cc4959d9fb0b315084cc49a5381c13166b6554` and tree
+`938a789f807b898797d2e634b7bfbaaedfe29a63`. Its public `linux/amd64` OCI
+artifact is
+`ghcr.io/ktogias/gnostoa@sha256:73e5bd55fb4fed4accc836294a97b144d8b7060d68b19c3631ab7c05b5cd1455`.
+Pull by that digest rather than relying on the `0.1.1` tag.
 
-This source snapshot itself establishes no package, OCI-image,
-documentation-site, compatibility, production-readiness or independent-transfer
-claim.
+The source and artifact establish no package or documentation-site publication,
+compatibility, production-readiness or independent-transfer claim. Verified
+artifact availability is not deployment authorization, reproducibility,
+general-security assurance or qualified legal clearance. The durable result and
+its exact evidence limits are in the
+[v0.1.1 publication assessment](../knowledge/assessments/v0-1-1-source-and-oci-publication-result.md).
 
 ### Available from source
 
@@ -56,7 +64,8 @@ claim.
 
 ### Not established
 
-- installable released artifacts or upgrade compatibility;
+- package/site artifacts or upgrade compatibility beyond the exact published
+  `linux/amd64` digest;
 - production readiness, security certification or service operation;
 - independent adoption, net productivity benefit or product-market demand;
 - scalable guided review with low cognitive load; or
@@ -104,8 +113,9 @@ platform is deferred Research rather than a publication gate, as recorded by
 The source-publication route treated exact disclosure, visibility with `main`
 unchanged, protection, anonymous read-back and protected integration as
 separate effects. All completed for the source baseline; Issue #1 and PR #23
-bind the current integration result. Package, image and site publication remain
-separate later effects.
+bind the current integration result. Package and site publication remain
+separate later effects. The later `v0.1.1` source and OCI effects are reconciled
+in their own [durable result](../knowledge/assessments/v0-1-1-source-and-oci-publication-result.md).
 
 Clean wheel and source-distribution candidates now build and run against an
 explicit separate public-source binding; an absent or malformed binding fails
@@ -131,10 +141,11 @@ do not prove acceptance, the package audit does not establish package trust,
 legacy license metadata still requires human review, and neither the inventory
 nor the tree scan covers the OS/base image, Git history or provider artifacts.
 [Dependency evidence](dependency-evidence.md) documents the exact boundary.
-Complete image/system-component inventory, legal review, publisher and release
-provenance and the remaining artifact-release gates remain open. The exact
-source-publication disposition, protection and integration state remains in
-the linked provider records.
+The published digest has bounded runtime inventory and GitHub build-provenance
+verification. Exact rebuild reproducibility, qualified legal clearance,
+production readiness, package/site publication and broader consumer assurances
+remain unclaimed. The exact source-publication disposition, protection and
+integration state remains in the linked provider and durable result records.
 
 ## Current direction
 

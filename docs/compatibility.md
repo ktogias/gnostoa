@@ -6,15 +6,15 @@ a release promise.
 
 ## Current baseline
 
-`v0.1.0` is the **first source-only, pre-stable release identity**
-([Decision 0020](../knowledge/decisions/0020-establish-v0-1-0-as-the-first-source-only-pre-stable-release-identity.md)),
-naming the immutable commit `ee808572d3930ec3dc50d350ae1ed25a0236bb6b` with
-public-surface digest
-`sha256:021f18107feb93be2d4c6e5d8dca7d73bf2247871fc100859ba576089f55772b`.
-It is **not** an established compatibility baseline. Whether a corresponding tag,
-Release or artifact exists externally is provider-authoritative and is not
-restated here; a version label alone is never sufficient identity. No package,
-OCI image or documentation site is published by this source snapshot.
+`v0.1.0` remains the historical first source-only identity. The current
+pre-stable release identity is [`v0.1.1`](https://github.com/ktogias/gnostoa/releases/tag/v0.1.1),
+bound to commit `84cc4959d9fb0b315084cc49a5381c13166b6554`, tree
+`938a789f807b898797d2e634b7bfbaaedfe29a63` and source public-surface digest
+`sha256:33792909555029c1b2879d78f112ba0e3227d73abac0b89652781554fee1af74`.
+Its public `linux/amd64` OCI artifact is
+`ghcr.io/ktogias/gnostoa@sha256:73e5bd55fb4fed4accc836294a97b144d8b7060d68b19c3631ab7c05b5cd1455`.
+The exact source identity, public-surface digest and OCI manifest digest are
+distinct authorities. No Python package or documentation site is published.
 
 Evaluation must therefore pin all of the following together:
 
@@ -34,13 +34,13 @@ not evidence that two artifacts or source trees are equivalent.
 | JSON Schema identity | Public schema IDs use a versioned `/schemas/v1/` namespace. A breaking schema contract requires a new major path and migration guidance. |
 | Profile and policy contracts | Each profile or policy has its own version. A consumer pins the exact revision and verifies that specialization does not weaken inherited constraints. |
 | Python distribution | The wheel is execution-only. It must be paired with the exact separately pinned public-source root and its digest. |
-| OCI distribution | A released consumer image must be pinned by immutable digest and bound to the same source revision and public surface. No image has been released yet. |
+| OCI distribution | The released `linux/amd64` v0.1.1 image must be pinned as `ghcr.io/ktogias/gnostoa@sha256:73e5bd55fb4fed4accc836294a97b144d8b7060d68b19c3631ab7c05b5cd1455` and bound to the v0.1.1 source revision and public surface. The `0.1.1` tag alone is not the consumer identity. |
 | Knowledge bundles | A bundle is compatible only when it validates against the explicitly selected profile, schemas and policy set. |
 
 The generic
 [versioning and upgrade guidance](../guidance/reference/versioning-and-upgrades.md)
 defines the intended PATCH, MINOR and MAJOR meanings for validation contracts.
-It does not turn the unpublished `0.1.0` candidate into a long-term support or
+It does not turn the pre-stable `v0.1.1` release into a long-term support or
 cross-version compatibility promise.
 
 ## Safe evaluation upgrade
@@ -83,7 +83,7 @@ verification.
 
 ## Not yet promised
 
-The current candidate has no demonstrated compatibility matrix with an older
+The current release has no demonstrated compatibility matrix with an older
 or newer release, automated migration tool, deprecation window, support
 lifetime or rollback guarantee. Dependency/security scans and coverage evidence
 are bounded release-candidate signals. Exact-lock Python license inventories and
@@ -92,6 +92,10 @@ and do not constitute legal compatibility review. The Python locks now admit
 only committed SHA-256 wheel identities, and the evidence records the exact
 wheel selected for the current Python/platform environment. That prevents
 unlisted package bytes but does not authenticate publishers, guarantee index
-availability or establish release provenance. These limits must be resolved or
-carried explicitly before artifact publication; they must not be inferred from
-the presence of a `0.1.0` version.
+availability or establish release provenance. The published image carries
+bounded runtime, provenance and digest-verification evidence, but availability
+is not production readiness, deployment authorization, exact rebuild
+reproducibility, general security or qualified legal clearance. These limits
+must not be inferred from the presence of the `v0.1.1` source tag or `0.1.1`
+image tag. See the
+[publication result](../knowledge/assessments/v0-1-1-source-and-oci-publication-result.md).
