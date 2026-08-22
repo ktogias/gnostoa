@@ -40,7 +40,51 @@ case "${suite}" in
     knowledge_cli docs-build --site-dir "${site_dir}"
     ;;
   release)
-    echo "SKIP: deployable_artifact capability is false"
+    release_image="ghcr.io/ktogias/gnostoa@sha256:73e5bd55fb4fed4accc836294a97b144d8b7060d68b19c3631ab7c05b5cd1455" # pragma: allowlist secret -- public registry identity
+    release_public_digest="sha256:33792909555029c1b2879d78f112ba0e3227d73abac0b89652781554fee1af74" # pragma: allowlist secret -- public-surface digest
+    release_notice_digest="sha256:68978e9fc1875f275c0dfb9bd71ed19d025b01f66409bb31d785d86165ee691c" # pragma: allowlist secret -- public notice digest
+    release_tmp="$(mktemp -d "${TMPDIR:-/tmp}/gnostoa-release-verify.XXXXXX")"
+    release_docker_config="${release_tmp}/docker"
+    mkdir -m 700 "${release_docker_config}"
+    trap 'rm -rf -- "${release_tmp}"' EXIT HUP INT TERM
+
+    sed 's/  # pragma: allowlist secret -- public SB2 digest$//' > "${release_tmp}/gnostoa-sb2.sha256" <<'EOF'
+54339d70f04824605a8e7bee0fb8bce02906523109e1c012a20eb312b9cac1cb  tools/build_context_pack.py  # pragma: allowlist secret -- public SB2 digest
+e22de87395da6ff5e32428ed9b8cfc123a3512136aeb12f939868fa68f049676  tools/build_docs.py  # pragma: allowlist secret -- public SB2 digest
+6659c3680ad5ec0ca325f9a4b41fda7ef71b8c8f31ea584624c0c53f5587e156  tools/check_change_policy.py  # pragma: allowlist secret -- public SB2 digest
+9c0ba59484a81e6f9aa00296557e7b66ec698c1e6d44d9df8047563f4882484c  tools/check_ci_policy.py  # pragma: allowlist secret -- public SB2 digest
+dd4839c528451421fa5757468fd4bbc7c9ea475325d22b9e630d884d0fce7ab9  tools/check_guardrails.py  # pragma: allowlist secret -- public SB2 digest
+15cc878aea0a1eda46af40e443f2d87f6123d8def1eb7d22cb1b05649b308c8a  tools/check_runtime_lock.py  # pragma: allowlist secret -- public SB2 digest
+ac9bb147308f26a0d0a4ad0267c934f5021c44527396eb98c7e6149b4c1d3898  tools/cli.py  # pragma: allowlist secret -- public SB2 digest
+2d5a77af4d0a6b2bd1dcf3786e7ebacc1c06bc6cc0e07c2e69f0736e98515593  tools/knowledge_common.py  # pragma: allowlist secret -- public SB2 digest
+a61fc494a84cad5cad6923f072dc05fd2edb41162cf45c7446eb05303d73e5c4  tools/repository_scope.py  # pragma: allowlist secret -- public SB2 digest
+c0f7c63107c941b5bbfc89d4399c5a197f9c0939c06e5b8012c3aeeaa9b54824  tools/self_check.py  # pragma: allowlist secret -- public SB2 digest
+da5644815c1ed19d79f320c3c2758a4877f105d440d0a0206650ec8f92f06204  tools/task_envelope.py  # pragma: allowlist secret -- public SB2 digest
+7d728446c8a34e7515c626b1c3b8af6cfafee38318616a44a86303af3beb5ca1  tools/validate_bundle.py  # pragma: allowlist secret -- public SB2 digest
+EOF
+
+    command -v docker >/dev/null 2>&1
+    DOCKER_CONFIG="${release_docker_config}" docker pull "${release_image}"
+    test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "${release_image}")" = "linux/amd64"
+    test "$(docker image inspect --format '{{.Config.User}}' "${release_image}")" = "kit"
+    test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "${release_image}")" = "0.1.1"
+    test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${release_image}")" = "84cc4959d9fb0b315084cc49a5381c13166b6554" # pragma: allowlist secret -- public source revision
+    docker image inspect "${release_image}" \
+      | python -c 'import json,sys; labels=json.load(sys.stdin)[0]["Config"].get("Labels") or {}; assert "org.opencontainers.image.licenses" not in labels'
+    test "$(docker run --rm --entrypoint id "${release_image}" -u)" = "10001"
+    docker run --rm --entrypoint python "${release_image}" -c \
+      'import importlib.metadata as m, importlib.util, platform, pyexpat; assert platform.python_version() == "3.12.14"; assert pyexpat.version_info == (2, 8, 3); assert len({d.metadata["Name"].lower() for d in m.distributions()}) == 8; assert importlib.util.find_spec("pip") is None; assert importlib.util.find_spec("ensurepip") is None'
+    test "$(docker run --rm --entrypoint sh "${release_image}" -c "dpkg-query -W -f='\${binary:Package}\\n' | wc -l")" = "118"
+    release_actual="$(docker run --rm --entrypoint python "${release_image}" -m tools.cli surface-digest --root /opt/gnostoa)"
+    test "${release_actual}" = "${release_public_digest}"
+    release_actual="$(docker run --rm --entrypoint sha256sum "${release_image}" /opt/gnostoa/THIRD_PARTY_NOTICES | cut -d' ' -f1)"
+    test "sha256:${release_actual}" = "${release_notice_digest}"
+    docker run --rm \
+      --mount "type=bind,source=${release_tmp}/gnostoa-sb2.sha256,target=/tmp/gnostoa-sb2.sha256,readonly" \
+      --entrypoint sh "${release_image}" -ec \
+      'cd /opt/gnostoa; test "$(wc -l < /tmp/gnostoa-sb2.sha256)" -eq 12; sha256sum -c /tmp/gnostoa-sb2.sha256'
+    docker run --rm "${release_image}" self-check --skip-tests
+    echo "PASS: immutable public linux/amd64 release artifact verified; no rebuild-repeatability claim is made"
     ;;
   *)
     echo "usage: ./ci/verify {policy|fast|regression|integration|smoke|extended|release}" >&2

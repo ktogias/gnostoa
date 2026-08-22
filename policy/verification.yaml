@@ -10,7 +10,7 @@ capabilities:
   integration: false
   smoke: true
   extended: true
-  deployable_artifact: false
+  deployable_artifact: true
 
 suites:
   fast:
@@ -29,3 +29,7 @@ suites:
     command: ["./ci/verify", extended]
     timeout_minutes: 30
     evidence: [artifact, test-report]
+  release:
+    command: ["./ci/verify", release]
+    timeout_minutes: 15
+    evidence: [artifact, observation, validation-report]
