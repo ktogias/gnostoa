@@ -292,22 +292,29 @@ class LicensePolicyTests(unittest.TestCase):
             hashlib.sha256(notice_bytes).hexdigest(),
         )
 
-        tracked = subprocess.run(
-            [
-                "git",
-                "-c",
-                f"safe.directory={ROOT}",
-                "-C",
-                str(ROOT),
-                "ls-files",
-                "--error-unmatch",
-                "THIRD_PARTY_NOTICES",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual("THIRD_PARTY_NOTICES", tracked.stdout.strip())
+        manifest = ROOT / ".gnostoa-source-files"
+        if manifest.is_file():
+            self.assertIn(
+                b"THIRD_PARTY_NOTICES",
+                manifest.read_bytes().split(b"\0"),
+            )
+        else:
+            tracked = subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    f"safe.directory={ROOT}",
+                    "-C",
+                    str(ROOT),
+                    "ls-files",
+                    "--error-unmatch",
+                    "THIRD_PARTY_NOTICES",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual("THIRD_PARTY_NOTICES", tracked.stdout.strip())
 
         def exact_section(start: bytes, end: bytes) -> bytes:
             return notice_bytes.split(start, maxsplit=1)[1].split(end, maxsplit=1)[0]
