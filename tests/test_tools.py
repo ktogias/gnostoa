@@ -284,6 +284,73 @@ class LicensePolicyTests(unittest.TestCase):
             'org.opencontainers.image.authors="Konstantinos Togias"', dockerfile
         )
 
+    def test_cpython_third_party_notices_are_version_bound_and_tracked(self) -> None:
+        notice_path = ROOT / "THIRD_PARTY_NOTICES"
+        notice_bytes = notice_path.read_bytes()
+        self.assertEqual(
+            "68978e9fc1875f275c0dfb9bd71ed19d025b01f66409bb31d785d86165ee691c",  # pragma: allowlist secret -- public notice digest
+            hashlib.sha256(notice_bytes).hexdigest(),
+        )
+
+        manifest = ROOT / ".gnostoa-source-files"
+        if manifest.is_file():
+            self.assertIn(
+                b"THIRD_PARTY_NOTICES",
+                manifest.read_bytes().split(b"\0"),
+            )
+        else:
+            tracked = subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    f"safe.directory={ROOT}",
+                    "-C",
+                    str(ROOT),
+                    "ls-files",
+                    "--error-unmatch",
+                    "THIRD_PARTY_NOTICES",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual("THIRD_PARTY_NOTICES", tracked.stdout.strip())
+
+        def exact_section(start: bytes, end: bytes) -> bytes:
+            return notice_bytes.split(start, maxsplit=1)[1].split(end, maxsplit=1)[0]
+
+        cpython_licence = exact_section(
+            b"----- BEGIN EXACT CPYTHON V3.12.14 DOC/LICENSE.RST -----\n",
+            b"----- END EXACT CPYTHON V3.12.14 DOC/LICENSE.RST -----\n",
+        )
+        hacl_root_licence = exact_section(
+            b"----- BEGIN EXACT HACL BOUND-REVISION ROOT LICENSE -----\n",
+            b"----- END EXACT HACL BOUND-REVISION ROOT LICENSE -----\n",
+        )
+        self.assertEqual(
+            "341832873fd316a37927e79385093fbbfd40a467428480835fe435a80cadf4e5",  # pragma: allowlist secret -- public CPython licence digest
+            hashlib.sha256(cpython_licence).hexdigest(),
+        )
+        self.assertEqual(
+            "c5accbbd8546e94c34aed24afe689a617627d18eed5a6c48277e48db57c23851",  # pragma: allowlist secret -- public HACL licence digest
+            hashlib.sha256(hacl_root_licence).hexdigest(),
+        )
+
+        notice = notice_bytes.decode("utf-8")
+        self.assertIn("CPython tag: v3.12.14", notice)
+        self.assertIn(
+            "bb3d0dc8d9d15a5cd51094d5b69e70aa09005ff0",  # pragma: allowlist secret -- public HACL revision
+            notice,
+        )
+        self.assertIn("/opt/gnostoa/THIRD_PARTY_NOTICES", notice)
+        self.assertIn("must be refreshed and\nre-verified", notice)
+
+        # The existing source-authority route installs every tracked candidate
+        # path beneath /opt/gnostoa. Exact runtime presence is read back from
+        # the built image in the delivery verification for this candidate.
+        dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        self.assertIn("COPY --from=candidate --chown=kit:kit source/ .", dockerfile)
+
     def test_license_scope_is_explicit_for_adopting_projects(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         licensing = (ROOT / "LICENSING.md").read_text(encoding="utf-8")

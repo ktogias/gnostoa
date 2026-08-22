@@ -47,6 +47,7 @@ inherited, copied or loaded by adopting projects.
 - [Confine local Markdown filesystem references to the explicit project root](decisions/0034-confine-local-markdown-filesystem-references-to-the-explicit-project-root.md)
 - [Accept bounded first-party source-security sufficiency for the first OCI candidate](decisions/0035-accept-bounded-first-party-source-security-sufficiency-for-the-first-oci-candidate.md)
 - [Canonicalize bounded self-hosted delivery practice](decisions/0036-canonicalize-bounded-self-hosted-delivery-practice.md)
+- [Provide a version-bound CPython third-party attribution bundle](decisions/0037-provide-a-version-bound-cpython-third-party-attribution-bundle.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Verification precedes integration](requirements/verification-precedes-implementation.md)
