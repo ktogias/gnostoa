@@ -30,7 +30,7 @@ RUN apt-get update \
       "util-linux=${UTIL_LINUX_VERSION}" \
     && rm -rf /var/lib/apt/lists/*
 
-ARG KIT_VERSION=0.1.0
+ARG KIT_VERSION=0.1.1
 ARG VCS_REF=development
 ARG BUILD_DATE=unknown
 
