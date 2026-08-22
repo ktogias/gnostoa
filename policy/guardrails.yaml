@@ -413,6 +413,7 @@ guardrails:
     guidance: guidance/workflows/configure-continuous-integration.md#procedure
     implementation:
       - .github/workflows/verification.yml
+      - .github/workflows/publish-oci.yml
       - ci/github-actions.yml
       - ci/gitlab-ci.yml
       - .gitlab-ci.yml
@@ -420,6 +421,7 @@ guardrails:
     tests:
       - tests/test_tools.py::ContinuousIntegrationTests.test_provider_adapters_cover_candidate_and_integration_events
       - tests/test_tools.py::PublicationBaselineTests.test_github_provider_surface_is_active_and_owned
+      - tests/test_tools.py::PublicationBaselineTests.test_ghcr_publication_workflow_is_exact_and_write_once
 
   - id: conditional-artifact-promotion
     title: Delivery activates for deployable artifacts and promotes the verified artifact
