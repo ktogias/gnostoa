@@ -1,0 +1,116 @@
+---
+type: Runbook
+title: Deliver a bounded self-hosted slice
+description: Short Gnostoa-self operational route from current-subject orientation through exact-candidate verification, authorized integration, subject re-binding and close-last reconciliation.
+status: draft
+generated:
+  by: codex/gpt-5
+  at: "2026-08-22T07:25:33Z"
+sources:
+  - id: delivery-practice-work-item
+    resource: https://github.com/ktogias/gnostoa/issues/80
+    title: Canonicalize bounded self-hosted delivery practice
+x-project-knowledge:
+  id: kit.runbook.deliver-bounded-self-hosted-slice
+  owners:
+    - team:gnostoa-maintainers
+  scope:
+    - gnostoa
+  relations:
+    - kind: governed-by
+      target: /decisions/0036-canonicalize-bounded-self-hosted-delivery-practice.md
+    - kind: depends-on
+      target: /lifecycles/evidence-gated-capability-evolution.md
+    - kind: references
+      target: /decisions/0024-separate-stable-navigation-from-volatile-state.md
+    - kind: references
+      target: /runbooks/maintain-the-kit.md
+    - kind: references
+      target: /runbooks/publish-source-only-release.md
+---
+
+# Deliver a bounded self-hosted slice
+
+**Scope: ordinary changes to Gnostoa itself.** This is an operational route, not
+a second lifecycle and not adopter guidance. The
+[evidence-gated lifecycle](../lifecycles/evidence-gated-capability-evolution.md)
+owns epistemic order, gap classes, selection/admission and oracle limits.
+
+## Compact task input
+
+An ordinary task prompt normally supplies only the concrete task or selected
+owner outcome, authoritative starting subject, admitted scope and exclusions,
+task-specific stop conditions, material evidence, authorized effects and the
+result needed for the next owner decision. There is no fixed length limit.
+
+## Preconditions
+
+- The current source and provider subject can be read back.
+- The concrete task, admitted scope and accountable owner are known.
+- Any required Work Item, Decision and pre-implementation evidence are present
+  before implementation begins.
+
+## Procedure
+
+1. **Orient and read back the current subject.** Start through `AGENTS.md`; bind
+   protected source, provider lifecycle and the active Work Item without replaying
+   raw conversations. Use Decision 0016's resume route.
+2. **Classify the observed gap.** Apply the
+   [canonical lifecycle](../lifecycles/evidence-gated-capability-evolution.md);
+   do not infer a new mechanism or implementation from research or selection.
+3. **Acquire bounded evidence or research.** Load only what distinguishes the
+   proposed result and preserve negative findings.
+4. **Obtain an owner semantic choice when required.** Oracle or unresolved
+   semantic limits remain human decisions.
+5. **Name the proposed surface and class.** Use the generic
+   [change workflow](../../guidance/workflows/propose-review-merge-change.md) and
+   `policy/change-control.yaml`; reclassify upward if the real surface expands.
+6. **Satisfy implementation admission.** Create or link required records and
+   establish the applicable pre-implementation evidence before editing.
+7. **Make the smallest admitted change.** Follow the
+   [verification-first workflow](../../guidance/workflows/develop-verification-first.md)
+   and keep specialized semantics in their owning runbooks.
+8. **Verify the exact candidate.** Inspect the final diff, identify the measured
+   subject, run applicable local/runtime checks and record actual results.
+9. **Verify the exact PR head.** Provider checks must bind to that head; inspect
+   required jobs individually. A successful run does not turn `SKIPPED` into
+   `PASS`.
+10. **Obtain authority for the exact effect.** Repository preparation and green
+    evidence do not authorize merge or another provider mutation. For release or
+    publication effects, follow the specialized runbook instead.
+11. **Perform only the authorized effect.** If the Work Item must survive merge,
+    keep provider metadata and the prospective merge message free of automatic
+    closing semantics; the
+    [source-release runbook](publish-source-only-release.md) records the known
+    GitHub parsing precaution.
+12. **Read back integrated and provider state.** PR-head verification and the
+    integrated-main revision are separate observations. Read the exact protected
+    revision, changed paths, provider jobs and lifecycle state.
+13. **Re-bind the subject and reconcile.** A new SHA alone does not invalidate
+    evidence. Prove the relevant subject unchanged before reuse; when it changed
+    materially, replay only affected evidence. Re-read navigation under
+    [Decision 0024](../decisions/0024-separate-stable-navigation-from-volatile-state.md).
+14. **Close the Work Item last.** Close only after integrated/provider read-back,
+    subject re-binding and reconciliation succeed; then record the next owner
+    decision without starting it automatically.
+
+## Verification
+
+Use the repository's current policy and container routes rather than copying a
+fixed suite here. Record exact-candidate and integrated-main results separately,
+including public-surface digest, executable/runtime-subject equality and X3 when
+applicable. Provider command success is not authoritative read-back.
+
+## Recovery
+
+On subject drift, a failed required job, an unexpected provider effect or scope
+expansion, stop before the next effect. Read back the authoritative state,
+reclassify or re-bind as applicable, and return to the owner rather than silently
+retargeting the slice.
+
+## Fresh-agent falsification
+
+Run the retrospective's fresh-agent test on the first naturally occurring
+eligible ordinary slice. The agent should reconstruct this route from repository
+knowledge using only task-specific input. This tests discoverability and process
+reconstruction, not semantic autonomy or adopter transfer.
