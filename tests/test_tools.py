@@ -294,6 +294,37 @@ class PublicationBaselineTests(unittest.TestCase):
         self.assertEqual(3, workflow.count("assert_tag_absent"))
         self.assertEqual(1, workflow.count('docker push "${IMAGE_REF}"'))
 
+    def test_release_verification_is_bound_to_published_digest(self) -> None:
+        verification = load_yaml(ROOT / "policy" / "verification.yaml")
+        self.assertTrue(verification["capabilities"]["deployable_artifact"])
+        self.assertEqual(
+            ["./ci/verify", "release"],
+            verification["suites"]["release"]["command"],
+        )
+
+        script = (ROOT / "ci" / "verify").read_text(encoding="utf-8")
+        immutable_ref = (
+            "ghcr.io/ktogias/gnostoa@sha256:"
+            "73e5bd55fb4fed4accc836294a97b144d8b7060d68b19c3631ab7c05b5cd1455"  # pragma: allowlist secret -- public registry identity
+        )
+        self.assertIn(immutable_ref, script)
+        self.assertNotIn("ghcr.io/ktogias/gnostoa:0.1.1", script)
+        self.assertNotIn("SKIP: deployable_artifact capability is false", script)
+        for marker in (
+            "DOCKER_CONFIG",
+            "docker pull",
+            "linux/amd64",
+            "3.12.14",
+            "(2, 8, 3)",
+            "33792909555029c1b2879d78f112ba0e3227d73abac0b89652781554fee1af74",  # pragma: allowlist secret -- public-surface digest
+            "68978e9fc1875f275c0dfb9bd71ed19d025b01f66409bb31d785d86165ee691c",  # pragma: allowlist secret -- public notice digest
+            "gnostoa-sb2.sha256",
+            "self-check --skip-tests",
+            "org.opencontainers.image.licenses",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, script)
+
     def test_current_indexes_cover_every_canonical_concept(self) -> None:
         for surface in ("guidance", "knowledge"):
             with self.subTest(surface=surface):
