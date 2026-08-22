@@ -49,6 +49,7 @@ inherited, copied or loaded by adopting projects.
 - [Canonicalize bounded self-hosted delivery practice](decisions/0036-canonicalize-bounded-self-hosted-delivery-practice.md)
 - [Provide a version-bound CPython third-party attribution bundle](decisions/0037-provide-a-version-bound-cpython-third-party-attribution-bundle.md)
 - [Establish v0.1.1 as a source-only patch release identity](decisions/0038-establish-v0-1-1-as-a-source-only-patch-release-identity.md)
+- [Publish v0.1.1 as the first public GHCR image](decisions/0039-publish-v0-1-1-as-the-first-public-ghcr-image.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Verification precedes integration](requirements/verification-precedes-implementation.md)

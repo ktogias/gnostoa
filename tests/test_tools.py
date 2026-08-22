@@ -229,6 +229,71 @@ class PublicationBaselineTests(unittest.TestCase):
         ):
             self.assertIn(owned_path, codeowners)
 
+    def test_ghcr_publication_workflow_is_exact_and_write_once(self) -> None:
+        workflow_path = ROOT / ".github" / "workflows" / "publish-oci.yml"
+        self.assertTrue(workflow_path.is_file())
+        workflow = workflow_path.read_text(encoding="utf-8")
+        parsed = load_yaml(workflow_path)
+
+        self.assertEqual({}, parsed["permissions"])
+        self.assertEqual(["publish"], list(parsed["jobs"]))
+        self.assertEqual(
+            {
+                "contents": "read",
+                "packages": "write",
+                "id-token": "write",
+                "attestations": "write",
+            },
+            parsed["jobs"]["publish"]["permissions"],
+        )
+        self.assertEqual(
+            {"group": "gnostoa-ghcr-0.1.1", "cancel-in-progress": False},
+            parsed["concurrency"],
+        )
+
+        required = (
+            "workflow_dispatch:",
+            "group: gnostoa-ghcr-0.1.1",
+            "cancel-in-progress: false",
+            "contents: read",
+            "packages: write",
+            "id-token: write",
+            "attestations: write",
+            "refs/tags/v0.1.1",
+            "84cc4959d9fb0b315084cc49a5381c13166b6554",  # pragma: allowlist secret -- public source revision
+            "938a789f807b898797d2e634b7bfbaaedfe29a63",  # pragma: allowlist secret -- public source tree
+            "ac7faf520bad82edd13ed41c6f9a9c8e686e019e",  # pragma: allowlist secret -- public tag object
+            "ghcr.io/ktogias/gnostoa:0.1.1",
+            "GNOSTOA_CANDIDATE_REF=v0.1.1",
+            "GNOSTOA_KIT_VERSION=0.1.1",
+            "BUILD_DATE=2026-08-22T13:20:42Z",
+            "--platform linux/amd64",
+            "--provenance=false",
+            "--sbom=false",
+            "manifest unknown|not found",
+            'docker push "${IMAGE_REF}"',
+            "--format '{{.Manifest.Digest}}'",
+            "33792909555029c1b2879d78f112ba0e3227d73abac0b89652781554fee1af74",  # pragma: allowlist secret -- public-surface digest
+            "68978e9fc1875f275c0dfb9bd71ed19d025b01f66409bb31d785d86165ee691c",  # pragma: allowlist secret -- public notice digest
+            "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+            "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
+            "subject-name: ghcr.io/ktogias/gnostoa",
+            "push-to-registry: true",
+            "create-storage-record: false",
+            "gh attestation verify",
+        )
+        for marker in required:
+            with self.subTest(marker=marker):
+                self.assertIn(marker, workflow)
+
+        self.assertNotIn("inputs:", workflow)
+        self.assertNotIn("docker/login-action", workflow)
+        self.assertNotIn("docker/setup-buildx-action", workflow)
+        self.assertNotIn("docker/build-push-action", workflow)
+        self.assertNotRegex(workflow, r"ghcr\.io/ktogias/gnostoa:latest\b")
+        self.assertEqual(3, workflow.count("assert_tag_absent"))
+        self.assertEqual(1, workflow.count('docker push "${IMAGE_REF}"'))
+
     def test_current_indexes_cover_every_canonical_concept(self) -> None:
         for surface in ("guidance", "knowledge"):
             with self.subTest(surface=surface):

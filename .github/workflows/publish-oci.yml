@@ -1,0 +1,216 @@
+name: Publish Gnostoa v0.1.1 OCI image
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: gnostoa-ghcr-0.1.1
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: ghcr.io/ktogias/gnostoa
+  IMAGE_REF: ghcr.io/ktogias/gnostoa:0.1.1
+  SOURCE_TAG: v0.1.1
+  SOURCE_COMMIT: 84cc4959d9fb0b315084cc49a5381c13166b6554 # pragma: allowlist secret -- public source revision
+  SOURCE_TREE: 938a789f807b898797d2e634b7bfbaaedfe29a63 # pragma: allowlist secret -- public source tree
+  TAG_OBJECT: ac7faf520bad82edd13ed41c6f9a9c8e686e019e # pragma: allowlist secret -- public tag object
+  BASE_DIGEST: sha256:2c941e860699f878900b0edc2403613c234d4b32eda3cc9fa7036991a2a63c4a
+  PUBLIC_DIGEST: sha256:33792909555029c1b2879d78f112ba0e3227d73abac0b89652781554fee1af74
+  NOTICE_DIGEST: sha256:68978e9fc1875f275c0dfb9bd71ed19d025b01f66409bb31d785d86165ee691c
+
+jobs:
+  publish:
+    name: publish-linux-amd64
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Check out the immutable source tag
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: refs/tags/v0.1.1
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Assert the exact source and build inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REPOSITORY}" = "ktogias/gnostoa"
+          test "${GITHUB_ACTOR}" = "ktogias"
+          test "$(git cat-file -t "refs/tags/${SOURCE_TAG}")" = "tag"
+          test "$(git rev-parse "refs/tags/${SOURCE_TAG}")" = "${TAG_OBJECT}"
+          test "$(git rev-parse "${SOURCE_TAG}^{commit}")" = "${SOURCE_COMMIT}"
+          test "$(git rev-parse HEAD)" = "${SOURCE_COMMIT}"
+          test "$(git rev-parse 'HEAD^{tree}')" = "${SOURCE_TREE}"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          test "$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')" = "0.1.1"
+          grep -F 'ARG KIT_VERSION=0.1.1' Dockerfile
+          grep -F "ARG PYTHON_BASE_IMAGE=python:3.12-slim@${BASE_DIGEST}" Dockerfile
+
+      - name: Record the build envelope
+        shell: bash
+        run: |
+          set -euo pipefail
+          uname -a
+          cat /etc/os-release
+          docker version
+          docker buildx version
+          printf 'workflow=%s\nrun_id=%s\nrun_attempt=%s\nrun_url=%s/%s/actions/runs/%s\n' \
+            "${GITHUB_WORKFLOW}" "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" \
+            "${GITHUB_SERVER_URL}" "${GITHUB_REPOSITORY}" "${GITHUB_RUN_ID}"
+
+      - name: Authenticate to GHCR
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${GHCR_TOKEN}" \
+            | docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+
+      - name: Build, verify, publish and read back the digest
+        id: publish
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          assert_tag_absent() {
+            local output status
+            set +e
+            output="$(docker buildx imagetools inspect "${IMAGE_REF}" 2>&1)"
+            status=$?
+            set -e
+            if [ "${status}" -eq 0 ]; then
+              echo "refusing to overwrite existing image tag ${IMAGE_REF}" >&2
+              exit 1
+            fi
+            if ! grep -Eqi 'manifest unknown|not found' <<<"${output}"; then
+              echo "tag absence was not established authoritatively" >&2
+              printf '%s\n' "${output}" >&2
+              exit 1
+            fi
+            echo "confirmed absent: ${IMAGE_REF}"
+          }
+
+          write_sb2_baseline() {
+            cat > "${RUNNER_TEMP}/gnostoa-sb2.sha256" <<'EOF'
+          54339d70f04824605a8e7bee0fb8bce02906523109e1c012a20eb312b9cac1cb  tools/build_context_pack.py
+          e22de87395da6ff5e32428ed9b8cfc123a3512136aeb12f939868fa68f049676  tools/build_docs.py
+          6659c3680ad5ec0ca325f9a4b41fda7ef71b8c8f31ea584624c0c53f5587e156  tools/check_change_policy.py
+          9c0ba59484a81e6f9aa00296557e7b66ec698c1e6d44d9df8047563f4882484c  tools/check_ci_policy.py
+          dd4839c528451421fa5757468fd4bbc7c9ea475325d22b9e630d884d0fce7ab9  tools/check_guardrails.py
+          15cc878aea0a1eda46af40e443f2d87f6123d8def1eb7d22cb1b05649b308c8a  tools/check_runtime_lock.py
+          ac9bb147308f26a0d0a4ad0267c934f5021c44527396eb98c7e6149b4c1d3898  tools/cli.py
+          2d5a77af4d0a6b2bd1dcf3786e7ebacc1c06bc6cc0e07c2e69f0736e98515593  tools/knowledge_common.py
+          a61fc494a84cad5cad6923f072dc05fd2edb41162cf45c7446eb05303d73e5c4  tools/repository_scope.py
+          c0f7c63107c941b5bbfc89d4399c5a197f9c0939c06e5b8012c3aeeaa9b54824  tools/self_check.py
+          da5644815c1ed19d79f320c3c2758a4877f105d440d0a0206650ec8f92f06204  tools/task_envelope.py
+          7d728446c8a34e7515c626b1c3b8af6cfafee38318616a44a86303af3beb5ca1  tools/validate_bundle.py
+          EOF
+          }
+
+          verify_image() {
+            local reference="$1" actual
+            test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "${reference}")" = "linux/amd64"
+            test "$(docker image inspect --format '{{.Config.User}}' "${reference}")" = "kit"
+            test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "${reference}")" = "0.1.1"
+            test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${reference}")" = "${SOURCE_COMMIT}"
+            test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.created"}}' "${reference}")" = "2026-08-22T13:20:42Z"
+            docker image inspect "${reference}" \
+              | python -c 'import json,sys; labels=json.load(sys.stdin)[0]["Config"].get("Labels") or {}; assert "org.opencontainers.image.licenses" not in labels'
+            test "$(docker run --rm --entrypoint id "${reference}" -u)" = "10001"
+            docker run --rm --entrypoint python "${reference}" -c \
+              'import importlib.metadata as m, importlib.util, platform, pyexpat; assert platform.python_version() == "3.12.14"; assert pyexpat.version_info == (2, 8, 3); assert len({d.metadata["Name"].lower() for d in m.distributions()}) == 8; assert importlib.util.find_spec("pip") is None; assert importlib.util.find_spec("ensurepip") is None'
+            test "$(docker run --rm --entrypoint sh "${reference}" -c "dpkg-query -W -f='\${binary:Package}\\n' | wc -l")" = "118"
+            actual="$(docker run --rm --entrypoint python "${reference}" -m tools.cli surface-digest --root /opt/gnostoa)"
+            test "${actual}" = "${PUBLIC_DIGEST}"
+            actual="$(docker run --rm --entrypoint sha256sum "${reference}" /opt/gnostoa/THIRD_PARTY_NOTICES | cut -d' ' -f1)"
+            test "sha256:${actual}" = "${NOTICE_DIGEST}"
+            docker run --rm \
+              --mount "type=bind,source=${RUNNER_TEMP}/gnostoa-sb2.sha256,target=/tmp/gnostoa-sb2.sha256,readonly" \
+              --entrypoint sh "${reference}" -ec \
+              'cd /opt/gnostoa; test "$(wc -l < /tmp/gnostoa-sb2.sha256)" -eq 12; sha256sum -c /tmp/gnostoa-sb2.sha256'
+            docker run --rm "${reference}" self-check --skip-tests
+          }
+
+          write_sb2_baseline
+          assert_tag_absent
+
+          builder="gnostoa-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker buildx create \
+            --name "${builder}" \
+            --driver docker-container \
+            --use \
+            --bootstrap
+          trap 'docker buildx rm "${builder}" >/dev/null 2>&1 || true' EXIT
+          docker buildx inspect --bootstrap
+
+          GNOSTOA_CANDIDATE_REF=v0.1.1 \
+          GNOSTOA_KIT_VERSION=0.1.1 \
+            ./ci/build-runtime \
+              --tag "${IMAGE_REF}" \
+              --platform linux/amd64 \
+              --pull \
+              --no-cache \
+              --provenance=false \
+              --sbom=false \
+              --load \
+              --build-arg BUILD_DATE=2026-08-22T13:20:42Z
+
+          verify_image "${IMAGE_REF}"
+          assert_tag_absent
+          docker push "${IMAGE_REF}"
+
+          registry_digest="$(docker buildx imagetools inspect "${IMAGE_REF}" --format '{{.Manifest.Digest}}')"
+          if ! [[ "${registry_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "invalid registry manifest digest: ${registry_digest}" >&2
+            exit 1
+          fi
+          echo "registry_digest=${registry_digest}" >> "${GITHUB_OUTPUT}"
+
+          docker image rm "${IMAGE_REF}"
+          digest_ref="${IMAGE_NAME}@${registry_digest}"
+          docker pull "${digest_ref}"
+          verify_image "${digest_ref}"
+          test "$(docker buildx imagetools inspect "${IMAGE_REF}" --format '{{.Manifest.Digest}}')" = "${registry_digest}"
+
+      - name: Attest the registry-read-back manifest digest
+        id: attest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-name: ghcr.io/ktogias/gnostoa
+          subject-digest: ${{ steps.publish.outputs.registry_digest }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Verify provenance and final registry identity
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_DIGEST: ${{ steps.publish.outputs.registry_digest }}
+        run: |
+          set -euo pipefail
+          test "$(docker buildx imagetools inspect "${IMAGE_REF}" --format '{{.Manifest.Digest}}')" = "${REGISTRY_DIGEST}"
+          gh attestation verify \
+            "oci://${IMAGE_NAME}@${REGISTRY_DIGEST}" \
+            --repo ktogias/gnostoa
+          {
+            echo "## Published Gnostoa v0.1.1"
+            echo
+            echo "- source tag: \`${SOURCE_TAG}\`"
+            echo "- source commit: \`${SOURCE_COMMIT}\`"
+            echo "- source tree: \`${SOURCE_TREE}\`"
+            echo "- platform: \`linux/amd64\`"
+            echo "- image: \`${IMAGE_NAME}@${REGISTRY_DIGEST}\`"
+            echo "- workflow run: \`${GITHUB_RUN_ID}\`, attempt \`${GITHUB_RUN_ATTEMPT}\`"
+            echo "- public digest: \`${PUBLIC_DIGEST}\`"
+            echo "- THIRD_PARTY_NOTICES: \`${NOTICE_DIGEST}\`"
+            echo
+            echo "No exact-digest rebuild-repeatability claim is made."
+          } >> "${GITHUB_STEP_SUMMARY}"
