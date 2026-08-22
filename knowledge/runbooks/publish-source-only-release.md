@@ -30,7 +30,7 @@ x-project-knowledge:
 # Publish a source-only release
 
 **Scope: Gnostoa itself, source-only releases only.** Not adopter guidance. Draft,
-based on one completed release; expect to correct it. Governed by
+exercised by the completed `v0.1.0` and `v0.1.1` source releases. Governed by
 [Decision 0021](../decisions/0021-adopt-the-observed-source-only-release-procedure-for-gnostoa-self-governance.md).
 
 A source-only release names an existing commit. It publishes **no** package, OCI
@@ -301,8 +301,7 @@ is procedural self-knowledge only.
 
 ## Revisit condition
 
-Revisit after the next completed source-only release, or earlier if GitHub tag or
-Release semantics change, squash/merge parsing semantics materially change,
-provider automation changes, the release packaging or distribution scope changes,
-or repeated evidence contradicts part of this procedure. One successful release
-does not make it permanently stable.
+Revisit when an observed release failure or a material change to provider tag,
+Release, parsing or automation semantics, or to the release packaging or
+distribution scope, challenges this procedure. Another successful release or
+the passage of time does not by itself require procedural expansion.

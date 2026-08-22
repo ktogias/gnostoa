@@ -5,10 +5,15 @@ usable by both people and software agents. It validates structured Markdown and
 YAML, enforces non-weakening project profiles and policy boundaries, and builds
 bounded orientation packs without requiring a hosted knowledge service.
 
-> **Status: pre-release public source baseline.** The validator, examples, policy
-> checks, context-pack builder and documentation projection run from this
-> repository. No package, image or site has been released yet, and independent
-> adoption has not been demonstrated.
+> **Status: pre-stable v0.1.1 source and OCI release.** The immutable source tag
+> is [`v0.1.1`](https://github.com/ktogias/gnostoa/releases/tag/v0.1.1). One public
+> `linux/amd64` image is available as
+> `ghcr.io/ktogias/gnostoa@sha256:73e5bd55fb4fed4accc836294a97b144d8b7060d68b19c3631ab7c05b5cd1455`.
+> No package or site has been released, and artifact availability is not a
+> production-readiness or independent-adoption claim.
+
+The earlier pre-publication projection, “No package, image or site has been released yet,”
+is superseded by the digest-bound image result above.
 
 ## Why Gnostoa
 
@@ -70,8 +75,8 @@ candidate. A wheel or source-distribution install supplies execution only: set
 `KNOWLEDGE_KIT_ROOT` to the separate pinned public-source checkout that supplies
 schemas and profiles. Unbound or wrongly bound native execution fails with an
 actionable error instead of treating installed package files as canonical
-source. No artifact has been released yet; consumers must still pin the
-artifact, source revision and public-surface digest together.
+source. Consumers must pin the artifact, source revision and public-surface
+digest together; the released OCI route below is one such exact binding.
 
 ## What works today
 
@@ -137,7 +142,20 @@ consumer domain vocabulary.
 
 ## Container route
 
-Build and test the current checkout without publishing an image. The helper
+For the released pre-stable runtime, prefer the immutable registry digest:
+
+```bash
+docker pull ghcr.io/ktogias/gnostoa@sha256:73e5bd55fb4fed4accc836294a97b144d8b7060d68b19c3631ab7c05b5cd1455
+docker run --rm ghcr.io/ktogias/gnostoa@sha256:73e5bd55fb4fed4accc836294a97b144d8b7060d68b19c3631ab7c05b5cd1455 self-check
+```
+
+The `0.1.1` tag is a human-facing version reference; the registry digest is the
+immutable consumer identity. This public artifact is available and verified for
+`linux/amd64`, but is not claimed reproducible, production-ready, generally
+secure or qualified as legally cleared. See the
+[v0.1.1 publication result](knowledge/assessments/v0-1-1-source-and-oci-publication-result.md).
+
+To build and test the current checkout without publishing, the helper
 materialises exactly the Git-tracked files, using their current working-tree
 contents, so untracked or ignored local files never become runtime source:
 
@@ -147,9 +165,8 @@ ci/build-runtime --tag gnostoa:source-checkout
 docker run --rm gnostoa:source-checkout self-check
 ```
 
-Released consumers will use an OCI image pinned by digest. Until an image is
-actually released, examples that contain registry coordinates are contracts or
-templates—not installable artifact claims.
+Local checkout images are not substitutes for the released registry identity
+and do not carry its provider provenance.
 
 ## Develop and verify
 
