@@ -57,7 +57,7 @@ def _add_tar_bytes(archive: tarfile.TarFile, name: str, content: bytes) -> None:
 def _release_archive_fixtures(
     directory: Path,
     *,
-    version: str = "0.1.0",
+    version: str = "0.1.1",
     include_notice: bool = True,
 ) -> tuple[Path, Path]:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
