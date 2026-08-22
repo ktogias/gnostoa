@@ -295,6 +295,8 @@ class LicensePolicyTests(unittest.TestCase):
         tracked = subprocess.run(
             [
                 "git",
+                "-c",
+                f"safe.directory={ROOT}",
                 "-C",
                 str(ROOT),
                 "ls-files",
