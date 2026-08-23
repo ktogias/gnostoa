@@ -1,7 +1,7 @@
 ---
 type: Source
 title: Weather-note cold-start onboarding result
-description: Bounded comparison of five owner-provided cold-start evaluator reports, separating executed technical evidence, semantic fidelity and invalid fabricated execution claims.
+description: Bounded comparison of seven owner-provided cold-start evaluator reports, separating executed technical evidence, honest non-execution, semantic fidelity and invalid fabricated execution claims.
 status: draft
 generated:
   by: codex/gpt-5
@@ -22,6 +22,9 @@ sources:
   - id: weather-note-fifth-run-work-item
     resource: https://github.com/ktogias/gnostoa/issues/101
     title: Reconcile the fifth weather-note evaluator report
+  - id: weather-note-late-reports-work-item
+    resource: https://github.com/ktogias/gnostoa/issues/103
+    title: Reconcile two late weather-note evaluator reports
 x-project-knowledge:
   id: kit.assessment.weather-note-cold-start-onboarding-result
   owners:
@@ -217,21 +220,103 @@ Disposition: **INVALID / FABRICATED EXECUTION CLAIM**.
 - evidence binding: **FAIL**; and
 - timing and adoption verdict: **DISCARD**.
 
-The fourth and fifth reports repeat an imagined public interface:
+## Sixth-run execution-claim falsification
+
+The owner supplied a sixth report, identifying its evaluator as **GPAI Pro**.
+That identity is owner-reported and was not independently verified. No raw
+project files, command log, exit codes, source/runtime lock, exact Git or OCI
+identity, generated artifact or hash receipt accompanied the report.
+
+Bounded read-back contradicts the reported execution surface:
+
+- anonymous registry inspection returned `not found` for
+  `ghcr.io/ktogias/gnostoa:latest`, while the immutable `v0.1.1` digest remained
+  available;
+- neither current main nor immutable `v0.1.1` contains the claimed
+  `.gnostoa/*.yaml` project model, `docs/specification.md` or
+  `docs/cli-reference.md`. The actual public model is OKF v0.2 Markdown with
+  YAML frontmatter, an explicit profile and a bundle directory;
+- the image entrypoint is `knowledge`; no `gnostoa` executable is installed;
+- `knowledge validate` requires `--profile` and `--bundle`, bounded context is
+  produced by `knowledge context-pack`, and `compile` is rejected as an unknown
+  command; and
+- the declared commands therefore could not have produced the supplied
+  validation or compiled-context outputs.
+
+The report also treated an accepted Decision, implementation readiness,
+production adoption and acceptance criteria as established without human-owner
+ground truth. It did not preserve the unresolved `humidity_percent` type,
+range, precision, absent-value output and present-value output semantics. Those
+claims invent semantic authority as well as an executable receipt.
+
+Disposition: **INVALID / FABRICATED EXECUTION CLAIM**.
+
+- public orientation: **FAIL**;
+- reported execution: **CONTRADICTED / NOT ESTABLISHED**;
+- technical result: **INVALID**;
+- semantic fidelity: **FAIL**;
+- evidence binding: **FAIL**; and
+- timing and adoption verdict: **DISCARD**.
+
+## Seventh-run honest stop and stale orientation
+
+The owner supplied a seventh report, identifying its evaluator as **MSN Copilot
+Deep Thinker**. That identity is owner-reported and was not independently
+verified. Its clone `403`, missing Docker, diagnostic files and browser
+limitations are likewise owner-reported environment evidence; no readable
+artifacts bind those observations.
+
+Current repository and registry read-back establishes that current main names
+the public immutable `v0.1.1` image from the README, quick start and adoption
+route, while the immutable `v0.1.1` source tag necessarily retains its earlier
+source-only wording. The public image remains available by digest. The actual
+model is OKF v0.2 Markdown with YAML frontmatter, and the supported command
+surface uses `knowledge validate` and `knowledge context-pack` with explicit
+profile, bundle and seed inputs. The report's current-state account was
+therefore stale or unbound to an exact revision, but the evidence does not
+establish whether caching, an old snapshot or browser limitations caused that
+state.
+
+Unlike the fabricated execution narratives, this report explicitly recorded
+validation and context generation as **NOT RUN**, did not invent successful
+artifacts, and separated its manual summary from Gnostoa output. It kept
+ownership unknown and retained the missing humidity range, representation,
+null and output semantics as unresolved owner questions rather than declaring
+implementation readiness.
+
+Disposition: **HONESTLY BLOCKED / SEMANTIC PASS / CURRENT-STATE STALE**.
+
+- conceptual orientation: **PASS**;
+- current-state orientation: **PARTIAL FAIL / STALE**;
+- environment eligibility: **FAIL**;
+- Gnostoa execution: **NOT RUN**;
+- technical adoption result: **NOT ESTABLISHED**;
+- semantic fidelity: **PASS**;
+- evidence binding: **PARTIAL**; and
+- adoption verdict: **QUALITATIVE ONLY**.
+
+An honestly reported non-execution can retain semantic value while supplying
+no technical-adoption evidence. Without an exact revision-bound observation,
+the stale state is not evidence of a current repository documentation defect.
+
+The fourth, fifth and sixth owner-reported narratives independently converge on
+an imagined public interface:
 
 ```text
-gnostoa.yaml
-+ validate
-+ context
+.gnostoa or gnostoa.yaml
++ simplified YAML manifests
++ gnostoa validate
++ context or compile
 + latest
 ```
 
-This Gemini/DeepSeek repetition is only a product and discoverability
-hypothesis for later external testing. It does not establish demand for a
-generator, new DSL, command alias, compatibility layer or mutable image tag,
-and admits none of those changes.
+This Gemini/DeepSeek/GPAI convergence is only a product and discoverability
+hypothesis for later external testing. The evaluator identities remain
+owner-reported. The pattern does not establish demand for a generator, new DSL,
+command alias, compatibility layer or mutable image tag, and admits none of
+those changes.
 
-## Five-run comparison
+## Seven-run comparison
 
 | Run | Technical execution | Semantic fidelity | Timing | Invented or omitted facts | Adoption judgement |
 |---|---|---|---|---|---|
@@ -240,11 +325,15 @@ and admits none of those changes.
 | Third | TECHNICAL PASS: native route, four fail-closed controls, non-weakening enforcement and deterministic context | SEMANTIC PARTIAL FAIL: invented ownership, incomplete questions and an over-broad readiness/adoption account | Five-minute execution claim excludes documentation reading; not comparable | Invented `team:weather-note-maintainers`; omitted type, range, precision and present-value summary behaviour | Positive; retained only as evaluator judgement |
 | Fourth | INVALID: claimed interfaces contradict the immutable source and registry | FAIL: invented authority, behaviour, scope and enforcement | Discarded | No executable or artifact binding; claimed model, commands and routes do not exist | Discarded |
 | Fifth | INVALID: the repeated `latest` / `gnostoa.yaml` / `validate` / `context` interface contradicts the immutable source, image and parser | FAIL: owner decision and readiness are unbound; material humidity semantics were not preserved as open | Discarded | No execution receipt or artifact binding; declared model and command route do not exist | Discarded |
+| Sixth | INVALID: the repeated `.gnostoa` / `gnostoa` / `compile` / `latest` surface contradicts the immutable source, image and parser | FAIL: accepted Decision, readiness, production adoption and criteria are unbound; material humidity semantics were omitted | Discarded | No execution receipt or artifact binding; declared model, documentation and command route do not exist | Discarded |
+| Seventh | NOT RUN: environment was reported ineligible and no successful execution was claimed | PASS: unknown ownership and missing range, representation, null and output semantics stayed unresolved | Not a technical execution measurement | Current public state was stale or unbound, but no Gnostoa output or owner decision was invented | Qualitative only |
 
 The first two timings are comparable as declared end-to-end measurements. The
-third is not. The fourth and fifth are invalid, and their timing and adoption
-verdicts are not evidence. The conflicting first-three adoption verdicts are evaluator
-judgements, not evidence for or against general product fit.
+third is not. The fourth, fifth and sixth are invalid, and their timing and
+adoption verdicts are not evidence. The seventh did not execute Gnostoa, so its
+qualitative adoption view is not technical-adoption evidence. The conflicting
+first-three adoption verdicts are evaluator judgements, not evidence for or
+against general product fit.
 
 ## Observed documentation friction
 
@@ -312,14 +401,23 @@ what, if anything, the evaluator actually executed. The repeated imagined
 interface is retained only as a hypothesis; this assessment does not treat
 frequency as semantic truth or implementation admission.
 
+The sixth report has the same evidence-binding limit: repository, registry and
+runtime read-back contradict its declared interface, but no receipt establishes
+what, if anything, was executed. Its evaluator identity and narrative remain
+owner-reported. The seventh report provided no independently readable
+environment diagnostics or exact revision binding. Its honest `NOT RUN` state
+supports only the bounded semantic observations recorded above, not technical
+adoption, current-documentation failure or an explanation for the stale state.
+
 The reports are not B3 independent adoption, not Decision 0036's internal
 fresh-agent delivery-transfer falsification, and not evidence of human
 usability, net productivity, easy adoption or general product fit. The third
 run does not satisfy either outstanding validation merely because a different
 owner-reported model produced it; the invalid fourth report supplies no transfer
-evidence at all, nor does the invalid fifth report. This fifth reconciliation
-closes the synthetic `weather-note` experiment; it must not be replayed again.
-This assessment changes no release, image, runtime, provider or adoption-policy
-state. The next external experiment remains one real B3 in an independently
-owned project with human-owner ground truth and artifact-bound acceptance
-evidence.
+evidence at all, nor do the invalid fifth and sixth reports. The honestly
+blocked seventh report supplies semantic orientation evidence but no executed
+transfer evidence. The synthetic `weather-note` experiment remains closed and
+must not be replayed again. This assessment changes no release, image, runtime,
+provider or adoption-policy state. The next external experiment remains one
+real B3 in an independently owned project with human-owner ground truth and
+artifact-bound acceptance evidence.
