@@ -10,6 +10,9 @@ sources:
   - id: weather-note-cold-start-work-item
     resource: https://github.com/ktogias/gnostoa/issues/93
     title: Canonicalize the weather-note cold-start onboarding result
+  - id: weather-note-replication-work-item
+    resource: https://github.com/ktogias/gnostoa/issues/95
+    title: Reconcile the replicated weather-note onboarding result
 x-project-knowledge:
   id: kit.assessment.weather-note-cold-start-onboarding-result
   owners:
@@ -47,6 +50,28 @@ semantic contract requires an accountable project-owner choice.
 
 Disposition: **STRONG PASS for public cold-start technical onboarding.**
 
+## Replication
+
+A second genuinely fresh public evaluation completed the same bounded technical
+route in **574 seconds**. It verified the immutable `v0.1.1` source and OCI
+identities, then ran every Gnostoa operation after download with `--network
+none`. Source/runtime lock checking, bundle validation and context generation
+passed. Two context generations were byte-identical with SHA-256
+`8ccd75c2b43c2e8048b3f4cfa7cae93a67aa1ea8125e4ce4e2ea046d80cfb8ae`.
+
+The disposable project contained four project concepts, 11 additions and 275
+lines. No Gnostoa maintainer intervened, no application implementation was
+performed and no absent domain fact was invented. The handoff again stopped on
+the missing `humidity_percent` type, range and summary semantics, leaving that
+owner decision unresolved rather than fabricating it.
+
+This replicates the **STRONG PASS** technical result. It does not establish that
+the shorter elapsed time was caused by the documentation changes, nor human
+usability, productivity benefit, B3 transfer or general product fit. The second
+evaluator also judged permanent adoption disproportionate for this tiny
+one-off project; repetition makes that a synthetic product-fit hypothesis, not
+general adopter guidance.
+
 ## Observed documentation friction
 
 The exercise identified five Gnostoa documentation findings:
@@ -77,12 +102,13 @@ bounded product-fit evidence, not a general benefit or rejection claim.
 
 The complete transcript, disposable fixture, raw command outputs and a complete
 hash manifest were not retained with the declared owner packet. This assessment
-does not reconstruct them or claim an independently repeated result. Immutable
-source and OCI identities were read back from Gnostoa's existing publication
-authority; the adoption measurement itself remains owner-provided evidence.
+does not reconstruct them. The replication packet supplied the context-pack
+digest above but did not retain the complete raw fixture, command log or an
+independently verifiable artifact manifest. Immutable source and OCI identities
+were read back from Gnostoa's existing publication authority; both adoption
+measurements otherwise remain owner-provided evidence.
 
 The result is not B3 independent adoption, not Decision 0036's internal
 fresh-agent delivery-transfer falsification, and not evidence of human
 usability, net productivity, easy adoption or general product fit. It changes
 no release, image, runtime, provider or adoption-policy state.
-

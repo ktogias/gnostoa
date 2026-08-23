@@ -35,6 +35,11 @@ The project has a pinned toolkit dependency, minimal project profile, valid OKF
 bundle, review ownership and CI validation. No domain taxonomy is introduced
 without demonstrated need.
 
+This is the **durable full-adoption** route: it adds repository-owned knowledge,
+policy, CI and provider maintenance. For a bounded technical evaluation and
+orientation without that commitment, stop here and use the
+[minimal evaluation route](../../docs/quick-start.md) instead.
+
 ## Preconditions
 
 - The toolkit has a released tag or immutable commit.
@@ -46,7 +51,27 @@ without demonstrated need.
 ## Procedure
 
 1. Pin the toolkit as `.knowledge-kit/` using a submodule, vendored release or
-   reproducible local dependency. Pin the matching runtime image by digest in
+   reproducible local dependency. For the annotated `v0.1.1` tag, use a
+   detached exact-commit checkout rather than `git submodule add -b v0.1.1`:
+
+   ```bash
+   GNOSTOA_COMMIT=84cc4959d9fb0b315084cc49a5381c13166b6554
+
+   git submodule add --depth 1 \
+     https://github.com/ktogias/gnostoa.git .knowledge-kit
+   git -C .knowledge-kit fetch --depth 1 origin tag v0.1.1
+   test "$(git -C .knowledge-kit rev-parse 'v0.1.1^{commit}')" = \
+     "$GNOSTOA_COMMIT"
+   git -C .knowledge-kit checkout --detach "$GNOSTOA_COMMIT"
+   test "$(git -C .knowledge-kit rev-parse HEAD)" = "$GNOSTOA_COMMIT"
+   git add .gitmodules .knowledge-kit
+   test "$(git ls-files --stage .knowledge-kit | awk '{print $2}')" = \
+     "$GNOSTOA_COMMIT"
+   ```
+
+   The superproject records the exact commit as its gitlink; the tag is a
+   verified source identity, not a branch to follow. Pin the matching runtime
+   image by digest in
    `.knowledge/kit.lock.yaml`, adapting
    [`templates/knowledge-kit.lock.yaml`](../../templates/knowledge-kit.lock.yaml).
    Compute the exact toolkit digest with `knowledge surface-digest --root
@@ -72,6 +97,11 @@ without demonstrated need.
    before generating summaries.
 9. Add the smallest useful spine: project, systems, repositories, contracts,
    decisions and explicit open questions.
+   A `Requirement` records desired project behaviour. A
+   [task envelope](resume-bounded-task.md) instead records bounded active or
+   resumable work state. Link them when relevant, but do not duplicate the
+   Requirement in the envelope. Create an envelope only when the intended work
+   needs a durable handoff, interruption checkpoint or later resume.
 10. Adapt the Change Request, emergency and CODEOWNERS templates. Add the Work
    Item and verification-plan templates only when they provide durable value.
    Establish one fast focused suite, one relevant
@@ -138,6 +168,12 @@ without demonstrated need.
      --profile .knowledge/profile.yaml \
      --bundle knowledge/
    ```
+
+   A bounded context pack projects selected metadata, descriptions and
+   relations; it does not necessarily reproduce complete concept bodies.
+   Material constraints needed during handoff therefore need accurate,
+   non-misleading descriptions. Paths rendered into the saved pack are
+   relative to the selected bundle and lead back to the canonical concepts.
 
 14. Install and exercise the appropriate provider adapter through the
     [continuous-integration workflow](configure-continuous-integration.md).

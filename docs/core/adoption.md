@@ -35,6 +35,24 @@ The consuming project's agent router should be adapted from
 agents to the one relevant generic workflow and explicitly excludes toolkit
 self-knowledge.
 
+## Keep desired behaviour separate from active work
+
+A `Requirement` records desired project behaviour that the project intends to
+preserve. A [bounded task envelope](../../guidance/workflows/resume-bounded-task.md)
+records the current scope, state, next action and handoff for active or
+resumable work. Link the envelope to relevant Requirements and Decisions; do
+not copy their normative content into task state.
+
+Use a task envelope when the work is intended to survive a handoff, interruption
+or later resume. A small task completed without that continuity need not create
+one merely because a Requirement exists.
+
+Bounded context generation is an orientation projection, not a copy of each
+concept body. It emits selected concept metadata, descriptions and relations.
+Put material handoff constraints in accurate, useful descriptions and follow
+the emitted concept paths back to canonical Markdown for full evidence. Paths
+shown in a saved context pack are relative to the selected bundle.
+
 ## Unknown accountable owner
 
 Keep an unknown owner explicit and the affected knowledge draft or unresolved.
