@@ -1,30 +1,29 @@
-# Five-minute source quick start
+# Minimal evaluation and orientation
 
-This page is a derived navigation projection of the supported commands and
-public contracts in the repository. It is not a released-artifact claim.
+This page is a navigation projection of the supported public commands and
+contracts. Use it to validate a public example and generate a bounded context
+pack without adopting Gnostoa into a repository or changing canonical
+Markdown. Full repository, CI and provider integration is a separate
+[adoption route](core/adoption.md).
 
-## Outcome
+## Published v0.1.1 OCI route
 
-Validate an anonymous knowledge bundle and derive a bounded orientation pack
-without changing the canonical Markdown files.
-
-## Native route
-
-Requirements: Git and Python 3.11 or newer.
+Requirements: Git and a Docker-compatible container runtime. The image pull is
+anonymous; after the pull, validation and context generation run offline.
 
 ```bash
-git clone https://github.com/ktogias/gnostoa.git
+git clone --branch v0.1.1 --depth 1 https://github.com/ktogias/gnostoa.git
 cd gnostoa
+test "$(git rev-parse HEAD)" = "84cc4959d9fb0b315084cc49a5381c13166b6554" # pragma: allowlist secret -- public source revision
 
-python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install --only-binary=:all: --require-hashes \
-  -r requirements/runtime.lock
-python -m pip install --no-deps -e .
+GNOSTOA_IMAGE="ghcr.io/ktogias/gnostoa@sha256:73e5bd55fb4fed4accc836294a97b144d8b7060d68b19c3631ab7c05b5cd1455" # pragma: allowlist secret -- public registry identity
+docker pull "$GNOSTOA_IMAGE"
 
-knowledge validate \
-  --profile core/profile.yaml \
-  --bundle examples/generic
+docker run --rm --network none \
+  --mount type=bind,source="$PWD",target=/workspace,readonly \
+  --workdir /workspace \
+  "$GNOSTOA_IMAGE" \
+  validate --profile core/profile.yaml --bundle examples/generic
 ```
 
 The successful validation result is:
@@ -33,10 +32,14 @@ The successful validation result is:
 OK: bundle conforms to project-knowledge-core 0.1.0 (OKF 0.2)
 ```
 
-Build a bounded context view:
+Generate a bounded orientation pack from the same pinned source and image:
 
 ```bash
-knowledge context-pack \
+docker run --rm --network none \
+  --mount type=bind,source="$PWD",target=/workspace,readonly \
+  --workdir /workspace \
+  "$GNOSTOA_IMAGE" \
+  context-pack \
   --profile core/profile.yaml \
   --bundle examples/generic \
   --seed example.system.processing \
@@ -45,91 +48,52 @@ knowledge context-pack \
 ```
 
 Inspect the output for three concepts: the processing system, its governing
-Decision and the project root. The context pack is derived orientation only;
-the linked files under `examples/generic/` remain authoritative.
+Decision and the project root. The pack is derived orientation only; the linked
+files in `examples/generic/` remain authoritative. This example loads the public
+core profile and the example bundle, not Gnostoa's self-knowledge bundle.
 
-This is deliberately an editable source-checkout installation and remains the
-shortest way to evaluate an unreleased revision.
+## Historical source-tag documentation
 
-## Artifact-installed native fallback
+The documentation stored inside immutable tag `v0.1.1` records the source-only
+state at the moment that tag was created. The tag cannot be rewritten after the
+later OCI publication. Current `main`, the
+[`v0.1.1` GitHub Release](https://github.com/ktogias/gnostoa/releases/tag/v0.1.1)
+and the [publication result](../knowledge/assessments/v0-1-1-source-and-oci-publication-result.md)
+record the later public image. Use the immutable digest above, not the `0.1.1`
+registry tag alone, as the OCI consumer identity.
 
-No artifact has been published yet. For a locally built or future released
-wheel, keep execution separate from the immutable public-source checkout:
+No Python wheel or package registry artifact is published. For native evaluation
+of the pinned source, use the source checkout and locked runtime requirements:
 
 ```bash
-GNOSTOA_SOURCE=/absolute/path/to/pinned/gnostoa-source
-
 python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install --only-binary=:all: --require-hashes \
-  -r "$GNOSTOA_SOURCE/requirements/runtime.lock"
-python -m pip install --no-deps /absolute/path/to/gnostoa-0.1.0-py3-none-any.whl
-
-export KNOWLEDGE_KIT_ROOT="$GNOSTOA_SOURCE"
-knowledge validate \
-  --profile "$KNOWLEDGE_KIT_ROOT/core/profile.yaml" \
-  --bundle "$KNOWLEDGE_KIT_ROOT/examples/generic"
+  -r requirements/runtime.lock
+python -m pip install --no-deps -e .
+export KNOWLEDGE_KIT_ROOT="$PWD"
+knowledge validate --profile core/profile.yaml --bundle examples/generic
 ```
 
-The wheel intentionally does not duplicate canonical schemas, profiles or
-guidance. `KNOWLEDGE_KIT_ROOT` locates those assets; it does not prove their
-identity. A consuming project must also hash-pin the executable artifact and
-validate its `.knowledge/kit.lock.yaml` source revision and public-surface
-digest before use. Missing or malformed bindings fail explicitly.
+## Evaluation versus adoption
 
-## Container route
+This minimal route demonstrates that the pinned public command surface can
+validate and orient over one bundle. It does not establish net productivity,
+human usability, production readiness or fit for a particular project.
 
-Requirements: Git and a Docker-compatible container runtime.
-
-`ci/build-runtime` supplies the image with exactly the Git-tracked candidate
-files at their current working-tree contents, so a local scratch file cannot
-become runtime source. It needs a Git checkout: a plain source archive has no
-candidate to read.
-
-```bash
-git clone https://github.com/ktogias/gnostoa.git
-cd gnostoa
-
-ci/build-runtime --tag gnostoa:source-checkout
-
-docker run --rm gnostoa:source-checkout self-check
-```
-
-To validate the checkout through the image's public command surface:
-
-```bash
-docker run --rm \
-  --mount type=bind,source="$PWD",target=/workspace,readonly \
-  --workdir /workspace \
-  gnostoa:source-checkout \
-  validate \
-  --profile core/profile.yaml \
-  --bundle examples/generic
-```
-
-## What this proves
-
-- the checkout installs and exposes the declared `knowledge` command;
-- clean wheel and source-distribution installs use an explicit source binding;
-- the generic profile validates a technology-neutral fixture;
-- the same canonical bundle can produce a bounded derived view; and
-- the container can run the repository self-check as a non-root user.
-
-It does not prove that a package or image has been published, that Gnostoa is
-production-ready, or that another project can adopt it efficiently. Those are
-separate release and transfer gates.
-
-For release-candidate verification, the maintainer smoke builds both native
-archives, checks their metadata and clean-install behavior, and can emit an
-exact evidence manifest. See [Compatibility and upgrade status](compatibility.md)
-for the command, pinning boundary and remaining non-promises.
+Full adoption additionally places a pinned toolkit source under project
+authority, defines a project profile and canonical Project concept, adapts the
+agent route, and adds the selected repository/CI/provider controls. Follow the
+[existing adoption guide](core/adoption.md) when that maintenance commitment is
+justified.
 
 ## Continue
 
+- Start from the existing [project profile example](https://github.com/ktogias/gnostoa/blob/main/examples/profiles/example-project/profile.yaml)
+  and [Project concept example](https://github.com/ktogias/gnostoa/blob/main/examples/generic/project.md).
 - Read [Current status](status.md) before relying on a capability.
-- Read [Compatibility and upgrade status](compatibility.md) before pinning an
-  artifact or changing a toolkit version.
-- Follow the [adoption guide](core/adoption.md) to evaluate project integration.
-- Use the [reusable guidance router](../guidance/index.md) for a specific task.
+- Read [Compatibility and upgrade status](compatibility.md) before changing a
+  toolkit version.
+- Use the [reusable guidance router](../guidance/index.md) for the chosen task.
 - Inspect the [public inheritance contract](../knowledge/contracts/public-inheritance-surface.md)
   before extending a profile.
