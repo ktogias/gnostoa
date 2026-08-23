@@ -1,7 +1,7 @@
 ---
 type: Source
 title: Weather-note cold-start onboarding result
-description: Bounded owner-provided measurement of one fresh agent's public technical onboarding through the immutable v0.1.1 source and OCI route.
+description: Bounded comparison of three owner-provided cold-start evaluations through the immutable v0.1.1 source and OCI route, including technical success and semantic counter-evidence.
 status: draft
 generated:
   by: codex/gpt-5
@@ -13,6 +13,9 @@ sources:
   - id: weather-note-replication-work-item
     resource: https://github.com/ktogias/gnostoa/issues/95
     title: Reconcile the replicated weather-note onboarding result
+  - id: weather-note-third-run-work-item
+    resource: https://github.com/ktogias/gnostoa/issues/97
+    title: Reconcile the third weather-note cold-start result
 x-project-knowledge:
   id: kit.assessment.weather-note-cold-start-onboarding-result
   owners:
@@ -26,6 +29,10 @@ x-project-knowledge:
       target: /assessments/v0-1-1-source-and-oci-publication-result.md
     - kind: references
       target: /decisions/0036-canonicalize-bounded-self-hosted-delivery-practice.md
+    - kind: references
+      target: /lifecycles/evidence-gated-capability-evolution.md
+    - kind: references
+      target: /assessments/b2-control-selection-and-failure-path-map.md
 ---
 
 # Weather-note cold-start onboarding result
@@ -72,6 +79,58 @@ evaluator also judged permanent adoption disproportionate for this tiny
 one-off project; repetition makes that a synthetic product-fit hypothesis, not
 general adopter guidance.
 
+## Third-run semantic counter-evidence
+
+The owner supplied a third evaluation, identifying its evaluator as **Claude
+Opus 5**. That model identity is owner-reported and was not independently
+verified. Native supported execution succeeded; validation and four negative
+controls failed closed; non-weakening enforcement held; context generation was
+deterministic; and no Gnostoa maintainer intervened. The technical disposition
+is **PASS**.
+
+Read-back of the two supplied Markdown artifacts nevertheless establishes a
+**SEMANTIC PARTIAL FAIL**:
+
+- the context pack repeatedly declares `Owners:
+  team:weather-note-maintainers`, and the task projection declares
+  `Owner/class: team:weather-note-maintainers / normal`, although no real owner
+  or team identity was supplied;
+- the projection says `State: ready`, but also says recorded status grants no
+  acceptance, integration or external effect, names an accountable maintainer
+  as the next actor and makes owner clarification its next action. It was not
+  implementation-ready. The schema-valid state can at most describe readiness
+  for that clarification; this is not evidence of a validator defect;
+- its only surfaced semantic question was what to print when
+  `humidity_percent` is absent. It omitted the permitted JSON type, range,
+  precision and present-value summary behaviour;
+- the context pack contains useful descriptions and relations, but does not
+  contain every material constraint or open question claimed by the evaluator;
+- the reported five-minute duration excludes documentation reading and is not
+  comparable with the two end-to-end measurements; and
+- the evaluator added policy, CI and verification surfaces while calling the
+  result minimal adoption, then judged permanent adoption positively. Those
+  facts demonstrate evaluator variation in the minimal/full boundary and
+  product-fit judgement, not a general adopter conclusion.
+
+The material lesson is **schema and policy validity do not establish semantic
+truth or completeness**. That rule remains owned by the
+[evidence-gated lifecycle](../lifecycles/evidence-gated-capability-evolution.md)
+and its linked
+[CF-11 evidence](b2-control-selection-and-failure-path-map.md); this assessment
+does not create a duplicate rule or new mechanism.
+
+## Three-run comparison
+
+| Run | Technical execution | Semantic fidelity | Timing | Invented or omitted facts | Adoption judgement |
+|---|---|---|---|---|---|
+| First | STRONG PASS: immutable OCI/source route, offline validation and deterministic context | Correctly stopped on underspecified humidity semantics | 11 minutes 11.5 seconds end to end | No missing fact reported as invented; type, range and precision remained open | Negative for this tiny one-off project |
+| Replication | STRONG PASS: identity checks, network-isolated validation and byte-identical context | Correctly stopped on type, range and summary semantics | 574 seconds end to end | No missing fact reported as invented; owner decision remained open | Negative for this tiny one-off project |
+| Third | TECHNICAL PASS: native route, four fail-closed controls, non-weakening enforcement and deterministic context | SEMANTIC PARTIAL FAIL: invented ownership, incomplete questions and an over-broad readiness/adoption account | Five-minute execution claim excludes documentation reading; not comparable | Invented `team:weather-note-maintainers`; omitted type, range, precision and present-value summary behaviour | Positive; retained only as evaluator judgement |
+
+The first two timings are comparable as declared end-to-end measurements. The
+third is not. The conflicting adoption verdicts are three evaluator judgements,
+not evidence for or against general product fit.
+
 ## Observed documentation friction
 
 The exercise identified five Gnostoa documentation findings:
@@ -100,15 +159,31 @@ bounded product-fit evidence, not a general benefit or rejection claim.
 
 ## Evidence limits
 
-The complete transcript, disposable fixture, raw command outputs and a complete
-hash manifest were not retained with the declared owner packet. This assessment
-does not reconstruct them. The replication packet supplied the context-pack
-digest above but did not retain the complete raw fixture, command log or an
-independently verifiable artifact manifest. Immutable source and OCI identities
-were read back from Gnostoa's existing publication authority; both adoption
-measurements otherwise remain owner-provided evidence.
+The complete transcripts, disposable fixtures and raw command outputs were not
+retained with the declared owner packets. This assessment does not reconstruct
+them. The replication packet supplied the context-pack digest above but did not
+retain the complete raw fixture, command log or an independently verifiable
+artifact manifest.
 
-The result is not B3 independent adoption, not Decision 0036's internal
+For the third run, the supplied artifacts were read back byte-for-byte and
+verified as:
+
+- context pack:
+  `sha256:a4ee15cebee3f4eb590dfd35c781e2d5e15a4a3ae7c1bf8cd8fc5f093f7c940b`;
+- current task projection:
+  `sha256:9869a3802b63f59572849b4562a6bdb99bed9cf6b6f6b5c16b30f701699d2824`.
+
+Those complete artifacts remain supplied evidence rather than checked-in
+canonical records; only the material excerpts and hashes are preserved here.
+The third run's fixture, full report, test log, claimed deterministic-output
+pair and five-minute timing were not independently reproduced. Immutable source
+and OCI identities were read back from Gnostoa's existing publication
+authority; all three evaluations otherwise remain owner-provided evidence.
+
+The results are not B3 independent adoption, not Decision 0036's internal
 fresh-agent delivery-transfer falsification, and not evidence of human
-usability, net productivity, easy adoption or general product fit. It changes
-no release, image, runtime, provider or adoption-policy state.
+usability, net productivity, easy adoption or general product fit. The third
+run does not satisfy either outstanding validation merely because a different
+owner-reported model produced it. This assessment changes no release, image,
+runtime, provider or adoption-policy state. The next external experiment remains
+one real B3 in an independently owned project with human-owner ground truth.
