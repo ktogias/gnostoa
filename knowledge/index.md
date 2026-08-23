@@ -87,6 +87,7 @@ inherited, copied or loaded by adopting projects.
 - [GitHub security observation pilot](assessments/github-security-observation-pilot.md)
 - [Weather-note cold-start onboarding result](assessments/weather-note-cold-start-onboarding-result.md)
 - [Weather-note evaluation root-cause retrospective](assessments/weather-note-evaluation-root-cause-retrospective.md)
+- [B3 independent-adoption experiment design](assessments/b3-independent-adoption-experiment-design.md)
 - [First-publication provider audit snapshot](assessments/first-publication-provider-audit.md)
 - [First-publication reputation and direction assessment](assessments/first-publication-reputation-and-direction-assessment.md)
 - [Source-publication name-risk screening](assessments/gnostoa-source-name-screening.md)
