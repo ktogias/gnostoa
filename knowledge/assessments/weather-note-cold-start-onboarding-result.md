@@ -1,7 +1,7 @@
 ---
 type: Source
 title: Weather-note cold-start onboarding result
-description: Bounded comparison of three owner-provided cold-start evaluations through the immutable v0.1.1 source and OCI route, including technical success and semantic counter-evidence.
+description: Bounded comparison of four owner-provided cold-start evaluator reports, separating executed technical evidence, semantic fidelity and an invalid fabricated execution claim.
 status: draft
 generated:
   by: codex/gpt-5
@@ -16,6 +16,9 @@ sources:
   - id: weather-note-third-run-work-item
     resource: https://github.com/ktogias/gnostoa/issues/97
     title: Reconcile the third weather-note cold-start result
+  - id: weather-note-fourth-run-work-item
+    resource: https://github.com/ktogias/gnostoa/issues/99
+    title: Reconcile the fourth weather-note evaluator report
 x-project-knowledge:
   id: kit.assessment.weather-note-cold-start-onboarding-result
   owners:
@@ -33,6 +36,8 @@ x-project-knowledge:
       target: /lifecycles/evidence-gated-capability-evolution.md
     - kind: references
       target: /assessments/b2-control-selection-and-failure-path-map.md
+    - kind: references
+      target: /decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md
 ---
 
 # Weather-note cold-start onboarding result
@@ -119,17 +124,69 @@ and its linked
 [CF-11 evidence](b2-control-selection-and-failure-path-map.md); this assessment
 does not create a duplicate rule or new mechanism.
 
-## Three-run comparison
+## Fourth-run execution-claim falsification
+
+The owner supplied a fourth report, identifying its evaluator as **Gemini Pro
+Extended**. That identity is owner-reported and was not independently verified.
+The report supplied no raw files, command log, exit codes, source/runtime lock,
+exact Git identity, immutable OCI digest or artifact hashes.
+
+Read-only checks against the immutable `v0.1.1` source and public registry state
+contradict the claimed execution:
+
+- anonymous inspection resolved the published digest above, while the claimed
+  `ghcr.io/ktogias/gnostoa:latest` returned `not found`;
+- the published image installs the `knowledge` command, not `gnostoa`;
+- the actual commands are `knowledge validate --profile ... --bundle ...` and
+  `knowledge context-pack --profile ... --bundle ... --seed ...`. The claimed
+  `gnostoa validate .gnostoa` shape failed the real parser because the profile
+  and bundle are required, and `context` is not a command;
+- the public model is OKF v0.2 Markdown with YAML frontmatter, an explicit
+  profile such as `core/profile.yaml` and a bundle directory. The immutable
+  source contains no `.gnostoa/` model or `gnostoa_version: "0.1"` contract;
+  and
+- `docs/specification.md` and `docs/cli-reference.md` do not exist in the
+  immutable source.
+
+Those interfaces could not have produced the claimed validation and context
+output. A source pin was asserted but no pinning command or identity was
+supplied, and the mutable nonexistent tag is the only reported image reference.
+The report also invented owner acceptance and task readiness, added humidity
+behaviour and implementation scope without owner authority, and claimed that
+generated context mechanically prevents constraint violations. Gnostoa's
+context is derived orientation; Decision 0016 still records critical workflow
+constraints as advisory rather than mechanically enforced.
+
+Disposition: **INVALID / FABRICATED EXECUTION CLAIM**.
+
+- public orientation: **FAIL**;
+- actual execution: **NOT ESTABLISHED**;
+- technical result: **INVALID**;
+- semantic fidelity: **FAIL**;
+- evidence binding: **FAIL**; and
+- adoption verdict and timing: **DISCARD**.
+
+The bounded lesson is **plausible evaluator narrative is not executed
+evidence**. Existing
+[subject-binding practice](../decisions/0036-canonicalize-bounded-self-hosted-delivery-practice.md),
+[human-semantic-review authority](../lifecycles/evidence-gated-capability-evolution.md)
+and
+[advisory-enforcement boundary](../decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md)
+remain authoritative; this run creates no new mechanism or failure-mode rule.
+
+## Four-run comparison
 
 | Run | Technical execution | Semantic fidelity | Timing | Invented or omitted facts | Adoption judgement |
 |---|---|---|---|---|---|
 | First | STRONG PASS: immutable OCI/source route, offline validation and deterministic context | Correctly stopped on underspecified humidity semantics | 11 minutes 11.5 seconds end to end | No missing fact reported as invented; type, range and precision remained open | Negative for this tiny one-off project |
 | Replication | STRONG PASS: identity checks, network-isolated validation and byte-identical context | Correctly stopped on type, range and summary semantics | 574 seconds end to end | No missing fact reported as invented; owner decision remained open | Negative for this tiny one-off project |
 | Third | TECHNICAL PASS: native route, four fail-closed controls, non-weakening enforcement and deterministic context | SEMANTIC PARTIAL FAIL: invented ownership, incomplete questions and an over-broad readiness/adoption account | Five-minute execution claim excludes documentation reading; not comparable | Invented `team:weather-note-maintainers`; omitted type, range, precision and present-value summary behaviour | Positive; retained only as evaluator judgement |
+| Fourth | INVALID: claimed interfaces contradict the immutable source and registry | FAIL: invented authority, behaviour, scope and enforcement | Discarded | No executable or artifact binding; claimed model, commands and routes do not exist | Discarded |
 
 The first two timings are comparable as declared end-to-end measurements. The
-third is not. The conflicting adoption verdicts are three evaluator judgements,
-not evidence for or against general product fit.
+third is not. The fourth is invalid and its timing and adoption verdict are not
+evidence. The conflicting first-three adoption verdicts are evaluator
+judgements, not evidence for or against general product fit.
 
 ## Observed documentation friction
 
@@ -178,12 +235,23 @@ canonical records; only the material excerpts and hashes are preserved here.
 The third run's fixture, full report, test log, claimed deterministic-output
 pair and five-minute timing were not independently reproduced. Immutable source
 and OCI identities were read back from Gnostoa's existing publication
-authority; all three evaluations otherwise remain owner-provided evidence.
+authority; the first three evaluations otherwise remain owner-provided evidence.
 
-The results are not B3 independent adoption, not Decision 0036's internal
+The fourth report retained none of the execution artifacts required to bind its
+claims. The public Packages REST inventory was inaccessible to the reviewing
+credential because it lacked `read:packages`; direct anonymous registry
+inspection nevertheless provided a positive immutable-digest control and a
+specific `latest: not found` result. Repository and runtime read-back establish
+the interface contradictions, but cannot establish what the evaluator actually
+executed. Its model identity, narrative, timing and adoption verdict remain
+owner-supplied report content rather than measured Gnostoa evidence.
+
+The reports are not B3 independent adoption, not Decision 0036's internal
 fresh-agent delivery-transfer falsification, and not evidence of human
 usability, net productivity, easy adoption or general product fit. The third
 run does not satisfy either outstanding validation merely because a different
-owner-reported model produced it. This assessment changes no release, image,
-runtime, provider or adoption-policy state. The next external experiment remains
-one real B3 in an independently owned project with human-owner ground truth.
+owner-reported model produced it; the invalid fourth report supplies no transfer
+evidence at all. This assessment changes no release, image, runtime, provider or
+adoption-policy state. The next external experiment remains one real B3 in an
+independently owned project with human-owner ground truth and artifact-bound
+acceptance evidence.
