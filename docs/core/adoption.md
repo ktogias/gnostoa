@@ -1,7 +1,18 @@
 # Adoption guide
 
 This page is a navigation projection, not a second source of operating rules.
-Use the canonical route for the task:
+
+## Choose the commitment
+
+For a bounded technical look, use the [minimal evaluation and orientation
+route](../quick-start.md). It validates a public example and generates derived
+context without requiring repository, CI or provider adoption. The existing
+[project profile example](https://github.com/ktogias/gnostoa/blob/main/examples/profiles/example-project/profile.yaml)
+and [Project concept example](https://github.com/ktogias/gnostoa/blob/main/examples/generic/project.md) show the two
+starting shapes directly.
+
+Full adoption is a durable project-maintenance choice. Use the canonical route
+for the task:
 
 - [bootstrap a new project](../../guidance/workflows/bootstrap-new-project.md);
 - [adopt an existing project](../../guidance/workflows/adopt-existing-project.md);
@@ -23,3 +34,11 @@ The consuming project's agent router should be adapted from
 [`templates/AGENTS.project.md`](../../templates/AGENTS.project.md). It routes
 agents to the one relevant generic workflow and explicitly excludes toolkit
 self-knowledge.
+
+## Unknown accountable owner
+
+Keep an unknown owner explicit and the affected knowledge draft or unresolved.
+Do not invent a person. If a syntactic role placeholder is needed to keep a
+draft structurally valid, label the ownership gap explicitly: the placeholder
+is routing metadata, not verified accountability. Do not promote the concept or
+Decision to stable until an accountable owner accepts it.
