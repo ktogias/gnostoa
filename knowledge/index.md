@@ -103,6 +103,7 @@ inherited, copied or loaded by adopting projects.
 - [Prepare the first public repository publication](runbooks/prepare-first-publication.md)
 - [Review the publication baseline](runbooks/review-publication-baseline.md)
 - [Publish a source-only release](runbooks/publish-source-only-release.md)
+- [Publish a version-bound source and OCI release](runbooks/publish-version-bound-source-and-oci-release.md)
 
 For project-independent operating guidance, route through
 [`guidance/index.md`](../guidance/index.md).
