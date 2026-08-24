@@ -57,6 +57,24 @@ workflow-enforced write-once reference. The registry manifest digest is the
 immutable OCI consumer identity. No `latest` or additional image tag exists.
 The immutable `v0.1.1` source and artifact remain valid historical results.
 
+### Public-surface subject boundary
+
+The immutable v0.1.2 released artifact contains public-surface digest
+`sha256:bd8078467b0189d535f222072253e1ef9e8f5fb780f55b56269738cb8f4ef095`.
+Later documentation and verification-control changes on `main` have a distinct
+derived current-main public digest. They do not rewrite, replace or re-bind the
+tagged v0.1.2 source or the published OCI artifact. The final current-main
+digest must be measured from the accepted and integrated tree and recorded in
+close-out evidence; this repository record does not predict or embed that
+changing digest.
+
+### Executable-subject preservation boundary
+
+The preservation claim is limited to the published OCI runtime and the exact
+12-file SB2 executable subject remaining byte-identical. This reconciliation
+changes the repository-side executable `ci/verify`; it therefore makes no claim
+that every executable file in the repository is unchanged.
+
 ## Provider execution and source binding
 
 One manual, input-free workflow dispatch created
