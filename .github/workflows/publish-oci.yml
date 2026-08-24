@@ -1,4 +1,4 @@
-name: Publish Gnostoa v0.1.1 OCI image
+name: Publish Gnostoa v0.1.2 OCI image
 
 on:
   workflow_dispatch:
@@ -6,19 +6,22 @@ on:
 permissions: {}
 
 concurrency:
-  group: gnostoa-ghcr-0.1.1
+  group: gnostoa-ghcr-0.1.2
   cancel-in-progress: false
 
 env:
+  RELEASE_VERSION: "0.1.2"
   IMAGE_NAME: ghcr.io/ktogias/gnostoa
-  IMAGE_REF: ghcr.io/ktogias/gnostoa:0.1.1
-  SOURCE_TAG: v0.1.1
-  SOURCE_COMMIT: 84cc4959d9fb0b315084cc49a5381c13166b6554 # pragma: allowlist secret -- public source revision
-  SOURCE_TREE: 938a789f807b898797d2e634b7bfbaaedfe29a63 # pragma: allowlist secret -- public source tree
-  TAG_OBJECT: ac7faf520bad82edd13ed41c6f9a9c8e686e019e # pragma: allowlist secret -- public tag object
+  IMAGE_REF: ghcr.io/ktogias/gnostoa:0.1.2
+  SOURCE_TAG: v0.1.2
+  SOURCE_COMMIT: 56f6c5ede9ff1d6585404d102aba8413994a2697 # pragma: allowlist secret -- public source revision
+  SOURCE_TREE: 6db26c9ce2eeaa82882bac82312f675ee19e6d0a # pragma: allowlist secret -- public source tree
+  TAG_OBJECT: d9ea04ea649132e74bd3d9b8b089b86ea7e0d6a7 # pragma: allowlist secret -- public tag object
   BASE_DIGEST: sha256:2c941e860699f878900b0edc2403613c234d4b32eda3cc9fa7036991a2a63c4a
-  PUBLIC_DIGEST: sha256:33792909555029c1b2879d78f112ba0e3227d73abac0b89652781554fee1af74
+  PUBLIC_DIGEST: sha256:bd8078467b0189d535f222072253e1ef9e8f5fb780f55b56269738cb8f4ef095
   NOTICE_DIGEST: sha256:68978e9fc1875f275c0dfb9bd71ed19d025b01f66409bb31d785d86165ee691c
+  # UTC rendering of the annotated v0.1.2 tag object's tagger timestamp.
+  BUILD_DATE: "2026-08-24T17:12:02Z"
 
 jobs:
   publish:
@@ -33,7 +36,7 @@ jobs:
       - name: Check out the immutable source tag
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: refs/tags/v0.1.1
+          ref: refs/tags/${{ env.SOURCE_TAG }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -49,8 +52,8 @@ jobs:
           test "$(git rev-parse HEAD)" = "${SOURCE_COMMIT}"
           test "$(git rev-parse 'HEAD^{tree}')" = "${SOURCE_TREE}"
           test -z "$(git status --porcelain --untracked-files=no)"
-          test "$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')" = "0.1.1"
-          grep -F 'ARG KIT_VERSION=0.1.1' Dockerfile
+          test "$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')" = "${RELEASE_VERSION}"
+          grep -F "ARG KIT_VERSION=${RELEASE_VERSION}" Dockerfile
           grep -F "ARG PYTHON_BASE_IMAGE=python:3.12-slim@${BASE_DIGEST}" Dockerfile
 
       - name: Record the build envelope
@@ -107,7 +110,7 @@ jobs:
           dd4839c528451421fa5757468fd4bbc7c9ea475325d22b9e630d884d0fce7ab9  tools/check_guardrails.py
           15cc878aea0a1eda46af40e443f2d87f6123d8def1eb7d22cb1b05649b308c8a  tools/check_runtime_lock.py
           ac9bb147308f26a0d0a4ad0267c934f5021c44527396eb98c7e6149b4c1d3898  tools/cli.py
-          2d5a77af4d0a6b2bd1dcf3786e7ebacc1c06bc6cc0e07c2e69f0736e98515593  tools/knowledge_common.py
+          fbbcc38fb82aa572cd92c683ad983fda7398761a9c08b94cbce5d0080d6eb5ed  tools/knowledge_common.py
           a61fc494a84cad5cad6923f072dc05fd2edb41162cf45c7446eb05303d73e5c4  tools/repository_scope.py
           c0f7c63107c941b5bbfc89d4399c5a197f9c0939c06e5b8012c3aeeaa9b54824  tools/self_check.py
           da5644815c1ed19d79f320c3c2758a4877f105d440d0a0206650ec8f92f06204  tools/task_envelope.py
@@ -119,12 +122,13 @@ jobs:
             local reference="$1" actual
             test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "${reference}")" = "linux/amd64"
             test "$(docker image inspect --format '{{.Config.User}}' "${reference}")" = "kit"
-            test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "${reference}")" = "0.1.1"
+            test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "${reference}")" = "${RELEASE_VERSION}"
             test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${reference}")" = "${SOURCE_COMMIT}"
-            test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.created"}}' "${reference}")" = "2026-08-22T13:20:42Z"
+            test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.created"}}' "${reference}")" = "${BUILD_DATE}"
             docker image inspect "${reference}" \
               | python -c 'import json,sys; labels=json.load(sys.stdin)[0]["Config"].get("Labels") or {}; assert "org.opencontainers.image.licenses" not in labels'
             test "$(docker run --rm --entrypoint id "${reference}" -u)" = "10001"
+            test "$(docker run --rm --entrypoint id "${reference}" -g)" = "10001"
             docker run --rm --entrypoint python "${reference}" -c \
               'import importlib.metadata as m, importlib.util, platform, pyexpat; assert platform.python_version() == "3.12.14"; assert pyexpat.version_info == (2, 8, 3); assert len({d.metadata["Name"].lower() for d in m.distributions()}) == 8; assert importlib.util.find_spec("pip") is None; assert importlib.util.find_spec("ensurepip") is None'
             test "$(docker run --rm --entrypoint sh "${reference}" -c "dpkg-query -W -f='\${binary:Package}\\n' | wc -l")" = "118"
@@ -151,8 +155,8 @@ jobs:
           trap 'docker buildx rm "${builder}" >/dev/null 2>&1 || true' EXIT
           docker buildx inspect --bootstrap
 
-          GNOSTOA_CANDIDATE_REF=v0.1.1 \
-          GNOSTOA_KIT_VERSION=0.1.1 \
+          GNOSTOA_CANDIDATE_REF="${SOURCE_TAG}" \
+          GNOSTOA_KIT_VERSION="${RELEASE_VERSION}" \
             ./ci/build-runtime \
               --tag "${IMAGE_REF}" \
               --platform linux/amd64 \
@@ -161,7 +165,7 @@ jobs:
               --provenance=false \
               --sbom=false \
               --load \
-              --build-arg BUILD_DATE=2026-08-22T13:20:42Z
+              --build-arg BUILD_DATE="${BUILD_DATE}"
 
           verify_image "${IMAGE_REF}"
           assert_tag_absent
@@ -200,8 +204,15 @@ jobs:
           gh attestation verify \
             "oci://${IMAGE_NAME}@${REGISTRY_DIGEST}" \
             --repo ktogias/gnostoa
+
+          anonymous_config="$(mktemp -d "${RUNNER_TEMP}/gnostoa-anonymous-docker.XXXXXX")"
+          trap 'rm -rf -- "${anonymous_config}"' EXIT
+          docker image rm "${IMAGE_NAME}@${REGISTRY_DIGEST}"
+          DOCKER_CONFIG="${anonymous_config}" \
+            docker pull "${IMAGE_NAME}@${REGISTRY_DIGEST}"
+          test "$(docker buildx imagetools inspect "${IMAGE_REF}" --format '{{.Manifest.Digest}}')" = "${REGISTRY_DIGEST}"
           {
-            echo "## Published Gnostoa v0.1.1"
+            echo "## Published Gnostoa v${RELEASE_VERSION}"
             echo
             echo "- source tag: \`${SOURCE_TAG}\`"
             echo "- source commit: \`${SOURCE_COMMIT}\`"
