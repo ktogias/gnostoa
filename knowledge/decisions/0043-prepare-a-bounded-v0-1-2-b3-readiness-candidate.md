@@ -122,7 +122,7 @@ documentation. Until a later provider effect is authorized and completed,
 public consumer instructions continue to name `v0.1.1` and its immutable
 digest.
 
-**G2. Executable candidate binding.** Because `tools/knowledge_common.py` is an
+**G.2. Executable candidate binding.** Because `tools/knowledge_common.py` is an
 SB2 executable, bind the final exact PR head and tree to its changed paths,
 public-surface digest, new per-file SHA-256, source/runtime/vendored digest
 equality and runtime self-check through a Docker-capable provider route. Reuse
@@ -132,8 +132,9 @@ parser boundary rather than claiming the earlier SB2 bytes are unchanged.
 
 **H. Explicit exclusions.** Select no B3 project, outreach, execution or result;
 no generator, DSL, alias, mutable image tag, `latest`, workflow engine or new
-evidence mechanism; no package, OCI image or site publication; and no broader
-context-budget, package-namespace, coverage or knowledge-lifecycle work.
+generic reusable evidence mechanism beyond the exact-candidate binding in G.2;
+no package, OCI image or site publication; and no broader context-budget,
+package-namespace, coverage or knowledge-lifecycle work.
 
 **I. Effect boundary.** This Decision admits preparation and verification of a
 branch and Pull Request. It authorizes **no merge, tag, GitHub Release, registry

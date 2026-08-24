@@ -86,11 +86,6 @@ jobs:
             --only-binary=:all: \
             --require-hashes \
             -r requirements/development.lock
-      - name: Controlled Python 3.11 compatibility negative control
-        if: matrix.python-version == '3.11'
-        run: |
-          echo "Expected intermediate failure: verify regression fails closed"
-          exit 1
       - name: Run the source compatibility suite
         run: ./ci/verify fast
 
@@ -137,9 +132,11 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
       - name: Build the candidate runtime
         run: |
-          GNOSTOA_CANDIDATE_REF="${GITHUB_SHA}" \
+          GNOSTOA_CANDIDATE_REF="$(git rev-parse HEAD)" \
             ./ci/build-runtime --tag "${GNOSTOA_CI_IMAGE}"
       - name: Run smoke verification
         run: |
@@ -149,6 +146,74 @@ jobs:
             --workdir /workspace \
             "${GNOSTOA_CI_IMAGE}" \
             -ec './ci/verify smoke'
+      - name: Bind the exact PR executable candidate
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -eu
+
+          candidate_commit=$(git rev-parse HEAD)
+          candidate_tree=$(git rev-parse 'HEAD^{tree}')
+          test "${candidate_commit}" = "${{ github.event.pull_request.head.sha || github.sha }}"
+
+          test -z "$(git diff --name-only "${BASE_SHA}" HEAD -- \
+            ci/build-runtime tools/repository_scope.py)"
+          version_delta=$(git diff --unified=0 "${BASE_SHA}" HEAD -- Dockerfile \
+            | grep '^[+-]ARG KIT_VERSION=')
+          expected_version_delta=$(printf '%s\n%s' \
+            '-ARG KIT_VERSION=0.1.1' '+ARG KIT_VERSION=0.1.2')
+          test "${version_delta}" = "${expected_version_delta}"
+
+          vendored_root=$(mktemp -d "${RUNNER_TEMP}/gnostoa-vendored.XXXXXX")
+          trap 'rm -rf "${vendored_root}"' EXIT
+          git archive "${candidate_commit}" | tar -x -C "${vendored_root}"
+
+          source_digest=$(docker run --rm \
+            --entrypoint python \
+            --mount type=bind,source="${GITHUB_WORKSPACE}",target=/workspace,readonly \
+            --workdir /workspace \
+            "${GNOSTOA_CI_IMAGE}" \
+            -m tools.cli surface-digest --root /workspace)
+          runtime_digest=$(docker run --rm \
+            --entrypoint python \
+            "${GNOSTOA_CI_IMAGE}" \
+            -m tools.cli surface-digest --root /opt/gnostoa)
+          vendored_digest=$(docker run --rm \
+            --entrypoint python \
+            --mount type=bind,source="${vendored_root}",target=/vendored,readonly \
+            --workdir /vendored \
+            "${GNOSTOA_CI_IMAGE}" \
+            -m tools.cli surface-digest --root /vendored)
+          test "${source_digest}" = "${runtime_digest}"
+          test "${source_digest}" = "${vendored_digest}"
+
+          source_sb2=$(sha256sum tools/knowledge_common.py | cut -d' ' -f1)
+          runtime_sb2=$(docker run --rm \
+            --entrypoint sha256sum \
+            "${GNOSTOA_CI_IMAGE}" \
+            /opt/gnostoa/tools/knowledge_common.py | cut -d' ' -f1)
+          vendored_sb2=$(sha256sum \
+            "${vendored_root}/tools/knowledge_common.py" | cut -d' ' -f1)
+          test "${source_sb2}" = "${runtime_sb2}"
+          test "${source_sb2}" = "${vendored_sb2}"
+
+          docker run --rm "${GNOSTOA_CI_IMAGE}" self-check
+
+          printf 'candidate.commit=%s\n' "${candidate_commit}"
+          printf 'candidate.tree=%s\n' "${candidate_tree}"
+          printf 'candidate.base=%s\n' "${BASE_SHA}"
+          printf 'candidate.changed_paths.begin\n'
+          git diff --name-only "${BASE_SHA}" HEAD
+          printf 'candidate.changed_paths.end\n'
+          printf 'public_surface.source=%s\n' "${source_digest}"
+          printf 'public_surface.runtime=%s\n' "${runtime_digest}"
+          printf 'public_surface.vendored=%s\n' "${vendored_digest}"
+          printf 'sb2.tools_knowledge_common.source=%s\n' "${source_sb2}"
+          printf 'sb2.tools_knowledge_common.runtime=%s\n' "${runtime_sb2}"
+          printf 'sb2.tools_knowledge_common.vendored=%s\n' "${vendored_sb2}"
+          printf 'source_binding.mechanism=unchanged\n'
+          printf 'runtime.self_check=PASS\n'
 
   extended:
     name: extended
