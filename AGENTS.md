@@ -14,6 +14,9 @@ Start with `README.md`. Load only the route required by the task.
   `knowledge/lifecycles/evidence-gated-capability-evolution.md`,
   `knowledge/runbooks/deliver-bounded-self-hosted-slice.md`, Decision 0016,
   the current roadmap and the active Work Item before proposing implementation.
+- Gnostoa version-bound source-and-OCI release series: after the ordinary
+  self-hosted route, read
+  `knowledge/runbooks/publish-version-bound-source-and-oci-release.md`.
 - Anonymous examples: use only generic vocabulary and never treat examples as
   approved project facts.
 
