@@ -433,20 +433,24 @@ class PublicationBaselineTests(unittest.TestCase):
         script = (ROOT / "ci" / "verify").read_text(encoding="utf-8")
         immutable_ref = (
             "ghcr.io/ktogias/gnostoa@sha256:"
-            "73e5bd55fb4fed4accc836294a97b144d8b7060d68b19c3631ab7c05b5cd1455"  # pragma: allowlist secret -- public registry identity
+            "0cd31a2a649c4ffede8972680c6779c981decf5ce8605f749fa7d58751472f80"  # pragma: allowlist secret -- public registry identity
         )
         self.assertIn(immutable_ref, script)
-        self.assertNotIn("ghcr.io/ktogias/gnostoa:0.1.1", script)
+        self.assertNotIn("ghcr.io/ktogias/gnostoa:0.1.2", script)
         self.assertNotIn("SKIP: deployable_artifact capability is false", script)
         for marker in (
             "DOCKER_CONFIG",
             "docker pull",
             "linux/amd64",
+            'id "${release_image}" -g',
+            '"0.1.2"',
+            "56f6c5ede9ff1d6585404d102aba8413994a2697",  # pragma: allowlist secret -- public source revision
             "3.12.14",
             "(2, 8, 3)",
-            "33792909555029c1b2879d78f112ba0e3227d73abac0b89652781554fee1af74",  # pragma: allowlist secret -- public-surface digest
+            "bd8078467b0189d535f222072253e1ef9e8f5fb780f55b56269738cb8f4ef095",  # pragma: allowlist secret -- public-surface digest
             "68978e9fc1875f275c0dfb9bd71ed19d025b01f66409bb31d785d86165ee691c",  # pragma: allowlist secret -- public notice digest
             "gnostoa-sb2.sha256",
+            "fbbcc38fb82aa572cd92c683ad983fda7398761a9c08b94cbce5d0080d6eb5ed",  # pragma: allowlist secret -- public SB2 digest
             "self-check --skip-tests",
             "org.opencontainers.image.licenses",
         ):
@@ -3249,15 +3253,27 @@ class DocumentationTests(unittest.TestCase):
         self.assertIn("## Try Gnostoa from this checkout", readme)
         self.assertIn("--seed example.system.processing", readme)
         self.assertIn("python -m pip install --no-deps -e .", readme)
-        self.assertIn("pre-stable v0.1.1 source and OCI release", readme)
+        self.assertIn("pre-stable v0.1.2 source and OCI release", readme)
+        self.assertIn(
+            "0cd31a2a649c4ffede8972680c6779c981decf5ce8605f749fa7d58751472f80",  # pragma: allowlist secret -- public registry identity
+            readme,
+        )
         self.assertIn("B3 independent-adoption methodology", readme)
+        self.assertIn("`v0.1.2` is published", index)
         self.assertIn("digest-pinned `linux/amd64` OCI image", index)
         self.assertNotIn("not published package, image", index)
         self.assertIn("navigation projection", quick_start)
         self.assertIn("knowledge validate", quick_start)
         self.assertIn("KNOWLEDGE_KIT_ROOT", quick_start)
+        self.assertIn("Published v0.1.2 OCI route", quick_start)
+        self.assertIn(
+            "0cd31a2a649c4ffede8972680c6779c981decf5ce8605f749fa7d58751472f80",  # pragma: allowlist secret -- public registry identity
+            quick_start,
+        )
         self.assertIn("navigation projection", status)
         self.assertIn("Source and publication status", status)
+        self.assertIn("current pre-stable source identity is", status)
+        self.assertIn("v0.1.2", status)
         for projection in (status, roadmap):
             self.assertIn("B3 has not begun", projection)
             self.assertIn("candidate selection", projection)

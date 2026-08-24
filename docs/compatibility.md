@@ -6,15 +6,17 @@ a release promise.
 
 ## Current baseline
 
-`v0.1.0` remains the historical first source-only identity. The current
-pre-stable release identity is [`v0.1.1`](https://github.com/ktogias/gnostoa/releases/tag/v0.1.1),
-bound to commit `84cc4959d9fb0b315084cc49a5381c13166b6554`, tree
-`938a789f807b898797d2e634b7bfbaaedfe29a63` and source public-surface digest
-`sha256:33792909555029c1b2879d78f112ba0e3227d73abac0b89652781554fee1af74`.
+`v0.1.0` remains the historical first source-only identity, and `v0.1.1`
+remains the historical first OCI publication. The current pre-stable release
+identity is [`v0.1.2`](https://github.com/ktogias/gnostoa/releases/tag/v0.1.2),
+bound to commit `56f6c5ede9ff1d6585404d102aba8413994a2697`, tree
+`6db26c9ce2eeaa82882bac82312f675ee19e6d0a` and source public-surface digest
+`sha256:bd8078467b0189d535f222072253e1ef9e8f5fb780f55b56269738cb8f4ef095`.
 Its public `linux/amd64` OCI artifact is
-`ghcr.io/ktogias/gnostoa@sha256:73e5bd55fb4fed4accc836294a97b144d8b7060d68b19c3631ab7c05b5cd1455`.
+`ghcr.io/ktogias/gnostoa@sha256:0cd31a2a649c4ffede8972680c6779c981decf5ce8605f749fa7d58751472f80`.
 The exact source identity, public-surface digest and OCI manifest digest are
-distinct authorities. No Python package or documentation site is published.
+distinct authorities. No `latest` tag, Python package or documentation site is
+published.
 
 Evaluation must therefore pin all of the following together:
 
@@ -27,12 +29,14 @@ Evaluation must therefore pin all of the following together:
 Changing one identity requires revalidation. A matching version label alone is
 not evidence that two artifacts or source trees are equivalent.
 
-## Current checkout candidate
+## Current released patch
 
 [Decision 0043](../knowledge/decisions/0043-prepare-a-bounded-v0-1-2-b3-readiness-candidate.md)
-admits `0.1.2` metadata only for the current source/runtime candidate. It is not
-a released consumer identity: until a separate publication effect completes,
-`v0.1.1` and its immutable OCI digest above remain the public route.
+prepared the `0.1.2` source/runtime candidate. Decision 0044 and the
+[publication result](../knowledge/assessments/v0-1-2-source-and-oci-publication-result.md)
+bind the later source and OCI publication effects. Consumers must still use
+the immutable digest above rather than treating a version label as the
+artifact identity.
 
 The candidate rejects duplicate keys in standalone YAML and Markdown
 frontmatter. YAML 1.2 requires unique mapping keys, so this is documented as
@@ -52,13 +56,13 @@ interpreter, operating system or architecture.
 | JSON Schema identity | Public schema IDs use a versioned `/schemas/v1/` namespace. A breaking schema contract requires a new major path and migration guidance. |
 | Profile and policy contracts | Each profile or policy has its own version. A consumer pins the exact revision and verifies that specialization does not weaken inherited constraints. |
 | Python distribution | The wheel is execution-only. It must be paired with the exact separately pinned public-source root and its digest. |
-| OCI distribution | The released `linux/amd64` v0.1.1 image must be pinned as `ghcr.io/ktogias/gnostoa@sha256:73e5bd55fb4fed4accc836294a97b144d8b7060d68b19c3631ab7c05b5cd1455` and bound to the v0.1.1 source revision and public surface. The `0.1.1` tag alone is not the consumer identity. |
+| OCI distribution | The released `linux/amd64` v0.1.2 image must be pinned as `ghcr.io/ktogias/gnostoa@sha256:0cd31a2a649c4ffede8972680c6779c981decf5ce8605f749fa7d58751472f80` and bound to the v0.1.2 source revision and public surface. The `0.1.2` tag alone is not the consumer identity, and no `latest` tag exists. |
 | Knowledge bundles | A bundle is compatible only when it validates against the explicitly selected profile, schemas and policy set. |
 
 The generic
 [versioning and upgrade guidance](../guidance/reference/versioning-and-upgrades.md)
 defines the intended PATCH, MINOR and MAJOR meanings for validation contracts.
-It does not turn the pre-stable `v0.1.1` release into a long-term support or
+It does not turn the pre-stable `v0.1.2` release into a long-term support or
 cross-version compatibility promise.
 
 ## Safe evaluation upgrade
@@ -114,6 +118,6 @@ availability or establish release provenance. The published image carries
 bounded runtime, provenance and digest-verification evidence, but availability
 is not production readiness, deployment authorization, exact rebuild
 reproducibility, general security or qualified legal clearance. These limits
-must not be inferred from the presence of the `v0.1.1` source tag or `0.1.1`
+must not be inferred from the presence of the `v0.1.2` source tag or `0.1.2`
 image tag. See the
-[publication result](../knowledge/assessments/v0-1-1-source-and-oci-publication-result.md).
+[publication result](../knowledge/assessments/v0-1-2-source-and-oci-publication-result.md).

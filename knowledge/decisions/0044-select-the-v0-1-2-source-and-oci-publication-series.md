@@ -13,6 +13,9 @@ sources:
   - id: v0-1-1-publication-result
     resource: ../assessments/v0-1-1-source-and-oci-publication-result.md
     title: v0.1.1 source and OCI publication result
+  - id: v0-1-2-publication-result
+    resource: ../assessments/v0-1-2-source-and-oci-publication-result.md
+    title: v0.1.2 source and OCI publication result
 x-project-knowledge:
   id: kit.decision.0044.select-the-v0-1-2-source-and-oci-publication-series
   owners:
@@ -34,6 +37,8 @@ x-project-knowledge:
       target: /runbooks/publish-source-only-release.md
     - kind: references
       target: /assessments/v0-1-1-source-and-oci-publication-result.md
+    - kind: references
+      target: /assessments/v0-1-2-source-and-oci-publication-result.md
 ---
 
 # Select the v0.1.2 source and OCI publication series
@@ -46,9 +51,10 @@ maintainer's semantic choices; this record is faithful transcription.
 
 Decision 0043 produced the integrated `v0.1.2` readiness candidate at commit
 `908edf87fb280c2f778123d7b39d93a3370da188`, tree
-`d5ec63552f4ed466405db8c322d3d3bd2a7924f6`. Distribution metadata and the
-default local OCI version are `0.1.2`, but the immutable public source and OCI
-consumer identities remain `v0.1.1` and its registry digest.
+`d5ec63552f4ed466405db8c322d3d3bd2a7924f6`. At Phase-1 admission,
+distribution metadata and the default local OCI version were `0.1.2`, while the
+immutable public source and OCI consumer identities still remained `v0.1.1`
+and its registry digest.
 
 Phase-1 preflight found no `v0.1.2` Git tag, GitHub Release or GHCR tag and no
 released Python/base change that preempts this candidate. That observation
@@ -163,11 +169,43 @@ This re-admission authorizes **no Phase-1 PR merge, tag, Release, workflow
 dispatch, GHCR mutation, attestation, release-verifier re-binding, B3 selection
 or Work Item closure**. Those effects require accountable-owner review of the
 new exact PR head and the later freshness and reconciliation gates above.
+That historical boundary governed Phase 1 and did not itself authorize the
+later separately admitted source, publication or reconciliation effects.
+
+**N. Observed source and OCI result.** Separate owner effects created annotated
+tag `v0.1.2` at tag object
+`d9ea04ea649132e74bd3d9b8b089b86ea7e0d6a7`, commit
+`56f6c5ede9ff1d6585404d102aba8413994a2697` and tree
+`6db26c9ce2eeaa82882bac82312f675ee19e6d0a`, then published exactly
+`ghcr.io/ktogias/gnostoa@sha256:0cd31a2a649c4ffede8972680c6779c981decf5ce8605f749fa7d58751472f80`
+for `linux/amd64`. Workflow run `32763848257`, attempt 1, read the digest back,
+pulled and verified it, created attestation `42664371`, verified provenance and
+anonymous access, and left `latest` absent. The durable result and evidence
+limits live in the linked v0.1.2 publication assessment.
+
+**O. Current release-verifier transition.** Bind `ci/verify release` to the
+immutable v0.1.2 registry digest, never the version tag. Preserve fail-closed
+platform, version, source-revision, runtime-inventory, public-digest, complete
+12-file SB2, notice and self-check controls. `deployable_artifact=true` means
+verified public artifact availability for that exact digest only; it does not
+mean deployment authorization, production readiness, reproducibility, general
+security or qualified legal clearance. v0.1.1 remains an immutable historical
+artifact but ceases to be the current verifier target once this reconciliation
+is integrated and read back.
+
+**P. Publication-result authority and public projection.** Preserve one
+authoritative v0.1.2 result assessment and route public status to the immutable
+digest. Do not freeze mutable package permissions, visibility or linkage as
+timeless source truth. Do not claim exact-digest rebuild repeatability for
+v0.1.2: it was not tested, is not required for this release and any rebuild
+requires a later patch version. B3 remains unstarted until this Work Item's
+post-publication integration and provider reconciliation are complete.
 
 ## Consequences
 
-- `v0.1.2` remains a proposed source/OCI identity until the exact Phase-1 tree
-  is accepted, integrated and then read back through the authorized effects.
+- `v0.1.2` is now an immutable source identity and one public write-once
+  `linux/amd64` OCI digest; the final repository reconciliation remains subject
+  to exact-candidate owner acceptance and integrated read-back.
 - Provider-created identities are recorded only after they exist; none is
   predicted in this Decision.
 - The existing v0.1.1 mechanisms are reused in bounded version-specific phases,
@@ -175,5 +213,5 @@ new exact PR head and the later freshness and reconciliation gates above.
 - Permanent exact-candidate verification reports current evidence generically;
   it does not preserve assertions about one historical release delta or infer
   owner sufficiency from byte equality.
-- Work Item #111 stays open through publication and post-publication
-  reconciliation; B3 stays paused.
+- Work Item #111 stays open through this post-publication reconciliation and is
+  closed only after integrated/provider read-back; B3 stays paused.

@@ -5,10 +5,10 @@ usable by both people and software agents. It validates structured Markdown and
 YAML, enforces non-weakening project profiles and policy boundaries, and builds
 bounded orientation packs without requiring a hosted knowledge service.
 
-> **Status: pre-stable v0.1.1 source and OCI release.** The immutable source tag
-> is [`v0.1.1`](https://github.com/ktogias/gnostoa/releases/tag/v0.1.1). One public
+> **Status: pre-stable v0.1.2 source and OCI release.** The immutable source tag
+> is [`v0.1.2`](https://github.com/ktogias/gnostoa/releases/tag/v0.1.2). One public
 > `linux/amd64` image is available as
-> `ghcr.io/ktogias/gnostoa@sha256:73e5bd55fb4fed4accc836294a97b144d8b7060d68b19c3631ab7c05b5cd1455`.
+> `ghcr.io/ktogias/gnostoa@sha256:0cd31a2a649c4ffede8972680c6779c981decf5ce8605f749fa7d58751472f80`.
 > No package or site has been released, and artifact availability is not a
 > production-readiness or independent-adoption claim.
 
@@ -147,15 +147,17 @@ consumer domain vocabulary.
 For the released pre-stable runtime, prefer the immutable registry digest:
 
 ```bash
-docker pull ghcr.io/ktogias/gnostoa@sha256:73e5bd55fb4fed4accc836294a97b144d8b7060d68b19c3631ab7c05b5cd1455
-docker run --rm ghcr.io/ktogias/gnostoa@sha256:73e5bd55fb4fed4accc836294a97b144d8b7060d68b19c3631ab7c05b5cd1455 self-check
+docker pull ghcr.io/ktogias/gnostoa@sha256:0cd31a2a649c4ffede8972680c6779c981decf5ce8605f749fa7d58751472f80
+docker run --rm ghcr.io/ktogias/gnostoa@sha256:0cd31a2a649c4ffede8972680c6779c981decf5ce8605f749fa7d58751472f80 self-check
 ```
 
-The `0.1.1` tag is a human-facing version reference; the registry digest is the
+The `0.1.2` tag is a human-facing write-once version reference; the registry
+digest is the
 immutable consumer identity. This public artifact is available and verified for
 `linux/amd64`, but is not claimed reproducible, production-ready, generally
-secure or qualified as legally cleared. See the
-[v0.1.1 publication result](knowledge/assessments/v0-1-1-source-and-oci-publication-result.md).
+secure or qualified as legally cleared. No `latest` tag exists. The immutable
+v0.1.1 source and image remain historical. See the
+[v0.1.2 publication result](knowledge/assessments/v0-1-2-source-and-oci-publication-result.md).
 
 To build and test the current checkout without publishing, the helper
 materialises exactly the Git-tracked files, using their current working-tree

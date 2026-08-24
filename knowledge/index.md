@@ -86,6 +86,7 @@ inherited, copied or loaded by adopting projects.
 - [Markdown reference authority and outside-root observation result](assessments/markdown-reference-authority-and-outside-root-observation-result.md)
 - [Self-hosted delivery practice retrospective](assessments/self-hosted-delivery-practice-retrospective.md)
 - [v0.1.1 source and OCI publication result](assessments/v0-1-1-source-and-oci-publication-result.md)
+- [v0.1.2 source and OCI publication result](assessments/v0-1-2-source-and-oci-publication-result.md)
 - [GitHub security observation pilot](assessments/github-security-observation-pilot.md)
 - [Weather-note cold-start onboarding result](assessments/weather-note-cold-start-onboarding-result.md)
 - [Weather-note evaluation root-cause retrospective](assessments/weather-note-evaluation-root-cause-retrospective.md)
