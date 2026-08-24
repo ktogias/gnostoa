@@ -278,7 +278,7 @@ authoritative for its live lifecycle.
 
 | Work Items | Problem addressed | Completion signal | Non-goal |
 |---|---|---|---|
-| [#111](https://github.com/ktogias/gnostoa/issues/111) | The integrated `v0.1.2` readiness candidate has no immutable source tag, source-only prerelease, OCI digest, provenance or digest-bound post-publication reconciliation. | One exact `v0.1.2` source identity and public write-once `linux/amd64` OCI digest are published and reconciled through the existing bounded mechanisms, with the Work Item closed last. | B3 selection or execution; `latest`, extra tags, multi-architecture, reproducibility claims, deployment or a new release framework. |
+| [#111](https://github.com/ktogias/gnostoa/issues/111) | The immutable `v0.1.2` source and public OCI artifact exist, while the current release verifier, durable result and public projections still require exact digest-bound reconciliation. | The verifier targets the published `v0.1.2` digest, durable and public records agree with provider read-back, integrated verification succeeds and the Work Item closes last. | B3 selection or execution; `latest`, extra tags, multi-architecture, reproducibility claims, deployment or a new release framework. |
 
 ## Research
 

@@ -40,8 +40,8 @@ case "${suite}" in
     knowledge_cli docs-build --site-dir "${site_dir}"
     ;;
   release)
-    release_image="ghcr.io/ktogias/gnostoa@sha256:73e5bd55fb4fed4accc836294a97b144d8b7060d68b19c3631ab7c05b5cd1455" # pragma: allowlist secret -- public registry identity
-    release_public_digest="sha256:33792909555029c1b2879d78f112ba0e3227d73abac0b89652781554fee1af74" # pragma: allowlist secret -- public-surface digest
+    release_image="ghcr.io/ktogias/gnostoa@sha256:0cd31a2a649c4ffede8972680c6779c981decf5ce8605f749fa7d58751472f80" # pragma: allowlist secret -- public registry identity
+    release_public_digest="sha256:bd8078467b0189d535f222072253e1ef9e8f5fb780f55b56269738cb8f4ef095" # pragma: allowlist secret -- public-surface digest
     release_notice_digest="sha256:68978e9fc1875f275c0dfb9bd71ed19d025b01f66409bb31d785d86165ee691c" # pragma: allowlist secret -- public notice digest
     release_tmp="$(mktemp -d "${TMPDIR:-/tmp}/gnostoa-release-verify.XXXXXX")"
     release_docker_config="${release_tmp}/docker"
@@ -56,7 +56,7 @@ e22de87395da6ff5e32428ed9b8cfc123a3512136aeb12f939868fa68f049676  tools/build_do
 dd4839c528451421fa5757468fd4bbc7c9ea475325d22b9e630d884d0fce7ab9  tools/check_guardrails.py  # pragma: allowlist secret -- public SB2 digest
 15cc878aea0a1eda46af40e443f2d87f6123d8def1eb7d22cb1b05649b308c8a  tools/check_runtime_lock.py  # pragma: allowlist secret -- public SB2 digest
 ac9bb147308f26a0d0a4ad0267c934f5021c44527396eb98c7e6149b4c1d3898  tools/cli.py  # pragma: allowlist secret -- public SB2 digest
-2d5a77af4d0a6b2bd1dcf3786e7ebacc1c06bc6cc0e07c2e69f0736e98515593  tools/knowledge_common.py  # pragma: allowlist secret -- public SB2 digest
+fbbcc38fb82aa572cd92c683ad983fda7398761a9c08b94cbce5d0080d6eb5ed  tools/knowledge_common.py  # pragma: allowlist secret -- public SB2 digest
 a61fc494a84cad5cad6923f072dc05fd2edb41162cf45c7446eb05303d73e5c4  tools/repository_scope.py  # pragma: allowlist secret -- public SB2 digest
 c0f7c63107c941b5bbfc89d4399c5a197f9c0939c06e5b8012c3aeeaa9b54824  tools/self_check.py  # pragma: allowlist secret -- public SB2 digest
 da5644815c1ed19d79f320c3c2758a4877f105d440d0a0206650ec8f92f06204  tools/task_envelope.py  # pragma: allowlist secret -- public SB2 digest
@@ -67,11 +67,12 @@ EOF
     DOCKER_CONFIG="${release_docker_config}" docker pull "${release_image}"
     test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "${release_image}")" = "linux/amd64"
     test "$(docker image inspect --format '{{.Config.User}}' "${release_image}")" = "kit"
-    test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "${release_image}")" = "0.1.1"
-    test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${release_image}")" = "84cc4959d9fb0b315084cc49a5381c13166b6554" # pragma: allowlist secret -- public source revision
+    test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "${release_image}")" = "0.1.2"
+    test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${release_image}")" = "56f6c5ede9ff1d6585404d102aba8413994a2697" # pragma: allowlist secret -- public source revision
     docker image inspect "${release_image}" \
       | python -c 'import json,sys; labels=json.load(sys.stdin)[0]["Config"].get("Labels") or {}; assert "org.opencontainers.image.licenses" not in labels'
     test "$(docker run --rm --entrypoint id "${release_image}" -u)" = "10001"
+    test "$(docker run --rm --entrypoint id "${release_image}" -g)" = "10001"
     docker run --rm --entrypoint python "${release_image}" -c \
       'import importlib.metadata as m, importlib.util, platform, pyexpat; assert platform.python_version() == "3.12.14"; assert pyexpat.version_info == (2, 8, 3); assert len({d.metadata["Name"].lower() for d in m.distributions()}) == 8; assert importlib.util.find_spec("pip") is None; assert importlib.util.find_spec("ensurepip") is None'
     test "$(docker run --rm --entrypoint sh "${release_image}" -c "dpkg-query -W -f='\${binary:Package}\\n' | wc -l")" = "118"

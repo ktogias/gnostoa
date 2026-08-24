@@ -3,7 +3,7 @@
 ## Supported release
 
 The earlier **No supported release** projection is superseded. The latest
-published pre-stable release is the supported release, currently `v0.1.1`.
+published pre-stable release is the supported release, currently `v0.1.2`.
 Artifact availability is not a production-readiness or security-certification
 claim.
 

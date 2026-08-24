@@ -7,7 +7,7 @@ Gnostoa validates Git-native project knowledge for people and software agents.
 It combines structured Markdown, non-weakening profiles, deterministic checks
 and bounded context views without requiring a hosted knowledge service.
 
-> **Pre-stable:** `v0.1.1` is published as an immutable source release and one
+> **Pre-stable:** `v0.1.2` is published as an immutable source release and one
 > digest-pinned `linux/amd64` OCI image. No Python package, documentation site
 > or production-ready service has been released. Read [Current status](status.md)
 > for the exact identity and claim limits.
