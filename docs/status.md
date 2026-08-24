@@ -164,8 +164,14 @@ resumability and bounded human understanding, and are **not** an enforcement
 mechanism. The failed property that follows from it — critical workflow
 constraints are advisory rather than mechanically enforced — remains
 **unmitigated**, and **no successor control experiment or mitigation is
-selected**. Independent transfer into an externally owned project remains later
-work.
+selected**. The first real
+[B3 independent-adoption methodology](../knowledge/assessments/b3-independent-adoption-experiment-design.md)
+is now pre-registered. B3 has not begun: candidate selection — one eligible
+independently owned project, human owner, real task and mutation boundary — is
+still the next B3 owner subject. The separate bounded source-hardening candidate
+is governed
+by [Decision 0043](../knowledge/decisions/0043-prepare-a-bounded-v0-1-2-b3-readiness-candidate.md)
+and does not itself count as transfer evidence.
 
 This page deliberately does not restate delivery chronology, live Work Item
 lifecycle or candidate-bound measured outcomes, because each of those changes

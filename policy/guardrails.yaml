@@ -1,4 +1,4 @@
-version: "0.10.0"
+version: "0.11.0"
 guardrails:
   - id: monotonic-profile-inheritance
     title: Child profiles do not weaken parent policy
@@ -37,6 +37,19 @@ guardrails:
       - tests/test_tools.py::BundleTests.test_self_knowledge_bundle_is_valid
       - tests/test_tools.py::DocumentationTests.test_repository_documentation_links_resolve
       - tests/test_tools.py::PublicationBaselineTests.test_current_indexes_cover_every_canonical_concept
+
+  - id: unambiguous-yaml-mappings
+    title: Canonical YAML inputs reject duplicate mapping keys
+    applies_to: [kit, adopting-projects]
+    enforcement: automated
+    owner: team:gnostoa-maintainers
+    guidance: guidance/guardrails/non-negotiable.md#rule
+    implementation:
+      - tools/knowledge_common.py#KnowledgeLoader
+    tests:
+      - tests/test_tools.py::KnowledgeInputTests.test_duplicate_keys_are_rejected_in_standalone_yaml
+      - tests/test_tools.py::KnowledgeInputTests.test_duplicate_keys_are_rejected_in_markdown_frontmatter
+      - tests/test_tools.py::KnowledgeInputTests.test_duplicate_merge_keys_are_rejected_in_both_yaml_inputs
 
   - id: stable-public-schema-identity
     title: Public schemas use unique versioned identifiers under an owned namespace

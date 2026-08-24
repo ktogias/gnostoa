@@ -72,6 +72,8 @@ irrelevant context.
     changes receive no privileged secrets.
 28. Delivery gates exist only for declared deployable artifacts and promote the
     exact verified CI artifact without rebuilding it between environments.
+29. Canonical YAML inputs reject duplicate mapping keys rather than silently
+    selecting one value.
 
 ## Enforcement
 

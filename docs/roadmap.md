@@ -10,6 +10,15 @@ records are labelled explicitly, and none is a first-publication blocker unless
 a concrete security, legal, correctness or exposure finding demonstrates that
 dependency.
 
+The first real
+[B3 independent-adoption methodology](../knowledge/assessments/b3-independent-adoption-experiment-design.md)
+is pre-registered. B3 has not begun, and candidate selection remains
+its next owner subject. Separately,
+[Decision 0043](../knowledge/decisions/0043-prepare-a-bounded-v0-1-2-b3-readiness-candidate.md)
+admits one bounded source-hardening candidate under
+[Work Item #109](https://github.com/ktogias/gnostoa/issues/109); it selects no B3
+project or release effect, and its live lifecycle remains provider-authoritative.
+
 ## Now
 
 **Which Work Item is currently selected, if any, is provider state — not a
@@ -256,27 +265,31 @@ site or hosted service was released by that effect.
 
 ## Next
 
-B2/P1 completed 2026-08-16 ([PR #25–26](https://github.com/ktogias/gnostoa/pull/26)) with one validated task envelope and deterministic current projection delivered. B2/P2 completed 2026-08-17 under the closed [B2 experiment Work Item](https://github.com/ktogias/gnostoa/issues/24): a fresh actor resumed from the envelope alone, and the owner accepted the result while narrowing the product claim. That Work Item is the completed evidence base, not the container for later slices. Its named failed property is that critical workflow constraints are advisory rather than mechanically enforced. B2 reduced foreground evidence and provider-comment amplification, and orientation and final semantic review fit their bounded budgets in the measured cases; a total owner-effort improvement over B1 was **not** established. That framing is recorded, not activated. C4-v0 was experimented with under [#33](https://github.com/ktogias/gnostoa/issues/33) and rejected as a readiness predicate; no successor control is selected. Once B2 is comprehensible, B3 tests transfer into an independently owned project. See [Decision 0016](../knowledge/decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md).
+B2/P1 and B2/P2 are completed evidence. C4-v0 was rejected and no successor
+control is selected. The next B3 owner subject is candidate selection under the
+pre-registered methodology; no target project, owner or task is selected yet.
+Before that separate choice, the admitted delivery item is the bounded
+source-readiness correction below. Provider state remains authoritative for its
+live lifecycle.
 
 | Work Items | Problem addressed | Completion signal | Non-goal |
 |---|---|---|---|
-| [#35](https://github.com/ktogias/gnostoa/issues/35) | The C4-v0 falsification left open whether any small missing evidence primitive would convert one materially important observed undecidability into reproducible, candidate-bound evidence. | **Reported.** Eight evidence boundaries reconstructed and separated from fundamental oracle limits; three candidate primitives compared, none demonstrated at its own boundary. The owner selected **none of them**, choosing instead a smaller precursor experiment that routes an existing check. That precursor was later **refuted at its entrance gate before implementation** and is rejected as posed; see [#39](https://github.com/ktogias/gnostoa/issues/39). | Implementing any evidence primitive, rescuing the refuted precursor with an ID-to-path convention, automatic reference resolution, a schema change, an observation binding, public CI or tool changes, or a test presented as review-boundary enforcement; or activating E1, E2, E3, C2, C3 or Decision 0016 increment 2. |
-| [#33](https://github.com/ktogias/gnostoa/issues/33) | Critical workflow constraints remain advisory rather than mechanically enforced. The most recurrent observed path is readiness asserted while required preconditions are false. | **Reported.** The C4-v0 experiment ran under [Decision 0017](../knowledge/decisions/0017-scope-the-readiness-predicate-experiment-to-gnostoa-self-hosting.md) and its strict hypothesis was refuted; the owner accepted the experimental result and **rejected C4-v0 as a readiness predicate**. Retained as evidence only: deterministic consistency checks over existing evidence can detect some state and identity defects before human review — recorded, not activated. The failed property itself is unmitigated and no successor is selected. | Treating an experimental result as adoption, promoting C4-v0 to the public inherited surface without a separate owner Decision, expanding it into a state machine, workflow engine, capability broker or provider adapter layer, or nominating further controls before the experiment reports. |
-| [#6](https://github.com/ktogias/gnostoa/issues/6), [#9](https://github.com/ktogias/gnostoa/issues/9), [#13](https://github.com/ktogias/gnostoa/issues/13) | Admission, effect gating, context selection and canonical-language handling need bounded contracts only where B2 demonstrates actual need. | B2 identifies a concrete repeated failure or dependency and a smallest enforceable contract. | Making every proposed contract an implementation prerequisite for B2. |
-| [#7](https://github.com/ktogias/gnostoa/issues/7) | External evaluation needs a safe, reproducible workspace boundary. | One anonymous adoption fixture runs with declared ownership, hermetic inputs and no host-data leakage. | Claiming broad external adoption or production isolation from a single fixture. |
+| [#109](https://github.com/ktogias/gnostoa/issues/109) | Duplicate YAML ambiguity, unverified Python-floor breadth, mutable OKF provenance and stale front-door projections weaken the B3 starting boundary. | One reviewable `v0.1.2` candidate rejects duplicate mappings, tests source under Python 3.11/3.12, pins OKF v0.2 and reconciles projections with all required checks green. | Selecting or executing B3; adding a generator, alias, workflow mechanism or mutable image tag; merge, tag, Release or artifact publication. |
 
 ## Research
 
 These items contain useful designs and evidence. Their underlying capability
-need is demonstrated, but their minimum implementation and sequencing remain
-experimental. They stay outside the first-publication critical path while B2
-selects the smallest safe slices.
+need may be demonstrated, but their minimum implementation and sequencing remain
+experimental. They stay outside current delivery until a later owner selection
+and candidate-specific admission.
 
 | Work Items | Research question | Promotion condition |
 |---|---|---|
-| [#3](https://github.com/ktogias/gnostoa/issues/3), [#5](https://github.com/ktogias/gnostoa/issues/5), [#8](https://github.com/ktogias/gnostoa/issues/8) | What is the smallest durable task-context, crash-recovery and asynchronous-waiting slice that addresses the already observed B1 failures? | Publication is complete and B2 isolates one bounded contract with interruption, stale-state and recovery evidence. |
+| [#3](https://github.com/ktogias/gnostoa/issues/3), [#5](https://github.com/ktogias/gnostoa/issues/5), [#8](https://github.com/ktogias/gnostoa/issues/8) | What is the smallest durable task-context, crash-recovery and asynchronous-waiting slice that addresses the already observed B1 failures? | A later owner selection names one repeated unsolved failure and a bounded candidate that existing B2 evidence does not already cover. |
+| [#6](https://github.com/ktogias/gnostoa/issues/6), [#9](https://github.com/ktogias/gnostoa/issues/9), [#13](https://github.com/ktogias/gnostoa/issues/13) | Which admission, orientation and canonical-language controls address a newly observed repeated failure without turning the full research backlog into prerequisites? | One concrete failure, routing location and smallest enforceable contract are selected and admitted independently. |
+| [#7](https://github.com/ktogias/gnostoa/issues/7) | What workspace ownership or hermetic-execution boundary is needed beyond the already bounded public evaluation route? | A real task demonstrates an unresolved host-data or ownership risk and admits one falsifiable boundary without claiming general isolation. |
 | [#10](https://github.com/ktogias/gnostoa/issues/10), [#11](https://github.com/ktogias/gnostoa/issues/11), [#14](https://github.com/ktogias/gnostoa/issues/14) | Which role, semantic-capture and goal-alignment projections improve decisions without becoming a second authority? | A bounded experiment demonstrates measurable orientation or reconciliation benefit with deterministic regeneration. |
-| [#15](https://github.com/ktogias/gnostoa/issues/15) | Which workflow mechanics can be automated without automating evidence amplification or weakening review? | B2 identifies stable repeated mechanics, explicit effect boundaries and a falsifiable reduction target. |
+| [#15](https://github.com/ktogias/gnostoa/issues/15) | Which workflow mechanics can be automated without automating evidence amplification or weakening review? | A later measured task identifies stable repeated mechanics, explicit effect boundaries and a falsifiable reduction target. |
 
 [Issue #12](https://github.com/ktogias/gnostoa/issues/12) is a closed historical
 B1 design and dogfood ledger. Its 342 comments remain inspectable evidence of
@@ -285,8 +298,10 @@ platform is deferred to Research and is not the contributor interface or an
 active publication prerequisite. The capability direction remains planned by
 [Decision 0016](../knowledge/decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md).
 Issue #24 is the completed B2 evidence base, and [Issue #33](https://github.com/ktogias/gnostoa/issues/33)
-is the completed C4-v0 experiment whose control was rejected. No bounded route is
-currently selected.
+is the completed C4-v0 experiment whose control was rejected. B3 methodology is
+pre-registered but B3 has not begun; its next owner subject is candidate
+selection. Work Item #109 is a separate readiness correction and does not select
+or execute that candidate-specific experiment.
 
 The work in PR #4 is retained here as an exact research input for #3. It is not
 discarded, accepted or part of the first-publication baseline while its review

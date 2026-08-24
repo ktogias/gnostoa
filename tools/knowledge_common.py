@@ -9,6 +9,8 @@ from typing import Any
 from urllib.parse import urlparse
 
 import yaml
+from yaml.constructor import ConstructorError
+from yaml.nodes import MappingNode
 
 FRONTMATTER_RE = re.compile(
     r"\A---[ \t]*\r?\n(?P<yaml>.*?)\r?\n---[ \t]*(?:\r?\n|$)(?P<body>.*)\Z",
@@ -27,6 +29,42 @@ TOOLKIT_ROOT_MARKERS = (
 
 class KnowledgeLoader(yaml.SafeLoader):
     """Safe YAML loader that keeps ISO dates as strings."""
+
+    def construct_mapping(
+        self, node: MappingNode, deep: bool = False
+    ) -> dict[Any, Any]:
+        """Reject explicit duplicate keys before PyYAML discards a value."""
+
+        seen: set[tuple[str, Any]] = set()
+        for key_node, _ in node.value:
+            if key_node.tag == "tag:yaml.org,2002:merge":
+                # The merge tag has no scalar constructor before SafeLoader's
+                # flattening pass, but it is still an explicit mapping key and
+                # must participate in duplicate detection. A single merge,
+                # including a sequence value, keeps SafeLoader's semantics.
+                key = "<<"
+            else:
+                key = self.construct_object(key_node, deep=deep)
+            identity = (key_node.tag, key)
+            try:
+                duplicate = identity in seen
+            except TypeError as exc:
+                raise ConstructorError(
+                    "while constructing a mapping",
+                    node.start_mark,
+                    "found an unhashable key",
+                    key_node.start_mark,
+                ) from exc
+            if duplicate:
+                raise ConstructorError(
+                    "while constructing a mapping",
+                    node.start_mark,
+                    f"found duplicate key {key!r}",
+                    key_node.start_mark,
+                )
+            seen.add(identity)
+
+        return super().construct_mapping(node, deep=deep)
 
 
 KnowledgeLoader.yaml_implicit_resolvers = {
