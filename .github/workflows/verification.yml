@@ -167,6 +167,7 @@ jobs:
 
           vendored_root=$(mktemp -d "${RUNNER_TEMP}/gnostoa-vendored.XXXXXX")
           trap 'rm -rf "${vendored_root}"' EXIT
+          chmod 0755 "${vendored_root}"
           git archive "${candidate_commit}" | tar -x -C "${vendored_root}"
 
           source_digest=$(docker run --rm \
