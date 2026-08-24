@@ -157,16 +157,9 @@ jobs:
           candidate_tree=$(git rev-parse 'HEAD^{tree}')
           test "${candidate_commit}" = "${{ github.event.pull_request.head.sha || github.sha }}"
 
-          test -z "$(git diff --name-only "${BASE_SHA}" HEAD -- \
-            ci/build-runtime tools/repository_scope.py)"
-          version_delta=$(git diff --unified=0 "${BASE_SHA}" HEAD -- Dockerfile \
-            | grep '^[+-]ARG KIT_VERSION=')
-          expected_version_delta=$(printf '%s\n%s' \
-            '-ARG KIT_VERSION=0.1.1' '+ARG KIT_VERSION=0.1.2')
-          test "${version_delta}" = "${expected_version_delta}"
-
           vendored_root=$(mktemp -d "${RUNNER_TEMP}/gnostoa-vendored.XXXXXX")
-          trap 'rm -rf "${vendored_root}"' EXIT
+          sb2_root=$(mktemp -d "${RUNNER_TEMP}/gnostoa-sb2.XXXXXX")
+          trap 'rm -rf "${vendored_root}" "${sb2_root}"' EXIT
           chmod 0755 "${vendored_root}"
           git archive "${candidate_commit}" | tar -x -C "${vendored_root}"
 
@@ -189,15 +182,56 @@ jobs:
           test "${source_digest}" = "${runtime_digest}"
           test "${source_digest}" = "${vendored_digest}"
 
-          source_sb2=$(sha256sum tools/knowledge_common.py | cut -d' ' -f1)
-          runtime_sb2=$(docker run --rm \
-            --entrypoint sha256sum \
+          sb2_paths_file="${sb2_root}/paths"
+          cat > "${sb2_paths_file}" <<'EOF'
+          tools/build_context_pack.py
+          tools/build_docs.py
+          tools/check_change_policy.py
+          tools/check_ci_policy.py
+          tools/check_guardrails.py
+          tools/check_runtime_lock.py
+          tools/cli.py
+          tools/knowledge_common.py
+          tools/repository_scope.py
+          tools/self_check.py
+          tools/task_envelope.py
+          tools/validate_bundle.py
+          EOF
+          test "$(wc -l < "${sb2_paths_file}")" -eq 12
+          test "$(LC_ALL=C sort -u "${sb2_paths_file}" | wc -l)" -eq 12
+
+          source_sb2_manifest="${sb2_root}/source.sha256"
+          runtime_sb2_manifest="${sb2_root}/runtime.sha256"
+          vendored_sb2_manifest="${sb2_root}/vendored.sha256"
+
+          while IFS= read -r sb2_path; do
+            test -n "${sb2_path}"
+            sha256sum "${sb2_path}"
+          done < "${sb2_paths_file}" > "${source_sb2_manifest}"
+
+          docker run --rm \
+            --entrypoint sh \
+            --mount \
+              type=bind,source="${sb2_paths_file}",target=/tmp/gnostoa-sb2-paths,readonly \
             "${GNOSTOA_CI_IMAGE}" \
-            /opt/gnostoa/tools/knowledge_common.py | cut -d' ' -f1)
-          vendored_sb2=$(sha256sum \
-            "${vendored_root}/tools/knowledge_common.py" | cut -d' ' -f1)
-          test "${source_sb2}" = "${runtime_sb2}"
-          test "${source_sb2}" = "${vendored_sb2}"
+            -ec '
+              cd /opt/gnostoa
+              while IFS= read -r sb2_path; do
+                test -n "${sb2_path}"
+                sha256sum "${sb2_path}"
+              done < /tmp/gnostoa-sb2-paths
+            ' > "${runtime_sb2_manifest}"
+
+          (
+            cd "${vendored_root}"
+            while IFS= read -r sb2_path; do
+              test -n "${sb2_path}"
+              sha256sum "${sb2_path}"
+            done < "${sb2_paths_file}"
+          ) > "${vendored_sb2_manifest}"
+
+          cmp "${source_sb2_manifest}" "${runtime_sb2_manifest}"
+          cmp "${source_sb2_manifest}" "${vendored_sb2_manifest}"
 
           docker run --rm "${GNOSTOA_CI_IMAGE}" self-check
 
@@ -210,10 +244,17 @@ jobs:
           printf 'public_surface.source=%s\n' "${source_digest}"
           printf 'public_surface.runtime=%s\n' "${runtime_digest}"
           printf 'public_surface.vendored=%s\n' "${vendored_digest}"
-          printf 'sb2.tools_knowledge_common.source=%s\n' "${source_sb2}"
-          printf 'sb2.tools_knowledge_common.runtime=%s\n' "${runtime_sb2}"
-          printf 'sb2.tools_knowledge_common.vendored=%s\n' "${vendored_sb2}"
-          printf 'source_binding.mechanism=unchanged\n'
+          printf 'sb2.membership=12\n'
+          printf 'sb2.source.begin\n'
+          cat "${source_sb2_manifest}"
+          printf 'sb2.source.end\n'
+          printf 'sb2.runtime.begin\n'
+          cat "${runtime_sb2_manifest}"
+          printf 'sb2.runtime.end\n'
+          printf 'sb2.vendored.begin\n'
+          cat "${vendored_sb2_manifest}"
+          printf 'sb2.vendored.end\n'
+          printf 'source_binding.mechanism=candidate-generic-three-way\n'
           printf 'runtime.self_check=PASS\n'
 
   extended:

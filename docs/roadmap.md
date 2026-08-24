@@ -13,11 +13,13 @@ dependency.
 The first real
 [B3 independent-adoption methodology](../knowledge/assessments/b3-independent-adoption-experiment-design.md)
 is pre-registered. B3 has not begun, and candidate selection remains
-its next owner subject. Separately,
+its next owner subject after the publication sequence below. The
 [Decision 0043](../knowledge/decisions/0043-prepare-a-bounded-v0-1-2-b3-readiness-candidate.md)
-admits one bounded source-hardening candidate under
-[Work Item #109](https://github.com/ktogias/gnostoa/issues/109); it selects no B3
-project or release effect, and its live lifecycle remains provider-authoritative.
+readiness candidate is integrated. Separately,
+[Decision 0044](../knowledge/decisions/0044-select-the-v0-1-2-source-and-oci-publication-series.md)
+admits its bounded source-and-OCI publication series under
+[Work Item #111](https://github.com/ktogias/gnostoa/issues/111); it selects no B3
+project, and its live lifecycle remains provider-authoritative.
 
 ## Now
 
@@ -268,13 +270,15 @@ site or hosted service was released by that effect.
 B2/P1 and B2/P2 are completed evidence. C4-v0 was rejected and no successor
 control is selected. The next B3 owner subject is candidate selection under the
 pre-registered methodology; no target project, owner or task is selected yet.
+The source-readiness correction under
+[Work Item #109](https://github.com/ktogias/gnostoa/issues/109) is complete.
 Before that separate choice, the admitted delivery item is the bounded
-source-readiness correction below. Provider state remains authoritative for its
-live lifecycle.
+`v0.1.2` source-and-OCI publication series below. Provider state remains
+authoritative for its live lifecycle.
 
 | Work Items | Problem addressed | Completion signal | Non-goal |
 |---|---|---|---|
-| [#109](https://github.com/ktogias/gnostoa/issues/109) | Duplicate YAML ambiguity, unverified Python-floor breadth, mutable OKF provenance and stale front-door projections weaken the B3 starting boundary. | One reviewable `v0.1.2` candidate rejects duplicate mappings, tests source under Python 3.11/3.12, pins OKF v0.2 and reconciles projections with all required checks green. | Selecting or executing B3; adding a generator, alias, workflow mechanism or mutable image tag; merge, tag, Release or artifact publication. |
+| [#111](https://github.com/ktogias/gnostoa/issues/111) | The integrated `v0.1.2` readiness candidate has no immutable source tag, source-only prerelease, OCI digest, provenance or digest-bound post-publication reconciliation. | One exact `v0.1.2` source identity and public write-once `linux/amd64` OCI digest are published and reconciled through the existing bounded mechanisms, with the Work Item closed last. | B3 selection or execution; `latest`, extra tags, multi-architecture, reproducibility claims, deployment or a new release framework. |
 
 ## Research
 
@@ -300,8 +304,9 @@ active publication prerequisite. The capability direction remains planned by
 Issue #24 is the completed B2 evidence base, and [Issue #33](https://github.com/ktogias/gnostoa/issues/33)
 is the completed C4-v0 experiment whose control was rejected. B3 methodology is
 pre-registered but B3 has not begun; its next owner subject is candidate
-selection. Work Item #109 is a separate readiness correction and does not select
-or execute that candidate-specific experiment.
+selection. The readiness correction under Work Item #109 is complete; Work Item
+#111 separately governs the `v0.1.2` publication sequence and does not select or
+execute that candidate-specific experiment.
 
 The work in PR #4 is retained here as an exact research input for #3. It is not
 discarded, accepted or part of the first-publication baseline while its review
