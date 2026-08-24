@@ -78,7 +78,9 @@ Markdown frontmatter because both are public inputs to the same loader. The
 diagnostic identifies the duplicate and its source location without exposing
 unrelated file content. Unique-key inputs, aliases already permitted by the
 bounded loader, timestamp-as-string behavior and profile semantics remain
-unchanged.
+unchanged. Repeated explicit YAML merge keys are duplicates too and fail by the
+same rule. One merge key, one merge whose value is a sequence and an explicit
+key overriding a value inherited through one merge remain supported.
 
 **C. Compatibility.** Treat duplicate mappings as invalid ambiguous YAML rather
 than as a supported public input. No valid-input behavior is selected to change,
@@ -92,7 +94,12 @@ change, stop and reclassify before continuing.
 `Python 3.11 or newer` claim only by adding a bounded CPython 3.11 and 3.12
 source-test matrix to centralized CI. The existing Python 3.12 container remains
 the authoritative runtime, smoke and release path. The matrix makes no claim
-for an untested interpreter, operating system or architecture.
+for an untested interpreter, operating system or architecture. At the PR,
+merge-group and protected-main boundaries, `regression` must run through an
+`always()` route and explicitly fail unless `policy`, `fast` and the aggregate
+Python-compatibility matrix all succeeded. One controlled intermediate Python
+3.11 failure must demonstrate provider `regression` failure before the fault is
+removed and the final exact head is rerun green.
 
 **E. Immutable OKF subject.** Bind Gnostoa's adopted OKF v0.2 rationale and
 reusable source references to upstream commit
@@ -114,6 +121,14 @@ immutable `v0.1.1` publication workflow, digest, tag, evidence or historical
 documentation. Until a later provider effect is authorized and completed,
 public consumer instructions continue to name `v0.1.1` and its immutable
 digest.
+
+**G2. Executable candidate binding.** Because `tools/knowledge_common.py` is an
+SB2 executable, bind the final exact PR head and tree to its changed paths,
+public-surface digest, new per-file SHA-256, source/runtime/vendored digest
+equality and runtime self-check through a Docker-capable provider route. Reuse
+prior X3 source-binding evidence only after proving its mechanism unchanged;
+otherwise replay `ci/x3_conformance`. Reopen and replay only the affected G3
+parser boundary rather than claiming the earlier SB2 bytes are unchanged.
 
 **H. Explicit exclusions.** Select no B3 project, outreach, execution or result;
 no generator, DSL, alias, mutable image tag, `latest`, workflow engine or new

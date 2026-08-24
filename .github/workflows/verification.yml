@@ -86,15 +86,31 @@ jobs:
             --only-binary=:all: \
             --require-hashes \
             -r requirements/development.lock
+      - name: Controlled Python 3.11 compatibility negative control
+        if: matrix.python-version == '3.11'
+        run: |
+          echo "Expected intermediate failure: verify regression fails closed"
+          exit 1
       - name: Run the source compatibility suite
         run: ./ci/verify fast
 
   regression:
     name: regression
     needs: [policy, fast, python-compatibility]
-    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+    if: >-
+      always() &&
+      (github.event_name != 'push' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     steps:
+      - name: Assert successful prerequisites
+        env:
+          POLICY_RESULT: ${{ needs.policy.result }}
+          FAST_RESULT: ${{ needs.fast.result }}
+          PYTHON_COMPATIBILITY_RESULT: ${{ needs.python-compatibility.result }}
+        run: |
+          test "${POLICY_RESULT}" = success
+          test "${FAST_RESULT}" = success
+          test "${PYTHON_COMPATIBILITY_RESULT}" = success
       # actions/checkout v6.0.2
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:

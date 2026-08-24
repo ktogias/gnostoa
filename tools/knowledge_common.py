@@ -37,12 +37,14 @@ class KnowledgeLoader(yaml.SafeLoader):
 
         seen: set[tuple[str, Any]] = set()
         for key_node, _ in node.value:
-            # Preserve SafeLoader's existing YAML-merge behavior. An explicit
-            # key may intentionally override a merged default; only repeated
-            # keys written in this mapping are ambiguous input.
             if key_node.tag == "tag:yaml.org,2002:merge":
-                continue
-            key = self.construct_object(key_node, deep=deep)
+                # The merge tag has no scalar constructor before SafeLoader's
+                # flattening pass, but it is still an explicit mapping key and
+                # must participate in duplicate detection. A single merge,
+                # including a sequence value, keeps SafeLoader's semantics.
+                key = "<<"
+            else:
+                key = self.construct_object(key_node, deep=deep)
             identity = (key_node.tag, key)
             try:
                 duplicate = identity in seen

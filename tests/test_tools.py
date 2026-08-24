@@ -210,8 +210,9 @@ class PublicationBaselineTests(unittest.TestCase):
             "github.event.pull_request.number || github.ref",
             workflow,
         )
+        self.assertIn("always() &&", workflow)
         self.assertIn(
-            "if: github.event_name != 'push' || github.ref == 'refs/heads/main'",
+            "(github.event_name != 'push' || github.ref == 'refs/heads/main')",
             workflow,
         )
         self.assertRegex(workflow, r"actions/checkout@[a-f0-9]{40}")
@@ -602,6 +603,88 @@ class KnowledgeInputTests(unittest.TestCase):
                     self.assertIn("duplicate key", message.lower())
                     expected_key = "type" if name == "top-level" else "id"
                     self.assertIn(expected_key, message)
+
+    def test_duplicate_merge_keys_are_rejected_in_both_yaml_inputs(self) -> None:
+        duplicate_merges = """\
+base1: &base1
+  owner: one
+base2: &base2
+  owner: two
+concept:
+  <<: *base1
+  <<: *base2
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            yaml_path = root / "input.yaml"
+            markdown_path = root / "concept.md"
+            yaml_path.write_text(duplicate_merges, encoding="utf-8")
+            markdown_path.write_text(
+                f"---\ntype: Reference\n{duplicate_merges}---\n\n# Concept\n",
+                encoding="utf-8",
+            )
+
+            for name, load in (
+                ("standalone-yaml", lambda: load_yaml(yaml_path)),
+                (
+                    "markdown-frontmatter",
+                    lambda: knowledge_common.parse_markdown(markdown_path, root),
+                ),
+            ):
+                with self.subTest(name=name):
+                    with self.assertRaises(KnowledgeFormatError) as raised:
+                        load()
+                    message = str(raised.exception)
+                    self.assertIn("duplicate key", message.lower())
+                    self.assertIn("<<", message)
+
+    def test_supported_yaml_merge_shapes_remain_unchanged(self) -> None:
+        cases = {
+            "one-merge": (
+                "base: &base\n  owner: one\nconcept:\n  <<: *base\n",
+                {"owner": "one"},
+            ),
+            "one-sequence-merge": (
+                "base1: &base1\n  owner: one\n"
+                "base2: &base2\n  reviewer: two\n"
+                "concept:\n  <<: [*base1, *base2]\n",
+                {"owner": "one", "reviewer": "two"},
+            ),
+            "explicit-override": (
+                "base: &base\n  owner: inherited\n"
+                "concept:\n  <<: *base\n  owner: explicit\n",
+                {"owner": "explicit"},
+            ),
+            "ordinary-unique": (
+                "concept:\n  owner: one\n  reviewer: two\n",
+                {"owner": "one", "reviewer": "two"},
+            ),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "input.yaml"
+            for name, (content, expected) in cases.items():
+                with self.subTest(name=name):
+                    path.write_text(content, encoding="utf-8")
+                    self.assertEqual(expected, load_yaml(path)["concept"])
+
+    def test_supported_merge_override_remains_valid_in_frontmatter(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "concept.md"
+            path.write_text(
+                "---\n"
+                "type: Reference\n"
+                "base: &base\n"
+                "  owner: inherited\n"
+                "concept:\n"
+                "  <<: *base\n"
+                "  owner: explicit\n"
+                "---\n\n"
+                "# Concept\n",
+                encoding="utf-8",
+            )
+            document = knowledge_common.parse_markdown(path, root)
+            self.assertEqual({"owner": "explicit"}, document.metadata["concept"])
 
     def test_okf_v0_2_consumer_sentinel_preserves_extensions(self) -> None:
         fixture = (
@@ -1739,6 +1822,46 @@ change_classes:
 
 
 class ContinuousIntegrationTests(unittest.TestCase):
+    def test_python_compatibility_gates_regression_fail_closed(self) -> None:
+        workflow = load_yaml(ROOT / ".github" / "workflows" / "verification.yml")
+        jobs = workflow["jobs"]
+        compatibility = jobs["python-compatibility"]
+        regression = jobs["regression"]
+
+        self.assertEqual(
+            ["3.11", "3.12"],
+            compatibility["strategy"]["matrix"]["python-version"],
+        )
+        self.assertEqual(
+            ["policy", "fast", "python-compatibility"], regression["needs"]
+        )
+        condition = regression["if"]
+        self.assertIn("always()", condition)
+        self.assertIn("github.event_name != 'push'", condition)
+        self.assertIn("github.ref == 'refs/heads/main'", condition)
+
+        assertions = [
+            step
+            for step in regression["steps"]
+            if step.get("name") == "Assert successful prerequisites"
+        ]
+        self.assertEqual(1, len(assertions), assertions)
+        assertion = assertions[0]
+        self.assertEqual(
+            {
+                "POLICY_RESULT": "${{ needs.policy.result }}",
+                "FAST_RESULT": "${{ needs.fast.result }}",
+                "PYTHON_COMPATIBILITY_RESULT": "${{ needs.python-compatibility.result }}",
+            },
+            assertion["env"],
+        )
+        for result in (
+            "POLICY_RESULT",
+            "FAST_RESULT",
+            "PYTHON_COMPATIBILITY_RESULT",
+        ):
+            self.assertIn(f'test "${{{result}}}" = success', assertion["run"])
+
     def test_generic_ci_policy_is_authoritative_and_tiered(self) -> None:
         module = importlib.import_module("tools.check_ci_policy")
         policy = module.load_ci_policy(ROOT / "core" / "continuous-integration.yaml")

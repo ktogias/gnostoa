@@ -49,6 +49,7 @@ guardrails:
     tests:
       - tests/test_tools.py::KnowledgeInputTests.test_duplicate_keys_are_rejected_in_standalone_yaml
       - tests/test_tools.py::KnowledgeInputTests.test_duplicate_keys_are_rejected_in_markdown_frontmatter
+      - tests/test_tools.py::KnowledgeInputTests.test_duplicate_merge_keys_are_rejected_in_both_yaml_inputs
 
   - id: stable-public-schema-identity
     title: Public schemas use unique versioned identifiers under an owned namespace
