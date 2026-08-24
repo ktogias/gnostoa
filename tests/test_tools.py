@@ -264,7 +264,7 @@ class PublicationBaselineTests(unittest.TestCase):
             '"${{ github.event.pull_request.head.sha || github.sha }}"',
             "candidate_tree=$(git rev-parse 'HEAD^{tree}')",
             "printf 'candidate.tree=%s\\n' \"${candidate_tree}\"",
-            "git archive \"${candidate_commit}\"",
+            'git archive "${candidate_commit}"',
             "surface-digest --root /workspace",
             "surface-digest --root /opt/gnostoa",
             "surface-digest --root /vendored",
@@ -277,7 +277,7 @@ class PublicationBaselineTests(unittest.TestCase):
             "sb2.source.begin",
             "sb2.runtime.begin",
             "sb2.vendored.begin",
-            "git diff --name-only \"${BASE_SHA}\" HEAD",
+            'git diff --name-only "${BASE_SHA}" HEAD',
         ):
             with self.subTest(required=required):
                 self.assertIn(required, binding)
