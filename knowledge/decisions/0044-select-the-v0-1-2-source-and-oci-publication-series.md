@@ -55,10 +55,16 @@ released Python/base change that preempts this candidate. That observation
 admits an exact reviewable publication Decision; it is not publication-time
 freshness and it creates no provider effect.
 
-The Phase-1 repository change is `normal`: it records candidate-bound
-governance and corrects stable navigation without changing executable source,
-release verification or a publication mechanism. A tag, GitHub Release, GHCR
-push and provenance record are later `critical` effects.
+The initially admitted Phase-1 repository change was `normal`: it recorded
+candidate-bound governance and corrected stable navigation without changing
+executable source, release verification or a publication mechanism. Exact-head
+provider run `32739639579` then supplied valid RED evidence that the permanent
+candidate-binding step still encoded task-specific assertions from the
+historical `0.1.1` to `0.1.2` change. The owner re-admitted a bounded
+`normative` correction in the same Work Item, Decision and Pull Request because
+the correction changes the authoritative provider-verification contract. A
+tag, GitHub Release, GHCR push and provenance record remain later `critical`
+effects.
 
 ## Decision
 
@@ -139,11 +145,24 @@ selection or execution must wait until source/OCI publication, digest-bound
 release verification and integrated/provider reconciliation have completed.
 
 **M. Phase-1 effect boundary.** This Decision admits one Work Item, one branch,
-this Decision, minimal navigation/projection and one exact reviewable Pull
-Request. It authorizes **no Phase-1 PR merge, tag, Release, workflow dispatch,
-GHCR mutation, attestation, verifier re-binding, B3 selection or Work Item
-closure**. Those effects require accountable-owner review of the exact PR and
-the later freshness and reconciliation gates above.
+this Decision, minimal navigation/projection, one exact reviewable Pull Request
+and the bounded correction of its permanent PR candidate-binding verification.
+That binding must retain exact checked-out commit/tree assertion, three-way
+source/runtime/metadata-free-vendored public-surface equality, runtime
+self-check and changed-path reporting. It must compare the complete current
+12-file SB2 membership generically across the same three subjects and emit the
+resulting exact manifests. It must not contain a version, Pull Request,
+incident, changed-path or knowledge-only bypass; hard-code an earlier
+candidate's file digests; or claim that equality alone proves X3 or G3 transfer
+sufficiency. The required check executes even when the proposed change is
+knowledge-only. Provider RED run `32739639579` is the characterization evidence;
+a fresh run must bind the corrected final exact PR head and report every job,
+with `SKIPPED` distinct from `PASS`.
+
+This re-admission authorizes **no Phase-1 PR merge, tag, Release, workflow
+dispatch, GHCR mutation, attestation, release-verifier re-binding, B3 selection
+or Work Item closure**. Those effects require accountable-owner review of the
+new exact PR head and the later freshness and reconciliation gates above.
 
 ## Consequences
 
@@ -153,5 +172,8 @@ the later freshness and reconciliation gates above.
   predicted in this Decision.
 - The existing v0.1.1 mechanisms are reused in bounded version-specific phases,
   rather than generalized into a new release system.
+- Permanent exact-candidate verification reports current evidence generically;
+  it does not preserve assertions about one historical release delta or infer
+  owner sufficiency from byte equality.
 - Work Item #111 stays open through publication and post-publication
   reconciliation; B3 stays paused.

@@ -234,6 +234,72 @@ class PublicationBaselineTests(unittest.TestCase):
         ):
             self.assertIn(owned_path, codeowners)
 
+    def test_pr_candidate_binding_is_generic_and_complete(self) -> None:
+        workflow_path = ROOT / ".github" / "workflows" / "verification.yml"
+        workflow = workflow_path.read_text(encoding="utf-8")
+        binding = workflow.split(
+            "      - name: Bind the exact PR executable candidate\n", maxsplit=1
+        )[1].split("\n  extended:\n", maxsplit=1)[0]
+
+        sb2_paths = (
+            "tools/build_context_pack.py",
+            "tools/build_docs.py",
+            "tools/check_change_policy.py",
+            "tools/check_ci_policy.py",
+            "tools/check_guardrails.py",
+            "tools/check_runtime_lock.py",
+            "tools/cli.py",
+            "tools/knowledge_common.py",
+            "tools/repository_scope.py",
+            "tools/self_check.py",
+            "tools/task_envelope.py",
+            "tools/validate_bundle.py",
+        )
+        for path in sb2_paths:
+            with self.subTest(path=path):
+                self.assertEqual(1, binding.count(path))
+
+        for required in (
+            'test "${candidate_commit}" = '
+            '"${{ github.event.pull_request.head.sha || github.sha }}"',
+            "candidate_tree=$(git rev-parse 'HEAD^{tree}')",
+            "printf 'candidate.tree=%s\\n' \"${candidate_tree}\"",
+            "git archive \"${candidate_commit}\"",
+            "surface-digest --root /workspace",
+            "surface-digest --root /opt/gnostoa",
+            "surface-digest --root /vendored",
+            'test "${source_digest}" = "${runtime_digest}"',
+            'test "${source_digest}" = "${vendored_digest}"',
+            'test "$(wc -l < "${sb2_paths_file}")" -eq 12',
+            'cmp "${source_sb2_manifest}" "${runtime_sb2_manifest}"',
+            'cmp "${source_sb2_manifest}" "${vendored_sb2_manifest}"',
+            'docker run --rm "${GNOSTOA_CI_IMAGE}" self-check',
+            "sb2.source.begin",
+            "sb2.runtime.begin",
+            "sb2.vendored.begin",
+            "git diff --name-only \"${BASE_SHA}\" HEAD",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, binding)
+
+        for incident_specific in (
+            "ARG KIT_VERSION=0.1.1",
+            "ARG KIT_VERSION=0.1.2",
+            "expected_version_delta",
+            "ci/build-runtime tools/repository_scope.py",
+            "sb2.tools_knowledge_common",
+            "continue-on-error",
+            "|| true",
+        ):
+            with self.subTest(incident_specific=incident_specific):
+                self.assertNotIn(incident_specific, binding)
+
+        self.assertNotIn("Dockerfile", binding)
+        self.assertGreater(
+            binding.index('git diff --name-only "${BASE_SHA}" HEAD'),
+            binding.index('docker run --rm "${GNOSTOA_CI_IMAGE}" self-check'),
+        )
+
     def test_ghcr_publication_workflow_is_exact_and_write_once(self) -> None:
         workflow_path = ROOT / ".github" / "workflows" / "publish-oci.yml"
         self.assertTrue(workflow_path.is_file())
