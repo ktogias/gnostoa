@@ -92,13 +92,15 @@ digest together; the released OCI route below is one such exact binding.
 The raw Issue #12 and PR #2 ledger is retained as one-time B1 self-dogfood
 evidence; it is **not the expected contribution workflow**. Normal changes use
 the compact route in [CONTRIBUTING.md](CONTRIBUTING.md), ordinary Pull Request
-review and proportionate evidence. [B2](https://github.com/ktogias/gnostoa/issues/24)
-now measures whether the useful B1 controls can be preserved with materially
-less owner effort and evidence amplification. B1 has already demonstrated the
-need for guided review, durable task context, bounded plans, explicit handoffs
-and safe resume; the [bootstrap Decision](knowledge/decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md)
-selects incremental post-publication implementation because the full workflow
-platform is not a publication prerequisite.
+review and proportionate evidence. B2/P1 and B2/P2 completed the first bounded
+self-hosting measurements and narrowed the claim: the envelope and projection
+improve orientation and resumability but are not workflow enforcement. The
+[bootstrap Decision](knowledge/decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md)
+keeps the broader platform off the critical path: the full workflow platform
+is not a publication prerequisite. The first real
+[B3 independent-adoption methodology](knowledge/assessments/b3-independent-adoption-experiment-design.md)
+is pre-registered, but the experiment has not begun; selecting one eligible
+project, owner and real task remains the next B3 owner decision.
 
 Gnostoa is not yet a hosted service, a workflow engine, a general-purpose graph
 database or a production-ready release. It does not claim reduced engineering

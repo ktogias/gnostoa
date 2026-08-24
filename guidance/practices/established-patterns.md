@@ -8,7 +8,7 @@ generated:
   at: "2026-07-29T00:00:00Z"
 sources:
   - id: okf-spec
-    resource: https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md
+    resource: https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/9a15b13ba996bb713b19e053ea744abee01c2714/okf/SPEC.md
     title: Open Knowledge Format v0.2
   - id: docs-as-code
     resource: https://www.writethedocs.org/guide/docs-as-code/

@@ -27,6 +27,24 @@ Evaluation must therefore pin all of the following together:
 Changing one identity requires revalidation. A matching version label alone is
 not evidence that two artifacts or source trees are equivalent.
 
+## Current checkout candidate
+
+[Decision 0043](../knowledge/decisions/0043-prepare-a-bounded-v0-1-2-b3-readiness-candidate.md)
+admits `0.1.2` metadata only for the current source/runtime candidate. It is not
+a released consumer identity: until a separate publication effect completes,
+`v0.1.1` and its immutable OCI digest above remain the public route.
+
+The candidate rejects duplicate keys in standalone YAML and Markdown
+frontmatter. YAML 1.2 requires unique mapping keys, so this is documented as
+fail-closed handling of ambiguous invalid input; valid unique-key inputs are not
+intended to change. A file that relied on last-key-wins behavior must remove the
+duplicate and retain one explicit value before validation.
+
+The declared native source floor remains Python 3.11. Centralized source tests
+exercise CPython 3.11 and 3.12, while the current development and released OCI
+runtime route remains Python 3.12. This establishes no support claim for another
+interpreter, operating system or architecture.
+
 ## Compatibility layers
 
 | Layer | Current rule |

@@ -57,7 +57,7 @@ def _add_tar_bytes(archive: tarfile.TarFile, name: str, content: bytes) -> None:
 def _release_archive_fixtures(
     directory: Path,
     *,
-    version: str = "0.1.1",
+    version: str = "0.1.2",
     include_notice: bool = True,
 ) -> tuple[Path, Path]:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
@@ -215,6 +215,10 @@ class PublicationBaselineTests(unittest.TestCase):
             workflow,
         )
         self.assertRegex(workflow, r"actions/checkout@[a-f0-9]{40}")
+        self.assertRegex(workflow, r"actions/setup-python@[a-f0-9]{40}")
+        self.assertIn('python-version: ["3.11", "3.12"]', workflow)
+        self.assertIn("needs: [policy, fast, python-compatibility]", workflow)
+        self.assertIn("./ci/verify fast", workflow)
         self.assertIn("docker build", workflow)
 
         codeowners = codeowners_path.read_text(encoding="utf-8")
@@ -559,6 +563,75 @@ type_rules: {}
             )
             with self.assertRaises(KnowledgeFormatError):
                 load_profile(child, project_root=root)
+
+
+class KnowledgeInputTests(unittest.TestCase):
+    def test_duplicate_keys_are_rejected_in_standalone_yaml(self) -> None:
+        cases = {
+            "top-level": "id: first\nid: second\n",
+            "nested": "outer:\n  id: first\n  id: second\n",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "input.yaml"
+            for name, content in cases.items():
+                with self.subTest(name=name):
+                    path.write_text(content, encoding="utf-8")
+                    with self.assertRaises(KnowledgeFormatError) as raised:
+                        load_yaml(path)
+                    message = str(raised.exception)
+                    self.assertIn("duplicate key", message.lower())
+                    self.assertIn("id", message)
+
+    def test_duplicate_keys_are_rejected_in_markdown_frontmatter(self) -> None:
+        cases = {
+            "top-level": "type: Reference\ntype: Decision\n",
+            "nested": "type: Reference\nextension:\n  id: first\n  id: second\n",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "concept.md"
+            for name, frontmatter in cases.items():
+                with self.subTest(name=name):
+                    path.write_text(
+                        f"---\n{frontmatter}---\n\n# Concept\n",
+                        encoding="utf-8",
+                    )
+                    with self.assertRaises(KnowledgeFormatError) as raised:
+                        knowledge_common.parse_markdown(path, root)
+                    message = str(raised.exception)
+                    self.assertIn("duplicate key", message.lower())
+                    expected_key = "type" if name == "top-level" else "id"
+                    self.assertIn(expected_key, message)
+
+    def test_okf_v0_2_consumer_sentinel_preserves_extensions(self) -> None:
+        fixture = (
+            ROOT / "tests" / "fixtures" / "okf-v0.2" / "minimal-extended-concept.md"
+        )
+        document = knowledge_common.parse_markdown(fixture, fixture.parent)
+
+        self.assertEqual("Reference", document.metadata["type"])
+        self.assertEqual(
+            {"by": "human:fixture-owner", "at": "2026-08-24T00:00:00Z"},
+            document.metadata["verified"],
+        )
+        self.assertEqual({"retained": True}, document.metadata["x-fixture-extension"])
+        self.assertIn("# Minimal extended concept", document.body)
+
+    def test_okf_v0_2_authority_is_bound_to_an_immutable_revision(self) -> None:
+        pinned = (
+            "https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/"
+            "9a15b13ba996bb713b19e053ea744abee01c2714/okf/SPEC.md"
+        )
+        paths = (
+            ROOT / "knowledge" / "decisions" / "0001-okf-as-canonical-format.md",
+            ROOT / "guidance" / "reference" / "tool-selection.md",
+            ROOT / "guidance" / "practices" / "established-patterns.md",
+        )
+        for path in paths:
+            with self.subTest(path=path.relative_to(ROOT)):
+                content = path.read_text(encoding="utf-8")
+                self.assertIn(pinned, content)
+                self.assertNotIn("knowledge-catalog/blob/main/okf/SPEC.md", content)
 
 
 class ProfileReadBoundaryTests(unittest.TestCase):
@@ -2798,7 +2871,9 @@ class DocumentationTests(unittest.TestCase):
             "## Research", maxsplit=1
         )[0]
         research_section = roadmap.split("## Research", maxsplit=1)[1]
-        self.assertIn("https://github.com/ktogias/gnostoa/issues/24", next_section)
+        self.assertIn("https://github.com/ktogias/gnostoa/issues/109", next_section)
+        self.assertNotIn("https://github.com/ktogias/gnostoa/issues/24", next_section)
+        self.assertIn("https://github.com/ktogias/gnostoa/issues/24", roadmap)
         self.assertNotIn("https://github.com/ktogias/gnostoa/issues/12", next_section)
         self.assertIn("https://github.com/ktogias/gnostoa/issues/12", research_section)
 
@@ -2864,13 +2939,15 @@ class DocumentationTests(unittest.TestCase):
             self.assertIn(decision_name, projection)
 
         # The invariant is that the workflow need stays durably planned while
-        # the projections name the *current* experiment, not that any one slice
-        # is active. P1 is historical; Issue #24's P2 is the bounded experiment.
+        # completed B2 evidence remains distinct from the not-yet-started B3
+        # experiment and from the separately admitted readiness correction.
+        self.assertIn("B2/P1 and B2/P2 are both complete", roadmap)
+        self.assertIn("B2/P1 completed", status)
         for projection in (roadmap, status):
-            self.assertIn("B2/P1 completed", projection)
             self.assertIn("https://github.com/ktogias/gnostoa/issues/24", projection)
+            self.assertIn("B3 has not begun", projection)
             self.assertNotIn("Active B2/P1", projection)
-        self.assertIn("B2/P2", roadmap)
+        self.assertIn("https://github.com/ktogias/gnostoa/issues/109", roadmap)
         self.assertIn("need has already been demonstrated", status)
         self.assertIn(
             "full workflow platform is not a publication prerequisite",
@@ -2918,18 +2995,27 @@ class DocumentationTests(unittest.TestCase):
 
     def test_public_front_door_exposes_verified_evaluation_path(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        index = (ROOT / "docs" / "index.md").read_text(encoding="utf-8")
         quick_start = (ROOT / "docs" / "quick-start.md").read_text(encoding="utf-8")
         status = (ROOT / "docs" / "status.md").read_text(encoding="utf-8")
+        roadmap = (ROOT / "docs" / "roadmap.md").read_text(encoding="utf-8")
 
         self.assertIn("## Try Gnostoa from this checkout", readme)
         self.assertIn("--seed example.system.processing", readme)
         self.assertIn("python -m pip install --no-deps -e .", readme)
-        self.assertIn("No package, image or site has been released yet", readme)
+        self.assertIn("pre-stable v0.1.1 source and OCI release", readme)
+        self.assertIn("B3 independent-adoption methodology", readme)
+        self.assertIn("digest-pinned `linux/amd64` OCI image", index)
+        self.assertNotIn("not published package, image", index)
         self.assertIn("navigation projection", quick_start)
         self.assertIn("knowledge validate", quick_start)
         self.assertIn("KNOWLEDGE_KIT_ROOT", quick_start)
         self.assertIn("navigation projection", status)
         self.assertIn("Source and publication status", status)
+        for projection in (status, roadmap):
+            self.assertIn("B3 has not begun", projection)
+            self.assertIn("candidate selection", projection)
+            self.assertIn("0043-prepare-a-bounded-v0-1-2", projection)
 
     def test_repository_documentation_links_resolve(self) -> None:
         paths = [
