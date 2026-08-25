@@ -96,6 +96,7 @@ inherited, copied or loaded by adopting projects.
 - [Nextcloud Mail adoption external-practice research and remediation alternatives](assessments/nextcloud-mail-adoption-external-practice-and-remediation-alternatives.md)
 - [Nextcloud Mail adoption route-activation diagnostic design](assessments/nextcloud-mail-adoption-route-activation-diagnostic-design.md)
 - [Nextcloud Mail adoption route-activation diagnostic result](assessments/nextcloud-mail-adoption-route-activation-diagnostic-result.md)
+- [Nextcloud Mail post-diagnostic remediation alternatives](assessments/nextcloud-mail-post-diagnostic-remediation-alternatives.md)
 - [First-publication provider audit snapshot](assessments/first-publication-provider-audit.md)
 - [First-publication reputation and direction assessment](assessments/first-publication-reputation-and-direction-assessment.md)
 - [Source-publication name-risk screening](assessments/gnostoa-source-name-screening.md)
