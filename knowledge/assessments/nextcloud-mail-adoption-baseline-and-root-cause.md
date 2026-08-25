@@ -133,7 +133,7 @@ same-agent recovery evidence.
 | First read-only audit | Classified adoption as not established; exposed wrong identities, broken routing, invented semantics and internally conflicting generic-schema claims. | `A2`, `A3` |
 | Same-agent reconstruction | Found the intended three-root layout, local inheritance, YAML lock, Project/CI surfaces and CLI; removed nested Git metadata and corrected source/base/artifact identities in stages. | `B1`, `C5` |
 | Structural validation | A source-built v0.1.2 development image eventually ran the structural lock, policy, bundle and guardrail checks successfully. The earlier `ADOPTION STATUS: ESTABLISHED` conclusion was broader than this evidence. | `B2`, `C4`, `C5` |
-| Operational closeout | Published OCI execution and context generation remained absent; project verification was environment-blocked; semantic and routing defects remained in the authored files. | `C1`–`C4` |
+| Operational closeout | Published OCI execution remained independently `NOT RUN`; context generation remained absent; project verification was environment-blocked; semantic and routing defects remained in the authored files. | `C1`–`C4` |
 | Owner disposition | Technical execution `PARTIAL`, semantic fidelity `FAIL`, owner acceptance `REJECT`, durable adoption `NO`; same-agent recovery retained only as a bounded positive observation. | `W1` |
 
 ## Frozen result dimensions
@@ -157,10 +157,18 @@ same-agent recovery evidence.
 
 The recovery produced a locally vendored source, project configuration,
 Project concept, verification script and structurally valid bundle. The
-source-built v0.1.2 tooling passed its bounded structural checks. It did not
-run the immutable published OCI, generate a context pack, execute the declared
-project suites or produce a commit/provider candidate. Therefore neither
-published-runtime adoption nor operational readiness was established (`C2`–`C5`).
+later source-built v0.1.2 route established bounded technical execution of its
+structural checks. A correctly identity-bound and verified supported native or
+source-built route can establish technical execution; execution through the
+published OCI is not independently required for a valid adoption. Published
+OCI execution nevertheless remained `NOT RUN` as a separate observation.
+
+The adoption claim still exceeded the evidence: the initially selected route
+was not established and truthfully classified before completion was claimed,
+no context pack was generated, and declared project verification was
+unexecuted or initially misrepresented. The later evidence supported only a
+partial technical result, not operational readiness or durable adoption
+(`A1`–`A3`, `B2`, `C2`–`C5`).
 
 ### Semantic outcome
 
@@ -179,9 +187,10 @@ the immutable source and manifest identities. However, registry manifest
 observation, source-built execution and published-image execution remained
 different evidence classes. A source-built checker receiving the public image
 reference as an environment value proved declared-reference equality, not
-execution of registry bytes. No context receipt or declared test report
-existed, and the initial generic-schema conflict remained unresolved (`A3`,
-`C2`–`C4`).
+execution of registry bytes. That limits claims about the published OCI; it
+does not invalidate a correctly bound supported native or source-built route.
+No context receipt or declared test report existed, and the initial
+generic-schema conflict remained unresolved (`A3`, `C2`–`C4`).
 
 ### Corrections that remain useful evidence
 
@@ -212,7 +221,7 @@ factor alone caused the result.
 | ID | Class and surface | Bounded causal conclusion | Evidence map and limit |
 |---|---|---|---|
 | `D1` | Direct cause — agent | The first attempt authored a model before following the existing-project route through the bootstrap procedure and templates. This directly produced the wrong lock format, local/remote path model, router targets and incomplete file set. | `A1`, `A2`; the correcting agent explicitly attributes these errors to not reading the authorities before authoring in `B1`. |
-| `D2` | Direct cause — agent | The agent used completion of structural checks as its stopping criterion and did not require context generation, declared project-suite execution or published-runtime execution before claiming adoption. | The broad claim in `B2` is contradicted and narrowed by `C2`–`C4`. |
+| `D2` | Direct cause — agent | The invalid claim combined four failures: it did not establish and truthfully classify the selected supported execution route before claiming completion; it generated no bounded context; declared project suites were unexecuted or initially misrepresented; and the retained evidence did not support the breadth of the adoption claim. Published OCI execution was not a prerequisite; its `NOT RUN` result remains independent. | The initial claim and evidence conflict in `A1`–`A3`, the broad structural-green claim in `B2`, and the narrower route, context and suite read-back in `C2`–`C5`. |
 | `D3` | Direct cause — agent | Unsupported inference substituted plausible owners, provenance, vocabulary and runtime/capability semantics for unknown project facts. | Exact authored values in `A2` and `C1`; #117 records that the human did not supply or verify them. |
 | `D4` | Direct cause — agent/evidence | Evidence classes were conflated: a Python base digest became an application artifact identity, and later a caller-supplied public image reference was described as published-OCI evidence despite source-built execution. | `A2`, `B2`, `C4`. |
 | `F1` | Contributing factor — documentation routing | The existing-project page delegates exact file construction to the longer bootstrap route. The required three roots and target files are present there but distributed across steps, so success depends on following the cross-route rather than reading the adoption page in isolation. | Agent-reported friction in `B3`, mechanically bounded by `R1`; `B1` also shows that the agent had not followed the route initially, so this is not established as the sole cause. |
@@ -221,7 +230,7 @@ factor alone caused the result.
 | `F4` | Contributing factor — environment state | A stale local v0.1.0 image produced a source/runtime mismatch and required a later source build before structural checks could run against v0.1.2. | `C5`; it does not establish a defect in the immutable v0.1.2 artifact. |
 | `F5` | Contributing factor — experiment design | The minimal prompt supplied no project ground-truth matrix, independent accountable owner or predeclared receipt contract. That made unsupported inference easier to miss and prevented a complete comparison ledger. | Prompt and evidence limits in `W1`; omissions in `A1`–`A3` and `C1`–`C4`. This does not excuse the agent from stopping on unknowns. |
 | `O1` | Observation/acquisition-binding gap | The local Mail workspace and command chronology are not provider-addressable and lack a complete timestamped artifact/hash manifest, so the reports cannot be independently replayed or ordered completely. | `W1`, `A3`; all three comments are explicitly owner-reported. |
-| `O2` | Observation/acquisition-binding gap | The published OCI manifest was registry-observed but its bytes were never pulled and executed. Supplying its reference to `check-runtime` did not bind the running source-built image to those bytes. | `C4`; `R2` confirms the checker compares a caller-supplied reference rather than deriving registry execution. |
+| `O2` | Observation/acquisition-binding gap | The published OCI manifest was registry-observed but its bytes were never pulled and executed. Supplying its reference to `check-runtime` did not bind the running source-built image to those bytes. This bounds only the published-OCI observation and does not make a correctly bound supported native or source-built route invalid. | `C4`; `R2` confirms the checker compares a caller-supplied reference rather than deriving registry execution. |
 | `O3` | Observation/acquisition-binding gap | No generated context artifact, hash or command receipt exists, so context quality and determinism are unobserved. | `C2`. |
 | `O4` | Observation/acquisition-binding gap | Declared `test-report` evidence was absent and project tests did not execute, so the manifest declaration had no bound result. | Exact manifest and exit evidence in `C1`, `C3`. |
 | `R3` | Routing gap — agent-authored output | `AGENTS.md` used `../.knowledge-kit/...` from the repository root and therefore routed outside the intended target, despite the referenced toolkit files existing inside `.knowledge-kit/`. | Exact delta in `C1`; the baseline router template in `R1` uses `.knowledge-kit/...`. |
@@ -291,8 +300,9 @@ baseline to fit the result.
   provide the expected layout, commands, failure list or correction feedback
   before the first final report.
 - Bind the then-admitted Gnostoa documentation subject and immutable execution
-  subject separately. A source-built fallback and the published OCI remain
-  different evidence categories.
+  subject separately. A supported native or source-built route and the
+  published OCI remain different evidence categories; the report must name
+  which route actually executed.
 - Make no provider effect in Mail and do not repair Gnostoa during measurement.
 
 ### Fail-closed preflight and stop conditions
@@ -323,8 +333,10 @@ Report environment eligibility, public orientation, structural validation,
 published-runtime execution, technical execution, semantic fidelity, evidence
 binding, context quality, human intervention, owner acceptance, measured
 utility and durable-adoption disposition separately. A structural pass cannot
-replace any other dimension. Severity and materiality accompany omissions and
-inventions rather than relying on counts alone.
+replace any other dimension, while published-runtime `NOT RUN` does not by
+itself make technical execution fail when another supported route is correctly
+bound and verified. Severity and materiality accompany omissions and inventions
+rather than relying on counts alone.
 
 The primary comparison question is:
 
