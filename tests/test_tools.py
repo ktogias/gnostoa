@@ -1495,6 +1495,60 @@ class MarkdownReferenceAuthorityTests(unittest.TestCase):
 
 
 class BundleTests(unittest.TestCase):
+    def test_adoption_guidance_exposes_the_first_verified_slice_contract(
+        self,
+    ) -> None:
+        adoption = (
+            ROOT / "guidance" / "workflows" / "adopt-existing-project.md"
+        ).read_text(encoding="utf-8")
+        bootstrap = (
+            ROOT / "guidance" / "workflows" / "bootstrap-new-project.md"
+        ).read_text(encoding="utf-8")
+
+        for required in (
+            "## First verified adoption slice",
+            "minimal evaluation",
+            "durable adoption",
+            "actual supported execution route",
+            "Bounded context generation",
+            "Project suites: `PASS`, `FAIL`, `BLOCKED` or `NOT RUN`",
+            "Semantic owner review: `ACCEPT`, `CORRECT`, `REJECT` or `UNRESOLVED`",
+        ):
+            self.assertIn(required, adoption)
+
+        for root in ("`.knowledge-kit/`", "`.knowledge/`", "`knowledge/`"):
+            self.assertIn(root, bootstrap)
+        for template, target in (
+            ("templates/knowledge-kit.lock.yaml", ".knowledge/kit.lock.yaml"),
+            ("templates/change-control.project.yaml", ".knowledge/change-control.yaml"),
+            (
+                "templates/continuous-integration.project.yaml",
+                ".knowledge/continuous-integration.yaml",
+            ),
+            ("templates/verification.project.yaml", ".knowledge/verification.yaml"),
+            ("templates/verify.project", "ci/verify"),
+            ("templates/AGENTS.project.md", "AGENTS.md"),
+        ):
+            template_target = "../../" + template
+            self.assertIn(
+                f"[`{template}`]({template_target}) → `{target}`",
+                bootstrap,
+            )
+
+        for identity in (
+            "Documentation identity",
+            "Toolkit source identity",
+            "Selected execution route",
+            "Published OCI identity",
+        ):
+            self.assertIn(identity, bootstrap)
+        self.assertIn(
+            "does not prove that those image bytes executed",
+            bootstrap,
+        )
+        for route in ("native", "source-built", "immutable OCI"):
+            self.assertIn(route, bootstrap)
+
     def test_generic_example_is_valid(self) -> None:
         _, issues = validate_bundle(
             ROOT / "core" / "profile.yaml",

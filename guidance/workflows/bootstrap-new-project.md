@@ -40,13 +40,60 @@ policy, CI and provider maintenance. For a bounded technical evaluation and
 orientation without that commitment, stop here and use the
 [minimal evaluation route](../../docs/quick-start.md) instead.
 
+## Roots, targets and identities
+
+Keep the three project roots distinct; the
+[repository-layout reference](../reference/repository-layout-and-distribution.md)
+owns their wider placement choices:
+
+- `.knowledge-kit/` is the pinned toolkit source dependency.
+- `.knowledge/` holds project profile, lock, policy and verification
+  configuration.
+- `knowledge/` is the canonical project-owned OKF concept bundle.
+
+For the core bootstrap, copy or adapt the named reusable files to these exact
+targets:
+
+- [`templates/knowledge-kit.lock.yaml`](../../templates/knowledge-kit.lock.yaml) → `.knowledge/kit.lock.yaml`
+- [`templates/change-control.project.yaml`](../../templates/change-control.project.yaml) → `.knowledge/change-control.yaml`
+- [`templates/continuous-integration.project.yaml`](../../templates/continuous-integration.project.yaml) → `.knowledge/continuous-integration.yaml`
+- [`templates/verification.project.yaml`](../../templates/verification.project.yaml) → `.knowledge/verification.yaml`
+- [`templates/verify.project`](../../templates/verify.project) → `ci/verify`
+- [`templates/AGENTS.project.md`](../../templates/AGENTS.project.md) → `AGENTS.md`
+
+The project profile and initial `knowledge/index.md` and Project concept are
+authored in the steps below; their contents are not inferred from the template
+filenames. Optional review and provider templates remain governed by the
+[continuous-integration workflow](configure-continuous-integration.md) and the
+selected provider's own target paths.
+
+Record four subjects separately:
+
+- **Documentation identity:** the exact revision of the Gnostoa pages followed.
+- **Toolkit source identity:** the immutable source revision materialized at
+  `.knowledge-kit/`.
+- **Selected execution route:** the native, source-built or immutable OCI route
+  that actually ran, plus the observed identity evidence for that execution.
+- **Published OCI identity:** the immutable registry digest, whether or not OCI
+  was selected as the execution route.
+
+Writing an image reference into a lock or environment variable declares an
+expected identity; it does not prove that those image bytes executed. A native,
+source-built or immutable OCI route is valid when its own prerequisites and the
+existing source/runtime identity checks are satisfied. Report only the route
+that actually executed, and do not translate source-built or native evidence
+into a published-OCI claim.
+
 ## Preconditions
 
 - The toolkit has a released tag or immutable commit.
-- A matching runtime image is available by immutable OCI digest.
+- A matching runtime identity is available to record and one supported native,
+  source-built or immutable OCI execution route is usable.
 - The project repository and accountable owner are known.
 - The team has selected embedded or dedicated knowledge-repository placement.
-- Local development or CI provides an OCI-compatible container runtime.
+- Local development or CI provides the prerequisites for the selected route. An
+  OCI-compatible container runtime is required only for OCI and source-built
+  container routes.
 
 ## Procedure
 
@@ -111,7 +158,8 @@ orientation without that commitment, stop here and use the
    [repository-settings checklist](../../templates/repository-settings-checklist.md)
    to map the policy to the selected provider. Do not publish or integrate the
    baseline yet.
-11. Check source/runtime lockstep and validate through the pinned image:
+11. Check source/runtime lockstep through the selected supported route. The
+    canonical immutable-OCI invocation is:
 
    ```bash
    KNOWLEDGE_KIT_IMAGE='registry.example.org/gnostoa@sha256:<digest>'
@@ -189,7 +237,10 @@ Use the project router template at
 [`templates/AGENTS.project.md`](../../templates/AGENTS.project.md) so agents
 load this guidance by task rather than loading the entire toolkit.
 
-When an OCI runtime is unavailable, use the supported native fallback:
+When the exact toolkit source is built locally, record the source commit and
+built runtime identity, execute the same checks and classify the result as
+source-built rather than published-OCI execution. When an OCI runtime is
+unavailable, use the supported native fallback:
 
 ```bash
 python3 -m venv .venv-knowledge

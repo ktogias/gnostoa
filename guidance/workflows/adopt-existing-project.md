@@ -20,6 +20,8 @@ x-project-knowledge:
     - kind: references
       target: /reference/repository-layout-and-distribution.md
     - kind: depends-on
+      target: /workflows/bootstrap-new-project.md
+    - kind: depends-on
       target: /workflows/propose-review-merge-change.md
     - kind: depends-on
       target: /workflows/configure-continuous-integration.md
@@ -32,6 +34,50 @@ x-project-knowledge:
 One real development workflow has a verified current-state knowledge slice,
 clear source authority, visible contradictions and measured navigation value.
 The adoption does not attempt a big-bang rewrite of legacy documentation.
+
+## First verified adoption slice
+
+First resolve the intended commitment through the
+[adoption guide](../../docs/core/adoption.md). A **minimal evaluation** follows
+the linked quick start and stops before repository-owned policy, CI or provider
+maintenance is introduced. A **durable adoption** continues through this
+workflow. If the commitment is unclear, keep it unresolved and stop rather than
+silently choosing the larger surface. If accountable ownership is unknown, keep
+the affected knowledge draft or unresolved and ask; do not invent a person,
+team, provenance or acceptance.
+
+For durable adoption, complete this bounded slice before expanding the full
+procedure:
+
+1. Select one pilot and bind the exact documentation and toolkit source subjects.
+   Use the [bootstrap root and target map](bootstrap-new-project.md#roots-targets-and-identities)
+   rather than reconstructing file placement from names.
+2. Check source access, workspace state and required project tools, then identify
+   the **actual supported execution route** that will run: native, source-built
+   or immutable OCI. Record the observed route identity; a declaration alone is
+   not execution evidence.
+3. Author only the project-owned profile, lock, policy and smallest draft concept
+   spine needed by the pilot. Preserve unknown facts as unknown.
+4. Run source/runtime-lock, policy, profile and bundle structural validation
+   through that route.
+5. Run bounded-context generation for the pilot and retain the generated output
+   and its identity. Follow its concept paths back to canonical project records
+   for full evidence.
+6. Run the project suites that the environment supports. Classify an unavailable
+   required tool or suite separately as `BLOCKED`; do not report it as a pass or
+   make it erase a distinct structural result.
+7. Record the dimensions independently rather than collapsing them into one
+   adoption status:
+   - Structural validation: `PASS`, `FAIL` or `NOT RUN`.
+   - Bounded context generation: `PASS`, `FAIL` or `NOT RUN`.
+   - Project suites: `PASS`, `FAIL`, `BLOCKED` or `NOT RUN`.
+   - Semantic owner review: `ACCEPT`, `CORRECT`, `REJECT` or `UNRESOLVED`.
+   - Durable adoption: `YES`, `NO` or `DEFERRED`.
+
+Only an accountable owner can accept the semantic content and durable
+commitment. This slice is a concentrated entry to the existing procedure, not a
+universal path and not a substitute for the linked bootstrap, verification or
+provider details.
 
 ## Preconditions
 
@@ -46,8 +92,8 @@ The adoption does not attempt a big-bang rewrite of legacy documentation.
 1. Choose embedded placement for one repository or a dedicated knowledge
    repository for a multi-repository program.
 2. Pin the toolkit revision, deterministic public-surface digest and matching
-   runtime image, then create a minimal project profile and validate the lock as
-   in the new-project workflow.
+   runtime identity, then create a minimal project profile and validate the lock
+   through the [new-project workflow](bootstrap-new-project.md).
 3. Inherit the generic change-control and CI policies. Inventory current branch,
    review, hooks, pipelines, test suites, secrets and emergency practices, and
    record gaps without silently treating them as compliant.
