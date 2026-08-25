@@ -61,6 +61,13 @@ targets:
 - [`templates/verify.project`](../../templates/verify.project) → `ci/verify`
 - [`templates/AGENTS.project.md`](../../templates/AGENTS.project.md) → `AGENTS.md`
 
+For an existing repository, follow the
+[existing-project workflow](adopt-existing-project.md#preserve-existing-project-authority)
+before applying this map. Each template is source material, not authorization
+to replace an existing authoritative target: inspect and preserve the target,
+and request accountable-owner resolution before writing when instructions
+conflict or edit authority is unclear.
+
 The project profile and initial `knowledge/index.md` and Project concept are
 authored in the steps below; their contents are not inferred from the template
 filenames. Optional review and provider templates remain governed by the
