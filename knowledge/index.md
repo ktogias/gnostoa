@@ -55,6 +55,7 @@ inherited, copied or loaded by adopting projects.
 - [Accept the weather-note cold-start onboarding result](decisions/0042-accept-the-weather-note-cold-start-onboarding-result.md)
 - [Prepare a bounded v0.1.2 B3-readiness candidate](decisions/0043-prepare-a-bounded-v0-1-2-b3-readiness-candidate.md)
 - [Select the v0.1.2 source and OCI publication series](decisions/0044-select-the-v0-1-2-source-and-oci-publication-series.md)
+- [Select documentation-only remediation for Nextcloud Mail adoption](decisions/0045-select-documentation-only-remediation-for-nextcloud-mail-adoption.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Verification precedes integration](requirements/verification-precedes-implementation.md)
