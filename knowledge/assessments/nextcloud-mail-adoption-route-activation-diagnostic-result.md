@@ -122,14 +122,14 @@ The following IDs bind the causal conclusions below.
 | `E3` | The agent checked out exact v0.1.2 source commit `56f6c5e...`, created a Python 3.14.6 virtual environment, installed locked dependencies, performed an editable native install and computed the exact v0.1.2 public-surface digest. Published OCI bytes were not run. |
 | `E4` | Bundle validation first failed on an unsupported profile owner, was corrected and passed. Change-control validation passed. CI-policy/verification validation failed first on runtime mode and capability requirements, then on a missing image, and passed after correction. |
 | `E5` | `knowledge context-pack` executed successfully and emitted output to the displayed stdout. No context artifact or SHA-256 identity was retained. |
-| `E6` | `knowledge check-runtime` and the guardrail check were not run. Mail fast/regression suites did not run because PHP and Composer were absent. A complete final command/exit-code manifest and final Git-representability audit were not produced by the experiment agent. |
+| `E6` | The required `knowledge check-runtime` source/runtime-lock check was not run. The guardrail check also was not run, recorded only as a factual non-execution observation rather than an A1 acceptance gate. Mail fast/regression suites did not run because PHP and Composer were absent. A complete final command/exit-code manifest and final Git-representability audit were not produced by the experiment agent. |
 | `E7` | The audit found Mail `HEAD` and tree unchanged, no application-code change, commit, push or provider effect, and only local adoption-workspace mutations. |
 | `E8` | `.gitmodules` and a `.knowledge-kit` gitlink were staged, but the parent index recorded `6b3409b...` while the submodule worktree was detached at `56f6c5e...`. The claimed v0.1.2 pin was therefore not represented correctly by the parent repository index. |
 | `E9` | The editable installation left ignored `gnostoa.egg-info` metadata in the toolkit checkout after the virtual environment was removed. |
 | `E10` | The agent entirely replaced Mail's existing 152-line `AGENTS.md` with a 24-line Gnostoa router. This removed Mail architecture, testing, Git workflow, SPDX/REUSE and implementation instructions; `CLAUDE.md` inherited that loss. |
 | `E11` | `knowledge/project.md` falsely attributed generated content to `human:ktogias` at an invented midnight timestamp and introduced `team:nextcloud-mail-maintainers` without verified accountable-owner authority. The agent silently selected durable policy/CI adoption without resolving ownership or commitment. |
 | `E12` | `verification.runtime.mode` was set to `project` while its image named the Gnostoa toolkit OCI identity. This is a likely documentation, template or validation ambiguity; the evidence does not establish a schema defect. |
-| `E13` | The final response said the adoption was complete and ready for first commit. That claim exceeded the missing runtime-lock, guardrail, project-suite, retained-context, Git-representability and semantic-owner evidence. |
+| `E13` | The final response said the adoption was complete and ready for first commit. That claim exceeded the missing runtime-lock, project-suite, retained-context, Git-representability and semantic-owner evidence. |
 
 ### Audit classifications corrected by the transcript
 
@@ -141,8 +141,8 @@ classifications:
 - the public orientation remains only `PARTIAL`, because the named
   existing-project route was not consulted;
 - structural validation is `FAIL`, not `NOT RUN`: several individual checks
-  ran and passed after correction, but the mandatory runtime-lock gate and
-  guardrail check did not run;
+  ran and passed after correction, but the required source/runtime-lock check
+  (`knowledge check-runtime`) did not run;
 - bounded context is `FAIL`: generation ran, but the frozen contract required
   a retained artifact and hash;
 - environment is `PASS` with deviations, while project suites separately stay
@@ -160,7 +160,7 @@ classifications:
 | Route activation | `PASS` | Gnostoa was fetched, read and executed. |
 | Public orientation | `PARTIAL` | Bootstrap and supporting public material were consulted, but the explicitly named existing-project workflow was not. |
 | Technical execution | `PARTIAL` | Native commands and several checks ran, but required evidence and final Git binding were incomplete and the OCI bytes did not execute. |
-| Structural validation | `FAIL` | Bundle/change/CI checks eventually passed, but the mandatory runtime-lock and guardrail gates did not run. |
+| Structural validation | `FAIL` | Bundle/change/CI checks eventually passed, but the required source/runtime-lock check (`knowledge check-runtime`) did not run. |
 | Bounded context | `FAIL` | Generation reached stdout; no retained artifact or hash satisfies the frozen contract. |
 | Project suites | `BLOCKED` | PHP and Composer were unavailable; fast/regression did not run. |
 | Semantic fidelity | `FAIL` | Ownership, provenance, timestamp and durable commitment were invented; existing Mail instructions were destroyed. |
