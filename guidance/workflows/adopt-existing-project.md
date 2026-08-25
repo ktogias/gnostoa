@@ -79,6 +79,29 @@ commitment. This slice is a concentrated entry to the existing procedure, not a
 universal path and not a substitute for the linked bootstrap, verification or
 provider details.
 
+## Preserve existing project authority
+
+Before writing any mapped target, inspect whether it already exists and
+identify its project authority. A reusable template is source material for
+adaptation, not authorization to replace an existing authoritative file.
+
+If `AGENTS.md` exists and the authority to edit it is clear, preserve its
+existing project-specific instructions, add only the missing Gnostoa routing
+section, and retain unrelated content and ordering where practical. Record the
+before/after diff or identities as adoption evidence. Never silently resolve
+contradictory instructions. If a Gnostoa route conflicts with existing project
+instructions, or authority to alter them is unclear, stop, preserve the
+existing file, record the conflict and request accountable-owner resolution.
+
+Apply the same inventory and no-blind-overwrite boundary to existing mapped
+policy, CI and verification targets. This boundary does not imply that prose or
+a reusable template can mechanically merge their semantics. The existing
+unknown-owner and commitment stop, source/runtime-lock check and final staged
+gitlink equality remain required in their owning steps; do not replace them
+with file-preservation evidence. This documentation is a falsifiable control,
+not a guarantee of agent compliance, and one later fresh rerun must measure its
+predicted benefit.
+
 ## Preconditions
 
 - A bounded pilot area and its accountable owners are selected.

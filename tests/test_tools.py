@@ -1549,6 +1549,46 @@ class BundleTests(unittest.TestCase):
         for route in ("native", "source-built", "immutable OCI"):
             self.assertIn(route, bootstrap)
 
+    def test_existing_project_adoption_preserves_authoritative_targets(
+        self,
+    ) -> None:
+        adoption = (
+            ROOT / "guidance" / "workflows" / "adopt-existing-project.md"
+        ).read_text(encoding="utf-8")
+        bootstrap = (
+            ROOT / "guidance" / "workflows" / "bootstrap-new-project.md"
+        ).read_text(encoding="utf-8")
+        router = (ROOT / "templates" / "AGENTS.project.md").read_text(encoding="utf-8")
+        normalized_adoption = " ".join(adoption.split())
+
+        for required in (
+            "## Preserve existing project authority",
+            "inspect whether it already exists",
+            "source material for adaptation, not authorization to replace",
+            "preserve its existing project-specific instructions",
+            "add only the missing Gnostoa routing section",
+            "before/after diff or identities",
+            "Never silently resolve contradictory instructions",
+            "request accountable-owner resolution",
+            "policy, CI and verification targets",
+        ):
+            self.assertIn(required, normalized_adoption)
+
+        for surface in (bootstrap, router):
+            normalized_surface = " ".join(surface.replace("\n>", "\n").split())
+            self.assertIn(
+                "source material, not authorization to replace",
+                normalized_surface,
+            )
+            self.assertIn("preserve", normalized_surface.lower())
+            self.assertIn(
+                "request accountable-owner resolution",
+                normalized_surface,
+            )
+
+        self.assertIn("existing-project workflow", " ".join(bootstrap.split()))
+        self.assertIn("before/after identities or diff", " ".join(router.split()))
+
     def test_generic_example_is_valid(self) -> None:
         _, issues = validate_bundle(
             ROOT / "core" / "profile.yaml",
