@@ -91,6 +91,7 @@ inherited, copied or loaded by adopting projects.
 - [Weather-note cold-start onboarding result](assessments/weather-note-cold-start-onboarding-result.md)
 - [Weather-note evaluation root-cause retrospective](assessments/weather-note-evaluation-root-cause-retrospective.md)
 - [B3 independent-adoption experiment design](assessments/b3-independent-adoption-experiment-design.md)
+- [Nextcloud Mail adoption baseline and root-cause analysis](assessments/nextcloud-mail-adoption-baseline-and-root-cause.md)
 - [First-publication provider audit snapshot](assessments/first-publication-provider-audit.md)
 - [First-publication reputation and direction assessment](assessments/first-publication-reputation-and-direction-assessment.md)
 - [Source-publication name-risk screening](assessments/gnostoa-source-name-screening.md)
