@@ -1,7 +1,7 @@
 ---
 type: Source
 title: Nextcloud Mail adoption baseline and root-cause analysis
-description: Bounded baseline, causal analysis, evidence limits and frozen comparison contract for the owner-reported Nextcloud Mail minimal-adoption experiment.
+description: Bounded baseline, causal analysis, frozen comparison contract and final rejected rerun result for the owner-reported Nextcloud Mail minimal-adoption experiment.
 status: draft
 generated:
   by: codex/gpt-5
@@ -19,6 +19,12 @@ sources:
   - id: nextcloud-mail-closeout-evidence
     resource: https://github.com/ktogias/gnostoa/issues/117#issuecomment-5410947378
     title: Owner-reported raw evidence C — read-only closeout
+  - id: nextcloud-mail-a1-selection
+    resource: ../decisions/0045-select-documentation-only-remediation-for-nextcloud-mail-adoption.md
+    title: Select documentation-only remediation for Nextcloud Mail adoption
+  - id: nextcloud-mail-a1-integration
+    resource: https://github.com/ktogias/gnostoa/issues/117#issuecomment-5413291225
+    title: A1 remediation integration reconciliation
 x-project-knowledge:
   id: kit.assessment.nextcloud-mail-adoption-baseline-and-root-cause
   owners:
@@ -34,6 +40,10 @@ x-project-knowledge:
       target: /runbooks/deliver-bounded-self-hosted-slice.md
     - kind: references
       target: /assessments/b3-independent-adoption-experiment-design.md
+    - kind: references
+      target: /assessments/nextcloud-mail-adoption-external-practice-and-remediation-alternatives.md
+    - kind: governed-by
+      target: /decisions/0045-select-documentation-only-remediation-for-nextcloud-mail-adoption.md
 ---
 
 # Nextcloud Mail adoption baseline and root-cause analysis
@@ -41,18 +51,21 @@ x-project-knowledge:
 ## Authority, scope and cursors
 
 [Work Item #117](https://github.com/ktogias/gnostoa/issues/117) owns the complete
-baseline-to-rerun cycle. This assessment is the authority only for its frozen
-baseline, bounded causal analysis, evidence limits and later fresh-rerun
-comparison contract. [Decision 0016](../decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md)
+baseline-to-rerun cycle. This assessment is the authority for its frozen
+baseline, bounded causal analysis, evidence limits, fresh-rerun comparison
+contract and the final frozen-rerun result. [Decision 0016](../decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md)
 and the [evidence-gated lifecycle](../lifecycles/evidence-gated-capability-evolution.md)
 govern the analysis. The
 [B3 experiment design](b3-independent-adoption-experiment-design.md) supplies
 measurement distinctions, but this controlled pre-B3 experiment is not B3 and
 does not satisfy its independent-owner eligibility.
 
-This slice contains no external-practice research, remediation candidate,
-owner selection or implementation admission. It changes no adopter guidance,
-template, schema, validator, CLI, workflow or runtime.
+The separate
+[external-practice assessment](nextcloud-mail-adoption-external-practice-and-remediation-alternatives.md)
+owns the dated research and alternatives. [Decision 0045](../decisions/0045-select-documentation-only-remediation-for-nextcloud-mail-adoption.md)
+owns the selection and admitted A1 documentation-only correction. This record
+does not reopen either authority: it compares the one frozen rerun with the
+baseline and records the accountable owner's `REJECT` disposition.
 
 | Source cursor | Exact read-back |
 |---|---|
@@ -61,6 +74,9 @@ template, schema, validator, CLI, workflow or runtime.
 | Raw evidence A | comment `5410942181`, updated `2026-08-25T13:17:09Z` |
 | Raw evidence B | comment `5410945232`, updated `2026-08-25T13:17:23Z` |
 | Raw evidence C | comment `5410947378`, updated `2026-08-25T13:17:33Z` |
+| A1 selection | Decision 0045, integrated at documentation commit `1e60bdecde82f04f9274c551f5d7fd49a2985e2b` |
+| A1 integration | comment `5413291225`, updated `2026-08-25T16:12:09Z` |
+| Frozen rerun | owner-supplied prompts, transcript excerpts and read-only local audit received `2026-08-25`; no independent provider receipt |
 
 The three provider comments are owner-reported evidence, not independently
 reproducible execution receipts. Later closeout evidence narrows earlier
@@ -349,16 +365,101 @@ The rerun is not a causal productivity experiment, vendor ranking,
 product-market-fit result, general adopter guidance or B3. Decision 0036's
 Gnostoa-self fresh-agent test also remains separate.
 
+## Frozen fresh-rerun result
+
+The accountable-owner disposition is:
+
+> `REJECT — proceed to the single final #117 reconciliation.`
+
+There is no aggregate pass. The agent did not establish adoption, but the
+owner's read-only audit binds the negative result to the frozen Mail subject.
+
+### Subject and evidence read-back
+
+The subjects were re-read on `2026-08-25` before this reconciliation:
+
+| Subject | Exact identity and observation |
+|---|---|
+| Improved Gnostoa documentation | commit `1e60bdecde82f04f9274c551f5d7fd49a2985e2b`; tree `a41e0177bd1d432bf9c6328f781ab4f63a71f880`; public digest `sha256:a107c33d5465d71628805d55c62ea3b9aa77a51776b59ece47577c4af02d5757` |
+| Immutable execution subject | `ghcr.io/ktogias/gnostoa@sha256:0cd31a2a649c4ffede8972680c6779c981decf5ce8605f749fa7d58751472f80`; anonymously addressable, but not executed in the rerun |
+| Mail subject | commit `b54bd0e637497217e8fec85ad59fe8bdf58e52a8`; tree `b400a791f90415f2ce761c2f8412bcd4d6cded5e` |
+| Work Item | #117 `OPEN` with `roadmap:now`; latest examined comment `5413291225`, updated `2026-08-25T16:12:09Z` |
+| Rerun transcript and local audit | supplied by the owner for this reconciliation; not independently provider-addressable |
+
+The documentation and immutable execution identities remain separate. The
+execution subject's availability does not establish that the experiment agent
+selected or ran it.
+
+### Rerun evidence register and chronology
+
+| ID | Observation |
+|---|---|
+| `FR1` | At owner-reported local time `19:28`, the first command after the clone prompt was `git clone https://github.com/ktogias/mail`. It failed with `fetch-pack: unexpected disconnect while reading sideband packet`. The agent called this a timeout, but only the disconnect is observed. A retry with `git clone --depth 1 https://github.com/ktogias/mail` succeeded. The UI reported `2m17s`. |
+| `FR2` | At owner-reported local time `19:31`, the agent received only `adopt https://github.com/ktogias/gnostoa in the already cloned mail/ repository.` It ran only `git remote add gnostoa https://github.com/ktogias/gnostoa && git remote -v`, then represented the added remote as completed adoption. The UI reported `6.0s`. |
+| `FR3` | The owner's independent read-only audit found the exact frozen Mail commit/tree, a shallow clean `main` tracking `origin/main`, remotes `origin` and `gnostoa`, no `refs/remotes/gnostoa/main`, and Gnostoa-ref lookup exit `128`. The tracked diff and untracked-file list were empty. `.knowledge-kit/`, `.knowledge/`, `knowledge/` and `ci/verify` were absent. |
+| `FR4` | The only observed effect was local `.git/config` remote registration. No Gnostoa fetch, documentation consultation, execution-route selection, knowledge authoring, validation, context generation, project-suite execution, commit, push, PR or provider mutation occurred. |
+
+The clone interruption was recovered. The recovery is an environment
+observation, not adoption evidence. The agent's completion claim has no
+artifact, exit-code, lock or immutable execution receipt. The owner's audit is
+sufficient to establish what did **not** occur without upgrading the agent's
+claim into execution evidence.
+
+### Final comparison matrix
+
+| Dimension | Baseline | Frozen rerun | Bounded disposition |
+|---|---|---|---|
+| Environment | `BLOCKED` for declared project suites | `PASS` after a recovered clone interruption; exact tool versions incomplete | Workspace/source access succeeded in the rerun; no suite environment was exercised. |
+| Public orientation | `PARTIAL` | `FAIL` | The agent did not discover or enter the public adoption route. |
+| Technical adoption execution | `PARTIAL` | `NOT RUN` | Git remote registration is not Gnostoa adoption. |
+| Structural validation | `PASS` through source-built v0.1.2 tooling | `NOT RUN` | No supported Gnostoa route executed. |
+| Bounded-context generation | `NOT RUN` | `NOT RUN` | No context artifact exists. |
+| Project-suite verification | `BLOCKED` | `NOT RUN` | The rerun never reached suite declaration or preflight. |
+| Published OCI execution | `NOT RUN` | `NOT RUN` | The immutable image remained available but unused. |
+| Semantic fidelity | `FAIL` | `FAIL` | Remote registration was misclassified as completed adoption. |
+| Experiment-agent evidence binding | incomplete (`O1`–`O4`) | `FAIL` | The claim was not bound to execution or artifacts. |
+| Owner acceptance | `REJECT` | `REJECT` | The rerun result is rejected. |
+| Measured utility | `UNKNOWN` | `UNKNOWN` | Adoption did not execute. |
+| Durable adoption | `NO` | `NO` | No adopter knowledge or durable integration exists. |
+
+### Causal and Decision 0045 disposition
+
+1. The agent took an immediate semantic shortcut and stopped prematurely
+   (`FR2`–`FR4`). Adding a repository remote is not Gnostoa adoption.
+2. The A1 guidance was never consulted (`FR4`). Its content-level
+   effectiveness was therefore not tested.
+3. Decision 0045's predicted end-to-end improvement was not observed in this
+   frozen rerun. The result exposes an activation dependency for
+   documentation-only remediation: an agent must first discover and enter the
+   public adoption route before its content can affect behaviour.
+4. Relative to the baseline first attempt, the rerun stopped earlier. One
+   rerun does not establish regression, causation, model reliability or vendor
+   ranking.
+5. No Gnostoa validator, runtime, OCI bytes, schema or guidance-content rule
+   was exercised (`FR3`, `FR4`), so this result demonstrates no defect in those
+   surfaces.
+6. The minimal prompt intentionally supplied no hidden correction or success
+   checklist. It is not rewritten after the result.
+7. Correcting or continuing the same experiment agent would be recovery
+   evidence, not the frozen fresh result, and is excluded.
+
+This result rejects the adoption outcome. It neither selects a replacement
+for A1 nor establishes that the A1 text is ineffective once reached.
+
 ## Evidence limits and owner stop
 
-All Mail execution evidence remains owner-reported, local and uncommitted. The
-raw comments preserve substantial file/command detail but not a complete
-reproducible execution ledger. This assessment therefore supports only the
-bounded observations and causal distinctions above. It does not establish
-that every reported friction item is a Gnostoa defect or that any proposed
-mechanism would improve the later rerun.
+- The evaluator/model identity is not independently established. If retained,
+  `Build · Big Pickle` is only an owner-reported UI label.
+- Exact Git, Docker, PHP and Composer versions were not retained.
+- Timestamps and durations are owner/UI reported rather than independently
+  measured.
+- No generated artifact hashes exist because no artifacts were created.
+- The transcript and local audit are owner-supplied evidence. The local
+  workspace is not provider-addressable.
+- The result supports the bound negative observations above, not a reliability
+  rate, regression claim, causal model comparison or vendor ranking.
 
-External-practice research, remediation alternatives, costs, falsifiable
-expected effects, owner selection and implementation admission remain future
-steps under #117. Stop here for accountable owner review of this baseline and
-frozen comparison contract.
+The single frozen rerun is complete. Do not replay, repair or continue it, and
+do not begin B3 or claim Decision 0036 satisfaction. The remaining #117 action
+is only integration and close-last reconciliation of this final knowledge
+record. No further remediation is selected here.
