@@ -151,25 +151,42 @@ Version 1 is a closed, mechanically decidable profile:
   subjects are normalized absolute paths. Lock subjects are normalized
   project-relative POSIX paths with no empty, `.` or `..` component. Container
   subjects are 1--256 printable ASCII characters identifying the entered
-  runtime instance.
+  runtime instance. Container platform `os` and `architecture` values are
+  1--32 lowercase ASCII letters, digits, `.`, `_` or `-` and begin with a
+  letter or digit.
 - Version 1 admits only these bound identity profiles:
 
   | `kind` | `role` | exact value members | exact measurement method |
   | --- | --- | --- | --- |
   | `native-executable` | `suite-runtime` | `sha256`, `version` | `executable-sha256-and-version-v1` |
   | `dependency-lock` | `suite-lock` | `sha256` | `file-sha256-v1` |
-  | `oci-image` | `suite-runtime` | `digest` | `entered-container-image-digest-v1` |
+  | `oci-platform-manifest` | `suite-runtime` | `manifest_digest`, `manifest_media_type`, `configuration_digest`, `platform` | `entered-container-platform-manifest-config-v1` |
 
-  Every `sha256` or `digest` value is the literal `sha256:` followed by 64
-  lowercase hexadecimal characters. The executable method resolves the
-  executable actually used for the suite payload, hashes those executable
-  bytes and obtains the version from that executable in the entered native
-  environment. A dispatch-only shell does not substitute for the payload
-  runtime. The lock method hashes the applicable project dependency/toolchain
-  lock consumed by that route. The container method starts from the entered
-  container instance, uses the project adapter's container engine to resolve
-  the immutable image digest for that instance, and never accepts an image
-  tag, manifest expectation or caller value as the measurement.
+  Every `sha256`, `manifest_digest` or `configuration_digest` value is the
+  literal `sha256:` followed by 64 lowercase hexadecimal characters. The
+  executable method resolves the executable actually used for the suite
+  payload, hashes those executable bytes and obtains the version from that
+  executable in the entered native environment. A dispatch-only shell does not
+  substitute for the payload runtime. The lock method hashes the applicable
+  project dependency/toolchain lock consumed by that route.
+
+  The container value's `manifest_media_type` is exactly
+  `application/vnd.oci.image.manifest.v1+json` or
+  `application/vnd.docker.distribution.manifest.v2+json`; index and manifest-list
+  media types are not accepted. `platform` is one object with exactly `os` and
+  `architecture`. The container measurement starts from the entered container
+  instance, measures the immutable configuration digest exposed for that
+  instance, obtains the exact platform-specific manifest bytes and media type,
+  verifies the manifest hash as `manifest_digest`, verifies that its
+  configuration descriptor equals `configuration_digest`, verifies the
+  configuration blob against that digest, and reads the reported OS and
+  architecture from that configuration. Thus the method binds entered
+  instance -> configuration and platform manifest -> the same configuration;
+  an engine image ID remains a separate engine identifier. It may support the
+  instance-to-configuration binding only when the engine's documented identity
+  contract and verification of the configuration blob establish that it is
+  the same configuration digest. Otherwise it is not accepted, and it is never
+  called or compared as a manifest digest.
 - A complete `native` observation contains at least one
   `native-executable`/`suite-runtime` item for every applicable interpreter,
   compiler, package manager or test runner used by the suite payload, and at
@@ -177,10 +194,14 @@ Version 1 is a closed, mechanically decidable profile:
   cannot identify and measure both the actual toolchain and its applicable
   lock, the native route is incomplete and `BLOCKED` in version 1.
 - A complete `container` observation contains exactly one
-  `oci-image`/`suite-runtime` item. Its immutable digest is measured from the
-  container instance that entered the suite runtime. A tag, configured image
-  string, lock value or expected digest is declaration-only and cannot satisfy
-  this profile.
+  `oci-platform-manifest`/`suite-runtime` item and uses the closed descriptor
+  binding above. Version 1 accepts only a digest-pinned, platform-specific
+  manifest. An OCI image index, Docker manifest list, unavailable manifest or
+  configuration blob, ambiguous platform, absent instance-to-configuration
+  binding or absent manifest-to-configuration binding makes the route
+  unsupported/incomplete and `BLOCKED`. A tag, configured image string, caller
+  value, unbound `RepoDigest`, lock value or expected digest is declaration-only
+  and cannot satisfy this profile.
 - `service` and `composite` remain recognized route classifications, but are
   unsupported in version 1. Their relevant execution components and roles
   cannot yet be bounded generically without selecting a new contract; they
@@ -210,9 +231,16 @@ non-overwriting evidence bundle.
 The sidecar suite and invocation value must equal the command attempt that
 produced it. Its origin entry must equal the invoked project command, whose hash
 is measured independently by adoption-check. Any declared runtime expectation
-may constrain the observed value and a mismatch fails coherence, but neither a
-manifest value nor a caller-supplied expected identity can create an observation
-or coherence `PASS`.
+may constrain the observed value and a mismatch fails coherence, but only after
+the declaration's descriptor kind is established mechanically. A mandatory
+`runtime.image` declaration identified as a platform-specific image manifest is
+compared only with `manifest_digest` after its descriptor media type equals the
+observed `manifest_media_type`; it is never compared with `configuration_digest`
+or a container-engine image ID. A declaration resolving to an index/manifest
+list, or whose descriptor kind or complete descriptor chain cannot be
+established, is unsupported/incomplete and `BLOCKED` in version 1. Neither a
+manifest value nor a caller-supplied expected identity can create an
+observation or coherence `PASS`.
 
 A valid sidecar is explicitly **project-reported runtime observation**. It is
 not independent attestation, semantic truth or owner acceptance. Independent
@@ -268,13 +296,16 @@ negative tests and fresh-rerun falsification boundary. It must add focused tests
 for absent, oversized, malformed, duplicate or unknown members at every object
 level, wrong-schema, wrong-suite, wrong-binding, invalid-origin,
 declaration-only, pre-existing-path and overwrite cases. Route-profile tests
-must reject tag-only container identity, invalid identity/method pairings and
-native observations missing applicable executable/toolchain or lock identity;
-must return `BLOCKED` for service/composite version 1 observations; must accept
-complete measured native and container profiles; and must distinguish an
-incomplete observation at exit `3` from a complete actual/mandatory-declaration
-coherence conflict at exit `1`. No Mail fixture or experiment is admitted by
-those tests.
+must reject tag-only or unbound-`RepoDigest` container identity, index/manifest
+list descriptors, manifest/configuration/image-ID conflation, incomplete
+descriptor chains, invalid identity/method pairings and native observations
+missing applicable executable/toolchain or lock identity; must return `BLOCKED`
+for service/composite version 1 observations; must accept complete measured
+native and platform-manifest container profiles; must compare a mandatory image
+declaration only with an observed descriptor of the same kind; and must
+distinguish an incomplete observation at exit `3` from a complete
+actual/mandatory-declaration coherence conflict at exit `1`. No Mail fixture or
+experiment is admitted by those tests.
 
 ## Consequences
 
