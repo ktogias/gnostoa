@@ -106,97 +106,97 @@ The current public contracts expose the mismatch:
 
 In the final Mail rerun, the lock retained placeholder image values, the
 published Gnostoa OCI image was not executed, and PHP/Composer were absent on
-the host. Those facts support a blocked native host attempt. They do not prove
-that every authoritative Mail verification route was unavailable, and they do
-not authorize treating the Gnostoa image as Mail's project runtime.
+the host. Those facts do not establish which Mail-owned verification route was
+authoritative or whether its entry point could execute. Missing host tools do
+not establish that native host execution was intended, and they do not
+authorize treating the Gnostoa image as Mail's project runtime.
 
 ## Evidence-to-conclusion map
 
 | ID | Observation or authority | Bounded conclusion |
 |---|---|---|
-| `R1` | All three rejected Mail attempts omitted or overextended required project-suite evidence; the two later runs encountered absent PHP/Composer. | `adoption-check` needs one fail-closed project-suite routing result, but host dependency absence alone is not enough when an already-declared container route may be viable. |
+| `R1` | All three rejected Mail attempts omitted or overextended required project-suite evidence; the two later runs encountered absent PHP/Composer. | `adoption-check` needs one fail-closed project-suite result through the project's authoritative entry point. Host dependency absence is `BLOCKED` only when it prevents that entry point from executing; it does not identify the intended route. |
 | `R2` | The #122 configuration used the Gnostoa toolkit OCI identity as the project verification image; #125 retained placeholder registry identities while executing Gnostoa natively. | Toolkit execution, declared project runtime and observed project execution must be separate fields; a declaration cannot produce coherence or execution `PASS`. |
 | `R3` | The final rerun mechanically passed component policy/profile/bundle checks but never ran `check-runtime` or Mail suites. | Structural toolkit validation and project verification are independent required dimensions; neither can substitute for the other. |
-| `R4` | The current schema requires one project image and the template supplies a placeholder, while public runtime guidance also recognizes isolated native execution. | The present manifest cannot truthfully represent the required generic image/container/native routing boundary without a later public-contract change or a narrower project-owned delegation contract. |
+| `R4` | The current schema requires one project image and the template supplies a placeholder, while public runtime guidance also recognizes isolated native execution. | The present manifest has a real compatibility gap between its image-shaped declaration and project-owned verification routes. The evidence does not determine whether that gap needs a manifest change or can be resolved by bounded evidence from the existing project adapter. |
 | `R5` | The current CI contract already declares `./ci/verify <suite>` as the shared adapter for project-owned suites. | Preserve that adapter as the normal execution boundary; do not make `adoption-check` a general container builder, service orchestrator or dependency installer. |
-| `R6` | Decision 0047 requires direct measurement where mechanically possible and forbids expected/caller declarations from establishing execution. | Any routing extension needs a bound observation of the route actually entered; route metadata alone can select or constrain an attempt, never prove it ran. |
+| `R6` | Decision 0047 requires direct measurement where mechanically possible and forbids expected/caller declarations from establishing execution. | The authoritative project entry needs a bound observation of the runtime it actually used; declarations can constrain validation but never prove execution. |
 
 The evidence does not establish that Mail lacks an authoritative container
 route, that its dependencies should be containerized, or that a project image
-should be created. It establishes only that the experiment did not select,
-execute and bind a project-owned route before classifying the suites.
+should be created. It establishes only that the experiment did not execute and
+bind one project-owned authoritative verification entry point before
+classifying the suites.
 
 ## Generic fail-closed routing contract
 
-### Authority and precedence
+### Project authority and one entry point
 
-The project owns both its verification suites and the route used to execute
-them. A future admitted contract must resolve only routes already declared by
-project authority, in this precedence:
+The project owns both its verification suites and how they enter their
+verification runtime. It must expose one authoritative verification entry
+point, normally the `./ci/verify <suite>` commands already declared by the
+validated verification manifest. That project-owned adapter decides whether
+and how to enter its declared digest-pinned image, Dockerfile, Dev Container,
+Compose or CI service, or isolated native environment.
 
-1. an existing project verification image pinned by registry digest;
-2. an existing authoritative Dockerfile, Dev Container, Compose service or CI
-   container route that the project already makes mechanically reproducible;
-3. an existing authoritative isolated native route; or
-4. no viable route, yielding `BLOCKED`.
+Gnostoa does not assign precedence among those route kinds. It does not select
+an alternative, fall back after unavailability or test failure, infer authority
+from file presence, or synthesize a runtime. A Dockerfile, dependency file,
+Dev Container, Compose file or CI fragment is not authority merely because it
+exists. An absent, ambiguous, unavailable or mechanically unobservable
+authoritative entry point yields `BLOCKED` with retained evidence.
 
-File presence is not route authority. A dependency file, a Dockerfile fragment
-or an unrelated CI step is not enough to synthesize or select a runner.
-Documentation, an existing project verification manifest, and the project-owned
-`ci/verify` adapter must agree on the route. Ambiguity or disagreement blocks
-before suite execution and is reported for accountable-owner resolution.
-
-Only an unavailable entrance may advance to the next already-declared route.
-Once a route executes a suite, timeout or a test failure is `FAIL`; the checker
-must not try a lower-priority route to obtain a green result. Missing native
-host dependencies are one route-level unavailable result. They become the
-aggregate `BLOCKED` conclusion only after no higher-priority declared route can
-execute.
+Once the authoritative entry executes a suite, its timeout or test failure is
+`FAIL`; no different route is attempted to obtain a green result. Missing host
+dependencies yield `BLOCKED` only when they prevent the project-owned entry
+point from executing. Gnostoa must not infer from their absence that native
+host execution was the project's intended route.
 
 ### Execution ownership
 
-`adoption-check` normally invokes the existing project-owned
+`adoption-check` invokes only the existing project-owned
 `./ci/verify <suite>` command without a shell. Project-owned `ci/verify` remains
-responsible for entering an already-supported Dockerfile, Dev Container,
-Compose, CI-container or isolated native environment. The Gnostoa wrapper may
-launch an already-declared digest-pinned project image as a thin execution
-adapter only if a later contract makes that exact behavior explicit; it must
-not build an image, infer build arguments, provision services or translate
-container definitions.
+responsible for entering its authoritative digest-pinned image, Dockerfile,
+Dev Container, Compose or CI-container route, or isolated native environment.
+Gnostoa does not independently launch even a declared project image, build an
+image, infer build arguments, provision services or translate container
+definitions.
 
 The normal `knowledge adoption-check` invocation gains no project-runtime
 command, Dockerfile, dependency or image override. It derives the verification
 manifest and `ci/verify` commands from the project root as Decision 0047 already
-requires. Non-standard path overrides locate authority; they cannot declare a
-route successful.
+requires. Non-standard path overrides locate the entry-point authority; they
+cannot choose another route or declare execution successful.
 
 ### Declaration versus observation
 
-A project route declaration selects and constrains an attempt. It is not
+A project route or runtime declaration is an expected constraint. It is not
 execution evidence. The result must preserve at least these separate subjects:
 
 - Gnostoa documentation source;
 - Gnostoa toolkit source;
 - Gnostoa executing runtime;
-- selected adopter verification route and its project authority;
+- the adopter's authoritative verification entry and declared expectation;
 - observed adopter verification runtime; and
 - each project-suite execution.
 
 For a digest-pinned image, the expected image reference remains a declaration.
-`PASS` requires an engine-observed content digest for the image actually used,
-plus the suite process exit bound to that run. For a project-owned container
-route, retain hashes of its authoritative definition and the observed runtime
-or image identity produced by the executed project adapter. For an isolated
-native route, retain the project adapter identity and directly measured
-executable/toolchain versions and applicable lock identities. A missing or
-unverifiable actual yields `BLOCKED`; copying expected values into a result
-yields no pass.
+`PASS` requires a bounded, mechanically validated observation of the image
+actually used, including its content digest, plus the suite process exit bound
+to that run. For another container or service route, retain the authoritative
+entry-point identity and the observed runtime identity exposed by the executed
+project adapter. For an isolated native route, retain that entry-point identity
+and directly measured executable/toolchain versions and applicable lock
+identities. A missing or unverifiable actual yields `BLOCKED`; copying expected
+values into a result yields no pass.
 
 The project adapter may need a small, machine-readable runtime-observation
-handshake so `adoption-check` can bind the route actually entered to each suite
-result. That observation is project-owned execution evidence, not independent
-attestation or semantic truth. Its absence must block a complete mechanical
-result rather than be replaced by manifest values or narrative output.
+handshake so `adoption-check` can bind the runtime actually used to each suite
+result. Whether existing output can carry equivalent evidence safely must be
+characterized before changing a manifest or adapter format. That observation
+is project-owned execution evidence, not independent attestation or semantic
+truth. Its absence must block a complete mechanical result rather than be
+replaced by manifest values or narrative output.
 
 ### Result and exit semantics
 
@@ -206,15 +206,14 @@ Decision 0047's existing process exits remain sufficient:
   required project suite pass, producing `READY FOR ACCOUNTABLE-OWNER REVIEW`;
 - exit `1` for an executed suite, route-coherence or postcondition failure;
 - exit `2` for invalid/unsafe invocation or an internal error; and
-- exit `3` when every declared route is unavailable or a required runtime
-  observation cannot be acquired.
+- exit `3` when the authoritative project entry is absent, ambiguous or
+  unavailable, or when a required runtime observation cannot be acquired.
 
 The result needs separate project-verification dimensions:
 
-- route declaration: `VALID`, `INVALID` or `ABSENT`;
-- route selection: `PASS`, `BLOCKED` or `FAIL`;
+- authoritative entry: `VALID`, `INVALID` or `ABSENT`;
+- project-owned route entry: `ENTERED`, `BLOCKED` or `FAIL`;
 - project-runtime observation: `PASS`, `BLOCKED` or `FAIL`;
-- each route attempt: `NOT TRIED`, `UNAVAILABLE`, `ENTERED` or `FAIL`;
 - each project suite: `PASS`, `FAIL`, `BLOCKED` or `NOT RUN`; and
 - toolkit/project runtime separation: `PASS`, `BLOCKED` or `FAIL`.
 
@@ -225,9 +224,9 @@ command only. It is not project truth, owner acceptance or durable adoption.
 
 ### Evidence, idempotence and safety
 
-The adoption evidence bundle must retain the validated route declarations,
-the exact `ci/verify` blob or file hash, route-attempt chronology, authority-file
-hashes, directly observed runtime identities, commands, numeric exits,
+The adoption evidence bundle must retain the authoritative-entry declaration,
+the exact `ci/verify` blob or file hash, its command and attempt chronology,
+before/after Git state, directly observed runtime identities, numeric exits,
 stdout/stderr and suite results. It must identify which observations came from
 Gnostoa and which came from the project adapter.
 
@@ -240,41 +239,41 @@ publishes an image or starts undeclared services.
 
 ## Alternatives
 
-### `V0` — leave all selection inside `ci/verify`
+### `V0` — leave runtime entry inside `ci/verify`
 
 - **Strength:** preserves project authority, the existing suite interface and
-  complex project-specific setup without a Gnostoa orchestrator.
-- **Gap:** an opaque wrapper result cannot show which runtime executed, whether
-  a declared image was preferred or whether missing host tools were considered
-  only after viable container routes. It cannot independently distinguish a
-  route declaration from an observation.
-- **Disposition:** retain `ci/verify` as executor, but do not leave selection
-  and evidence entirely opaque.
+  complex project-specific setup without a Gnostoa orchestrator or route
+  selector.
+- **Gap:** an opaque wrapper result cannot show which runtime executed and
+  cannot distinguish a declaration from an observation.
+- **Disposition:** retain `ci/verify` as the sole executor. Add or validate only
+  the smallest bounded observation needed to make its actual runtime visible.
 
-### `V1` — declare routing in `verification.yaml`
+### `V1` — represent one selected authoritative route in `verification.yaml`
 
-- **Strength:** gives `adoption-check` one validated project-owned authority
-  from which to derive precedence, prevents prompt-specific route flags and can
-  keep expected identities separate from observed actuals.
+- **Strength:** could record one project-selected route and its observation
+  requirements while keeping expected identities separate from observed
+  actuals.
 - **Gap:** the current schema represents only toolkit or one mandatory project
-  image. A general list of build commands, service settings or native setup
-  would become a new orchestration DSL and duplicate project authority.
-- **Disposition:** recommended only as a narrow selector for already-owned
-  routes, paired with `ci/verify` execution and runtime observation. Do not put
-  container recipes or dependency-install commands in the manifest.
+  image. Even a single-route representation is a public compatibility change;
+  a route list, precedence model, build commands or service settings would
+  become an unjustified orchestration DSL and duplicate project authority.
+- **Disposition:** retain as a later compatibility option only if equivalent
+  evidence cannot be obtained safely through the existing entry point. Do not
+  preselect a schema change or put recipes and dependency-install commands in
+  the manifest.
 
 ### `V2` — Gnostoa-managed container execution
 
-- **Strength:** a thin runner can directly bind an already-declared immutable
-  image digest and isolate host dependencies.
+- **Strength:** direct container control could bind a declared immutable image
+  digest and isolate host dependencies.
 - **Gap:** interpreting Dockerfiles, Dev Containers or Compose would make
   Gnostoa responsible for build contexts, secrets, platforms, volumes,
   services, networks and cleanup. It would also bypass project-owned suite
   setup.
-- **Disposition:** reject general management. A later implementation may admit
-  only thin execution of an existing digest-pinned project image while still
-  invoking `ci/verify` inside it; all build and service orchestration stays
-  project-owned.
+- **Disposition:** reject. If a project uses an image, its authoritative
+  `ci/verify` entry owns entry into that image; Gnostoa does not launch an
+  alternative route around the adapter.
 
 ### `V3` — synthesize a temporary container
 
@@ -288,84 +287,99 @@ publishes an image or starts undeclared services.
 
 ## Smallest recommended mechanism
 
-Recommend a **narrow declarative selector plus project-owned execution and
+Recommend **one project-owned authoritative entry plus bounded runtime
 observation**:
 
 1. preserve `./ci/verify <suite>` as the sole normal project-suite entry;
-2. let the validated verification manifest identify only already-authoritative
-   candidate route kinds and immutable expectations, in the fixed
-   image/container/native precedence above;
-3. require the project adapter to enter the selected existing route and expose
-   a bounded, machine-readable observation of the runtime actually used;
-4. let `adoption-check` validate that observation, capture the suite result and
-   aggregate unavailable routes without building or provisioning anything; and
-5. block when a declaration lacks a measured counterpart or no declared route
-   can execute.
+2. derive and validate that entry from the project root and existing
+   verification manifest;
+3. let the project adapter alone enter its selected image, container, service
+   or isolated-native environment;
+4. have `adoption-check` retain the adapter blob hash, exact command, numeric
+   exit, stdout/stderr and before/after Git state, and validate a bounded
+   observation of the runtime actually used; and
+5. return `BLOCKED` when the authoritative entry or its runtime observation is
+   absent, ambiguous or unavailable, without selecting or attempting a
+   substitute.
 
-This is smaller than a Gnostoa runner or synthesized environment, but it is not
-already covered by Decision 0047's assumption that implementation changes no
-existing project file format. The current verification schema cannot express
-the generic route set, and the current `ci/verify` contract has no runtime
-observation handshake. Therefore implementation is **not yet admitted** under
-Decision 0047 alone. Accountable-owner selection must first bind the exact
-minimal manifest and adapter compatibility change, or select a still-narrower
-contract that supplies equivalent direct observations without changing those
-surfaces. This assessment creates no new Decision and changes no selection.
+This is smaller than a Gnostoa selector, runner or synthesized environment.
+The current verification manifest's mandatory project-image shape remains a
+real compatibility gap, but the evidence does not select its solution. The
+smallest later compatibility choices are:
+
+| Choice | Surface | Boundary |
+|---|---|---|
+| Existing adapter owns routing; no manifest-format change | Characterize whether `ci/verify` can expose sufficient bounded runtime evidence through its existing command/output contract. | Smallest if the observation is safe, unambiguous and bindable. |
+| Represent only the selected authoritative route and observation requirements | Add the minimum manifest semantics needed to validate one project-selected expectation, while `ci/verify` still owns execution. | Justified only if the existing adapter contract cannot supply equivalent evidence; no route list or precedence. |
+| Multi-route selector or route-list DSL | Gnostoa chooses or orders image, container, service and native alternatives. | Not supported by the evidence and rejected. |
+
+Implementation is therefore **not yet admitted** under Decision 0047 alone.
+Accountable-owner selection must first bind whether the existing adapter can
+provide equivalent evidence without a format change or whether one selected
+route/observation representation is necessary. This assessment creates no new
+Decision and changes no existing selection.
 
 ## Prospective implementation and negative-test boundary
 
-If the owner selects the recommendation, the smallest coherent implementation
-must be reclassified as `normative` and is expected to touch the existing
-verification schema/checker/template, the `ci/verify` template/contract,
-`adoption-check`, focused tests and the existing adoption/CI guidance only.
-Exact fields and observation format must be frozen before editing. No new
-configuration file, recipe language or provider adapter is justified.
+If the owner selects the recommendation, test-first characterization must
+first determine whether the existing `ci/verify` command/output can carry an
+unambiguous bound observation without a manifest-format change. Only if it
+cannot may a later normative slice admit the minimum representation for one
+project-selected route and its observation requirements. The resulting change
+may touch `adoption-check`, focused tests and the existing adapter/guidance
+contract; schema/checker/template changes are conditional, not preselected.
+Exact observation semantics must be frozen before editing. No new
+configuration file, route list, recipe language or provider adapter is
+justified.
 
 Focused tests must prove at least that:
 
 1. a declared or caller-supplied image digest cannot produce route or runtime
    `PASS` without observed execution of that digest;
 2. a Gnostoa toolkit image cannot satisfy an adopter project-runtime result;
-3. a viable declared digest image is attempted before native host dependency
-   checks;
-4. an unavailable higher-priority route may fall through only to another
-   already-declared route, while an executed test failure cannot fall through;
-5. an undeclared Dockerfile, Dev Container, Compose file or CI fragment is not
-   built, entered or converted into a route;
-6. a declared project-container route with no bound runtime observation is
+3. only the project-owned authoritative entry is invoked; Gnostoa performs no
+   alternate-route attempt after unavailability or test failure;
+4. Dockerfile, Dev Container, Compose or CI file presence is not interpreted
+   as route authority and causes no build, entry or synthesis;
+5. an absent, ambiguous or unavailable authoritative entry is `BLOCKED`;
+6. an executed project entry with no bound runtime observation is
    `BLOCKED`, not `PASS`;
 7. an isolated native result records actual tool identities and becomes
-   `BLOCKED` when required tools are absent;
-8. absent host PHP/Composer does not decide aggregate availability before all
-   higher-priority declared routes are resolved;
+   `BLOCKED` when its project-owned entry cannot execute because required tools
+   are absent;
+8. absent host PHP/Composer does not cause Gnostoa to assume that native host
+   execution was intended or to choose another route;
 9. no route writes a recipe, installs dependencies, changes canonical bytes or
    turns mechanical suite success into semantic acceptance; and
-10. all route attempts, exits, observations and hashes are retained on both
+10. the entry attempt, exits, observations and hashes are retained on both
     `FAIL` and `BLOCKED` paths.
 
 Compatibility review must cover existing manifests with `runtime.image`, the
 placeholder project template, provider `expected-runtime-image` checks, native
 projects and projects whose `ci/verify` already owns containers or services.
+It must compare retaining the current manifest format with representing one
+selected authoritative route; it must not assume a route selector is needed.
 Any public schema, template, adapter or CLI change requires a later source and
 runtime release before general consumers can rely on it. This analysis selects
-no version or publication effect.
+no format, version or publication effect.
 
 ## Later falsification and stop
 
 Nextcloud Mail may be used only after implementation and a separate
 pre-registration. The later contract must freeze the same Mail source subject,
 the exact new Gnostoa documentation/toolkit/runtime subjects, the authoritative
-Mail verification routes visible at that source, the environment and the
-evidence bundle. It must not generate a Mail container route or pre-supply
-project facts.
+Mail verification entry visible at that source, the environment and the
+evidence bundle. It must not generate or select a Mail container route or
+pre-supply project facts.
 
 The routing mechanism is falsified if it treats the Gnostoa runtime as Mail's
-project runtime, blocks on missing host dependencies before resolving an
-already-declared viable route, executes an undeclared or synthesized route,
-falls back after a real test failure, accepts declaration-only identity, loses
-route evidence or returns mechanical/semantic adoption acceptance. If no
-declared Mail route can execute, exit `3` with retained `BLOCKED` evidence is
-the expected correct result, not a failed product claim.
+project runtime, invokes anything other than Mail's authoritative entry,
+assumes native execution from missing host dependencies, selects or synthesizes
+an alternate route, falls back after unavailability or test failure, accepts
+declaration-only identity, loses entry/runtime evidence or returns
+mechanical/semantic adoption acceptance. If Mail's authoritative entry is
+absent, ambiguous, unavailable or unobservable, exit `3` with retained
+`BLOCKED` evidence is the expected correct result, not a failed product claim.
 
 No implementation, guidance/runtime change, Mail experiment, release, OCI
 effect, B3 result, Decision-0036 result or Gnostoa self-verification Docker-build
