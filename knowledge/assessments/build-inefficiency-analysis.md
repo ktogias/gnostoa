@@ -35,7 +35,9 @@ x-project-knowledge:
 
 ## Executive Summary
 
-This document analyzes the build image inefficiency identified in Issue #132 and recommends evidence-based best practices for optimization. The analysis follows the project's evidence-gated capability evolution lifecycle, progressing through all seven epistemic questions before recording the final research record.
+This document analyzes the build image inefficiency identified in [Issue #132](https://github.com/ktogias/gnostoa/issues/132) and recommends evidence-based best practices for optimization. The analysis follows the project's evidence-gated capability evolution lifecycle, progressing through all seven epistemic questions before recording the research record.
+
+Assessment candidate complete; awaiting owner review/integration/reconciliation.
 
 ## Current State
 
@@ -51,7 +53,7 @@ This document analyzes the build image inefficiency identified in Issue #132 and
 
 ### 1. What the system can know
 
-Five builds completed; cumulative 269s; largest single waste 42s (runtime-build); largest candidate-context waste 83s; no runtime produced by 3 of 5 runs.
+Five builds completed; cumulative 269s; largest single waste 42s (runtime-build); largest candidate-context waste 83s; runtime produced by 4 of 5 runs (smoke job runtime ignored).
 
 ### 2. Which mechanisms are already present and deterministic
 
@@ -59,7 +61,7 @@ Docker layer cache works, but `runtime-build` triggers on every candidate contex
 
 ### 3. Which observations are authoritatively acquired
 
-Full build logs captured (5 entries); pipeline triggers recorded (5 runs); timing data measured across 3 runs; `manifest.json` verified as deterministic.
+Build logs were captured during the measurement session (5 entries); pipeline triggers recorded (5 runs); timing data measured across 3 runs; `manifest.json` verified as deterministic. **Limitation**: The referenced workflow-run IDs are from the measurement session and may not be resolvable from the current provider surface if those runs have expired or been cleaned up. The timing measurements are durable; the full logs are not guaranteed to be.
 
 ### 4. At which system boundary a mechanism is reliably executed
 
@@ -91,7 +93,7 @@ The owner must judge whether the inefficiency is worth fixing, cache poisoning r
 
 ## Deterministic-Sufficiency Judgment
 
-Build defense is bounded to smoke tests. The stage sequence and image digest are deterministic. Optional reuse of deterministic runtime images across jobs or across commits in the same Pull Request is bounded by the evidence-gated lifecycle and would not weaken build defense.
+Build defense is bounded to smoke tests. The stage sequence is deterministic. Exact OCI digest rebuild repeatability is not established (see v0.1.2 publication result). Optional reuse of deterministic runtime images across jobs or across commits in the same Pull Request is bounded by the evidence-gated lifecycle and would not weaken build defense, provided reuse is scoped to jobs with the same exact source/build subject.
 
 ## Best Practice Recommendations
 
@@ -116,7 +118,7 @@ COPY src/ ./src/
 
 **Evidence**: Industry standard practice; Docker documentation explicitly recommends this pattern.
 
-### 2. BuildKit Cache Mounts (Priority: High)
+### 2. BuildKit Cache Mounts (Priority: High — requires separate experiment)
 
 **Practice**: Use `--mount=type=cache` for download directories.
 
@@ -124,13 +126,11 @@ COPY src/ ./src/
 
 **Current State**: No cache mounts used; `pip install` re-downloads packages on every build.
 
-**Recommendation**:
-```dockerfile
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir -r requirements.txt
-```
+**Experiment Required**: The current recipe `--mount=type=cache,target=/root/.cache/pip` with `pip install --no-cache-dir` conflicts: `--no-cache-dir` disables the cache that the mount is trying to persist. This must be tested as a separate experiment with either:
+- Change pip invocation to `pip install` (without `--no-cache-dir`) under controlled evidence, or
+- Do not claim the cache-mount benefit until the conflict is resolved.
 
-**Evidence**: Docker documentation; AWS build optimization guide; reduces build time by 20-40%.
+**Evidence**: Docker documentation; AWS build optimization guide. Actual benefit to be measured in controlled experiment.
 
 ### 3. Multi-Stage Build Optimization (Priority: Medium)
 
@@ -142,17 +142,17 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 **Recommendation**: Already implemented in our Dockerfile with `runtime-build` and `development` stages. Maintain this pattern.
 
-### 4. Image Reuse Across Jobs (Priority: Medium)
+### 4. Image Reuse Across Jobs (Priority: Medium — requires careful scoping)
 
-**Practice**: Share verified runtime images between verification jobs.
+**Practice**: Share verified runtime images between verification jobs with the same exact source/build subject.
 
-**Rationale**: The same runtime image is rebuilt identically across verification.yml jobs. Building once and reusing saves 42+ seconds per subsequent job.
+**Rationale**: The same runtime image is rebuilt identically across verification.yml jobs (excluding smoke, which checks out the PR head). Building once and reusing could save build time per subsequent job.
 
 **Current State**: Each verification job builds its own image independently.
 
-**Recommendation**: Build runtime image once, store in GitHub Actions cache or local registry, reuse in dependent jobs.
+**Recommendation**: Build runtime image once, store in GitHub Actions cache or local registry, reuse in dependent jobs. **Must be keyed and scoped only across jobs with the same exact source/build subject** (e.g., fast, regression, extended on the same merge candidate). Smoke job uses a different subject and must not share images.
 
-**Caveat**: Requires careful consideration of cache invalidation and build determinism.
+**Caveat**: Requires careful consideration of cache invalidation, build determinism, and cache-poisoning controls.
 
 ### 5. Governance Separation (Priority: Low)
 
@@ -168,18 +168,18 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 ### Phase 1: Low-Risk, High-Impact (Immediate)
 
-1. **Restructure Dockerfile layers** - Move dependency installation before source code copy
-2. **Add cache mounts** - Implement BuildKit cache mounts for pip downloads
-3. **Fix smoke job naming** - Correct image tag naming inconsistency
+1. **Fix smoke job naming** - Correct image tag naming inconsistency (correctness issue)
+2. **Dependency-first layering for `development` stage** - Move dependency installation before source code copy in `development` stage only (not `runtime-build`, which participates in candidate-manifest/source-binding semantics)
+3. **Cache mount experiment** - Test BuildKit cache mount with appropriate pip invocation (resolve `--no-cache-dir` conflict)
 
-**Expected Impact**: 50-70% reduction in rebuild time for source changes.
+**Expected Impact**: To be measured in controlled experiments.
 
 ### Phase 2: Medium-Risk, Medium-Impact (Future)
 
-1. **Implement image reuse** - Share runtime images across verification jobs
+1. **Implement image reuse** - Share runtime images across verification jobs (scoped to same source/build subject only)
 2. **Optimize CI pipeline** - Parallelize independent jobs
 
-**Expected Impact**: Additional 20-30% reduction in total CI time.
+**Expected Impact**: To be measured after Phase 1.
 
 ### Phase 3: High-Risk, High-Impact (Long-term)
 
@@ -235,11 +235,12 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 ## Recommended Implementation Order
 
-1. **Dependency-first layering** (Dockerfile restructure): move `COPY requirements/ .` and `COPY pyproject.toml .` before source code copy in `development` stage. Zero cost, high leverage, directly matches industry practice.
-2. **Optional BuildKit cache mount** for pip download directory: `--mount=type=cache,target=/root/.cache/pip` in `runtime-build` stage. Prevents network re-downloads for identical requirements.
-3. **Smoke job image-name correction**: rename tag from `${{ github.sha }}` (merge SHA) to PR-head SHA to match actual content source. Low risk, eliminates naming ambiguity.
-4. **Optional per-work-item shared image** via GHA cache: after PR merge, cache runtime image for reuse in subsequent verification jobs. Requires cache key design to prevent poisoning.
-5. **Optional export cache** for local/rebuild speed: build once, export to registry, import on rebuilds. Highest leverage but requires infrastructure.
+Following the owner's suggested order:
+
+1. **Smoke job image-name correction** (correctness issue): rename tag from `${{ github.sha }}` (merge SHA) to PR-head SHA to match actual content source. This is an identity/observability ambiguity, not merely an optimization.
+2. **Isolated `development` dependency-layering experiment**: move `COPY requirements/ .` and `COPY pyproject.toml .` before source code copy in `development` stage only. Do not generalize to `runtime-build` without a separate binding analysis.
+3. **Separate pip cache-mount experiment**: test BuildKit cache mount with cold/warm and changed/unchanged-lock measurements. Resolve the `--no-cache-dir` conflict before claiming benefit.
+4. **Exact-subject cross-job image reuse** (only if still justified): implement with cache-poisoning and identity controls, scoped only to jobs with the same exact source/build subject.
 
 ## Non-Goals
 
@@ -262,6 +263,6 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 ## Status
 
-This analysis is complete and recorded in [Issue #132](https://github.com/ktogias/gnostoa/issues/132). The research record is closed. No code changes were made — the working tree remains clean.
+Assessment candidate complete; awaiting owner review/integration/reconciliation. Recorded in [Issue #132](https://github.com/ktogias/gnostoa/issues/132). No code changes were made — the working tree remains clean.
 
-The next step would be change implementation (dockerfile restructure, cache mount, smoke naming fix), which requires a Work Item and Decision before proceeding per the evidence-gated lifecycle.
+The next step would be change implementation (smoke naming fix, dependency-layering experiment, cache-mount experiment), which requires a Work Item and Decision before proceeding per the evidence-gated lifecycle.
