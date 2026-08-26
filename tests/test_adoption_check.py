@@ -7,7 +7,6 @@ import re
 import shutil
 import subprocess
 import tempfile
-import time
 import unittest
 from collections.abc import Callable
 from contextlib import redirect_stderr, redirect_stdout
@@ -105,6 +104,7 @@ class AdoptionCheckContractTests(unittest.TestCase):
         self.assertIn("--seed", help_text)
         self.assertIn("--output-dir", help_text)
         self.assertIn(adoption_check.OBSERVATION_SCHEMA, help_text)
+        self.assertIn(adoption_check.BUNDLE_COMMITMENT_SCHEMA, help_text)
         self.assertIn("GNOSTOA_ADOPTION_OBSERVATION_PATH", help_text)
         self.assertNotIn("--owner", help_text)
         self.assertNotIn("--accept", help_text)
@@ -128,6 +128,9 @@ class AdoptionCheckContractTests(unittest.TestCase):
         self.assertIn("64 KiB", adoption)
         self.assertIn("READY FOR ACCOUNTABLE-OWNER REVIEW", " ".join(adoption.split()))
         self.assertIn("project-reported runtime observation", adoption)
+        self.assertIn("append-only in-memory ledger", adoption)
+        self.assertIn(adoption_check.BUNDLE_COMMITMENT_SCHEMA, adoption)
+        self.assertIn("unrestricted persistent process", adoption)
         self.assertIn("mechanical-completion-evidence", bootstrap)
         self.assertIn("bounded-adoption-completion-evidence", guardrails)
 
@@ -396,8 +399,6 @@ class AdoptionCheckSidecarAcquisitionTests(unittest.TestCase):
             root = Path(directory)
             target = root / "observation.json"
             replacement = root / "replacement.json"
-            evidence = root / "evidence"
-            evidence.mkdir()
             opened_file_content = b'{"sample":"original"}\n'
             replacement_file_content = b'{"sample":"replacement"}\n'
             target.write_bytes(opened_file_content)
@@ -412,15 +413,18 @@ class AdoptionCheckSidecarAcquisitionTests(unittest.TestCase):
                     target, 64, "observation"
                 )
 
-            artifact = adoption_check.EvidenceWriter(evidence, []).write_bytes(
-                "runtime-observations/fast.json", observed
+            writer = adoption_check.EvidenceWriter([])
+            artifact = writer.write_bytes(
+                "runtime-observations/fast.json",
+                observed,
+                origin="project-adapter:fast",
             )
-            retained = evidence / "runtime-observations" / "fast.json"
-            self.assertEqual(opened_file_content, retained.read_bytes())
+            retained = writer.artifacts()[0]
+            self.assertEqual(opened_file_content, retained.content)
             self.assertEqual(
                 adoption_check._sha256(opened_file_content), artifact["sha256"]
             )
-            self.assertNotEqual(replacement_file_content, retained.read_bytes())
+            self.assertNotEqual(replacement_file_content, retained.content)
 
     def test_relative_path_replacement_cannot_redirect_an_opened_descriptor(
         self,
@@ -1178,16 +1182,13 @@ raise SystemExit(0)
                 )
 
     def test_evidence_artifacts_are_created_once_without_replacement(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory) / "evidence"
-            root.mkdir()
-            writer = adoption_check.EvidenceWriter(root, [])
-            writer.write_text("component.txt", "first\n")
-            with self.assertRaisesRegex(
-                adoption_check.UnsafeInvocation, "without replacement"
-            ):
-                writer.write_text("component.txt", "second\n")
-            self.assertEqual("first\n", (root / "component.txt").read_text())
+        writer = adoption_check.EvidenceWriter([])
+        writer.write_text("component.txt", "first\n", origin="gnostoa-test")
+        with self.assertRaisesRegex(
+            adoption_check.UnsafeInvocation, "without replacement"
+        ):
+            writer.write_text("component.txt", "second\n", origin="gnostoa-test")
+        self.assertEqual(b"first\n", writer.artifacts()[0].content)
 
     def test_documentation_drift_and_unobserved_oci_digest_are_blocked(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1461,9 +1462,7 @@ raise SystemExit(0)
             self.assertFalse(output.exists())
 
     def test_suite_cannot_overwrite_a_pre_suite_component_artifact(self) -> None:
-        self._assert_suite_cannot_mutate_authoritative_evidence(
-            "overwrite-component"
-        )
+        self._assert_suite_cannot_mutate_authoritative_evidence("overwrite-component")
 
     def test_suite_cannot_replace_a_pre_suite_artifact_inode(self) -> None:
         self._assert_suite_cannot_mutate_authoritative_evidence("replace-component")
@@ -1484,26 +1483,12 @@ raise SystemExit(0)
         with tempfile.TemporaryDirectory() as directory:
             project, toolkit = self._project(directory)
             output = Path(directory) / "evidence"
-            real_manifest = adoption_check._safe_artifact_manifest
-            calls = 0
-
-            def pause_before_final_hash(root: Path) -> list[dict[str, Any]]:
-                nonlocal calls
-                calls += 1
-                if calls == 2:
-                    time.sleep(0.2)
-                return real_manifest(root)
-
-            with mock.patch(
-                "tools.adoption_check._safe_artifact_manifest",
-                side_effect=pause_before_final_hash,
-            ):
-                result, stdout, stderr = self._run(
-                    project,
-                    toolkit,
-                    output,
-                    mode="background-evidence-mutation",
-                )
+            result, stdout, stderr = self._run(
+                project,
+                toolkit,
+                output,
+                mode="background-evidence-mutation",
+            )
 
             self.assertEqual((0, ""), (result, stderr), stdout)
             self.assertIn("READY FOR ACCOUNTABLE-OWNER REVIEW", stdout)
@@ -1516,22 +1501,24 @@ raise SystemExit(0)
         with tempfile.TemporaryDirectory() as directory:
             project, toolkit = self._project(directory)
             output = Path(directory) / "evidence"
-            real_manifest = adoption_check._safe_artifact_manifest
+            real_reconcile = adoption_check._reconcile_materialized
             calls = 0
 
-            def mutate_after_first_read(root: Path) -> list[dict[str, Any]]:
+            def mutate_after_first_reconciliation(
+                root: Path,
+                artifacts: tuple[adoption_check.EvidenceArtifact, ...],
+            ) -> None:
                 nonlocal calls
-                manifest = real_manifest(root)
+                real_reconcile(root, artifacts)
                 calls += 1
                 if calls == 1:
                     (root / "candidate.patch").write_bytes(
                         b"post-reconciliation replacement bytes\n"
                     )
-                return manifest
 
             with mock.patch(
-                "tools.adoption_check._safe_artifact_manifest",
-                side_effect=mutate_after_first_read,
+                "tools.adoption_check._reconcile_materialized",
+                side_effect=mutate_after_first_reconciliation,
             ):
                 result, stdout, _ = self._run(project, toolkit, output)
 

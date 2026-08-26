@@ -184,7 +184,22 @@ behavior is unchanged.
 
 The evidence directory retains component numeric exits and output, the
 project-reported sidecars and hashes, two-generation context evidence, the
-staged patch and before/after Git state. Exit `0` means only `READY FOR
+staged patch and before/after Git state. Gnostoa holds authoritative artifact
+bytes in an append-only in-memory ledger while project suites run; the only
+suite-visible tool-owned area is that attempt's fresh incoming sidecar
+directory. After all attempts, it creates a clean no-replace bundle from the
+ledger and reconciles every regular file before atomic publication.
+
+After a successful bundle publication, trusted stdout emits exactly one
+`EVIDENCE BUNDLE COMMITMENT: gnostoa-adoption-evidence-bundle/v1 sha256:<64
+hex>` record. The digest covers compact, key-sorted UTF-8 JSON plus one LF: an
+array sorted by normalized relative path with exactly `path`, `bytes` and
+`sha256` for every materialized file, including `adoption-check.json` and
+`SHA256SUMS`. Retain this external record separately. Recomputing it detects
+later changed bundle bytes, but it is not provenance or protection from an
+unrestricted persistent process running as the same filesystem owner.
+
+Exit `0` means only `READY FOR
 ACCOUNTABLE-OWNER REVIEW`; exit `1` is a mechanical failure, exit `2` an unsafe
 or invalid invocation/internal error, and exit `3` a blocked prerequisite. A
 project-reported runtime observation is not independent attestation, semantic

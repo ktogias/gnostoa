@@ -172,6 +172,9 @@ guardrails:
       - tests/test_adoption_check.py::AdoptionCheckExecutionTests.test_complete_native_candidate_is_evidence_bound_not_semantically_accepted
       - tests/test_adoption_check.py::AdoptionCheckExecutionTests.test_invalid_sidecars_are_blocked_and_never_escape_the_evidence_root
       - tests/test_adoption_check.py::AdoptionCheckExecutionTests.test_staged_submodule_gitlink_must_equal_the_toolkit_worktree
+      - tests/test_adoption_check.py::AdoptionCheckExecutionTests.test_suite_cannot_overwrite_a_pre_suite_component_artifact
+      - tests/test_adoption_check.py::AdoptionCheckExecutionTests.test_mutation_between_reconciliation_and_manifest_fails_closed
+      - tests/test_adoption_check.py::AdoptionCheckExecutionTests.test_external_bundle_commitment_detects_later_bundle_mutation
 
   - id: self-knowledge-boundary
     title: Adopting projects do not inherit toolkit self-knowledge
