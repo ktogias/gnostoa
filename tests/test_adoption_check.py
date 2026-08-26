@@ -372,10 +372,10 @@ class AdoptionCheckSidecarAcquisitionTests(unittest.TestCase):
             root = Path(directory)
             target = root / "observation.json"
             replacement = root / "replacement.json"
-            trusted = b"trusted inode bytes\n"
-            substituted = b"substituted inode bytes\n"
-            target.write_bytes(trusted)
-            replacement.write_bytes(substituted)
+            opened_file_content = b"original inode bytes\n"
+            replacement_file_content = b"replacement inode bytes\n"
+            target.write_bytes(opened_file_content)
+            replacement.write_bytes(replacement_file_content)
             pathname_open, descriptor_open = self._race_openers(target, replacement)
 
             with (
@@ -386,8 +386,8 @@ class AdoptionCheckSidecarAcquisitionTests(unittest.TestCase):
                     target, 64, "observation"
                 )
 
-            self.assertEqual(trusted, observed)
-            self.assertEqual(substituted, target.read_bytes())
+            self.assertEqual(opened_file_content, observed)
+            self.assertEqual(replacement_file_content, target.read_bytes())
 
     def test_retention_uses_only_the_safely_opened_file_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -396,10 +396,10 @@ class AdoptionCheckSidecarAcquisitionTests(unittest.TestCase):
             replacement = root / "replacement.json"
             evidence = root / "evidence"
             evidence.mkdir()
-            trusted = b'{"binding":"trusted"}\n'
-            substituted = b'{"binding":"substituted"}\n'
-            target.write_bytes(trusted)
-            replacement.write_bytes(substituted)
+            opened_file_content = b'{"sample":"original"}\n'
+            replacement_file_content = b'{"sample":"replacement"}\n'
+            target.write_bytes(opened_file_content)
+            replacement.write_bytes(replacement_file_content)
             pathname_open, descriptor_open = self._race_openers(target, replacement)
 
             with (
@@ -414,9 +414,11 @@ class AdoptionCheckSidecarAcquisitionTests(unittest.TestCase):
                 "runtime-observations/fast.json", observed
             )
             retained = evidence / "runtime-observations" / "fast.json"
-            self.assertEqual(trusted, retained.read_bytes())
-            self.assertEqual(adoption_check._sha256(trusted), artifact["sha256"])
-            self.assertNotEqual(substituted, retained.read_bytes())
+            self.assertEqual(opened_file_content, retained.read_bytes())
+            self.assertEqual(
+                adoption_check._sha256(opened_file_content), artifact["sha256"]
+            )
+            self.assertNotEqual(replacement_file_content, retained.read_bytes())
 
 
 class AdoptionCheckExecutionTests(unittest.TestCase):
