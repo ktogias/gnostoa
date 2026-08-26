@@ -59,6 +59,7 @@ inherited, copied or loaded by adopting projects.
 - [Select fail-closed existing-file adaptation](decisions/0046-select-fail-closed-existing-file-adaptation.md)
 - [Select a bounded adoption-completion check](decisions/0047-select-a-bounded-adoption-completion-check.md)
 - [Select project-adapter runtime observation for adoption-check](decisions/0048-select-project-adapter-runtime-observation-for-adoption-check.md)
+- [Bind adoption evidence to an authoritative ledger](decisions/0049-bind-adoption-evidence-to-an-authoritative-ledger.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Verification precedes integration](requirements/verification-precedes-implementation.md)

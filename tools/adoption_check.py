@@ -10,14 +10,12 @@ import os
 import platform
 import re
 import secrets
-import shutil
 import stat
 import subprocess
 import sys
-import tempfile
 from collections.abc import Callable
 from contextlib import redirect_stderr, redirect_stdout
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from io import StringIO
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -38,6 +36,7 @@ MAX_OBSERVATION_BYTES = 65_536
 MAX_TEXT = 512
 MAX_VERSION = 256
 MAX_IDENTITIES = 16
+BUNDLE_COMMITMENT_SCHEMA = "gnostoa-adoption-evidence-bundle/v1"
 
 HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 BINDING_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -88,6 +87,14 @@ class PathSet:
 
 
 @dataclass(frozen=True)
+class BoundOutputParent:
+    path: Path
+    descriptor: int
+    device: int
+    inode: int
+
+
+@dataclass(frozen=True)
 class RuntimeObservation:
     value: dict[str, Any]
     route_kind: str
@@ -95,37 +102,71 @@ class RuntimeObservation:
     manifest_media_type: str | None
 
 
-@dataclass
-class EvidenceWriter:
-    root: Path
-    components: list[dict[str, Any]]
+@dataclass(frozen=True)
+class EvidenceArtifact:
+    path: str
+    content: bytes
+    byte_length: int
+    digest: str
+    origin: str
 
-    def write_bytes(self, relative: str, content: bytes) -> dict[str, Any]:
-        path = _new_evidence_path(self.root, relative)
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        try:
-            descriptor = os.open(path, flags, 0o600)
-        except OSError as exc:
-            raise UnsafeInvocation(
-                f"cannot create evidence artifact without replacement: {path}: {exc}"
-            ) from exc
-        try:
-            with os.fdopen(descriptor, "wb") as target:
-                target.write(content)
-        except OSError as exc:
-            raise UnsafeInvocation(
-                f"cannot write evidence artifact {path}: {exc}"
-            ) from exc
+    def metadata(self) -> dict[str, Any]:
         return {
-            "path": relative,
-            "sha256": _sha256(content),
-            "bytes": len(content),
+            "path": self.path,
+            "sha256": self.digest,
+            "bytes": self.byte_length,
+            "origin": self.origin,
         }
 
-    def write_text(self, relative: str, content: str) -> dict[str, Any]:
-        return self.write_bytes(relative, content.encode("utf-8"))
+
+@dataclass
+class EvidenceWriter:
+    components: list[dict[str, Any]]
+    _artifacts: dict[str, EvidenceArtifact] = field(default_factory=dict, init=False)
+
+    def write_bytes(
+        self,
+        relative: str,
+        content: bytes,
+        *,
+        origin: str,
+    ) -> dict[str, Any]:
+        path = _normalize_artifact_path(relative)
+        if path in self._artifacts:
+            raise UnsafeInvocation(
+                f"cannot retain evidence artifact without replacement: {path}"
+            )
+        if (
+            not origin
+            or len(origin) > 256
+            or any(ord(character) < 32 or ord(character) == 127 for character in origin)
+        ):
+            raise UnsafeInvocation(f"invalid evidence artifact origin for {path}")
+        immutable_content = bytes(content)
+        artifact = EvidenceArtifact(
+            path=path,
+            content=immutable_content,
+            byte_length=len(immutable_content),
+            digest=_sha256(immutable_content),
+            origin=origin,
+        )
+        self._artifacts[path] = artifact
+        return artifact.metadata()
+
+    def write_text(
+        self,
+        relative: str,
+        content: str,
+        *,
+        origin: str,
+    ) -> dict[str, Any]:
+        return self.write_bytes(relative, content.encode("utf-8"), origin=origin)
+
+    def artifacts(self) -> tuple[EvidenceArtifact, ...]:
+        return tuple(self._artifacts[path] for path in sorted(self._artifacts))
+
+    def manifest(self) -> list[dict[str, Any]]:
+        return [artifact.metadata() for artifact in self.artifacts()]
 
     def component(
         self,
@@ -140,8 +181,9 @@ class EvidenceWriter:
     ) -> dict[str, Any]:
         stdout_path = f"components/{name}.stdout"
         stderr_path = f"components/{name}.stderr"
-        self.write_bytes(stdout_path, stdout)
-        self.write_bytes(stderr_path, stderr)
+        origin = f"gnostoa-component:{name}"
+        self.write_bytes(stdout_path, stdout, origin=origin)
+        self.write_bytes(stderr_path, stderr, origin=origin)
         record: dict[str, Any] = {
             "name": name,
             "command": command,
@@ -160,41 +202,17 @@ def _sha256(content: bytes) -> str:
     return f"sha256:{hashlib.sha256(content).hexdigest()}"
 
 
-def _new_evidence_path(root: Path, relative: str) -> Path:
+def _normalize_artifact_path(relative: str) -> str:
+    if not isinstance(relative, str) or not relative or len(relative) > 1024:
+        raise UnsafeInvocation(f"unsafe evidence artifact path: {relative!r}")
     candidate = PurePosixPath(relative)
     if candidate.is_absolute() or any(
         part in {"", ".", ".."} for part in candidate.parts
     ):
         raise UnsafeInvocation(f"unsafe evidence artifact path: {relative}")
-    try:
-        root_mode = root.lstat().st_mode
-    except OSError as exc:
-        raise UnsafeInvocation(f"cannot inspect evidence root {root}: {exc}") from exc
-    if not stat.S_ISDIR(root_mode) or stat.S_ISLNK(root_mode):
-        raise UnsafeInvocation(f"evidence root is not a regular directory: {root}")
-
-    current = root
-    for part in candidate.parts[:-1]:
-        current /= part
-        try:
-            mode = current.lstat().st_mode
-        except FileNotFoundError:
-            try:
-                current.mkdir(mode=0o700)
-            except OSError as exc:
-                raise UnsafeInvocation(
-                    f"cannot create evidence directory {current}: {exc}"
-                ) from exc
-            mode = current.lstat().st_mode
-        except OSError as exc:
-            raise UnsafeInvocation(
-                f"cannot inspect evidence directory {current}: {exc}"
-            ) from exc
-        if not stat.S_ISDIR(mode) or stat.S_ISLNK(mode):
-            raise UnsafeInvocation(
-                f"evidence directory is not a non-symlink directory: {current}"
-            )
-    return root.joinpath(*candidate.parts)
+    if any("\\" in part or "\x00" in part for part in candidate.parts):
+        raise UnsafeInvocation(f"unsafe evidence artifact path: {relative}")
+    return candidate.as_posix()
 
 
 def _has_control(value: str) -> bool:
@@ -1188,22 +1206,66 @@ def _adapter_path(root: Path, entry: str) -> Path:
     return path
 
 
-def _discard_incoming(path: Path) -> None:
-    """Remove one tool-owned incoming area without following a replacement link."""
+def _list_bound_directory(descriptor: int, label: str) -> list[str]:
+    """List a held directory from its beginning on supported Linux runtimes."""
 
     try:
-        mode = path.lstat().st_mode
-    except FileNotFoundError:
-        return
-    except OSError:
-        return
-    if stat.S_ISDIR(mode) and not stat.S_ISLNK(mode):
-        shutil.rmtree(path, ignore_errors=True)
-        return
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        return os.listdir(descriptor)
+    except OSError as exc:
+        raise UnsafeInvocation(f"cannot inspect {label}: {exc}") from exc
+
+
+def _validate_suite_exchange(
+    exchange_descriptor: int,
+    incoming_descriptor: int,
+    suite: str,
+) -> None:
+    """Require the held suite exchange to contain only its bound sidecar area."""
+
+    exchange_entries = set(
+        _list_bound_directory(exchange_descriptor, f"{suite} suite exchange")
+    )
+    unexpected_exchange = exchange_entries - {"incoming"}
+    if unexpected_exchange:
+        raise UnsafeInvocation(
+            f"{suite} suite created unexpected exchange paths: "
+            + ", ".join(sorted(unexpected_exchange))
+        )
+    if "incoming" not in exchange_entries:
+        raise ObservationBlocked(f"{suite} runtime observation directory disappeared")
+
     try:
-        path.unlink()
-    except OSError:
-        pass
+        expected = os.fstat(incoming_descriptor)
+        observed = os.stat(
+            "incoming",
+            dir_fd=exchange_descriptor,
+            follow_symlinks=False,
+        )
+    except OSError as exc:
+        raise ObservationBlocked(
+            f"cannot reconcile {suite} runtime observation directory: {exc}"
+        ) from exc
+    if not stat.S_ISDIR(observed.st_mode) or (observed.st_dev, observed.st_ino) != (
+        expected.st_dev,
+        expected.st_ino,
+    ):
+        raise ObservationBlocked(f"{suite} runtime observation directory was replaced")
+
+    try:
+        incoming_entries = set(
+            _list_bound_directory(
+                incoming_descriptor, f"{suite} runtime observation directory"
+            )
+        )
+    except UnsafeInvocation as exc:
+        raise ObservationBlocked(str(exc)) from exc
+    unexpected_incoming = incoming_entries - {"observation.json"}
+    if unexpected_incoming:
+        raise UnsafeInvocation(
+            f"{suite} suite created unexpected incoming paths: "
+            + ", ".join(sorted(unexpected_incoming))
+        )
 
 
 def _suite_attempt(
@@ -1213,6 +1275,7 @@ def _suite_attempt(
     verification: dict[str, Any],
     paths: PathSet,
     writer: EvidenceWriter,
+    output_parent: BoundOutputParent,
 ) -> dict[str, Any]:
     command = declaration.get("command")
     timeout_minutes = declaration.get("timeout_minutes")
@@ -1249,24 +1312,49 @@ def _suite_attempt(
         )
 
     binding = secrets.token_hex(32)
-    incoming_root = writer.root / f".{suite}-runtime-observation-incoming"
-    observation_path = incoming_root / "observation.json"
-    directory_descriptor: int | None = None
+    exchange_name: str | None = None
+    exchange_descriptor: int | None = None
+    incoming_descriptor: int | None = None
+    observation_path: Path | None = None
     try:
-        incoming_root.mkdir()
-        directory_descriptor = _open_directory_descriptor(
-            incoming_root, f"{suite} runtime observation directory"
+        _assert_visible_output_parent(output_parent, f"{suite} suite exchange creation")
+        exchange_name, exchange_descriptor = _create_unique_directory_at(
+            output_parent.descriptor,
+            f".gnostoa-adoption-{suite}-",
+            f"{suite} suite exchange",
+        )
+        os.mkdir("incoming", mode=0o700, dir_fd=exchange_descriptor)
+        incoming_descriptor = _open_directory_at(
+            exchange_descriptor,
+            "incoming",
+            f"{suite} runtime observation directory",
         )
         _require_absent_at(
-            directory_descriptor,
-            observation_path.name,
+            incoming_descriptor,
+            "observation.json",
             f"{suite} runtime observation",
         )
+        _validate_suite_exchange(exchange_descriptor, incoming_descriptor, suite)
+        observation_path = (
+            output_parent.path / exchange_name / "incoming" / "observation.json"
+        )
     except (OSError, ObservationBlocked) as exc:
-        if directory_descriptor is not None:
-            os.close(directory_descriptor)
-            directory_descriptor = None
-        _discard_incoming(incoming_root)
+        if incoming_descriptor is not None:
+            os.close(incoming_descriptor)
+            incoming_descriptor = None
+        if exchange_descriptor is not None:
+            try:
+                if exchange_name is not None:
+                    _remove_bound_directory_at(
+                        output_parent.descriptor,
+                        exchange_descriptor,
+                        exchange_name,
+                        f"{suite} suite exchange",
+                    )
+            finally:
+                os.close(exchange_descriptor)
+                exchange_descriptor = None
+        _assert_visible_output_parent(output_parent, f"{suite} suite exchange failure")
         record = writer.component(
             f"project-{suite}",
             list(command),
@@ -1274,16 +1362,22 @@ def _suite_attempt(
             "BLOCKED",
             b"",
             str(exc).encode(),
-            detail="runtime observation directory could not be acquired safely",
+            detail="runtime observation exchange could not be acquired safely",
         )
         record["adapter_sha256"] = adapter_hash
         record["invocation_binding"] = binding
         return record
+
+    if (
+        exchange_name is None
+        or exchange_descriptor is None
+        or incoming_descriptor is None
+        or observation_path is None
+    ):
+        raise ObservationBlocked("runtime observation exchange was not acquired")
     environment = os.environ.copy()
     environment["GNOSTOA_ADOPTION_OBSERVATION_PATH"] = str(observation_path)
     environment["GNOSTOA_ADOPTION_INVOCATION_BINDING"] = binding
-    if directory_descriptor is None:
-        raise ObservationBlocked("runtime observation directory was not acquired")
 
     try:
         try:
@@ -1294,6 +1388,12 @@ def _suite_attempt(
                 timeout=timeout_minutes * 60,
             )
         except (FileNotFoundError, PermissionError, OSError) as exc:
+            try:
+                _validate_suite_exchange(
+                    exchange_descriptor, incoming_descriptor, suite
+                )
+            except ObservationBlocked:
+                pass
             record = writer.component(
                 f"project-{suite}",
                 list(command),
@@ -1307,6 +1407,12 @@ def _suite_attempt(
             record["invocation_binding"] = binding
             return record
         except subprocess.TimeoutExpired as exc:
+            try:
+                _validate_suite_exchange(
+                    exchange_descriptor, incoming_descriptor, suite
+                )
+            except ObservationBlocked:
+                pass
             stdout = exc.stdout if isinstance(exc.stdout, bytes) else b""
             stderr = exc.stderr if isinstance(exc.stderr, bytes) else b""
             record = writer.component(
@@ -1320,6 +1426,50 @@ def _suite_attempt(
             )
             record["adapter_sha256"] = adapter_hash
             record["invocation_binding"] = binding
+            return record
+
+        try:
+            _validate_suite_exchange(exchange_descriptor, incoming_descriptor, suite)
+        except ObservationBlocked as exc:
+            retained_layout_observation: dict[str, Any] = {}
+            try:
+                bound_bytes = _read_regular_bounded_at(
+                    incoming_descriptor,
+                    observation_path.name,
+                    MAX_OBSERVATION_BYTES,
+                    f"{suite} runtime observation",
+                )
+            except ObservationBlocked:
+                pass
+            else:
+                retained_layout_observation = writer.write_bytes(
+                    f"runtime-observations/{suite}.json",
+                    bound_bytes,
+                    origin=f"project-adapter:{suite}",
+                )
+            record = writer.component(
+                f"project-{suite}",
+                list(command),
+                process.returncode,
+                (
+                    "PASS"
+                    if process.returncode == 0
+                    else "BLOCKED"
+                    if process.returncode in {126, 127}
+                    else "FAIL"
+                ),
+                process.stdout,
+                process.stderr,
+            )
+            record["adapter_sha256"] = adapter_hash
+            record["invocation_binding"] = binding
+            record["runtime_observation"] = {
+                "result": "BLOCKED",
+                "authority": "project-reported",
+                "detail": str(exc),
+                "independent_attestation": "NOT OBSERVED",
+                **retained_layout_observation,
+            }
             return record
 
         if process.returncode == 0:
@@ -1342,13 +1492,15 @@ def _suite_attempt(
         retained_observation: dict[str, Any] = {}
         try:
             raw_observation = _read_regular_bounded_at(
-                directory_descriptor,
+                incoming_descriptor,
                 observation_path.name,
                 MAX_OBSERVATION_BYTES,
                 f"{suite} runtime observation",
             )
             retained_observation = writer.write_bytes(
-                f"runtime-observations/{suite}.json", raw_observation
+                f"runtime-observations/{suite}.json",
+                raw_observation,
+                origin=f"project-adapter:{suite}",
             )
             observation = validate_runtime_observation(
                 raw_observation,
@@ -1398,11 +1550,27 @@ def _suite_attempt(
                 "independent_attestation": "NOT OBSERVED",
                 **retained_observation,
             }
+        _validate_suite_exchange(exchange_descriptor, incoming_descriptor, suite)
         return record
     finally:
-        if directory_descriptor is not None:
-            os.close(directory_descriptor)
-        _discard_incoming(incoming_root)
+        cleanup_error: AdoptionCheckError | None = None
+        if incoming_descriptor is not None:
+            os.close(incoming_descriptor)
+        if exchange_descriptor is not None:
+            try:
+                _remove_bound_directory_at(
+                    output_parent.descriptor,
+                    exchange_descriptor,
+                    exchange_name,
+                    f"{suite} suite exchange",
+                )
+            except AdoptionCheckError as exc:
+                cleanup_error = exc
+            finally:
+                os.close(exchange_descriptor)
+        _assert_visible_output_parent(output_parent, f"{suite} suite completion")
+        if cleanup_error is not None:
+            raise cleanup_error
 
 
 def _identity_result(
@@ -1497,7 +1665,11 @@ def _identity_result(
                     "detail": str(exc),
                 }
             else:
-                artifact = writer.write_bytes("oci-digest-evidence.bin", supplied)
+                artifact = writer.write_bytes(
+                    "oci-digest-evidence.bin",
+                    supplied,
+                    origin="caller-supplied-oci-evidence",
+                )
                 external_oci["supplied_evidence"] = {
                     "result": "DECLARATION ONLY",
                     **artifact,
@@ -1588,7 +1760,11 @@ def _context_components(
             "determinism": "FAIL",
             "retention": "NOT RUN",
         }
-    artifact = writer.write_bytes("context-pack.md", first_stdout)
+    artifact = writer.write_bytes(
+        "context-pack.md",
+        first_stdout,
+        origin="gnostoa-context-generator",
+    )
     return {
         "generation": "PASS",
         "determinism": "PASS",
@@ -1670,30 +1846,563 @@ def _project_suite_dimensions(records: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _safe_artifact_manifest(root: Path) -> list[dict[str, Any]]:
-    artifacts: list[dict[str, Any]] = []
-    for path in sorted(root.rglob("*"), key=lambda item: item.as_posix()):
+def _directory_open_flags() -> int:
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    directory = getattr(os, "O_DIRECTORY", None)
+    if nofollow is None or directory is None:
+        raise UnsafeInvocation(
+            "descriptor-bound evidence materialization requires O_NOFOLLOW and O_DIRECTORY"
+        )
+    flags = int(os.O_RDONLY | nofollow | directory)
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    return flags
+
+
+def _safe_basename(name: str, label: str) -> str:
+    if (
+        not name
+        or name in {".", ".."}
+        or "/" in name
+        or "\\" in name
+        or "\x00" in name
+        or len(os.fsencode(name)) > 240
+    ):
+        raise UnsafeInvocation(f"invalid {label} basename")
+    return name
+
+
+def _acquire_output_parent(output: Path) -> BoundOutputParent:
+    parent_path = output.parent
+    try:
+        descriptor = os.open(parent_path, _directory_open_flags())
+    except OSError as exc:
+        raise UnsafeInvocation(f"cannot bind output parent: {exc}") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISDIR(metadata.st_mode):
+            raise UnsafeInvocation("output parent is not a non-symlink directory")
+        bound = BoundOutputParent(
+            path=parent_path,
+            descriptor=descriptor,
+            device=metadata.st_dev,
+            inode=metadata.st_ino,
+        )
+        _assert_visible_output_parent(bound, "descriptor acquisition")
+        output_name = _safe_basename(output.name, "output")
         try:
-            mode = path.lstat().st_mode
+            os.stat(output_name, dir_fd=descriptor, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
         except OSError as exc:
             raise UnsafeInvocation(
-                f"cannot inspect evidence artifact {path}: {exc}"
+                f"cannot inspect output through bound parent: {exc}"
             ) from exc
-        if stat.S_ISDIR(mode):
+        else:
+            raise UnsafeInvocation(f"output directory already exists: {output}")
+    except BaseException:
+        os.close(descriptor)
+        raise
+    return bound
+
+
+def _assert_visible_output_parent(
+    parent: BoundOutputParent,
+    phase: str,
+) -> None:
+    try:
+        visible = parent.path.lstat()
+    except OSError as exc:
+        raise UnsafeInvocation(
+            f"output parent became unavailable during {phase}: {exc}"
+        ) from exc
+    if (
+        stat.S_ISLNK(visible.st_mode)
+        or not stat.S_ISDIR(visible.st_mode)
+        or (visible.st_dev, visible.st_ino) != (parent.device, parent.inode)
+    ):
+        raise UnsafeInvocation(f"output parent identity changed during {phase}")
+
+
+def _create_unique_directory_at(
+    parent_descriptor: int,
+    prefix: str,
+    label: str,
+) -> tuple[str, int]:
+    if not prefix or len(os.fsencode(prefix)) > 160:
+        raise UnsafeInvocation(f"invalid {label} prefix")
+    for _ in range(32):
+        name = _safe_basename(f"{prefix}{secrets.token_hex(16)}", label)
+        try:
+            os.mkdir(name, mode=0o700, dir_fd=parent_descriptor)
+        except FileExistsError:
             continue
-        if not stat.S_ISREG(mode) or stat.S_ISLNK(mode):
-            raise UnsafeInvocation(f"evidence artifact is not a regular file: {path}")
-        relative = path.relative_to(root).as_posix()
-        content = path.read_bytes()
-        artifacts.append(
-            {"path": relative, "sha256": _sha256(content), "bytes": len(content)}
+        except OSError as exc:
+            raise UnsafeInvocation(f"cannot create {label}: {exc}") from exc
+        try:
+            return name, _open_directory_at(parent_descriptor, name, label)
+        except BaseException:
+            try:
+                os.rmdir(name, dir_fd=parent_descriptor)
+            except OSError:
+                pass
+            raise
+    raise UnsafeInvocation(f"cannot allocate collision-free {label}")
+
+
+def _clear_bound_directory(descriptor: int, label: str) -> None:
+    for name in _list_bound_directory(descriptor, label):
+        _safe_basename(name, f"{label} entry")
+        try:
+            metadata = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise UnsafeInvocation(
+                f"cannot inspect {label} entry {name}: {exc}"
+            ) from exc
+        if stat.S_ISDIR(metadata.st_mode):
+            child = _open_directory_at(descriptor, name, f"{label} entry {name}")
+            try:
+                opened = os.fstat(child)
+                if (opened.st_dev, opened.st_ino) != (
+                    metadata.st_dev,
+                    metadata.st_ino,
+                ):
+                    raise UnsafeInvocation(
+                        f"{label} entry {name} was replaced during cleanup"
+                    )
+                _clear_bound_directory(child, f"{label}/{name}")
+            finally:
+                os.close(child)
+            try:
+                current = os.stat(
+                    name,
+                    dir_fd=descriptor,
+                    follow_symlinks=False,
+                )
+            except OSError as exc:
+                raise UnsafeInvocation(
+                    f"cannot reconcile {label} directory {name}: {exc}"
+                ) from exc
+            if not stat.S_ISDIR(current.st_mode) or (
+                current.st_dev,
+                current.st_ino,
+            ) != (metadata.st_dev, metadata.st_ino):
+                raise UnsafeInvocation(
+                    f"{label} directory {name} was replaced during cleanup"
+                )
+            try:
+                os.rmdir(name, dir_fd=descriptor)
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                raise UnsafeInvocation(
+                    f"cannot remove {label} directory {name}: {exc}"
+                ) from exc
+        else:
+            try:
+                os.unlink(name, dir_fd=descriptor)
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                raise UnsafeInvocation(
+                    f"cannot remove {label} entry {name}: {exc}"
+                ) from exc
+
+
+def _bound_directory_name(
+    parent_descriptor: int,
+    descriptor: int,
+    preferred_name: str,
+    label: str,
+) -> str | None:
+    expected = os.fstat(descriptor)
+    matches: list[str] = []
+    names = _list_bound_directory(parent_descriptor, f"{label} parent")
+    names.sort(key=lambda name: name != preferred_name)
+    for name in names:
+        try:
+            metadata = os.stat(
+                name,
+                dir_fd=parent_descriptor,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise UnsafeInvocation(
+                f"cannot locate bound {label} directory: {exc}"
+            ) from exc
+        if stat.S_ISDIR(metadata.st_mode) and (
+            metadata.st_dev,
+            metadata.st_ino,
+        ) == (expected.st_dev, expected.st_ino):
+            matches.append(name)
+    if not matches:
+        if expected.st_nlink == 0:
+            return None
+        raise UnsafeInvocation(f"cannot locate bound {label} directory")
+    if len(matches) != 1:
+        raise UnsafeInvocation(f"bound {label} directory has ambiguous names")
+    return matches[0]
+
+
+def _remove_bound_directory_at(
+    parent_descriptor: int,
+    descriptor: int,
+    preferred_name: str,
+    label: str,
+) -> None:
+    _clear_bound_directory(descriptor, label)
+    name = _bound_directory_name(
+        parent_descriptor,
+        descriptor,
+        preferred_name,
+        label,
+    )
+    if name is None:
+        return
+    expected = os.fstat(descriptor)
+    try:
+        visible = os.stat(name, dir_fd=parent_descriptor, follow_symlinks=False)
+    except OSError as exc:
+        raise UnsafeInvocation(f"cannot reconcile bound {label}: {exc}") from exc
+    if not stat.S_ISDIR(visible.st_mode) or (
+        visible.st_dev,
+        visible.st_ino,
+    ) != (expected.st_dev, expected.st_ino):
+        raise UnsafeInvocation(f"bound {label} directory was replaced during cleanup")
+    try:
+        os.rmdir(name, dir_fd=parent_descriptor)
+    except OSError as exc:
+        raise UnsafeInvocation(f"cannot remove bound {label}: {exc}") from exc
+
+
+def _open_directory_at(parent_descriptor: int, name: str, label: str) -> int:
+    try:
+        descriptor = os.open(
+            name,
+            _directory_open_flags(),
+            dir_fd=parent_descriptor,
         )
-    return artifacts
+    except OSError as exc:
+        raise UnsafeInvocation(f"cannot open {label}: {exc}") from exc
+    try:
+        mode = os.fstat(descriptor).st_mode
+        if not stat.S_ISDIR(mode):
+            raise UnsafeInvocation(f"{label} is not a non-symlink directory")
+    except BaseException:
+        os.close(descriptor)
+        raise
+    return descriptor
 
 
-def _rename_noreplace(source: Path, target: Path) -> None:
+def _create_or_open_directory_at(
+    parent_descriptor: int,
+    name: str,
+    label: str,
+) -> int:
+    try:
+        os.mkdir(name, mode=0o700, dir_fd=parent_descriptor)
+    except FileExistsError:
+        pass
+    except OSError as exc:
+        raise UnsafeInvocation(f"cannot create {label}: {exc}") from exc
+    return _open_directory_at(parent_descriptor, name, label)
+
+
+def _write_all(descriptor: int, content: bytes, label: str) -> None:
+    offset = 0
+    try:
+        while offset < len(content):
+            written = os.write(descriptor, content[offset:])
+            if written <= 0:
+                raise OSError(errno.EIO, "short evidence write")
+            offset += written
+        os.fsync(descriptor)
+    except OSError as exc:
+        raise UnsafeInvocation(f"cannot write {label}: {exc}") from exc
+
+
+def _read_opened_materialized(
+    descriptor: int,
+    maximum: int,
+    label: str,
+) -> bytes:
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            raise UnsafeInvocation(f"{label} is not one singly linked regular file")
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        remaining = maximum + 1
+        chunks: list[bytes] = []
+        while remaining:
+            chunk = os.read(descriptor, min(remaining, 65_536))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+    except OSError as exc:
+        raise UnsafeInvocation(f"cannot read {label}: {exc}") from exc
+    content = b"".join(chunks)
+    if len(content) > maximum:
+        raise UnsafeInvocation(f"{label} changed length during reconciliation")
+    return content
+
+
+def _write_artifact_at(root_descriptor: int, artifact: EvidenceArtifact) -> None:
+    parts = PurePosixPath(artifact.path).parts
+    parent_descriptor = os.dup(root_descriptor)
+    try:
+        for index, part in enumerate(parts[:-1]):
+            child = _create_or_open_directory_at(
+                parent_descriptor,
+                part,
+                f"evidence directory {'/'.join(parts[: index + 1])}",
+            )
+            os.close(parent_descriptor)
+            parent_descriptor = child
+
+        flags = os.O_RDWR | os.O_CREAT | os.O_EXCL
+        nofollow = getattr(os, "O_NOFOLLOW", None)
+        if nofollow is None:
+            raise UnsafeInvocation(
+                "descriptor-bound evidence materialization requires O_NOFOLLOW"
+            )
+        flags |= nofollow
+        if hasattr(os, "O_CLOEXEC"):
+            flags |= os.O_CLOEXEC
+        try:
+            descriptor = os.open(
+                parts[-1],
+                flags,
+                0o600,
+                dir_fd=parent_descriptor,
+            )
+        except OSError as exc:
+            raise UnsafeInvocation(
+                f"cannot create evidence artifact without replacement: {artifact.path}: {exc}"
+            ) from exc
+        try:
+            _write_all(descriptor, artifact.content, artifact.path)
+            retained = _read_opened_materialized(
+                descriptor,
+                artifact.byte_length,
+                artifact.path,
+            )
+            if retained != artifact.content or _sha256(retained) != artifact.digest:
+                raise UnsafeInvocation(
+                    f"evidence artifact differs immediately after writing: {artifact.path}"
+                )
+        finally:
+            os.close(descriptor)
+    finally:
+        os.close(parent_descriptor)
+
+
+def _read_regular_at_for_reconciliation(
+    parent_descriptor: int,
+    name: str,
+    maximum: int,
+    label: str,
+) -> bytes:
+    flags = os.O_RDONLY
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    if nofollow is None:
+        raise UnsafeInvocation(
+            "descriptor-bound evidence reconciliation requires O_NOFOLLOW"
+        )
+    flags |= nofollow
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    try:
+        descriptor = os.open(name, flags, dir_fd=parent_descriptor)
+    except OSError as exc:
+        raise UnsafeInvocation(f"cannot open {label}: {exc}") from exc
+    try:
+        return _read_opened_materialized(descriptor, maximum, label)
+    finally:
+        os.close(descriptor)
+
+
+def _reconcile_directory(
+    descriptor: int,
+    prefix: PurePosixPath,
+    expected: dict[str, EvidenceArtifact],
+    observed: set[str],
+) -> None:
+    names = sorted(_list_bound_directory(descriptor, "materialized evidence"))
+    for name in names:
+        if not name or name in {".", ".."} or "/" in name or "\\" in name:
+            raise UnsafeInvocation("materialized evidence contains an invalid basename")
+        relative_path = prefix / name if prefix.parts else PurePosixPath(name)
+        relative = relative_path.as_posix()
+        try:
+            metadata = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+        except OSError as exc:
+            raise UnsafeInvocation(
+                f"cannot inspect materialized evidence path {relative}: {exc}"
+            ) from exc
+        if stat.S_ISDIR(metadata.st_mode):
+            if not any(path.startswith(relative + "/") for path in expected):
+                raise UnsafeInvocation(
+                    f"unexpected materialized evidence directory: {relative}"
+                )
+            child = _open_directory_at(
+                descriptor,
+                name,
+                f"materialized evidence directory {relative}",
+            )
+            try:
+                _reconcile_directory(child, relative_path, expected, observed)
+            finally:
+                os.close(child)
+            continue
+        if not stat.S_ISREG(metadata.st_mode):
+            raise UnsafeInvocation(
+                f"materialized evidence path is not regular: {relative}"
+            )
+        artifact = expected.get(relative)
+        if artifact is None:
+            raise UnsafeInvocation(f"unexpected materialized evidence file: {relative}")
+        content = _read_regular_at_for_reconciliation(
+            descriptor,
+            name,
+            artifact.byte_length,
+            f"materialized evidence artifact {relative}",
+        )
+        if (
+            content != artifact.content
+            or len(content) != artifact.byte_length
+            or _sha256(content) != artifact.digest
+        ):
+            raise UnsafeInvocation(
+                f"materialized evidence differs from authoritative ledger: {relative}"
+            )
+        observed.add(relative)
+
+
+def _reconcile_materialized(
+    root: Path,
+    artifacts: tuple[EvidenceArtifact, ...],
+) -> None:
+    root_descriptor = _open_directory_descriptor(root, "materialized evidence root")
+    try:
+        _reconcile_materialized_at(root_descriptor, artifacts)
+    finally:
+        os.close(root_descriptor)
+
+
+def _reconcile_materialized_at(
+    root_descriptor: int,
+    artifacts: tuple[EvidenceArtifact, ...],
+) -> None:
+    expected = {artifact.path: artifact for artifact in artifacts}
+    observed: set[str] = set()
+    _reconcile_directory(root_descriptor, PurePosixPath(), expected, observed)
+    missing = sorted(set(expected) - observed)
+    if missing:
+        raise UnsafeInvocation(
+            "materialized evidence is missing ledger paths: " + ", ".join(missing)
+        )
+
+
+def _commitment_payload(
+    entries: list[dict[str, Any]],
+) -> bytes:
+    payload = [
+        {
+            "bytes": entry["bytes"],
+            "path": entry["path"],
+            "sha256": entry["sha256"],
+        }
+        for entry in sorted(entries, key=lambda item: str(item["path"]))
+    ]
+    return (
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode("utf-8")
+
+
+def _ledger_bundle_commitment(artifacts: tuple[EvidenceArtifact, ...]) -> str:
+    return _sha256(_commitment_payload([item.metadata() for item in artifacts]))
+
+
+def _materialized_manifest_at(root_descriptor: int) -> list[dict[str, Any]]:
+    manifest: list[dict[str, Any]] = []
+
+    def visit(descriptor: int, prefix: PurePosixPath) -> None:
+        names = sorted(_list_bound_directory(descriptor, "evidence bundle"))
+        for name in names:
+            relative_path = prefix / name if prefix.parts else PurePosixPath(name)
+            relative = _normalize_artifact_path(relative_path.as_posix())
+            try:
+                metadata = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+            except OSError as exc:
+                raise UnsafeInvocation(
+                    f"cannot inspect evidence bundle path {relative}: {exc}"
+                ) from exc
+            if stat.S_ISDIR(metadata.st_mode):
+                child = _open_directory_at(
+                    descriptor,
+                    name,
+                    f"evidence bundle directory {relative}",
+                )
+                try:
+                    visit(child, relative_path)
+                finally:
+                    os.close(child)
+                continue
+            if not stat.S_ISREG(metadata.st_mode):
+                raise UnsafeInvocation(
+                    f"evidence bundle path is not regular: {relative}"
+                )
+            content = _read_regular_at_for_reconciliation(
+                descriptor,
+                name,
+                metadata.st_size,
+                f"evidence bundle artifact {relative}",
+            )
+            manifest.append(
+                {"path": relative, "bytes": len(content), "sha256": _sha256(content)}
+            )
+
+    visit(root_descriptor, PurePosixPath())
+    return manifest
+
+
+def _materialized_manifest(root: Path) -> list[dict[str, Any]]:
+    root_descriptor = _open_directory_descriptor(root, "evidence bundle root")
+    try:
+        return _materialized_manifest_at(root_descriptor)
+    finally:
+        os.close(root_descriptor)
+
+
+def _materialized_bundle_commitment(root: Path) -> str:
+    return _sha256(_commitment_payload(_materialized_manifest(root)))
+
+
+def _materialized_bundle_commitment_at(root_descriptor: int) -> str:
+    return _sha256(_commitment_payload(_materialized_manifest_at(root_descriptor)))
+
+
+def _rename_noreplace_at(
+    parent_descriptor: int,
+    source_name: str,
+    target_name: str,
+    target_display: Path,
+) -> None:
     if sys.platform != "linux":
         raise UnsafeInvocation("atomic no-replace evidence finalization requires Linux")
+    _safe_basename(source_name, "staging")
+    _safe_basename(target_name, "output")
     library = ctypes.CDLL(None, use_errno=True)
     renameat2 = getattr(library, "renameat2", None)
     if renameat2 is None:
@@ -1707,17 +2416,17 @@ def _rename_noreplace(source: Path, target: Path) -> None:
     ]
     renameat2.restype = ctypes.c_int
     result = renameat2(
-        -100,
-        os.fsencode(source),
-        -100,
-        os.fsencode(target),
+        parent_descriptor,
+        os.fsencode(source_name),
+        parent_descriptor,
+        os.fsencode(target_name),
         1,
     )
     if result == 0:
         return
     error = ctypes.get_errno()
     if error == errno.EEXIST:
-        raise UnsafeInvocation(f"output directory already exists: {target}")
+        raise UnsafeInvocation(f"output directory already exists: {target_display}")
     raise UnsafeInvocation(
         f"cannot atomically finalize evidence directory: {os.strerror(error)}"
     )
@@ -1727,18 +2436,106 @@ def _finalize(
     writer: EvidenceWriter,
     output: Path,
     result: dict[str, Any],
-) -> None:
-    result["artifacts"] = _safe_artifact_manifest(writer.root)
+    output_parent: BoundOutputParent,
+) -> str:
+    result["artifacts"] = writer.manifest()
     writer.write_text(
         "adoption-check.json",
         json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        origin="gnostoa-result",
     )
-    manifest = _safe_artifact_manifest(writer.root)
+    manifest = writer.manifest()
     lines = [
         f"{item['sha256'].removeprefix('sha256:')}  {item['path']}" for item in manifest
     ]
-    writer.write_text("SHA256SUMS", "\n".join(lines) + "\n")
-    _rename_noreplace(writer.root, output)
+    writer.write_text(
+        "SHA256SUMS",
+        "\n".join(lines) + "\n",
+        origin="gnostoa-manifest",
+    )
+    artifacts = writer.artifacts()
+    commitment = _ledger_bundle_commitment(artifacts)
+
+    if output.parent != output_parent.path:
+        raise UnsafeInvocation("bound output parent does not match final output")
+    _assert_visible_output_parent(output_parent, "materialization")
+    staging_name, staging_descriptor = _create_unique_directory_at(
+        output_parent.descriptor,
+        f".{output.name}.materializing-",
+        "evidence materialization root",
+    )
+    published = False
+    try:
+        for artifact in artifacts:
+            _write_artifact_at(staging_descriptor, artifact)
+
+        _reconcile_materialized_at(staging_descriptor, artifacts)
+        if _materialized_bundle_commitment_at(staging_descriptor) != commitment:
+            raise UnsafeInvocation(
+                "materialized evidence commitment differs from authoritative ledger"
+            )
+        _reconcile_materialized_at(staging_descriptor, artifacts)
+        _assert_visible_output_parent(output_parent, "publication")
+        _rename_noreplace_at(
+            output_parent.descriptor,
+            staging_name,
+            output.name,
+            output,
+        )
+        published = True
+        try:
+            _assert_visible_output_parent(output_parent, "post-publication read-back")
+            published_descriptor = _open_directory_at(
+                output_parent.descriptor,
+                output.name,
+                "published evidence bundle",
+            )
+            try:
+                staging_identity = os.fstat(staging_descriptor)
+                published_identity = os.fstat(published_descriptor)
+                if (
+                    staging_identity.st_dev,
+                    staging_identity.st_ino,
+                ) != (
+                    published_identity.st_dev,
+                    published_identity.st_ino,
+                ):
+                    raise UnsafeInvocation(
+                        "published evidence does not match held staging identity"
+                    )
+                _reconcile_materialized_at(published_descriptor, artifacts)
+                if (
+                    _materialized_bundle_commitment_at(published_descriptor)
+                    != commitment
+                ):
+                    raise UnsafeInvocation(
+                        "published evidence commitment differs from authoritative ledger"
+                    )
+            finally:
+                os.close(published_descriptor)
+        except BaseException:
+            published = False
+            _remove_bound_directory_at(
+                output_parent.descriptor,
+                staging_descriptor,
+                output.name,
+                "published evidence bundle",
+            )
+            raise
+        return commitment
+    finally:
+        if not published:
+            try:
+                _remove_bound_directory_at(
+                    output_parent.descriptor,
+                    staging_descriptor,
+                    staging_name,
+                    "evidence materialization root",
+                )
+            finally:
+                os.close(staging_descriptor)
+        else:
+            os.close(staging_descriptor)
 
 
 def _result_exit(
@@ -1840,12 +2637,12 @@ def _blocked_prerequisite_result(
     }
 
 
-def _execute(args: argparse.Namespace, paths: PathSet) -> tuple[int, Path]:
-    temporary = Path(
-        tempfile.mkdtemp(prefix=f".{paths.output.name}.tmp-", dir=paths.output.parent)
-    )
-    writer = EvidenceWriter(temporary, [])
-    finalized = False
+def _execute_bound(
+    args: argparse.Namespace,
+    paths: PathSet,
+    output_parent: BoundOutputParent,
+) -> tuple[int, Path, str]:
+    writer = EvidenceWriter([])
     prerequisite_stage = "initial Git snapshot"
     completed_dimensions: dict[str, Any] | None = None
     try:
@@ -1853,7 +2650,11 @@ def _execute(args: argparse.Namespace, paths: PathSet) -> tuple[int, Path]:
         verification = load_yaml(paths.verification)
         before = _git_snapshot(paths.project_root)
         candidate_patch = before.pop("_patch")
-        writer.write_bytes("candidate.patch", candidate_patch)
+        writer.write_bytes(
+            "candidate.patch",
+            candidate_patch,
+            origin="gnostoa-git-snapshot",
+        )
 
         prerequisite_stage = "initial Git representation"
         representation, representation_problems = _git_representation(
@@ -2016,6 +2817,7 @@ def _execute(args: argparse.Namespace, paths: PathSet) -> tuple[int, Path]:
                             verification=verification,
                             paths=paths,
                             writer=writer,
+                            output_parent=output_parent,
                         )
                     )
                 else:
@@ -2116,6 +2918,7 @@ def _execute(args: argparse.Namespace, paths: PathSet) -> tuple[int, Path]:
         writer.write_text(
             "git-state.json",
             json.dumps(git_state, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            origin="gnostoa-git-reconciliation",
         )
 
         dimensions = dict(completed_dimensions)
@@ -2156,9 +2959,8 @@ def _execute(args: argparse.Namespace, paths: PathSet) -> tuple[int, Path]:
                 "project_runtime_observation": "project-reported, not independently attested",
             },
         }
-        _finalize(writer, paths.output, result)
-        finalized = True
-        return exit_code, paths.output
+        commitment = _finalize(writer, paths.output, result, output_parent)
+        return exit_code, paths.output, commitment
     except BlockedPrerequisite as exc:
         result = _blocked_prerequisite_result(
             args,
@@ -2168,12 +2970,16 @@ def _execute(args: argparse.Namespace, paths: PathSet) -> tuple[int, Path]:
             error=exc,
             completed_dimensions=completed_dimensions,
         )
-        _finalize(writer, paths.output, result)
-        finalized = True
-        return 3, paths.output
+        commitment = _finalize(writer, paths.output, result, output_parent)
+        return 3, paths.output, commitment
+
+
+def _execute(args: argparse.Namespace, paths: PathSet) -> tuple[int, Path, str]:
+    output_parent = _acquire_output_parent(paths.output)
+    try:
+        return _execute_bound(args, paths, output_parent)
     finally:
-        if not finalized:
-            shutil.rmtree(temporary, ignore_errors=True)
+        os.close(output_parent.descriptor)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -2196,7 +3002,12 @@ def _parser() -> argparse.ArgumentParser:
             "  composite routes are blocked. The sidecar is project-reported, not "
             "independent\n"
             "  attestation or semantic acceptance. See the existing-project adoption "
-            "workflow."
+            "workflow.\n\n"
+            "Evidence integrity:\n"
+            "  Authoritative bytes are ledger-bound while suites run. After atomic "
+            "bundle publication,\n"
+            f"  stdout emits one {BUNDLE_COMMITMENT_SCHEMA} commitment for separate "
+            "retention."
         ),
     )
     parser.add_argument(
@@ -2233,7 +3044,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         paths = _derive_paths(args)
-        code, output = _execute(args, paths)
+        code, output, commitment = _execute(args, paths)
     except BlockedPrerequisite as exc:
         print(f"BLOCKED: {exc}", file=sys.stderr)
         return 3
@@ -2245,6 +3056,7 @@ def main(argv: list[str] | None = None) -> int:
     ) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
+    print(f"EVIDENCE BUNDLE COMMITMENT: {BUNDLE_COMMITMENT_SCHEMA} {commitment}")
     if code == 0:
         print(f"READY FOR ACCOUNTABLE-OWNER REVIEW: {output}")
     elif code == 1:
