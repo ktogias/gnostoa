@@ -107,12 +107,26 @@ the following required top-level members:
   "invocation_binding": "<64 lowercase hexadecimal characters>",
   "route_kind": "native",
   "runtime_identity": [
-    {"kind": "<identity kind>", "value": "<directly observed value>"}
+    {
+      "kind": "native-executable",
+      "role": "suite-runtime",
+      "subject": "/absolute/path/to/executable",
+      "value": {
+        "sha256": "sha256:<64 lowercase hexadecimal characters>",
+        "version": "<directly observed version>"
+      },
+      "measurement": {"method": "executable-sha256-and-version-v1"}
+    },
+    {
+      "kind": "dependency-lock",
+      "role": "suite-lock",
+      "subject": "project-relative.lock",
+      "value": {
+        "sha256": "sha256:<64 lowercase hexadecimal characters>"
+      },
+      "measurement": {"method": "file-sha256-v1"}
+    }
   ],
-  "measurement_method": {
-    "kind": "<bounded method identifier>",
-    "detail": "<how the running project route acquired the value>"
-  },
   "origin": {
     "kind": "project-adapter",
     "entry": "./ci/verify"
@@ -120,22 +134,76 @@ the following required top-level members:
 }
 ```
 
-`route_kind` classifies the route actually entered as `native`, `container`,
-`service` or `composite`; it neither selects a route nor authorizes fallback.
-`runtime_identity` is non-empty and records actual values acquired from that
-runtime, not expected values copied from the manifest, lock or caller.
-`measurement_method` identifies how those values were acquired and cannot be a
-declaration or caller-input method. `origin` identifies the project adapter;
-the caller binds it to the exact entry command and independently retained entry
-file or blob hash. Duplicate or unknown top-level members are invalid under
-version 1; later extension requires another schema version.
+The example contains placeholders and is not itself a valid observation.
+Version 1 is a closed, mechanically decidable profile:
+
+- `schema` is the exact literal shown above. `suite` is the invoked suite key
+  from the validated verification manifest, uses 1--64 ASCII letters, digits,
+  `.`, `_` or `-`, and equals that invocation. `invocation_binding` is exactly
+  64 lowercase hexadecimal characters. `route_kind` is exactly `native`,
+  `container`, `service` or `composite`; it classifies the route actually
+  entered and neither selects a route nor authorizes fallback.
+- `runtime_identity` has 1--16 items. Each item has exactly `kind`, `role`,
+  `subject`, `value` and `measurement`; each `measurement` has exactly
+  `method`. Items are unique by `(kind, role, subject)`. Every string other
+  than the exact literals and hashes is 1--512 Unicode scalar values with no
+  control characters; a `version` is further limited to 256. Native executable
+  subjects are normalized absolute paths. Lock subjects are normalized
+  project-relative POSIX paths with no empty, `.` or `..` component. Container
+  subjects are 1--256 printable ASCII characters identifying the entered
+  runtime instance.
+- Version 1 admits only these bound identity profiles:
+
+  | `kind` | `role` | exact value members | exact measurement method |
+  | --- | --- | --- | --- |
+  | `native-executable` | `suite-runtime` | `sha256`, `version` | `executable-sha256-and-version-v1` |
+  | `dependency-lock` | `suite-lock` | `sha256` | `file-sha256-v1` |
+  | `oci-image` | `suite-runtime` | `digest` | `entered-container-image-digest-v1` |
+
+  Every `sha256` or `digest` value is the literal `sha256:` followed by 64
+  lowercase hexadecimal characters. The executable method resolves the
+  executable actually used for the suite payload, hashes those executable
+  bytes and obtains the version from that executable in the entered native
+  environment. A dispatch-only shell does not substitute for the payload
+  runtime. The lock method hashes the applicable project dependency/toolchain
+  lock consumed by that route. The container method starts from the entered
+  container instance, uses the project adapter's container engine to resolve
+  the immutable image digest for that instance, and never accepts an image
+  tag, manifest expectation or caller value as the measurement.
+- A complete `native` observation contains at least one
+  `native-executable`/`suite-runtime` item for every applicable interpreter,
+  compiler, package manager or test runner used by the suite payload, and at
+  least one applicable `dependency-lock`/`suite-lock` item. If the adapter
+  cannot identify and measure both the actual toolchain and its applicable
+  lock, the native route is incomplete and `BLOCKED` in version 1.
+- A complete `container` observation contains exactly one
+  `oci-image`/`suite-runtime` item. Its immutable digest is measured from the
+  container instance that entered the suite runtime. A tag, configured image
+  string, lock value or expected digest is declaration-only and cannot satisfy
+  this profile.
+- `service` and `composite` remain recognized route classifications, but are
+  unsupported in version 1. Their relevant execution components and roles
+  cannot yet be bounded generically without selecting a new contract; they
+  therefore produce `BLOCKED`, not an adapter-defined identity pass.
+- `origin` has exactly `kind` and `entry`; `kind` is the exact literal
+  `project-adapter`, and `entry` is the 1--512-character invoked project
+  command. The caller binds it to that exact entry and independently retains
+  its file or blob hash.
+
+The JSON decoder rejects duplicate member names and unknown members at every
+object level. It also rejects unknown enum values, profiles, roles, measurement
+methods, value members and duplicate identity items. Later extension of any
+vocabulary, route profile or object shape requires another schema version.
+Caller-, manifest- or lock-supplied expected identities remain declarations:
+copying one into a syntactically valid item does not establish its required
+measurement and cannot independently produce observation or coherence `PASS`.
 
 ### C. Validate, retain and classify the observation
 
 After the suite process exits, adoption-check must retain its numeric exit,
 stdout, stderr and before/after Git state, then read only the exact caller-chosen
-sidecar path. It validates the size, JSON shape, schema, suite, invocation
-binding, route kind, non-empty runtime identity, measurement method and
+sidecar path. It validates the size, closed JSON shape, schema, suite,
+invocation binding, route profile, complete bound identity set and
 project-adapter origin. It hashes and retains the exact sidecar bytes in the
 non-overwriting evidence bundle.
 
@@ -153,12 +221,24 @@ a separate observation; the adapter cannot mark its own sidecar attested. In
 its absence, independent attestation remains `NOT OBSERVED` without rewriting
 the project-reported result.
 
-Missing, malformed, mismatched, stale, declaration-only or origin-unbound
-observation produces `project-runtime observation: BLOCKED` and overall exit
-`3`, while retaining any separately observed suite exit. With a valid sidecar,
-an executed suite failure keeps Decision 0047's exit `1`; unsafe invocation or
-internal failure keeps exit `2`. Exit `0` remains only `READY FOR
-ACCOUNTABLE-OWNER REVIEW`, never semantic or durable-adoption acceptance.
+Missing, malformed, oversized, stale, wrong-schema, wrong-suite, wrong-binding,
+invalid-origin, unknown, duplicate, unsupported, incomplete or
+declaration-only observation produces `project-runtime observation: BLOCKED`
+and overall exit `3`, while retaining any separately observed suite exit. A
+complete measured observation that conflicts with an applicable mandatory
+declared identity instead produces route coherence `FAIL` and overall exit
+`1`. The distinction is whether the actual subject was first observed
+completely: unavailable or invalid observation is `BLOCKED`; a complete actual
+that contradicts its mandatory expectation is an executed coherence failure.
+
+This operationalizes Decision 0047's unavailable/incoherent-subject boundary
+and the integrated assessment's exit split without leaving "mismatched"
+ambiguous: failure to acquire the required actual is exit `3`, while comparison
+of a complete actual to an applicable mandatory declaration can fail with exit
+`1`. With a complete coherent sidecar, an executed suite failure also keeps
+Decision 0047's exit `1`; unsafe invocation or internal failure keeps exit `2`.
+Exit `0` remains only `READY FOR ACCOUNTABLE-OWNER REVIEW`, never semantic or
+durable-adoption acceptance.
 
 ### D. Preserve ordinary adapter compatibility
 
@@ -185,10 +265,16 @@ solution.
 Decision 0047 remains unchanged. The future implementation must preserve its
 toolkit/runtime identity separation, evidence bundle, semantic-owner gate,
 negative tests and fresh-rerun falsification boundary. It must add focused tests
-for absent, oversized, malformed, duplicate-key, wrong-schema, wrong-suite,
-wrong-binding, invalid-origin, declaration-only, pre-existing-path and
-overwrite cases, plus valid observations for project-owned route kinds. No Mail
-fixture or experiment is admitted by those tests.
+for absent, oversized, malformed, duplicate or unknown members at every object
+level, wrong-schema, wrong-suite, wrong-binding, invalid-origin,
+declaration-only, pre-existing-path and overwrite cases. Route-profile tests
+must reject tag-only container identity, invalid identity/method pairings and
+native observations missing applicable executable/toolchain or lock identity;
+must return `BLOCKED` for service/composite version 1 observations; must accept
+complete measured native and container profiles; and must distinguish an
+incomplete observation at exit `3` from a complete actual/mandatory-declaration
+coherence conflict at exit `1`. No Mail fixture or experiment is admitted by
+those tests.
 
 ## Consequences
 
