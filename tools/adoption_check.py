@@ -1074,6 +1074,12 @@ def _read_regular_bounded(path: Path, maximum: int, label: str) -> bytes:
                 f"{label} is not a regular non-symlink file"
             ) from exc
         raise ObservationBlocked(f"cannot read {label}: {exc}") from exc
+    return _read_opened_regular(descriptor, maximum, label)
+
+
+def _read_opened_regular(descriptor: int, maximum: int, label: str) -> bytes:
+    """Validate, read and close one already-opened candidate regular file."""
+
     try:
         try:
             mode = os.fstat(descriptor).st_mode
@@ -1095,6 +1101,74 @@ def _read_regular_bounded(path: Path, maximum: int, label: str) -> bytes:
     if len(content) > maximum:
         raise ObservationBlocked(f"{label} exceeds {maximum} bytes")
     return content
+
+
+def _open_directory_descriptor(path: Path, label: str) -> int:
+    """Open one directory without following its final path component."""
+
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    if nofollow is None:
+        raise ObservationBlocked(
+            f"cannot safely acquire {label}: O_NOFOLLOW is unavailable"
+        )
+    flags = os.O_RDONLY | nofollow
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise ObservationBlocked(f"cannot acquire {label}: {exc}") from exc
+    try:
+        mode = os.fstat(descriptor).st_mode
+        if not stat.S_ISDIR(mode):
+            raise ObservationBlocked(f"{label} is not a non-symlink directory")
+    except BaseException:
+        os.close(descriptor)
+        raise
+    return descriptor
+
+
+def _require_absent_at(directory_descriptor: int, name: str, label: str) -> None:
+    """Require one basename to be absent through an already-bound directory."""
+
+    try:
+        os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise ObservationBlocked(f"cannot inspect initial {label}: {exc}") from exc
+    raise ObservationBlocked(f"{label} was not initially absent")
+
+
+def _read_regular_bounded_at(
+    directory_descriptor: int,
+    name: str,
+    maximum: int,
+    label: str,
+) -> bytes:
+    """Read one regular basename relative to a held directory descriptor."""
+
+    if not name or name in {".", ".."} or "/" in name or "\\" in name:
+        raise ObservationBlocked(f"cannot safely read {label}: invalid basename")
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    if nofollow is None:
+        raise ObservationBlocked(
+            f"cannot safely read {label}: O_NOFOLLOW is unavailable"
+        )
+    flags = os.O_RDONLY | nofollow
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    try:
+        descriptor = os.open(name, flags, dir_fd=directory_descriptor)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise ObservationBlocked(
+                f"{label} is not a regular non-symlink file"
+            ) from exc
+        raise ObservationBlocked(f"cannot read {label}: {exc}") from exc
+    return _read_opened_regular(descriptor, maximum, label)
 
 
 def _adapter_path(root: Path, entry: str) -> Path:
@@ -1176,24 +1250,23 @@ def _suite_attempt(
 
     binding = secrets.token_hex(32)
     incoming_root = writer.root / f".{suite}-runtime-observation-incoming"
-    incoming_root.mkdir()
     observation_path = incoming_root / "observation.json"
-    if observation_path.exists():
-        raise UnsafeInvocation(
-            f"runtime observation path already exists: {observation_path}"
-        )
-    environment = os.environ.copy()
-    environment["GNOSTOA_ADOPTION_OBSERVATION_PATH"] = str(observation_path)
-    environment["GNOSTOA_ADOPTION_INVOCATION_BINDING"] = binding
-
+    directory_descriptor: int | None = None
     try:
-        process = _run_bytes(
-            list(command),
-            cwd=paths.project_root,
-            env=environment,
-            timeout=timeout_minutes * 60,
+        incoming_root.mkdir()
+        directory_descriptor = _open_directory_descriptor(
+            incoming_root, f"{suite} runtime observation directory"
         )
-    except (FileNotFoundError, PermissionError, OSError) as exc:
+        _require_absent_at(
+            directory_descriptor,
+            observation_path.name,
+            f"{suite} runtime observation",
+        )
+    except (OSError, ObservationBlocked) as exc:
+        if directory_descriptor is not None:
+            os.close(directory_descriptor)
+            directory_descriptor = None
+        _discard_incoming(incoming_root)
         record = writer.component(
             f"project-{suite}",
             list(command),
@@ -1201,105 +1274,135 @@ def _suite_attempt(
             "BLOCKED",
             b"",
             str(exc).encode(),
-            detail="project entry could not launch",
+            detail="runtime observation directory could not be acquired safely",
         )
         record["adapter_sha256"] = adapter_hash
         record["invocation_binding"] = binding
-        _discard_incoming(incoming_root)
         return record
-    except subprocess.TimeoutExpired as exc:
-        stdout = exc.stdout if isinstance(exc.stdout, bytes) else b""
-        stderr = exc.stderr if isinstance(exc.stderr, bytes) else b""
+    environment = os.environ.copy()
+    environment["GNOSTOA_ADOPTION_OBSERVATION_PATH"] = str(observation_path)
+    environment["GNOSTOA_ADOPTION_INVOCATION_BINDING"] = binding
+    if directory_descriptor is None:
+        raise ObservationBlocked("runtime observation directory was not acquired")
+
+    try:
+        try:
+            process = _run_bytes(
+                list(command),
+                cwd=paths.project_root,
+                env=environment,
+                timeout=timeout_minutes * 60,
+            )
+        except (FileNotFoundError, PermissionError, OSError) as exc:
+            record = writer.component(
+                f"project-{suite}",
+                list(command),
+                None,
+                "BLOCKED",
+                b"",
+                str(exc).encode(),
+                detail="project entry could not launch",
+            )
+            record["adapter_sha256"] = adapter_hash
+            record["invocation_binding"] = binding
+            return record
+        except subprocess.TimeoutExpired as exc:
+            stdout = exc.stdout if isinstance(exc.stdout, bytes) else b""
+            stderr = exc.stderr if isinstance(exc.stderr, bytes) else b""
+            record = writer.component(
+                f"project-{suite}",
+                list(command),
+                None,
+                "FAIL",
+                stdout,
+                stderr,
+                detail="project suite timed out",
+            )
+            record["adapter_sha256"] = adapter_hash
+            record["invocation_binding"] = binding
+            return record
+
+        if process.returncode == 0:
+            suite_result = "PASS"
+        elif process.returncode in {126, 127}:
+            suite_result = "BLOCKED"
+        else:
+            suite_result = "FAIL"
         record = writer.component(
             f"project-{suite}",
             list(command),
-            None,
-            "FAIL",
-            stdout,
-            stderr,
-            detail="project suite timed out",
+            process.returncode,
+            suite_result,
+            process.stdout,
+            process.stderr,
         )
         record["adapter_sha256"] = adapter_hash
         record["invocation_binding"] = binding
-        _discard_incoming(incoming_root)
+
+        retained_observation: dict[str, Any] = {}
+        try:
+            raw_observation = _read_regular_bounded_at(
+                directory_descriptor,
+                observation_path.name,
+                MAX_OBSERVATION_BYTES,
+                f"{suite} runtime observation",
+            )
+            retained_observation = writer.write_bytes(
+                f"runtime-observations/{suite}.json", raw_observation
+            )
+            observation = validate_runtime_observation(
+                raw_observation,
+                suite=suite,
+                invocation_binding=binding,
+                origin_entry=entry,
+            )
+            record["runtime_observation"] = {
+                "result": "PASS",
+                "authority": "project-reported",
+                **retained_observation,
+                "route_kind": observation.route_kind,
+                "independent_attestation": "NOT OBSERVED",
+            }
+
+            runtime = verification.get("runtime")
+            if isinstance(runtime, dict) and runtime.get("mode") == "project":
+                declared_image = runtime.get("image")
+                if isinstance(declared_image, str) and "@" in declared_image:
+                    declared_digest = declared_image.rsplit("@", 1)[1]
+                    if observation.route_kind != "container":
+                        raise ObservationConflict(
+                            "complete native project runtime conflicts with mandatory image declaration"
+                        )
+                    if observation.manifest_digest != declared_digest:
+                        raise ObservationBlocked(
+                            "runtime.image descriptor kind cannot be established from "
+                            "the differing observed platform manifest"
+                        )
+                    record["runtime_observation"]["declared_manifest_coherence"] = (
+                        "PASS"
+                    )
+            record["runtime_observation"]["value"] = observation.value
+        except ObservationConflict as exc:
+            record["runtime_observation"] = {
+                "result": "FAIL",
+                "authority": "project-reported",
+                "detail": str(exc),
+                "independent_attestation": "NOT OBSERVED",
+                **retained_observation,
+            }
+        except ObservationBlocked as exc:
+            record["runtime_observation"] = {
+                "result": "BLOCKED",
+                "authority": "project-reported",
+                "detail": str(exc),
+                "independent_attestation": "NOT OBSERVED",
+                **retained_observation,
+            }
         return record
-
-    if process.returncode == 0:
-        suite_result = "PASS"
-    elif process.returncode in {126, 127}:
-        suite_result = "BLOCKED"
-    else:
-        suite_result = "FAIL"
-    record = writer.component(
-        f"project-{suite}",
-        list(command),
-        process.returncode,
-        suite_result,
-        process.stdout,
-        process.stderr,
-    )
-    record["adapter_sha256"] = adapter_hash
-    record["invocation_binding"] = binding
-
-    retained_observation: dict[str, Any] = {}
-    try:
-        raw_observation = _read_regular_bounded(
-            observation_path,
-            MAX_OBSERVATION_BYTES,
-            f"{suite} runtime observation",
-        )
-        retained_observation = writer.write_bytes(
-            f"runtime-observations/{suite}.json", raw_observation
-        )
-        observation = validate_runtime_observation(
-            raw_observation,
-            suite=suite,
-            invocation_binding=binding,
-            origin_entry=entry,
-        )
-        record["runtime_observation"] = {
-            "result": "PASS",
-            "authority": "project-reported",
-            **retained_observation,
-            "route_kind": observation.route_kind,
-            "independent_attestation": "NOT OBSERVED",
-        }
-
-        runtime = verification.get("runtime")
-        if isinstance(runtime, dict) and runtime.get("mode") == "project":
-            declared_image = runtime.get("image")
-            if isinstance(declared_image, str) and "@" in declared_image:
-                declared_digest = declared_image.rsplit("@", 1)[1]
-                if observation.route_kind != "container":
-                    raise ObservationConflict(
-                        "complete native project runtime conflicts with mandatory image declaration"
-                    )
-                if observation.manifest_digest != declared_digest:
-                    raise ObservationBlocked(
-                        "runtime.image descriptor kind cannot be established from "
-                        "the differing observed platform manifest"
-                    )
-                record["runtime_observation"]["declared_manifest_coherence"] = "PASS"
-        record["runtime_observation"]["value"] = observation.value
-    except ObservationConflict as exc:
-        record["runtime_observation"] = {
-            "result": "FAIL",
-            "authority": "project-reported",
-            "detail": str(exc),
-            "independent_attestation": "NOT OBSERVED",
-            **retained_observation,
-        }
-    except ObservationBlocked as exc:
-        record["runtime_observation"] = {
-            "result": "BLOCKED",
-            "authority": "project-reported",
-            "detail": str(exc),
-            "independent_attestation": "NOT OBSERVED",
-            **retained_observation,
-        }
     finally:
+        if directory_descriptor is not None:
+            os.close(directory_descriptor)
         _discard_incoming(incoming_root)
-    return record
 
 
 def _identity_result(
@@ -1666,6 +1769,7 @@ def _blocked_prerequisite_result(
     *,
     stage: str,
     error: BlockedPrerequisite,
+    completed_dimensions: dict[str, Any] | None,
 ) -> dict[str, Any]:
     detail = f"{stage}: {error}"
     writer.component(
@@ -1677,29 +1781,38 @@ def _blocked_prerequisite_result(
         str(error).encode("utf-8", errors="replace"),
         detail=detail,
     )
-    not_run = {
-        "result": "NOT RUN",
-        "detail": f"not reached because {detail}",
-    }
-    dimensions: dict[str, Any] = {
-        "environment": {"result": "BLOCKED", "detail": detail},
-        "documentation_toolkit_execution_coherence": dict(not_run),
-        "external_oci_digest": {
-            "result": (
-                "NOT OBSERVED" if args.execution_route == "oci" else "NOT APPLICABLE"
-            )
-        },
-        "runtime_lock_validation": dict(not_run),
-        "change_policy": dict(not_run),
-        "ci_policy": dict(not_run),
-        "profile_and_bundle": dict(not_run),
-        "bounded_context": dict(not_run),
-        "project_suites": dict(not_run),
-        "git_representability": {"result": "BLOCKED", "detail": detail},
-        "evidence_bundle": {"result": "PASS"},
-        "semantic_owner_review": "REQUIRED",
-        "durable_adoption": "NOT DETERMINED",
-    }
+    if completed_dimensions is None:
+        not_run = {
+            "result": "NOT RUN",
+            "detail": f"not reached because {detail}",
+        }
+        dimensions: dict[str, Any] = {
+            "environment": {"result": "BLOCKED", "detail": detail},
+            "documentation_toolkit_execution_coherence": dict(not_run),
+            "external_oci_digest": {
+                "result": (
+                    "NOT OBSERVED"
+                    if args.execution_route == "oci"
+                    else "NOT APPLICABLE"
+                )
+            },
+            "runtime_lock_validation": dict(not_run),
+            "change_policy": dict(not_run),
+            "ci_policy": dict(not_run),
+            "profile_and_bundle": dict(not_run),
+            "bounded_context": dict(not_run),
+            "project_suites": dict(not_run),
+            "git_representability": {"result": "BLOCKED", "detail": detail},
+            "evidence_bundle": {"result": "PASS"},
+            "semantic_owner_review": "REQUIRED",
+            "durable_adoption": "NOT DETERMINED",
+        }
+    else:
+        dimensions = dict(completed_dimensions)
+        dimensions["git_representability"] = {
+            "result": "BLOCKED",
+            "detail": detail,
+        }
     return {
         "schema": RESULT_SCHEMA,
         "outcome": "BLOCKED",
@@ -1734,6 +1847,7 @@ def _execute(args: argparse.Namespace, paths: PathSet) -> tuple[int, Path]:
     writer = EvidenceWriter(temporary, [])
     finalized = False
     prerequisite_stage = "initial Git snapshot"
+    completed_dimensions: dict[str, Any] | None = None
     try:
         lock = load_yaml(paths.lock)
         verification = load_yaml(paths.verification)
@@ -1930,6 +2044,48 @@ def _execute(args: argparse.Namespace, paths: PathSet) -> tuple[int, Path]:
                     )
                 )
 
+        project_suites = _project_suite_dimensions(suite_records)
+        suite_availability = {
+            record["name"].removeprefix("project-"): (
+                "BLOCKED" if record["result"] == "BLOCKED" else "PASS"
+            )
+            for record in suite_records
+        }
+        if identity_state == "FAIL":
+            identity["result"] = "FAIL"
+        completed_dimensions = {
+            "environment": {
+                "result": (
+                    "BLOCKED" if "BLOCKED" in suite_availability.values() else "PASS"
+                ),
+                "required_suite_availability": suite_availability,
+            },
+            "documentation_toolkit_execution_coherence": identity,
+            "external_oci_digest": identity["external_oci_digest"],
+            "runtime_lock_validation": {"result": runtime_component["result"]},
+            "change_policy": {"result": change_component["result"]},
+            "ci_policy": {"result": ci_component["result"]},
+            "profile_and_bundle": {"result": bundle_component["result"]},
+            "bounded_context": {
+                "result": _aggregate(
+                    [
+                        context["generation"],
+                        context["determinism"],
+                        context["retention"],
+                    ]
+                ),
+                **context,
+            },
+            "project_suites": project_suites,
+            "git_representability": {
+                "result": "NOT RUN",
+                "detail": "final Git postcondition has not been acquired",
+            },
+            "evidence_bundle": {"result": "PASS"},
+            "semantic_owner_review": "REQUIRED",
+            "durable_adoption": "NOT DETERMINED",
+        }
+
         prerequisite_stage = "final Git snapshot"
         after = _git_snapshot(paths.project_root)
         after_patch = after.pop("_patch")
@@ -1962,47 +2118,11 @@ def _execute(args: argparse.Namespace, paths: PathSet) -> tuple[int, Path]:
             json.dumps(git_state, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         )
 
-        project_suites = _project_suite_dimensions(suite_records)
-        suite_availability = {
-            record["name"].removeprefix("project-"): (
-                "BLOCKED" if record["result"] == "BLOCKED" else "PASS"
-            )
-            for record in suite_records
+        dimensions = dict(completed_dimensions)
+        dimensions["git_representability"] = {
+            "result": "FAIL" if representation_problems else "PASS",
+            "problems": sorted(set(representation_problems)),
         }
-        dimensions: dict[str, Any] = {
-            "environment": {
-                "result": (
-                    "BLOCKED" if "BLOCKED" in suite_availability.values() else "PASS"
-                ),
-                "required_suite_availability": suite_availability,
-            },
-            "documentation_toolkit_execution_coherence": identity,
-            "external_oci_digest": identity["external_oci_digest"],
-            "runtime_lock_validation": {"result": runtime_component["result"]},
-            "change_policy": {"result": change_component["result"]},
-            "ci_policy": {"result": ci_component["result"]},
-            "profile_and_bundle": {"result": bundle_component["result"]},
-            "bounded_context": {
-                "result": _aggregate(
-                    [
-                        context["generation"],
-                        context["determinism"],
-                        context["retention"],
-                    ]
-                ),
-                **context,
-            },
-            "project_suites": project_suites,
-            "git_representability": {
-                "result": "FAIL" if representation_problems else "PASS",
-                "problems": sorted(set(representation_problems)),
-            },
-            "evidence_bundle": {"result": "PASS"},
-            "semantic_owner_review": "REQUIRED",
-            "durable_adoption": "NOT DETERMINED",
-        }
-        if identity_state == "FAIL":
-            dimensions["documentation_toolkit_execution_coherence"]["result"] = "FAIL"
 
         exit_code = _result_exit(writer.components, dimensions)
         if exit_code == 0:
@@ -2046,6 +2166,7 @@ def _execute(args: argparse.Namespace, paths: PathSet) -> tuple[int, Path]:
             writer,
             stage=prerequisite_stage,
             error=exc,
+            completed_dimensions=completed_dimensions,
         )
         _finalize(writer, paths.output, result)
         finalized = True

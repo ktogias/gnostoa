@@ -351,8 +351,8 @@ class AdoptionCheckSidecarAcquisitionTests(unittest.TestCase):
             root = Path(directory)
             target = root / "observation.json"
             replacement = root / "replacement.json"
-            target.write_bytes(b"trusted\n")
-            replacement.write_bytes(b"substituted\n")
+            target.write_bytes(b"original file bytes\n")
+            replacement.write_bytes(b"replacement file bytes\n")
             pathname_open, descriptor_open = self._race_openers(
                 target, replacement, symlink=True
             )
@@ -419,6 +419,47 @@ class AdoptionCheckSidecarAcquisitionTests(unittest.TestCase):
                 adoption_check._sha256(opened_file_content), artifact["sha256"]
             )
             self.assertNotEqual(replacement_file_content, retained.read_bytes())
+
+    def test_relative_path_replacement_cannot_redirect_an_opened_descriptor(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "observation.json"
+            replacement = root / "replacement.json"
+            opened_file_content = b"original relative inode bytes\n"
+            replacement_file_content = b"replacement relative inode bytes\n"
+            target.write_bytes(opened_file_content)
+            replacement.write_bytes(replacement_file_content)
+            real_open = os.open
+
+            directory_descriptor = real_open(root, os.O_RDONLY | os.O_DIRECTORY)
+
+            def descriptor_open(
+                path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+                flags: int,
+                mode: int = 0o777,
+                *,
+                dir_fd: int | None = None,
+            ) -> int:
+                if dir_fd is None:
+                    descriptor = real_open(path, flags, mode)
+                else:
+                    descriptor = real_open(path, flags, mode, dir_fd=dir_fd)
+                if dir_fd == directory_descriptor and os.fsdecode(path) == target.name:
+                    os.replace(replacement, target)
+                return descriptor
+
+            try:
+                with mock.patch("tools.adoption_check.os.open", descriptor_open):
+                    observed = adoption_check._read_regular_bounded_at(
+                        directory_descriptor, target.name, 64, "observation"
+                    )
+            finally:
+                os.close(directory_descriptor)
+
+            self.assertEqual(opened_file_content, observed)
+            self.assertEqual(replacement_file_content, target.read_bytes())
 
 
 class AdoptionCheckExecutionTests(unittest.TestCase):
@@ -556,6 +597,22 @@ elif mode == "oversized":
     publish("x" * 65537)
 elif mode == "symlink":
     target.symlink_to(Path(".knowledge/project.lock").resolve())
+elif mode == "parent-symlink":
+    external = target.parent.parent.parent / f"external-{suite}"
+    external.mkdir()
+    (external / target.name).write_text(
+        '{"sample":"external"}\\n', encoding="utf-8"
+    )
+    target.parent.rmdir()
+    target.parent.symlink_to(external, target_is_directory=True)
+elif mode == "parent-replaced":
+    opened_directory = target.parent.parent.parent / f"opened-{suite}"
+    target.parent.rename(opened_directory)
+    (opened_directory / target.name).write_text(
+        '{"sample":"original"}\\n', encoding="utf-8"
+    )
+    target.parent.mkdir()
+    target.write_text('{"sample":"replacement"}\\n', encoding="utf-8")
 elif mode != "no-observation":
     if mode.startswith("container-"):
         digest_character = "6" if mode == "container-pass" else "8"
@@ -771,6 +828,9 @@ raise SystemExit(0)
                 f"{stage} Git snapshot unavailable",
                 manifest["dimensions"]["git_representability"]["detail"],
             )
+            self._assert_prerequisite_dimension_history(
+                manifest, completed=fail_call == 2
+            )
             self.assertEqual(
                 before_status,
                 self._git(
@@ -789,6 +849,256 @@ raise SystemExit(0)
 
     def test_unavailable_final_git_snapshot_is_retained_as_blocked(self) -> None:
         self._assert_unavailable_git_snapshot_is_blocked(2)
+
+    def _assert_unavailable_git_representation_is_blocked(self, fail_call: int) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, toolkit = self._project(directory)
+            output = Path(directory) / "evidence"
+            before_status = self._git(
+                project, "status", "--porcelain=v2", "--untracked-files=all"
+            ).stdout
+            before_index = self._git(
+                project, "diff", "--cached", "--binary", "--full-index"
+            ).stdout
+            stage = "initial" if fail_call == 1 else "final"
+            real_representation = adoption_check._git_representation
+            calls = 0
+
+            def unavailable_representation(
+                paths: adoption_check.PathSet,
+                verification: dict[str, object],
+            ) -> tuple[dict[str, object], list[str]]:
+                nonlocal calls
+                calls += 1
+                if calls == fail_call:
+                    raise adoption_check.BlockedPrerequisite(
+                        f"{stage} Git representation unavailable"
+                    )
+                return real_representation(paths, verification)
+
+            with mock.patch(
+                "tools.adoption_check._git_representation",
+                side_effect=unavailable_representation,
+            ):
+                result, stdout, stderr = self._run(project, toolkit, output)
+
+            self.assertEqual((3, ""), (result, stderr), stdout)
+            self.assertIn("BLOCKED", stdout)
+            self.assertNotIn("READY FOR ACCOUNTABLE-OWNER REVIEW", stdout)
+            manifest = json.loads((output / "adoption-check.json").read_text())
+            self.assertEqual("BLOCKED", manifest["outcome"])
+            self.assertEqual(
+                "BLOCKED", manifest["dimensions"]["git_representability"]["result"]
+            )
+            self.assertIn(
+                f"{stage} Git representation unavailable",
+                manifest["dimensions"]["git_representability"]["detail"],
+            )
+            self._assert_prerequisite_dimension_history(
+                manifest, completed=fail_call == 2
+            )
+            self.assertEqual(
+                before_status,
+                self._git(
+                    project, "status", "--porcelain=v2", "--untracked-files=all"
+                ).stdout,
+            )
+            self.assertEqual(
+                before_index,
+                self._git(
+                    project, "diff", "--cached", "--binary", "--full-index"
+                ).stdout,
+            )
+
+    def _assert_prerequisite_dimension_history(
+        self, manifest: dict[str, object], *, completed: bool
+    ) -> None:
+        dimensions = manifest["dimensions"]
+        assert isinstance(dimensions, dict)
+        expected = "PASS" if completed else "NOT RUN"
+        for name in (
+            "runtime_lock_validation",
+            "change_policy",
+            "ci_policy",
+            "profile_and_bundle",
+            "bounded_context",
+            "project_suites",
+        ):
+            with self.subTest(dimension=name, completed=completed):
+                dimension = dimensions[name]
+                assert isinstance(dimension, dict)
+                self.assertEqual(expected, dimension["result"])
+
+        if not completed:
+            return
+        components = manifest["components"]
+        assert isinstance(components, list)
+        component_results = {
+            component["name"]: component["result"]
+            for component in components
+            if isinstance(component, dict)
+        }
+        self.assertEqual(
+            component_results["runtime-lock"],
+            dimensions["runtime_lock_validation"]["result"],
+        )
+        self.assertEqual(
+            component_results["change-policy"],
+            dimensions["change_policy"]["result"],
+        )
+        self.assertEqual(
+            component_results["ci-policy"], dimensions["ci_policy"]["result"]
+        )
+        self.assertEqual(
+            component_results["bundle"], dimensions["profile_and_bundle"]["result"]
+        )
+        self.assertEqual(
+            {
+                "fast": component_results["project-fast"],
+                "regression": component_results["project-regression"],
+            },
+            dimensions["project_suites"]["suites"],
+        )
+        self.assertEqual("PASS", dimensions["environment"]["result"])
+        self.assertEqual(
+            "PASS", dimensions["documentation_toolkit_execution_coherence"]["result"]
+        )
+        self.assertEqual("PASS", dimensions["evidence_bundle"]["result"])
+
+    def test_unavailable_initial_git_representation_is_retained_as_blocked(
+        self,
+    ) -> None:
+        self._assert_unavailable_git_representation_is_blocked(1)
+
+    def test_unavailable_final_git_representation_preserves_completed_results(
+        self,
+    ) -> None:
+        self._assert_unavailable_git_representation_is_blocked(2)
+
+    def test_parent_symlink_escape_is_blocked_without_retaining_external_bytes(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, toolkit = self._project(directory)
+            output = Path(directory) / "evidence"
+            result, stdout, stderr = self._run(
+                project, toolkit, output, mode="parent-symlink"
+            )
+
+            self.assertEqual((3, ""), (result, stderr), stdout)
+            manifest = json.loads((output / "adoption-check.json").read_text())
+            self.assertEqual("BLOCKED", manifest["outcome"])
+            self.assertFalse((output / "runtime-observations" / "fast.json").exists())
+            self.assertFalse(
+                (output / "runtime-observations" / "regression.json").exists()
+            )
+            artifact_paths = {artifact["path"] for artifact in manifest["artifacts"]}
+            self.assertFalse(
+                any(path.startswith("runtime-observations/") for path in artifact_paths)
+            )
+            for component in manifest["components"]:
+                if component["name"].startswith("project-"):
+                    self.assertNotIn("sha256", component["runtime_observation"])
+
+    def test_renamed_parent_retains_only_descriptor_bound_bytes_and_hash(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, toolkit = self._project(directory)
+            output = Path(directory) / "evidence"
+            result, stdout, stderr = self._run(
+                project, toolkit, output, mode="parent-replaced"
+            )
+
+            self.assertEqual((3, ""), (result, stderr), stdout)
+            retained = output / "runtime-observations" / "fast.json"
+            opened_file_content = b'{"sample":"original"}\n'
+            replacement_file_content = b'{"sample":"replacement"}\n'
+            self.assertEqual(opened_file_content, retained.read_bytes())
+            manifest = json.loads((output / "adoption-check.json").read_text())
+            fast = next(
+                component
+                for component in manifest["components"]
+                if component["name"] == "project-fast"
+            )
+            self.assertEqual(
+                adoption_check._sha256(opened_file_content),
+                fast["runtime_observation"]["sha256"],
+            )
+            self.assertNotEqual(replacement_file_content, retained.read_bytes())
+
+    def test_incoming_directory_descriptors_close_on_blocked_and_exception_paths(
+        self,
+    ) -> None:
+        real_open = os.open
+        real_close = os.close
+        real_run_bytes = adoption_check._run_bytes
+
+        for outcome in ("blocked", "launch-error", "timeout"):
+            with (
+                self.subTest(outcome=outcome),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                project, toolkit = self._project(directory)
+                output = Path(directory) / "evidence"
+                opened: set[int] = set()
+                closed: set[int] = set()
+
+                def tracking_open(
+                    path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+                    flags: int,
+                    mode: int = 0o777,
+                    opened_descriptors: set[int] = opened,
+                    *,
+                    dir_fd: int | None = None,
+                ) -> int:
+                    if dir_fd is None:
+                        descriptor = real_open(path, flags, mode)
+                    else:
+                        descriptor = real_open(path, flags, mode, dir_fd=dir_fd)
+                    if flags & getattr(os, "O_DIRECTORY", 0):
+                        opened_descriptors.add(descriptor)
+                    return descriptor
+
+                def tracking_close(
+                    descriptor: int,
+                    opened_descriptors: set[int] = opened,
+                    closed_descriptors: set[int] = closed,
+                ) -> None:
+                    if descriptor in opened_descriptors:
+                        closed_descriptors.add(descriptor)
+                    real_close(descriptor)
+
+                def controlled_run(
+                    command: list[str],
+                    *,
+                    cwd: Path,
+                    env: dict[str, str] | None = None,
+                    timeout: float | None = None,
+                    fixture_outcome: str = outcome,
+                ) -> subprocess.CompletedProcess[bytes]:
+                    if command and command[0] == "./ci/verify":
+                        if fixture_outcome == "launch-error":
+                            raise OSError("fixture launch unavailable")
+                        if fixture_outcome == "timeout":
+                            raise subprocess.TimeoutExpired(command, timeout or 0)
+                    return real_run_bytes(command, cwd=cwd, env=env, timeout=timeout)
+
+                mode = "no-observation" if outcome == "blocked" else "pass"
+                with (
+                    mock.patch("tools.adoption_check.os.open", tracking_open),
+                    mock.patch("tools.adoption_check.os.close", tracking_close),
+                    mock.patch(
+                        "tools.adoption_check._run_bytes", side_effect=controlled_run
+                    ),
+                ):
+                    self._run(project, toolkit, output, mode=mode)
+
+                self.assertTrue(opened)
+                self.assertEqual(opened, closed)
+                for descriptor in opened:
+                    with self.assertRaises(OSError):
+                        os.fstat(descriptor)
 
     def test_invalid_sidecars_are_blocked_and_never_escape_the_evidence_root(
         self,
