@@ -3,9 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from collections.abc import Callable
 from contextlib import redirect_stderr, redirect_stdout
@@ -577,7 +579,9 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
+import time
 
 mode = os.environ.get("ADOPTION_FIXTURE_MODE", "pass")
 suite = sys.argv[1]
@@ -676,6 +680,56 @@ elif mode != "no-observation":
 if mode == "mutate":
     with Path("AGENTS.md").open("a", encoding="utf-8") as handle:
         handle.write("suite mutation\\n")
+if mode in {
+    "overwrite-component",
+    "replace-component",
+    "mutate-candidate",
+    "mutate-context",
+    "unexpected-evidence-path",
+    "background-evidence-mutation",
+}:
+    evidence_root = target.parent.parent
+    if mode == "overwrite-component":
+        artifact = evidence_root / "components" / "runtime-lock.stdout"
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_bytes(b"replacement component bytes\\n")
+    elif mode == "replace-component":
+        artifact = evidence_root / "components" / "runtime-lock.stdout"
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        replacement = evidence_root / "component-replacement.tmp"
+        replacement.write_bytes(b"replacement inode bytes\\n")
+        os.replace(replacement, artifact)
+    elif mode == "mutate-candidate":
+        (evidence_root / "candidate.patch").write_bytes(
+            b"replacement candidate bytes\\n"
+        )
+    elif mode == "mutate-context":
+        (evidence_root / "context-pack.md").write_bytes(
+            b"replacement context bytes\\n"
+        )
+    elif mode == "unexpected-evidence-path":
+        (evidence_root / "suite-created.txt").write_text(
+            "unexpected suite path\\n", encoding="utf-8"
+        )
+    else:
+        program = (
+            "import pathlib,time\\n"
+            f"root=pathlib.Path({str(evidence_root)!r})\\n"
+            "deadline=time.monotonic()+2\\n"
+            "marker=root/'adoption-check.json'\\n"
+            "while time.monotonic()<deadline and not marker.exists():\\n"
+            "    time.sleep(0.002)\\n"
+            "if marker.exists():\\n"
+            "    (root/'candidate.patch').write_bytes("
+            "b'background replacement bytes\\\\n')\\n"
+        )
+        subprocess.Popen(
+            [sys.executable, "-c", program],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
 if mode == "fail":
     raise SystemExit(1)
 raise SystemExit(0)
@@ -1395,6 +1449,121 @@ raise SystemExit(0)
             )
             self.assertEqual(2, result)
             self.assertIn("outside the project root", stderr)
+
+    def _assert_suite_cannot_mutate_authoritative_evidence(self, mode: str) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, toolkit = self._project(directory)
+            output = Path(directory) / "evidence"
+            result, stdout, _ = self._run(project, toolkit, output, mode=mode)
+
+            self.assertEqual(2, result, stdout)
+            self.assertNotIn("READY FOR ACCOUNTABLE-OWNER REVIEW", stdout)
+            self.assertFalse(output.exists())
+
+    def test_suite_cannot_overwrite_a_pre_suite_component_artifact(self) -> None:
+        self._assert_suite_cannot_mutate_authoritative_evidence(
+            "overwrite-component"
+        )
+
+    def test_suite_cannot_replace_a_pre_suite_artifact_inode(self) -> None:
+        self._assert_suite_cannot_mutate_authoritative_evidence("replace-component")
+
+    def test_suite_cannot_mutate_candidate_or_context_before_hashing(self) -> None:
+        for mode in ("mutate-candidate", "mutate-context"):
+            with self.subTest(mode=mode):
+                self._assert_suite_cannot_mutate_authoritative_evidence(mode)
+
+    def test_unexpected_suite_created_evidence_path_fails_closed(self) -> None:
+        self._assert_suite_cannot_mutate_authoritative_evidence(
+            "unexpected-evidence-path"
+        )
+
+    def test_background_descendant_cannot_reach_authoritative_finalization(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, toolkit = self._project(directory)
+            output = Path(directory) / "evidence"
+            real_manifest = adoption_check._safe_artifact_manifest
+            calls = 0
+
+            def pause_before_final_hash(root: Path) -> list[dict[str, Any]]:
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    time.sleep(0.2)
+                return real_manifest(root)
+
+            with mock.patch(
+                "tools.adoption_check._safe_artifact_manifest",
+                side_effect=pause_before_final_hash,
+            ):
+                result, stdout, stderr = self._run(
+                    project,
+                    toolkit,
+                    output,
+                    mode="background-evidence-mutation",
+                )
+
+            self.assertEqual((0, ""), (result, stderr), stdout)
+            self.assertIn("READY FOR ACCOUNTABLE-OWNER REVIEW", stdout)
+            self.assertNotEqual(
+                b"background replacement bytes\n",
+                (output / "candidate.patch").read_bytes(),
+            )
+
+    def test_mutation_between_reconciliation_and_manifest_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, toolkit = self._project(directory)
+            output = Path(directory) / "evidence"
+            real_manifest = adoption_check._safe_artifact_manifest
+            calls = 0
+
+            def mutate_after_first_read(root: Path) -> list[dict[str, Any]]:
+                nonlocal calls
+                manifest = real_manifest(root)
+                calls += 1
+                if calls == 1:
+                    (root / "candidate.patch").write_bytes(
+                        b"post-reconciliation replacement bytes\n"
+                    )
+                return manifest
+
+            with mock.patch(
+                "tools.adoption_check._safe_artifact_manifest",
+                side_effect=mutate_after_first_read,
+            ):
+                result, stdout, _ = self._run(project, toolkit, output)
+
+            self.assertEqual(2, result, stdout)
+            self.assertNotIn("READY FOR ACCOUNTABLE-OWNER REVIEW", stdout)
+            self.assertFalse(output.exists())
+
+    def test_external_bundle_commitment_detects_later_bundle_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, toolkit = self._project(directory)
+            output = Path(directory) / "evidence"
+            result, stdout, stderr = self._run(project, toolkit, output)
+            self.assertEqual((0, ""), (result, stderr), stdout)
+            match = re.search(
+                r"^EVIDENCE BUNDLE COMMITMENT: "
+                r"gnostoa-adoption-evidence-bundle/v1 (sha256:[0-9a-f]{64})$",
+                stdout,
+                flags=re.MULTILINE,
+            )
+            self.assertIsNotNone(match, stdout)
+            assert match is not None
+            published_commitment = match.group(1)
+            self.assertEqual(
+                published_commitment,
+                adoption_check._materialized_bundle_commitment(output),
+            )
+
+            (output / "candidate.patch").write_bytes(b"later custody bytes\n")
+            self.assertNotEqual(
+                published_commitment,
+                adoption_check._materialized_bundle_commitment(output),
+            )
 
     def test_final_hash_manifest_matches_every_retained_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
