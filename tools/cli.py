@@ -5,6 +5,7 @@ from collections.abc import Callable
 from importlib.metadata import PackageNotFoundError, version
 
 from . import (
+    adoption_check,
     build_context_pack,
     build_docs,
     check_change_policy,
@@ -17,6 +18,10 @@ from . import (
 )
 
 COMMANDS: dict[str, tuple[str, Callable[[list[str] | None], int]]] = {
+    "adoption-check": (
+        "produce bounded mechanical adoption evidence",
+        adoption_check.main,
+    ),
     "validate": ("validate an OKF bundle", validate_bundle.main),
     "context-pack": ("build a bounded orientation pack", build_context_pack.main),
     "docs-build": ("build the derived human documentation site", build_docs.main),

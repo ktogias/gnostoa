@@ -102,6 +102,94 @@ with file-preservation evidence. This documentation is a falsifiable control,
 not a guarantee of agent compliance, and one later fresh rerun must measure its
 predicted benefit.
 
+## Mechanical completion evidence
+
+After the bounded candidate is authored and staged, use a toolkit source or
+runtime that actually contains `adoption-check` to bind its mechanical state
+before accountable-owner review. The immutable v0.1.2 source and OCI artifact
+predate this command and do not acquire it through later documentation.
+
+From the project root, the normal native invocation is:
+
+```bash
+knowledge adoption-check \
+  --execution-route native \
+  --seed project.system.pilot \
+  --output-dir ../gnostoa-adoption-evidence
+```
+
+Choose a new output path outside the project. The command derives the lock,
+toolkit source, profile, policy, verification manifest, bundle and required
+`fast` and `regression` commands from their conventional locations. Use the
+documented path overrides only for a real non-standard layout, and use
+`--documentation-root` when the exact guidance subject consulted differs from
+the pinned toolkit source. Every override is retained as an input declaration;
+it cannot prove execution or coherence.
+
+The project-owned verification adapter remains authoritative for entering its
+runtime. During each adoption-check suite attempt it receives
+`GNOSTOA_ADOPTION_OBSERVATION_PATH` and
+`GNOSTOA_ADOPTION_INVOCATION_BINDING`. To provide complete evidence, that same
+invocation writes one closed
+`gnostoa-project-runtime-observation/v1` JSON object through a temporary file in
+the supplied directory and atomically installs the initially absent sidecar
+without replacement. The object is at most 64 KiB, rejects duplicate or unknown
+members, contains 1--16 unique identity items, and has this closed shape:
+
+```json
+{
+  "schema": "gnostoa-project-runtime-observation/v1",
+  "suite": "fast",
+  "invocation_binding": "<GNOSTOA_ADOPTION_INVOCATION_BINDING>",
+  "route_kind": "native",
+  "runtime_identity": [
+    {
+      "kind": "native-executable",
+      "role": "suite-runtime",
+      "subject": "/absolute/path/to/executable",
+      "value": {"sha256": "sha256:<64 hex>", "version": "<observed>"},
+      "measurement": {"method": "executable-sha256-and-version-v1"}
+    }
+  ],
+  "origin": {"kind": "project-adapter", "entry": "./ci/verify"}
+}
+```
+
+The placeholder object is incomplete. The exact version-1 identity profiles
+are:
+
+| Route | `kind` / `role` | Exact `value` members | Exact measurement method |
+|---|---|---|---|
+| native | `native-executable` / `suite-runtime` | `sha256`, `version` | `executable-sha256-and-version-v1` |
+| native | `dependency-lock` / `suite-lock` | `sha256` | `file-sha256-v1` |
+| container | `oci-platform-manifest` / `suite-runtime` | `manifest_digest`, `manifest_media_type`, `configuration_digest`, `platform` (`os`, `architecture`) | `entered-container-platform-manifest-config-v1` |
+
+A complete native observation includes the actual suite executables/toolchains
+and every applicable dependency/toolchain lock. Executable subjects are
+normalized absolute paths; lock subjects are normalized project-relative POSIX
+paths. A complete container observation has exactly one printable entered
+instance subject, one platform-specific OCI or Docker v2 manifest media type,
+and the instance-to-configuration and manifest-to-configuration binding. Hashes
+use `sha256:` plus 64 lowercase hexadecimal characters. Other strings are
+bounded to 512 characters (versions to 256); suite keys use 1--64 ASCII letters,
+digits, `.`, `_` or `-`.
+
+Tags, expected values, engine image IDs and unbound repository digests are
+declarations, not observations. Service and composite routes are unsupported
+by version 1. Missing, malformed, stale, unsupported or incomplete sidecars
+leave the project-runtime observation `BLOCKED`; a complete observation that
+conflicts with an applicable mandatory declaration is `FAIL`. Outside
+adoption-check the handshake variables are absent and the adapter's ordinary
+behavior is unchanged.
+
+The evidence directory retains component numeric exits and output, the
+project-reported sidecars and hashes, two-generation context evidence, the
+staged patch and before/after Git state. Exit `0` means only `READY FOR
+ACCOUNTABLE-OWNER REVIEW`; exit `1` is a mechanical failure, exit `2` an unsafe
+or invalid invocation/internal error, and exit `3` a blocked prerequisite. A
+project-reported runtime observation is not independent attestation, semantic
+truth, owner acceptance or durable-adoption authority.
+
 ## Preconditions
 
 - A bounded pilot area and its accountable owners are selected.
@@ -145,7 +233,11 @@ predicted benefit.
     concepts.
 14. Run the baseline tasks with and without the knowledge slice and compare
     correctness, exploration operations, input tokens and human review time.
-15. Expand one bounded area at a time only when the previous slice remains
+15. Stage the bounded candidate and run the
+    [mechanical completion check](#mechanical-completion-evidence). Preserve its
+    evidence bundle for accountable-owner review; do not translate exit `0`
+    into semantic acceptance or durable adoption.
+16. Expand one bounded area at a time only when the previous slice remains
     maintainable.
 
 ## Verification

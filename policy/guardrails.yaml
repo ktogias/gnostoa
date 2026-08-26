@@ -1,4 +1,4 @@
-version: "0.11.0"
+version: "0.12.0"
 guardrails:
   - id: monotonic-profile-inheritance
     title: Child profiles do not weaken parent policy
@@ -157,6 +157,21 @@ guardrails:
       - tests/test_task_envelope.py::TaskEnvelopeTests.test_envelope_is_built_from_one_bounded_snapshot
       - tests/test_task_envelope.py::TaskEnvelopeTests.test_multibyte_envelope_within_the_source_bound_is_accepted
       - tests/test_task_envelope.py::TaskEnvelopeTests.test_custom_schema_source_is_bounded_and_fails_closed
+
+  - id: bounded-adoption-completion-evidence
+    title: Adoption completion evidence remains mechanical and owner-gated
+    applies_to: [kit, adopting-projects]
+    enforcement: hybrid
+    owner: team:gnostoa-maintainers
+    guidance: guidance/workflows/adopt-existing-project.md#mechanical-completion-evidence
+    implementation:
+      - tools/adoption_check.py#main
+      - tools/cli.py#main
+    tests:
+      - tests/test_adoption_check.py::AdoptionCheckContractTests.test_unified_cli_exposes_the_bounded_adoption_check
+      - tests/test_adoption_check.py::AdoptionCheckExecutionTests.test_complete_native_candidate_is_evidence_bound_not_semantically_accepted
+      - tests/test_adoption_check.py::AdoptionCheckExecutionTests.test_invalid_sidecars_are_blocked_and_never_escape_the_evidence_root
+      - tests/test_adoption_check.py::AdoptionCheckExecutionTests.test_staged_submodule_gitlink_must_equal_the_toolkit_worktree
 
   - id: self-knowledge-boundary
     title: Adopting projects do not inherit toolkit self-knowledge
