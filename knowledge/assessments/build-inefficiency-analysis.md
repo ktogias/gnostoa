@@ -41,13 +41,13 @@ Assessment candidate complete; awaiting owner review/integration/reconciliation.
 
 ## Current State
 
-**Measured Impact**: 5 builds accumulated 269 seconds of build time, with the largest single waste at 42 seconds (runtime-build stage). The `pip install` phase is deterministic and unchanging across all runs.
+**Measured Impact**: 5 builds accumulated 269 seconds of build time, with the largest single waste at 42 seconds (runtime-build stage). The relevant locked dependency inputs were unchanged across the measured candidate builds while dependency-install/build work was repeated.
 
 **Root Cause**: Docker layer cache invalidation due to:
 1. Source code changes invalidating downstream layers
 2. No cache mounts for download directories
 3. No cross-job image reuse
-4. Governance files included in production builds
+4. Governance files included in full-context (development) builds
 
 ## Epistemic Order (Research)
 
@@ -69,7 +69,7 @@ Dependency-first layering applies at Dockerfile boundary; optional cache mounts 
 
 ### 5. Whether new evidence primitives are needed
 
-Not yet; class B transitioning to class C; no observations missing.
+Not yet; class B transitioning to class C. No new evidence primitive appears necessary for the current research decision; some raw historical logs are no longer durably bound.
 
 ### 6. Which smaller mechanics should be verified first
 
@@ -89,7 +89,7 @@ The owner must judge whether the inefficiency is worth fixing, cache poisoning r
 | 14275830343 | publish-oci.yml (workflow_dispatch) | build-runtime-image | filtered (45→36 files) | 97 | 15.133 | yes |
 | 14275414862 | verification.yml (merge_group) | smoke | full | 18 | 0.383 | no (ignored) |
 
-**Key finding**: `runtime-build` stage rebuilds from scratch on every candidate context change. The largest single waste is 42s (run 14275965916). The `pip install` phase is deterministic and unchanging across all runs. Candidate context filtering removes only 9 files (governance docs), providing negligible speed benefit for this codebase.
+**Key finding**: `runtime-build` stage rebuilds from scratch on every candidate context change. The largest single waste is 42s (run 14275965916). The relevant locked dependency inputs were unchanged across the measured candidate builds while dependency-install/build work was repeated. Candidate context filtering removes only 9 files (governance docs), providing negligible speed benefit for this codebase.
 
 ## Deterministic-Sufficiency Judgment
 
@@ -138,9 +138,9 @@ COPY src/ ./src/
 
 **Rationale**: Build tools (compilers, test frameworks) are unnecessary in production images. Smaller images mean faster pulls, less storage, and reduced attack surface.
 
-**Current State**: Production images include test dependencies.
+**Current State**: Already implemented. The `runtime-build` stage uses the runtime lock; the `development` stage uses the development lock. This separation is already satisfied with no remediation selected.
 
-**Recommendation**: Already implemented in our Dockerfile with `runtime-build` and `development` stages. Maintain this pattern.
+**Recommendation**: Maintain this pattern.
 
 ### 4. Image Reuse Across Jobs (Priority: Medium — requires careful scoping)
 
