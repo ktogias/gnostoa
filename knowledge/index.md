@@ -102,6 +102,7 @@ inherited, copied or loaded by adopting projects.
 - [Nextcloud Mail post-remediation fresh rerun design](assessments/nextcloud-mail-post-remediation-fresh-rerun-design.md)
 - [Nextcloud Mail post-remediation fresh rerun result](assessments/nextcloud-mail-post-remediation-fresh-rerun-result.md)
 - [Nextcloud Mail adoption-completion gate analysis](assessments/nextcloud-mail-adoption-completion-gate-analysis.md)
+- [Adoption-check project-verification runtime routing](assessments/adoption-check-project-verification-runtime-routing.md)
 - [First-publication provider audit snapshot](assessments/first-publication-provider-audit.md)
 - [First-publication reputation and direction assessment](assessments/first-publication-reputation-and-direction-assessment.md)
 - [Source-publication name-risk screening](assessments/gnostoa-source-name-screening.md)
