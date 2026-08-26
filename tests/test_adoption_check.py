@@ -1,0 +1,933 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import tempfile
+import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
+from pathlib import Path
+from unittest import mock
+
+import yaml
+
+from tools import adoption_check
+from tools.check_runtime_lock import public_surface_digest
+from tools.cli import main as cli_main
+
+ROOT = Path(__file__).resolve().parents[1]
+REVISION = "1" * 40
+IMAGE = f"registry.example.org/gnostoa@sha256:{'2' * 64}"
+
+
+def _native_observation(
+    *,
+    suite: str = "fast",
+    binding: str = "3" * 64,
+    entry: str = "./ci/verify",
+) -> dict[str, object]:
+    return {
+        "schema": adoption_check.OBSERVATION_SCHEMA,
+        "suite": suite,
+        "invocation_binding": binding,
+        "route_kind": "native",
+        "runtime_identity": [
+            {
+                "kind": "native-executable",
+                "role": "suite-runtime",
+                "subject": "/usr/bin/python3",
+                "value": {"sha256": f"sha256:{'4' * 64}", "version": "3.12.0"},
+                "measurement": {"method": "executable-sha256-and-version-v1"},
+            },
+            {
+                "kind": "dependency-lock",
+                "role": "suite-lock",
+                "subject": "requirements.lock",
+                "value": {"sha256": f"sha256:{'5' * 64}"},
+                "measurement": {"method": "file-sha256-v1"},
+            },
+        ],
+        "origin": {"kind": "project-adapter", "entry": entry},
+    }
+
+
+def _container_observation() -> dict[str, object]:
+    return {
+        "schema": adoption_check.OBSERVATION_SCHEMA,
+        "suite": "fast",
+        "invocation_binding": "3" * 64,
+        "route_kind": "container",
+        "runtime_identity": [
+            {
+                "kind": "oci-platform-manifest",
+                "role": "suite-runtime",
+                "subject": "container-instance-1",
+                "value": {
+                    "manifest_digest": f"sha256:{'6' * 64}",
+                    "manifest_media_type": "application/vnd.oci.image.manifest.v1+json",
+                    "configuration_digest": f"sha256:{'7' * 64}",
+                    "platform": {"os": "linux", "architecture": "amd64"},
+                },
+                "measurement": {
+                    "method": "entered-container-platform-manifest-config-v1"
+                },
+            }
+        ],
+        "origin": {"kind": "project-adapter", "entry": "./ci/verify"},
+    }
+
+
+class AdoptionCheckContractTests(unittest.TestCase):
+    def _validate(self, value: dict[str, object]) -> adoption_check.RuntimeObservation:
+        return adoption_check.validate_runtime_observation(
+            (json.dumps(value) + "\n").encode(),
+            suite="fast",
+            invocation_binding="3" * 64,
+            origin_entry="./ci/verify",
+        )
+
+    def test_unified_cli_exposes_the_bounded_adoption_check(self) -> None:
+        stdout = StringIO()
+        stderr = StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            result = cli_main(["adoption-check", "--help"])
+
+        self.assertEqual(0, result, stderr.getvalue())
+        help_text = stdout.getvalue()
+        self.assertIn("--execution-route", help_text)
+        self.assertIn("--seed", help_text)
+        self.assertIn("--output-dir", help_text)
+        self.assertIn(adoption_check.OBSERVATION_SCHEMA, help_text)
+        self.assertIn("GNOSTOA_ADOPTION_OBSERVATION_PATH", help_text)
+        self.assertNotIn("--owner", help_text)
+        self.assertNotIn("--accept", help_text)
+        self.assertNotIn("--force", help_text)
+
+    def test_public_workflow_owns_the_completion_and_sidecar_boundary(self) -> None:
+        adoption = (
+            ROOT / "guidance" / "workflows" / "adopt-existing-project.md"
+        ).read_text(encoding="utf-8")
+        bootstrap = (
+            ROOT / "guidance" / "workflows" / "bootstrap-new-project.md"
+        ).read_text(encoding="utf-8")
+        guardrails = (ROOT / "policy" / "guardrails.yaml").read_text(encoding="utf-8")
+
+        self.assertIn("## Mechanical completion evidence", adoption)
+        self.assertIn("knowledge adoption-check", adoption)
+        self.assertIn("GNOSTOA_ADOPTION_OBSERVATION_PATH", adoption)
+        self.assertIn(adoption_check.OBSERVATION_SCHEMA, adoption)
+        self.assertIn("executable-sha256-and-version-v1", adoption)
+        self.assertIn("entered-container-platform-manifest-config-v1", adoption)
+        self.assertIn("64 KiB", adoption)
+        self.assertIn("READY FOR ACCOUNTABLE-OWNER REVIEW", " ".join(adoption.split()))
+        self.assertIn("project-reported runtime observation", adoption)
+        self.assertIn("mechanical-completion-evidence", bootstrap)
+        self.assertIn("bounded-adoption-completion-evidence", guardrails)
+
+    def test_closed_native_profile_requires_measured_executable_and_lock(self) -> None:
+        observation = self._validate(_native_observation())
+        self.assertEqual("native", observation.route_kind)
+        self.assertIsNone(observation.manifest_digest)
+
+        missing_lock = _native_observation()
+        identities = missing_lock["runtime_identity"]
+        assert isinstance(identities, list)
+        identities.pop()
+        with self.assertRaisesRegex(
+            adoption_check.ObservationBlocked, "dependency lock"
+        ):
+            self._validate(missing_lock)
+
+        arbitrary = _native_observation()
+        identities = arbitrary["runtime_identity"]
+        assert isinstance(identities, list)
+        identity = identities[0]
+        assert isinstance(identity, dict)
+        identity["measurement"] = {"method": "adapter-defined"}
+        with self.assertRaisesRegex(
+            adoption_check.ObservationBlocked, "measurement method"
+        ):
+            self._validate(arbitrary)
+
+    def test_closed_json_rejects_duplicate_unknown_stale_and_unbound_members(
+        self,
+    ) -> None:
+        duplicate = (
+            b'{"schema":"gnostoa-project-runtime-observation/v1",'
+            b'"schema":"gnostoa-project-runtime-observation/v1"}'
+        )
+        with self.assertRaisesRegex(adoption_check.ObservationBlocked, "duplicate"):
+            adoption_check.validate_runtime_observation(
+                duplicate,
+                suite="fast",
+                invocation_binding="3" * 64,
+                origin_entry="./ci/verify",
+            )
+
+        cases = []
+        unknown = _native_observation()
+        unknown["expected_digest"] = f"sha256:{'8' * 64}"
+        cases.append((unknown, "unknown members"))
+        stale = _native_observation(binding="9" * 64)
+        cases.append((stale, "wrong invocation binding"))
+        wrong_suite = _native_observation(suite="regression")
+        cases.append((wrong_suite, "does not match"))
+        wrong_origin = _native_observation(entry="./another-entry")
+        cases.append((wrong_origin, "does not match"))
+        for value, message in cases:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(adoption_check.ObservationBlocked, message):
+                    self._validate(value)
+
+    def test_container_profile_keeps_descriptor_kinds_distinct(self) -> None:
+        observation = self._validate(_container_observation())
+        self.assertEqual(f"sha256:{'6' * 64}", observation.manifest_digest)
+        self.assertEqual(
+            "application/vnd.oci.image.manifest.v1+json",
+            observation.manifest_media_type,
+        )
+
+        index = _container_observation()
+        identities = index["runtime_identity"]
+        assert isinstance(identities, list)
+        identity = identities[0]
+        assert isinstance(identity, dict)
+        value = identity["value"]
+        assert isinstance(value, dict)
+        value["manifest_media_type"] = "application/vnd.oci.image.index.v1+json"
+        with self.assertRaisesRegex(
+            adoption_check.ObservationBlocked, "not a platform manifest"
+        ):
+            self._validate(index)
+
+        conflated = _container_observation()
+        identities = conflated["runtime_identity"]
+        assert isinstance(identities, list)
+        identity = identities[0]
+        assert isinstance(identity, dict)
+        value = identity["value"]
+        assert isinstance(value, dict)
+        value["image_id"] = value["configuration_digest"]
+        with self.assertRaisesRegex(
+            adoption_check.ObservationBlocked, "unknown members"
+        ):
+            self._validate(conflated)
+
+    def test_service_and_composite_routes_are_blocked_in_v1(self) -> None:
+        for route in ("service", "composite"):
+            with self.subTest(route=route):
+                value = _native_observation()
+                value["route_kind"] = route
+                with self.assertRaisesRegex(
+                    adoption_check.ObservationBlocked, "unsupported"
+                ):
+                    self._validate(value)
+
+    def test_sidecar_bounds_and_closed_members_fail_blocked(self) -> None:
+        wrong_schema = _native_observation()
+        wrong_schema["schema"] = "gnostoa-project-runtime-observation/v2"
+        invalid_origin = _native_observation()
+        invalid_origin["origin"] = {
+            "kind": "independent-attestation",
+            "entry": "./ci/verify",
+        }
+        nested_unknown = _native_observation()
+        identities = nested_unknown["runtime_identity"]
+        assert isinstance(identities, list)
+        identity = identities[0]
+        assert isinstance(identity, dict)
+        value = identity["value"]
+        assert isinstance(value, dict)
+        value["expected"] = f"sha256:{'4' * 64}"
+        surrogate = _native_observation()
+        surrogate["origin"] = {
+            "kind": "project-adapter",
+            "entry": "./ci/verify\ud800",
+        }
+
+        for candidate, message in (
+            (wrong_schema, "wrong schema"),
+            (invalid_origin, "not project-adapter"),
+            (nested_unknown, "unknown members"),
+            (surrogate, "non-scalar"),
+        ):
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(adoption_check.ObservationBlocked, message):
+                    self._validate(candidate)
+
+        with self.assertRaisesRegex(adoption_check.ObservationBlocked, "exceeds"):
+            adoption_check.validate_runtime_observation(
+                b"x" * (adoption_check.MAX_OBSERVATION_BYTES + 1),
+                suite="fast",
+                invocation_binding="3" * 64,
+                origin_entry="./ci/verify",
+            )
+
+    def test_container_declarations_and_engine_ids_cannot_substitute_for_profile(
+        self,
+    ) -> None:
+        for identity in (
+            {
+                "kind": "oci-tag",
+                "role": "suite-runtime",
+                "subject": "container-instance-1",
+                "value": {"tag": "example:stable"},
+                "measurement": {"method": "caller-value"},
+            },
+            {
+                "kind": "oci-repodigest",
+                "role": "suite-runtime",
+                "subject": "container-instance-1",
+                "value": {"digest": f"sha256:{'6' * 64}"},
+                "measurement": {"method": "engine-repodigest"},
+            },
+            {
+                "kind": "engine-image-id",
+                "role": "suite-runtime",
+                "subject": "container-instance-1",
+                "value": {"sha256": f"sha256:{'7' * 64}"},
+                "measurement": {"method": "engine-image-id"},
+            },
+        ):
+            candidate = _container_observation()
+            candidate["runtime_identity"] = [identity]
+            with self.subTest(kind=identity["kind"]):
+                with self.assertRaisesRegex(
+                    adoption_check.ObservationBlocked, "unknown identity profile"
+                ):
+                    self._validate(candidate)
+
+
+class AdoptionCheckExecutionTests(unittest.TestCase):
+    def _git(self, root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", "-C", str(root), *arguments],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def _project(
+        self, directory: str, *, runtime_mode: str = "toolkit"
+    ) -> tuple[Path, Path]:
+        container = Path(directory)
+        project = container / "project"
+        project.mkdir()
+        self._git(project, "init", "-b", "main")
+        self._git(project, "config", "user.email", "fixture@example.invalid")
+        self._git(project, "config", "user.name", "Fixture")
+        (project / "AGENTS.md").write_text(
+            "# Existing project authority\n", encoding="utf-8"
+        )
+        self._git(project, "add", "AGENTS.md")
+        self._git(project, "commit", "-m", "baseline")
+
+        toolkit = project / ".knowledge-kit"
+        toolkit.mkdir()
+        shutil.copy2(ROOT / "pyproject.toml", toolkit / "pyproject.toml")
+        shutil.copytree(ROOT / "core", toolkit / "core")
+        shutil.copytree(ROOT / "schemas", toolkit / "schemas")
+        digest = public_surface_digest(toolkit)
+
+        configuration = project / ".knowledge"
+        configuration.mkdir()
+        (configuration / "profile.yaml").write_text(
+            """id: example-adopter
+version: "0.1.0"
+okf_version: "0.2"
+extends: [../.knowledge-kit/core/profile.yaml]
+concept_types: []
+relation_kinds: []
+""",
+            encoding="utf-8",
+        )
+        (configuration / "kit.lock.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "version": 1,
+                    "toolkit": {
+                        "source": ".knowledge-kit",
+                        "revision": REVISION,
+                        "public_surface_digest": digest,
+                        "profile": ".knowledge/profile.yaml",
+                    },
+                    "runtime": {"image": IMAGE, "revision": REVISION},
+                },
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+        (configuration / "change-control.yaml").write_text(
+            """id: example-change-control
+version: "0.1.0"
+owner: team:example
+extends: [../.knowledge-kit/core/change-control.yaml]
+""",
+            encoding="utf-8",
+        )
+        (configuration / "continuous-integration.yaml").write_text(
+            """id: example-ci
+version: "0.1.0"
+owner: team:example
+extends: [../.knowledge-kit/core/continuous-integration.yaml]
+""",
+            encoding="utf-8",
+        )
+        runtime: dict[str, str] = {"mode": runtime_mode}
+        if runtime_mode == "project":
+            runtime["image"] = f"registry.example.org/project@sha256:{'6' * 64}"
+        verification = {
+            "id": "example-verification",
+            "version": "0.1.0",
+            "owner": "team:example",
+            "policy": "continuous-integration.yaml",
+            "runtime": runtime,
+            "capabilities": {
+                "integration": False,
+                "smoke": False,
+                "extended": False,
+                "deployable_artifact": False,
+            },
+            "suites": {
+                suite: {
+                    "command": ["./ci/verify", suite],
+                    "timeout_minutes": 1,
+                    "evidence": ["test-report"],
+                }
+                for suite in ("fast", "regression")
+            },
+        }
+        (configuration / "verification.yaml").write_text(
+            yaml.safe_dump(verification, sort_keys=False), encoding="utf-8"
+        )
+        (configuration / "project.lock").write_text("fixture-lock\n", encoding="utf-8")
+
+        bundle = project / "knowledge"
+        shutil.copytree(ROOT / "examples" / "generic", bundle)
+        ci = project / "ci"
+        ci.mkdir()
+        adapter = ci / "verify"
+        adapter.write_text(
+            """#!/usr/bin/env python3
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+
+mode = os.environ.get("ADOPTION_FIXTURE_MODE", "pass")
+suite = sys.argv[1]
+if mode == "blocked":
+    raise SystemExit(127)
+
+target = Path(os.environ["GNOSTOA_ADOPTION_OBSERVATION_PATH"])
+def publish(content):
+    temporary = target.with_name(target.name + ".tmp")
+    temporary.write_text(content, encoding="utf-8")
+    os.link(temporary, target)
+    temporary.unlink()
+
+if mode == "malformed":
+    publish("{\\n")
+elif mode == "oversized":
+    publish("x" * 65537)
+elif mode == "symlink":
+    target.symlink_to(Path(".knowledge/project.lock").resolve())
+elif mode != "no-observation":
+    if mode.startswith("container-"):
+        digest_character = "6" if mode == "container-pass" else "8"
+        observation = {
+            "schema": "gnostoa-project-runtime-observation/v1",
+            "suite": suite,
+            "invocation_binding": os.environ["GNOSTOA_ADOPTION_INVOCATION_BINDING"],
+            "route_kind": "container",
+            "runtime_identity": [
+                {
+                    "kind": "oci-platform-manifest",
+                    "role": "suite-runtime",
+                    "subject": "fixture-container-instance",
+                    "value": {
+                        "manifest_digest": "sha256:" + digest_character * 64,
+                        "manifest_media_type": "application/vnd.oci.image.manifest.v1+json",
+                        "configuration_digest": "sha256:" + "7" * 64,
+                        "platform": {"os": "linux", "architecture": "amd64"},
+                    },
+                    "measurement": {
+                        "method": "entered-container-platform-manifest-config-v1"
+                    },
+                }
+            ],
+            "origin": {"kind": "project-adapter", "entry": "./ci/verify"},
+        }
+    else:
+        executable = Path(sys.executable)
+        lock = Path(".knowledge/project.lock")
+        observation = {
+            "schema": "gnostoa-project-runtime-observation/v1",
+            "suite": suite,
+            "invocation_binding": os.environ["GNOSTOA_ADOPTION_INVOCATION_BINDING"],
+            "route_kind": "native",
+            "runtime_identity": [
+                {
+                    "kind": "native-executable",
+                    "role": "suite-runtime",
+                    "subject": str(executable),
+                    "value": {
+                        "sha256": "sha256:" + hashlib.sha256(executable.read_bytes()).hexdigest(),
+                        "version": sys.version.split()[0],
+                    },
+                    "measurement": {"method": "executable-sha256-and-version-v1"},
+                },
+                {
+                    "kind": "dependency-lock",
+                    "role": "suite-lock",
+                    "subject": ".knowledge/project.lock",
+                    "value": {
+                        "sha256": "sha256:" + hashlib.sha256(lock.read_bytes()).hexdigest(),
+                    },
+                    "measurement": {"method": "file-sha256-v1"},
+                },
+            ],
+            "origin": {"kind": "project-adapter", "entry": "./ci/verify"},
+        }
+    if mode == "wrong-binding":
+        observation["invocation_binding"] = "9" * 64
+    publish(json.dumps(observation, sort_keys=True) + "\\n")
+if mode == "mutate":
+    with Path("AGENTS.md").open("a", encoding="utf-8") as handle:
+        handle.write("suite mutation\\n")
+if mode == "fail":
+    raise SystemExit(1)
+raise SystemExit(0)
+""",
+            encoding="utf-8",
+        )
+        adapter.chmod(0o755)
+        with (project / "AGENTS.md").open("a", encoding="utf-8") as handle:
+            handle.write(
+                "\n## Gnostoa route\n\nFollow the existing-project workflow.\n"
+            )
+        self._git(project, "add", ".")
+        return project, toolkit
+
+    def _run(
+        self,
+        project: Path,
+        toolkit: Path,
+        output: Path,
+        *,
+        mode: str = "pass",
+        execution_route: str = "native",
+        documentation_root: Path | None = None,
+        execution_root: Path | None = None,
+    ) -> tuple[int, str, str]:
+        stdout = StringIO()
+        stderr = StringIO()
+        environment = {
+            "KNOWLEDGE_KIT_ROOT": str(toolkit),
+            "KNOWLEDGE_KIT_REVISION": REVISION,
+            "ADOPTION_FIXTURE_MODE": mode,
+        }
+        arguments = [
+            "adoption-check",
+            "--execution-route",
+            execution_route,
+            "--seed",
+            "example.system.processing",
+            "--output-dir",
+            str(output),
+            "--project-root",
+            str(project),
+        ]
+        if documentation_root is not None:
+            arguments.extend(["--documentation-root", str(documentation_root)])
+        with (
+            mock.patch.dict(os.environ, environment, clear=False),
+            mock.patch(
+                "tools.adoption_check._execution_root",
+                return_value=execution_root or toolkit,
+            ),
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+        ):
+            result = cli_main(arguments)
+        return result, stdout.getvalue(), stderr.getvalue()
+
+    def test_complete_native_candidate_is_evidence_bound_not_semantically_accepted(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, toolkit = self._project(directory)
+            output = Path(directory) / "evidence"
+            before = self._git(project, "status", "--porcelain=v2").stdout
+            result, stdout, stderr = self._run(project, toolkit, output)
+            after = self._git(project, "status", "--porcelain=v2").stdout
+
+            self.assertEqual((0, ""), (result, stderr), stdout)
+            self.assertIn("READY FOR ACCOUNTABLE-OWNER REVIEW", stdout)
+            self.assertEqual(before, after)
+            manifest = json.loads((output / "adoption-check.json").read_text())
+            self.assertEqual(adoption_check.RESULT_SCHEMA, manifest["schema"])
+            self.assertEqual(
+                "REQUIRED", manifest["dimensions"]["semantic_owner_review"]
+            )
+            self.assertEqual(
+                "NOT DETERMINED", manifest["dimensions"]["durable_adoption"]
+            )
+            self.assertEqual(
+                "PASS", manifest["dimensions"]["bounded_context"]["result"]
+            )
+            self.assertEqual("PASS", manifest["dimensions"]["project_suites"]["result"])
+            self.assertTrue((output / "context-pack.md").is_file())
+            self.assertTrue((output / "candidate.patch").is_file())
+            self.assertTrue((output / "git-state.json").is_file())
+            sums = (output / "SHA256SUMS").read_text()
+            self.assertIn("adoption-check.json", sums)
+            self.assertIn("context-pack.md", sums)
+
+    def test_missing_observation_and_unavailable_suite_are_blocked_with_evidence(
+        self,
+    ) -> None:
+        for mode in ("no-observation", "blocked"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                project, toolkit = self._project(directory)
+                output = Path(directory) / "evidence"
+                result, stdout, stderr = self._run(project, toolkit, output, mode=mode)
+                self.assertEqual((3, ""), (result, stderr), stdout)
+                manifest = json.loads((output / "adoption-check.json").read_text())
+                self.assertEqual("BLOCKED", manifest["outcome"])
+                self.assertEqual(
+                    "BLOCKED",
+                    manifest["dimensions"]["project_suites"][
+                        "project_runtime_observation"
+                    ],
+                )
+                self.assertEqual(
+                    "BLOCKED" if mode == "blocked" else "PASS",
+                    manifest["dimensions"]["environment"]["result"],
+                )
+
+    def test_invalid_sidecars_are_blocked_and_never_escape_the_evidence_root(
+        self,
+    ) -> None:
+        for mode in ("malformed", "oversized", "wrong-binding", "symlink"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                project, toolkit = self._project(directory)
+                output = Path(directory) / "evidence"
+                result, stdout, stderr = self._run(project, toolkit, output, mode=mode)
+                self.assertEqual((3, ""), (result, stderr), stdout)
+                manifest = json.loads((output / "adoption-check.json").read_text())
+                self.assertEqual("BLOCKED", manifest["outcome"])
+                self.assertEqual(
+                    "BLOCKED",
+                    manifest["dimensions"]["project_suites"][
+                        "project_runtime_observation"
+                    ],
+                )
+                self.assertFalse(any(path.is_symlink() for path in output.rglob("*")))
+                retained = output / "runtime-observations" / "fast.json"
+                self.assertEqual(
+                    mode in {"malformed", "wrong-binding"}, retained.is_file()
+                )
+
+    def test_evidence_artifacts_are_created_once_without_replacement(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "evidence"
+            root.mkdir()
+            writer = adoption_check.EvidenceWriter(root, [])
+            writer.write_text("component.txt", "first\n")
+            with self.assertRaisesRegex(
+                adoption_check.UnsafeInvocation, "without replacement"
+            ):
+                writer.write_text("component.txt", "second\n")
+            self.assertEqual("first\n", (root / "component.txt").read_text())
+
+    def test_documentation_drift_and_unobserved_oci_digest_are_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, toolkit = self._project(directory)
+            documentation = Path(directory) / "documentation"
+            shutil.copytree(toolkit, documentation)
+            with (documentation / "pyproject.toml").open("a", encoding="utf-8") as file:
+                file.write("# distinct documentation subject\n")
+            output = Path(directory) / "documentation-evidence"
+            result, stdout, stderr = self._run(
+                project, toolkit, output, documentation_root=documentation
+            )
+            self.assertEqual((3, ""), (result, stderr), stdout)
+            manifest = json.loads((output / "adoption-check.json").read_text())
+            self.assertIn(
+                "documentation and toolkit public surfaces differ",
+                manifest["dimensions"]["documentation_toolkit_execution_coherence"][
+                    "blockers"
+                ],
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            project, toolkit = self._project(directory)
+            output = Path(directory) / "oci-evidence"
+            result, stdout, stderr = self._run(
+                project, toolkit, output, execution_route="oci"
+            )
+            self.assertEqual((3, ""), (result, stderr), stdout)
+            manifest = json.loads((output / "adoption-check.json").read_text())
+            self.assertEqual(
+                "NOT OBSERVED", manifest["dimensions"]["external_oci_digest"]["result"]
+            )
+
+    def test_locked_declaration_cannot_replace_a_measured_actual(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, toolkit = self._project(directory)
+            lock_path = project / ".knowledge" / "kit.lock.yaml"
+            lock = yaml.safe_load(lock_path.read_text())
+            lock["toolkit"]["public_surface_digest"] = f"sha256:{'0' * 64}"
+            lock_path.write_text(
+                yaml.safe_dump(lock, sort_keys=False), encoding="utf-8"
+            )
+            self._git(project, "add", ".knowledge/kit.lock.yaml")
+            output = Path(directory) / "evidence"
+            result, stdout, stderr = self._run(project, toolkit, output)
+            self.assertEqual((1, ""), (result, stderr), stdout)
+            manifest = json.loads((output / "adoption-check.json").read_text())
+            self.assertEqual(
+                "FAIL", manifest["dimensions"]["runtime_lock_validation"]["result"]
+            )
+            self.assertEqual(
+                "NOT RUN", manifest["dimensions"]["change_policy"]["result"]
+            )
+
+    def test_measured_toolkit_and_execution_surface_mismatch_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, toolkit = self._project(directory)
+            execution_root = Path(directory) / "execution-root"
+            shutil.copytree(toolkit, execution_root)
+            with (execution_root / "pyproject.toml").open(
+                "a", encoding="utf-8"
+            ) as file:
+                file.write("# runtime drift\n")
+            output = Path(directory) / "evidence"
+            result, stdout, stderr = self._run(
+                project, toolkit, output, execution_root=execution_root
+            )
+            self.assertEqual((1, ""), (result, stderr), stdout)
+            manifest = json.loads((output / "adoption-check.json").read_text())
+            identity = manifest["dimensions"][
+                "documentation_toolkit_execution_coherence"
+            ]
+            self.assertEqual("FAIL", identity["result"])
+            self.assertIn(
+                "toolkit source and executing runtime public surfaces differ",
+                identity["failures"],
+            )
+
+    def test_context_must_regenerate_byte_identically_before_retention(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, toolkit = self._project(directory)
+            output = Path(directory) / "evidence"
+            generated = iter(("first context\n", "different context\n"))
+
+            def context_main(_: list[str] | None = None) -> int:
+                print(next(generated), end="")
+                return 0
+
+            with mock.patch(
+                "tools.adoption_check.build_context_pack.main", side_effect=context_main
+            ):
+                result, stdout, stderr = self._run(project, toolkit, output)
+            self.assertEqual((1, ""), (result, stderr), stdout)
+            manifest = json.loads((output / "adoption-check.json").read_text())
+            self.assertEqual(
+                "FAIL", manifest["dimensions"]["bounded_context"]["result"]
+            )
+            self.assertFalse((output / "context-pack.md").exists())
+
+    def test_untracked_required_target_and_suite_mutation_fail_git_binding(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, toolkit = self._project(directory)
+            self._git(project, "rm", "--cached", ".knowledge/profile.yaml")
+            output = Path(directory) / "untracked-evidence"
+            result, stdout, stderr = self._run(project, toolkit, output)
+            self.assertEqual((1, ""), (result, stderr), stdout)
+            manifest = json.loads((output / "adoption-check.json").read_text())
+            self.assertEqual(
+                "FAIL", manifest["dimensions"]["git_representability"]["result"]
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            project, toolkit = self._project(directory)
+            output = Path(directory) / "mutation-evidence"
+            result, stdout, stderr = self._run(project, toolkit, output, mode="mutate")
+            self.assertEqual((1, ""), (result, stderr), stdout)
+            manifest = json.loads((output / "adoption-check.json").read_text())
+            problems = manifest["dimensions"]["git_representability"]["problems"]
+            self.assertTrue(
+                any("changed during adoption-check" in problem for problem in problems)
+            )
+
+    def test_staged_submodule_gitlink_must_equal_the_toolkit_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, original_toolkit = self._project(directory)
+            source = Path(directory) / "toolkit-source"
+            source.mkdir()
+            self._git(source, "init", "-b", "main")
+            self._git(source, "config", "user.email", "fixture@example.invalid")
+            self._git(source, "config", "user.name", "Fixture")
+            shutil.copy2(ROOT / "pyproject.toml", source / "pyproject.toml")
+            shutil.copytree(ROOT / "core", source / "core")
+            shutil.copytree(ROOT / "schemas", source / "schemas")
+            self._git(source, "add", ".")
+            self._git(source, "commit", "-m", "toolkit v1")
+            first = self._git(source, "rev-parse", "HEAD").stdout.strip()
+            with (source / "pyproject.toml").open("a", encoding="utf-8") as file:
+                file.write("# second source identity\n")
+            self._git(source, "add", "pyproject.toml")
+            self._git(source, "commit", "-m", "toolkit v2")
+
+            self._git(project, "rm", "-r", "--cached", ".knowledge-kit")
+            shutil.rmtree(original_toolkit)
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "protocol.file.allow=always",
+                    "-C",
+                    str(project),
+                    "submodule",
+                    "add",
+                    str(source),
+                    ".knowledge-kit",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            toolkit = project / ".knowledge-kit"
+            self._git(toolkit, "checkout", "--detach", first)
+            lock_path = project / ".knowledge" / "kit.lock.yaml"
+            lock = yaml.safe_load(lock_path.read_text())
+            lock["toolkit"]["revision"] = first
+            lock["runtime"]["revision"] = first
+            lock["toolkit"]["public_surface_digest"] = public_surface_digest(toolkit)
+            lock_path.write_text(
+                yaml.safe_dump(lock, sort_keys=False), encoding="utf-8"
+            )
+            self._git(project, "add", ".knowledge/kit.lock.yaml", ".gitmodules")
+
+            output = Path(directory) / "evidence"
+            result, stdout, stderr = self._run(project, toolkit, output)
+            self.assertEqual((1, ""), (result, stderr), stdout)
+            manifest = json.loads((output / "adoption-check.json").read_text())
+            submodule = manifest["dimensions"]["git_representability"]
+            self.assertEqual("FAIL", submodule["result"])
+            self.assertIn(
+                "staged toolkit gitlink differs from toolkit worktree HEAD",
+                submodule["problems"],
+            )
+
+    def test_executed_suite_failure_takes_precedence_over_missing_success(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, toolkit = self._project(directory)
+            output = Path(directory) / "evidence"
+            result, stdout, stderr = self._run(project, toolkit, output, mode="fail")
+            self.assertEqual((1, ""), (result, stderr), stdout)
+            manifest = json.loads((output / "adoption-check.json").read_text())
+            self.assertEqual("MECHANICAL CHECK FAILED", manifest["outcome"])
+            self.assertEqual("FAIL", manifest["dimensions"]["project_suites"]["result"])
+
+    def test_mandatory_image_conflict_is_failure_not_incomplete_observation(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, toolkit = self._project(directory, runtime_mode="project")
+            output = Path(directory) / "evidence"
+            result, stdout, stderr = self._run(project, toolkit, output)
+            self.assertEqual((1, ""), (result, stderr), stdout)
+            manifest = json.loads((output / "adoption-check.json").read_text())
+            self.assertEqual(
+                "FAIL",
+                manifest["dimensions"]["project_suites"]["project_runtime_observation"],
+            )
+
+    def test_platform_manifest_coherence_uses_only_the_same_descriptor_kind(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, toolkit = self._project(directory, runtime_mode="project")
+            output = Path(directory) / "matching-evidence"
+            result, stdout, stderr = self._run(
+                project, toolkit, output, mode="container-pass"
+            )
+            self.assertEqual((0, ""), (result, stderr), stdout)
+            manifest = json.loads((output / "adoption-check.json").read_text())
+            observations = [
+                component["runtime_observation"]
+                for component in manifest["components"]
+                if component["name"].startswith("project-")
+            ]
+            self.assertTrue(
+                all(
+                    item["declared_manifest_coherence"] == "PASS"
+                    for item in observations
+                )
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            project, toolkit = self._project(directory, runtime_mode="project")
+            output = Path(directory) / "different-evidence"
+            result, stdout, stderr = self._run(
+                project, toolkit, output, mode="container-different"
+            )
+            self.assertEqual((3, ""), (result, stderr), stdout)
+            manifest = json.loads((output / "adoption-check.json").read_text())
+            self.assertEqual(
+                "BLOCKED",
+                manifest["dimensions"]["project_suites"]["project_runtime_observation"],
+            )
+
+    def test_existing_or_in_project_output_is_refused_without_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, toolkit = self._project(directory)
+            existing = Path(directory) / "evidence"
+            existing.mkdir()
+            marker = existing / "marker"
+            marker.write_text("preserve\n", encoding="utf-8")
+            result, _, stderr = self._run(project, toolkit, existing)
+            self.assertEqual(2, result)
+            self.assertIn("already exists", stderr)
+            self.assertEqual("preserve\n", marker.read_text())
+
+            result, _, stderr = self._run(
+                project, toolkit, project / "in-project-evidence"
+            )
+            self.assertEqual(2, result)
+            self.assertIn("outside the project root", stderr)
+
+    def test_final_hash_manifest_matches_every_retained_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, toolkit = self._project(directory)
+            output = Path(directory) / "evidence"
+            result, _, _ = self._run(project, toolkit, output)
+            self.assertEqual(0, result)
+            lines = (output / "SHA256SUMS").read_text().splitlines()
+            recorded = {
+                path: digest for digest, path in (line.split("  ", 1) for line in lines)
+            }
+            files = {
+                path.relative_to(output).as_posix()
+                for path in output.rglob("*")
+                if path.is_file() and path.name != "SHA256SUMS"
+            }
+            self.assertEqual(files, set(recorded))
+            for relative, digest in recorded.items():
+                self.assertEqual(
+                    digest,
+                    hashlib.sha256((output / relative).read_bytes()).hexdigest(),
+                )
+
+
+if __name__ == "__main__":
+    unittest.main()
