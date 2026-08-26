@@ -58,6 +58,7 @@ inherited, copied or loaded by adopting projects.
 - [Select documentation-only remediation for Nextcloud Mail adoption](decisions/0045-select-documentation-only-remediation-for-nextcloud-mail-adoption.md)
 - [Select fail-closed existing-file adaptation](decisions/0046-select-fail-closed-existing-file-adaptation.md)
 - [Select a bounded adoption-completion check](decisions/0047-select-a-bounded-adoption-completion-check.md)
+- [Select project-adapter runtime observation for adoption-check](decisions/0048-select-project-adapter-runtime-observation-for-adoption-check.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Verification precedes integration](requirements/verification-precedes-implementation.md)
