@@ -187,8 +187,15 @@ project-reported sidecars and hashes, two-generation context evidence, the
 staged patch and before/after Git state. Gnostoa holds authoritative artifact
 bytes in an append-only in-memory ledger while project suites run; the only
 suite-visible tool-owned area is that attempt's fresh incoming sidecar
-directory. After all attempts, it creates a clean no-replace bundle from the
-ledger and reconciles every regular file before atomic publication.
+directory. It binds the validated output parent once before suites, creates
+exchanges and final staging by basename relative to that held directory, and
+checks that the visible parent still has the held identity after each suite and
+at the materialization and publication boundaries. After all attempts, it
+creates a clean no-replace bundle from the ledger, reconciles every regular
+file, and publishes with a descriptor-relative no-replace rename. A missing,
+symlinked or replaced visible parent is an integrity failure; if detected after
+publication, the tool removes only its just-created bundle and emits neither
+commitment nor readiness.
 
 After a successful bundle publication, trusted stdout emits exactly one
 `EVIDENCE BUNDLE COMMITMENT: gnostoa-adoption-evidence-bundle/v1 sha256:<64
@@ -197,7 +204,10 @@ array sorted by normalized relative path with exactly `path`, `bytes` and
 `sha256` for every materialized file, including `adoption-check.json` and
 `SHA256SUMS`. Retain this external record separately. Recomputing it detects
 later changed bundle bytes, but it is not provenance or protection from an
-unrestricted persistent process running as the same filesystem owner.
+unrestricted persistent process running as the same filesystem owner. That
+residual same-user process can still race after the final identity checkpoint
+or alter ordinary post-publication custody without operating-system isolation
+or another external trust anchor.
 
 Exit `0` means only `READY FOR
 ACCOUNTABLE-OWNER REVIEW`; exit `1` is a mechanical failure, exit `2` an unsafe

@@ -681,6 +681,14 @@ elif mode != "no-observation":
     if mode == "wrong-binding":
         observation["invocation_binding"] = "9" * 64
     publish(json.dumps(observation, sort_keys=True) + "\\n")
+if mode in {"output-parent-symlink", "output-parent-directory"} and suite == "regression":
+    output_parent = target.parent.parent.parent
+    renamed_parent = output_parent.with_name(output_parent.name + "-renamed")
+    output_parent.rename(renamed_parent)
+    if mode == "output-parent-symlink":
+        output_parent.symlink_to(Path.cwd(), target_is_directory=True)
+    else:
+        output_parent.mkdir()
 if mode == "mutate":
     with Path("AGENTS.md").open("a", encoding="utf-8") as handle:
         handle.write("suite mutation\\n")
@@ -1461,6 +1469,219 @@ raise SystemExit(0)
             self.assertNotIn("READY FOR ACCOUNTABLE-OWNER REVIEW", stdout)
             self.assertFalse(output.exists())
 
+    def _assert_output_parent_replacement_fails_closed(self, mode: str) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project, toolkit = self._project(directory)
+            output_parent = root / "output-parent"
+            output_parent.mkdir()
+            output = output_parent / "evidence"
+            renamed_parent = root / "output-parent-renamed"
+            before = self._git(project, "status", "--porcelain=v2").stdout
+
+            result, stdout, _ = self._run(project, toolkit, output, mode=mode)
+
+            after = self._git(project, "status", "--porcelain=v2").stdout
+            self.assertEqual(2, result, stdout)
+            self.assertNotIn("READY FOR ACCOUNTABLE-OWNER REVIEW", stdout)
+            self.assertNotIn("EVIDENCE BUNDLE COMMITMENT", stdout)
+            self.assertEqual(before, after)
+            self.assertFalse(output.exists())
+            self.assertFalse((renamed_parent / output.name).exists())
+            self.assertFalse(
+                any(renamed_parent.glob(".gnostoa-adoption-*")),
+                list(renamed_parent.iterdir()) if renamed_parent.exists() else [],
+            )
+            self.assertFalse(
+                any(renamed_parent.glob(".*.materializing-*")),
+                list(renamed_parent.iterdir()) if renamed_parent.exists() else [],
+            )
+
+    def test_suite_cannot_redirect_output_parent_to_project_symlink(self) -> None:
+        self._assert_output_parent_replacement_fails_closed("output-parent-symlink")
+
+    def test_suite_cannot_redirect_output_parent_to_another_directory(self) -> None:
+        self._assert_output_parent_replacement_fails_closed("output-parent-directory")
+
+    def test_output_parent_replacement_after_final_git_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project, toolkit = self._project(directory)
+            output_parent = root / "output-parent"
+            output_parent.mkdir()
+            output = output_parent / "evidence"
+            renamed_parent = root / "output-parent-renamed"
+            substitute_parent = root / "substitute-parent"
+            before = self._git(project, "status", "--porcelain=v2").stdout
+            real_representation = adoption_check._git_representation
+            calls = 0
+
+            def replace_after_final_git(
+                paths: adoption_check.PathSet,
+                verification: dict[str, object],
+            ) -> tuple[dict[str, object], list[str]]:
+                nonlocal calls
+                result = real_representation(paths, verification)
+                calls += 1
+                if calls == 2:
+                    output_parent.rename(renamed_parent)
+                    substitute_parent.mkdir()
+                    substitute_parent.rename(output_parent)
+                return result
+
+            with mock.patch(
+                "tools.adoption_check._git_representation",
+                side_effect=replace_after_final_git,
+            ):
+                result, stdout, _ = self._run(project, toolkit, output)
+
+            after = self._git(project, "status", "--porcelain=v2").stdout
+            self.assertEqual(2, result, stdout)
+            self.assertNotIn("READY FOR ACCOUNTABLE-OWNER REVIEW", stdout)
+            self.assertNotIn("EVIDENCE BUNDLE COMMITMENT", stdout)
+            self.assertEqual(before, after)
+            self.assertFalse(output.exists())
+            self.assertFalse((renamed_parent / output.name).exists())
+            self.assertFalse(any(renamed_parent.glob(".gnostoa-adoption-*")))
+            self.assertFalse(any(renamed_parent.glob(".*.materializing-*")))
+
+    def test_output_parent_replacement_immediately_before_publication_fails_closed(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project, toolkit = self._project(directory)
+            output_parent = root / "output-parent"
+            output_parent.mkdir()
+            output = output_parent / "evidence"
+            renamed_parent = root / "output-parent-renamed"
+            before = self._git(project, "status", "--porcelain=v2").stdout
+            real_rename = adoption_check._rename_noreplace_at
+
+            def replace_before_publication(
+                parent_descriptor: int,
+                source_name: str,
+                target_name: str,
+                target_display: Path,
+            ) -> None:
+                output_parent.rename(renamed_parent)
+                output_parent.mkdir()
+                real_rename(
+                    parent_descriptor,
+                    source_name,
+                    target_name,
+                    target_display,
+                )
+
+            with mock.patch(
+                "tools.adoption_check._rename_noreplace_at",
+                side_effect=replace_before_publication,
+            ):
+                result, stdout, _ = self._run(project, toolkit, output)
+
+            after = self._git(project, "status", "--porcelain=v2").stdout
+            self.assertEqual(2, result, stdout)
+            self.assertNotIn("READY FOR ACCOUNTABLE-OWNER REVIEW", stdout)
+            self.assertNotIn("EVIDENCE BUNDLE COMMITMENT", stdout)
+            self.assertEqual(before, after)
+            self.assertFalse(output.exists())
+            self.assertFalse((renamed_parent / output.name).exists())
+            self.assertFalse(any(renamed_parent.glob(".gnostoa-adoption-*")))
+            self.assertFalse(any(renamed_parent.glob(".*.materializing-*")))
+
+    def test_output_parent_descriptor_closes_on_all_completion_paths(self) -> None:
+        real_open = os.open
+        real_close = os.close
+        real_run_bytes = adoption_check._run_bytes
+
+        for outcome in ("success", "blocked", "timeout", "exception"):
+            with (
+                self.subTest(outcome=outcome),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                project, toolkit = self._project(directory)
+                output_parent = root / "output-parent"
+                output_parent.mkdir()
+                output = output_parent / "evidence"
+                parent_descriptors: set[int] = set()
+                closed_descriptors: set[int] = set()
+
+                def tracking_open(
+                    path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+                    flags: int,
+                    mode: int = 0o777,
+                    *,
+                    dir_fd: int | None = None,
+                    expected_parent: Path = output_parent,
+                    opened_descriptors: set[int] = parent_descriptors,
+                ) -> int:
+                    if dir_fd is None:
+                        descriptor = real_open(path, flags, mode)
+                    else:
+                        descriptor = real_open(path, flags, mode, dir_fd=dir_fd)
+                    if dir_fd is None and Path(os.fsdecode(path)) == expected_parent:
+                        opened_descriptors.add(descriptor)
+                    return descriptor
+
+                def tracking_close(
+                    descriptor: int,
+                    opened_descriptors: set[int] = parent_descriptors,
+                    closed: set[int] = closed_descriptors,
+                ) -> None:
+                    if descriptor in opened_descriptors:
+                        closed.add(descriptor)
+                    real_close(descriptor)
+
+                mode = "no-observation" if outcome == "blocked" else "pass"
+                with (
+                    mock.patch("tools.adoption_check.os.open", tracking_open),
+                    mock.patch("tools.adoption_check.os.close", tracking_close),
+                ):
+                    if outcome == "timeout":
+
+                        def timeout_suite_only(
+                            command: list[str],
+                            *,
+                            cwd: Path,
+                            env: dict[str, str] | None = None,
+                            timeout: float | None = None,
+                        ) -> subprocess.CompletedProcess[bytes]:
+                            if command and command[0] == "./ci/verify":
+                                raise subprocess.TimeoutExpired(command, timeout or 0)
+                            return real_run_bytes(
+                                command,
+                                cwd=cwd,
+                                env=env,
+                                timeout=timeout,
+                            )
+
+                        with mock.patch(
+                            "tools.adoption_check._run_bytes",
+                            side_effect=timeout_suite_only,
+                        ):
+                            self._run(project, toolkit, output, mode=mode)
+                    elif outcome == "exception":
+                        with mock.patch(
+                            "tools.adoption_check._finalize",
+                            side_effect=adoption_check.UnsafeInvocation(
+                                "fixture finalization failure"
+                            ),
+                        ):
+                            self._run(project, toolkit, output, mode=mode)
+                    else:
+                        self._run(project, toolkit, output, mode=mode)
+
+                self.assertTrue(parent_descriptors)
+                self.assertEqual(parent_descriptors, closed_descriptors)
+                self.assertFalse(any(output_parent.glob(".gnostoa-adoption-*")))
+                self.assertFalse(any(output_parent.glob(".*.materializing-*")))
+                if outcome == "exception":
+                    self.assertFalse(output.exists())
+                for descriptor in parent_descriptors:
+                    with self.assertRaises(OSError):
+                        os.fstat(descriptor)
+
     def test_suite_cannot_overwrite_a_pre_suite_component_artifact(self) -> None:
         self._assert_suite_cannot_mutate_authoritative_evidence("overwrite-component")
 
@@ -1501,23 +1722,29 @@ raise SystemExit(0)
         with tempfile.TemporaryDirectory() as directory:
             project, toolkit = self._project(directory)
             output = Path(directory) / "evidence"
-            real_reconcile = adoption_check._reconcile_materialized
+            real_reconcile = adoption_check._reconcile_materialized_at
             calls = 0
 
             def mutate_after_first_reconciliation(
-                root: Path,
+                root_descriptor: int,
                 artifacts: tuple[adoption_check.EvidenceArtifact, ...],
             ) -> None:
                 nonlocal calls
-                real_reconcile(root, artifacts)
+                real_reconcile(root_descriptor, artifacts)
                 calls += 1
                 if calls == 1:
-                    (root / "candidate.patch").write_bytes(
-                        b"post-reconciliation replacement bytes\n"
+                    descriptor = os.open(
+                        "candidate.patch",
+                        os.O_WRONLY | os.O_TRUNC,
+                        dir_fd=root_descriptor,
                     )
+                    try:
+                        os.write(descriptor, b"post-reconciliation replacement bytes\n")
+                    finally:
+                        os.close(descriptor)
 
             with mock.patch(
-                "tools.adoption_check._reconcile_materialized",
+                "tools.adoption_check._reconcile_materialized_at",
                 side_effect=mutate_after_first_reconciliation,
             ):
                 result, stdout, _ = self._run(project, toolkit, output)

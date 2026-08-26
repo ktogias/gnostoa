@@ -84,10 +84,24 @@ producer used atomic no-replace installation; that remains its obligation.
 
 Only after all project-suite attempts finish may Gnostoa construct
 `adoption-check.json`, artifact metadata and `SHA256SUMS` from ledger entries.
-It then materializes one fresh private staging tree through descriptor-relative,
-no-follow, no-replace writes. It reopens and reconciles the exact paths, types,
-lengths, digests and bytes against the ledger before atomically publishing the
-previously absent final bundle. An unexpected path, replacement, mismatch or
+Before any suite executes, Gnostoa opens the already validated output parent
+once without following its final component, validates the descriptor, and
+retains its device and inode identity. Suite exchanges and the fresh private
+staging tree are created by unpredictable basenames relative to that held
+descriptor. Materialization uses descriptor-relative, no-follow, no-replace
+writes; reconciliation reads through the same held directory hierarchy; and
+the atomic no-replace rename supplies the held output-parent descriptor for
+both source and destination rather than reopening either parent by pathname.
+
+Gnostoa compares the held parent with a non-following inspection of its visible
+pathname after acquisition, after every suite attempt, immediately before
+materialization and publication, and immediately after publication before
+emitting the external commitment. It reopens the published basename relative
+to the held parent and reconciles its identity, exact paths, types, lengths,
+digests and bytes against the ledger. If the visible parent is missing,
+symlinked or identity-mismatched after the rename, Gnostoa removes only the
+just-created tool-owned bundle relative to the held descriptor and suppresses
+commitment and readiness. Any unexpected path, replacement, mismatch or
 reconciliation failure is an integrity/internal failure with exit `2`, no
 readiness claim and no publication of a supposedly valid bundle.
 
@@ -122,12 +136,14 @@ observation remains project-reported rather than independently attested.
 
 The ledger and descriptor-bound reconciliation prevent suite mutation of
 authoritative pre-suite pathnames and detect mutation within the admitted
-materialization protocol. They do not fully exclude an unrestricted persistent
-malicious process running as the same user after publication. That process can
-still alter ordinary filesystem custody; a previously emitted external
-commitment makes later mutation detectable only when a trusted consumer retains
-and recomputes it. Stronger exclusion requires operating-system isolation or a
-separate external trust anchor and is not selected here.
+materialization protocol, including replacement of the visible output-parent
+pathname at the admitted checkpoints. They do not fully exclude an unrestricted
+persistent malicious process running as the same user from racing after the
+last checkpoint or changing ordinary filesystem custody after publication. A
+previously emitted external commitment makes later mutation detectable only
+when a trusted consumer retains and recomputes it. Stronger exclusion requires
+operating-system isolation or a separate external trust anchor and is not
+selected here.
 
 ## Consequences
 
