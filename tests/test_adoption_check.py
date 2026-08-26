@@ -7,9 +7,11 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from collections.abc import Callable
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 import yaml
@@ -299,6 +301,122 @@ class AdoptionCheckContractTests(unittest.TestCase):
                     adoption_check.ObservationBlocked, "unknown identity profile"
                 ):
                     self._validate(candidate)
+
+
+class AdoptionCheckSidecarAcquisitionTests(unittest.TestCase):
+    def _race_openers(
+        self,
+        target: Path,
+        replacement: Path,
+        *,
+        symlink: bool = False,
+    ) -> tuple[Callable[..., Any], Callable[..., int]]:
+        real_path_open = Path.open
+        real_os_open = os.open
+
+        def replace() -> None:
+            if symlink:
+                if os.path.lexists(target):
+                    target.unlink()
+                target.symlink_to(replacement)
+            else:
+                os.replace(replacement, target)
+
+        def pathname_open(path: Path, *args: Any, **kwargs: Any) -> Any:
+            if Path(path) == target:
+                replace()
+            return real_path_open(path, *args, **kwargs)
+
+        def descriptor_open(
+            path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+            flags: int,
+            mode: int = 0o777,
+            *,
+            dir_fd: int | None = None,
+        ) -> int:
+            if symlink and Path(os.fsdecode(path)) == target:
+                replace()
+            if dir_fd is None:
+                descriptor = real_os_open(path, flags, mode)
+            else:
+                descriptor = real_os_open(path, flags, mode, dir_fd=dir_fd)
+            if not symlink and Path(os.fsdecode(path)) == target:
+                replace()
+            return descriptor
+
+        return pathname_open, descriptor_open
+
+    def test_symlink_swap_during_acquisition_is_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "observation.json"
+            replacement = root / "replacement.json"
+            target.write_bytes(b"trusted\n")
+            replacement.write_bytes(b"substituted\n")
+            pathname_open, descriptor_open = self._race_openers(
+                target, replacement, symlink=True
+            )
+
+            with (
+                mock.patch.object(Path, "open", pathname_open),
+                mock.patch("tools.adoption_check.os.open", descriptor_open),
+                self.assertRaisesRegex(
+                    adoption_check.ObservationBlocked,
+                    "regular non-symlink file",
+                ),
+            ):
+                adoption_check._read_regular_bounded(target, 64, "observation")
+
+    def test_path_replacement_cannot_redirect_an_opened_descriptor(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "observation.json"
+            replacement = root / "replacement.json"
+            trusted = b"trusted inode bytes\n"
+            substituted = b"substituted inode bytes\n"
+            target.write_bytes(trusted)
+            replacement.write_bytes(substituted)
+            pathname_open, descriptor_open = self._race_openers(target, replacement)
+
+            with (
+                mock.patch.object(Path, "open", pathname_open),
+                mock.patch("tools.adoption_check.os.open", descriptor_open),
+            ):
+                observed = adoption_check._read_regular_bounded(
+                    target, 64, "observation"
+                )
+
+            self.assertEqual(trusted, observed)
+            self.assertEqual(substituted, target.read_bytes())
+
+    def test_retention_uses_only_the_safely_opened_file_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "observation.json"
+            replacement = root / "replacement.json"
+            evidence = root / "evidence"
+            evidence.mkdir()
+            trusted = b'{"binding":"trusted"}\n'
+            substituted = b'{"binding":"substituted"}\n'
+            target.write_bytes(trusted)
+            replacement.write_bytes(substituted)
+            pathname_open, descriptor_open = self._race_openers(target, replacement)
+
+            with (
+                mock.patch.object(Path, "open", pathname_open),
+                mock.patch("tools.adoption_check.os.open", descriptor_open),
+            ):
+                observed = adoption_check._read_regular_bounded(
+                    target, 64, "observation"
+                )
+
+            artifact = adoption_check.EvidenceWriter(evidence, []).write_bytes(
+                "runtime-observations/fast.json", observed
+            )
+            retained = evidence / "runtime-observations" / "fast.json"
+            self.assertEqual(trusted, retained.read_bytes())
+            self.assertEqual(adoption_check._sha256(trusted), artifact["sha256"])
+            self.assertNotEqual(substituted, retained.read_bytes())
 
 
 class AdoptionCheckExecutionTests(unittest.TestCase):
@@ -609,6 +727,66 @@ raise SystemExit(0)
                     "BLOCKED" if mode == "blocked" else "PASS",
                     manifest["dimensions"]["environment"]["result"],
                 )
+
+    def _assert_unavailable_git_snapshot_is_blocked(self, fail_call: int) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, toolkit = self._project(directory)
+            output = Path(directory) / "evidence"
+            before_status = self._git(
+                project, "status", "--porcelain=v2", "--untracked-files=all"
+            ).stdout
+            before_index = self._git(
+                project, "diff", "--cached", "--binary", "--full-index"
+            ).stdout
+            stage = "initial" if fail_call == 1 else "final"
+            real_snapshot = adoption_check._git_snapshot
+            calls = 0
+
+            def unavailable_snapshot(root: Path) -> dict[str, object]:
+                nonlocal calls
+                calls += 1
+                if calls == fail_call:
+                    raise adoption_check.BlockedPrerequisite(
+                        f"{stage} Git snapshot unavailable"
+                    )
+                return real_snapshot(root)
+
+            with mock.patch(
+                "tools.adoption_check._git_snapshot",
+                side_effect=unavailable_snapshot,
+            ):
+                result, stdout, stderr = self._run(project, toolkit, output)
+
+            self.assertEqual((3, ""), (result, stderr), stdout)
+            self.assertIn("BLOCKED", stdout)
+            self.assertNotIn("READY FOR ACCOUNTABLE-OWNER REVIEW", stdout)
+            manifest = json.loads((output / "adoption-check.json").read_text())
+            self.assertEqual("BLOCKED", manifest["outcome"])
+            self.assertEqual(
+                "BLOCKED", manifest["dimensions"]["git_representability"]["result"]
+            )
+            self.assertIn(
+                f"{stage} Git snapshot unavailable",
+                manifest["dimensions"]["git_representability"]["detail"],
+            )
+            self.assertEqual(
+                before_status,
+                self._git(
+                    project, "status", "--porcelain=v2", "--untracked-files=all"
+                ).stdout,
+            )
+            self.assertEqual(
+                before_index,
+                self._git(
+                    project, "diff", "--cached", "--binary", "--full-index"
+                ).stdout,
+            )
+
+    def test_unavailable_initial_git_snapshot_is_retained_as_blocked(self) -> None:
+        self._assert_unavailable_git_snapshot_is_blocked(1)
+
+    def test_unavailable_final_git_snapshot_is_retained_as_blocked(self) -> None:
+        self._assert_unavailable_git_snapshot_is_blocked(2)
 
     def test_invalid_sidecars_are_blocked_and_never_escape_the_evidence_root(
         self,

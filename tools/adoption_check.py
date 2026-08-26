@@ -783,12 +783,16 @@ def _tool_versions(project_root: Path) -> dict[str, Any]:
         python_identity["sha256"] = "NOT OBSERVED"
         python_identity["detail"] = str(exc)
 
-    git = _git(project_root, ["--version"])
-    git_version = (
-        git.stdout.decode("utf-8", errors="replace").strip()
-        if git.returncode == 0
-        else "NOT OBSERVED"
-    )
+    try:
+        git = _git(project_root, ["--version"])
+    except OSError:
+        git_version = "NOT OBSERVED"
+    else:
+        git_version = (
+            git.stdout.decode("utf-8", errors="replace").strip()
+            if git.returncode == 0
+            else "NOT OBSERVED"
+        )
     try:
         package_version = importlib.metadata.version("gnostoa")
     except importlib.metadata.PackageNotFoundError:
@@ -952,7 +956,9 @@ def _git_representation(
     for relative in sorted(required, key=lambda item: item.as_posix()):
         try:
             target_states.append(_tracked_file_state(root, relative))
-        except (AdoptionCheckError, BlockedPrerequisite) as exc:
+        except BlockedPrerequisite:
+            raise
+        except AdoptionCheckError as exc:
             problems.append(str(exc))
 
     source_relative = _relative_within(root, paths.toolkit_source, "toolkit source")
@@ -961,15 +967,11 @@ def _git_representation(
     if len(source_entries) == 1 and source_entries[0].startswith("160000 "):
         fields = source_entries[0].split(maxsplit=3)
         index_revision = fields[1] if len(fields) >= 2 else ""
-        try:
-            worktree_revision = _git_text(
-                paths.toolkit_source,
-                ["rev-parse", "HEAD"],
-                "toolkit worktree revision",
-            )
-        except BlockedPrerequisite as exc:
-            problems.append(str(exc))
-            worktree_revision = ""
+        worktree_revision = _git_text(
+            paths.toolkit_source,
+            ["rev-parse", "HEAD"],
+            "toolkit worktree revision",
+        )
         submodule = {
             "path": source_relative.as_posix(),
             "index_mode": "160000",
@@ -982,7 +984,9 @@ def _git_representation(
         if (root / ".gitmodules").is_file():
             try:
                 target_states.append(_tracked_file_state(root, Path(".gitmodules")))
-            except (AdoptionCheckError, BlockedPrerequisite) as exc:
+            except BlockedPrerequisite:
+                raise
+            except AdoptionCheckError as exc:
                 problems.append(str(exc))
     else:
         vendored = _git_required(
@@ -994,26 +998,39 @@ def _git_representation(
         if not members:
             problems.append("vendored toolkit source has no tracked members")
 
-    changed = _git(
-        root,
-        [
-            "diff",
-            "--quiet",
-            "--",
-            *(
-                item.as_posix()
-                for item in sorted(required, key=lambda path: path.as_posix())
-            ),
-            source_relative.as_posix(),
-        ],
-    )
+    try:
+        changed = _git(
+            root,
+            [
+                "diff",
+                "--quiet",
+                "--",
+                *(
+                    item.as_posix()
+                    for item in sorted(required, key=lambda path: path.as_posix())
+                ),
+                source_relative.as_posix(),
+            ],
+        )
+    except OSError as exc:
+        raise BlockedPrerequisite(
+            f"cannot execute Git for required adoption-target comparison: {exc}"
+        ) from exc
     if changed.returncode == 1:
         problems.append("required adoption targets differ between index and worktree")
     elif changed.returncode != 0:
-        problems.append("cannot compare required adoption targets with the index")
+        detail = changed.stderr.decode("utf-8", errors="replace").strip()
+        raise BlockedPrerequisite(
+            detail or "cannot compare required adoption targets with the index"
+        )
 
-    before_agents = _git(root, ["rev-parse", "HEAD:AGENTS.md"])
-    staged_agents = _git(root, ["rev-parse", ":AGENTS.md"])
+    try:
+        before_agents = _git(root, ["rev-parse", "HEAD:AGENTS.md"])
+        staged_agents = _git(root, ["rev-parse", ":AGENTS.md"])
+    except OSError as exc:
+        raise BlockedPrerequisite(
+            f"cannot execute Git for AGENTS.md identity acquisition: {exc}"
+        ) from exc
     agents = {
         "head_blob": (
             before_agents.stdout.decode().strip()
@@ -1035,17 +1052,46 @@ def _git_representation(
 
 
 def _read_regular_bounded(path: Path, maximum: int, label: str) -> bytes:
+    """Bind validation and bounded reading to one no-follow file descriptor.
+
+    The final descriptor cannot establish the producer's historical publication
+    method; atomic no-replace publication remains a producer-side obligation.
+    """
+
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    if nofollow is None:
+        raise ObservationBlocked(
+            f"cannot safely read {label}: O_NOFOLLOW is unavailable"
+        )
+    flags = os.O_RDONLY | nofollow
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
     try:
-        mode = path.lstat().st_mode
+        descriptor = os.open(path, flags)
     except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise ObservationBlocked(
+                f"{label} is not a regular non-symlink file"
+            ) from exc
         raise ObservationBlocked(f"cannot read {label}: {exc}") from exc
-    if not stat.S_ISREG(mode) or stat.S_ISLNK(mode):
-        raise ObservationBlocked(f"{label} is not a regular non-symlink file")
     try:
-        with path.open("rb") as handle:
-            content = handle.read(maximum + 1)
-    except OSError as exc:
-        raise ObservationBlocked(f"cannot read {label}: {exc}") from exc
+        try:
+            mode = os.fstat(descriptor).st_mode
+            if not stat.S_ISREG(mode):
+                raise ObservationBlocked(f"{label} is not a regular non-symlink file")
+            remaining = maximum + 1
+            chunks: list[bytes] = []
+            while remaining:
+                chunk = os.read(descriptor, min(remaining, 65_536))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            content = b"".join(chunks)
+        except OSError as exc:
+            raise ObservationBlocked(f"cannot read {label}: {exc}") from exc
+    finally:
+        os.close(descriptor)
     if len(content) > maximum:
         raise ObservationBlocked(f"{label} exceeds {maximum} bytes")
     return content
@@ -1613,12 +1659,81 @@ def _result_exit(
     return 0
 
 
+def _blocked_prerequisite_result(
+    args: argparse.Namespace,
+    paths: PathSet,
+    writer: EvidenceWriter,
+    *,
+    stage: str,
+    error: BlockedPrerequisite,
+) -> dict[str, Any]:
+    detail = f"{stage}: {error}"
+    writer.component(
+        "git-prerequisite",
+        [],
+        None,
+        "BLOCKED",
+        b"",
+        str(error).encode("utf-8", errors="replace"),
+        detail=detail,
+    )
+    not_run = {
+        "result": "NOT RUN",
+        "detail": f"not reached because {detail}",
+    }
+    dimensions: dict[str, Any] = {
+        "environment": {"result": "BLOCKED", "detail": detail},
+        "documentation_toolkit_execution_coherence": dict(not_run),
+        "external_oci_digest": {
+            "result": (
+                "NOT OBSERVED" if args.execution_route == "oci" else "NOT APPLICABLE"
+            )
+        },
+        "runtime_lock_validation": dict(not_run),
+        "change_policy": dict(not_run),
+        "ci_policy": dict(not_run),
+        "profile_and_bundle": dict(not_run),
+        "bounded_context": dict(not_run),
+        "project_suites": dict(not_run),
+        "git_representability": {"result": "BLOCKED", "detail": detail},
+        "evidence_bundle": {"result": "PASS"},
+        "semantic_owner_review": "REQUIRED",
+        "durable_adoption": "NOT DETERMINED",
+    }
+    return {
+        "schema": RESULT_SCHEMA,
+        "outcome": "BLOCKED",
+        "exit_code": 3,
+        "arguments": {
+            "execution_route": args.execution_route,
+            "seeds": list(args.seed),
+            "depth": args.depth,
+            "max_tokens": args.max_tokens,
+            "project_root": str(paths.project_root),
+            "output_dir": str(paths.output),
+            "overrides": paths.overrides,
+        },
+        "tool_versions": _tool_versions(paths.project_root),
+        "components": writer.components,
+        "dimensions": dimensions,
+        "authority": {
+            "mechanical_result_only": True,
+            "semantic_owner_review": "REQUIRED",
+            "durable_adoption": "NOT DETERMINED",
+            "project_runtime_observation": (
+                "project-reported, not independently attested"
+            ),
+        },
+    }
+
+
 def _execute(args: argparse.Namespace, paths: PathSet) -> tuple[int, Path]:
     temporary = Path(
         tempfile.mkdtemp(prefix=f".{paths.output.name}.tmp-", dir=paths.output.parent)
     )
     writer = EvidenceWriter(temporary, [])
     finalized = False
+    prerequisite_stage = "initial Git snapshot"
     try:
         lock = load_yaml(paths.lock)
         verification = load_yaml(paths.verification)
@@ -1626,6 +1741,7 @@ def _execute(args: argparse.Namespace, paths: PathSet) -> tuple[int, Path]:
         candidate_patch = before.pop("_patch")
         writer.write_bytes("candidate.patch", candidate_patch)
 
+        prerequisite_stage = "initial Git representation"
         representation, representation_problems = _git_representation(
             paths, verification
         )
@@ -1814,6 +1930,7 @@ def _execute(args: argparse.Namespace, paths: PathSet) -> tuple[int, Path]:
                     )
                 )
 
+        prerequisite_stage = "final Git snapshot"
         after = _git_snapshot(paths.project_root)
         after_patch = after.pop("_patch")
         if before["head"] != after["head"] or before["tree"] != after["tree"]:
@@ -1826,6 +1943,7 @@ def _execute(args: argparse.Namespace, paths: PathSet) -> tuple[int, Path]:
             representation_problems.append(
                 "staged candidate changed during adoption-check"
             )
+        prerequisite_stage = "final Git representation"
         final_representation, final_problems = _git_representation(paths, verification)
         representation_problems.extend(final_problems)
         if representation != final_representation:
@@ -1921,6 +2039,17 @@ def _execute(args: argparse.Namespace, paths: PathSet) -> tuple[int, Path]:
         _finalize(writer, paths.output, result)
         finalized = True
         return exit_code, paths.output
+    except BlockedPrerequisite as exc:
+        result = _blocked_prerequisite_result(
+            args,
+            paths,
+            writer,
+            stage=prerequisite_stage,
+            error=exc,
+        )
+        _finalize(writer, paths.output, result)
+        finalized = True
+        return 3, paths.output
     finally:
         if not finalized:
             shutil.rmtree(temporary, ignore_errors=True)
@@ -1984,6 +2113,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         paths = _derive_paths(args)
         code, output = _execute(args, paths)
+    except BlockedPrerequisite as exc:
+        print(f"BLOCKED: {exc}", file=sys.stderr)
+        return 3
     except (
         AdoptionCheckError,
         KnowledgeFormatError,
