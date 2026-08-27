@@ -377,6 +377,40 @@ class PublicationBaselineTests(unittest.TestCase):
         )
         self.assertIn('test "$(wc -l < /tmp/gnostoa-sb2.sha256)" -eq 14', workflow)
 
+    def test_ghcr_publication_rejects_non_main_dispatch_context(self) -> None:
+        workflow_path = ROOT / ".github" / "workflows" / "publish-oci.yml"
+        workflow = workflow_path.read_text(encoding="utf-8")
+        parsed = load_yaml(workflow_path)
+        publish = parsed["jobs"]["publish"]
+
+        self.assertEqual(
+            "${{ github.ref == 'refs/heads/main' && github.ref_type == 'branch' }}",
+            publish["if"],
+        )
+        assertion_step = next(
+            step
+            for step in publish["steps"]
+            if step.get("name") == "Assert the exact source and build inputs"
+        )
+        assertion_script = assertion_step["run"]
+        guards = (
+            'test "${GITHUB_REF}" = "refs/heads/main"',
+            'test "${GITHUB_REF_TYPE}" = "branch"',
+            'test "${GITHUB_REF_NAME}" = "main"',
+            'test "${GITHUB_WORKFLOW_REF}" = "${GITHUB_REPOSITORY}/.github/workflows/publish-oci.yml@refs/heads/main"',
+        )
+        for guard in guards:
+            with self.subTest(guard=guard):
+                self.assertIn(guard, assertion_script)
+                self.assertLess(
+                    workflow.index(guard),
+                    workflow.index("- name: Authenticate to GHCR"),
+                )
+                self.assertLess(
+                    workflow.index(guard),
+                    workflow.index("assert_tag_absent()"),
+                )
+
     def test_ghcr_publication_workflow_is_exact_and_write_once(self) -> None:
         workflow_path = ROOT / ".github" / "workflows" / "publish-oci.yml"
         self.assertTrue(workflow_path.is_file())

@@ -26,6 +26,7 @@ env:
 jobs:
   publish:
     name: publish-linux-amd64
+    if: ${{ github.ref == 'refs/heads/main' && github.ref_type == 'branch' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -46,6 +47,10 @@ jobs:
           set -euo pipefail
           test "${GITHUB_REPOSITORY}" = "ktogias/gnostoa"
           test "${GITHUB_ACTOR}" = "ktogias"
+          test "${GITHUB_REF}" = "refs/heads/main"
+          test "${GITHUB_REF_TYPE}" = "branch"
+          test "${GITHUB_REF_NAME}" = "main"
+          test "${GITHUB_WORKFLOW_REF}" = "${GITHUB_REPOSITORY}/.github/workflows/publish-oci.yml@refs/heads/main"
           test "$(git cat-file -t "refs/tags/${SOURCE_TAG}")" = "tag"
           test "$(git rev-parse "refs/tags/${SOURCE_TAG}")" = "${TAG_OBJECT}"
           test "$(git rev-parse "${SOURCE_TAG}^{commit}")" = "${SOURCE_COMMIT}"
