@@ -381,12 +381,18 @@ class PublicationBaselineTests(unittest.TestCase):
         workflow_path = ROOT / ".github" / "workflows" / "publish-oci.yml"
         workflow = workflow_path.read_text(encoding="utf-8")
         parsed = load_yaml(workflow_path)
+        authorize = parsed["jobs"]["authorize"]
         publish = parsed["jobs"]["publish"]
 
-        self.assertEqual(
-            "${{ github.ref == 'refs/heads/main' && github.ref_type == 'branch' }}",
-            publish["if"],
+        self.assertEqual({}, authorize["permissions"])
+        self.assertEqual("authorize", publish["needs"])
+        self.assertNotIn("if", publish)
+        authorization_step = next(
+            step
+            for step in authorize["steps"]
+            if step.get("name") == "Reject non-main dispatch context"
         )
+        authorization_script = authorization_step["run"]
         assertion_step = next(
             step
             for step in publish["steps"]
@@ -394,6 +400,8 @@ class PublicationBaselineTests(unittest.TestCase):
         )
         assertion_script = assertion_step["run"]
         guards = (
+            'test "${GITHUB_REPOSITORY}" = "ktogias/gnostoa"',
+            'test "${GITHUB_ACTOR}" = "ktogias"',
             'test "${GITHUB_REF}" = "refs/heads/main"',
             'test "${GITHUB_REF_TYPE}" = "branch"',
             'test "${GITHUB_REF_NAME}" = "main"',
@@ -401,6 +409,7 @@ class PublicationBaselineTests(unittest.TestCase):
         )
         for guard in guards:
             with self.subTest(guard=guard):
+                self.assertIn(guard, authorization_script)
                 self.assertIn(guard, assertion_script)
                 self.assertLess(
                     workflow.index(guard),
@@ -411,6 +420,47 @@ class PublicationBaselineTests(unittest.TestCase):
                     workflow.index("assert_tag_absent()"),
                 )
 
+        accepted_environment = os.environ | {
+            "GITHUB_REPOSITORY": "ktogias/gnostoa",
+            "GITHUB_ACTOR": "ktogias",
+            "GITHUB_REF": "refs/heads/main",
+            "GITHUB_REF_TYPE": "branch",
+            "GITHUB_REF_NAME": "main",
+            "GITHUB_WORKFLOW_REF": (
+                "ktogias/gnostoa/.github/workflows/publish-oci.yml@refs/heads/main"
+            ),
+        }
+        accepted = subprocess.run(
+            ["bash", "-c", authorization_script],
+            env=accepted_environment,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(0, accepted.returncode, accepted.stderr)
+
+        rejected_contexts = (
+            {"GITHUB_REF": "refs/heads/agent/publication"},
+            {"GITHUB_REF_TYPE": "tag", "GITHUB_REF_NAME": "v0.2.0"},
+            {"GITHUB_REF_NAME": "agent/publication"},
+            {
+                "GITHUB_WORKFLOW_REF": (
+                    "ktogias/gnostoa/.github/workflows/"
+                    "publish-oci.yml@refs/heads/agent/publication"
+                )
+            },
+        )
+        for changed_environment in rejected_contexts:
+            with self.subTest(changed_environment=changed_environment):
+                rejected = subprocess.run(
+                    ["bash", "-c", authorization_script],
+                    env=accepted_environment | changed_environment,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(0, rejected.returncode)
+
     def test_ghcr_publication_workflow_is_exact_and_write_once(self) -> None:
         workflow_path = ROOT / ".github" / "workflows" / "publish-oci.yml"
         self.assertTrue(workflow_path.is_file())
@@ -419,7 +469,7 @@ class PublicationBaselineTests(unittest.TestCase):
 
         self.assertEqual("Publish Gnostoa v0.2.0 OCI image", parsed["name"])
         self.assertEqual({}, parsed["permissions"])
-        self.assertEqual(["publish"], list(parsed["jobs"]))
+        self.assertEqual(["authorize", "publish"], list(parsed["jobs"]))
         self.assertEqual(
             {
                 "contents": "read",

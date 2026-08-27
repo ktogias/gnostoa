@@ -24,9 +24,25 @@ env:
   BUILD_DATE: "2026-08-27T19:04:17Z"
 
 jobs:
+  authorize:
+    name: require-main-dispatch
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Reject non-main dispatch context
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REPOSITORY}" = "ktogias/gnostoa"
+          test "${GITHUB_ACTOR}" = "ktogias"
+          test "${GITHUB_REF}" = "refs/heads/main"
+          test "${GITHUB_REF_TYPE}" = "branch"
+          test "${GITHUB_REF_NAME}" = "main"
+          test "${GITHUB_WORKFLOW_REF}" = "${GITHUB_REPOSITORY}/.github/workflows/publish-oci.yml@refs/heads/main"
+
   publish:
     name: publish-linux-amd64
-    if: ${{ github.ref == 'refs/heads/main' && github.ref_type == 'branch' }}
+    needs: authorize
     runs-on: ubuntu-latest
     permissions:
       contents: read
