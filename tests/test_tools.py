@@ -3459,11 +3459,58 @@ class DocumentationTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         normalized_completion_analysis = " ".join(completion_analysis.split())
         self.assertIn(
+            "description: Bounded causal synthesis, alternatives and "
+            "executable-contract recommendation after four rejected Nextcloud "
+            "Mail adoption attempts across three Work Item cycles.",
+            normalized_completion_analysis,
+        )
+        self.assertNotIn(
+            "after three rejected Nextcloud Mail adoption attempts",
+            normalized_completion_analysis,
+        )
+        self.assertIn(
             "four rejected adoption attempts across three Work Item cycles",
             normalized_completion_analysis,
         )
         self.assertIn(
             "#117 frozen fresh-agent rerun", normalized_completion_analysis
+        )
+
+        completion_decision = (
+            ROOT
+            / "knowledge"
+            / "decisions"
+            / "0047-select-a-bounded-adoption-completion-check.md"
+        ).read_text(encoding="utf-8")
+        normalized_completion_decision = " ".join(completion_decision.split())
+        self.assertIn(
+            "Four rejected Nextcloud Mail adoption attempts are recorded "
+            "across three Work Item cycles",
+            normalized_completion_decision,
+        )
+        self.assertIn(
+            "Three mechanically substantive attempts",
+            normalized_completion_decision,
+        )
+        self.assertNotIn(
+            "Three rejected Nextcloud Mail adoption attempts",
+            normalized_completion_decision,
+        )
+
+        runtime_routing = (
+            ROOT
+            / "knowledge"
+            / "assessments"
+            / "adoption-check-project-verification-runtime-routing.md"
+        ).read_text(encoding="utf-8")
+        normalized_runtime_routing = " ".join(runtime_routing.split())
+        self.assertIn(
+            "The baseline, #122 and #125 were the three attempts that reached "
+            "mechanically substantive adoption work",
+            normalized_runtime_routing,
+        )
+        self.assertNotIn(
+            "All three rejected Mail attempts", normalized_runtime_routing
         )
 
     def test_container_first_verification_bypass_is_recorded_and_routed(

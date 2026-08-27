@@ -1,7 +1,7 @@
 ---
 type: Source
 title: Nextcloud Mail adoption-completion gate analysis
-description: Bounded causal synthesis, alternatives and executable-contract recommendation after three rejected Nextcloud Mail adoption attempts.
+description: Bounded causal synthesis, alternatives and executable-contract recommendation after four rejected Nextcloud Mail adoption attempts across three Work Item cycles.
 status: draft
 generated:
   by: codex/gpt-5
