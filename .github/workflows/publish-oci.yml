@@ -35,6 +35,8 @@ jobs:
           set -euo pipefail
           test "${GITHUB_REPOSITORY}" = "ktogias/gnostoa"
           test "${GITHUB_ACTOR}" = "ktogias"
+          test "${GITHUB_TRIGGERING_ACTOR}" = "ktogias"
+          test "${GITHUB_RUN_ATTEMPT}" = "1"
           test "${GITHUB_REF}" = "refs/heads/main"
           test "${GITHUB_REF_TYPE}" = "branch"
           test "${GITHUB_REF_NAME}" = "main"
@@ -63,6 +65,8 @@ jobs:
           set -euo pipefail
           test "${GITHUB_REPOSITORY}" = "ktogias/gnostoa"
           test "${GITHUB_ACTOR}" = "ktogias"
+          test "${GITHUB_TRIGGERING_ACTOR}" = "ktogias"
+          test "${GITHUB_RUN_ATTEMPT}" = "1"
           test "${GITHUB_REF}" = "refs/heads/main"
           test "${GITHUB_REF_TYPE}" = "branch"
           test "${GITHUB_REF_NAME}" = "main"
