@@ -80,16 +80,19 @@ explicit label and expose both CLI and OCI-label checks in provider evidence.
 The release smoke now executes a real adoption check from clean wheel and source
 distribution environments; both must retain a schema-valid READY result without
 mutating the fixture project. Documentation now records Nextcloud Mail as the
-selected B3 target while keeping measurement explicitly unstarted.
+selected B3 target, preserves the rejected attempts as controlled pre-B3
+evidence, acknowledges that operational B3 work has begun and distinguishes it
+from the new `v0.2.0` exact-subject rerun, which has not begun.
 
 The native fallback was used because this execution environment exposes no OCI
 engine. With the exact committed development lock, the Phase-1 candidate
 currently reports:
 
 - policy, CI-policy, guardrail and both knowledge-bundle checks: PASS;
-- focused installed-artifact and version-binding repair criteria: 9/9 PASS;
+- focused installed-artifact, version-binding and chronology repair criteria:
+  10/10 PASS;
 - adoption assurance/check portfolio: 68/68 PASS;
-- complete Python portfolio: 251/251 PASS;
+- complete Python portfolio: 252/252 PASS;
 - clean wheel and source-distribution adoption checks: PASS with identical
   declared results;
 - regression and smoke portfolios: PASS; and

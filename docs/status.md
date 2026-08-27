@@ -172,10 +172,15 @@ constraints are advisory rather than mechanically enforced — remains
 **unmitigated**, and **no successor control experiment or mitigation is
 selected**. The first real
 [B3 independent-adoption methodology](../knowledge/assessments/b3-independent-adoption-experiment-design.md)
-is pre-registered, and Nextcloud Mail is selected for its later fresh rerun.
-B3 measurement has not begun. The current sequence publishes and verifies the
-`v0.2.0` source and immutable OCI subject, then freezes the exact experiment
-contract under
+is pre-registered, and Nextcloud Mail is selected. Operational B3 work has
+begun: three initial-adoption attempts were rejected without passing the
+initial-adoption gate. Those attempts produced no final utility or
+durable-adoption result, and their exact historical records remain bounded as
+controlled pre-B3 evidence because they did not satisfy the pre-registration's
+strict independent-owner eligibility. That evidentiary classification does not
+erase the operational chronology. The `v0.2.0` exact-subject rerun has not begun.
+The current sequence publishes and verifies the `v0.2.0` source and immutable
+OCI subject, then freezes the exact experiment contract under
 [Decision 0051](../knowledge/decisions/0051-select-the-v0-2-0-source-and-oci-publication-series.md).
 `ktogias/mail` is the mutation workspace; `nextcloud/mail` retains semantic,
 Issue and final Change Request authority. Selection, release and freeze do not

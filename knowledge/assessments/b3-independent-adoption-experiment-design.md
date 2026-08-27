@@ -255,3 +255,15 @@ scoped. The next owner subject is candidate selection: one target project,
 human owner, real task, permissions and mutation boundary, and review
 availability. Only after that selection may one candidate-specific contract be
 admitted and frozen before execution.
+
+## Later chronology note
+
+The preceding stop point is the pre-registration state at the time this design
+was frozen, not a current status projection. Operational B3 work later began in
+Nextcloud Mail. Three initial-adoption attempts were rejected without passing
+the initial-adoption gate, so they produced no final utility or
+durable-adoption result. Their exact records remain bounded as controlled
+pre-B3 evidence because they did not satisfy this design's strict
+independent-owner eligibility; that evidentiary classification does not erase
+the operational chronology. The new `v0.2.0` exact-subject rerun selected by
+Decision 0051 has not begun.

@@ -3376,21 +3376,53 @@ class DocumentationTests(unittest.TestCase):
             self.assertIn(decision_name, projection)
 
         # The invariant is that the workflow need stays durably planned while
-        # completed B2 evidence remains distinct from the selected B3 target
-        # and the not-yet-started B3 measurement.
+        # completed B2 evidence remains distinct from the selected B3 target,
+        # rejected initial-adoption attempts and the new exact-subject rerun.
         self.assertIn("B2/P1 and B2/P2 are both complete", roadmap)
         self.assertIn("B2/P1 completed", status)
         for projection in (roadmap, status):
-            self.assertIn("https://github.com/ktogias/gnostoa/issues/24", projection)
-            self.assertIn("B3 measurement has not begun", projection)
-            self.assertIn("Nextcloud Mail", projection)
-            self.assertNotIn("Active B2/P1", projection)
+            normalized_projection = " ".join(projection.split())
+            self.assertIn(
+                "https://github.com/ktogias/gnostoa/issues/24",
+                normalized_projection,
+            )
+            self.assertIn("Operational B3 work has begun", normalized_projection)
+            self.assertIn("exact-subject rerun has not begun", normalized_projection)
+            self.assertIn("Nextcloud Mail", normalized_projection)
+            self.assertNotIn("Active B2/P1", normalized_projection)
         self.assertIn("https://github.com/ktogias/gnostoa/issues/146", roadmap)
         self.assertIn("need has already been demonstrated", status)
         self.assertIn(
             "full workflow platform is not a publication prerequisite",
             normalized_readme,
         )
+
+    def test_current_b3_projection_preserves_operational_chronology(self) -> None:
+        projections = {
+            "README": (ROOT / "README.md").read_text(encoding="utf-8"),
+            "roadmap": (ROOT / "docs" / "roadmap.md").read_text(encoding="utf-8"),
+            "status": (ROOT / "docs" / "status.md").read_text(encoding="utf-8"),
+        }
+
+        for name, projection in projections.items():
+            with self.subTest(projection=name):
+                normalized = " ".join(projection.split())
+                self.assertIn("Operational B3 work has begun", normalized)
+                self.assertIn("initial-adoption attempts", normalized)
+                self.assertIn("without passing the initial-adoption gate", normalized)
+                self.assertIn("controlled pre-B3", normalized)
+                self.assertIn("exact-subject rerun has not begun", normalized)
+                self.assertNotIn("B3 measurement has not begun", normalized)
+
+        frozen_design = (
+            ROOT
+            / "knowledge"
+            / "assessments"
+            / "b3-independent-adoption-experiment-design.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("## Later chronology note", frozen_design)
+        self.assertIn("not a current status projection", frozen_design)
+        self.assertIn("B3 has not begun", frozen_design)
 
     def test_container_first_verification_bypass_is_recorded_and_routed(
         self,
@@ -3463,11 +3495,15 @@ class DocumentationTests(unittest.TestCase):
         self.assertIn("current pre-stable source identity is", status)
         self.assertIn("v0.1.2", status)
         for projection in (status, roadmap):
-            self.assertIn("B3 measurement has not begun", projection)
-            self.assertIn("Nextcloud Mail", projection)
-            self.assertIn("0051-select-the-v0-2-0", projection)
-            self.assertNotIn("candidate selection remains", projection)
-            self.assertNotIn("candidate selection — one eligible", projection)
+            normalized_projection = " ".join(projection.split())
+            self.assertIn("Operational B3 work has begun", normalized_projection)
+            self.assertIn("exact-subject rerun has not begun", normalized_projection)
+            self.assertIn("Nextcloud Mail", normalized_projection)
+            self.assertIn("0051-select-the-v0-2-0", normalized_projection)
+            self.assertNotIn("candidate selection remains", normalized_projection)
+            self.assertNotIn(
+                "candidate selection — one eligible", normalized_projection
+            )
 
     def test_repository_documentation_links_resolve(self) -> None:
         paths = [

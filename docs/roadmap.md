@@ -12,8 +12,14 @@ dependency.
 
 The first real
 [B3 independent-adoption methodology](../knowledge/assessments/b3-independent-adoption-experiment-design.md)
-is pre-registered, and Nextcloud Mail is the selected target for its later fresh
-rerun. B3 measurement has not begun. The current owner-selected sequence is the
+is pre-registered, and Nextcloud Mail is the selected target. Operational B3
+work has begun: three initial-adoption attempts were rejected without passing
+the initial-adoption gate. Those attempts produced no final utility or
+durable-adoption result, and their exact historical records remain bounded as
+controlled pre-B3 evidence because they did not satisfy the pre-registration's
+strict independent-owner eligibility. That evidentiary classification does not
+erase the operational chronology. The `v0.2.0` exact-subject rerun has not begun.
+The current owner-selected sequence is the
 [`v0.2.0` source-and-OCI publication and exact-subject freeze](../knowledge/decisions/0051-select-the-v0-2-0-source-and-oci-publication-series.md)
 under [Work Item #146](https://github.com/ktogias/gnostoa/issues/146).
 `ktogias/mail` remains the mutation workspace and `nextcloud/mail` retains
@@ -267,8 +273,10 @@ site or hosted service was released by that effect.
 ## Next
 
 B2/P1 and B2/P2 are completed evidence. C4-v0 was rejected and no successor
-control is selected. Nextcloud Mail is already selected for the later B3 fresh
-rerun; the measurement itself has not started. The current delivery item is the
+control is selected. Nextcloud Mail is already selected. Operational B3 work
+has begun, but its initial-adoption attempts were rejected and remain bounded as
+controlled pre-B3 evidence under the strict eligibility contract. The
+`v0.2.0` exact-subject rerun has not begun. The current delivery item is the
 bounded `v0.2.0` source-and-OCI publication series and subsequent exact B3
 contract freeze. Provider state remains authoritative for its live lifecycle.
 
@@ -299,9 +307,11 @@ active publication prerequisite. The capability direction remains planned by
 [Decision 0016](../knowledge/decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md).
 Issue #24 is the completed B2 evidence base, and [Issue #33](https://github.com/ktogias/gnostoa/issues/33)
 is the completed C4-v0 experiment whose control was rejected. B3 methodology is
-pre-registered and Nextcloud Mail is selected, but B3 measurement has not begun.
-Work Item #146 separately governs the `v0.2.0` publication and exact-subject
-freeze; it does not execute or disposition the candidate-specific experiment.
+pre-registered and Nextcloud Mail is selected. Operational B3 work has begun;
+the rejected initial-adoption attempts remain controlled pre-B3 records and
+produced no final result. The `v0.2.0` exact-subject rerun has not begun. Work
+Item #146 separately governs the `v0.2.0` publication and exact-subject freeze;
+it does not execute or disposition the candidate-specific experiment.
 
 The work in PR #4 is retained here as an exact research input for #3. It is not
 discarded, accepted or part of the first-publication baseline while its review
