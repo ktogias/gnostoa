@@ -282,6 +282,17 @@ or invalid invocation/internal error, and exit `3` a blocked prerequisite. A
 project-reported runtime observation is not independent attestation, semantic
 truth, owner acceptance or durable-adoption authority.
 
+The complete exact candidate is a precondition for a version-2 result. The
+initial and final Git snapshots therefore form a subject-acquisition boundary.
+If either snapshot cannot be acquired, the command does not retry that failed
+acquisition while constructing error evidence and does not invent a partial
+`before` or `after` identity. It stops with exit `3` and a bounded stderr
+diagnostic, with no version-2 result, evidence bundle, commitment or readiness.
+This is a pre-result failure, not a retained `BLOCKED` result. A
+Git-representation prerequisite is different: when both required snapshots can
+still be acquired, the exact subject exists, so that failure may be retained as
+a subject-bound `BLOCKED` result.
+
 For every retained result, stdout also keeps these layers visibly separate:
 
 ```text

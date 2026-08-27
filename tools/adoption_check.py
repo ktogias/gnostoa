@@ -3079,6 +3079,7 @@ def _execute_bound(
     writer = EvidenceWriter([])
     prerequisite_stage = "initial Git snapshot"
     before: dict[str, Any] | None = None
+    after: dict[str, Any] | None = None
     representation: dict[str, Any] | None = None
     representation_problems: list[str] = []
     identity: dict[str, Any] | None = None
@@ -3361,6 +3362,11 @@ def _execute_bound(
         commitment = _finalize(writer, paths.output, result, output_parent)
         return exit_code, paths.output, commitment
     except BlockedPrerequisite as exc:
+        if before is None or (
+            after is None and prerequisite_stage == "final Git snapshot"
+        ):
+            raise BlockedPrerequisite(f"{prerequisite_stage}: {exc}") from exc
+
         detail = f"{prerequisite_stage}: {exc}"
         writer.component(
             "git-prerequisite",
@@ -3372,16 +3378,9 @@ def _execute_bound(
             detail=detail,
         )
 
-        if before is None:
-            before = _git_snapshot(paths.project_root)
-            candidate_patch = before.pop("_patch")
-            writer.write_bytes(
-                "candidate.patch",
-                candidate_patch,
-                origin="gnostoa-git-snapshot",
-            )
-        after = _git_snapshot(paths.project_root)
-        after.pop("_patch")
+        if after is None:
+            after = _git_snapshot(paths.project_root)
+            after.pop("_patch")
         observed_stability_problems = [
             *representation_problems,
             *_snapshot_stability_problems(before, after),

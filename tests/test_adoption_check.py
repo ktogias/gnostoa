@@ -155,6 +155,11 @@ class AdoptionCheckContractTests(unittest.TestCase):
         self.assertIn("Legacy `dimensions`", adoption)
         self.assertIn("append-only in-memory ledger", adoption)
         self.assertIn(adoption_check.BUNDLE_COMMITMENT_SCHEMA, adoption)
+        self.assertIn("subject-acquisition boundary", adoption)
+        self.assertIn(
+            "no version-2 result, evidence bundle, commitment or readiness", adoption
+        )
+        self.assertIn("Git-representation prerequisite", adoption)
         self.assertIn("unrestricted persistent process", adoption)
         self.assertIn("mechanical-completion-evidence", bootstrap)
         self.assertIn("bounded-adoption-completion-evidence", guardrails)
@@ -1036,7 +1041,12 @@ raise SystemExit(0)
                     (projection["result"], projection["reason"]),
                 )
 
-    def _assert_unavailable_git_snapshot_is_blocked(self, fail_call: int) -> None:
+    def _assert_git_snapshot_failure_has_no_subject_result(
+        self,
+        fail_call: int,
+        *,
+        persistent: bool,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             project, toolkit = self._project(directory)
             output = Path(directory) / "evidence"
@@ -1053,7 +1063,7 @@ raise SystemExit(0)
             def unavailable_snapshot(root: Path) -> dict[str, object]:
                 nonlocal calls
                 calls += 1
-                if calls == fail_call:
+                if calls == fail_call or (persistent and calls >= fail_call):
                     raise adoption_check.BlockedPrerequisite(
                         f"{stage} Git snapshot unavailable"
                     )
@@ -1065,25 +1075,31 @@ raise SystemExit(0)
             ):
                 result, stdout, stderr = self._run(project, toolkit, output)
 
-            self.assertEqual((3, ""), (result, stderr), stdout)
-            self.assertIn("BLOCKED", stdout)
-            self.assertNotIn("READY FOR ACCOUNTABLE-OWNER REVIEW", stdout)
-            manifest = json.loads((output / "adoption-check.json").read_text())
-            self.assertEqual("BLOCKED", manifest["outcome"])
-            self.assertEqual(
-                ("UNKNOWN", "PrerequisiteBlocked"),
-                (
-                    _condition(manifest, "CandidateStable")["status"],
-                    _condition(manifest, "CandidateStable")["reason"],
-                ),
-            )
+            self.assertEqual(3, result, (stdout, stderr))
+            self.assertEqual(fail_call, calls, "Git snapshot acquisition was retried")
+            self.assertEqual("", stdout)
             self.assertIn(
                 f"{stage} Git snapshot unavailable",
-                _json_evidence(output, "git-state.json")["problems"][0],
+                stderr,
             )
-            self._assert_prerequisite_condition_history(
-                manifest, completed=fail_call == 2
+            self.assertIn("BLOCKED:", stderr)
+            self.assertNotIn(
+                "EVIDENCE BUNDLE COMMITMENT",
+                stdout + stderr,
             )
+            self.assertNotIn("REVIEW READINESS", stdout + stderr)
+            self.assertNotIn(
+                "READY FOR ACCOUNTABLE-OWNER REVIEW",
+                stdout + stderr,
+            )
+            self.assertFalse(output.exists())
+            residuals = sorted(
+                path.name
+                for path in Path(directory).iterdir()
+                if path.name.startswith(".gnostoa-adoption-")
+                or path.name.startswith(".evidence.materializing-")
+            )
+            self.assertEqual([], residuals)
             self.assertEqual(
                 before_status,
                 self._git(
@@ -1097,11 +1113,21 @@ raise SystemExit(0)
                 ).stdout,
             )
 
-    def test_unavailable_initial_git_snapshot_is_retained_as_blocked(self) -> None:
-        self._assert_unavailable_git_snapshot_is_blocked(1)
+    def test_initial_git_snapshot_failure_has_no_subject_bound_result(self) -> None:
+        self._assert_git_snapshot_failure_has_no_subject_result(1, persistent=False)
 
-    def test_unavailable_final_git_snapshot_is_retained_as_blocked(self) -> None:
-        self._assert_unavailable_git_snapshot_is_blocked(2)
+    def test_persistent_initial_git_snapshot_unavailability_has_no_result(
+        self,
+    ) -> None:
+        self._assert_git_snapshot_failure_has_no_subject_result(1, persistent=True)
+
+    def test_final_git_snapshot_failure_has_no_subject_bound_result(self) -> None:
+        self._assert_git_snapshot_failure_has_no_subject_result(2, persistent=False)
+
+    def test_persistent_final_git_snapshot_unavailability_has_no_result(
+        self,
+    ) -> None:
+        self._assert_git_snapshot_failure_has_no_subject_result(2, persistent=True)
 
     def _assert_unavailable_git_representation_is_blocked(self, fail_call: int) -> None:
         with tempfile.TemporaryDirectory() as directory:
