@@ -3524,6 +3524,12 @@ class DocumentationTests(unittest.TestCase):
         self.assertIn("historical for acceptance", normalized)
         self.assertIn("fresh exact-head evidence", normalized)
         self.assertNotIn("Phase-1 candidate currently reports", normalized)
+        self.assertNotRegex(normalized, r"\b\d+/\d+ PASS\b")
+        self.assertNotIn("75.23% branch-aware coverage", normalized)
+        self.assertIn(
+            "branch-aware coverage above the declared 65% floor",
+            normalized,
+        )
 
     def test_container_first_verification_bypass_is_recorded_and_routed(
         self,

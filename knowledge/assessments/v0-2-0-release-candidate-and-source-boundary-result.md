@@ -106,15 +106,15 @@ the accompanying external evidence reported:
 
 - policy, CI-policy, guardrail and both knowledge-bundle checks: PASS;
 - focused installed-artifact, version-binding and chronology repair criteria:
-  10/10 PASS;
-- adoption assurance/check portfolio: 68/68 PASS;
-- complete Python portfolio: 252/252 PASS;
+  PASS;
+- adoption assurance/check portfolio: PASS;
+- complete Python portfolio: PASS;
 - clean wheel and source-distribution adoption checks: PASS with identical
   declared results;
 - regression and smoke portfolios: PASS; and
 - extended quality portfolio: PASS, including formatting, lint, configured
   static typing, strict documentation, dependency and secret checks, and
-  75.23% branch-aware coverage against a 65% floor.
+  branch-aware coverage above the declared 65% floor.
 
 These PASS observations do not carry forward by ancestry or unchanged-path
 inference. A moved head requires fresh exact-head evidence before
@@ -152,8 +152,8 @@ It must be remeasured from the exact committed and provider-checked candidate.
 
 ## Affected assurance replay
 
-The replay covered the complete 14-member set and the 68 focused adoption
-tests. The added route retains the already reviewed local Git/process,
+The replay covered the complete 14-member set and the full focused adoption
+portfolio. The added route retains the already reviewed local Git/process,
 subject-binding and evidence-publication contracts. The bounded static inventory
 found no newly supported network, credential, archive-extraction or privilege
 effect. Expected local process and platform interfaces remain subject to their
