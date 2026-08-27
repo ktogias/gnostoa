@@ -182,6 +182,68 @@ conflicts with an applicable mandatory declaration is `FAIL`. Outside
 adoption-check the handshake variables are absent and the adapter's ordinary
 behavior is unchanged.
 
+The retained `adoption-check.json` uses the closed
+`gnostoa-adoption-check/v2` contract. It has one content-addressed candidate
+subject, canonical observations, independently derived conditions, one named
+readiness-policy evaluation and a separate owner-disposition requirement.
+Legacy `dimensions` are not a second authority and are not emitted.
+
+The candidate subject binds the repository object format and base commit, the
+digest and length of the complete staged-index representation and retained
+patch, required gitlinks, and the before/after Git identities used by the
+stability check. Every observation and condition references that same subject.
+Changing the candidate therefore changes its subject identity and invalidates
+prior readiness or owner action for the earlier candidate.
+
+Observation assurance is assigned by the verifier from the acquisition path;
+the evidence producer cannot select a stronger label:
+
+| Observation | Basis | Assigned assurance |
+|---|---|---|
+| Candidate, execution-subject, structure, context and evidence checks | Gnostoa measurement | `gnostoa-direct-measurement` |
+| Project-suite launch and exit | Gnostoa-observed project-authoritative command | `gnostoa-observed-project-process` |
+| Runtime sidecar | Invocation-bound project report | `invocation-bound-project-report` |
+| Semantic review requirement | Normative contract, not an empirical result | `normative-requirement` |
+
+The local profile does not turn the project report into independent
+attestation. A future external-attestation profile must verify its trust root,
+verifier identity, exact candidate, observation type and retained evidence
+before it can substitute for a named observation; merely supplying a claim or
+signature is insufficient and no such provider is selected here.
+
+The eight conditions use `TRUE`, `FALSE` or `UNKNOWN` plus stable reasons:
+
+- `CandidateStable`
+- `ExecutionSubjectsCoherent`
+- `StructuralValid`
+- `ContextDeterministic`
+- `ProjectSuitesPassed`
+- `RuntimeObservationAvailable`
+- `EvidenceIntegrityPreserved`
+- `SemanticReviewRequired`
+
+The closed `gnostoa-review-ready/v1` policy requires the first seven
+conditions to be `TRUE` for the exact same candidate. Its canonical bytes and
+SHA-256, and the exact version-2 result schema bytes, are retained under
+`contracts/` and referenced from the result. `SemanticReviewRequired` remains
+`TRUE` as a normative requirement but is intentionally outside mechanical
+readiness; adoption-check cannot clear it. Detailed identity, structure,
+context, suite and runtime-report records remain digest-bound evidence under
+`observations/`, while `components` retains bounded process logs rather than a
+parallel decision model.
+
+Policy evaluation is explicit and fail closed: all required conditions `TRUE`
+produces `READY`; a required `FALSE` produces `FAILED`; unsafe/integrity or
+internal evaluation failure produces `ERROR`; otherwise a required `UNKNOWN`
+produces `BLOCKED`. A provider projection must consume a complete
+`gnostoa-adoption-check/v2` result that passed the closed schema and cross-field
+contract validation; an isolated readiness mapping is insufficient. It may
+report success only for validated `READY` whose candidate and policy identity
+are exact. A missing, stale, skipped, neutral, blocked or otherwise incomplete
+aggregate is not readiness. This contract validation does not replace a future
+external consumer's separate verification of the retained bundle bytes and
+external whole-bundle commitment; no provider integration is selected here.
+
 The evidence directory retains component numeric exits and output, the
 project-reported sidecars and hashes, two-generation context evidence, the
 staged patch and before/after Git state. Gnostoa holds authoritative artifact
@@ -196,6 +258,11 @@ file, and publishes with a descriptor-relative no-replace rename. A missing,
 symlinked or replaced visible parent is an integrity failure; if detected after
 publication, the tool removes only its just-created bundle and emits neither
 commitment nor readiness.
+
+`EvidenceIntegrityPreserved` is transaction-bound: it becomes externally
+claimable only when the complete ledger reconciliation, no-replace publication
+and post-publication read-back succeed. A failed finalization leaves no retained
+supposedly-ready bundle and emits no readiness or commitment.
 
 After a successful bundle publication, trusted stdout emits exactly one
 `EVIDENCE BUNDLE COMMITMENT: gnostoa-adoption-evidence-bundle/v1 sha256:<64
@@ -214,6 +281,28 @@ ACCOUNTABLE-OWNER REVIEW`; exit `1` is a mechanical failure, exit `2` an unsafe
 or invalid invocation/internal error, and exit `3` a blocked prerequisite. A
 project-reported runtime observation is not independent attestation, semantic
 truth, owner acceptance or durable-adoption authority.
+
+The complete exact candidate is a precondition for a version-2 result. The
+initial and final Git snapshots therefore form a subject-acquisition boundary.
+If either snapshot cannot be acquired, the command does not retry that failed
+acquisition while constructing error evidence and does not invent a partial
+`before` or `after` identity. It stops with exit `3` and a bounded stderr
+diagnostic, with no version-2 result, evidence bundle, commitment or readiness.
+This is a pre-result failure, not a retained `BLOCKED` result. A
+Git-representation prerequisite is different: when both required snapshots can
+still be acquired, the exact subject exists, so that failure may be retained as
+a subject-bound `BLOCKED` result.
+
+For every retained result, stdout also keeps these layers visibly separate:
+
+```text
+REVIEW READINESS: READY|FAILED|ERROR|BLOCKED
+SEMANTIC ADOPTION: NOT DETERMINED
+OWNER DISPOSITION: REQUIRED
+```
+
+The existing `READY FOR ACCOUNTABLE-OWNER REVIEW` success marker remains a
+compatibility projection of exact `READY`; it is not owner disposition.
 
 ## Preconditions
 
