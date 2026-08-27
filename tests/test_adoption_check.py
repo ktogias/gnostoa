@@ -527,6 +527,11 @@ class AdoptionCheckExecutionTests(unittest.TestCase):
         shutil.copy2(ROOT / "pyproject.toml", toolkit / "pyproject.toml")
         shutil.copytree(ROOT / "core", toolkit / "core")
         shutil.copytree(ROOT / "schemas", toolkit / "schemas")
+        shutil.copytree(
+            ROOT / "tools",
+            toolkit / "tools",
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+        )
         digest = public_surface_digest(toolkit)
 
         configuration = project / ".knowledge"
@@ -1504,6 +1509,78 @@ raise SystemExit(0)
             )
             self.assertIn(
                 "toolkit source and executing runtime public surfaces differ",
+                identity["failures"],
+            )
+
+    def test_execution_only_distribution_binds_code_and_schema_to_pinned_source(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, toolkit = self._project(directory)
+            execution_root = Path(directory) / "site-packages"
+            shutil.copytree(
+                ROOT / "tools",
+                execution_root / "tools",
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+            )
+            output = Path(directory) / "evidence"
+
+            result, stdout, stderr = self._run(
+                project,
+                toolkit,
+                output,
+                execution_root=execution_root,
+            )
+
+            self.assertEqual((0, ""), (result, stderr), stdout)
+            self.assertIn("READY FOR ACCOUNTABLE-OWNER REVIEW", stdout)
+            identity = _json_evidence(output, "observations/execution-subjects.json")[
+                "identity"
+            ]
+            executing = identity["measurements"]["executing_runtime"]
+            self.assertEqual("installed-python-distribution", executing["authority"])
+            self.assertEqual("PASS", executing["source_binding"]["result"])
+            self.assertGreater(executing["source_binding"]["membership"], 0)
+            self.assertEqual(
+                (toolkit / "schemas" / "adoption-check.schema.json").read_bytes(),
+                (output / "contracts" / "adoption-check.schema.json").read_bytes(),
+            )
+
+    def test_execution_only_distribution_code_drift_is_a_measured_failure(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, toolkit = self._project(directory)
+            execution_root = Path(directory) / "site-packages"
+            shutil.copytree(
+                ROOT / "tools",
+                execution_root / "tools",
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+            )
+            with (execution_root / "tools" / "adoption_check.py").open(
+                "a", encoding="utf-8"
+            ) as stream:
+                stream.write("# installed distribution drift\n")
+            output = Path(directory) / "evidence"
+
+            result, stdout, stderr = self._run(
+                project,
+                toolkit,
+                output,
+                execution_root=execution_root,
+            )
+
+            self.assertEqual((1, ""), (result, stderr), stdout)
+            manifest = json.loads((output / "adoption-check.json").read_text())
+            self.assertEqual(
+                "FALSE",
+                _condition(manifest, "ExecutionSubjectsCoherent")["status"],
+            )
+            identity = _json_evidence(output, "observations/execution-subjects.json")[
+                "identity"
+            ]
+            self.assertIn(
+                "installed Python distribution differs from pinned toolkit source",
                 identity["failures"],
             )
 

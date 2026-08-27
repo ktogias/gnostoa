@@ -55,7 +55,7 @@ interpreter, operating system or architecture.
 |---|---|
 | JSON Schema identity | Public schema IDs use a versioned `/schemas/v1/` namespace. A breaking schema contract requires a new major path and migration guidance. |
 | Profile and policy contracts | Each profile or policy has its own version. A consumer pins the exact revision and verifies that specialization does not weaken inherited constraints. |
-| Python distribution | The wheel is execution-only. It must be paired with the exact separately pinned public-source root and its digest. |
+| Python distribution | The wheel is execution-only. It must be paired with the exact separately pinned public-source root and its digest. `adoption-check` reads its result schema from that source and accepts an installed runtime only after the complete installed `tools` payload is byte-equal to the pinned source payload. |
 | OCI distribution | The released `linux/amd64` v0.1.2 image must be pinned as `ghcr.io/ktogias/gnostoa@sha256:0cd31a2a649c4ffede8972680c6779c981decf5ce8605f749fa7d58751472f80` and bound to the v0.1.2 source revision and public surface. The `0.1.2` tag alone is not the consumer identity, and no `latest` tag exists. |
 | Knowledge bundles | A bundle is compatible only when it validates against the explicitly selected profile, schemas and policy set. |
 
@@ -97,11 +97,14 @@ python ci/release_smoke.py \
 
 The manifest records package identity, console commands, source revision,
 public-surface digest, artifact and metadata hashes, and hashes of the declared
-validation and context-pack results. Manifest generation rejects a revision
-that differs from `HEAD` or a dirty Git tree. The result contains filenames
-rather than local absolute paths. It is build evidence, not a signature,
-attestation, published provenance record or substitute for independent
-verification.
+validation and context-pack results. The smoke also creates a staged anonymous
+adoption fixture and requires the clean installed wheel and source distribution
+to produce a retained `gnostoa-adoption-check/v2` result with review readiness
+`READY`; that remains mechanical readiness, not semantic adoption. Manifest
+generation rejects a revision that differs from `HEAD` or a dirty Git tree. The
+result contains filenames rather than local absolute paths. It is build
+evidence, not a signature, attestation, published provenance record or
+substitute for independent verification.
 
 ## Not yet promised
 

@@ -31,6 +31,7 @@ jobs:
       - name: Build the candidate runtime
         run: |
           GNOSTOA_CANDIDATE_REF="${GITHUB_SHA}" \
+          GNOSTOA_KIT_VERSION=0.2.0 \
             ./ci/build-runtime --tag "${GNOSTOA_CI_IMAGE}"
       - name: Run policy verification
         run: |
@@ -52,6 +53,7 @@ jobs:
       - name: Build the candidate runtime
         run: |
           GNOSTOA_CANDIDATE_REF="${GITHUB_SHA}" \
+          GNOSTOA_KIT_VERSION=0.2.0 \
             ./ci/build-runtime --tag "${GNOSTOA_CI_IMAGE}"
       - name: Run fast verification
         run: |
@@ -88,6 +90,11 @@ jobs:
             -r requirements/development.lock
       - name: Run the source compatibility suite
         run: ./ci/verify fast
+      - name: Run clean installed-artifact adoption smoke
+        if: matrix.python-version == '3.12'
+        run: |
+          python ci/release_smoke.py \
+            --output-dir "${RUNNER_TEMP}/gnostoa-distributions"
 
   regression:
     name: regression
@@ -113,6 +120,7 @@ jobs:
       - name: Build the candidate runtime
         run: |
           GNOSTOA_CANDIDATE_REF="${GITHUB_SHA}" \
+          GNOSTOA_KIT_VERSION=0.2.0 \
             ./ci/build-runtime --tag "${GNOSTOA_CI_IMAGE}"
       - name: Run regression verification
         run: |
@@ -137,6 +145,7 @@ jobs:
       - name: Build the candidate runtime
         run: |
           GNOSTOA_CANDIDATE_REF="$(git rev-parse HEAD)" \
+          GNOSTOA_KIT_VERSION=0.2.0 \
             ./ci/build-runtime --tag "${GNOSTOA_CI_IMAGE}"
       - name: Run smoke verification
         run: |
@@ -235,6 +244,12 @@ jobs:
           cmp "${source_sb2_manifest}" "${runtime_sb2_manifest}"
           cmp "${source_sb2_manifest}" "${vendored_sb2_manifest}"
 
+          runtime_cli_version=$(docker run --rm "${GNOSTOA_CI_IMAGE}" --version)
+          runtime_oci_label_version=$(docker image inspect \
+            --format '{{index .Config.Labels "org.opencontainers.image.version"}}' \
+            "${GNOSTOA_CI_IMAGE}")
+          test "${runtime_cli_version}" = "0.2.0"
+          test "${runtime_oci_label_version}" = "0.2.0"
           docker run --rm "${GNOSTOA_CI_IMAGE}" self-check
 
           printf 'candidate.commit=%s\n' "${candidate_commit}"
@@ -257,6 +272,8 @@ jobs:
           cat "${vendored_sb2_manifest}"
           printf 'sb2.vendored.end\n'
           printf 'source_binding.mechanism=candidate-generic-three-way\n'
+          printf 'runtime.cli_version=%s\n' "${runtime_cli_version}"
+          printf 'runtime.oci_label_version=%s\n' "${runtime_oci_label_version}"
           printf 'runtime.self_check=PASS\n'
 
   extended:

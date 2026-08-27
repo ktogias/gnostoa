@@ -124,8 +124,11 @@ Clean wheel and source-distribution candidates now build and run against an
 explicit separate public-source binding; an absent or malformed binding fails
 with an actionable diagnostic, and the wheel does not duplicate the canonical
 schemas or profiles. The release smoke also verifies package metadata, console
-commands, license and notice and can emit a path-neutral evidence manifest with
-the source, public-surface and artifact digests. The
+commands, license and notice, and executes a real `adoption-check` from each
+clean installed artifact. That exercise requires exact byte equality between
+the installed `tools` payload and the pinned public source, acquires the result
+schema from that source, and can emit a path-neutral evidence manifest with the
+source, public-surface and artifact digests. The
 [compatibility note](compatibility.md) states the current exact-pin boundary
 and non-promises. This is release-candidate evidence, not a published package
 claim. The extended suite now enforces Ruff formatting and a bounded lint set,
@@ -169,12 +172,14 @@ constraints are advisory rather than mechanically enforced — remains
 **unmitigated**, and **no successor control experiment or mitigation is
 selected**. The first real
 [B3 independent-adoption methodology](../knowledge/assessments/b3-independent-adoption-experiment-design.md)
-is now pre-registered. B3 has not begun: candidate selection — one eligible
-independently owned project, human owner, real task and mutation boundary — is
-still the next B3 owner subject. The separate bounded source-hardening candidate
-is governed
-by [Decision 0043](../knowledge/decisions/0043-prepare-a-bounded-v0-1-2-b3-readiness-candidate.md)
-and does not itself count as transfer evidence.
+is pre-registered, and Nextcloud Mail is selected for its later fresh rerun.
+B3 measurement has not begun. The current sequence publishes and verifies the
+`v0.2.0` source and immutable OCI subject, then freezes the exact experiment
+contract under
+[Decision 0051](../knowledge/decisions/0051-select-the-v0-2-0-source-and-oci-publication-series.md).
+`ktogias/mail` is the mutation workspace; `nextcloud/mail` retains semantic,
+Issue and final Change Request authority. Selection, release and freeze do not
+themselves count as transfer evidence or owner disposition.
 
 This page deliberately does not restate delivery chronology, live Work Item
 lifecycle or candidate-bound measured outcomes, because each of those changes

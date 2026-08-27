@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -20,6 +21,10 @@ from email import policy
 from email.parser import BytesParser
 from pathlib import Path, PurePosixPath
 from typing import Any
+
+import yaml
+
+from .check_runtime_lock import PUBLIC_SURFACE_PATHS, public_surface_digest
 
 CANONICAL_SOURCE_ROOTS = {
     "ci",
@@ -48,6 +53,7 @@ class ArtifactResult:
     validation: str
     context_pack: str
     surface_digest: str
+    adoption_check: str
 
 
 def sha256_file(path: Path) -> str:
@@ -414,6 +420,271 @@ def _environment_commands(environment: Path) -> tuple[Path, Path]:
     return scripts / "python", scripts / "knowledge"
 
 
+def _copy_public_source(repository_root: Path, destination: Path) -> None:
+    destination.mkdir()
+    ignored = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo")
+    for relative in PUBLIC_SURFACE_PATHS:
+        source = repository_root / relative
+        target = destination / relative
+        if source.is_dir():
+            shutil.copytree(source, target, symlinks=True, ignore=ignored)
+        elif source.is_file():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target, follow_symlinks=False)
+
+
+def _prepare_adoption_project(
+    repository_root: Path,
+    project: Path,
+    source_revision: str,
+) -> Path:
+    project.mkdir()
+    _run(["git", "init", "-b", "main"], cwd=project)
+    _run(["git", "config", "user.email", "fixture@example.invalid"], cwd=project)
+    _run(["git", "config", "user.name", "Release smoke"], cwd=project)
+    (project / "AGENTS.md").write_text(
+        "# Existing project authority\n", encoding="utf-8"
+    )
+    _run(["git", "add", "AGENTS.md"], cwd=project)
+    _run(["git", "commit", "-m", "baseline"], cwd=project)
+
+    toolkit = project / ".knowledge-kit"
+    _copy_public_source(repository_root, toolkit)
+    surface_digest = public_surface_digest(toolkit)
+
+    configuration = project / ".knowledge"
+    configuration.mkdir()
+    (configuration / "profile.yaml").write_text(
+        """id: release-smoke-adopter
+version: "0.1.0"
+okf_version: "0.2"
+extends: [../.knowledge-kit/core/profile.yaml]
+concept_types: []
+relation_kinds: []
+""",
+        encoding="utf-8",
+    )
+    (configuration / "kit.lock.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "toolkit": {
+                    "source": ".knowledge-kit",
+                    "revision": source_revision,
+                    "public_surface_digest": surface_digest,
+                    "profile": ".knowledge/profile.yaml",
+                },
+                "runtime": {
+                    "image": ("registry.example.invalid/gnostoa@sha256:" + "2" * 64),
+                    "revision": source_revision,
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (configuration / "change-control.yaml").write_text(
+        """id: release-smoke-change-control
+version: "0.1.0"
+owner: team:release-smoke
+extends: [../.knowledge-kit/core/change-control.yaml]
+""",
+        encoding="utf-8",
+    )
+    (configuration / "continuous-integration.yaml").write_text(
+        """id: release-smoke-ci
+version: "0.1.0"
+owner: team:release-smoke
+extends: [../.knowledge-kit/core/continuous-integration.yaml]
+""",
+        encoding="utf-8",
+    )
+    (configuration / "verification.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "id": "release-smoke-verification",
+                "version": "0.1.0",
+                "owner": "team:release-smoke",
+                "policy": "continuous-integration.yaml",
+                "runtime": {"mode": "toolkit"},
+                "capabilities": {
+                    "integration": False,
+                    "smoke": False,
+                    "extended": False,
+                    "deployable_artifact": False,
+                },
+                "suites": {
+                    suite: {
+                        "command": ["./ci/verify", suite],
+                        "timeout_minutes": 1,
+                        "evidence": ["test-report"],
+                    }
+                    for suite in ("fast", "regression")
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (configuration / "project.lock").write_text(
+        "release-smoke-lock\n", encoding="utf-8"
+    )
+
+    shutil.copytree(repository_root / "examples" / "generic", project / "knowledge")
+    ci = project / "ci"
+    ci.mkdir()
+    adapter = ci / "verify"
+    adapter.write_text(
+        """#!/usr/bin/env python3
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+
+suite = sys.argv[1]
+target = Path(os.environ["GNOSTOA_ADOPTION_OBSERVATION_PATH"])
+executable = Path(sys.executable).resolve()
+lock = Path(".knowledge/project.lock")
+observation = {
+    "schema": "gnostoa-project-runtime-observation/v1",
+    "suite": suite,
+    "invocation_binding": os.environ["GNOSTOA_ADOPTION_INVOCATION_BINDING"],
+    "route_kind": "native",
+    "runtime_identity": [
+        {
+            "kind": "native-executable",
+            "role": "suite-runtime",
+            "subject": str(executable),
+            "value": {
+                "sha256": "sha256:" + hashlib.sha256(executable.read_bytes()).hexdigest(),
+                "version": sys.version.split()[0],
+            },
+            "measurement": {"method": "executable-sha256-and-version-v1"},
+        },
+        {
+            "kind": "dependency-lock",
+            "role": "suite-lock",
+            "subject": ".knowledge/project.lock",
+            "value": {
+                "sha256": "sha256:" + hashlib.sha256(lock.read_bytes()).hexdigest(),
+            },
+            "measurement": {"method": "file-sha256-v1"},
+        },
+    ],
+    "origin": {"kind": "project-adapter", "entry": "./ci/verify"},
+}
+temporary = target.with_name(target.name + ".tmp")
+temporary.write_text(json.dumps(observation, sort_keys=True) + "\\n", encoding="utf-8")
+os.link(temporary, target)
+temporary.unlink()
+""",
+        encoding="utf-8",
+    )
+    adapter.chmod(0o755)
+    with (project / "AGENTS.md").open("a", encoding="utf-8") as stream:
+        stream.write("\n## Gnostoa route\n\nFollow the existing-project workflow.\n")
+    _run(["git", "add", "."], cwd=project)
+    return toolkit
+
+
+def _exercise_adoption_check(
+    knowledge: Path,
+    repository_root: Path,
+    workspace: Path,
+    environment: dict[str, str],
+) -> str:
+    source_revision = _run(
+        ["git", "rev-parse", "HEAD"], cwd=repository_root
+    ).stdout.strip()
+    fixture_name = f"adoption-{knowledge.parent.parent.name}"
+    project = workspace / fixture_name
+    toolkit = _prepare_adoption_project(
+        repository_root,
+        project,
+        source_revision,
+    )
+    output = workspace / f"{fixture_name}-evidence"
+    adoption_environment = environment | {
+        "KNOWLEDGE_KIT_ROOT": str(toolkit),
+        "KNOWLEDGE_KIT_REVISION": source_revision,
+        "PATH": f"{knowledge.parent}{os.pathsep}{environment.get('PATH', '')}",
+    }
+    before = _run(["git", "status", "--porcelain=v2"], cwd=project).stdout
+    result = _run(
+        [
+            str(knowledge),
+            "adoption-check",
+            "--execution-route",
+            "native",
+            "--seed",
+            "example.system.processing",
+            "--output-dir",
+            str(output),
+            "--project-root",
+            str(project),
+        ],
+        cwd=workspace,
+        env=adoption_environment,
+    )
+    after = _run(["git", "status", "--porcelain=v2"], cwd=project).stdout
+    if after != before:
+        raise ReleaseSmokeError("installed adoption-check mutated its fixture project")
+    required_markers = (
+        "EVIDENCE BUNDLE COMMITMENT: gnostoa-adoption-evidence-bundle/v1 ",
+        "REVIEW READINESS: READY",
+        "SEMANTIC ADOPTION: NOT DETERMINED",
+        "OWNER DISPOSITION: REQUIRED",
+        "READY FOR ACCOUNTABLE-OWNER REVIEW",
+    )
+    missing = [marker for marker in required_markers if marker not in result.stdout]
+    if missing:
+        raise ReleaseSmokeError(
+            "installed adoption-check omitted required success markers: "
+            + ", ".join(missing)
+        )
+    manifest_path = output / "adoption-check.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ReleaseSmokeError(
+            f"installed adoption-check did not retain a valid result: {exc}"
+        ) from exc
+    if (
+        manifest.get("schema") != "gnostoa-adoption-check/v2"
+        or manifest.get("exit_code") != 0
+        or manifest.get("readiness", {}).get("result") != "READY"
+        or manifest.get("owner_disposition", {}).get("semantic_review") != "REQUIRED"
+    ):
+        raise ReleaseSmokeError(
+            "installed adoption-check retained an unexpected assurance result"
+        )
+    execution_path = output / "observations" / "execution-subjects.json"
+    try:
+        execution = json.loads(execution_path.read_text(encoding="utf-8"))
+        executing_runtime = execution["identity"]["measurements"]["executing_runtime"]
+    except (KeyError, OSError, json.JSONDecodeError, TypeError) as exc:
+        raise ReleaseSmokeError(
+            f"installed adoption-check did not retain runtime identity: {exc}"
+        ) from exc
+    if (
+        executing_runtime.get("authority") != "installed-python-distribution"
+        or executing_runtime.get("source_binding", {}).get("result") != "PASS"
+    ):
+        raise ReleaseSmokeError(
+            "installed adoption-check did not bind its distribution to pinned source"
+        )
+    retained_schema = output / "contracts" / "adoption-check.schema.json"
+    if (
+        retained_schema.read_bytes()
+        != (repository_root / "schemas" / "adoption-check.schema.json").read_bytes()
+    ):
+        raise ReleaseSmokeError(
+            "installed adoption-check did not retain the pinned result schema"
+        )
+    return "READY"
+
+
 def _exercise_artifact(
     artifact: Path,
     kind: str,
@@ -459,6 +730,8 @@ def _exercise_artifact(
         "KNOWLEDGE_KIT_ROOT",
         "KNOWLEDGE_KIT_REVISION",
         "KNOWLEDGE_KIT_IMAGE",
+        "PYTHONHOME",
+        "PYTHONPATH",
     ):
         unbound_environment.pop(name, None)
     unbound = _run(
@@ -549,6 +822,12 @@ def _exercise_artifact(
         cwd=workspace,
         env=bound_environment,
     ).stdout
+    adoption_check = _exercise_adoption_check(
+        knowledge,
+        repository_root,
+        workspace,
+        bound_environment,
+    )
 
     return ArtifactResult(
         artifact=artifact,
@@ -559,6 +838,7 @@ def _exercise_artifact(
         validation=validation,
         context_pack=context_pack,
         surface_digest=surface_digest,
+        adoption_check=adoption_check,
     )
 
 
@@ -631,10 +911,12 @@ def release_smoke(repository_root: Path, output_dir: Path) -> list[ArtifactResul
             result.validation,
             result.context_pack,
             result.surface_digest,
+            result.adoption_check,
         ) != (
             first.validation,
             first.context_pack,
             first.surface_digest,
+            first.adoption_check,
         ):
             raise ReleaseSmokeError(
                 "wheel and source-distribution installs produced different "
@@ -661,7 +943,12 @@ def release_evidence_manifest(
             "release evidence requires exactly one wheel and one source distribution"
         )
     declared_results = {
-        (result.validation, result.context_pack, result.surface_digest)
+        (
+            result.validation,
+            result.context_pack,
+            result.surface_digest,
+            result.adoption_check,
+        )
         for result in results
     }
     if len(declared_results) != 1:
@@ -714,6 +1001,9 @@ def release_evidence_manifest(
             "clean_install": True,
             "unbound_source_rejected": True,
             "explicit_source_binding": True,
+            "installed_adoption_check": all(
+                result.adoption_check == "READY" for result in results
+            ),
             "wheel_canonical_payloads": [],
             "declared_results_identical": True,
             "source_revision_verified": True,
@@ -743,7 +1033,8 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Build a wheel and source distribution, install each into a clean "
-            "environment and verify explicit public-source binding."
+            "environment, verify explicit public-source binding and run the "
+            "installed adoption-check capability."
         )
     )
     parser.add_argument(
@@ -788,9 +1079,12 @@ def main(argv: list[str] | None = None) -> int:
     for result in results:
         print(
             f"OK: {result.artifact.name} sha256:{result.digest} passed native "
-            "source-binding smoke"
+            "source-binding and adoption-check smoke"
         )
-    print("OK: wheel and source-distribution declared results are identical")
+    print(
+        "OK: wheel and source-distribution validation, context and adoption "
+        "results are identical"
+    )
     if args.evidence_manifest is not None:
         print(f"OK: release evidence written to {args.evidence_manifest}")
     return 0

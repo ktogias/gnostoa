@@ -308,9 +308,21 @@ class PublicationBaselineTests(unittest.TestCase):
             "project"
         ]
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        workflow = (ROOT / ".github" / "workflows" / "verification.yml").read_text(
+            encoding="utf-8"
+        )
+        binding = workflow.split(
+            "      - name: Bind the exact PR executable candidate\n", maxsplit=1
+        )[1].split("\n  extended:\n", maxsplit=1)[0]
 
         self.assertEqual("0.2.0", project["version"])
         self.assertIn("ARG KIT_VERSION=0.2.0", dockerfile)
+        self.assertEqual(4, workflow.count("GNOSTOA_KIT_VERSION=0.2.0"))
+        self.assertIn("Run clean installed-artifact adoption smoke", workflow)
+        self.assertIn("python ci/release_smoke.py", workflow)
+        self.assertIn("org.opencontainers.image.version", binding)
+        self.assertIn("runtime.cli_version=%s", binding)
+        self.assertIn("runtime.oci_label_version=%s", binding)
 
     def test_ghcr_publication_workflow_is_exact_and_write_once(self) -> None:
         workflow_path = ROOT / ".github" / "workflows" / "publish-oci.yml"
@@ -2444,7 +2456,13 @@ class RuntimeTests(unittest.TestCase):
                 "OK: bundle conforms to project-knowledge-core 0.1.0 (OKF 0.2)\n"
             )
 
-            with patch("tools.release_smoke._run") as run:
+            with (
+                patch("tools.release_smoke._run") as run,
+                patch(
+                    "tools.release_smoke._exercise_adoption_check",
+                    return_value="READY",
+                ) as adoption_check,
+            ):
                 run.side_effect = [
                     completed(),
                     completed(),
@@ -2459,7 +2477,7 @@ class RuntimeTests(unittest.TestCase):
                     completed(f"sha256:{'0' * 64}\n"),
                 ]
 
-                _exercise_artifact(
+                result = _exercise_artifact(
                     wheel,
                     "wheel",
                     "0.2.0",
@@ -2467,6 +2485,13 @@ class RuntimeTests(unittest.TestCase):
                     workspace,
                     environment,
                 )
+
+            self.assertEqual("READY", result.adoption_check)
+            adoption_check.assert_called_once()
+            self.assertEqual(
+                environment / "bin" / "knowledge",
+                adoption_check.call_args.args[0],
+            )
 
             for call_index in (3, 5, 6):
                 command = run.call_args_list[call_index].args[0]
@@ -2523,6 +2548,7 @@ class RuntimeTests(unittest.TestCase):
                     validation="validation\n",
                     context_pack="context pack\n",
                     surface_digest="sha256:" + "3" * 64 + "\n",
+                    adoption_check="READY",
                 ),
                 ArtifactResult(
                     artifact=source_distribution,
@@ -2533,6 +2559,7 @@ class RuntimeTests(unittest.TestCase):
                     validation="validation\n",
                     context_pack="context pack\n",
                     surface_digest="sha256:" + "3" * 64 + "\n",
+                    adoption_check="READY",
                 ),
             ]
             revision = "6" * 40
@@ -2541,6 +2568,7 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(first, second)
             self.assertEqual("gnostoa-release-evidence/v1", first["format"])
             self.assertEqual(revision, first["source"]["revision"])
+            self.assertTrue(first["checks"]["installed_adoption_check"])
             self.assertEqual(
                 [wheel.name, source_distribution.name],
                 [artifact["filename"] for artifact in first["artifacts"]],
@@ -3280,7 +3308,7 @@ class DocumentationTests(unittest.TestCase):
             "## Research", maxsplit=1
         )[0]
         research_section = roadmap.split("## Research", maxsplit=1)[1]
-        self.assertIn("https://github.com/ktogias/gnostoa/issues/109", next_section)
+        self.assertIn("https://github.com/ktogias/gnostoa/issues/146", next_section)
         self.assertNotIn("https://github.com/ktogias/gnostoa/issues/24", next_section)
         self.assertIn("https://github.com/ktogias/gnostoa/issues/24", roadmap)
         self.assertNotIn("https://github.com/ktogias/gnostoa/issues/12", next_section)
@@ -3348,15 +3376,16 @@ class DocumentationTests(unittest.TestCase):
             self.assertIn(decision_name, projection)
 
         # The invariant is that the workflow need stays durably planned while
-        # completed B2 evidence remains distinct from the not-yet-started B3
-        # experiment and from the separately admitted readiness correction.
+        # completed B2 evidence remains distinct from the selected B3 target
+        # and the not-yet-started B3 measurement.
         self.assertIn("B2/P1 and B2/P2 are both complete", roadmap)
         self.assertIn("B2/P1 completed", status)
         for projection in (roadmap, status):
             self.assertIn("https://github.com/ktogias/gnostoa/issues/24", projection)
-            self.assertIn("B3 has not begun", projection)
+            self.assertIn("B3 measurement has not begun", projection)
+            self.assertIn("Nextcloud Mail", projection)
             self.assertNotIn("Active B2/P1", projection)
-        self.assertIn("https://github.com/ktogias/gnostoa/issues/109", roadmap)
+        self.assertIn("https://github.com/ktogias/gnostoa/issues/146", roadmap)
         self.assertIn("need has already been demonstrated", status)
         self.assertIn(
             "full workflow platform is not a publication prerequisite",
@@ -3434,9 +3463,11 @@ class DocumentationTests(unittest.TestCase):
         self.assertIn("current pre-stable source identity is", status)
         self.assertIn("v0.1.2", status)
         for projection in (status, roadmap):
-            self.assertIn("B3 has not begun", projection)
-            self.assertIn("candidate selection", projection)
-            self.assertIn("0043-prepare-a-bounded-v0-1-2", projection)
+            self.assertIn("B3 measurement has not begun", projection)
+            self.assertIn("Nextcloud Mail", projection)
+            self.assertIn("0051-select-the-v0-2-0", projection)
+            self.assertNotIn("candidate selection remains", projection)
+            self.assertNotIn("candidate selection — one eligible", projection)
 
     def test_repository_documentation_links_resolve(self) -> None:
         paths = [

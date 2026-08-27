@@ -36,9 +36,12 @@ This Phase-1 record covers only the proposed `v0.2.0` source candidate and the
 affected first-party executable boundary required before source publication.
 It begins from protected `main`
 `6714d70772f021bd3e174510f16bcfc5230f168b`, tree
-`42d0f1dd323c6ae99c9bbe01f54b346f937ab7a2`. The final Pull Request head,
-integrated commit, annotated tag and OCI digest do not yet exist and must be
-recorded through provider read-back rather than predicted here.
+`42d0f1dd323c6ae99c9bbe01f54b346f937ab7a2`. The installed-artifact repair
+starts from Pull Request head
+`f06f5004fbc7a4672513ce9813d1fe03113598bf`, tree
+`ed9588132dcea1b6c16af1384bbec97625098926`. Its final repaired head, integrated
+commit, annotated tag and OCI digest must be recorded through provider read-back
+rather than predicted here.
 
 ## Verification-first result
 
@@ -61,18 +64,38 @@ explicit project root. A focused regression test now binds this behavior, and
 fresh wheel and source-distribution exercises return identical declared
 results.
 
+A later clean-wheel falsification found that the old release smoke was
+insufficient: it passed while the installed `adoption-check` exited `2` before
+retaining evidence because the execution-only wheel did not contain the
+canonical result schema. Focused RED cases also established that the candidate
+runtime label defaulted to `development`, explicit version drift was not
+rejected and the public status still described candidate selection as pending.
+
+The bounded repair preserves the execution-only wheel contract. An installed
+runtime now acquires the schema from the exact pinned public source and must
+prove bounded, complete byte equality between its installed `tools` payload and
+that source before it can claim execution-subject coherence. Exact-candidate
+runtime builds derive `0.2.0` from package metadata, reject a conflicting
+explicit label and expose both CLI and OCI-label checks in provider evidence.
+The release smoke now executes a real adoption check from clean wheel and source
+distribution environments; both must retain a schema-valid READY result without
+mutating the fixture project. Documentation now records Nextcloud Mail as the
+selected B3 target while keeping measurement explicitly unstarted.
+
 The native fallback was used because this execution environment exposes no OCI
 engine. With the exact committed development lock, the Phase-1 candidate
 currently reports:
 
 - policy, CI-policy, guardrail and both knowledge-bundle checks: PASS;
-- focused release criteria: 2/2 PASS;
-- adoption assurance/check portfolio: 66/66 PASS;
-- complete Python portfolio: 247/247 PASS;
+- focused installed-artifact and version-binding repair criteria: 9/9 PASS;
+- adoption assurance/check portfolio: 68/68 PASS;
+- complete Python portfolio: 251/251 PASS;
+- clean wheel and source-distribution adoption checks: PASS with identical
+  declared results;
 - regression and smoke portfolios: PASS; and
 - extended quality portfolio: PASS, including formatting, lint, configured
   static typing, strict documentation, dependency and secret checks, and
-  75.61% branch-aware coverage against a 65% floor.
+  75.23% branch-aware coverage against a 65% floor.
 
 Container source/runtime/vendored equality, provider jobs and CodeQL remain
 required exact-head evidence and are not inferred from these local results.
@@ -86,7 +109,7 @@ previous 12-member boundary. The proposed complete candidate set is:
 | Path | Candidate SHA-256 |
 | --- | --- |
 | `tools/adoption_assurance.py` | `e5eb50cc43ba3f212e4543d09df584cef2680a363cd5f872bcf36f42a414a79b` |
-| `tools/adoption_check.py` | `8bd67eb2ef846df5b476dd0756a3c2f2c696177ca7d1215516a385c65f642e16` |
+| `tools/adoption_check.py` | `bf55db5d4d998b23cb7ab6ee336c89a9f9ef9d31978c268bcbb7f42420feff78` |
 | `tools/build_context_pack.py` | `54339d70f04824605a8e7bee0fb8bce02906523109e1c012a20eb312b9cac1cb` |
 | `tools/build_docs.py` | `e22de87395da6ff5e32428ed9b8cfc123a3512136aeb12f939868fa68f049676` |
 | `tools/check_change_policy.py` | `6659c3680ad5ec0ca325f9a4b41fda7ef71b8c8f31ea584624c0c53f5587e156` |
@@ -101,12 +124,12 @@ previous 12-member boundary. The proposed complete candidate set is:
 | `tools/validate_bundle.py` | `7d728446c8a34e7515c626b1c3b8af6cfafee38318616a44a86303af3beb5ca1` |
 
 The candidate public-surface digest measured from the working source is
-`sha256:e202ce0907e82dc7ade953eafb2709e36ff4abf9939306413f7a55bcd1e61d48`.
+`sha256:a85ac8dde00f1ed8fb0425de08597828e97c246ec17ce6556f3f222b27ddb1c1`.
 It must be remeasured from the exact committed and provider-checked candidate.
 
 ## Affected assurance replay
 
-The replay covered the complete 14-member set and the 66 focused adoption
+The replay covered the complete 14-member set and the 68 focused adoption
 tests. The added route retains the already reviewed local Git/process,
 subject-binding and evidence-publication contracts. The bounded static inventory
 found no newly supported network, credential, archive-extraction or privilege

@@ -99,8 +99,11 @@ improve orientation and resumability but are not workflow enforcement. The
 keeps the broader platform off the critical path: the full workflow platform
 is not a publication prerequisite. The first real
 [B3 independent-adoption methodology](knowledge/assessments/b3-independent-adoption-experiment-design.md)
-is pre-registered, but the experiment has not begun; selecting one eligible
-project, owner and real task remains the next B3 owner decision.
+is pre-registered, and Nextcloud Mail is the selected target for its later fresh
+rerun. B3 measurement has not begun. The current sequence publishes and verifies
+the `v0.2.0` source and immutable OCI execution subject, then freezes the exact
+experiment contract before any rerun. `ktogias/mail` is the mutation workspace;
+`nextcloud/mail` retains semantic, Issue and final Change Request authority.
 
 Gnostoa is not yet a hosted service, a workflow engine, a general-purpose graph
 database or a production-ready release. It does not claim reduced engineering
