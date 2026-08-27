@@ -3386,9 +3386,7 @@ class DocumentationTests(unittest.TestCase):
                 "https://github.com/ktogias/gnostoa/issues/24",
                 normalized_projection,
             )
-            self.assertIn(
-                "Operational work toward B3 has begun", normalized_projection
-            )
+            self.assertIn("Operational work toward B3 has begun", normalized_projection)
             self.assertIn("exact-subject rerun has not begun", normalized_projection)
             self.assertIn("Nextcloud Mail", normalized_projection)
             self.assertNotIn("Active B2/P1", normalized_projection)
@@ -3472,9 +3470,7 @@ class DocumentationTests(unittest.TestCase):
             "four rejected adoption attempts across three Work Item cycles",
             normalized_completion_analysis,
         )
-        self.assertIn(
-            "#117 frozen fresh-agent rerun", normalized_completion_analysis
-        )
+        self.assertIn("#117 frozen fresh-agent rerun", normalized_completion_analysis)
 
         completion_decision = (
             ROOT
@@ -3509,9 +3505,7 @@ class DocumentationTests(unittest.TestCase):
             "mechanically substantive adoption work",
             normalized_runtime_routing,
         )
-        self.assertNotIn(
-            "All three rejected Mail attempts", normalized_runtime_routing
-        )
+        self.assertNotIn("All three rejected Mail attempts", normalized_runtime_routing)
 
     def test_container_first_verification_bypass_is_recorded_and_routed(
         self,
@@ -3585,9 +3579,7 @@ class DocumentationTests(unittest.TestCase):
         self.assertIn("v0.1.2", status)
         for projection in (status, roadmap):
             normalized_projection = " ".join(projection.split())
-            self.assertIn(
-                "Operational work toward B3 has begun", normalized_projection
-            )
+            self.assertIn("Operational work toward B3 has begun", normalized_projection)
             self.assertIn("exact-subject rerun has not begun", normalized_projection)
             self.assertIn("Nextcloud Mail", normalized_projection)
             self.assertIn("0051-select-the-v0-2-0", normalized_projection)
