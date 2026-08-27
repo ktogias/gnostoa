@@ -31,6 +31,7 @@ jobs:
       - name: Build the candidate runtime
         run: |
           GNOSTOA_CANDIDATE_REF="${GITHUB_SHA}" \
+          GNOSTOA_KIT_VERSION=0.2.0 \
             ./ci/build-runtime --tag "${GNOSTOA_CI_IMAGE}"
       - name: Run policy verification
         run: |
@@ -52,6 +53,7 @@ jobs:
       - name: Build the candidate runtime
         run: |
           GNOSTOA_CANDIDATE_REF="${GITHUB_SHA}" \
+          GNOSTOA_KIT_VERSION=0.2.0 \
             ./ci/build-runtime --tag "${GNOSTOA_CI_IMAGE}"
       - name: Run fast verification
         run: |
@@ -88,6 +90,11 @@ jobs:
             -r requirements/development.lock
       - name: Run the source compatibility suite
         run: ./ci/verify fast
+      - name: Run clean installed-artifact adoption smoke
+        if: matrix.python-version == '3.12'
+        run: |
+          python ci/release_smoke.py \
+            --output-dir "${RUNNER_TEMP}/gnostoa-distributions"
 
   regression:
     name: regression
@@ -113,6 +120,7 @@ jobs:
       - name: Build the candidate runtime
         run: |
           GNOSTOA_CANDIDATE_REF="${GITHUB_SHA}" \
+          GNOSTOA_KIT_VERSION=0.2.0 \
             ./ci/build-runtime --tag "${GNOSTOA_CI_IMAGE}"
       - name: Run regression verification
         run: |
@@ -137,6 +145,7 @@ jobs:
       - name: Build the candidate runtime
         run: |
           GNOSTOA_CANDIDATE_REF="$(git rev-parse HEAD)" \
+          GNOSTOA_KIT_VERSION=0.2.0 \
             ./ci/build-runtime --tag "${GNOSTOA_CI_IMAGE}"
       - name: Run smoke verification
         run: |
@@ -184,6 +193,8 @@ jobs:
 
           sb2_paths_file="${sb2_root}/paths"
           cat > "${sb2_paths_file}" <<'EOF'
+          tools/adoption_assurance.py
+          tools/adoption_check.py
           tools/build_context_pack.py
           tools/build_docs.py
           tools/check_change_policy.py
@@ -197,8 +208,8 @@ jobs:
           tools/task_envelope.py
           tools/validate_bundle.py
           EOF
-          test "$(wc -l < "${sb2_paths_file}")" -eq 12
-          test "$(LC_ALL=C sort -u "${sb2_paths_file}" | wc -l)" -eq 12
+          test "$(wc -l < "${sb2_paths_file}")" -eq 14
+          test "$(LC_ALL=C sort -u "${sb2_paths_file}" | wc -l)" -eq 14
 
           source_sb2_manifest="${sb2_root}/source.sha256"
           runtime_sb2_manifest="${sb2_root}/runtime.sha256"
@@ -233,6 +244,12 @@ jobs:
           cmp "${source_sb2_manifest}" "${runtime_sb2_manifest}"
           cmp "${source_sb2_manifest}" "${vendored_sb2_manifest}"
 
+          runtime_cli_version=$(docker run --rm "${GNOSTOA_CI_IMAGE}" --version)
+          runtime_oci_label_version=$(docker image inspect \
+            --format '{{index .Config.Labels "org.opencontainers.image.version"}}' \
+            "${GNOSTOA_CI_IMAGE}")
+          test "${runtime_cli_version}" = "0.2.0"
+          test "${runtime_oci_label_version}" = "0.2.0"
           docker run --rm "${GNOSTOA_CI_IMAGE}" self-check
 
           printf 'candidate.commit=%s\n' "${candidate_commit}"
@@ -244,7 +261,7 @@ jobs:
           printf 'public_surface.source=%s\n' "${source_digest}"
           printf 'public_surface.runtime=%s\n' "${runtime_digest}"
           printf 'public_surface.vendored=%s\n' "${vendored_digest}"
-          printf 'sb2.membership=12\n'
+          printf 'sb2.membership=14\n'
           printf 'sb2.source.begin\n'
           cat "${source_sb2_manifest}"
           printf 'sb2.source.end\n'
@@ -255,6 +272,8 @@ jobs:
           cat "${vendored_sb2_manifest}"
           printf 'sb2.vendored.end\n'
           printf 'source_binding.mechanism=candidate-generic-three-way\n'
+          printf 'runtime.cli_version=%s\n' "${runtime_cli_version}"
+          printf 'runtime.oci_label_version=%s\n' "${runtime_oci_label_version}"
           printf 'runtime.self_check=PASS\n'
 
   extended:

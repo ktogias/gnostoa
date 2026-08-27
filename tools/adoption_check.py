@@ -37,6 +37,8 @@ MAX_OBSERVATION_BYTES = 65_536
 MAX_TEXT = 512
 MAX_VERSION = 256
 MAX_IDENTITIES = 16
+MAX_DISTRIBUTION_FILES = 1_024
+MAX_DISTRIBUTION_BYTES = 64 * 1024 * 1024
 BUNDLE_COMMITMENT_SCHEMA = "gnostoa-adoption-evidence-bundle/v1"
 
 HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -772,6 +774,168 @@ def _marker_exists(path: Path) -> bool:
     return True
 
 
+def _complete_public_source_root(root: Path) -> bool:
+    return all(
+        _marker_exists(root / marker)
+        for marker in (
+            "pyproject.toml",
+            "core/profile.yaml",
+            "schemas/profile.schema.json",
+        )
+    )
+
+
+def _package_paths(root: Path, *, declared: bool) -> list[Path]:
+    if declared:
+        try:
+            candidates = candidate_paths(root)
+        except RepositoryScopeError as exc:
+            raise BlockedPrerequisite(str(exc)) from exc
+    else:
+        package = root / "tools"
+        if not package.is_dir():
+            raise BlockedPrerequisite(
+                f"installed Gnostoa tools package is unavailable under {root}"
+            )
+        candidates = [
+            path.relative_to(root) for path in package.rglob("*") if path.is_file()
+        ]
+    selected = sorted(
+        {
+            path
+            for path in candidates
+            if path.parts
+            and path.parts[0] == "tools"
+            and "__pycache__" not in path.parts
+            and path.suffix.casefold() not in {".pyc", ".pyo"}
+        },
+        key=lambda path: path.as_posix(),
+    )
+    if len(selected) > MAX_DISTRIBUTION_FILES:
+        raise BlockedPrerequisite(
+            "Gnostoa package membership exceeds the installed-runtime bound"
+        )
+    return selected
+
+
+def _package_payload(
+    root: Path,
+    paths: list[Path],
+    *,
+    label: str,
+) -> tuple[dict[Path, bytes], str, str]:
+    payload: dict[Path, bytes] = {}
+    membership = hashlib.sha256()
+    content = hashlib.sha256()
+    total = 0
+    for relative in paths:
+        encoded = relative.as_posix().encode("utf-8")
+        try:
+            value = _read_regular_bounded(
+                root / relative,
+                8 * 1024 * 1024,
+                f"{label} {relative.as_posix()}",
+            )
+        except ObservationBlocked as exc:
+            raise BlockedPrerequisite(str(exc)) from exc
+        payload[relative] = value
+        total += len(value)
+        if total > MAX_DISTRIBUTION_BYTES:
+            raise BlockedPrerequisite(f"{label} exceeds the installed-runtime bound")
+        membership.update(len(encoded).to_bytes(8, "big"))
+        membership.update(encoded)
+        content.update(len(encoded).to_bytes(8, "big"))
+        content.update(encoded)
+        content.update(len(value).to_bytes(8, "big"))
+        content.update(value)
+    if not payload:
+        raise BlockedPrerequisite(f"{label} contains no Gnostoa package files")
+    return payload, f"sha256:{membership.hexdigest()}", f"sha256:{content.hexdigest()}"
+
+
+def _installed_distribution_identity(
+    root: Path,
+    source_root: Path,
+    source_identity: dict[str, Any],
+) -> dict[str, Any]:
+    resolved = root.resolve()
+    source_resolved = source_root.resolve()
+    source_declared = _marker_exists(source_resolved / ".git") or _marker_exists(
+        source_resolved / SOURCE_MANIFEST
+    )
+    source_paths = _package_paths(source_resolved, declared=source_declared)
+    runtime_paths = _package_paths(resolved, declared=False)
+    source_payload, source_membership, source_digest = _package_payload(
+        source_resolved,
+        source_paths,
+        label="pinned toolkit package file",
+    )
+    runtime_payload, runtime_membership, runtime_digest = _package_payload(
+        resolved,
+        runtime_paths,
+        label="installed Gnostoa package file",
+    )
+    source_set = set(source_payload)
+    runtime_set = set(runtime_payload)
+    missing = sorted(
+        (path.as_posix() for path in source_set - runtime_set),
+    )
+    unexpected = sorted(
+        (path.as_posix() for path in runtime_set - source_set),
+    )
+    changed = sorted(
+        path.as_posix()
+        for path in source_set & runtime_set
+        if source_payload[path] != runtime_payload[path]
+    )
+    result = "PASS" if not (missing or unexpected or changed) else "FAIL"
+    try:
+        distribution_version = importlib.metadata.version("gnostoa")
+    except importlib.metadata.PackageNotFoundError:
+        distribution_version = "NOT OBSERVED"
+    identity: dict[str, Any] = {
+        "root": str(resolved),
+        "authority": "installed-python-distribution",
+        "revision": None,
+        "tree": None,
+        "distribution": {
+            "name": "gnostoa",
+            "version": distribution_version,
+        },
+        "source_binding": {
+            "result": result,
+            "method": "installed-package-pinned-source-byte-equality-v1",
+            "membership": len(runtime_paths),
+            "source_membership_sha256": source_membership,
+            "runtime_membership_sha256": runtime_membership,
+            "source_payload_sha256": source_digest,
+            "runtime_payload_sha256": runtime_digest,
+            "missing": missing,
+            "unexpected": unexpected,
+            "changed": changed,
+        },
+    }
+    if result == "PASS":
+        public_digest = source_identity.get("public_surface_digest")
+        if not isinstance(public_digest, str):
+            raise BlockedPrerequisite(
+                "pinned toolkit public surface is unavailable for installed runtime binding"
+            )
+        identity["public_surface_digest"] = public_digest
+        source_revision = source_identity.get("revision")
+        if isinstance(source_revision, str):
+            identity["revision"] = source_revision
+            identity["revision_measurement"] = (
+                "installed-package-pinned-source-byte-equality-v1"
+            )
+        else:
+            revision = os.environ.get("KNOWLEDGE_KIT_REVISION", "")
+            if revision not in {"", "development", "unknown"}:
+                identity["revision"] = revision
+                identity["revision_measurement"] = "running-runtime-metadata"
+    return identity
+
+
 def _source_identity(root: Path, *, running: bool = False) -> dict[str, Any]:
     resolved = root.resolve()
     identity: dict[str, Any] = {
@@ -814,6 +978,16 @@ def _source_identity(root: Path, *, running: bool = False) -> dict[str, Any]:
     else:
         identity["authority"] = "metadata-free-vendored-source"
     return identity
+
+
+def _execution_identity(
+    root: Path,
+    source_root: Path,
+    source_identity: dict[str, Any],
+) -> dict[str, Any]:
+    if _complete_public_source_root(root):
+        return _source_identity(root, running=True)
+    return _installed_distribution_identity(root, source_root, source_identity)
 
 
 def _call_tool(
@@ -883,12 +1057,20 @@ def _runtime_component(
     stderr = StringIO()
     try:
         revision = runtime_identity.get("revision")
+        runtime_root = _execution_root()
+        source_binding = runtime_identity.get("source_binding")
+        if (
+            runtime_identity.get("authority") == "installed-python-distribution"
+            and isinstance(source_binding, dict)
+            and source_binding.get("result") == "PASS"
+        ):
+            runtime_root = paths.toolkit_source
         issues = check_runtime_lock(
             paths.lock,
             paths.project_root,
             revision if isinstance(revision, str) else "",
             "",
-            runtime_root=_execution_root(),
+            runtime_root=runtime_root,
         )
         for issue in issues:
             print(f"ERROR: {issue}", file=stdout)
@@ -1627,16 +1809,28 @@ def _identity_result(
     blocked: list[str] = []
     failed: list[str] = []
     identities = (
-        ("documentation", paths.documentation_root, False),
-        ("toolkit_source", paths.toolkit_source, False),
-        ("executing_runtime", _execution_root(), True),
+        ("documentation", paths.documentation_root),
+        ("toolkit_source", paths.toolkit_source),
     )
-    for name, root, running in identities:
+    for name, root in identities:
         try:
-            measurements[name] = _source_identity(root, running=running)
+            measurements[name] = _source_identity(root)
         except BlockedPrerequisite as exc:
             measurements[name] = {"root": str(root.resolve()), "result": "NOT OBSERVED"}
             blocked.append(str(exc))
+    source_identity = measurements.get("toolkit_source", {})
+    try:
+        measurements["executing_runtime"] = _execution_identity(
+            _execution_root(),
+            paths.toolkit_source,
+            source_identity,
+        )
+    except BlockedPrerequisite as exc:
+        measurements["executing_runtime"] = {
+            "root": str(_execution_root().resolve()),
+            "result": "NOT OBSERVED",
+        }
+        blocked.append(str(exc))
 
     toolkit = lock.get("toolkit")
     runtime = lock.get("runtime")
@@ -1657,6 +1851,11 @@ def _identity_result(
     documentation = measurements.get("documentation", {})
     source = measurements.get("toolkit_source", {})
     executing = measurements.get("executing_runtime", {})
+    source_binding = executing.get("source_binding")
+    if isinstance(source_binding, dict) and source_binding.get("result") == "FAIL":
+        failed.append(
+            "installed Python distribution differs from pinned toolkit source"
+        )
     document_digest = documentation.get("public_surface_digest")
     source_digest = source.get("public_surface_digest")
     runtime_digest = executing.get("public_surface_digest")
@@ -3091,7 +3290,7 @@ def _execute_bound(
     suite_records: list[dict[str, Any]] = []
     try:
         schema_bytes = _read_regular_bounded(
-            _execution_root() / "schemas" / "adoption-check.schema.json",
+            paths.toolkit_source / "schemas" / "adoption-check.schema.json",
             1_048_576,
             "adoption-check result schema",
         )

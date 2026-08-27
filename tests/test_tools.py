@@ -34,6 +34,7 @@ from tools.knowledge_common import (
 from tools.release_smoke import (
     ArtifactResult,
     ReleaseSmokeError,
+    _exercise_artifact,
     distribution_metadata_issues,
     release_evidence_manifest,
     release_smoke,
@@ -57,7 +58,7 @@ def _add_tar_bytes(archive: tarfile.TarFile, name: str, content: bytes) -> None:
 def _release_archive_fixtures(
     directory: Path,
     *,
-    version: str = "0.1.2",
+    version: str = "0.2.0",
     include_notice: bool = True,
 ) -> tuple[Path, Path]:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
@@ -242,6 +243,8 @@ class PublicationBaselineTests(unittest.TestCase):
         )[1].split("\n  extended:\n", maxsplit=1)[0]
 
         sb2_paths = (
+            "tools/adoption_assurance.py",
+            "tools/adoption_check.py",
             "tools/build_context_pack.py",
             "tools/build_docs.py",
             "tools/check_change_policy.py",
@@ -270,7 +273,7 @@ class PublicationBaselineTests(unittest.TestCase):
             "surface-digest --root /vendored",
             'test "${source_digest}" = "${runtime_digest}"',
             'test "${source_digest}" = "${vendored_digest}"',
-            'test "$(wc -l < "${sb2_paths_file}")" -eq 12',
+            'test "$(wc -l < "${sb2_paths_file}")" -eq 14',
             'cmp "${source_sb2_manifest}" "${runtime_sb2_manifest}"',
             'cmp "${source_sb2_manifest}" "${vendored_sb2_manifest}"',
             'docker run --rm "${GNOSTOA_CI_IMAGE}" self-check',
@@ -299,6 +302,27 @@ class PublicationBaselineTests(unittest.TestCase):
             binding.index('git diff --name-only "${BASE_SHA}" HEAD'),
             binding.index('docker run --rm "${GNOSTOA_CI_IMAGE}" self-check'),
         )
+
+    def test_v0_2_0_source_candidate_version_is_bound(self) -> None:
+        project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+            "project"
+        ]
+        dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        workflow = (ROOT / ".github" / "workflows" / "verification.yml").read_text(
+            encoding="utf-8"
+        )
+        binding = workflow.split(
+            "      - name: Bind the exact PR executable candidate\n", maxsplit=1
+        )[1].split("\n  extended:\n", maxsplit=1)[0]
+
+        self.assertEqual("0.2.0", project["version"])
+        self.assertIn("ARG KIT_VERSION=0.2.0", dockerfile)
+        self.assertEqual(4, workflow.count("GNOSTOA_KIT_VERSION=0.2.0"))
+        self.assertIn("Run clean installed-artifact adoption smoke", workflow)
+        self.assertIn("python ci/release_smoke.py", workflow)
+        self.assertIn("org.opencontainers.image.version", binding)
+        self.assertIn("runtime.cli_version=%s", binding)
+        self.assertIn("runtime.oci_label_version=%s", binding)
 
     def test_ghcr_publication_workflow_is_exact_and_write_once(self) -> None:
         workflow_path = ROOT / ".github" / "workflows" / "publish-oci.yml"
@@ -2411,6 +2435,72 @@ class RuntimeTests(unittest.TestCase):
             ):
                 release_smoke(ROOT, output)
 
+    def test_release_smoke_declares_fixture_project_root(self) -> None:
+        def completed(
+            output: str = "",
+            *,
+            returncode: int = 0,
+            error: str = "",
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=[], returncode=returncode, stdout=output, stderr=error
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            smoke_root = Path(directory)
+            wheel, _ = _release_archive_fixtures(smoke_root)
+            workspace = smoke_root / "workspace"
+            workspace.mkdir()
+            environment = smoke_root / "environment"
+            validation = (
+                "OK: bundle conforms to project-knowledge-core 0.1.0 (OKF 0.2)\n"
+            )
+
+            with (
+                patch("tools.release_smoke._run") as run,
+                patch(
+                    "tools.release_smoke._exercise_adoption_check",
+                    return_value="READY",
+                ) as adoption_check,
+            ):
+                run.side_effect = [
+                    completed(),
+                    completed(),
+                    completed(),
+                    completed(
+                        returncode=2,
+                        error="ERROR: KNOWLEDGE_KIT_ROOT is required\n",
+                    ),
+                    completed("0.2.0\n"),
+                    completed(validation),
+                    completed("context pack\n"),
+                    completed(f"sha256:{'0' * 64}\n"),
+                ]
+
+                result = _exercise_artifact(
+                    wheel,
+                    "wheel",
+                    "0.2.0",
+                    ROOT,
+                    workspace,
+                    environment,
+                )
+
+            self.assertEqual("READY", result.adoption_check)
+            adoption_check.assert_called_once()
+            self.assertEqual(
+                environment / "bin" / "knowledge",
+                adoption_check.call_args.args[0],
+            )
+
+            for call_index in (3, 5, 6):
+                command = run.call_args_list[call_index].args[0]
+                project_root_index = command.index("--project-root")
+                self.assertEqual(str(ROOT), command[project_root_index + 1])
+                self.assertEqual(
+                    workspace, run.call_args_list[call_index].kwargs["cwd"]
+                )
+
     def test_execution_wheel_must_not_duplicate_canonical_source(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             wheel = Path(directory) / "gnostoa-test.whl"
@@ -2458,6 +2548,7 @@ class RuntimeTests(unittest.TestCase):
                     validation="validation\n",
                     context_pack="context pack\n",
                     surface_digest="sha256:" + "3" * 64 + "\n",
+                    adoption_check="READY",
                 ),
                 ArtifactResult(
                     artifact=source_distribution,
@@ -2468,6 +2559,7 @@ class RuntimeTests(unittest.TestCase):
                     validation="validation\n",
                     context_pack="context pack\n",
                     surface_digest="sha256:" + "3" * 64 + "\n",
+                    adoption_check="READY",
                 ),
             ]
             revision = "6" * 40
@@ -2476,6 +2568,7 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(first, second)
             self.assertEqual("gnostoa-release-evidence/v1", first["format"])
             self.assertEqual(revision, first["source"]["revision"])
+            self.assertTrue(first["checks"]["installed_adoption_check"])
             self.assertEqual(
                 [wheel.name, source_distribution.name],
                 [artifact["filename"] for artifact in first["artifacts"]],
@@ -3215,7 +3308,7 @@ class DocumentationTests(unittest.TestCase):
             "## Research", maxsplit=1
         )[0]
         research_section = roadmap.split("## Research", maxsplit=1)[1]
-        self.assertIn("https://github.com/ktogias/gnostoa/issues/109", next_section)
+        self.assertIn("https://github.com/ktogias/gnostoa/issues/146", next_section)
         self.assertNotIn("https://github.com/ktogias/gnostoa/issues/24", next_section)
         self.assertIn("https://github.com/ktogias/gnostoa/issues/24", roadmap)
         self.assertNotIn("https://github.com/ktogias/gnostoa/issues/12", next_section)
@@ -3283,19 +3376,159 @@ class DocumentationTests(unittest.TestCase):
             self.assertIn(decision_name, projection)
 
         # The invariant is that the workflow need stays durably planned while
-        # completed B2 evidence remains distinct from the not-yet-started B3
-        # experiment and from the separately admitted readiness correction.
+        # completed B2 evidence remains distinct from the selected B3 target,
+        # four recorded adoption attempts and the new exact-subject rerun.
         self.assertIn("B2/P1 and B2/P2 are both complete", roadmap)
         self.assertIn("B2/P1 completed", status)
         for projection in (roadmap, status):
-            self.assertIn("https://github.com/ktogias/gnostoa/issues/24", projection)
-            self.assertIn("B3 has not begun", projection)
-            self.assertNotIn("Active B2/P1", projection)
-        self.assertIn("https://github.com/ktogias/gnostoa/issues/109", roadmap)
+            normalized_projection = " ".join(projection.split())
+            self.assertIn(
+                "https://github.com/ktogias/gnostoa/issues/24",
+                normalized_projection,
+            )
+            self.assertIn("Operational work toward B3 has begun", normalized_projection)
+            self.assertIn("exact-subject rerun has not begun", normalized_projection)
+            self.assertIn("Nextcloud Mail", normalized_projection)
+            self.assertNotIn("Active B2/P1", normalized_projection)
+        self.assertIn("https://github.com/ktogias/gnostoa/issues/146", roadmap)
         self.assertIn("need has already been demonstrated", status)
         self.assertIn(
             "full workflow platform is not a publication prerequisite",
             normalized_readme,
+        )
+
+    def test_current_b3_projection_preserves_operational_chronology(self) -> None:
+        projections = {
+            "README": (ROOT / "README.md").read_text(encoding="utf-8"),
+            "roadmap": (ROOT / "docs" / "roadmap.md").read_text(encoding="utf-8"),
+            "status": (ROOT / "docs" / "status.md").read_text(encoding="utf-8"),
+            "B3 design": (
+                ROOT
+                / "knowledge"
+                / "assessments"
+                / "b3-independent-adoption-experiment-design.md"
+            ).read_text(encoding="utf-8"),
+            "release result": (
+                ROOT
+                / "knowledge"
+                / "assessments"
+                / "v0-2-0-release-candidate-and-source-boundary-result.md"
+            ).read_text(encoding="utf-8"),
+            "Decision 0051": (
+                ROOT
+                / "knowledge"
+                / "decisions"
+                / "0051-select-the-v0-2-0-source-and-oci-publication-series.md"
+            ).read_text(encoding="utf-8"),
+        }
+
+        for name, projection in projections.items():
+            with self.subTest(projection=name):
+                normalized = " ".join(projection.split())
+                self.assertIn("Operational work toward B3 has begun", normalized)
+                self.assertIn("four autonomous adoption attempts", normalized.lower())
+                self.assertIn("#117", normalized)
+                self.assertIn("#122", normalized)
+                self.assertIn("#125", normalized)
+                self.assertIn("owner acceptance `REJECT`", normalized)
+                self.assertIn("measured utility `UNKNOWN`", normalized)
+                self.assertIn("durable adoption `NO`", normalized)
+                self.assertIn("controlled pre-B3", normalized)
+                self.assertIn("exact-subject rerun has not begun", normalized)
+                self.assertNotIn("B3 measurement has not begun", normalized)
+                self.assertNotIn("Operational B3 work", normalized)
+                self.assertNotIn("initial-adoption gate", normalized)
+
+        frozen_design = (
+            ROOT
+            / "knowledge"
+            / "assessments"
+            / "b3-independent-adoption-experiment-design.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("## Later chronology note", frozen_design)
+        self.assertIn("not a current status projection", frozen_design)
+        self.assertIn("B3 has not begun", frozen_design)
+
+        completion_analysis = (
+            ROOT
+            / "knowledge"
+            / "assessments"
+            / "nextcloud-mail-adoption-completion-gate-analysis.md"
+        ).read_text(encoding="utf-8")
+        normalized_completion_analysis = " ".join(completion_analysis.split())
+        self.assertIn(
+            "description: Bounded causal synthesis, alternatives and "
+            "executable-contract recommendation after four rejected Nextcloud "
+            "Mail adoption attempts across three Work Item cycles.",
+            normalized_completion_analysis,
+        )
+        self.assertNotIn(
+            "after three rejected Nextcloud Mail adoption attempts",
+            normalized_completion_analysis,
+        )
+        self.assertIn(
+            "four rejected adoption attempts across three Work Item cycles",
+            normalized_completion_analysis,
+        )
+        self.assertIn("#117 frozen fresh-agent rerun", normalized_completion_analysis)
+
+        completion_decision = (
+            ROOT
+            / "knowledge"
+            / "decisions"
+            / "0047-select-a-bounded-adoption-completion-check.md"
+        ).read_text(encoding="utf-8")
+        normalized_completion_decision = " ".join(completion_decision.split())
+        self.assertIn(
+            "Four rejected Nextcloud Mail adoption attempts are recorded "
+            "across three Work Item cycles",
+            normalized_completion_decision,
+        )
+        self.assertIn(
+            "Three mechanically substantive attempts",
+            normalized_completion_decision,
+        )
+        self.assertNotIn(
+            "Three rejected Nextcloud Mail adoption attempts",
+            normalized_completion_decision,
+        )
+
+        runtime_routing = (
+            ROOT
+            / "knowledge"
+            / "assessments"
+            / "adoption-check-project-verification-runtime-routing.md"
+        ).read_text(encoding="utf-8")
+        normalized_runtime_routing = " ".join(runtime_routing.split())
+        self.assertIn(
+            "The baseline, #122 and #125 were the three attempts that reached "
+            "mechanically substantive adoption work",
+            normalized_runtime_routing,
+        )
+        self.assertNotIn("All three rejected Mail attempts", normalized_runtime_routing)
+
+    def test_release_assessment_invalidates_evidence_when_subject_moves(
+        self,
+    ) -> None:
+        assessment = (
+            ROOT
+            / "knowledge"
+            / "assessments"
+            / "v0-2-0-release-candidate-and-source-boundary-result.md"
+        ).read_text(encoding="utf-8")
+        normalized = " ".join(assessment.split())
+
+        self.assertIn("not a floating exact-head status claim", normalized)
+        self.assertIn("cannot name its own containing commit or tree", normalized)
+        self.assertIn("Any later commit", normalized)
+        self.assertIn("historical for acceptance", normalized)
+        self.assertIn("fresh exact-head evidence", normalized)
+        self.assertNotIn("Phase-1 candidate currently reports", normalized)
+        self.assertNotRegex(normalized, r"\b\d+/\d+ PASS\b")
+        self.assertNotIn("75.23% branch-aware coverage", normalized)
+        self.assertIn(
+            "branch-aware coverage above the declared 65% floor",
+            normalized,
         )
 
     def test_container_first_verification_bypass_is_recorded_and_routed(
@@ -3369,9 +3602,15 @@ class DocumentationTests(unittest.TestCase):
         self.assertIn("current pre-stable source identity is", status)
         self.assertIn("v0.1.2", status)
         for projection in (status, roadmap):
-            self.assertIn("B3 has not begun", projection)
-            self.assertIn("candidate selection", projection)
-            self.assertIn("0043-prepare-a-bounded-v0-1-2", projection)
+            normalized_projection = " ".join(projection.split())
+            self.assertIn("Operational work toward B3 has begun", normalized_projection)
+            self.assertIn("exact-subject rerun has not begun", normalized_projection)
+            self.assertIn("Nextcloud Mail", normalized_projection)
+            self.assertIn("0051-select-the-v0-2-0", normalized_projection)
+            self.assertNotIn("candidate selection remains", normalized_projection)
+            self.assertNotIn(
+                "candidate selection — one eligible", normalized_projection
+            )
 
     def test_repository_documentation_links_resolve(self) -> None:
         paths = [

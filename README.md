@@ -99,8 +99,20 @@ improve orientation and resumability but are not workflow enforcement. The
 keeps the broader platform off the critical path: the full workflow platform
 is not a publication prerequisite. The first real
 [B3 independent-adoption methodology](knowledge/assessments/b3-independent-adoption-experiment-design.md)
-is pre-registered, but the experiment has not begun; selecting one eligible
-project, owner and real task remains the next B3 owner decision.
+is pre-registered, and Nextcloud Mail is the selected target. Operational work
+toward B3 has begun. Four autonomous adoption attempts are recorded: the
+baseline attempt and later frozen fresh-agent rerun under #117, the
+route-activation diagnostic under #122, and the post-remediation rerun under
+#125. All four ended with owner acceptance `REJECT`, measured utility `UNKNOWN`
+and durable adoption `NO`; none established accepted or durable adoption. Their
+exact historical records remain bounded as controlled pre-B3 evidence because
+they did not satisfy the pre-registration's strict independent-owner
+eligibility. That evidentiary classification does not erase the operational
+chronology. The `v0.2.0` exact-subject rerun has not begun.
+The current sequence publishes and verifies the `v0.2.0` source and immutable
+OCI execution subject, then freezes the exact experiment contract before that
+rerun. `ktogias/mail` is the mutation workspace; `nextcloud/mail` retains
+semantic, Issue and final Change Request authority.
 
 Gnostoa is not yet a hosted service, a workflow engine, a general-purpose graph
 database or a production-ready release. It does not claim reduced engineering

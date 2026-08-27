@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gnostoa"
-version = "0.1.2"
+version = "0.2.0"
 description = "Technology-neutral OKF profiles and validation tools for project knowledge"
 authors = [
   { name = "Konstantinos Togias" },

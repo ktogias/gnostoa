@@ -109,6 +109,13 @@ runtime that actually contains `adoption-check` to bind its mechanical state
 before accountable-owner review. The immutable v0.1.2 source and OCI artifact
 predate this command and do not acquire it through later documentation.
 
+For an execution-only wheel or source-distribution install, keep the canonical
+schemas and profiles in the separately pinned toolkit source. `adoption-check`
+loads its result schema from that source and records the installed Python
+distribution as coherent only when its complete installed `tools` payload is
+byte-equal to the pinned source payload. A version label or source pathname
+alone cannot satisfy that binding.
+
 From the project root, the normal native invocation is:
 
 ```bash

@@ -255,3 +255,17 @@ scoped. The next owner subject is candidate selection: one target project,
 human owner, real task, permissions and mutation boundary, and review
 availability. Only after that selection may one candidate-specific contract be
 admitted and frozen before execution.
+
+## Later chronology note
+
+The preceding stop point is the pre-registration state at the time this design
+was frozen, not a current status projection. Operational work toward B3 has
+begun in Nextcloud Mail. Four autonomous adoption attempts are recorded: the
+baseline attempt and later frozen fresh-agent rerun under #117, the
+route-activation diagnostic under #122, and the post-remediation rerun under
+#125. All four ended with owner acceptance `REJECT`, measured utility `UNKNOWN`
+and durable adoption `NO`; none established accepted or durable adoption. Their
+exact records remain bounded as controlled pre-B3 evidence because they did not
+satisfy this design's strict independent-owner eligibility; that evidentiary
+classification does not erase the operational chronology. The new `v0.2.0`
+exact-subject rerun has not begun; it is selected by Decision 0051.
