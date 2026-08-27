@@ -7,6 +7,8 @@ from pathlib import Path
 
 from tools import adoption_assurance
 
+ROOT = Path(__file__).resolve().parents[1]
+
 
 def _digest(label: str) -> str:
     return f"sha256:{hashlib.sha256(label.encode()).hexdigest()}"
@@ -358,7 +360,7 @@ class AdoptionAssuranceContractTests(unittest.TestCase):
 
     def test_result_schema_is_closed_and_rejects_v1_dimensions(self) -> None:
         schema = adoption_assurance.load_result_schema(
-            Path("schemas/adoption-check.schema.json")
+            ROOT / "schemas" / "adoption-check.schema.json"
         )
         self.assertEqual(
             "https://ktogias.github.io/gnostoa/schemas/v1/adoption-check.schema.json",
