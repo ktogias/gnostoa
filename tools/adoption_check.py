@@ -21,6 +21,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from . import (
+    adoption_assurance,
     build_context_pack,
     check_change_policy,
     check_ci_policy,
@@ -30,7 +31,7 @@ from .check_runtime_lock import check_runtime_lock, public_surface_digest
 from .knowledge_common import KnowledgeFormatError, load_yaml
 from .repository_scope import SOURCE_MANIFEST, RepositoryScopeError, candidate_paths
 
-RESULT_SCHEMA = "gnostoa-adoption-check/v1"
+RESULT_SCHEMA = adoption_assurance.RESULT_SCHEMA
 OBSERVATION_SCHEMA = "gnostoa-project-runtime-observation/v1"
 MAX_OBSERVATION_BYTES = 65_536
 MAX_TEXT = 512
@@ -543,7 +544,47 @@ def _git_snapshot(root: Path) -> dict[str, Any]:
         ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"],
         "ignored project state",
     )
+    staged_index = _git_required(
+        root,
+        ["ls-files", "--stage", "-z"],
+        "staged index identity",
+    )
+    object_format = _git_text(
+        root,
+        ["rev-parse", "--show-object-format"],
+        "repository object format",
+    )
+    gitlinks: list[dict[str, str]] = []
+    for raw_entry in staged_index.split(b"\0"):
+        if not raw_entry:
+            continue
+        metadata, separator, raw_path = raw_entry.partition(b"\t")
+        try:
+            fields = metadata.decode("ascii", errors="strict").split()
+        except UnicodeDecodeError as exc:
+            raise BlockedPrerequisite(
+                "staged index metadata is not canonical ASCII"
+            ) from exc
+        if (
+            separator
+            and len(fields) == 3
+            and fields[0] == "160000"
+            and fields[2] == "0"
+        ):
+            try:
+                path = raw_path.decode("utf-8", errors="strict")
+            except UnicodeDecodeError as exc:
+                raise BlockedPrerequisite(
+                    "staged gitlink path is not canonical UTF-8"
+                ) from exc
+            gitlinks.append(
+                {
+                    "path": path,
+                    "commit": fields[1],
+                }
+            )
     return {
+        "repository_object_format": object_format,
         "head": _git_text(root, ["rev-parse", "HEAD"], "HEAD"),
         "tree": _git_text(root, ["rev-parse", "HEAD^{tree}"], "HEAD tree"),
         "status": status.decode("utf-8", errors="replace"),
@@ -554,6 +595,9 @@ def _git_snapshot(root: Path) -> dict[str, Any]:
             if item
         ),
         "ignored_paths_sha256": _sha256(ignored),
+        "staged_index_sha256": _sha256(staged_index),
+        "staged_index_bytes": len(staged_index),
+        "gitlinks": sorted(gitlinks, key=lambda item: item["path"]),
         "candidate_patch_sha256": _sha256(patch),
         "candidate_patch_bytes": len(patch),
         "_patch": patch,
@@ -1773,77 +1817,566 @@ def _context_components(
     }
 
 
-def _aggregate(values: list[str]) -> str:
-    if any(value in {"FAIL", "ERROR"} for value in values):
-        return "FAIL"
-    if any(value in {"BLOCKED", "NOT RUN"} for value in values):
-        return "BLOCKED"
-    return "PASS"
+def _subject_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: snapshot[key]
+        for key in (
+            "head",
+            "tree",
+            "status_sha256",
+            "staged_index_sha256",
+            "staged_index_bytes",
+            "candidate_patch_sha256",
+            "candidate_patch_bytes",
+        )
+    }
 
 
-def _project_suite_dimensions(records: list[dict[str, Any]]) -> dict[str, Any]:
-    suites: dict[str, str] = {}
-    observation_results: list[str] = []
-    entry_results: list[str] = []
-    route_results: list[str] = []
-    for record in records:
-        suite = record["name"].removeprefix("project-")
-        result = str(record["result"])
-        suites[suite] = result
-        if "adapter_sha256" in record:
-            entry_results.append("VALID")
-        else:
-            entry_results.append("ABSENT")
-        if result == "PASS":
-            route_results.append("ENTERED")
-        elif result == "FAIL":
-            route_results.append("FAIL")
-        else:
-            route_results.append("BLOCKED")
-        observation = record.get("runtime_observation")
-        if isinstance(observation, dict):
-            observation_results.append(str(observation.get("result", "BLOCKED")))
-        else:
-            observation_results.append("BLOCKED")
+def _snapshot_stability_problems(
+    before: dict[str, Any], after: dict[str, Any]
+) -> list[str]:
+    problems: list[str] = []
+    if before["head"] != after["head"] or before["tree"] != after["tree"]:
+        problems.append("Git HEAD or tree changed during adoption-check")
+    if before["status_sha256"] != after["status_sha256"]:
+        problems.append("Git status changed during adoption-check")
+    if (
+        before["staged_index_sha256"] != after["staged_index_sha256"]
+        or before["staged_index_bytes"] != after["staged_index_bytes"]
+    ):
+        problems.append("staged index identity changed during adoption-check")
+    if before["repository_object_format"] != after["repository_object_format"]:
+        problems.append("repository object format changed during adoption-check")
+    if before["gitlinks"] != after["gitlinks"]:
+        problems.append("required gitlinks changed during adoption-check")
+    if (
+        before["candidate_patch_sha256"] != after["candidate_patch_sha256"]
+        or before["candidate_patch_bytes"] != after["candidate_patch_bytes"]
+    ):
+        problems.append("staged candidate changed during adoption-check")
+    return problems
 
-    suite_aggregate = _aggregate(list(suites.values()))
-    observation_aggregate = _aggregate(observation_results)
-    authoritative = (
-        "VALID"
-        if entry_results and all(result == "VALID" for result in entry_results)
-        else "ABSENT"
+
+def _artifact_reference(writer: EvidenceWriter, path: str) -> dict[str, Any]:
+    for artifact in writer.artifacts():
+        if artifact.path == path:
+            return artifact.metadata()
+    raise UnsafeInvocation(f"assurance observation cites missing evidence: {path}")
+
+
+def _artifact_references(
+    writer: EvidenceWriter, paths: list[str]
+) -> list[dict[str, Any]]:
+    return [_artifact_reference(writer, path) for path in sorted(set(paths))]
+
+
+def _write_json_evidence(
+    writer: EvidenceWriter,
+    path: str,
+    value: dict[str, Any] | list[dict[str, Any]],
+    *,
+    origin: str,
+) -> dict[str, Any]:
+    return writer.write_text(
+        path,
+        json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        origin=origin,
     )
-    if any(result == "FAIL" for result in route_results):
-        route = "FAIL"
-    elif route_results and all(result == "ENTERED" for result in route_results):
-        route = "ENTERED"
-    else:
-        route = "BLOCKED"
-    project_result = _aggregate(
+
+
+def _observation_outcome(values: list[str]) -> str:
+    if any(value == "ERROR" for value in values):
+        return "ERROR"
+    if any(value == "FAIL" for value in values):
+        return "FAIL"
+    if any(value == "BLOCKED" for value in values):
+        return "BLOCKED"
+    if any(value in {"NOT RUN", "NOT OBSERVED", "ABSENT"} for value in values):
+        return "NOT RUN"
+    if values and all(value in {"PASS", "VALID", "ENTERED"} for value in values):
+        return "PASS"
+    raise UnsafeInvocation(
+        "cannot map assurance observation outcomes: " + ", ".join(values)
+    )
+
+
+def _condition_state(
+    outcome: str,
+    *,
+    failure_reason: str = "ObservedFailure",
+    true_reason: str = "Satisfied",
+) -> tuple[str, str]:
+    if outcome == "PASS":
+        return "TRUE", true_reason
+    if outcome == "FAIL":
+        return "FALSE", failure_reason
+    if outcome == "ERROR":
+        return "UNKNOWN", "InternalError"
+    if outcome == "NOT RUN":
+        return "UNKNOWN", "NotRun"
+    if outcome == "BLOCKED":
+        return "UNKNOWN", "PrerequisiteBlocked"
+    raise UnsafeInvocation(f"unsupported observation outcome: {outcome}")
+
+
+def _public_components(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    public: list[dict[str, Any]] = []
+    for record in records:
+        item = {
+            key: record[key]
+            for key in ("name", "command", "exit_code", "result", "stdout", "stderr")
+        }
+        detail = record.get("detail")
+        if isinstance(detail, str):
+            item["detail"] = detail
+        public.append(item)
+    return public
+
+
+def _component_evidence_paths(records: list[dict[str, Any]]) -> list[str]:
+    paths: list[str] = []
+    for record in records:
+        for key in ("stdout", "stderr"):
+            value = record.get(key)
+            if isinstance(value, str):
+                paths.append(value)
+    return paths
+
+
+def _runtime_report_result(record: dict[str, Any]) -> str:
+    observation = record.get("runtime_observation")
+    if isinstance(observation, dict):
+        return str(observation.get("result", "BLOCKED"))
+    return "NOT RUN" if record.get("result") == "NOT RUN" else "BLOCKED"
+
+
+def _build_assurance_result(
+    *,
+    args: argparse.Namespace,
+    paths: PathSet,
+    writer: EvidenceWriter,
+    result_schema: dict[str, Any],
+    schema_artifact: dict[str, Any],
+    policy_artifact: dict[str, Any],
+    before: dict[str, Any],
+    after: dict[str, Any],
+    representation_problems: list[str],
+    identity: dict[str, Any],
+    runtime_component: dict[str, Any],
+    change_component: dict[str, Any],
+    ci_component: dict[str, Any],
+    bundle_component: dict[str, Any],
+    context: dict[str, str],
+    suite_records: list[dict[str, Any]],
+    stability_outcome: str | None = None,
+) -> dict[str, Any]:
+    subject = adoption_assurance.build_candidate_subject(
+        repository_object_format=str(before["repository_object_format"]),
+        base_commit=str(before["head"]),
+        staged_index_sha256=str(before["staged_index_sha256"]),
+        staged_index_bytes=int(before["staged_index_bytes"]),
+        candidate_patch_sha256=str(before["candidate_patch_sha256"]),
+        candidate_patch_bytes=int(before["candidate_patch_bytes"]),
+        gitlinks=before["gitlinks"],
+        before=_subject_snapshot(before),
+        after=_subject_snapshot(after),
+    )
+    subject_id = str(subject["id"])
+
+    git_state_reference = _artifact_reference(writer, "git-state.json")
+    candidate_patch_reference = _artifact_reference(writer, "candidate.patch")
+    execution_detail = _write_json_evidence(
+        writer,
+        "observations/execution-subjects.json",
+        {
+            "identity": identity,
+            "runtime_lock": {
+                "result": runtime_component["result"],
+                "exit_code": runtime_component["exit_code"],
+            },
+        },
+        origin="gnostoa-observation:execution-subjects",
+    )
+    structural_detail = _write_json_evidence(
+        writer,
+        "observations/structural-validation.json",
+        {
+            component["name"]: {
+                "result": component["result"],
+                "exit_code": component["exit_code"],
+            }
+            for component in (change_component, ci_component, bundle_component)
+        },
+        origin="gnostoa-observation:structural-validation",
+    )
+    context_detail = _write_json_evidence(
+        writer,
+        "observations/context-determinism.json",
+        context,
+        origin="gnostoa-observation:context-determinism",
+    )
+    suite_detail = _write_json_evidence(
+        writer,
+        "observations/project-suites.json",
         [
-            suite_aggregate,
-            observation_aggregate,
-            "PASS" if authoritative == "VALID" else "BLOCKED",
-            (
-                "PASS"
-                if route == "ENTERED"
-                else "FAIL"
-                if route == "FAIL"
-                else "BLOCKED"
-            ),
+            {
+                "name": record["name"],
+                "command": record["command"],
+                "exit_code": record["exit_code"],
+                "result": record["result"],
+                "adapter_sha256": record.get("adapter_sha256"),
+                "invocation_binding": record.get("invocation_binding"),
+            }
+            for record in suite_records
+        ],
+        origin="gnostoa-observation:project-suites",
+    )
+    runtime_detail = _write_json_evidence(
+        writer,
+        "observations/project-runtime-reports.json",
+        [
+            {
+                "suite": record["name"].removeprefix("project-"),
+                "report": record.get(
+                    "runtime_observation",
+                    {
+                        "result": _runtime_report_result(record),
+                        "detail": "runtime observation was not acquired or run",
+                    },
+                ),
+            }
+            for record in suite_records
+        ],
+        origin="gnostoa-observation:project-runtime-reports",
+    )
+    integrity_detail = _write_json_evidence(
+        writer,
+        "observations/evidence-integrity.json",
+        {
+            "contract": "authoritative-ledger-and-bound-publication/v1",
+            "claim_activation": "complete-publication-and-external-commitment",
+            "internal_manifest": "SHA256SUMS",
+            "external_commitment_schema": BUNDLE_COMMITMENT_SCHEMA,
+        },
+        origin="gnostoa-observation:evidence-integrity",
+    )
+
+    stable_outcome = stability_outcome or (
+        "FAIL" if representation_problems else "PASS"
+    )
+    execution_outcome = _observation_outcome(
+        [str(identity["result"]), str(runtime_component["result"])]
+    )
+    structural_outcome = _observation_outcome(
+        [
+            str(change_component["result"]),
+            str(ci_component["result"]),
+            str(bundle_component["result"]),
         ]
     )
-    return {
-        "result": project_result,
-        "suite_result": suite_aggregate,
-        "suites": suites,
-        "authoritative_entry": authoritative,
-        "project_owned_route_entry": route,
-        "project_runtime_observation": observation_aggregate,
-        "toolkit_project_runtime_separation": (
-            "PASS" if observation_aggregate == "PASS" else "BLOCKED"
+    context_outcome = _observation_outcome(
+        [context["generation"], context["determinism"], context["retention"]]
+    )
+    suite_outcome = _observation_outcome(
+        [str(record["result"]) for record in suite_records]
+    )
+    runtime_outcome = _observation_outcome(
+        [_runtime_report_result(record) for record in suite_records]
+    )
+    candidate_configuration = [
+        {"name": "candidate-subject", "value": subject_id},
+        {
+            "name": "repository-object-format",
+            "value": str(before["repository_object_format"]),
+        },
+    ]
+    execution_configuration = [
+        {"name": "candidate-subject", "value": subject_id},
+        {
+            "name": "runtime-lock-command",
+            "value": _sha256(
+                adoption_assurance.canonical_json_bytes(runtime_component["command"])
+            ),
+        },
+    ]
+    structural_configuration = [
+        {"name": "candidate-subject", "value": subject_id},
+        {
+            "name": "structural-command-set",
+            "value": _sha256(
+                adoption_assurance.canonical_json_bytes(
+                    [
+                        change_component["command"],
+                        ci_component["command"],
+                        bundle_component["command"],
+                    ]
+                )
+            ),
+        },
+    ]
+    context_configuration = [
+        {"name": "candidate-subject", "value": subject_id},
+        {
+            "name": "context-arguments",
+            "value": _sha256(
+                adoption_assurance.canonical_json_bytes(
+                    {
+                        "seeds": list(args.seed),
+                        "depth": args.depth,
+                        "max_tokens": args.max_tokens,
+                    }
+                )
+            ),
+        },
+    ]
+    suite_configuration = [
+        {"name": "candidate-subject", "value": subject_id},
+        *[
+            {
+                "name": f"suite.{record['name'].removeprefix('project-')}.adapter",
+                "value": str(record.get("adapter_sha256", "NOT OBSERVED")),
+            }
+            for record in suite_records
+        ],
+        *[
+            {
+                "name": f"suite.{record['name'].removeprefix('project-')}.command",
+                "value": _sha256(
+                    adoption_assurance.canonical_json_bytes(record["command"])
+                ),
+            }
+            for record in suite_records
+        ],
+    ]
+    runtime_configuration = [
+        {"name": "candidate-subject", "value": subject_id},
+        *[
+            {
+                "name": f"suite.{record['name'].removeprefix('project-')}.report",
+                "value": str(
+                    record.get("runtime_observation", {}).get("sha256", "NOT OBSERVED")
+                ),
+            }
+            for record in suite_records
+        ],
+    ]
+    policy_configuration = [
+        {"name": "candidate-subject", "value": subject_id},
+        {"name": "readiness-policy", "value": adoption_assurance.POLICY_SHA256},
+    ]
+    context_evidence = [context_detail]
+    if any(artifact.path == "context-pack.md" for artifact in writer.artifacts()):
+        context_evidence.append(_artifact_reference(writer, "context-pack.md"))
+    runtime_evidence = [runtime_detail]
+    for record in suite_records:
+        runtime_observation = record.get("runtime_observation")
+        if isinstance(runtime_observation, dict):
+            observation_path = runtime_observation.get("path")
+            if isinstance(observation_path, str):
+                runtime_evidence.append(_artifact_reference(writer, observation_path))
+
+    observations = [
+        adoption_assurance.make_observation(
+            observation_id="observation.candidate-stability",
+            observation_type="candidate-stability",
+            subject_id=subject_id,
+            outcome=stable_outcome,
+            producer="gnostoa-adoption-check",
+            configuration=candidate_configuration,
+            evidence=[candidate_patch_reference, git_state_reference],
         ),
+        adoption_assurance.make_observation(
+            observation_id="observation.execution-subject-coherence",
+            observation_type="execution-subject-coherence",
+            subject_id=subject_id,
+            outcome=execution_outcome,
+            producer="gnostoa-adoption-check",
+            configuration=execution_configuration,
+            evidence=[
+                execution_detail,
+                *_artifact_references(
+                    writer, _component_evidence_paths([runtime_component])
+                ),
+            ],
+        ),
+        adoption_assurance.make_observation(
+            observation_id="observation.structural-validation",
+            observation_type="structural-validation",
+            subject_id=subject_id,
+            outcome=structural_outcome,
+            producer="gnostoa-adoption-check",
+            configuration=structural_configuration,
+            evidence=[
+                structural_detail,
+                *_artifact_references(
+                    writer,
+                    _component_evidence_paths(
+                        [change_component, ci_component, bundle_component]
+                    ),
+                ),
+            ],
+        ),
+        adoption_assurance.make_observation(
+            observation_id="observation.context-determinism",
+            observation_type="context-determinism",
+            subject_id=subject_id,
+            outcome=context_outcome,
+            producer="gnostoa-adoption-check",
+            configuration=context_configuration,
+            evidence=context_evidence,
+        ),
+        adoption_assurance.make_observation(
+            observation_id="observation.project-suite-process",
+            observation_type="project-suite-process",
+            subject_id=subject_id,
+            outcome=suite_outcome,
+            producer="project-adapter",
+            configuration=suite_configuration,
+            evidence=[
+                suite_detail,
+                *_artifact_references(writer, _component_evidence_paths(suite_records)),
+            ],
+        ),
+        adoption_assurance.make_observation(
+            observation_id="observation.project-runtime-report",
+            observation_type="project-runtime-report",
+            subject_id=subject_id,
+            outcome=runtime_outcome,
+            producer="project-adapter",
+            configuration=runtime_configuration,
+            evidence=runtime_evidence,
+        ),
+        adoption_assurance.make_observation(
+            observation_id="observation.evidence-publication",
+            observation_type="evidence-publication",
+            subject_id=subject_id,
+            outcome="PASS",
+            producer="gnostoa-adoption-check",
+            configuration=policy_configuration,
+            evidence=[integrity_detail, schema_artifact, policy_artifact],
+        ),
+        adoption_assurance.make_observation(
+            observation_id="observation.semantic-review-requirement",
+            observation_type="semantic-review-requirement",
+            subject_id=subject_id,
+            outcome="PASS",
+            producer="gnostoa-readiness-policy",
+            configuration=policy_configuration,
+            evidence=[policy_artifact],
+        ),
+    ]
+
+    stability_failure_reason = (
+        "SubjectChanged"
+        if any(
+            "changed during adoption-check" in item for item in representation_problems
+        )
+        else "ObservedFailure"
+    )
+    condition_inputs = (
+        (
+            "CandidateStable",
+            observations[0],
+            stability_failure_reason,
+            "Satisfied",
+        ),
+        (
+            "ExecutionSubjectsCoherent",
+            observations[1],
+            "SubjectIncoherent",
+            "Satisfied",
+        ),
+        ("StructuralValid", observations[2], "ObservedFailure", "Satisfied"),
+        ("ContextDeterministic", observations[3], "ObservedFailure", "Satisfied"),
+        ("ProjectSuitesPassed", observations[4], "ObservedFailure", "Satisfied"),
+        (
+            "RuntimeObservationAvailable",
+            observations[5],
+            "ObservedFailure",
+            "Satisfied",
+        ),
+        (
+            "EvidenceIntegrityPreserved",
+            observations[6],
+            "ObservedFailure",
+            "Satisfied",
+        ),
+        (
+            "SemanticReviewRequired",
+            observations[7],
+            "ObservedFailure",
+            "Required",
+        ),
+    )
+    conditions: list[dict[str, Any]] = []
+    for condition_type, observation, failure_reason, true_reason in condition_inputs:
+        status, reason = _condition_state(
+            str(observation["outcome"]),
+            failure_reason=failure_reason,
+            true_reason=true_reason,
+        )
+        conditions.append(
+            adoption_assurance.make_condition(
+                condition_type=condition_type,
+                subject_id=subject_id,
+                status=status,
+                reason=reason,
+                observations=[observation],
+            )
+        )
+
+    readiness = adoption_assurance.evaluate_readiness(subject_id, conditions)
+    exit_code = int(readiness["exit_code"])
+    outcome = {
+        0: "READY FOR ACCOUNTABLE-OWNER REVIEW",
+        1: "MECHANICAL CHECK FAILED",
+        2: "INVALID OR INTERNAL ERROR",
+        3: "BLOCKED",
+    }[exit_code]
+    result: dict[str, Any] = {
+        "schema": RESULT_SCHEMA,
+        "outcome": outcome,
+        "exit_code": exit_code,
+        "subject": subject,
+        "arguments": {
+            "execution_route": args.execution_route,
+            "seeds": list(args.seed),
+            "depth": args.depth,
+            "max_tokens": args.max_tokens,
+            "project_root": str(paths.project_root),
+            "output_dir": str(paths.output),
+            "overrides": paths.overrides,
+        },
+        "tool_versions": _tool_versions(paths.project_root),
+        "components": _public_components(writer.components),
+        "observations": observations,
+        "conditions": conditions,
+        "contracts": {
+            "result_schema": {
+                "schema": "json-schema-draft-2020-12",
+                "id": result_schema["$id"],
+                "sha256": schema_artifact["sha256"],
+                "evidence": schema_artifact,
+            },
+            "readiness_policy": {
+                "schema": adoption_assurance.POLICY_SCHEMA,
+                "id": adoption_assurance.POLICY_ID,
+                "sha256": policy_artifact["sha256"],
+                "evidence": policy_artifact,
+            },
+        },
+        "readiness": readiness,
+        "owner_disposition": {
+            "semantic_review": "REQUIRED",
+            "durable_adoption": "NOT DETERMINED",
+        },
+        "artifacts": writer.manifest(),
     }
+    try:
+        adoption_assurance.validate_result(result, result_schema)
+    except adoption_assurance.AssuranceContractError as exc:
+        raise UnsafeInvocation(str(exc)) from exc
+    return result
 
 
 def _directory_open_flags() -> int:
@@ -2538,105 +3071,6 @@ def _finalize(
             os.close(staging_descriptor)
 
 
-def _result_exit(
-    components: list[dict[str, Any]],
-    dimensions: dict[str, Any],
-) -> int:
-    component_results = [str(component.get("result")) for component in components]
-    dimension_results: list[str] = []
-    for value in dimensions.values():
-        if isinstance(value, str):
-            dimension_results.append(value)
-        elif isinstance(value, dict) and isinstance(value.get("result"), str):
-            dimension_results.append(value["result"])
-    if "ERROR" in component_results or "ERROR" in dimension_results:
-        return 2
-    if "FAIL" in component_results or "FAIL" in dimension_results:
-        return 1
-    blocked_values = {"BLOCKED", "NOT RUN", "NOT OBSERVED", "ABSENT"}
-    if any(value in blocked_values for value in component_results + dimension_results):
-        return 3
-    return 0
-
-
-def _blocked_prerequisite_result(
-    args: argparse.Namespace,
-    paths: PathSet,
-    writer: EvidenceWriter,
-    *,
-    stage: str,
-    error: BlockedPrerequisite,
-    completed_dimensions: dict[str, Any] | None,
-) -> dict[str, Any]:
-    detail = f"{stage}: {error}"
-    writer.component(
-        "git-prerequisite",
-        [],
-        None,
-        "BLOCKED",
-        b"",
-        str(error).encode("utf-8", errors="replace"),
-        detail=detail,
-    )
-    if completed_dimensions is None:
-        not_run = {
-            "result": "NOT RUN",
-            "detail": f"not reached because {detail}",
-        }
-        dimensions: dict[str, Any] = {
-            "environment": {"result": "BLOCKED", "detail": detail},
-            "documentation_toolkit_execution_coherence": dict(not_run),
-            "external_oci_digest": {
-                "result": (
-                    "NOT OBSERVED"
-                    if args.execution_route == "oci"
-                    else "NOT APPLICABLE"
-                )
-            },
-            "runtime_lock_validation": dict(not_run),
-            "change_policy": dict(not_run),
-            "ci_policy": dict(not_run),
-            "profile_and_bundle": dict(not_run),
-            "bounded_context": dict(not_run),
-            "project_suites": dict(not_run),
-            "git_representability": {"result": "BLOCKED", "detail": detail},
-            "evidence_bundle": {"result": "PASS"},
-            "semantic_owner_review": "REQUIRED",
-            "durable_adoption": "NOT DETERMINED",
-        }
-    else:
-        dimensions = dict(completed_dimensions)
-        dimensions["git_representability"] = {
-            "result": "BLOCKED",
-            "detail": detail,
-        }
-    return {
-        "schema": RESULT_SCHEMA,
-        "outcome": "BLOCKED",
-        "exit_code": 3,
-        "arguments": {
-            "execution_route": args.execution_route,
-            "seeds": list(args.seed),
-            "depth": args.depth,
-            "max_tokens": args.max_tokens,
-            "project_root": str(paths.project_root),
-            "output_dir": str(paths.output),
-            "overrides": paths.overrides,
-        },
-        "tool_versions": _tool_versions(paths.project_root),
-        "components": writer.components,
-        "dimensions": dimensions,
-        "authority": {
-            "mechanical_result_only": True,
-            "semantic_owner_review": "REQUIRED",
-            "durable_adoption": "NOT DETERMINED",
-            "project_runtime_observation": (
-                "project-reported, not independently attested"
-            ),
-        },
-    }
-
-
 def _execute_bound(
     args: argparse.Namespace,
     paths: PathSet,
@@ -2644,8 +3078,36 @@ def _execute_bound(
 ) -> tuple[int, Path, str]:
     writer = EvidenceWriter([])
     prerequisite_stage = "initial Git snapshot"
-    completed_dimensions: dict[str, Any] | None = None
+    before: dict[str, Any] | None = None
+    representation: dict[str, Any] | None = None
+    representation_problems: list[str] = []
+    identity: dict[str, Any] | None = None
+    runtime_component: dict[str, Any] | None = None
+    change_component: dict[str, Any] | None = None
+    ci_component: dict[str, Any] | None = None
+    bundle_component: dict[str, Any] | None = None
+    context: dict[str, str] | None = None
+    suite_records: list[dict[str, Any]] = []
     try:
+        schema_bytes = _read_regular_bounded(
+            _execution_root() / "schemas" / "adoption-check.schema.json",
+            1_048_576,
+            "adoption-check result schema",
+        )
+        try:
+            result_schema = adoption_assurance.decode_result_schema(schema_bytes)
+        except adoption_assurance.AssuranceContractError as exc:
+            raise UnsafeInvocation(str(exc)) from exc
+        schema_artifact = writer.write_bytes(
+            "contracts/adoption-check.schema.json",
+            schema_bytes,
+            origin="gnostoa-result-schema",
+        )
+        policy_artifact = writer.write_bytes(
+            "contracts/gnostoa-review-ready-v1.json",
+            adoption_assurance.policy_bytes(),
+            origin="gnostoa-readiness-policy",
+        )
         lock = load_yaml(paths.lock)
         verification = load_yaml(paths.verification)
         before = _git_snapshot(paths.project_root)
@@ -2663,7 +3125,7 @@ def _execute_bound(
         if not candidate_patch:
             representation_problems.append("staged adoption candidate is empty")
 
-        identity, identity_state = _identity_result(
+        identity, _ = _identity_result(
             paths,
             lock,
             args.execution_route,
@@ -2804,7 +3266,7 @@ def _execute_bound(
             bundle_ready=bundle_component["result"] == "PASS",
         )
 
-        suite_records: list[dict[str, Any]] = []
+        suite_records = []
         suites = verification.get("suites")
         if ci_component["result"] == "PASS" and isinstance(suites, dict):
             for suite in ("fast", "regression"):
@@ -2846,61 +3308,17 @@ def _execute_bound(
                     )
                 )
 
-        project_suites = _project_suite_dimensions(suite_records)
-        suite_availability = {
-            record["name"].removeprefix("project-"): (
-                "BLOCKED" if record["result"] == "BLOCKED" else "PASS"
-            )
-            for record in suite_records
-        }
-        if identity_state == "FAIL":
-            identity["result"] = "FAIL"
-        completed_dimensions = {
-            "environment": {
-                "result": (
-                    "BLOCKED" if "BLOCKED" in suite_availability.values() else "PASS"
-                ),
-                "required_suite_availability": suite_availability,
-            },
-            "documentation_toolkit_execution_coherence": identity,
-            "external_oci_digest": identity["external_oci_digest"],
-            "runtime_lock_validation": {"result": runtime_component["result"]},
-            "change_policy": {"result": change_component["result"]},
-            "ci_policy": {"result": ci_component["result"]},
-            "profile_and_bundle": {"result": bundle_component["result"]},
-            "bounded_context": {
-                "result": _aggregate(
-                    [
-                        context["generation"],
-                        context["determinism"],
-                        context["retention"],
-                    ]
-                ),
-                **context,
-            },
-            "project_suites": project_suites,
-            "git_representability": {
-                "result": "NOT RUN",
-                "detail": "final Git postcondition has not been acquired",
-            },
-            "evidence_bundle": {"result": "PASS"},
-            "semantic_owner_review": "REQUIRED",
-            "durable_adoption": "NOT DETERMINED",
-        }
-
         prerequisite_stage = "final Git snapshot"
         after = _git_snapshot(paths.project_root)
         after_patch = after.pop("_patch")
-        if before["head"] != after["head"] or before["tree"] != after["tree"]:
-            representation_problems.append(
-                "Git HEAD or tree changed during adoption-check"
-            )
-        if before["status_sha256"] != after["status_sha256"]:
-            representation_problems.append("Git status changed during adoption-check")
+        representation_problems.extend(_snapshot_stability_problems(before, after))
         if candidate_patch != after_patch:
-            representation_problems.append(
-                "staged candidate changed during adoption-check"
-            )
+            if "staged candidate changed during adoption-check" not in (
+                representation_problems
+            ):
+                representation_problems.append(
+                    "staged candidate changed during adoption-check"
+                )
         prerequisite_stage = "final Git representation"
         final_representation, final_problems = _git_representation(paths, verification)
         representation_problems.extend(final_problems)
@@ -2921,57 +3339,142 @@ def _execute_bound(
             origin="gnostoa-git-reconciliation",
         )
 
-        dimensions = dict(completed_dimensions)
-        dimensions["git_representability"] = {
-            "result": "FAIL" if representation_problems else "PASS",
-            "problems": sorted(set(representation_problems)),
-        }
-
-        exit_code = _result_exit(writer.components, dimensions)
-        if exit_code == 0:
-            outcome = "READY FOR ACCOUNTABLE-OWNER REVIEW"
-        elif exit_code == 1:
-            outcome = "MECHANICAL CHECK FAILED"
-        elif exit_code == 3:
-            outcome = "BLOCKED"
-        else:
-            outcome = "INVALID OR INTERNAL ERROR"
-        result: dict[str, Any] = {
-            "schema": RESULT_SCHEMA,
-            "outcome": outcome,
-            "exit_code": exit_code,
-            "arguments": {
-                "execution_route": args.execution_route,
-                "seeds": list(args.seed),
-                "depth": args.depth,
-                "max_tokens": args.max_tokens,
-                "project_root": str(paths.project_root),
-                "output_dir": str(paths.output),
-                "overrides": paths.overrides,
-            },
-            "tool_versions": _tool_versions(paths.project_root),
-            "components": writer.components,
-            "dimensions": dimensions,
-            "authority": {
-                "mechanical_result_only": True,
-                "semantic_owner_review": "REQUIRED",
-                "durable_adoption": "NOT DETERMINED",
-                "project_runtime_observation": "project-reported, not independently attested",
-            },
-        }
+        result = _build_assurance_result(
+            args=args,
+            paths=paths,
+            writer=writer,
+            result_schema=result_schema,
+            schema_artifact=schema_artifact,
+            policy_artifact=policy_artifact,
+            before=before,
+            after=after,
+            representation_problems=sorted(set(representation_problems)),
+            identity=identity,
+            runtime_component=runtime_component,
+            change_component=change_component,
+            ci_component=ci_component,
+            bundle_component=bundle_component,
+            context=context,
+            suite_records=suite_records,
+        )
+        exit_code = int(result["exit_code"])
         commitment = _finalize(writer, paths.output, result, output_parent)
         return exit_code, paths.output, commitment
     except BlockedPrerequisite as exc:
-        result = _blocked_prerequisite_result(
-            args,
-            paths,
-            writer,
-            stage=prerequisite_stage,
-            error=exc,
-            completed_dimensions=completed_dimensions,
+        detail = f"{prerequisite_stage}: {exc}"
+        writer.component(
+            "git-prerequisite",
+            [],
+            None,
+            "BLOCKED",
+            b"",
+            str(exc).encode("utf-8", errors="replace"),
+            detail=detail,
+        )
+
+        if before is None:
+            before = _git_snapshot(paths.project_root)
+            candidate_patch = before.pop("_patch")
+            writer.write_bytes(
+                "candidate.patch",
+                candidate_patch,
+                origin="gnostoa-git-snapshot",
+            )
+        after = _git_snapshot(paths.project_root)
+        after.pop("_patch")
+        observed_stability_problems = [
+            *representation_problems,
+            *_snapshot_stability_problems(before, after),
+        ]
+        blocked_problems = sorted(set([*observed_stability_problems, detail]))
+
+        if representation is None:
+            representation = {
+                "required_targets": [],
+                "agents": {"head_blob": None, "index_blob": None},
+                "submodule": None,
+                "toolkit_source_mode": "NOT OBSERVED",
+            }
+        git_state = {
+            "before": before,
+            "after": after,
+            "representation": representation,
+            "problems": blocked_problems,
+        }
+        writer.write_text(
+            "git-state.json",
+            json.dumps(git_state, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            origin="gnostoa-git-reconciliation",
+        )
+
+        if identity is None:
+            identity = {
+                "result": "BLOCKED",
+                "declarations": {},
+                "measurements": {},
+                "external_oci_digest": {
+                    "result": (
+                        "NOT OBSERVED"
+                        if args.execution_route == "oci"
+                        else "NOT APPLICABLE"
+                    )
+                },
+                "failures": [],
+                "blockers": [detail],
+            }
+
+        def not_run_component(name: str) -> dict[str, Any]:
+            return writer.component(
+                name,
+                [],
+                None,
+                "NOT RUN",
+                b"",
+                b"",
+                detail=f"not reached because {detail}",
+            )
+
+        if runtime_component is None:
+            runtime_component = not_run_component("runtime-lock")
+        if change_component is None:
+            change_component = not_run_component("change-policy")
+        if ci_component is None:
+            ci_component = not_run_component("ci-policy")
+        if bundle_component is None:
+            bundle_component = not_run_component("bundle")
+        if context is None:
+            context = {
+                "generation": "NOT RUN",
+                "determinism": "NOT RUN",
+                "retention": "NOT RUN",
+            }
+        if not suite_records:
+            suite_records = [
+                not_run_component("project-fast"),
+                not_run_component("project-regression"),
+            ]
+
+        result = _build_assurance_result(
+            args=args,
+            paths=paths,
+            writer=writer,
+            result_schema=result_schema,
+            schema_artifact=schema_artifact,
+            policy_artifact=policy_artifact,
+            before=before,
+            after=after,
+            representation_problems=blocked_problems,
+            identity=identity,
+            runtime_component=runtime_component,
+            change_component=change_component,
+            ci_component=ci_component,
+            bundle_component=bundle_component,
+            context=context,
+            suite_records=suite_records,
+            stability_outcome=("FAIL" if observed_stability_problems else "BLOCKED"),
         )
         commitment = _finalize(writer, paths.output, result, output_parent)
-        return 3, paths.output, commitment
+        return int(result["exit_code"]), paths.output, commitment
 
 
 def _execute(args: argparse.Namespace, paths: PathSet) -> tuple[int, Path, str]:
@@ -3057,6 +3560,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
     print(f"EVIDENCE BUNDLE COMMITMENT: {BUNDLE_COMMITMENT_SCHEMA} {commitment}")
+    readiness = {0: "READY", 1: "FAILED", 2: "ERROR", 3: "BLOCKED"}[code]
+    print(f"REVIEW READINESS: {readiness}")
+    print("SEMANTIC ADOPTION: NOT DETERMINED")
+    print("OWNER DISPOSITION: REQUIRED")
     if code == 0:
         print(f"READY FOR ACCOUNTABLE-OWNER REVIEW: {output}")
     elif code == 1:

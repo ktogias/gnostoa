@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -17,13 +18,29 @@ from unittest import mock
 
 import yaml
 
-from tools import adoption_check
+from tools import adoption_assurance, adoption_check
 from tools.check_runtime_lock import public_surface_digest
 from tools.cli import main as cli_main
 
 ROOT = Path(__file__).resolve().parents[1]
 REVISION = "1" * 40
 IMAGE = f"registry.example.org/gnostoa@sha256:{'2' * 64}"
+
+
+def _condition(manifest: dict[str, Any], condition_type: str) -> dict[str, Any]:
+    return next(
+        item for item in manifest["conditions"] if item["type"] == condition_type
+    )
+
+
+def _observation(manifest: dict[str, Any], observation_type: str) -> dict[str, Any]:
+    return next(
+        item for item in manifest["observations"] if item["type"] == observation_type
+    )
+
+
+def _json_evidence(output: Path, relative: str) -> Any:
+    return json.loads((output / relative).read_text(encoding="utf-8"))
 
 
 def _native_observation(
@@ -128,6 +145,14 @@ class AdoptionCheckContractTests(unittest.TestCase):
         self.assertIn("64 KiB", adoption)
         self.assertIn("READY FOR ACCOUNTABLE-OWNER REVIEW", " ".join(adoption.split()))
         self.assertIn("project-reported runtime observation", adoption)
+        self.assertIn("gnostoa-adoption-check/v2", adoption)
+        self.assertIn("gnostoa-review-ready/v1", adoption)
+        self.assertIn("CandidateStable", adoption)
+        self.assertIn("RuntimeObservationAvailable", adoption)
+        self.assertIn("EvidenceIntegrityPreserved", adoption)
+        self.assertIn("REVIEW READINESS: READY|FAILED|ERROR|BLOCKED", adoption)
+        self.assertIn("OWNER DISPOSITION: REQUIRED", adoption)
+        self.assertIn("Legacy `dimensions`", adoption)
         self.assertIn("append-only in-memory ledger", adoption)
         self.assertIn(adoption_check.BUNDLE_COMMITMENT_SCHEMA, adoption)
         self.assertIn("unrestricted persistent process", adoption)
@@ -811,25 +836,128 @@ raise SystemExit(0)
 
             self.assertEqual((0, ""), (result, stderr), stdout)
             self.assertIn("READY FOR ACCOUNTABLE-OWNER REVIEW", stdout)
+            self.assertIn("REVIEW READINESS: READY", stdout)
+            self.assertIn("SEMANTIC ADOPTION: NOT DETERMINED", stdout)
+            self.assertIn("OWNER DISPOSITION: REQUIRED", stdout)
             self.assertEqual(before, after)
             manifest = json.loads((output / "adoption-check.json").read_text())
             self.assertEqual(adoption_check.RESULT_SCHEMA, manifest["schema"])
             self.assertEqual(
-                "REQUIRED", manifest["dimensions"]["semantic_owner_review"]
+                "REQUIRED", manifest["owner_disposition"]["semantic_review"]
             )
             self.assertEqual(
-                "NOT DETERMINED", manifest["dimensions"]["durable_adoption"]
+                "NOT DETERMINED",
+                manifest["owner_disposition"]["durable_adoption"],
             )
             self.assertEqual(
-                "PASS", manifest["dimensions"]["bounded_context"]["result"]
+                "TRUE", _condition(manifest, "ContextDeterministic")["status"]
             )
-            self.assertEqual("PASS", manifest["dimensions"]["project_suites"]["result"])
+            self.assertEqual(
+                "TRUE", _condition(manifest, "ProjectSuitesPassed")["status"]
+            )
             self.assertTrue((output / "context-pack.md").is_file())
             self.assertTrue((output / "candidate.patch").is_file())
             self.assertTrue((output / "git-state.json").is_file())
             sums = (output / "SHA256SUMS").read_text()
             self.assertIn("adoption-check.json", sums)
             self.assertIn("context-pack.md", sums)
+
+    def test_complete_candidate_emits_closed_v2_assurance_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, toolkit = self._project(directory)
+            output = Path(directory) / "evidence"
+
+            result, stdout, stderr = self._run(project, toolkit, output)
+
+            self.assertEqual((0, ""), (result, stderr), stdout)
+            manifest = json.loads((output / "adoption-check.json").read_text())
+            self.assertEqual("gnostoa-adoption-check/v2", manifest["schema"])
+            self.assertNotIn("dimensions", manifest)
+            self.assertNotIn("authority", manifest)
+            self.assertEqual("READY", manifest["readiness"]["result"])
+            self.assertEqual(0, manifest["readiness"]["exit_code"])
+            self.assertEqual(
+                manifest["subject"]["id"], manifest["readiness"]["subject"]
+            )
+            self.assertEqual(
+                {
+                    "semantic_review": "REQUIRED",
+                    "durable_adoption": "NOT DETERMINED",
+                },
+                manifest["owner_disposition"],
+            )
+
+            conditions = {item["type"]: item for item in manifest["conditions"]}
+            self.assertEqual(set(adoption_assurance.CONDITION_TYPES), set(conditions))
+            self.assertTrue(
+                all(
+                    conditions[name]["status"] == "TRUE"
+                    for name in adoption_assurance.REQUIRED_CONDITIONS
+                )
+            )
+            self.assertEqual(
+                ("TRUE", "Required"),
+                (
+                    conditions["SemanticReviewRequired"]["status"],
+                    conditions["SemanticReviewRequired"]["reason"],
+                ),
+            )
+
+            observations = {item["type"]: item for item in manifest["observations"]}
+            self.assertTrue(
+                all(
+                    {
+                        "name": "candidate-subject",
+                        "value": manifest["subject"]["id"],
+                    }
+                    in item["configuration"]
+                    for item in observations.values()
+                )
+            )
+            self.assertEqual(
+                "gnostoa-observed-project-process",
+                observations["project-suite-process"]["assurance"],
+            )
+            self.assertEqual(
+                "invocation-bound-project-report",
+                observations["project-runtime-report"]["assurance"],
+            )
+            artifact_paths = {item["path"] for item in manifest["artifacts"]}
+            self.assertIn("contracts/adoption-check.schema.json", artifact_paths)
+            self.assertIn("contracts/gnostoa-review-ready-v1.json", artifact_paths)
+            schema = adoption_assurance.load_result_schema(
+                ROOT / "schemas" / "adoption-check.schema.json"
+            )
+            adoption_assurance.validate_result(manifest, schema)
+
+            stale_evidence = copy.deepcopy(manifest)
+            stale_evidence["observations"][0]["evidence"][0]["sha256"] = (
+                f"sha256:{'0' * 64}"
+            )
+            with self.assertRaises(adoption_assurance.AssuranceContractError):
+                adoption_assurance.validate_result(stale_evidence, schema)
+
+            inconsistent_exit = copy.deepcopy(manifest)
+            inconsistent_exit["exit_code"] = 3
+            with self.assertRaises(adoption_assurance.AssuranceContractError):
+                adoption_assurance.validate_result(inconsistent_exit, schema)
+
+    def test_source_built_execution_route_remains_supported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, toolkit = self._project(directory)
+            output = Path(directory) / "evidence"
+
+            result, stdout, stderr = self._run(
+                project,
+                toolkit,
+                output,
+                execution_route="source-built",
+            )
+
+            self.assertEqual((0, ""), (result, stderr), stdout)
+            manifest = json.loads((output / "adoption-check.json").read_text())
+            self.assertEqual("source-built", manifest["arguments"]["execution_route"])
+            self.assertEqual("READY", manifest["readiness"]["result"])
 
     def test_missing_observation_and_unavailable_suite_are_blocked_with_evidence(
         self,
@@ -843,14 +971,15 @@ raise SystemExit(0)
                 manifest = json.loads((output / "adoption-check.json").read_text())
                 self.assertEqual("BLOCKED", manifest["outcome"])
                 self.assertEqual(
-                    "BLOCKED",
-                    manifest["dimensions"]["project_suites"][
-                        "project_runtime_observation"
-                    ],
+                    ("UNKNOWN", "PrerequisiteBlocked"),
+                    (
+                        _condition(manifest, "RuntimeObservationAvailable")["status"],
+                        _condition(manifest, "RuntimeObservationAvailable")["reason"],
+                    ),
                 )
                 self.assertEqual(
-                    "BLOCKED" if mode == "blocked" else "PASS",
-                    manifest["dimensions"]["environment"]["result"],
+                    "UNKNOWN" if mode == "blocked" else "TRUE",
+                    _condition(manifest, "ProjectSuitesPassed")["status"],
                 )
 
     def _assert_unavailable_git_snapshot_is_blocked(self, fail_call: int) -> None:
@@ -888,13 +1017,17 @@ raise SystemExit(0)
             manifest = json.loads((output / "adoption-check.json").read_text())
             self.assertEqual("BLOCKED", manifest["outcome"])
             self.assertEqual(
-                "BLOCKED", manifest["dimensions"]["git_representability"]["result"]
+                ("UNKNOWN", "PrerequisiteBlocked"),
+                (
+                    _condition(manifest, "CandidateStable")["status"],
+                    _condition(manifest, "CandidateStable")["reason"],
+                ),
             )
             self.assertIn(
                 f"{stage} Git snapshot unavailable",
-                manifest["dimensions"]["git_representability"]["detail"],
+                _json_evidence(output, "git-state.json")["problems"][0],
             )
-            self._assert_prerequisite_dimension_history(
+            self._assert_prerequisite_condition_history(
                 manifest, completed=fail_call == 2
             )
             self.assertEqual(
@@ -954,13 +1087,17 @@ raise SystemExit(0)
             manifest = json.loads((output / "adoption-check.json").read_text())
             self.assertEqual("BLOCKED", manifest["outcome"])
             self.assertEqual(
-                "BLOCKED", manifest["dimensions"]["git_representability"]["result"]
+                ("UNKNOWN", "PrerequisiteBlocked"),
+                (
+                    _condition(manifest, "CandidateStable")["status"],
+                    _condition(manifest, "CandidateStable")["reason"],
+                ),
             )
             self.assertIn(
                 f"{stage} Git representation unavailable",
-                manifest["dimensions"]["git_representability"]["detail"],
+                _json_evidence(output, "git-state.json")["problems"][0],
             )
-            self._assert_prerequisite_dimension_history(
+            self._assert_prerequisite_condition_history(
                 manifest, completed=fail_call == 2
             )
             self.assertEqual(
@@ -976,26 +1113,33 @@ raise SystemExit(0)
                 ).stdout,
             )
 
-    def _assert_prerequisite_dimension_history(
-        self, manifest: dict[str, object], *, completed: bool
+    def _assert_prerequisite_condition_history(
+        self, manifest: dict[str, Any], *, completed: bool
     ) -> None:
-        dimensions = manifest["dimensions"]
-        assert isinstance(dimensions, dict)
-        expected = "PASS" if completed else "NOT RUN"
+        expected = "TRUE" if completed else "UNKNOWN"
         for name in (
-            "runtime_lock_validation",
-            "change_policy",
-            "ci_policy",
-            "profile_and_bundle",
-            "bounded_context",
-            "project_suites",
+            "ExecutionSubjectsCoherent",
+            "StructuralValid",
+            "ContextDeterministic",
+            "ProjectSuitesPassed",
+            "RuntimeObservationAvailable",
         ):
-            with self.subTest(dimension=name, completed=completed):
-                dimension = dimensions[name]
-                assert isinstance(dimension, dict)
-                self.assertEqual(expected, dimension["result"])
+            with self.subTest(condition=name, completed=completed):
+                self.assertEqual(expected, _condition(manifest, name)["status"])
+
+        self.assertEqual(
+            "TRUE", _condition(manifest, "EvidenceIntegrityPreserved")["status"]
+        )
+        self.assertEqual("BLOCKED", manifest["readiness"]["result"])
 
         if not completed:
+            for name in (
+                "StructuralValid",
+                "ContextDeterministic",
+                "ProjectSuitesPassed",
+                "RuntimeObservationAvailable",
+            ):
+                self.assertEqual("NotRun", _condition(manifest, name)["reason"])
             return
         components = manifest["components"]
         assert isinstance(components, list)
@@ -1005,31 +1149,26 @@ raise SystemExit(0)
             if isinstance(component, dict)
         }
         self.assertEqual(
-            component_results["runtime-lock"],
-            dimensions["runtime_lock_validation"]["result"],
-        )
-        self.assertEqual(
-            component_results["change-policy"],
-            dimensions["change_policy"]["result"],
-        )
-        self.assertEqual(
-            component_results["ci-policy"], dimensions["ci_policy"]["result"]
-        )
-        self.assertEqual(
-            component_results["bundle"], dimensions["profile_and_bundle"]["result"]
-        )
-        self.assertEqual(
             {
-                "fast": component_results["project-fast"],
-                "regression": component_results["project-regression"],
+                "runtime-lock": "PASS",
+                "change-policy": "PASS",
+                "ci-policy": "PASS",
+                "bundle": "PASS",
+                "project-fast": "PASS",
+                "project-regression": "PASS",
             },
-            dimensions["project_suites"]["suites"],
+            {
+                name: component_results[name]
+                for name in (
+                    "runtime-lock",
+                    "change-policy",
+                    "ci-policy",
+                    "bundle",
+                    "project-fast",
+                    "project-regression",
+                )
+            },
         )
-        self.assertEqual("PASS", dimensions["environment"]["result"])
-        self.assertEqual(
-            "PASS", dimensions["documentation_toolkit_execution_coherence"]["result"]
-        )
-        self.assertEqual("PASS", dimensions["evidence_bundle"]["result"])
 
     def test_unavailable_initial_git_representation_is_retained_as_blocked(
         self,
@@ -1062,9 +1201,10 @@ raise SystemExit(0)
             self.assertFalse(
                 any(path.startswith("runtime-observations/") for path in artifact_paths)
             )
-            for component in manifest["components"]:
-                if component["name"].startswith("project-"):
-                    self.assertNotIn("sha256", component["runtime_observation"])
+            reports = _json_evidence(
+                output, "observations/project-runtime-reports.json"
+            )
+            self.assertTrue(all("sha256" not in item["report"] for item in reports))
 
     def test_renamed_parent_retains_only_descriptor_bound_bytes_and_hash(
         self,
@@ -1081,15 +1221,16 @@ raise SystemExit(0)
             opened_file_content = b'{"sample":"original"}\n'
             replacement_file_content = b'{"sample":"replacement"}\n'
             self.assertEqual(opened_file_content, retained.read_bytes())
-            manifest = json.loads((output / "adoption-check.json").read_text())
             fast = next(
-                component
-                for component in manifest["components"]
-                if component["name"] == "project-fast"
+                item["report"]
+                for item in _json_evidence(
+                    output, "observations/project-runtime-reports.json"
+                )
+                if item["suite"] == "fast"
             )
             self.assertEqual(
                 adoption_check._sha256(opened_file_content),
-                fast["runtime_observation"]["sha256"],
+                fast["sha256"],
             )
             self.assertNotEqual(replacement_file_content, retained.read_bytes())
 
@@ -1178,10 +1319,8 @@ raise SystemExit(0)
                 manifest = json.loads((output / "adoption-check.json").read_text())
                 self.assertEqual("BLOCKED", manifest["outcome"])
                 self.assertEqual(
-                    "BLOCKED",
-                    manifest["dimensions"]["project_suites"][
-                        "project_runtime_observation"
-                    ],
+                    "UNKNOWN",
+                    _condition(manifest, "RuntimeObservationAvailable")["status"],
                 )
                 self.assertFalse(any(path.is_symlink() for path in output.rglob("*")))
                 retained = output / "runtime-observations" / "fast.json"
@@ -1211,11 +1350,14 @@ raise SystemExit(0)
             )
             self.assertEqual((3, ""), (result, stderr), stdout)
             manifest = json.loads((output / "adoption-check.json").read_text())
+            execution = _json_evidence(output, "observations/execution-subjects.json")
             self.assertIn(
                 "documentation and toolkit public surfaces differ",
-                manifest["dimensions"]["documentation_toolkit_execution_coherence"][
-                    "blockers"
-                ],
+                execution["identity"]["blockers"],
+            )
+            self.assertEqual(
+                "UNKNOWN",
+                _condition(manifest, "ExecutionSubjectsCoherent")["status"],
             )
 
         with tempfile.TemporaryDirectory() as directory:
@@ -1226,8 +1368,14 @@ raise SystemExit(0)
             )
             self.assertEqual((3, ""), (result, stderr), stdout)
             manifest = json.loads((output / "adoption-check.json").read_text())
+            execution = _json_evidence(output, "observations/execution-subjects.json")
             self.assertEqual(
-                "NOT OBSERVED", manifest["dimensions"]["external_oci_digest"]["result"]
+                "NOT OBSERVED",
+                execution["identity"]["external_oci_digest"]["result"],
+            )
+            self.assertEqual(
+                "UNKNOWN",
+                _condition(manifest, "ExecutionSubjectsCoherent")["status"],
             )
 
     def test_locked_declaration_cannot_replace_a_measured_actual(self) -> None:
@@ -1245,10 +1393,11 @@ raise SystemExit(0)
             self.assertEqual((1, ""), (result, stderr), stdout)
             manifest = json.loads((output / "adoption-check.json").read_text())
             self.assertEqual(
-                "FAIL", manifest["dimensions"]["runtime_lock_validation"]["result"]
+                "FALSE",
+                _condition(manifest, "ExecutionSubjectsCoherent")["status"],
             )
             self.assertEqual(
-                "NOT RUN", manifest["dimensions"]["change_policy"]["result"]
+                "UNKNOWN", _condition(manifest, "StructuralValid")["status"]
             )
 
     def test_measured_toolkit_and_execution_surface_mismatch_fails(self) -> None:
@@ -1266,10 +1415,13 @@ raise SystemExit(0)
             )
             self.assertEqual((1, ""), (result, stderr), stdout)
             manifest = json.loads((output / "adoption-check.json").read_text())
-            identity = manifest["dimensions"][
-                "documentation_toolkit_execution_coherence"
+            identity = _json_evidence(output, "observations/execution-subjects.json")[
+                "identity"
             ]
-            self.assertEqual("FAIL", identity["result"])
+            self.assertEqual(
+                "FALSE",
+                _condition(manifest, "ExecutionSubjectsCoherent")["status"],
+            )
             self.assertIn(
                 "toolkit source and executing runtime public surfaces differ",
                 identity["failures"],
@@ -1292,7 +1444,7 @@ raise SystemExit(0)
             self.assertEqual((1, ""), (result, stderr), stdout)
             manifest = json.loads((output / "adoption-check.json").read_text())
             self.assertEqual(
-                "FAIL", manifest["dimensions"]["bounded_context"]["result"]
+                "FALSE", _condition(manifest, "ContextDeterministic")["status"]
             )
             self.assertFalse((output / "context-pack.md").exists())
 
@@ -1306,9 +1458,7 @@ raise SystemExit(0)
             result, stdout, stderr = self._run(project, toolkit, output)
             self.assertEqual((1, ""), (result, stderr), stdout)
             manifest = json.loads((output / "adoption-check.json").read_text())
-            self.assertEqual(
-                "FAIL", manifest["dimensions"]["git_representability"]["result"]
-            )
+            self.assertEqual("FALSE", _condition(manifest, "CandidateStable")["status"])
 
         with tempfile.TemporaryDirectory() as directory:
             project, toolkit = self._project(directory)
@@ -1316,7 +1466,7 @@ raise SystemExit(0)
             result, stdout, stderr = self._run(project, toolkit, output, mode="mutate")
             self.assertEqual((1, ""), (result, stderr), stdout)
             manifest = json.loads((output / "adoption-check.json").read_text())
-            problems = manifest["dimensions"]["git_representability"]["problems"]
+            problems = _json_evidence(output, "git-state.json")["problems"]
             self.assertTrue(
                 any("changed during adoption-check" in problem for problem in problems)
             )
@@ -1374,11 +1524,10 @@ raise SystemExit(0)
             result, stdout, stderr = self._run(project, toolkit, output)
             self.assertEqual((1, ""), (result, stderr), stdout)
             manifest = json.loads((output / "adoption-check.json").read_text())
-            submodule = manifest["dimensions"]["git_representability"]
-            self.assertEqual("FAIL", submodule["result"])
+            self.assertEqual("FALSE", _condition(manifest, "CandidateStable")["status"])
             self.assertIn(
                 "staged toolkit gitlink differs from toolkit worktree HEAD",
-                submodule["problems"],
+                _json_evidence(output, "git-state.json")["problems"],
             )
 
     def test_executed_suite_failure_takes_precedence_over_missing_success(self) -> None:
@@ -1389,7 +1538,9 @@ raise SystemExit(0)
             self.assertEqual((1, ""), (result, stderr), stdout)
             manifest = json.loads((output / "adoption-check.json").read_text())
             self.assertEqual("MECHANICAL CHECK FAILED", manifest["outcome"])
-            self.assertEqual("FAIL", manifest["dimensions"]["project_suites"]["result"])
+            self.assertEqual(
+                "FALSE", _condition(manifest, "ProjectSuitesPassed")["status"]
+            )
 
     def test_mandatory_image_conflict_is_failure_not_incomplete_observation(
         self,
@@ -1401,8 +1552,8 @@ raise SystemExit(0)
             self.assertEqual((1, ""), (result, stderr), stdout)
             manifest = json.loads((output / "adoption-check.json").read_text())
             self.assertEqual(
-                "FAIL",
-                manifest["dimensions"]["project_suites"]["project_runtime_observation"],
+                "FALSE",
+                _condition(manifest, "RuntimeObservationAvailable")["status"],
             )
 
     def test_platform_manifest_coherence_uses_only_the_same_descriptor_kind(
@@ -1415,11 +1566,11 @@ raise SystemExit(0)
                 project, toolkit, output, mode="container-pass"
             )
             self.assertEqual((0, ""), (result, stderr), stdout)
-            manifest = json.loads((output / "adoption-check.json").read_text())
             observations = [
-                component["runtime_observation"]
-                for component in manifest["components"]
-                if component["name"].startswith("project-")
+                item["report"]
+                for item in _json_evidence(
+                    output, "observations/project-runtime-reports.json"
+                )
             ]
             self.assertTrue(
                 all(
@@ -1437,8 +1588,8 @@ raise SystemExit(0)
             self.assertEqual((3, ""), (result, stderr), stdout)
             manifest = json.loads((output / "adoption-check.json").read_text())
             self.assertEqual(
-                "BLOCKED",
-                manifest["dimensions"]["project_suites"]["project_runtime_observation"],
+                "UNKNOWN",
+                _condition(manifest, "RuntimeObservationAvailable")["status"],
             )
 
     def test_existing_or_in_project_output_is_refused_without_overwrite(self) -> None:

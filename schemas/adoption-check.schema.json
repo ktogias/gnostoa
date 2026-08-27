@@ -1,0 +1,839 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ktogias.github.io/gnostoa/schemas/v1/adoption-check.schema.json",
+  "title": "Gnostoa adoption-check result v2",
+  "type": "object",
+  "required": [
+    "schema",
+    "outcome",
+    "exit_code",
+    "subject",
+    "arguments",
+    "tool_versions",
+    "components",
+    "observations",
+    "conditions",
+    "contracts",
+    "readiness",
+    "owner_disposition",
+    "artifacts"
+  ],
+  "properties": {
+    "schema": {
+      "const": "gnostoa-adoption-check/v2"
+    },
+    "outcome": {
+      "enum": [
+        "READY FOR ACCOUNTABLE-OWNER REVIEW",
+        "MECHANICAL CHECK FAILED",
+        "INVALID OR INTERNAL ERROR",
+        "BLOCKED"
+      ]
+    },
+    "exit_code": {
+      "enum": [0, 1, 2, 3]
+    },
+    "subject": {
+      "$ref": "#/$defs/subject"
+    },
+    "arguments": {
+      "$ref": "#/$defs/arguments"
+    },
+    "tool_versions": {
+      "$ref": "#/$defs/toolVersions"
+    },
+    "components": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "$ref": "#/$defs/component"
+      }
+    },
+    "observations": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": {
+        "$ref": "#/$defs/observation"
+      }
+    },
+    "conditions": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "items": {
+        "$ref": "#/$defs/condition"
+      }
+    },
+    "contracts": {
+      "$ref": "#/$defs/contracts"
+    },
+    "readiness": {
+      "$ref": "#/$defs/readiness"
+    },
+    "owner_disposition": {
+      "$ref": "#/$defs/ownerDisposition"
+    },
+    "artifacts": {
+      "type": "array",
+      "maxItems": 512,
+      "items": {
+        "$ref": "#/$defs/evidence"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "exit_code": {
+            "const": 0
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "outcome": {
+            "const": "READY FOR ACCOUNTABLE-OWNER REVIEW"
+          },
+          "readiness": {
+            "properties": {
+              "result": {
+                "const": "READY"
+              },
+              "exit_code": {
+                "const": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "exit_code": {
+            "const": 1
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "outcome": {
+            "const": "MECHANICAL CHECK FAILED"
+          },
+          "readiness": {
+            "properties": {
+              "result": {
+                "const": "FAILED"
+              },
+              "exit_code": {
+                "const": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "exit_code": {
+            "const": 2
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "outcome": {
+            "const": "INVALID OR INTERNAL ERROR"
+          },
+          "readiness": {
+            "properties": {
+              "result": {
+                "const": "ERROR"
+              },
+              "exit_code": {
+                "const": 2
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "exit_code": {
+            "const": 3
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "outcome": {
+            "const": "BLOCKED"
+          },
+          "readiness": {
+            "properties": {
+              "result": {
+                "const": "BLOCKED"
+              },
+              "exit_code": {
+                "const": 3
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "objectId": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$"
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["path", "sha256", "bytes", "origin"],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "sha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "origin": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "additionalProperties": false
+    },
+    "snapshot": {
+      "type": "object",
+      "required": [
+        "head",
+        "tree",
+        "status_sha256",
+        "staged_index_sha256",
+        "staged_index_bytes",
+        "candidate_patch_sha256",
+        "candidate_patch_bytes"
+      ],
+      "properties": {
+        "head": {
+          "$ref": "#/$defs/objectId"
+        },
+        "tree": {
+          "$ref": "#/$defs/objectId"
+        },
+        "status_sha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "staged_index_sha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "staged_index_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "candidate_patch_sha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "candidate_patch_bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "gitlink": {
+      "type": "object",
+      "required": ["path", "commit"],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "commit": {
+          "$ref": "#/$defs/objectId"
+        }
+      },
+      "additionalProperties": false
+    },
+    "subject": {
+      "type": "object",
+      "required": [
+        "id",
+        "type",
+        "repository_object_format",
+        "base_commit",
+        "candidate",
+        "snapshots"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/digest"
+        },
+        "type": {
+          "const": "git-staged-candidate/v1"
+        },
+        "repository_object_format": {
+          "enum": ["sha1", "sha256"]
+        },
+        "base_commit": {
+          "$ref": "#/$defs/objectId"
+        },
+        "candidate": {
+          "type": "object",
+          "required": [
+            "staged_index_sha256",
+            "staged_index_bytes",
+            "patch_sha256",
+            "patch_bytes",
+            "gitlinks"
+          ],
+          "properties": {
+            "staged_index_sha256": {
+              "$ref": "#/$defs/digest"
+            },
+            "staged_index_bytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "patch_sha256": {
+              "$ref": "#/$defs/digest"
+            },
+            "patch_bytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "gitlinks": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/gitlink"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "snapshots": {
+          "type": "object",
+          "required": ["before", "after"],
+          "properties": {
+            "before": {
+              "$ref": "#/$defs/snapshot"
+            },
+            "after": {
+              "$ref": "#/$defs/snapshot"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "arguments": {
+      "type": "object",
+      "required": [
+        "execution_route",
+        "seeds",
+        "depth",
+        "max_tokens",
+        "project_root",
+        "output_dir",
+        "overrides"
+      ],
+      "properties": {
+        "execution_route": {
+          "enum": ["native", "source-built", "oci"]
+        },
+        "seeds": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "depth": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "project_root": {
+          "type": "string",
+          "minLength": 1
+        },
+        "output_dir": {
+          "type": "string",
+          "minLength": 1
+        },
+        "overrides": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "toolVersions": {
+      "type": "object",
+      "required": ["gnostoa_distribution", "python", "git"],
+      "properties": {
+        "gnostoa_distribution": {
+          "type": "string"
+        },
+        "python": {
+          "type": "object",
+          "required": ["version", "executable", "sha256"],
+          "properties": {
+            "version": {
+              "type": "string"
+            },
+            "executable": {
+              "type": "string"
+            },
+            "sha256": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/digest"
+                },
+                {
+                  "const": "NOT OBSERVED"
+                }
+              ]
+            },
+            "detail": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "git": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "component": {
+      "type": "object",
+      "required": [
+        "name",
+        "command",
+        "exit_code",
+        "result",
+        "stdout",
+        "stderr"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/identifier"
+        },
+        "command": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        },
+        "exit_code": {
+          "type": ["integer", "null"]
+        },
+        "result": {
+          "enum": ["PASS", "FAIL", "BLOCKED", "NOT RUN", "ERROR"]
+        },
+        "stdout": {
+          "$ref": "#/$defs/path"
+        },
+        "stderr": {
+          "$ref": "#/$defs/path"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "observation": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "externalVerification": {
+      "type": "object",
+      "required": [
+        "verifier",
+        "verification_method",
+        "attestation_digest",
+        "subject_digest"
+      ],
+      "properties": {
+        "verifier": {
+          "$ref": "#/$defs/identifier"
+        },
+        "verification_method": {
+          "const": "signature-and-subject-binding-v1"
+        },
+        "attestation_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "subject_digest": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "additionalProperties": false
+    },
+    "configurationIdentity": {
+      "type": "object",
+      "required": ["name", "value"],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/identifier"
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        }
+      },
+      "additionalProperties": false
+    },
+    "observation": {
+      "type": "object",
+      "required": [
+        "id",
+        "type",
+        "subject",
+        "outcome",
+        "producer",
+        "verifier",
+        "authority",
+        "basis",
+        "assurance",
+        "configuration",
+        "evidence"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "type": {
+          "enum": [
+            "candidate-stability",
+            "execution-subject-coherence",
+            "structural-validation",
+            "context-determinism",
+            "project-suite-process",
+            "project-runtime-report",
+            "evidence-publication",
+            "semantic-review-requirement",
+            "external-attestation"
+          ]
+        },
+        "subject": {
+          "$ref": "#/$defs/digest"
+        },
+        "outcome": {
+          "enum": ["PASS", "FAIL", "BLOCKED", "NOT RUN", "ERROR"]
+        },
+        "producer": {
+          "$ref": "#/$defs/identifier"
+        },
+        "verifier": {
+          "$ref": "#/$defs/identifier"
+        },
+        "authority": {
+          "$ref": "#/$defs/identifier"
+        },
+        "basis": {
+          "$ref": "#/$defs/identifier"
+        },
+        "assurance": {
+          "$ref": "#/$defs/identifier"
+        },
+        "configuration": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/configurationIdentity"
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        },
+        "external_verification": {
+          "$ref": "#/$defs/externalVerification"
+        }
+      },
+      "additionalProperties": false
+    },
+    "condition": {
+      "type": "object",
+      "required": [
+        "type",
+        "subject",
+        "status",
+        "reason",
+        "observation_ids",
+        "authorities",
+        "observation_bases",
+        "assurances",
+        "verifiers",
+        "evidence"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "CandidateStable",
+            "ExecutionSubjectsCoherent",
+            "StructuralValid",
+            "ContextDeterministic",
+            "ProjectSuitesPassed",
+            "RuntimeObservationAvailable",
+            "EvidenceIntegrityPreserved",
+            "SemanticReviewRequired"
+          ]
+        },
+        "subject": {
+          "$ref": "#/$defs/digest"
+        },
+        "status": {
+          "enum": ["TRUE", "FALSE", "UNKNOWN"]
+        },
+        "reason": {
+          "enum": [
+            "Satisfied",
+            "Required",
+            "ObservedFailure",
+            "SubjectChanged",
+            "SubjectIncoherent",
+            "PrerequisiteBlocked",
+            "NotRun",
+            "UnsafeBoundary",
+            "InternalError"
+          ]
+        },
+        "observation_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/identifier"
+          }
+        },
+        "authorities": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/identifier"
+          }
+        },
+        "observation_bases": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/identifier"
+          }
+        },
+        "assurances": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/identifier"
+          }
+        },
+        "verifiers": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/identifier"
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 512,
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "contractReference": {
+      "type": "object",
+      "required": ["schema", "id", "sha256", "evidence"],
+      "properties": {
+        "schema": {
+          "$ref": "#/$defs/identifier"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/digest"
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        }
+      },
+      "additionalProperties": false
+    },
+    "contracts": {
+      "type": "object",
+      "required": ["result_schema", "readiness_policy"],
+      "properties": {
+        "result_schema": {
+          "$ref": "#/$defs/contractReference"
+        },
+        "readiness_policy": {
+          "$ref": "#/$defs/contractReference"
+        }
+      },
+      "additionalProperties": false
+    },
+    "conditionStatus": {
+      "type": "object",
+      "required": ["type", "status", "reason"],
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "status": {
+          "enum": ["TRUE", "FALSE", "UNKNOWN"]
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "readiness": {
+      "type": "object",
+      "required": [
+        "subject",
+        "policy",
+        "required_conditions",
+        "condition_statuses",
+        "problems",
+        "result",
+        "exit_code",
+        "reason"
+      ],
+      "properties": {
+        "subject": {
+          "$ref": "#/$defs/digest"
+        },
+        "policy": {
+          "type": "object",
+          "required": ["schema", "id", "sha256"],
+          "properties": {
+            "schema": {
+              "const": "gnostoa-readiness-policy/v1"
+            },
+            "id": {
+              "const": "gnostoa-review-ready/v1"
+            },
+            "sha256": {
+              "$ref": "#/$defs/digest"
+            }
+          },
+          "additionalProperties": false
+        },
+        "required_conditions": {
+          "type": "array",
+          "minItems": 7,
+          "maxItems": 7,
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "condition_statuses": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/conditionStatus"
+          }
+        },
+        "problems": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        },
+        "result": {
+          "enum": ["READY", "FAILED", "ERROR", "BLOCKED"]
+        },
+        "exit_code": {
+          "enum": [0, 1, 2, 3]
+        },
+        "reason": {
+          "enum": [
+            "AllRequiredConditionsTrue",
+            "RequiredConditionFailed",
+            "RequiredConditionUnknown",
+            "UnsafeOrInternalCondition",
+            "InvalidPolicyInput"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ownerDisposition": {
+      "type": "object",
+      "required": ["semantic_review", "durable_adoption"],
+      "properties": {
+        "semantic_review": {
+          "const": "REQUIRED"
+        },
+        "durable_adoption": {
+          "const": "NOT DETERMINED"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
