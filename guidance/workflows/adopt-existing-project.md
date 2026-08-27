@@ -235,10 +235,14 @@ parallel decision model.
 Policy evaluation is explicit and fail closed: all required conditions `TRUE`
 produces `READY`; a required `FALSE` produces `FAILED`; unsafe/integrity or
 internal evaluation failure produces `ERROR`; otherwise a required `UNKNOWN`
-produces `BLOCKED`. A provider projection may report success only for a
-validated `READY` result whose candidate and policy identity are exact. A
-missing, stale, skipped, neutral, blocked or otherwise incomplete aggregate is
-not readiness.
+produces `BLOCKED`. A provider projection must consume a complete
+`gnostoa-adoption-check/v2` result that passed the closed schema and cross-field
+contract validation; an isolated readiness mapping is insufficient. It may
+report success only for validated `READY` whose candidate and policy identity
+are exact. A missing, stale, skipped, neutral, blocked or otherwise incomplete
+aggregate is not readiness. This contract validation does not replace a future
+external consumer's separate verification of the retained bundle bytes and
+external whole-bundle commitment; no provider integration is selected here.
 
 The evidence directory retains component numeric exits and output, the
 project-reported sidecars and hashes, two-generation context evidence, the

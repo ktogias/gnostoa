@@ -929,6 +929,30 @@ raise SystemExit(0)
                 ROOT / "schemas" / "adoption-check.schema.json"
             )
             adoption_assurance.validate_result(manifest, schema)
+            projection = adoption_assurance.provider_projection(
+                manifest, manifest["subject"]["id"], schema=schema
+            )
+            self.assertEqual(
+                ("SUCCESS", "ExactReadySubject"),
+                (projection["result"], projection["reason"]),
+            )
+            stale_subject_projection = adoption_assurance.provider_projection(
+                manifest, f"sha256:{'0' * 64}", schema=schema
+            )
+            self.assertEqual(
+                ("FAILURE", "StaleSubject"),
+                (
+                    stale_subject_projection["result"],
+                    stale_subject_projection["reason"],
+                ),
+            )
+            missing_projection = adoption_assurance.provider_projection(
+                None, manifest["subject"]["id"], schema=schema
+            )
+            self.assertEqual(
+                ("FAILURE", "MissingResult"),
+                (missing_projection["result"], missing_projection["reason"]),
+            )
 
             stale_evidence = copy.deepcopy(manifest)
             stale_evidence["observations"][0]["evidence"][0]["sha256"] = (
@@ -936,11 +960,31 @@ raise SystemExit(0)
             )
             with self.assertRaises(adoption_assurance.AssuranceContractError):
                 adoption_assurance.validate_result(stale_evidence, schema)
+            stale_evidence_projection = adoption_assurance.provider_projection(
+                stale_evidence, manifest["subject"]["id"], schema=schema
+            )
+            self.assertEqual(
+                ("FAILURE", "InvalidResult"),
+                (
+                    stale_evidence_projection["result"],
+                    stale_evidence_projection["reason"],
+                ),
+            )
 
             inconsistent_exit = copy.deepcopy(manifest)
             inconsistent_exit["exit_code"] = 3
             with self.assertRaises(adoption_assurance.AssuranceContractError):
                 adoption_assurance.validate_result(inconsistent_exit, schema)
+            inconsistent_projection = adoption_assurance.provider_projection(
+                inconsistent_exit, manifest["subject"]["id"], schema=schema
+            )
+            self.assertEqual(
+                ("FAILURE", "InvalidResult"),
+                (
+                    inconsistent_projection["result"],
+                    inconsistent_projection["reason"],
+                ),
+            )
 
     def test_source_built_execution_route_remains_supported(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -980,6 +1024,16 @@ raise SystemExit(0)
                 self.assertEqual(
                     "UNKNOWN" if mode == "blocked" else "TRUE",
                     _condition(manifest, "ProjectSuitesPassed")["status"],
+                )
+                schema = adoption_assurance.load_result_schema(
+                    ROOT / "schemas" / "adoption-check.schema.json"
+                )
+                projection = adoption_assurance.provider_projection(
+                    manifest, manifest["subject"]["id"], schema=schema
+                )
+                self.assertEqual(
+                    ("FAILURE", "ReadinessNotSatisfied"),
+                    (projection["result"], projection["reason"]),
                 )
 
     def _assert_unavailable_git_snapshot_is_blocked(self, fail_call: int) -> None:
@@ -1540,6 +1594,16 @@ raise SystemExit(0)
             self.assertEqual("MECHANICAL CHECK FAILED", manifest["outcome"])
             self.assertEqual(
                 "FALSE", _condition(manifest, "ProjectSuitesPassed")["status"]
+            )
+            schema = adoption_assurance.load_result_schema(
+                ROOT / "schemas" / "adoption-check.schema.json"
+            )
+            projection = adoption_assurance.provider_projection(
+                manifest, manifest["subject"]["id"], schema=schema
+            )
+            self.assertEqual(
+                ("FAILURE", "ReadinessNotSatisfied"),
+                (projection["result"], projection["reason"]),
             )
 
     def test_mandatory_image_conflict_is_failure_not_incomplete_observation(

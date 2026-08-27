@@ -321,40 +321,40 @@ class AdoptionAssuranceContractTests(unittest.TestCase):
         readiness = adoption_assurance.evaluate_readiness(subject_id, stale)
         self.assertEqual(("ERROR", 2), (readiness["result"], readiness["exit_code"]))
 
-    def test_provider_projection_accepts_only_ready_exact_subject(self) -> None:
+    def test_provider_projection_rejects_unvalidated_ready_mapping(self) -> None:
+        subject_id = str(self._subject()["id"])
+        unvalidated = adoption_assurance.evaluate_readiness(
+            subject_id, self._conditions(subject_id)
+        )
+        projection = adoption_assurance.provider_projection(unvalidated, subject_id)
+        self.assertEqual(
+            ("FAILURE", "InvalidResult"),
+            (projection["result"], projection["reason"]),
+        )
+        invalid_schema_projection = adoption_assurance.provider_projection(
+            unvalidated, subject_id, schema={"type": 42}
+        )
+        self.assertEqual(
+            ("FAILURE", "InvalidResult"),
+            (
+                invalid_schema_projection["result"],
+                invalid_schema_projection["reason"],
+            ),
+        )
+
+    def test_provider_projection_rejects_raw_readiness_even_with_schema(self) -> None:
         subject_id = str(self._subject()["id"])
         ready = adoption_assurance.evaluate_readiness(
             subject_id, self._conditions(subject_id)
         )
-        self.assertEqual(
-            "SUCCESS",
-            adoption_assurance.provider_projection(ready, subject_id)["result"],
+        schema = adoption_assurance.load_result_schema(
+            ROOT / "schemas" / "adoption-check.schema.json"
         )
-        blocked = dict(ready, result="BLOCKED", exit_code=3)
-        self.assertEqual(
-            "FAILURE",
-            adoption_assurance.provider_projection(blocked, subject_id)["result"],
+        projection = adoption_assurance.provider_projection(
+            ready, subject_id, schema=schema
         )
         self.assertEqual(
-            "FAILURE",
-            adoption_assurance.provider_projection(ready, _digest("other"))["result"],
-        )
-        self.assertEqual(
-            "FAILURE",
-            adoption_assurance.provider_projection(None, subject_id)["result"],
-        )
-        stale_policy = copy.deepcopy(ready)
-        stale_policy["policy"]["sha256"] = _digest("changed-policy")
-        projection = adoption_assurance.provider_projection(stale_policy, subject_id)
-        self.assertEqual(
-            ("FAILURE", "StalePolicy"),
-            (projection["result"], projection["reason"]),
-        )
-        incomplete = copy.deepcopy(ready)
-        incomplete["condition_statuses"] = []
-        projection = adoption_assurance.provider_projection(incomplete, subject_id)
-        self.assertEqual(
-            ("FAILURE", "ReadinessNotSatisfied"),
+            ("FAILURE", "InvalidResult"),
             (projection["result"], projection["reason"]),
         )
 

@@ -706,47 +706,37 @@ def evaluate_readiness(
     }
 
 
-def provider_projection(
-    readiness: Mapping[str, Any] | None, expected_subject_id: str
-) -> dict[str, str]:
-    """Project readiness into a fail-closed provider status."""
-    expected = _require_digest(expected_subject_id, "expected_subject_id")
-    if readiness is None:
-        return {"result": "FAILURE", "reason": "MissingReadiness"}
-    if readiness.get("subject") != expected:
-        return {"result": "FAILURE", "reason": "StaleSubject"}
-    policy = readiness.get("policy")
-    if (
-        not isinstance(policy, dict)
-        or policy.get("id") != POLICY_ID
-        or policy.get("schema") != POLICY_SCHEMA
-        or policy.get("sha256") != POLICY_SHA256
-    ):
-        return {"result": "FAILURE", "reason": "StalePolicy"}
-    condition_statuses = readiness.get("condition_statuses")
-    if not isinstance(condition_statuses, list):
-        return {"result": "FAILURE", "reason": "InvalidReadiness"}
-    statuses: dict[str, object] = {}
-    for item in condition_statuses:
-        if not isinstance(item, dict) or not isinstance(item.get("type"), str):
-            return {"result": "FAILURE", "reason": "InvalidReadiness"}
-        condition_type = item["type"]
-        if condition_type in statuses:
-            return {"result": "FAILURE", "reason": "InvalidReadiness"}
-        statuses[condition_type] = item.get("status")
-    exact_ready = (
-        readiness.get("required_conditions") == list(REQUIRED_CONDITIONS)
-        and set(statuses) == set(CONDITION_TYPES)
-        and all(statuses.get(name) == "TRUE" for name in REQUIRED_CONDITIONS)
-        and statuses.get("SemanticReviewRequired") == "TRUE"
-        and readiness.get("problems") == []
-        and readiness.get("reason") == "AllRequiredConditionsTrue"
-        and readiness.get("result") == "READY"
-        and readiness.get("exit_code") == 0
-    )
-    if exact_ready:
+def _project_validated_readiness(readiness: Mapping[str, Any]) -> dict[str, str]:
+    """Project readiness only after its complete result has been validated."""
+    if readiness.get("result") == "READY" and readiness.get("exit_code") == 0:
         return {"result": "SUCCESS", "reason": "ExactReadySubject"}
     return {"result": "FAILURE", "reason": "ReadinessNotSatisfied"}
+
+
+def provider_projection(
+    result: Mapping[str, Any] | None,
+    expected_subject_id: str,
+    *,
+    schema: Mapping[str, Any] | None = None,
+) -> dict[str, str]:
+    """Validate a complete v2 result, then project exact-subject readiness."""
+    expected = _require_digest(expected_subject_id, "expected_subject_id")
+    if result is None:
+        return {"result": "FAILURE", "reason": "MissingResult"}
+    if schema is None:
+        return {"result": "FAILURE", "reason": "InvalidResult"}
+    try:
+        Draft202012Validator.check_schema(schema)
+        validate_result(result, schema)
+    except (AssuranceContractError, SchemaError):
+        return {"result": "FAILURE", "reason": "InvalidResult"}
+    subject = result.get("subject")
+    if not isinstance(subject, dict) or subject.get("id") != expected:
+        return {"result": "FAILURE", "reason": "StaleSubject"}
+    readiness = result.get("readiness")
+    if not isinstance(readiness, dict):
+        return {"result": "FAILURE", "reason": "InvalidResult"}
+    return _project_validated_readiness(readiness)
 
 
 def decode_result_schema(content: bytes) -> dict[str, Any]:
