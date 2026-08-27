@@ -402,6 +402,8 @@ class PublicationBaselineTests(unittest.TestCase):
         guards = (
             'test "${GITHUB_REPOSITORY}" = "ktogias/gnostoa"',
             'test "${GITHUB_ACTOR}" = "ktogias"',
+            'test "${GITHUB_TRIGGERING_ACTOR}" = "ktogias"',
+            'test "${GITHUB_RUN_ATTEMPT}" = "1"',
             'test "${GITHUB_REF}" = "refs/heads/main"',
             'test "${GITHUB_REF_TYPE}" = "branch"',
             'test "${GITHUB_REF_NAME}" = "main"',
@@ -423,6 +425,8 @@ class PublicationBaselineTests(unittest.TestCase):
         accepted_environment = os.environ | {
             "GITHUB_REPOSITORY": "ktogias/gnostoa",
             "GITHUB_ACTOR": "ktogias",
+            "GITHUB_TRIGGERING_ACTOR": "ktogias",
+            "GITHUB_RUN_ATTEMPT": "1",
             "GITHUB_REF": "refs/heads/main",
             "GITHUB_REF_TYPE": "branch",
             "GITHUB_REF_NAME": "main",
@@ -440,6 +444,8 @@ class PublicationBaselineTests(unittest.TestCase):
         self.assertEqual(0, accepted.returncode, accepted.stderr)
 
         rejected_contexts = (
+            {"GITHUB_TRIGGERING_ACTOR": "other-writer"},
+            {"GITHUB_RUN_ATTEMPT": "2"},
             {"GITHUB_REF": "refs/heads/agent/publication"},
             {"GITHUB_REF_TYPE": "tag", "GITHUB_REF_NAME": "v0.2.0"},
             {"GITHUB_REF_NAME": "agent/publication"},
