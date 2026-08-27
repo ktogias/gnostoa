@@ -3507,6 +3507,24 @@ class DocumentationTests(unittest.TestCase):
         )
         self.assertNotIn("All three rejected Mail attempts", normalized_runtime_routing)
 
+    def test_release_assessment_invalidates_evidence_when_subject_moves(
+        self,
+    ) -> None:
+        assessment = (
+            ROOT
+            / "knowledge"
+            / "assessments"
+            / "v0-2-0-release-candidate-and-source-boundary-result.md"
+        ).read_text(encoding="utf-8")
+        normalized = " ".join(assessment.split())
+
+        self.assertIn("not a floating exact-head status claim", normalized)
+        self.assertIn("cannot name its own containing commit or tree", normalized)
+        self.assertIn("Any later commit", normalized)
+        self.assertIn("historical for acceptance", normalized)
+        self.assertIn("fresh exact-head evidence", normalized)
+        self.assertNotIn("Phase-1 candidate currently reports", normalized)
+
     def test_container_first_verification_bypass_is_recorded_and_routed(
         self,
     ) -> None:

@@ -43,6 +43,18 @@ starts from Pull Request head
 commit, annotated tag and OCI digest must be recorded through provider read-back
 rather than predicted here.
 
+### Evidence-subject boundary
+
+This in-tree assessment is not a floating exact-head status claim. It cannot
+name its own containing commit or tree without changing that identity. Each
+PASS observation below applies only to the exact commit and tree named by the
+accompanying Pull Request or Work Item provider evidence. Any later commit,
+including a documentation-only or formatting-only change, makes those
+observations historical for acceptance until the applicable portfolio is rerun
+and a fresh exact-head evidence read-back is recorded. Provider records identify
+the current candidate; this file records the boundary and bounded result without
+predicting a future identity.
+
 ## Verification-first result
 
 Two focused criteria were established before implementation:
@@ -89,8 +101,8 @@ records remain controlled pre-B3 evidence under the strict eligibility
 contract. The new `v0.2.0` exact-subject rerun has not begun.
 
 The native fallback was used because this execution environment exposes no OCI
-engine. With the exact committed development lock, the Phase-1 candidate
-currently reports:
+engine. With the exact committed development lock, the exact subject named by
+the accompanying external evidence reported:
 
 - policy, CI-policy, guardrail and both knowledge-bundle checks: PASS;
 - focused installed-artifact, version-binding and chronology repair criteria:
@@ -103,6 +115,10 @@ currently reports:
 - extended quality portfolio: PASS, including formatting, lint, configured
   static typing, strict documentation, dependency and secret checks, and
   75.23% branch-aware coverage against a 65% floor.
+
+These PASS observations do not carry forward by ancestry or unchanged-path
+inference. A moved head requires fresh exact-head evidence before
+accountable-owner acceptance or any irreversible effect.
 
 Container source/runtime/vendored equality, provider jobs and CodeQL remain
 required exact-head evidence and are not inferred from these local results.
