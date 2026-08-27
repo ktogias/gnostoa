@@ -184,6 +184,8 @@ jobs:
 
           sb2_paths_file="${sb2_root}/paths"
           cat > "${sb2_paths_file}" <<'EOF'
+          tools/adoption_assurance.py
+          tools/adoption_check.py
           tools/build_context_pack.py
           tools/build_docs.py
           tools/check_change_policy.py
@@ -197,8 +199,8 @@ jobs:
           tools/task_envelope.py
           tools/validate_bundle.py
           EOF
-          test "$(wc -l < "${sb2_paths_file}")" -eq 12
-          test "$(LC_ALL=C sort -u "${sb2_paths_file}" | wc -l)" -eq 12
+          test "$(wc -l < "${sb2_paths_file}")" -eq 14
+          test "$(LC_ALL=C sort -u "${sb2_paths_file}" | wc -l)" -eq 14
 
           source_sb2_manifest="${sb2_root}/source.sha256"
           runtime_sb2_manifest="${sb2_root}/runtime.sha256"
@@ -244,7 +246,7 @@ jobs:
           printf 'public_surface.source=%s\n' "${source_digest}"
           printf 'public_surface.runtime=%s\n' "${runtime_digest}"
           printf 'public_surface.vendored=%s\n' "${vendored_digest}"
-          printf 'sb2.membership=12\n'
+          printf 'sb2.membership=14\n'
           printf 'sb2.source.begin\n'
           cat "${source_sb2_manifest}"
           printf 'sb2.source.end\n'

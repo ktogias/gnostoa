@@ -34,6 +34,7 @@ from tools.knowledge_common import (
 from tools.release_smoke import (
     ArtifactResult,
     ReleaseSmokeError,
+    _exercise_artifact,
     distribution_metadata_issues,
     release_evidence_manifest,
     release_smoke,
@@ -57,7 +58,7 @@ def _add_tar_bytes(archive: tarfile.TarFile, name: str, content: bytes) -> None:
 def _release_archive_fixtures(
     directory: Path,
     *,
-    version: str = "0.1.2",
+    version: str = "0.2.0",
     include_notice: bool = True,
 ) -> tuple[Path, Path]:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
@@ -242,6 +243,8 @@ class PublicationBaselineTests(unittest.TestCase):
         )[1].split("\n  extended:\n", maxsplit=1)[0]
 
         sb2_paths = (
+            "tools/adoption_assurance.py",
+            "tools/adoption_check.py",
             "tools/build_context_pack.py",
             "tools/build_docs.py",
             "tools/check_change_policy.py",
@@ -270,7 +273,7 @@ class PublicationBaselineTests(unittest.TestCase):
             "surface-digest --root /vendored",
             'test "${source_digest}" = "${runtime_digest}"',
             'test "${source_digest}" = "${vendored_digest}"',
-            'test "$(wc -l < "${sb2_paths_file}")" -eq 12',
+            'test "$(wc -l < "${sb2_paths_file}")" -eq 14',
             'cmp "${source_sb2_manifest}" "${runtime_sb2_manifest}"',
             'cmp "${source_sb2_manifest}" "${vendored_sb2_manifest}"',
             'docker run --rm "${GNOSTOA_CI_IMAGE}" self-check',
@@ -299,6 +302,15 @@ class PublicationBaselineTests(unittest.TestCase):
             binding.index('git diff --name-only "${BASE_SHA}" HEAD'),
             binding.index('docker run --rm "${GNOSTOA_CI_IMAGE}" self-check'),
         )
+
+    def test_v0_2_0_source_candidate_version_is_bound(self) -> None:
+        project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+            "project"
+        ]
+        dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+        self.assertEqual("0.2.0", project["version"])
+        self.assertIn("ARG KIT_VERSION=0.2.0", dockerfile)
 
     def test_ghcr_publication_workflow_is_exact_and_write_once(self) -> None:
         workflow_path = ROOT / ".github" / "workflows" / "publish-oci.yml"
@@ -2410,6 +2422,59 @@ class RuntimeTests(unittest.TestCase):
                 "artifact output directory is not empty",
             ):
                 release_smoke(ROOT, output)
+
+    def test_release_smoke_declares_fixture_project_root(self) -> None:
+        def completed(
+            output: str = "",
+            *,
+            returncode: int = 0,
+            error: str = "",
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=[], returncode=returncode, stdout=output, stderr=error
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            smoke_root = Path(directory)
+            wheel, _ = _release_archive_fixtures(smoke_root)
+            workspace = smoke_root / "workspace"
+            workspace.mkdir()
+            environment = smoke_root / "environment"
+            validation = (
+                "OK: bundle conforms to project-knowledge-core 0.1.0 (OKF 0.2)\n"
+            )
+
+            with patch("tools.release_smoke._run") as run:
+                run.side_effect = [
+                    completed(),
+                    completed(),
+                    completed(),
+                    completed(
+                        returncode=2,
+                        error="ERROR: KNOWLEDGE_KIT_ROOT is required\n",
+                    ),
+                    completed("0.2.0\n"),
+                    completed(validation),
+                    completed("context pack\n"),
+                    completed(f"sha256:{'0' * 64}\n"),
+                ]
+
+                _exercise_artifact(
+                    wheel,
+                    "wheel",
+                    "0.2.0",
+                    ROOT,
+                    workspace,
+                    environment,
+                )
+
+            for call_index in (3, 5, 6):
+                command = run.call_args_list[call_index].args[0]
+                project_root_index = command.index("--project-root")
+                self.assertEqual(str(ROOT), command[project_root_index + 1])
+                self.assertEqual(
+                    workspace, run.call_args_list[call_index].kwargs["cwd"]
+                )
 
     def test_execution_wheel_must_not_duplicate_canonical_source(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
