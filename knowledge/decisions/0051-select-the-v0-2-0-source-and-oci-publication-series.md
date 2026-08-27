@@ -55,14 +55,17 @@ subsequent exact-subject freeze for the already chosen Nextcloud Mail transfer
 experiment. Effective versioning classifies the additive capability as MINOR,
 so the next release identity is `v0.2.0`, not a patch rewrite of `v0.1.2`.
 
-Operational B3 work already began in Nextcloud Mail through the attempts
-recorded under Work Items #117, #122 and #125. Those attempts were rejected
-without passing the initial-adoption gate and produced no final utility or
-durable-adoption result. Their exact records intentionally remain classified as
-controlled pre-B3 evidence because the pre-registration's strict
-independent-owner eligibility was not satisfied. That bounded evidentiary
-classification does not erase the operational chronology. This release and
-freeze prepare a new exact-subject rerun; that rerun has not begun.
+Operational work toward B3 has begun in Nextcloud Mail. Four autonomous
+adoption attempts are recorded: the baseline attempt and later frozen
+fresh-agent rerun under Work Item #117, the route-activation diagnostic under
+#122, and the post-remediation rerun under #125. All four ended with owner
+acceptance `REJECT`, measured utility `UNKNOWN` and durable adoption `NO`; none
+established accepted or durable adoption. Their exact records intentionally
+remain classified as controlled pre-B3 evidence because the pre-registration's
+strict independent-owner eligibility was not satisfied. That bounded
+evidentiary classification does not erase the operational chronology. This
+release and freeze prepare a new exact-subject rerun. The `v0.2.0` exact-subject
+rerun has not begun.
 
 At selection time protected `main` is
 `6714d70772f021bd3e174510f16bcfc5230f168b`, tree

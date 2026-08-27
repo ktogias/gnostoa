@@ -79,10 +79,14 @@ runtime builds derive `0.2.0` from package metadata, reject a conflicting
 explicit label and expose both CLI and OCI-label checks in provider evidence.
 The release smoke now executes a real adoption check from clean wheel and source
 distribution environments; both must retain a schema-valid READY result without
-mutating the fixture project. Documentation now records Nextcloud Mail as the
-selected B3 target, preserves the rejected attempts as controlled pre-B3
-evidence, acknowledges that operational B3 work has begun and distinguishes it
-from the new `v0.2.0` exact-subject rerun, which has not begun.
+mutating the fixture project. Operational work toward B3 has begun in the
+selected Nextcloud Mail target. Four autonomous adoption attempts are recorded:
+the baseline attempt and later frozen fresh-agent rerun under #117, the
+route-activation diagnostic under #122, and the post-remediation rerun under
+#125. All four ended with owner acceptance `REJECT`, measured utility `UNKNOWN`
+and durable adoption `NO`; none established accepted or durable adoption. Their
+records remain controlled pre-B3 evidence under the strict eligibility
+contract. The new `v0.2.0` exact-subject rerun has not begun.
 
 The native fallback was used because this execution environment exposes no OCI
 engine. With the exact committed development lock, the Phase-1 candidate

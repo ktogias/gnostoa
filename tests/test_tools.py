@@ -3377,7 +3377,7 @@ class DocumentationTests(unittest.TestCase):
 
         # The invariant is that the workflow need stays durably planned while
         # completed B2 evidence remains distinct from the selected B3 target,
-        # rejected initial-adoption attempts and the new exact-subject rerun.
+        # four recorded adoption attempts and the new exact-subject rerun.
         self.assertIn("B2/P1 and B2/P2 are both complete", roadmap)
         self.assertIn("B2/P1 completed", status)
         for projection in (roadmap, status):
@@ -3386,7 +3386,9 @@ class DocumentationTests(unittest.TestCase):
                 "https://github.com/ktogias/gnostoa/issues/24",
                 normalized_projection,
             )
-            self.assertIn("Operational B3 work has begun", normalized_projection)
+            self.assertIn(
+                "Operational work toward B3 has begun", normalized_projection
+            )
             self.assertIn("exact-subject rerun has not begun", normalized_projection)
             self.assertIn("Nextcloud Mail", normalized_projection)
             self.assertNotIn("Active B2/P1", normalized_projection)
@@ -3402,17 +3404,42 @@ class DocumentationTests(unittest.TestCase):
             "README": (ROOT / "README.md").read_text(encoding="utf-8"),
             "roadmap": (ROOT / "docs" / "roadmap.md").read_text(encoding="utf-8"),
             "status": (ROOT / "docs" / "status.md").read_text(encoding="utf-8"),
+            "B3 design": (
+                ROOT
+                / "knowledge"
+                / "assessments"
+                / "b3-independent-adoption-experiment-design.md"
+            ).read_text(encoding="utf-8"),
+            "release result": (
+                ROOT
+                / "knowledge"
+                / "assessments"
+                / "v0-2-0-release-candidate-and-source-boundary-result.md"
+            ).read_text(encoding="utf-8"),
+            "Decision 0051": (
+                ROOT
+                / "knowledge"
+                / "decisions"
+                / "0051-select-the-v0-2-0-source-and-oci-publication-series.md"
+            ).read_text(encoding="utf-8"),
         }
 
         for name, projection in projections.items():
             with self.subTest(projection=name):
                 normalized = " ".join(projection.split())
-                self.assertIn("Operational B3 work has begun", normalized)
-                self.assertIn("initial-adoption attempts", normalized)
-                self.assertIn("without passing the initial-adoption gate", normalized)
+                self.assertIn("Operational work toward B3 has begun", normalized)
+                self.assertIn("four autonomous adoption attempts", normalized.lower())
+                self.assertIn("#117", normalized)
+                self.assertIn("#122", normalized)
+                self.assertIn("#125", normalized)
+                self.assertIn("owner acceptance `REJECT`", normalized)
+                self.assertIn("measured utility `UNKNOWN`", normalized)
+                self.assertIn("durable adoption `NO`", normalized)
                 self.assertIn("controlled pre-B3", normalized)
                 self.assertIn("exact-subject rerun has not begun", normalized)
                 self.assertNotIn("B3 measurement has not begun", normalized)
+                self.assertNotIn("Operational B3 work", normalized)
+                self.assertNotIn("initial-adoption gate", normalized)
 
         frozen_design = (
             ROOT
@@ -3423,6 +3450,21 @@ class DocumentationTests(unittest.TestCase):
         self.assertIn("## Later chronology note", frozen_design)
         self.assertIn("not a current status projection", frozen_design)
         self.assertIn("B3 has not begun", frozen_design)
+
+        completion_analysis = (
+            ROOT
+            / "knowledge"
+            / "assessments"
+            / "nextcloud-mail-adoption-completion-gate-analysis.md"
+        ).read_text(encoding="utf-8")
+        normalized_completion_analysis = " ".join(completion_analysis.split())
+        self.assertIn(
+            "four rejected adoption attempts across three Work Item cycles",
+            normalized_completion_analysis,
+        )
+        self.assertIn(
+            "#117 frozen fresh-agent rerun", normalized_completion_analysis
+        )
 
     def test_container_first_verification_bypass_is_recorded_and_routed(
         self,
@@ -3496,7 +3538,9 @@ class DocumentationTests(unittest.TestCase):
         self.assertIn("v0.1.2", status)
         for projection in (status, roadmap):
             normalized_projection = " ".join(projection.split())
-            self.assertIn("Operational B3 work has begun", normalized_projection)
+            self.assertIn(
+                "Operational work toward B3 has begun", normalized_projection
+            )
             self.assertIn("exact-subject rerun has not begun", normalized_projection)
             self.assertIn("Nextcloud Mail", normalized_projection)
             self.assertIn("0051-select-the-v0-2-0", normalized_projection)
