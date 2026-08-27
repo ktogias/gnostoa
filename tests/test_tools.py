@@ -324,12 +324,66 @@ class PublicationBaselineTests(unittest.TestCase):
         self.assertIn("runtime.cli_version=%s", binding)
         self.assertIn("runtime.oci_label_version=%s", binding)
 
+    def test_ghcr_v0_2_0_publication_subject_constants_are_exact(self) -> None:
+        workflow_path = ROOT / ".github" / "workflows" / "publish-oci.yml"
+        parsed = load_yaml(workflow_path)
+
+        self.assertEqual(
+            {
+                "RELEASE_VERSION": "0.2.0",
+                "IMAGE_NAME": "ghcr.io/ktogias/gnostoa",
+                "IMAGE_REF": "ghcr.io/ktogias/gnostoa:0.2.0",
+                "SOURCE_TAG": "v0.2.0",
+                "SOURCE_COMMIT": "39aa4f25bdf46811600d4a0f6f9c0da52b73c542",  # pragma: allowlist secret -- public source revision
+                "SOURCE_TREE": "866c8c489c9052c566bd65b6e798567d4a284f16",  # pragma: allowlist secret -- public source tree
+                "TAG_OBJECT": "6d0357e075744ee316c725554d2e2c920b19a4dc",  # pragma: allowlist secret -- public tag object
+                "BASE_DIGEST": (
+                    "sha256:2c941e860699f878900b0edc2403613c234d4b32eda3cc9fa7036991a2a63c4a"
+                ),
+                "PUBLIC_DIGEST": (
+                    "sha256:a85ac8dde00f1ed8fb0425de08597828e97c246ec17ce6556f3f222b27ddb1c1"
+                ),
+                "NOTICE_DIGEST": (
+                    "sha256:68978e9fc1875f275c0dfb9bd71ed19d025b01f66409bb31d785d86165ee691c"
+                ),
+                "BUILD_DATE": "2026-08-27T19:04:17Z",
+            },
+            parsed["env"],
+        )
+
+    def test_ghcr_v0_2_0_publication_boundary_has_14_members(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "publish-oci.yml").read_text(
+            encoding="utf-8"
+        )
+        baseline = re.search(
+            r"write_sb2_baseline\(\) \{.*?<<'EOF'\n(?P<manifest>.*?)\n\s+EOF",
+            workflow,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(baseline)
+        assert baseline is not None
+        manifest = tuple(
+            line.strip()
+            for line in baseline.group("manifest").splitlines()
+            if line.strip()
+        )
+
+        self.assertEqual(14, len(manifest))
+        self.assertTrue(
+            any(line.endswith("tools/adoption_assurance.py") for line in manifest)
+        )
+        self.assertTrue(
+            any(line.endswith("tools/adoption_check.py") for line in manifest)
+        )
+        self.assertIn('test "$(wc -l < /tmp/gnostoa-sb2.sha256)" -eq 14', workflow)
+
     def test_ghcr_publication_workflow_is_exact_and_write_once(self) -> None:
         workflow_path = ROOT / ".github" / "workflows" / "publish-oci.yml"
         self.assertTrue(workflow_path.is_file())
         workflow = workflow_path.read_text(encoding="utf-8")
         parsed = load_yaml(workflow_path)
 
+        self.assertEqual("Publish Gnostoa v0.2.0 OCI image", parsed["name"])
         self.assertEqual({}, parsed["permissions"])
         self.assertEqual(["publish"], list(parsed["jobs"]))
         self.assertEqual(
@@ -342,45 +396,45 @@ class PublicationBaselineTests(unittest.TestCase):
             parsed["jobs"]["publish"]["permissions"],
         )
         self.assertEqual(
-            {"group": "gnostoa-ghcr-0.1.2", "cancel-in-progress": False},
+            {"group": "gnostoa-ghcr-0.2.0", "cancel-in-progress": False},
             parsed["concurrency"],
         )
         self.assertEqual(
             {
-                "RELEASE_VERSION": "0.1.2",
+                "RELEASE_VERSION": "0.2.0",
                 "IMAGE_NAME": "ghcr.io/ktogias/gnostoa",
-                "IMAGE_REF": "ghcr.io/ktogias/gnostoa:0.1.2",
-                "SOURCE_TAG": "v0.1.2",
-                "SOURCE_COMMIT": "56f6c5ede9ff1d6585404d102aba8413994a2697",  # pragma: allowlist secret -- public source revision
-                "SOURCE_TREE": "6db26c9ce2eeaa82882bac82312f675ee19e6d0a",  # pragma: allowlist secret -- public source tree
-                "TAG_OBJECT": "d9ea04ea649132e74bd3d9b8b089b86ea7e0d6a7",  # pragma: allowlist secret -- public tag object
+                "IMAGE_REF": "ghcr.io/ktogias/gnostoa:0.2.0",
+                "SOURCE_TAG": "v0.2.0",
+                "SOURCE_COMMIT": "39aa4f25bdf46811600d4a0f6f9c0da52b73c542",  # pragma: allowlist secret -- public source revision
+                "SOURCE_TREE": "866c8c489c9052c566bd65b6e798567d4a284f16",  # pragma: allowlist secret -- public source tree
+                "TAG_OBJECT": "6d0357e075744ee316c725554d2e2c920b19a4dc",  # pragma: allowlist secret -- public tag object
                 "BASE_DIGEST": (
                     "sha256:2c941e860699f878900b0edc2403613c234d4b32eda3cc9fa7036991a2a63c4a"
                 ),
                 "PUBLIC_DIGEST": (
-                    "sha256:bd8078467b0189d535f222072253e1ef9e8f5fb780f55b56269738cb8f4ef095"
+                    "sha256:a85ac8dde00f1ed8fb0425de08597828e97c246ec17ce6556f3f222b27ddb1c1"
                 ),
                 "NOTICE_DIGEST": (
                     "sha256:68978e9fc1875f275c0dfb9bd71ed19d025b01f66409bb31d785d86165ee691c"
                 ),
-                "BUILD_DATE": "2026-08-24T17:12:02Z",
+                "BUILD_DATE": "2026-08-27T19:04:17Z",
             },
             parsed["env"],
         )
 
         required = (
             "workflow_dispatch:",
-            "group: gnostoa-ghcr-0.1.2",
+            "group: gnostoa-ghcr-0.2.0",
             "cancel-in-progress: false",
             "contents: read",
             "packages: write",
             "id-token: write",
             "attestations: write",
             "ref: refs/tags/${{ env.SOURCE_TAG }}",
-            "56f6c5ede9ff1d6585404d102aba8413994a2697",  # pragma: allowlist secret -- public source revision
-            "6db26c9ce2eeaa82882bac82312f675ee19e6d0a",  # pragma: allowlist secret -- public source tree
-            "d9ea04ea649132e74bd3d9b8b089b86ea7e0d6a7",  # pragma: allowlist secret -- public tag object
-            "ghcr.io/ktogias/gnostoa:0.1.2",
+            "39aa4f25bdf46811600d4a0f6f9c0da52b73c542",  # pragma: allowlist secret -- public source revision
+            "866c8c489c9052c566bd65b6e798567d4a284f16",  # pragma: allowlist secret -- public source tree
+            "6d0357e075744ee316c725554d2e2c920b19a4dc",  # pragma: allowlist secret -- public tag object
+            "ghcr.io/ktogias/gnostoa:0.2.0",
             'GNOSTOA_CANDIDATE_REF="${SOURCE_TAG}"',
             'GNOSTOA_KIT_VERSION="${RELEASE_VERSION}"',
             '--build-arg BUILD_DATE="${BUILD_DATE}"',
@@ -404,7 +458,7 @@ class PublicationBaselineTests(unittest.TestCase):
             "manifest unknown|not found",
             'docker push "${IMAGE_REF}"',
             "--format '{{.Manifest.Digest}}'",
-            "bd8078467b0189d535f222072253e1ef9e8f5fb780f55b56269738cb8f4ef095",  # pragma: allowlist secret -- public-surface digest
+            "a85ac8dde00f1ed8fb0425de08597828e97c246ec17ce6556f3f222b27ddb1c1",  # pragma: allowlist secret -- public-surface digest
             "68978e9fc1875f275c0dfb9bd71ed19d025b01f66409bb31d785d86165ee691c",  # pragma: allowlist secret -- public notice digest
             "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
             "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
@@ -419,23 +473,36 @@ class PublicationBaselineTests(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertIn(marker, workflow)
 
-        sb2_paths = (
-            "tools/build_context_pack.py",
-            "tools/build_docs.py",
-            "tools/check_change_policy.py",
-            "tools/check_ci_policy.py",
-            "tools/check_guardrails.py",
-            "tools/check_runtime_lock.py",
-            "tools/cli.py",
-            "tools/knowledge_common.py",
-            "tools/repository_scope.py",
-            "tools/self_check.py",
-            "tools/task_envelope.py",
-            "tools/validate_bundle.py",
+        expected_sb2 = (
+            "e5eb50cc43ba3f212e4543d09df584cef2680a363cd5f872bcf36f42a414a79b  tools/adoption_assurance.py",
+            "bf55db5d4d998b23cb7ab6ee336c89a9f9ef9d31978c268bcbb7f42420feff78  tools/adoption_check.py",
+            "54339d70f04824605a8e7bee0fb8bce02906523109e1c012a20eb312b9cac1cb  tools/build_context_pack.py",
+            "e22de87395da6ff5e32428ed9b8cfc123a3512136aeb12f939868fa68f049676  tools/build_docs.py",
+            "6659c3680ad5ec0ca325f9a4b41fda7ef71b8c8f31ea584624c0c53f5587e156  tools/check_change_policy.py",
+            "9c0ba59484a81e6f9aa00296557e7b66ec698c1e6d44d9df8047563f4882484c  tools/check_ci_policy.py",
+            "dd4839c528451421fa5757468fd4bbc7c9ea475325d22b9e630d884d0fce7ab9  tools/check_guardrails.py",
+            "15cc878aea0a1eda46af40e443f2d87f6123d8def1eb7d22cb1b05649b308c8a  tools/check_runtime_lock.py",
+            "8d698a1acccbf9a3622f20954e35e6377217030f387beea058b46c7e4a26fef1  tools/cli.py",
+            "fbbcc38fb82aa572cd92c683ad983fda7398761a9c08b94cbce5d0080d6eb5ed  tools/knowledge_common.py",
+            "a61fc494a84cad5cad6923f072dc05fd2edb41162cf45c7446eb05303d73e5c4  tools/repository_scope.py",
+            "c0f7c63107c941b5bbfc89d4399c5a197f9c0939c06e5b8012c3aeeaa9b54824  tools/self_check.py",
+            "da5644815c1ed19d79f320c3c2758a4877f105d440d0a0206650ec8f92f06204  tools/task_envelope.py",
+            "7d728446c8a34e7515c626b1c3b8af6cfafee38318616a44a86303af3beb5ca1  tools/validate_bundle.py",
         )
-        for path in sb2_paths:
-            with self.subTest(sb2_path=path):
-                self.assertEqual(1, workflow.count(path))
+        baseline = re.search(
+            r"write_sb2_baseline\(\) \{.*?<<'EOF'\n(?P<manifest>.*?)\n\s+EOF",
+            workflow,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(baseline)
+        assert baseline is not None
+        actual_sb2 = tuple(
+            line.strip()
+            for line in baseline.group("manifest").splitlines()
+            if line.strip()
+        )
+        self.assertEqual(expected_sb2, actual_sb2)
+        self.assertIn('test "$(wc -l < /tmp/gnostoa-sb2.sha256)" -eq 14', workflow)
 
         self.assertNotIn("inputs:", workflow)
         self.assertNotIn("docker/login-action", workflow)
@@ -443,6 +510,15 @@ class PublicationBaselineTests(unittest.TestCase):
         self.assertNotIn("docker/build-push-action", workflow)
         self.assertNotRegex(workflow, r"ghcr\.io/ktogias/gnostoa:latest\b")
         self.assertNotIn("0.1.1", workflow)
+        for stale in (
+            "0.1.2",
+            "56f6c5ede9ff1d6585404d102aba8413994a2697",  # pragma: allowlist secret -- historical public source revision
+            "6db26c9ce2eeaa82882bac82312f675ee19e6d0a",  # pragma: allowlist secret -- historical public source tree
+            "d9ea04ea649132e74bd3d9b8b089b86ea7e0d6a7",  # pragma: allowlist secret -- historical public tag object
+            "bd8078467b0189d535f222072253e1ef9e8f5fb780f55b56269738cb8f4ef095",  # pragma: allowlist secret -- historical public digest
+        ):
+            with self.subTest(stale=stale):
+                self.assertNotIn(stale, workflow)
         self.assertEqual(3, workflow.count("assert_tag_absent"))
         self.assertEqual(1, workflow.count('docker push "${IMAGE_REF}"'))
 
