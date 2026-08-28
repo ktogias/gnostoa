@@ -97,23 +97,26 @@ self-hosting measurements and narrowed the claim: the envelope and projection
 improve orientation and resumability but are not workflow enforcement. The
 [bootstrap Decision](knowledge/decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md)
 keeps the broader platform off the critical path: the full workflow platform
-is not a publication prerequisite. The first real
+is not a publication prerequisite. The strict
 [B3 independent-adoption methodology](knowledge/assessments/b3-independent-adoption-experiment-design.md)
-is pre-registered, and Nextcloud Mail is the selected target. Operational work
-toward B3 has begun. Four autonomous adoption attempts are recorded: the
-baseline attempt and later frozen fresh-agent rerun under #117, the
-route-activation diagnostic under #122, and the post-remediation rerun under
-#125. All four ended with owner acceptance `REJECT`, measured utility `UNKNOWN`
-and durable adoption `NO`; none established accepted or durable adoption. Their
-exact historical records remain bounded as controlled pre-B3 evidence because
-they did not satisfy the pre-registration's strict independent-owner
-eligibility. That evidentiary classification does not erase the operational
-chronology. The `v0.2.0` exact-subject rerun has not begun.
-The `v0.2.0` source and immutable OCI execution subject are published and
-digest-bound. The current sequence reconciles that release and then freezes
-the exact experiment contract before the rerun. `ktogias/mail` is the mutation
-workspace; `nextcloud/mail` retains
-semantic, Issue and final Change Request authority.
+remains pre-registered for a later `INDEPENDENT` evidence stage. Four
+autonomous Nextcloud Mail adoption attempts are retained as historical
+controlled pre-B3 evidence: the baseline and frozen fresh-agent rerun under
+#117, the route-activation diagnostic under #122, and the post-remediation
+rerun under #125. Their original `REJECT` / `UNKNOWN` / `NO` dispositions
+remain unchanged.
+
+[Decision 0052](knowledge/decisions/0052-use-staged-evidence-maturity-for-early-adoption-trials.md)
+now governs the early product phase through staged evidence. The `v0.2.0`
+source and immutable OCI execution subject are published, reconciled and
+digest-bound. The release-series experiment boundary is the bounded
+[Nextcloud Mail `OWNER-LED` baseline](knowledge/assessments/nextcloud-mail-v0-2-0-owner-led-adoption-trial-baseline.md),
+with `human:ktogias` as the initial semantic and evaluation authority. The
+concrete task run, preliminary owner assessment and retrospective are later
+separate work; upstream or project-participant feedback is additive and does
+not block them. `ktogias/mail` is the local mutation workspace, while
+`nextcloud/mail` retains Issue and final Change Request authority. This
+evidence establishes neither independent adoption nor upstream acceptance.
 
 Gnostoa is not yet a hosted service, a workflow engine, a general-purpose graph
 database or a production-ready release. It does not claim reduced engineering

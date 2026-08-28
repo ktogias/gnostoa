@@ -3546,8 +3546,8 @@ class DocumentationTests(unittest.TestCase):
             self.assertIn(decision_name, projection)
 
         # The invariant is that the workflow need stays durably planned while
-        # completed B2 evidence remains distinct from the selected B3 target,
-        # four recorded adoption attempts and the new exact-subject rerun.
+        # completed B2 evidence remains distinct from the historical pre-B3 attempts
+        # and the currently selected owner-led evidence stream.
         self.assertIn("B2/P1 and B2/P2 are both complete", roadmap)
         self.assertIn("B2/P1 completed", status)
         for projection in (roadmap, status):
@@ -3556,9 +3556,12 @@ class DocumentationTests(unittest.TestCase):
                 "https://github.com/ktogias/gnostoa/issues/24",
                 normalized_projection,
             )
-            self.assertIn("Operational work toward B3 has begun", normalized_projection)
-            self.assertIn("exact-subject rerun has not begun", normalized_projection)
+            self.assertIn("Decision 0052", normalized_projection)
+            self.assertIn("`OWNER-LED`", normalized_projection)
+            self.assertIn("`INDEPENDENT`", normalized_projection)
+            self.assertIn("later separate work", normalized_projection)
             self.assertIn("Nextcloud Mail", normalized_projection)
+            self.assertNotIn("exact-subject rerun has not begun", normalized_projection)
             self.assertNotIn("Active B2/P1", normalized_projection)
         self.assertIn("https://github.com/ktogias/gnostoa/issues/146", roadmap)
         self.assertIn("need has already been demonstrated", status)
@@ -3568,7 +3571,7 @@ class DocumentationTests(unittest.TestCase):
         )
 
     def test_current_b3_projection_preserves_operational_chronology(self) -> None:
-        projections = {
+        current_projections = {
             "README": (ROOT / "README.md").read_text(encoding="utf-8"),
             "roadmap": (ROOT / "docs" / "roadmap.md").read_text(encoding="utf-8"),
             "status": (ROOT / "docs" / "status.md").read_text(encoding="utf-8"),
@@ -3578,6 +3581,11 @@ class DocumentationTests(unittest.TestCase):
                 / "assessments"
                 / "b3-independent-adoption-experiment-design.md"
             ).read_text(encoding="utf-8"),
+        }
+        detailed_current_projections = {
+            name: current_projections[name] for name in ("README", "B3 design")
+        }
+        historical_projections = {
             "release result": (
                 ROOT
                 / "knowledge"
@@ -3592,8 +3600,30 @@ class DocumentationTests(unittest.TestCase):
             ).read_text(encoding="utf-8"),
         }
 
-        for name, projection in projections.items():
-            with self.subTest(projection=name):
+        for name, projection in current_projections.items():
+            with self.subTest(current_projection=name):
+                normalized = " ".join(projection.split())
+                self.assertIn("four autonomous", normalized.lower())
+                self.assertIn("`REJECT`", normalized)
+                self.assertIn("`UNKNOWN`", normalized)
+                self.assertIn("`NO`", normalized)
+                self.assertIn("controlled pre-B3", normalized)
+                self.assertIn("Decision 0052", normalized)
+                self.assertIn("`OWNER-LED`", normalized)
+                self.assertIn("`INDEPENDENT`", normalized)
+                self.assertNotIn("exact-subject rerun has not begun", normalized)
+                self.assertNotIn("exact B3 contract freeze", normalized)
+                self.assertNotIn("initial-adoption gate", normalized)
+
+        for name, projection in detailed_current_projections.items():
+            with self.subTest(detailed_current_projection=name):
+                normalized = " ".join(projection.split())
+                self.assertIn("#117", normalized)
+                self.assertIn("#122", normalized)
+                self.assertIn("#125", normalized)
+
+        for name, projection in historical_projections.items():
+            with self.subTest(historical_projection=name):
                 normalized = " ".join(projection.split())
                 self.assertIn("Operational work toward B3 has begun", normalized)
                 self.assertIn("four autonomous adoption attempts", normalized.lower())
@@ -3609,15 +3639,12 @@ class DocumentationTests(unittest.TestCase):
                 self.assertNotIn("Operational B3 work", normalized)
                 self.assertNotIn("initial-adoption gate", normalized)
 
-        frozen_design = (
-            ROOT
-            / "knowledge"
-            / "assessments"
-            / "b3-independent-adoption-experiment-design.md"
-        ).read_text(encoding="utf-8")
-        self.assertIn("## Later chronology note", frozen_design)
+        frozen_design = current_projections["B3 design"]
+        self.assertIn("## Later chronology and staged-evidence note", frozen_design)
         self.assertIn("not a current status projection", frozen_design)
         self.assertIn("B3 has not begun", frozen_design)
+        self.assertIn("Decision 0052", frozen_design)
+        self.assertIn("`OWNER-LED`", frozen_design)
 
         completion_analysis = (
             ROOT
@@ -3773,10 +3800,15 @@ class DocumentationTests(unittest.TestCase):
         self.assertIn("v0.2.0", status)
         for projection in (status, roadmap):
             normalized_projection = " ".join(projection.split())
-            self.assertIn("Operational work toward B3 has begun", normalized_projection)
-            self.assertIn("exact-subject rerun has not begun", normalized_projection)
+            self.assertIn("Decision 0052", normalized_projection)
+            self.assertIn("`OWNER-LED`", normalized_projection)
+            self.assertIn("`INDEPENDENT`", normalized_projection)
+            self.assertIn("later separate work", normalized_projection)
             self.assertIn("Nextcloud Mail", normalized_projection)
-            self.assertIn("0051-select-the-v0-2-0", normalized_projection)
+            self.assertIn("0052-use-staged-evidence-maturity", normalized_projection)
+            self.assertIn("owner-led-adoption-trial-baseline", normalized_projection)
+            self.assertNotIn("exact-subject rerun has not begun", normalized_projection)
+            self.assertNotIn("exact B3 contract freeze", normalized_projection)
             self.assertNotIn("candidate selection remains", normalized_projection)
             self.assertNotIn(
                 "candidate selection — one eligible", normalized_projection

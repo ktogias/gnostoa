@@ -234,3 +234,22 @@ back; release reconciliation itself is not transfer evidence.
   inheriting the historical 12-file manifest silently.
 - Work Item #146 remains open through digest-bound reconciliation and the
   separate B3 freeze; the exact-subject rerun has not begun.
+
+## Later staged-evidence amendment
+
+[Decision 0052](0052-use-staged-evidence-maturity-for-early-adoption-trials.md)
+later established a general staged-evidence policy for Gnostoa's early product
+phase. It partially supersedes this Decision only where sections H and M and the
+final consequence above make a strict `INDEPENDENT` B3 contract a prerequisite
+for completion of the v0.2.0 release Work Item.
+
+For that release series, an integrated and provider-read-back `OWNER-LED`
+baseline now satisfies the experiment-boundary requirement. The task run,
+initial assessment, retrospective, later upstream feedback and any future
+`COLLABORATIVE` or `INDEPENDENT` evidence are separate work and are not release
+completion gates.
+
+This amendment does not change the source, tag, Release, OCI, provenance,
+verification, reconciliation, effect-authority or non-claim rules recorded
+above. Where the earlier B3-dependent completion language conflicts with this
+amendment, Decision 0052 and this section govern.

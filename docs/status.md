@@ -170,25 +170,27 @@ resumability and bounded human understanding, and are **not** an enforcement
 mechanism. The failed property that follows from it — critical workflow
 constraints are advisory rather than mechanically enforced — remains
 **unmitigated**, and **no successor control experiment or mitigation is
-selected**. The first real
+selected**. The strict
 [B3 independent-adoption methodology](../knowledge/assessments/b3-independent-adoption-experiment-design.md)
-is pre-registered, and Nextcloud Mail is selected. Operational work toward B3
-has begun. Four autonomous adoption attempts are recorded: the baseline attempt
-and later frozen fresh-agent rerun under #117, the route-activation diagnostic
-under #122, and the post-remediation rerun under #125. All four ended with owner
-acceptance `REJECT`, measured utility `UNKNOWN` and durable adoption `NO`; none
-established accepted or durable adoption. Their exact historical records remain
-bounded as controlled pre-B3 evidence because they did not satisfy the
-pre-registration's strict independent-owner eligibility. That evidentiary
-classification does not erase the operational chronology. The `v0.2.0`
-exact-subject rerun has not begun.
-The `v0.2.0` source and immutable OCI subject are published and digest-bound.
-The current sequence reconciles that release, then freezes the exact experiment
-contract under
-[Decision 0051](../knowledge/decisions/0051-select-the-v0-2-0-source-and-oci-publication-series.md).
-`ktogias/mail` is the mutation workspace; `nextcloud/mail` retains semantic,
-Issue and final Change Request authority. Selection, release and freeze do not
-themselves count as transfer evidence or owner disposition.
+remains pre-registered for a later `INDEPENDENT` evidence stage. Four
+autonomous Nextcloud Mail adoption attempts remain historical controlled
+pre-B3 evidence, with their original `REJECT` / `UNKNOWN` / `NO`
+dispositions unchanged.
+
+[Decision 0052](../knowledge/decisions/0052-use-staged-evidence-maturity-for-early-adoption-trials.md)
+now governs early-product evidence through distinct `SELF-HOSTED`,
+`OWNER-LED`, `COLLABORATIVE` and `INDEPENDENT` classes. The current
+Nextcloud Mail path is `OWNER-LED`, with `human:ktogias` as the initial
+semantic and evaluation authority. The `v0.2.0` source and immutable OCI
+subject are published, reconciled and digest-bound, and the release-series
+experiment boundary is the
+[bounded owner-led baseline](../knowledge/assessments/nextcloud-mail-v0-2-0-owner-led-adoption-trial-baseline.md).
+The concrete task run, preliminary assessment and retrospective are later
+separate work. Upstream feedback is additive rather than blocking, while
+strict `INDEPENDENT` evidence remains a later maturity-stage activity.
+`ktogias/mail` is the local mutation workspace; `nextcloud/mail` retains
+Issue and final Change Request authority. No independent-adoption or
+upstream-acceptance claim is made.
 
 This page deliberately does not restate delivery chronology, live Work Item
 lifecycle or candidate-bound measured outcomes, because each of those changes
