@@ -38,6 +38,9 @@ x-project-knowledge:
       target: /decisions/0050-separate-adoption-observations-from-readiness-and-owner-disposition.md
     - kind: supersedes
       target: /decisions/0051-select-the-v0-2-0-source-and-oci-publication-series.md
+      description: >-
+        Partial supersession limited to section H, the B3-dependent sentence
+        in section M, and the corresponding Work Item completion condition.
     - kind: references
       target: /assessments/b3-independent-adoption-experiment-design.md
     - kind: governs
