@@ -19,6 +19,8 @@ x-project-knowledge:
   relations:
     - kind: governed-by
       target: /decisions/0036-canonicalize-bounded-self-hosted-delivery-practice.md
+    - kind: governed-by
+      target: /decisions/0053-require-lightweight-work-item-micro-retrospection.md
     - kind: depends-on
       target: /lifecycles/evidence-gated-capability-evolution.md
     - kind: references
@@ -54,7 +56,10 @@ result needed for the next owner decision. There is no fixed length limit.
 
 1. **Orient and read back the current subject.** Start through `AGENTS.md`; bind
    protected source, provider lifecycle and the active Work Item without replaying
-   raw conversations. Use Decision 0016's resume route.
+   raw conversations. Before creating another Work Item or PR for the same outcome,
+   read provider state for an existing open same-purpose record. Resume it when it
+   already owns the outcome; otherwise explicitly separate or supersede it before
+   creating a competing canonical path. Use Decision 0016's resume route.
 2. **Classify the observed gap.** Apply the
    [canonical lifecycle](../lifecycles/evidence-gated-capability-evolution.md);
    do not infer a new mechanism or implementation from research or selection.
@@ -90,9 +95,14 @@ result needed for the next owner decision. There is no fixed length limit.
     evidence. Prove the relevant subject unchanged before reuse; when it changed
     materially, replay only affected evidence. Re-read navigation under
     [Decision 0024](../decisions/0024-separate-stable-navigation-from-volatile-state.md).
-14. **Close the Work Item last.** Close only after integrated/provider read-back,
-    subject re-binding and reconciliation succeed; then record the next owner
-    decision without starting it automatically.
+14. **Record the micro-retrospective.** Before closure, answer briefly: what was
+    expected; what actually happened; what surprised us or was detected late;
+    which existing control worked or failed to activate; and whether one concrete
+    improvement is worth considering later. The close-out comment is normally
+    sufficient. A finding is not automatic implementation admission.
+15. **Close the Work Item last.** Close only after integrated/provider read-back,
+    subject re-binding, reconciliation and the micro-retrospective succeed; then
+    record the next owner decision without starting it automatically.
 
 ## Verification
 
