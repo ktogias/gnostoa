@@ -19,6 +19,9 @@ sources:
   - id: adoption-assurance-decision
     resource: 0050-separate-adoption-observations-from-readiness-and-owner-disposition.md
     title: Separate adoption observations from readiness and owner disposition
+  - id: v0-2-0-publication-result
+    resource: ../assessments/v0-2-0-source-and-oci-publication-result.md
+    title: v0.2.0 source and OCI publication result
 x-project-knowledge:
   id: kit.decision.0051.select-the-v0-2-0-source-and-oci-publication-series
   owners:
@@ -38,17 +41,19 @@ x-project-knowledge:
       target: /runbooks/publish-version-bound-source-and-oci-release.md
     - kind: references
       target: /assessments/b3-independent-adoption-experiment-design.md
+    - kind: references
+      target: /assessments/v0-2-0-source-and-oci-publication-result.md
 ---
 
 # Select the v0.2.0 source and OCI publication series
 
 ## Context
 
-The current immutable release is `v0.1.2`. It predates the public
-`knowledge adoption-check` command and the `gnostoa-adoption-check/v2` result
-contract now integrated on protected `main`. Decisions 0047 and 0050 classify
-that command and result as additive public capabilities that require a later
-source/runtime release before general reliance.
+At selection time the current immutable release was `v0.1.2`. It predates the
+public `knowledge adoption-check` command and the `gnostoa-adoption-check/v2`
+result contract now integrated on protected `main`. Decisions 0047 and 0050
+classify that command and result as additive public capabilities that require a
+later source/runtime release before general reliance.
 
 The accountable owner selected source publication, OCI publication and a
 subsequent exact-subject freeze for the already chosen Nextcloud Mail transfer
@@ -176,13 +181,56 @@ authorize a moved subject. Each irreversible effect is executed only after
 fresh read-back confirms the exact accepted subject, selected metadata,
 declared effect envelope and stop conditions in this Decision.
 
+### K. Record the observed source and OCI result
+
+Separate owner-authorized effects created annotated tag `v0.2.0` at tag object
+`6d0357e075744ee316c725554d2e2c920b19a4dc`, commit
+`39aa4f25bdf46811600d4a0f6f9c0da52b73c542` and tree
+`866c8c489c9052c566bd65b6e798567d4a284f16`, then published exactly
+`ghcr.io/ktogias/gnostoa@sha256:f89bf32c0c4b86bac71fa008579b2385e6ae39bf4822f685479c4f2cc22bfca4`
+for `linux/amd64`. Workflow run `33124503631`, attempt 1, read the digest back,
+pulled and verified it, created attestation `43531953`, verified provenance and
+anonymous access, and left `latest` absent. The durable result and evidence
+limits live in the linked v0.2.0 publication assessment.
+
+The publication used workflow source
+`b932ed0529087458e6d6406b83b17def23760cb0`. A later bounded correction on
+protected `main` added fail-closed first-attempt and triggering-actor guards for
+future workflow runs. The completed run itself was already attempt 1 with both
+`actor` and `triggering_actor` equal to the accountable owner; no rerun or
+republish occurred.
+
+### L. Transition the current release verifier
+
+Bind `ci/verify release` to the immutable v0.2.0 registry digest, never the
+version tag. Preserve fail-closed platform, version, source-revision,
+runtime-inventory, public-digest, complete 14-file SB2, notice and self-check
+controls. `deployable_artifact=true` means verified public artifact availability
+for that exact digest only; it does not mean deployment authorization,
+production readiness, reproducibility, general security or qualified legal
+clearance. v0.1.2 remains an immutable historical artifact but ceases to be the
+current verifier target once this reconciliation is integrated and read back.
+
+### M. Reconcile the result authority and public projection
+
+Preserve one authoritative v0.2.0 result assessment and route current public
+status to the immutable digest. Do not freeze mutable package permissions,
+visibility, linkage or Release presentation as timeless source truth. Do not
+claim exact-digest rebuild repeatability: it was not tested, is not required for
+this release and any rebuild requires a later release identity. Keep the exact
+B3 freeze separate until this reconciliation is integrated and provider-read
+back; release reconciliation itself is not transfer evidence.
+
 ## Consequences
 
-- General B3 reliance can use an immutable released v2-capable subject instead
-  of a development-branch candidate.
+- `v0.2.0` is now an immutable source identity and one public write-once
+  `linux/amd64` OCI digest; final repository reconciliation remains subject to
+  exact-candidate owner acceptance and integrated/provider read-back.
+- General B3 reliance can use that immutable released v2-capable subject after
+  the separate exact-subject contract is frozen.
 - The source, workflow and registry identities remain distinct and are created
   in that order.
 - The new executable paths enter the bounded release review surface rather than
   inheriting the historical 12-file manifest silently.
-- Publication remains a multi-phase Work Item and closes only after immutable
-  read-back, digest-bound reconciliation and the separate B3 freeze.
+- Work Item #146 remains open through digest-bound reconciliation and the
+  separate B3 freeze; the exact-subject rerun has not begun.

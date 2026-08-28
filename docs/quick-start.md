@@ -6,17 +6,17 @@ pack without adopting Gnostoa into a repository or changing canonical
 Markdown. Full repository, CI and provider integration is a separate
 [adoption route](core/adoption.md).
 
-## Published v0.1.2 OCI route
+## Published v0.2.0 OCI route
 
 Requirements: Git and a Docker-compatible container runtime. The image pull is
 anonymous; after the pull, validation and context generation run offline.
 
 ```bash
-git clone --branch v0.1.2 --depth 1 https://github.com/ktogias/gnostoa.git
+git clone --branch v0.2.0 --depth 1 https://github.com/ktogias/gnostoa.git
 cd gnostoa
-test "$(git rev-parse HEAD)" = "56f6c5ede9ff1d6585404d102aba8413994a2697" # pragma: allowlist secret -- public source revision
+test "$(git rev-parse HEAD)" = "39aa4f25bdf46811600d4a0f6f9c0da52b73c542" # pragma: allowlist secret -- public source revision
 
-GNOSTOA_IMAGE="ghcr.io/ktogias/gnostoa@sha256:0cd31a2a649c4ffede8972680c6779c981decf5ce8605f749fa7d58751472f80" # pragma: allowlist secret -- public registry identity
+GNOSTOA_IMAGE="ghcr.io/ktogias/gnostoa@sha256:f89bf32c0c4b86bac71fa008579b2385e6ae39bf4822f685479c4f2cc22bfca4" # pragma: allowlist secret -- public registry identity
 docker pull "$GNOSTOA_IMAGE"
 
 docker run --rm --network none \
@@ -54,12 +54,12 @@ core profile and the example bundle, not Gnostoa's self-knowledge bundle.
 
 ## Historical source-tag documentation
 
-The documentation stored inside immutable tag `v0.1.2` records the source-only
+The documentation stored inside immutable tag `v0.2.0` records the source-only
 state at the moment that tag was created. The tag cannot be rewritten after the
 later OCI publication. Current `main`, the
-[`v0.1.2` GitHub Release](https://github.com/ktogias/gnostoa/releases/tag/v0.1.2)
-and the [publication result](../knowledge/assessments/v0-1-2-source-and-oci-publication-result.md)
-record the later public image. Use the immutable digest above, not the `0.1.2`
+[`v0.2.0` GitHub Release](https://github.com/ktogias/gnostoa/releases/tag/v0.2.0)
+and the [publication result](../knowledge/assessments/v0-2-0-source-and-oci-publication-result.md)
+record the later public image. Use the immutable digest above, not the `0.2.0`
 registry tag alone, as the OCI consumer identity.
 
 No Python wheel or package registry artifact is published. For native evaluation
