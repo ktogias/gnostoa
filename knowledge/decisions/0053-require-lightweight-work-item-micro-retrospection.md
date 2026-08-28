@@ -32,7 +32,7 @@ x-project-knowledge:
       target: /decisions/0018-adopt-evidence-gated-capability-evolution-for-gnostoa-self-governance.md
     - kind: derived-from
       target: /assessments/v0-2-0-release-series-and-staged-evidence-retrospective.md
-    - kind: updates
+    - kind: references
       target: /runbooks/deliver-bounded-self-hosted-slice.md
 ---
 
