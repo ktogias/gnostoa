@@ -1,4 +1,4 @@
-name: Build staged-evidence projection patch
+name: Apply staged-evidence projection patch
 
 on:
   push:
@@ -6,10 +6,11 @@ on:
       - agent/freeze-v0-2-0-b3-contract
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  build-patch:
+  apply-patch:
+    if: ${{ github.event.head_commit.message == 'Authorize bounded staged-evidence projection application' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -17,25 +18,43 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           ref: agent/freeze-v0-2-0-b3-contract
-          fetch-depth: 1
-          persist-credentials: false
+          fetch-depth: 0
+          persist-credentials: true
 
-      - name: Apply fail-closed replacements in the disposable workspace
-        run: python .github/scripts/apply_staged_evidence_projections.py
+      - name: Bind the triggering branch subject
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
 
-      - name: Check the generated patch
-        run: git diff --check
+      - name: Apply the previously verified patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python .github/scripts/apply_staged_evidence_projections.py
+          rm .github/workflows/build-staged-evidence-projection-patch.yml
+          rm .github/scripts/apply_staged_evidence_projections.py
 
-      - name: Upload the bounded patched files
-        # actions/upload-artifact v4.6.2
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: staged-evidence-projection-files
-          path: |
-            README.md
-            docs/roadmap.md
-            docs/status.md
-            knowledge/assessments/b3-independent-adoption-experiment-design.md
-            knowledge/decisions/0052-use-staged-evidence-maturity-for-early-adoption-trials.md
-          if-no-files-found: error
-          retention-days: 1
+          expected=$(cat <<'EOF'
+          .github/scripts/apply_staged_evidence_projections.py
+          .github/workflows/build-staged-evidence-projection-patch.yml
+          README.md
+          docs/roadmap.md
+          docs/status.md
+          knowledge/assessments/b3-independent-adoption-experiment-design.md
+          knowledge/decisions/0052-use-staged-evidence-maturity-for-early-adoption-trials.md
+          EOF
+          )
+          actual=$(git status --short | sed 's/^...//' | sort)
+          test "${actual}" = "$(printf '%s\n' "${expected}" | sed 's/^          //' | sort)"
+          git diff --check
+
+      - name: Commit and push without rewriting history
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Konstantinos Togias"
+          git config user.email "info@ktogias.gr"
+          git add -A
+          git commit -m "Align current projections with staged evidence"
+          git push origin HEAD:agent/freeze-v0-2-0-b3-contract
