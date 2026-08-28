@@ -95,6 +95,7 @@ inherited, copied or loaded by adopting projects.
 - [v0.1.1 source and OCI publication result](assessments/v0-1-1-source-and-oci-publication-result.md)
 - [v0.1.2 source and OCI publication result](assessments/v0-1-2-source-and-oci-publication-result.md)
 - [v0.2.0 release-candidate and source-boundary result](assessments/v0-2-0-release-candidate-and-source-boundary-result.md)
+- [v0.2.0 source and OCI publication result](assessments/v0-2-0-source-and-oci-publication-result.md)
 - [GitHub security observation pilot](assessments/github-security-observation-pilot.md)
 - [Weather-note cold-start onboarding result](assessments/weather-note-cold-start-onboarding-result.md)
 - [Weather-note evaluation root-cause retrospective](assessments/weather-note-evaluation-root-cause-retrospective.md)

@@ -22,8 +22,9 @@ exact historical records remain bounded as controlled pre-B3 evidence because
 they did not satisfy the pre-registration's strict independent-owner
 eligibility. That evidentiary classification does not erase the operational
 chronology. The `v0.2.0` exact-subject rerun has not begun.
-The current owner-selected sequence is the
-[`v0.2.0` source-and-OCI publication and exact-subject freeze](../knowledge/decisions/0051-select-the-v0-2-0-source-and-oci-publication-series.md)
+The `v0.2.0` source and OCI artifact are published. The current owner-selected
+sequence is their digest-bound reconciliation followed by the
+[`v0.2.0` exact-subject freeze](../knowledge/decisions/0051-select-the-v0-2-0-source-and-oci-publication-series.md)
 under [Work Item #146](https://github.com/ktogias/gnostoa/issues/146).
 `ktogias/mail` remains the mutation workspace and `nextcloud/mail` retains
 semantic, Issue and final Change Request authority. Live lifecycle remains
@@ -279,13 +280,14 @@ B2/P1 and B2/P2 are completed evidence. C4-v0 was rejected and no successor
 control is selected. Nextcloud Mail is already selected. Operational work
 toward B3 has begun, but its adoption attempts were rejected and remain bounded
 as controlled pre-B3 evidence under the strict eligibility contract. The
-`v0.2.0` exact-subject rerun has not begun. The current delivery item is the
-bounded `v0.2.0` source-and-OCI publication series and subsequent exact B3
-contract freeze. Provider state remains authoritative for its live lifecycle.
+`v0.2.0` exact-subject rerun has not begun. The current delivery sequence is
+the published release's digest-bound reconciliation followed by the separate
+exact B3 contract freeze. Provider state remains authoritative for its live
+lifecycle.
 
 | Work Items | Problem addressed | Completion signal | Non-goal |
 |---|---|---|---|
-| [#146](https://github.com/ktogias/gnostoa/issues/146) | The integrated adoption-check v2 capability is not yet available through an immutable released Gnostoa source-and-runtime subject. | The `v0.2.0` source, write-once `linux/amd64` OCI digest, provenance and digest-bound reconciliation agree; the later Nextcloud Mail B3 contract is frozen to exact subjects and the Work Item closes last. | B3 execution or owner disposition; `latest`, extra tags, multi-architecture, reproducibility claims, deployment or a new release framework. |
+| [#146](https://github.com/ktogias/gnostoa/issues/146) | The immutable `v0.2.0` source and OCI artifact exist, while current release verification and public projections still require digest-bound reconciliation before the later B3 freeze. | Source, OCI digest, provenance, integrated release verification and public records agree; the later Nextcloud Mail B3 contract is frozen to exact subjects and the Work Item closes last. | B3 execution or owner disposition; `latest`, extra tags, multi-architecture, reproducibility claims, deployment or a new release framework. |
 
 ## Research
 
@@ -313,8 +315,9 @@ is the completed C4-v0 experiment whose control was rejected. B3 methodology is
 pre-registered and Nextcloud Mail is selected. Operational work toward B3 has
 begun; the rejected adoption attempts remain controlled pre-B3 records and
 produced no final result. The `v0.2.0` exact-subject rerun has not begun. Work
-Item #146 separately governs the `v0.2.0` publication and exact-subject freeze;
-it does not execute or disposition the candidate-specific experiment.
+Item #146 separately governs the published release's reconciliation and
+exact-subject freeze; it does not execute or disposition the candidate-specific
+experiment.
 
 The work in PR #4 is retained here as an exact research input for #3. It is not
 discarded, accepted or part of the first-publication baseline while its review
