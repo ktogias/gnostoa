@@ -50,6 +50,13 @@ That incident is evidence of the same failure family: current provider state was
 not re-read before creating another coordination record, so reflection itself
 amplified the evidence and review surface.
 
+The duplicate path also exposed a separate, mechanically decidable namespace
+gap: both retrospective branches independently selected a filename beginning
+with Decision number `0053`. Their full `x-project-knowledge.id` values differed,
+so the existing unique-ID validation would not reject both files if they were
+otherwise combined. Semantic same-purpose duplication and numeric Decision-prefix
+collision are therefore different problems.
+
 ## Decision
 
 ### A. End every bounded Work Item with a micro-retrospective
@@ -77,8 +84,13 @@ owns the outcome, resume or update it. If a materially different path is needed,
 explicitly supersede or separate the existing path before creating a competing
 canonical candidate.
 
-This is a routing/read-back rule, not a duplicate-detection engine. No new bot,
-checker, provider adapter or state machine is selected.
+This is a routing/read-back rule, not a semantic duplicate-detection engine. No
+new bot, provider adapter or state machine is selected.
+
+The separate numeric Decision-prefix collision does **not** share that rejection.
+It is a deterministic namespace-integrity property that can be checked cheaply.
+This Decision records the distinction but does not implement or admit a checker;
+that bounded validation change remains separate follow-up work.
 
 ### C. Keep formal retrospectives separately admitted
 
@@ -95,5 +107,8 @@ when the release, incident, repeated rework or unresolved learning warrants it.
 - Retrospective findings remain evidence, not automatic implementation scope.
 - The duplicate #155/#156 incident is retained as the falsification that motivated
   the resume-before-create clarification.
-- No owner-led trial, Mail mutation, upstream outreach, release effect or backlog
-  implementation is authorized by this Decision.
+- Numeric Decision-prefix uniqueness is explicitly separated from semantic
+  duplicate detection and retained for separately admitted deterministic
+  validation.
+- No owner-led trial, Mail mutation, upstream outreach, release effect, validator
+  implementation or backlog implementation is authorized by this Decision.
