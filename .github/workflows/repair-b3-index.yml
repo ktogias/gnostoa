@@ -1,0 +1,49 @@
+name: One-shot canonical B3 index repair
+
+on:
+  push:
+    branches:
+      - agent/freeze-nextcloud-mail-v0-2-0-b3-contract
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: agent/freeze-nextcloud-mail-v0-2-0-b3-contract
+          fetch-depth: 0
+
+      - name: Restore the exact base index and add only the new route
+        shell: bash
+        run: |
+          set -euo pipefail
+          git show 194aa1cbc342487ee72f8b912e69a5729d8aa568:knowledge/index.md > knowledge/index.md
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('knowledge/index.md')
+          text = path.read_text()
+          anchor = '- [B3 independent-adoption experiment design](assessments/b3-independent-adoption-experiment-design.md)\n'
+          addition = '- [Nextcloud Mail v0.2.0 B3 exact-subject contract](assessments/nextcloud-mail-v0-2-0-b3-exact-subject-contract.md)\n'
+          assert text.count(anchor) == 1
+          assert addition not in text
+          path.write_text(text.replace(anchor, anchor + addition))
+          PY
+          git diff --check
+          test "$(git diff --name-only | paste -sd, -)" = "knowledge/index.md"
+
+      - name: Commit the one-path repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add knowledge/index.md
+          git commit -m 'Restore canonical index for B3 contract'
+          git push origin HEAD:agent/freeze-nextcloud-mail-v0-2-0-b3-contract
