@@ -36,7 +36,7 @@ x-project-knowledge:
       target: /decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md
     - kind: governed-by
       target: /decisions/0050-separate-adoption-observations-from-readiness-and-owner-disposition.md
-    - kind: references
+    - kind: supersedes
       target: /decisions/0051-select-the-v0-2-0-source-and-oci-publication-series.md
     - kind: references
       target: /assessments/b3-independent-adoption-experiment-design.md
@@ -90,8 +90,10 @@ process ladder:
    supplies the task authority and evaluation required for a strict adoption
    experiment.
 
-Evidence may move to a richer class when new feedback exists. Absence of a
-higher class does not invalidate a correctly labelled lower-class result.
+An evidence stream may accumulate richer, separately labelled layers. Each
+original result retains the evidence class under which it was produced. The
+absence of a richer class does not invalidate a correctly labelled lower-class
+result.
 
 ### B. Classify the current Nextcloud Mail experiment as owner-led
 
@@ -188,6 +190,31 @@ project subjects. Task selection, execution, result assessment and any later
 external feedback belong to subsequent experimental records. They are not
 provider gates for the release lifecycle.
 
+### I. Scope the staged-evidence policy and the partial supersession
+
+This Decision establishes the general evidence-class policy for Gnostoa's
+early-stage trials. It is not a temporary exception that expires with `v0.2.0`.
+It remains the evidence-selection authority until a later explicit maturity
+decision changes it.
+
+Its `supersedes` relation to
+[Decision 0051](0051-select-the-v0-2-0-source-and-oci-publication-series.md)
+is deliberately partial because Decision 0051 also owns the immutable release
+semantics. Decision 0052 supersedes only the parts of Decision 0051 that make a
+strict `INDEPENDENT` B3 contract a prerequisite for completion of the v0.2.0
+release Work Item:
+
+- section H's strict B3 freeze requirement;
+- the B3-dependent sentence in section M; and
+- the corresponding final consequence and Work Item completion condition.
+
+All source, tag, Release, OCI, provenance, verifier, reconciliation, effect and
+non-claim rules in Decision 0051 remain authoritative. For Work Item 146,
+integration and provider read-back of the bounded `OWNER-LED` baseline satisfy
+the experiment-boundary requirement. Trial execution, result assessment,
+retrospection and later `COLLABORATIVE` or `INDEPENDENT` evidence are separate
+work and are not prerequisites for that release-series completion.
+
 ## Consequences
 
 - The independent-human requirement no longer blocks the current Nextcloud Mail
@@ -203,3 +230,5 @@ provider gates for the release lifecycle.
 - Earlier controlled Nextcloud Mail attempts retain their original artifacts
   and dispositions, but may also inform the owner-led evidence stream when
   clearly labelled as such.
+- The general staged-evidence policy continues beyond the v0.2.0 release; only
+  the targeted amendment of Decision 0051 is release-series-specific.
