@@ -63,6 +63,7 @@ inherited, copied or loaded by adopting projects.
 - [Separate adoption observations from readiness and owner disposition](decisions/0050-separate-adoption-observations-from-readiness-and-owner-disposition.md)
 - [Select the v0.2.0 source and OCI publication series](decisions/0051-select-the-v0-2-0-source-and-oci-publication-series.md)
 - [Use staged evidence maturity for early adoption trials](decisions/0052-use-staged-evidence-maturity-for-early-adoption-trials.md)
+- [Require lightweight Work Item micro-retrospection](decisions/0053-require-lightweight-work-item-micro-retrospection.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Verification precedes integration](requirements/verification-precedes-implementation.md)
