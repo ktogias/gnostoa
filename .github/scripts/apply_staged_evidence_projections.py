@@ -2,15 +2,6 @@ from pathlib import Path
 import re
 
 
-def replace_once(path: str, old: str, new: str) -> None:
-    file_path = Path(path)
-    text = file_path.read_text()
-    count = text.count(old)
-    if count != 1:
-        raise SystemExit(f"{path}: expected one literal match, found {count}")
-    file_path.write_text(text.replace(old, new))
-
-
 def sub_once(path: str, pattern: str, replacement: str) -> None:
     file_path = Path(path)
     text = file_path.read_text()
@@ -20,28 +11,14 @@ def sub_once(path: str, pattern: str, replacement: str) -> None:
     file_path.write_text(updated)
 
 
-replace_once(
+sub_once(
     "knowledge/decisions/0052-use-staged-evidence-maturity-for-early-adoption-trials.md",
-    """    - kind: supersedes
-      target: /decisions/0051-select-the-v0-2-0-source-and-oci-publication-series.md
-""",
+    r"    - kind: supersedes\n      target: /decisions/0051-select-the-v0-2-0-source-and-oci-publication-series\.md\n(?!      description:)",
     """    - kind: supersedes
       target: /decisions/0051-select-the-v0-2-0-source-and-oci-publication-series.md
       description: >-
         Partial supersession limited to section H, the B3-dependent sentence
         in section M, and the corresponding Work Item completion condition.
-""",
-)
-
-replace_once(
-    "knowledge/decisions/0052-use-staged-evidence-maturity-for-early-adoption-trials.md",
-    """Evidence may move to a richer class when new feedback exists. Absence of a
-higher class does not invalidate a correctly labelled lower-class result.
-""",
-    """An evidence stream may accumulate richer, separately labelled layers. Each
-original result retains the evidence class under which it was produced.
-Absence of a higher class does not invalidate a correctly labelled lower-class
-result.
 """,
 )
 
