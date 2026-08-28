@@ -100,6 +100,7 @@ inherited, copied or loaded by adopting projects.
 - [Weather-note cold-start onboarding result](assessments/weather-note-cold-start-onboarding-result.md)
 - [Weather-note evaluation root-cause retrospective](assessments/weather-note-evaluation-root-cause-retrospective.md)
 - [B3 independent-adoption experiment design](assessments/b3-independent-adoption-experiment-design.md)
+- [Nextcloud Mail v0.2.0 B3 subject-contract candidate](assessments/nextcloud-mail-v0-2-0-b3-subject-contract.md)
 - [Nextcloud Mail adoption baseline and root-cause analysis](assessments/nextcloud-mail-adoption-baseline-and-root-cause.md)
 - [Nextcloud Mail adoption external-practice research and remediation alternatives](assessments/nextcloud-mail-adoption-external-practice-and-remediation-alternatives.md)
 - [Nextcloud Mail adoption route-activation diagnostic design](assessments/nextcloud-mail-adoption-route-activation-diagnostic-design.md)
