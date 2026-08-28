@@ -1,0 +1,51 @@
+name: Exact v0.2.0 release read-back
+
+on:
+  push:
+    branches:
+      - evidence/v0-2-0-release-readback
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v0-2-0-release-readback
+  cancel-in-progress: false
+
+jobs:
+  release-readback:
+    name: release-readback
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # actions/checkout v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 194aa1cbc342487ee72f8b912e69a5729d8aa568
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Assert the exact integrated subject
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "194aa1cbc342487ee72f8b912e69a5729d8aa568"
+          test "$(git rev-parse 'HEAD^{tree}')" = "cb9284913483c717d3df1908af1c7956ce73ab4f"
+          printf 'integrated.commit=%s\n' "$(git rev-parse HEAD)"
+          printf 'integrated.tree=%s\n' "$(git rev-parse 'HEAD^{tree}')"
+
+      - name: Run the integrated immutable release verifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./ci/verify release 2>&1 | tee "${RUNNER_TEMP}/v0.2.0-release-readback.log"
+
+      - name: Upload bounded read-back evidence
+        if: ${{ always() }}
+        # actions/upload-artifact v4.6.2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: v0.2.0-release-readback-194aa1cb
+          path: ${{ runner.temp }}/v0.2.0-release-readback.log
+          if-no-files-found: warn
+          retention-days: 14
