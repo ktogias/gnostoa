@@ -223,6 +223,21 @@ amplification briefly amplified evidence and review surfaces. It therefore
 supports a lightweight micro-retrospective and resume-before-create rule rather
 than a heavier retrospective framework.
 
+### The duplicate path exposed an unguarded Decision-number namespace
+
+The two retrospective candidates independently used Decision number `0053` in
+different filenames. Their full concept IDs differed because the slugs differed.
+The current validator enforces uniqueness of the full `x-project-knowledge.id`;
+it does not enforce uniqueness of the numeric prefix in `knowledge/decisions/`.
+Therefore two different `0053-*` Decisions can be structurally valid at the same
+time and make shorthand such as `Decision 0053` ambiguous.
+
+This is **not** the semantic same-purpose duplicate problem above. Semantic
+outcome equivalence is contextual and is intentionally handled by provider
+orientation and human judgement. Numeric Decision-prefix uniqueness is a cheap,
+deterministic namespace-integrity property. The retrospective retains a bounded
+validator check as separate follow-up work; it is not implemented in this slice.
+
 ## Controls that earned their cost
 
 Retain these controls at the boundaries where they proved useful:
@@ -254,6 +269,8 @@ earlier and avoid duplicating coordination around them.
   natural-language wording.
 - The retrospective itself forked into duplicate Work Items and PRs before the
   existing active path was re-read.
+- The duplicate retrospective also exposed that Decision-number prefix
+  uniqueness is not mechanically enforced.
 - The owner-supplied synthetic-adopter review found material setup friction, but
   real project utility remains unmeasured.
 
@@ -275,10 +292,14 @@ earlier and avoid duplicating coordination around them.
 7. **Close each Work Item with a tiny reflection.** Five short questions are
    enough to capture late findings and one candidate improvement without making
    every change produce a formal retrospective artifact.
+8. **Mechanize cheap namespace integrity, not semantic equivalence.** A Decision
+   number prefix is deterministic and can be unique mechanically; whether two
+   work records mean the same thing remains a contextual owner judgement.
 
 The owner selected lesson 7 and the resume-before-create clarification as the
-small permanent policy in Decision 0053. No broader formal-RCA framework or
-P0/P1/P2 governance taxonomy is selected by this slice.
+small permanent policy in Decision 0053. Lesson 8 is retained as a separately
+admitted validator improvement, not implemented here. No broader formal-RCA
+framework or P0/P1/P2 governance taxonomy is selected by this slice.
 
 ## Retained follow-up hypotheses
 
@@ -288,6 +309,7 @@ No current release/integrity `P0` exists. The real owner-led trial is the next
 | Timing | Hypothesis | Admission condition |
 |---|---|---|
 | Next | Run one real bounded `OWNER-LED` Mail task and measure practical value. | Owner selects a reversible real task and compact run record. |
+| Before the next new Decision number is integrated | Enforce uniqueness of the numeric Decision filename prefix without attempting semantic duplicate detection. | Admit a focused validator/test slice against the existing decision namespace. |
 | Before next equivalent public-capability release | Make capability-by-shipping-artifact coverage explicit for source, wheel, sdist, OCI and supported runtimes as applicable. | A public capability or shipping claim changes. |
 | Before next equivalent immutable release | Obtain actual exact-ref `extended` execution rather than relying on provider `SKIPPED`. | A release candidate reaches semantic freeze. |
 | Focused reproduction | Distinguish adopter `InvalidInput` from tool `InternalError` and expose a concise reason if the reported scenario reproduces. | Reproduce the owner-supplied missing/mislocated bundle scenario. |
@@ -325,5 +347,6 @@ real owner-led task.
 
 This retrospective does not establish independent adoption, upstream acceptance,
 product-market fit, productivity gain, production readiness or general security.
-It does not execute the trial, mutate Mail, contact upstream, publish an artifact
-or implement the retained follow-up hypotheses.
+It does not execute the trial, mutate Mail, contact upstream, publish an artifact,
+implement Decision-prefix validation or implement the other retained follow-up
+hypotheses.
