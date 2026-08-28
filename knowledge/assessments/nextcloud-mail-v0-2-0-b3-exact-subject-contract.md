@@ -23,8 +23,8 @@ sources:
     resource: https://github.com/nextcloud/mail/issues/12943
     title: eml not attached when mark as spam
   - id: nextcloud-mail-upstream-release
-    resource: https://github.com/nextcloud/mail/releases/tag/v5.10.14
-    title: Nextcloud Mail v5.10.14
+    resource: https://github.com/nextcloud/mail/tree/v5.10.14
+    title: Nextcloud Mail v5.10.14 source tag
 x-project-knowledge:
   id: kit.assessment.nextcloud-mail-v0-2-0-b3-exact-subject-contract
   owners:
@@ -61,11 +61,19 @@ result, does not authorize a prompt, and does not authorize any repository,
 provider, package, Release, OCI or upstream effect.
 
 The accountable experiment owner and local-workspace semantic verifier is
-`human:ktogias`. The independently owned upstream project
-`nextcloud/mail` retains Issue semantics and final Change Request authority.
-Local owner review cannot be represented as upstream maintainer acceptance. If
-no independent upstream owner or maintainer reviews the final task result, that
-external disposition remains `UNKNOWN` or `DEFERRED`; it is not invented.
+`human:ktogias`. Strict B3 candidate eligibility additionally requires one
+identified human owner or maintainer of `nextcloud/mail`, independent from
+Gnostoa, who explicitly accepts responsibility for the project-semantic review
+before Prompt 1. No such person is silently inferred from repository metadata,
+a GitHub role or prior participation. The exact reviewer identity, authority
+basis, review availability and retained acceptance reference must be bound in
+the separate pre-prompt authorization. Without that binding, no prompt is sent.
+
+The independently owned upstream project `nextcloud/mail` retains Issue
+semantics and final Change Request authority. Local owner review cannot be
+represented as upstream maintainer acceptance. If the independent reviewer does
+not later supply a retained disposition for an eligible result, that external
+disposition remains `UNKNOWN` or `DEFERRED`; it is not invented.
 
 The frozen question is:
 
@@ -171,8 +179,8 @@ success criteria or experiment history to these two messages. The local target
 materialization above occurs without an explanatory agent message.
 
 After the autonomous adoption attempt, mechanical audit and accountable-owner
-`ACCEPT` for the exact adoption candidate, the same session may receive exactly
-one third message:
+and independent-project-reviewer `ACCEPT` for the exact adoption candidate, the
+same session may receive exactly one third message:
 
 `Use the adoption-modified Nextcloud Mail state as the baseline, reproduce the bug described in nextcloud/mail#12943, and add the smallest deterministic automated regression test that fails for the reproduced reason. Do not implement the production fix, and do not commit or push during this step.`
 
@@ -182,7 +190,7 @@ evidence. A corrected adoption would be a new candidate and requires a separate
 continuation disposition; it is not silently counted as the original fresh
 result.
 
-## Fresh-agent and environment freeze
+## Fresh-agent, independent-owner and environment freeze
 
 The run requires one new agent and session with no prior Gnostoa, weather-note,
 Nextcloud Mail experiment, Work Item 117, 122, 125 or 146, Decision 0051,
@@ -191,9 +199,10 @@ empty before Prompt 1. No Gnostoa checkout, Mail checkout, image, adoption
 artifact, experiment branch, hidden checklist or expected answer is preloaded
 for the agent.
 
-Provider-created session and image identities cannot be truthfully predicted in
-this repository candidate. Before Prompt 1, the controller must create one
-immutable preflight manifest that binds at minimum:
+Provider-created session and image identities and the independent reviewer's
+human identity cannot be truthfully predicted in this repository candidate.
+Before Prompt 1, the controller must create one immutable preflight manifest
+that binds at minimum:
 
 - provider and agent product;
 - exact model identifier and provider-reported revision when exposed;
@@ -202,13 +211,16 @@ immutable preflight manifest that binds at minimum:
 - container engine and daemon identity;
 - Git, Python, PHP, Composer, Node.js and package-manager versions available;
 - network and credential boundary;
-- initial workspace path, emptiness evidence and filesystem identity; and
+- initial workspace path, emptiness evidence and filesystem identity;
+- independent project reviewer identity, authority basis, review availability
+  and explicit participation acceptance reference; and
 - UTC start timestamp.
 
-The accountable owner must accept that exact manifest before Prompt 1. The
-manifest and acceptance become part of this contract by exact SHA-256 and
-provider reference. Missing, mutable-only, ambiguous or inaccessible material
-environment identity yields `Environment eligibility: BLOCKED`. This
+The accountable experiment owner and the independent project reviewer must
+accept that exact manifest before Prompt 1. The manifest and both acceptances
+become part of this contract by exact SHA-256 and provider references. Missing,
+mutable-only, ambiguous or inaccessible material environment identity, or an
+unbound independent reviewer, yields `Candidate eligibility: BLOCKED`. This
 provider-created binding does not permit changing any frozen repository,
 prompt, task or permission subject.
 
@@ -228,7 +240,8 @@ run.
 | The workspace source is exact upstream Mail `v5.10.14` commit/tree on a local-only branch | critical | controller-measured repository fact | preserve and verify; stop on mismatch |
 | Existing Mail policies, `AGENTS.md`, CI and verification targets retain project authority | critical | repository-visible | inspect before writing; preserve or stop on conflict |
 | Gnostoa source/runtime is exact immutable v0.2.0, while current `main` is only the prompt-reachable documentation projection | critical | controller-measured and repository-visible | keep identities separate and retain actual consulted/executed subjects |
-| Adoption commitment, semantic content and durability require accountable-owner review | critical | owner-only | leave unresolved before checkpoint; never invent acceptance |
+| Strict B3 eligibility requires a retained disposition from an identified project owner or maintainer independent from Gnostoa | critical | owner-only authority | do not infer identity or acceptance; stop before Prompt 1 when unbound |
+| Adoption commitment, semantic content and durability require both local experiment-owner and independent project-semantic review | critical | owner-only | leave unresolved before checkpoint; never invent acceptance |
 | Mechanical `gnostoa-adoption-check/v2` readiness is required before owner review but is not semantic acceptance | critical | released normative contract | run and retain exact result; keep readiness, semantic adoption and owner disposition separate |
 | Unknown owners, provenance, timestamps, commitments and unresolved project facts remain explicit | high | repository-visible or genuinely unresolved | preserve as unknown or ask only when necessary; do not fabricate |
 | Unsupported Mail suites or missing runtime observations are `BLOCKED`, not passed | high | environment observation | retain command, exit and blocker evidence independently |
@@ -238,9 +251,10 @@ run.
 | Local owner acceptance is not upstream maintainer acceptance | critical | authority contract | report dispositions separately; leave upstream judgement unresolved until actually supplied |
 | Productivity improvement, reliability rate, product-market fit and general adoptability are outside this one run | medium | experiment design | make no such claim |
 
-The owner may answer a necessary adoption-semantic question at the checkpoint,
-not during the first autonomous attempt. Upstream semantic questions that
-require a maintainer remain unresolved unless an actual maintainer supplies a
+The local experiment owner and independent project reviewer may answer a
+necessary adoption-semantic question at the checkpoint, not during the first
+autonomous attempt. Upstream semantic questions outside the accepted reviewer
+scope remain unresolved unless an actual authorized maintainer supplies a
 retained answer.
 
 ## Adoption phase and mechanical completion gate
@@ -278,18 +292,24 @@ Git change or evidence reconstruction. It distinguishes agent claims,
 transcript-bound execution, mechanically established workspace facts and owner
 judgement.
 
-## Owner checkpoint and real task
+## Dual-owner checkpoint and real task
 
-The accountable owner reviews the exact adoption candidate, bounded context,
-omissions, inventions, explicit unknowns, existing-authority preservation,
-mechanical v2 result and independent audit. The disposition is exactly one of
-`ACCEPT`, `CORRECT` or `REJECT` and binds the candidate subject.
+The local experiment owner and independent project reviewer inspect the exact
+adoption candidate, bounded context, omissions, inventions, explicit unknowns,
+existing-authority preservation, mechanical v2 result and independent audit.
+Each records exactly one candidate-bound disposition: `ACCEPT`, `CORRECT` or
+`REJECT`.
 
-Prompt 3 requires both exact mechanical `READY` and owner `ACCEPT`. After it is
-sent, the same agent may perform one bounded reproducer-first task-directed
-research pass. It may inspect the Issue, comments and exact Mail source, run the
-smallest relevant tests and add only the smallest deterministic automated test
-that fails for the reproduced reason.
+Prompt 3 requires exact mechanical `READY` and two exact `ACCEPT` dispositions.
+Immediately before Prompt 3, the controller also reads back that upstream Issue
+12943 remains open with the frozen title and materially unchanged task boundary.
+Any material Issue drift requires a new contract disposition rather than silent
+reinterpretation.
+
+After Prompt 3 is sent, the same agent may perform one bounded
+reproducer-first task-directed research pass. It may inspect the Issue, comments
+and exact Mail source, run the smallest relevant tests and add only the smallest
+deterministic automated test that fails for the reproduced reason.
 
 The task stops and records `Task result: BLOCKED` when the bug cannot be
 reproduced deterministically within that single bounded pass, the required test
@@ -309,18 +329,20 @@ The task explicitly excludes:
 
 After the agent stops, a second read-only audit binds the exact adoption
 baseline, task diff, command outputs, failing reason, test determinism and scope.
-The local owner evaluates task usefulness and review burden. Upstream acceptance
-remains separate and requires a later independently authorized Change Request
-and actual maintainer disposition.
+The local owner and independent reviewer evaluate task usefulness, semantic
+accuracy and review burden separately. Upstream final Change Request acceptance
+remains a later effect requiring independently authorized submission and actual
+maintainer disposition.
 
 ## Evidence and timing contract
 
 The controller declares UTC boundaries for preflight start, Prompt 1, subject
 materialization, Prompt 2, autonomous adoption stop, mechanical check, audit,
-owner disposition, Prompt 3 when eligible, task stop and final audit. Retain:
+both owner dispositions, Prompt 3 when eligible, task stop and final audit.
+Retain:
 
 - complete timestamped prompts, responses and tool transcript;
-- exact provider/session/environment manifest and owner acceptance reference;
+- exact provider/session/environment manifest and both acceptance references;
 - exact source, documentation, runtime, target and Issue read-backs;
 - substantive commands with working directory, timestamps and numeric exits;
 - initial and final Git commit, tree, branch, index, worktree and diff;
@@ -330,7 +352,7 @@ owner disposition, Prompt 3 when eligible, task stop and final audit. Retain:
   runtime sidecars, commitment and independent recomputation;
 - two-generation bounded-context evidence and deterministic equality;
 - Mail suite outputs or bounded blocker evidence;
-- owner questions, answers, corrections and exact candidate disposition;
+- owner questions, answers, corrections and exact candidate dispositions;
 - Prompt-3 reproducer commands, failing test, repeated deterministic result and
   task audit when eligible; and
 - one final SHA-256 manifest over all retained evidence.
@@ -344,6 +366,7 @@ No aggregate pass or fail is emitted. At minimum report:
 
 | Dimension | Allowed result |
 |---|---|
+| Candidate eligibility | `PASS / BLOCKED` |
 | Environment eligibility | `PASS / BLOCKED` |
 | Fresh-agent eligibility | `PASS / CONTAMINATED / BLOCKED` |
 | Public orientation | `PASS / PARTIAL / FAIL` |
@@ -357,24 +380,27 @@ No aggregate pass or fail is emitted. At minimum report:
 | Existing-file adaptation | `PASS / FAIL / NOT RUN` |
 | Semantic fidelity | `PASS / PARTIAL / FAIL` |
 | Agent evidence binding | `PASS / PARTIAL / FAIL` |
-| Local owner adoption disposition | `ACCEPT / CORRECT / REJECT / NOT REACHED` |
+| Local experiment-owner adoption disposition | `ACCEPT / CORRECT / REJECT / NOT REACHED` |
+| Independent project-reviewer adoption disposition | `ACCEPT / CORRECT / REJECT / NOT REACHED` |
 | Real-task execution | `PASS / FAIL / BLOCKED / NOT RUN` |
 | Regression-test determinism | `PASS / FAIL / BLOCKED / NOT RUN` |
 | Production-fix exclusion | `PASS / FAIL / NOT RUN` |
-| Upstream maintainer disposition | `ACCEPT / CORRECT / REJECT / UNKNOWN / NOT REQUESTED` |
+| Upstream final Change Request disposition | `ACCEPT / CORRECT / REJECT / UNKNOWN / NOT REQUESTED` |
 | Measured utility | `POSITIVE / MIXED / NEGATIVE / UNKNOWN` |
 | Durable adoption | `YES / NO / DEFERRED` |
 
-A local `ACCEPT` allows only the bounded Prompt-3 continuation. It does not
-establish upstream acceptance, permanent adoption or provider authority.
+Two local/checkpoint `ACCEPT` dispositions allow only the bounded Prompt-3
+continuation. They do not establish a final upstream Change Request outcome,
+permanent adoption or provider authority.
 
 ## Stop conditions and non-claims
 
 Stop before the next effect on any subject drift, inaccessible immutable
-identity, unaccepted environment manifest, non-fresh agent, contaminated
-workspace, unclear permission, missing supported Gnostoa route, candidate
-instability, invalid or non-READY v2 result, missing evidence, owner disposition
-other than exact `ACCEPT`, or task-scope conflict.
+identity, unaccepted environment manifest, missing independent reviewer or
+review acceptance, non-fresh agent, contaminated workspace, unclear permission,
+missing supported Gnostoa route, candidate instability, invalid or non-READY v2
+result, missing evidence, either checkpoint disposition other than exact
+`ACCEPT`, or task-scope conflict.
 
 This contract establishes no result, improvement, productivity benefit,
 reliability rate, general external adoption, product-market fit, production
@@ -384,6 +410,6 @@ provider, evidence framework, hosted service or mutable artifact alias.
 
 Integration of this knowledge-only candidate freezes the repository-known
 subjects and rules. It still does not send a prompt. Exactly one run requires a
-separate accountable-owner authorization that binds the provider-created
-preflight manifest and confirms all frozen identities immediately before
-Prompt 1.
+separate accountable-owner authorization that binds the independent reviewer,
+provider-created preflight manifest and all frozen identities immediately
+before Prompt 1.
