@@ -1,7 +1,7 @@
 ---
 type: Source
 title: v0.2.0 release-series and staged-evidence transition retrospective
-description: Bounded knowledge-only retrospective over the v0.2.0 source and OCI publication, reconciliation, provider lifecycle incidents and staged-evidence transition, preserving durable lessons without selecting backlog implementation.
+description: Bounded retrospective over the v0.2.0 source and OCI publication, reconciliation and staged-evidence transition, retaining lessons and backlog hypotheses without selecting implementation.
 status: draft
 generated:
   by: codex/gpt-5
@@ -53,229 +53,127 @@ x-project-knowledge:
 
 # v0.2.0 release-series and staged-evidence transition retrospective
 
-## Observation boundary
+## Boundary and evidence
 
-This retrospective is bounded to protected `main`
-`52e21722e2d24fc73e5b10e14996c127209e2599`, Git tree
-`79d06b4d4e3e96d3c42b5b8436e8e7eb3c9ca38d`, after integration of PR #152.
-It covers the release Work Item #146, PRs #147–#152, the immutable source and
-OCI effects, their provider read-backs, and the transition from the strict B3
-closeout path to staged evidence under Decision 0052.
+Observed at protected `main` commit
+`52e21722e2d24fc73e5b10e14996c127209e2599`, tree
+`79d06b4d4e3e96d3c42b5b8436e8e7eb3c9ca38d`, after PR #152. The window covers
+Work Item #146, PRs #147–#152, the immutable source/OCI effects and their
+provider read-backs.
 
-The immutable release subjects remain:
+The immutable release remains tag object
+`6d0357e075744ee316c725554d2e2c920b19a4dc`, source commit
+`39aa4f25bdf46811600d4a0f6f9c0da52b73c542`, tree
+`866c8c489c9052c566bd65b6e798567d4a284f16`, and OCI consumer identity
+`ghcr.io/ktogias/gnostoa@sha256:f89bf32c0c4b86bac71fa008579b2385e6ae39bf4822f685479c4f2cc22bfca4`.
+Publication run `33124503631` attempt 1, attestation `43531953`, integrated
+release-route read-back `33145955880`, and the integrated staged-evidence tree
+above provide the provider boundary.
 
-- annotated tag `v0.2.0`, tag object
-  `6d0357e075744ee316c725554d2e2c920b19a4dc`;
-- source commit `39aa4f25bdf46811600d4a0f6f9c0da52b73c542`, tree
-  `866c8c489c9052c566bd65b6e798567d4a284f16`;
-- OCI consumer identity
-  `ghcr.io/ktogias/gnostoa@sha256:f89bf32c0c4b86bac71fa008579b2385e6ae39bf4822f685479c4f2cc22bfca4`;
-- publication run `33124503631`, attempt 1, and provenance attestation
-  `43531953`;
-- integrated release reconciliation commit
-  `194aa1cbc342487ee72f8b912e69a5729d8aa568`, tree
-  `cb9284913483c717d3df1908af1c7956ce73ab4f`;
-- integrated release-route read-back run `33145955880`; and
-- integrated staged-evidence baseline commit
-  `52e21722e2d24fc73e5b10e14996c127209e2599`, tree
-  `79d06b4d4e3e96d3c42b5b8436e8e7eb3c9ca38d`.
+A maintainer-provided technical assessment dated 27 August 2026 is an attributed
+external input, not canonical provider truth. Its executed usability findings
+inform hypotheses; its time-bound counts are not current metrics, and its
+synthetic adopter is not treated as a real adoption result.
 
-A maintainer-provided technical assessment dated 27 August 2026 was also read.
-It is an attributed external input retained outside the repository, not a
-canonical provider record. Its executed observations and usability findings are
-used as hypotheses where they agree with durable evidence; its time-bound line,
-word and test counts are not promoted as current project metrics. The assessment
-itself states that its synthetic adopter is not a substitute for a real
-owner-led or independent adoption trial.
-
-No historical transcript or private chain of thought was reconstructed. No
-release, image, Mail or upstream state was mutated for this retrospective.
-
-## Outcome summary
+## Result
 
 | Dimension | Result |
 |---|---|
-| Immutable source publication | `PASS` — exact annotated tag, source commit and tree read back. |
-| Immutable OCI publication | `PASS` — one authorized attempt, digest-pinned `linux/amd64`, provenance and anonymous digest access read back. |
-| Release reconciliation | `PASS` — repository verifier, public projections and GitHub Release presentation bind the published digest. |
-| Owner-led baseline | `PASS` — Decision 0052 and the bounded Nextcloud Mail baseline are integrated and provider verified. |
-| Independent adoption | `NOT CLAIMED` — the strict B3 method is deferred to a later maturity stage. |
-| Product value in a real task | `UNKNOWN` — the first admitted `OWNER-LED` task run has not begun. |
+| Source and OCI publication | `PASS` — immutable identities and one authorized publication were read back. |
+| Reconciliation | `PASS` — verifier, projections and Release presentation bind the digest. |
+| Owner-led baseline | `PASS` — Decision 0052 and the Mail baseline are integrated and provider verified. |
+| Independent adoption | `NOT CLAIMED` — deferred to later maturity. |
+| Value in a real task | `UNKNOWN` — the first admitted `OWNER-LED` task has not run. |
 
-The technical release series succeeded. The process result is mixed: the
-controls prevented real defects and unauthorized effects, but the release and
-experiment-boundary work accumulated disproportionate coordination, evidence
-and wording overhead before producing new real-project value evidence.
+The technical series succeeded. The process was mixed: strong controls caught
+real defects and bounded irreversible effects, while coordination and evidence
+work grew faster than new real-project value evidence.
 
 ## What worked
 
-### 1. Falsification prevented a broken release
+- **Release falsification caught a product defect.** The strengthened smoke test
+  exposed an installed-artifact path that could terminate before retaining the
+  new adoption evidence. It was repaired before publication.
+- **Provider read-back replaced inferred success.** Tag, Release, OCI digest,
+  provenance and anonymous digest access were checked at their authorities;
+  `latest` remained absent and no replacement publication occurred.
+- **Publication became one-shot and fail closed.** Workflow-origin, actor,
+  triggering-actor and `GITHUB_RUN_ATTEMPT == 1` checks bounded the write effect.
+- **Exact-tree acceptance survived integration.** Accepted and squash-integrated
+  trees were equal, followed by integrated-main Verification and CodeQL.
+- **Negative evidence enabled correction.** Historical Mail results remained
+  `REJECT` / `UNKNOWN` / `NO`; Decision 0052 selected proportionate
+  `OWNER-LED` learning without relabelling them as success.
 
-The strengthened release smoke exposed that the execution-only installed
-artifact could terminate before retaining the evidence required by the new
-`adoption-check` capability. The candidate was repaired before publication, and
-the clean installed-artifact route was rerun. This was a direct product defect
-caught by assurance machinery, not a ceremonial check.
+## What created friction
 
-### 2. Immutable identities and read-back made irreversible effects accountable
-
-The series kept source selection, integration, tag creation, GitHub Release,
-OCI publication and reconciliation distinct. Source and image identities were
-read back from their authoritative providers rather than inferred from command
-success. The image was consumed by digest, `latest` remained absent and no
-replacement publication occurred.
-
-### 3. Publication authority became fail closed
-
-PR #148 bound publication to the exact main-hosted workflow and separated the
-authorization job from the write-capable job. PR #149 added explicit checks for
-the triggering actor and `GITHUB_RUN_ATTEMPT == 1`. The correction arrived after
-the single valid publication, without treating the already published artifact
-as invalid or authorizing a second dispatch.
-
-### 4. Exact-tree acceptance survived squash integration
-
-Candidate acceptance was bound to exact heads and trees. The integrated release
-reconciliation tree equalled its accepted tree, and the staged-evidence tree
-`79d06b4...` likewise survived squash integration unchanged. Post-merge
-Verification and CodeQL then observed integrated `main`, rather than relying only
-on PR-head evidence.
-
-### 5. Negative evidence and claim boundaries enabled a strategy correction
-
-The four historical Nextcloud Mail attempts retained their `REJECT`, `UNKNOWN`
-and `NO` dispositions. Instead of relabelling them as success, Decision 0052
-changed the present learning strategy: `OWNER-LED` evidence is proportionate for
-early product learning, while `INDEPENDENT` evidence remains available for
-stronger later claims. Upstream feedback became additive rather than an entry
-gate.
-
-## What created avoidable cost or risk
-
-### 1. The strict B3 contract was applied at the wrong maturity stage
-
-The initial path required an independent project authority, pre-approved semantic
-criteria and extensive audit controls before Gnostoa had demonstrated practical
-value in an owner-involved project. PR #151 and PR #152 temporarily represented
-competing experiment contracts. Closing the former as superseded and partially
-amending Decision 0051 were necessary cleanup, but the coordination cost was a
-symptom of a maturity mismatch.
-
-### 2. Evidence amplification consumed scarce human attention
-
-Many small wording, metadata and exact-head changes invalidated earlier acceptance
-claims and triggered another full provider portfolio. Temporary workflows,
-repair commits and final empty binding commits were sometimes used to regain a
-clean exact subject. The discipline protected correctness, but the aggregate
-volume made the owner the serial integration bottleneck and increased the chance
-of process mistakes.
-
-### 3. Provider lifecycle parsing was a hidden mutation surface
-
-A negative sentence containing a lifecycle keyword beside the Work Item
-reference caused GitHub to alter the Work Item state. The text was later repaired
-and the Work Item restored to `OPEN`. The lesson is narrower than a generic text
-scanner: every provider-parsed title, body and merge payload is an effect surface,
-and negation does not neutralize provider syntax.
-
-### 4. Current-facing prose and literal tests were too tightly coupled
-
-After Decision 0052 changed the current strategy, README, roadmap, status, the B3
-chronology note and documentation tests still encoded the old strict-B3 sequence.
-The tests correctly detected inconsistency, but they had pinned volatile wording
-rather than the intended semantic boundary. Historical records and current
-projections had to be separated explicitly.
-
-### 5. Product evidence lagged behind governance evidence
-
-The external assessment reproduced the quick start and found strong code and
-supply-chain hygiene, while also needing repeated attempts to configure a
-synthetic adopter and observing that strict `READY` requires project-side runtime
-integration. Those findings are useful risk hypotheses, but the central question
-remains unanswered: whether Gnostoa improves one real task enough to justify its
-adoption and continued complexity.
+- The strict independent-B3 contract was disproportionate before owner-involved
+  real-project value had been demonstrated; PRs #151 and #152 briefly encoded
+  competing paths.
+- Repeated wording, metadata and exact-head changes amplified evidence volume and
+  made the owner the serial integration bottleneck.
+- GitHub treated a lifecycle keyword beside a Work Item reference as an effect
+  even inside a negative sentence; provider-parsed bodies and merge payloads are
+  mutation surfaces.
+- Current prose and tests pinned the old strict-B3 chronology too literally;
+  historical evidence and current projections had to be separated.
+- The external assessment reproduced the quick start and strong technical hygiene
+  but encountered repeated synthetic-adopter setup friction. The real utility
+  question remains unanswered.
 
 ## Durable lessons
 
-1. **Keep strong exact-identity and provider-read-back controls at irreversible
-   boundaries.** The release smoke, one-shot publication authority and digest
-   read-back prevented or bounded concrete defects. These controls earned their
-   cost.
-2. **Match evidence rigor to the claim and product stage.** `OWNER-LED` evidence
-   can support preliminary product learning without pretending to be independent
-   adoption. Stronger controls belong with stronger later claims.
-3. **Test semantic invariants, not one volatile chronology sentence.** Historical
-   evidence should remain historically accurate; current projections should route
-   to current authority and avoid predicting provider effects.
-4. **Treat human attention as a finite verification resource.** New evidence,
-   mechanisms and exact-head cycles require a demonstrated risk or decision need;
-   volume is not assurance.
-5. **After a release boundary is safe, prioritize real product learning.** The
-   next substantive slice should measure a real task before expanding the
-   assurance system again, unless a concrete safety or correctness blocker appears.
+1. Retain exact identity, one-shot authority and provider read-back at
+   irreversible boundaries; these controls earned their cost.
+2. Match rigor to claim and maturity: `OWNER-LED` supports preliminary learning,
+   while `INDEPENDENT` supports stronger later claims.
+3. Test semantic invariants rather than volatile chronology wording.
+4. Treat human attention as finite; more evidence is not automatically more
+   assurance.
+5. Once a release boundary is safe, prioritize a real product task before adding
+   assurance machinery unless a concrete blocker appears.
 
-Decisions 0051 and 0052 already own the stable release and evidence-maturity
-policies. This retrospective selects no new Decision.
+Decisions 0051 and 0052 already own the stable policy. No new Decision is
+selected.
 
-## Prioritized backlog hypotheses
+## Retained backlog hypotheses
 
-The following items are retained as hypotheses, not admitted implementations.
-
-| Priority | Hypothesis | Admission trigger | Current disposition |
+| Priority | Hypothesis | Admission trigger | Disposition |
 |---|---|---|---|
-| P0 | Run one real bounded `OWNER-LED` task and measure orientation, semantic fidelity, owner intervention, verification and utility. | A concrete reversible Mail task and compact run record are selected by the owner. | `NEXT PRODUCT-LEARNING CANDIDATE`; not started. |
-| P1 | Distinguish adopter `InvalidInput` from tool `InternalError` and expose a bounded human-readable reason. | Reproduction in the real trial or one focused characterization test demonstrates the ambiguity materially affects diagnosis. | `RETAIN`; not selected. |
-| P1 | Add a non-authoritative diagnostic route and improve CLI/path guidance. | The real trial repeats serial one-error-per-run configuration or route-selection friction. | `RETAIN`; not selected. |
-| P2 | Decompose the largest adoption functions and reduce single-maintainer review risk. | Material change pressure, repeated review defects or a second maintainer requires independently reviewable seams. | `DEFER`; not selected. |
-| Later maturity | Execute a strict `INDEPENDENT` adoption experiment. | Wider use, publicity or claims require external task and evaluation authority. | `DEFER`; separate future admission. |
+| P0 | Run one real bounded `OWNER-LED` task and measure practical value. | Owner selects a reversible Mail task and compact run record. | Next product-learning candidate; not started. |
+| P1 | Separate adopter `InvalidInput` from tool `InternalError` and expose a concise reason. | Real trial or focused characterization reproduces material ambiguity. | Retain; not selected. |
+| P1 | Add non-authoritative diagnostics and clearer CLI/path guidance. | Real trial repeats serial setup or route-selection friction. | Retain; not selected. |
+| P2 | Decompose the largest adoption functions. | Review defects, change pressure or a second maintainer needs smaller seams. | Defer; not selected. |
+| Later | Execute strict `INDEPENDENT` adoption. | Wider use or stronger public claims require external authority. | Separate future admission. |
 
-The synthetic assessment's line and word ratios are not accepted as permanent
-budgets. They support the qualitative concern that internal assurance has grown
-faster than measured user value. The real owner-led run should determine which
-friction is product-critical before any broad simplification or refactor.
+The external assessment's line and word ratios are not permanent budgets. They
+support only the qualitative hypothesis that assurance grew faster than measured
+user value.
 
-## Implications for the first owner-led trial
+## Next owner-led trial
 
-The next trial should remain compact and preserve the evidence class under which
-it is produced. It should bind one real reversible task, exact prompt, frozen Mail
-subject, model/session context, owner constraints, available verification and
-stop conditions.
+Bind one real reversible task, exact prompt, frozen Mail subject, model/session
+context, owner constraints, available verification and stop conditions. Record:
 
-At minimum, record:
+- orientation time and attempts;
+- incorrect assumptions, especially invented owners, provenance or semantics;
+- owner questions and interventions;
+- knowledge/context artifacts actually used;
+- task verification and unresolved risk;
+- owner disposition, owner-assessed utility and durable-adoption result.
 
-- time and attempts needed to orient and begin useful work;
-- incorrect assumptions, especially invented owners, provenance or semantic
-  facts;
-- owner questions and interventions required;
-- which generated knowledge or context artifacts were actually used;
-- task verification results and unresolved risk;
-- owner disposition: `ACCEPT`, `CORRECT` or `REJECT`;
-- owner-assessed utility: `POSITIVE`, `MIXED`, `NEGATIVE` or `UNKNOWN`; and
-- durable adoption: `YES`, `NO` or `DEFERRED`.
+Do not force strict mechanical `READY` merely to exercise machinery. Use it only
+when its project-side integration is material to the selected task. The trial
+must test practical value and onboarding friction.
 
-Do not force the strict mechanical `READY` route merely to exercise machinery.
-Use it only where its project-side integration is material to the selected task.
-The trial should test practical value and onboarding friction, not reward
-compliance with the retrospective.
+## Disposition and non-conclusions
 
-## Retrospective disposition
+The `v0.2.0` release is technically successful and reconciled. Its immutable and
+one-shot controls remain. Decision 0052 is the appropriate maturity correction,
+and practical utility in one real task is the next unresolved product question.
+The backlog is recorded but not implemented.
 
-- The `v0.2.0` source and OCI release series is technically successful and
-  reconciled.
-- The one-shot publication, immutable identity, provenance and read-back controls
-  are retained.
-- The strict B3 closeout path was disproportionate for the current product stage;
-  Decision 0052 is the appropriate correction.
-- The main unresolved product question is practical utility in a real owner-led
-  task.
-- The backlog above is recorded but no item is implemented by this Work Item.
-- Work Item 146 remains in its current lifecycle state pending separate provider
-  reconciliation and an explicit owner lifecycle action.
-
-## Non-conclusions and effect boundary
-
-This retrospective does not establish independent adoption, upstream acceptance,
+This record does not establish independent adoption, upstream acceptance,
 product-market fit, productivity gain, production readiness or general security.
-It does not execute the owner-led trial, mutate Mail, contact upstream, publish or
-replace an artifact, authorize a new release effect, implement backlog items or
-change the lifecycle state of Work Item 146.
+It does not execute the trial, mutate Mail, contact upstream, publish an artifact,
+implement backlog items or change the lifecycle state of Work Item 146.
