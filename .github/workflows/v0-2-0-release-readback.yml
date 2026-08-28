@@ -1,4 +1,4 @@
-name: Exact v0.2.0 release read-back
+name: Exact v0.2.0 release read-back and presentation
 
 on:
   push:
@@ -6,15 +6,22 @@ on:
       - evidence/v0-2-0-release-readback
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: v0-2-0-release-readback
   cancel-in-progress: false
 
+env:
+  EXACT_MAIN_COMMIT: 194aa1cbc342487ee72f8b912e69a5729d8aa568
+  EXACT_MAIN_TREE: cb9284913483c717d3df1908af1c7956ce73ab4f
+  RELEASE_ID: "378065344"
+  EXPECTED_OLD_BODY_SHA256: 268ab520ecb2e1770072bb7788627191ba390334fabe4f9bd212e7440115ef43
+  EXPECTED_NEW_BODY_SHA256: 5351231f342216952dc1b424c2034f9d53ec985b7f231ea87fbfe902fd83355c
+
 jobs:
-  release-readback:
-    name: release-readback
+  release-readback-and-presentation:
+    name: release-readback-and-presentation
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -25,27 +32,166 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
-      - name: Assert the exact integrated subject
+      - name: Assert the exact integrated subject and current main
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "194aa1cbc342487ee72f8b912e69a5729d8aa568"
-          test "$(git rev-parse 'HEAD^{tree}')" = "cb9284913483c717d3df1908af1c7956ce73ab4f"
+          test "$(git rev-parse HEAD)" = "${EXACT_MAIN_COMMIT}"
+          test "$(git rev-parse 'HEAD^{tree}')" = "${EXACT_MAIN_TREE}"
+          remote_main=$(git ls-remote origin refs/heads/main | awk '{print $1}')
+          test "${remote_main}" = "${EXACT_MAIN_COMMIT}"
           printf 'integrated.commit=%s\n' "$(git rev-parse HEAD)"
           printf 'integrated.tree=%s\n' "$(git rev-parse 'HEAD^{tree}')"
+          printf 'provider.main=%s\n' "${remote_main}"
 
       - name: Run the integrated immutable release verifier
         shell: bash
         run: |
           set -euo pipefail
-          ./ci/verify release 2>&1 | tee "${RUNNER_TEMP}/v0.2.0-release-readback.log"
+          mkdir -p "${RUNNER_TEMP}/v0.2.0-release-presentation"
+          ./ci/verify release 2>&1 \
+            | tee "${RUNNER_TEMP}/v0.2.0-release-presentation/release-readback.log"
 
-      - name: Upload bounded read-back evidence
+      - name: Reconcile the existing GitHub Release presentation
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          evidence_dir="${RUNNER_TEMP}/v0.2.0-release-presentation"
+          before_json="${evidence_dir}/release-before.json"
+          after_json="${evidence_dir}/release-after.json"
+          new_body="${evidence_dir}/release-body.md"
+          payload_json="${evidence_dir}/release-payload.json"
+
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" > "${before_json}"
+
+          python - "${before_json}" "${EXPECTED_OLD_BODY_SHA256}" <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import sys
+
+          release = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          expected_body_digest = sys.argv[2]
+          body = release.get("body")
+          assert release["id"] == 378065344
+          assert release["tag_name"] == "v0.2.0"
+          assert release["target_commitish"] == "39aa4f25bdf46811600d4a0f6f9c0da52b73c542"
+          assert release["name"] == "Gnostoa v0.2.0"
+          assert release["draft"] is False
+          assert release["prerelease"] is True
+          assert release["assets"] == []
+          assert isinstance(body, str)
+          assert hashlib.sha256(body.encode()).hexdigest() == expected_body_digest
+          PY
+
+          cat > "${new_body}" <<'EOF'
+          ## Immutable source identity
+
+          This prerelease publishes the immutable Gnostoa `v0.2.0` source identity:
+
+          - annotated tag: `v0.2.0`
+          - tag object: `6d0357e075744ee316c725554d2e2c920b19a4dc`
+          - source commit: `39aa4f25bdf46811600d4a0f6f9c0da52b73c542`
+          - source tree: `866c8c489c9052c566bd65b6e798567d4a284f16`
+          - public-surface digest: `sha256:a85ac8dde00f1ed8fb0425de08597828e97c246ec17ce6556f3f222b27ddb1c1`
+
+          This release adds the bounded `knowledge adoption-check` capability and its
+          `gnostoa-adoption-check/v2` result contract.
+
+          ## Immutable OCI artifact
+
+          - version tag: `ghcr.io/ktogias/gnostoa:0.2.0`
+          - consumer identity: `ghcr.io/ktogias/gnostoa@sha256:f89bf32c0c4b86bac71fa008579b2385e6ae39bf4822f685479c4f2cc22bfca4`
+          - platform: exactly `linux/amd64`
+          - source revision: `39aa4f25bdf46811600d4a0f6f9c0da52b73c542`
+          - publication run: [`33124503631`, attempt 1](https://github.com/ktogias/gnostoa/actions/runs/33124503631)
+          - provenance: [attestation `43531953`](https://github.com/ktogias/gnostoa/attestations/43531953)
+
+          Exactly one authorized, input-free OCI publication run produced this artifact.
+          At publication read-back, `0.2.0` resolved to the immutable manifest digest
+          above, anonymous digest pull succeeded, and `latest` remained absent.
+
+          ## Post-integration verification
+
+          [Read-back run `33145955880`](https://github.com/ktogias/gnostoa/actions/runs/33145955880)
+          executed `./ci/verify release` from integrated `main` commit
+          `194aa1cbc342487ee72f8b912e69a5729d8aa568`, tree
+          `cb9284913483c717d3df1908af1c7956ce73ab4f`, and passed.
+
+          The digest-pulled checks covered platform, non-root runtime identity,
+          version and source-revision labels, Python/runtime inventory, the exact public
+          surface and third-party-notice digests, all 14 SB2 files, and the runtime
+          self-check.
+
+          ## Distribution and B3 boundary
+
+          GitHub-generated source archives are provider projections of the immutable tag,
+          not curated package artifacts. This Release has no curated assets. No
+          package-index artifact or documentation site is published.
+
+          The exact B3 subject contract has not yet been frozen, and no B3 execution is
+          part of this release presentation.
+
+          ## Explicit non-claims
+
+          This release does not establish production readiness, deployment authority,
+          general security, qualified legal clearance, exact-digest rebuild
+          reproducibility, multi-platform support, independent adoption, product-market
+          fit, or owner acceptance of any Nextcloud Mail change. It selects no generic
+          release or attestation framework.
+          EOF
+
+          python - "${new_body}" "${payload_json}" "${EXPECTED_NEW_BODY_SHA256}" <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import sys
+
+          body_path = pathlib.Path(sys.argv[1])
+          payload_path = pathlib.Path(sys.argv[2])
+          expected_body_digest = sys.argv[3]
+          body = body_path.read_text()
+          assert hashlib.sha256(body.encode()).hexdigest() == expected_body_digest
+          payload_path.write_text(json.dumps({"body": body}))
+          PY
+
+          gh api \
+            --method PATCH \
+            "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+            --input "${payload_json}" > "${after_json}"
+
+          python - "${after_json}" "${new_body}" "${EXPECTED_NEW_BODY_SHA256}" <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import sys
+
+          release = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          expected_body = pathlib.Path(sys.argv[2]).read_text()
+          expected_body_digest = sys.argv[3]
+          assert release["id"] == 378065344
+          assert release["tag_name"] == "v0.2.0"
+          assert release["target_commitish"] == "39aa4f25bdf46811600d4a0f6f9c0da52b73c542"
+          assert release["name"] == "Gnostoa v0.2.0"
+          assert release["draft"] is False
+          assert release["prerelease"] is True
+          assert release["assets"] == []
+          assert release["body"] == expected_body
+          assert hashlib.sha256(release["body"].encode()).hexdigest() == expected_body_digest
+          PY
+
+          printf 'release.presentation=UPDATED\n'
+          printf 'release.id=%s\n' "${RELEASE_ID}"
+          printf 'release.body.sha256=%s\n' "${EXPECTED_NEW_BODY_SHA256}"
+
+      - name: Upload bounded reconciliation evidence
         if: ${{ always() }}
         # actions/upload-artifact v4.6.2
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: v0.2.0-release-readback-194aa1cb
-          path: ${{ runner.temp }}/v0.2.0-release-readback.log
+          name: v0.2.0-release-presentation-194aa1cb
+          path: ${{ runner.temp }}/v0.2.0-release-presentation
           if-no-files-found: warn
           retention-days: 14
