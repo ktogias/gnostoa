@@ -1,0 +1,39 @@
+name: v0.2.0 integrated release read-back
+
+on:
+  push:
+    branches:
+      - ops/v0.2.0-release-readback
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v0.2.0-integrated-release-readback
+  cancel-in-progress: false
+
+jobs:
+  release-readback:
+    name: immutable release read-back
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # actions/checkout v6.0.2
+      - name: Check out the exact integrated reconciliation subject
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 194aa1cbc342487ee72f8b912e69a5729d8aa568
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Bind the exact integrated commit and tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "194aa1cbc342487ee72f8b912e69a5729d8aa568"
+          test "$(git rev-parse 'HEAD^{tree}')" = "cb9284913483c717d3df1908af1c7956ce73ab4f"
+          printf 'integrated.commit=%s\n' "$(git rev-parse HEAD)"
+          printf 'integrated.tree=%s\n' "$(git rev-parse 'HEAD^{tree}')"
+
+      - name: Execute the repository release verifier
+        run: ./ci/verify release
