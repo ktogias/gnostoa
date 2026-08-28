@@ -99,15 +99,21 @@ new release effect.
 
 ### Owner-supplied technical evaluation
 
-A separate technical evaluation dated 27 August 2026 is an attributed external
-input, not canonical provider truth and not independent-adopter evidence. The
-owner retains the exact artifact bytes:
+The retained technical evaluation **displays** the date 27 August 2026. The same
+artifact states a reviewed repository range through commit `52e2172…`, whose
+commit timestamp is `2026-08-28T10:59:10Z`. The displayed date is therefore
+presentation metadata only; it is not used as creation-time or freshness
+evidence. The evaluation is an attributed external input, not canonical provider
+truth and not independent-adopter evidence. The owner retains the exact artifact
+bytes:
 
 ```text
 artifact: Αξιολόγηση Gnostoa(2).html
 bytes: 73150
 sha256: 430fe5be949c9ff2921a0bde0b5bb22e06439731912c24b14e0e092a5cf68335
+displayed report date: 2026-08-27 (presentation metadata only)
 reported repository range: 6714d70… through 52e2172…
+reviewed-through commit timestamp: 2026-08-28T10:59:10Z
 reported environment: fresh clone, Python 3.11.15
 evaluator identity: not encoded in the retained artifact
 ```
@@ -144,9 +150,11 @@ structurally valid knowledge could still be semantically false. Three authoring
 attempts invented ownership, verifier or provenance facts; the frozen fresh-agent
 rerun stopped before writing knowledge.
 
-Those negative results directly motivated the bounded `adoption-check`, the
-Decision-0049 evidence-integrity repair and the Decision-0050 assurance-v2 model.
-The initial B3/pre-B3 work therefore functioned as productive falsification.
+Those negative results directly motivated the bounded `adoption-check` selected
+by Decision 0047. Subsequent falsification and review of that implementation
+motivated Decision 0049's evidence-integrity repair and Decision 0050's
+assurance-v2 model. The initial B3/pre-B3 work therefore functioned as productive
+falsification.
 
 What later became disproportionate was different: strict independently owned B3
 coordination was allowed to remain an immediate release-closeout prerequisite
