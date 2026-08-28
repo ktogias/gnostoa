@@ -17,7 +17,7 @@ jobs:
       # actions/checkout v6.0.2
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: 30b9fc0eabb5f7aa205e50a6788f1a86eb03f431
+          ref: eab78d527641451f24ac0910623f715e86567b88
           persist-credentials: false
           fetch-depth: 1
 
@@ -25,8 +25,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "30b9fc0eabb5f7aa205e50a6788f1a86eb03f431"
-          test "$(git rev-parse 'HEAD^{tree}')" = "9db80a948ca92d86f669d092b94e6c55b4d6ec6a"
+          test "$(git rev-parse HEAD)" = "eab78d527641451f24ac0910623f715e86567b88"
+          test "$(git rev-parse 'HEAD^{tree}')" = "920e010bb76971206fcc00172905161f9d1ae76c"
           printf 'candidate.commit=%s\n' "$(git rev-parse HEAD)"
           printf 'candidate.tree=%s\n' "$(git rev-parse 'HEAD^{tree}')"
 
@@ -34,8 +34,8 @@ jobs:
         run: |
           docker build \
             --target development \
-            --build-arg VCS_REF="30b9fc0eabb5f7aa205e50a6788f1a86eb03f431" \
-            --tag gnostoa-pr154-extended:30b9fc0 .
+            --build-arg VCS_REF="eab78d527641451f24ac0910623f715e86567b88" \
+            --tag gnostoa-pr154-extended:eab78d5 .
 
       - name: Prepare evidence output
         run: mkdir -p "${RUNNER_TEMP}/gnostoa-quality-evidence"
@@ -50,7 +50,7 @@ jobs:
             --mount type=bind,source="${GITHUB_WORKSPACE}",target=/workspace,readonly \
             --mount type=bind,source="${RUNNER_TEMP}/gnostoa-quality-evidence",target=/evidence \
             --workdir /workspace \
-            gnostoa-pr154-extended:30b9fc0 \
+            gnostoa-pr154-extended:eab78d5 \
             -ec './ci/verify extended'
 
       - name: Upload bounded evidence
@@ -58,7 +58,7 @@ jobs:
         # actions/upload-artifact v4.6.2
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: pr154-exact-extended-30b9fc0
+          name: pr154-exact-extended-eab78d5
           path: ${{ runner.temp }}/gnostoa-quality-evidence
           if-no-files-found: error
           retention-days: 14
