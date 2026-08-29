@@ -56,10 +56,10 @@ The canonical flow is:
    bounded acceptance criteria, scope/exclusions and an explicit admission
    condition or state.
 4. **Explicit admission condition.** The tracked Work Item must say what later
-   observation or owner choice would justify implementation. **Issue creation is
-   not implementation admission.** A capture-only Work Item does not automatically
-   become active WIP, does not automatically receive `roadmap:now`, and does not
-   authorize a branch, Pull Request or source mutation for the finding.
+   observation or owner choice would justify implementation. **Issue creation is not implementation admission.**
+   A capture-only Work Item does not automatically become active WIP, does not
+   automatically receive `roadmap:now`, and does not authorize a branch, Pull
+   Request or source mutation for the finding.
 5. **Implementation only after separate admission.** Implementation may begin only
    after a separately observable owner/admission step re-binds current provider and
    source state, selects the outcome, applies the current change classification,
