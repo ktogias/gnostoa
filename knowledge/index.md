@@ -66,6 +66,7 @@ inherited, copied or loaded by adopting projects.
 - [Require lightweight Work Item micro-retrospection](decisions/0053-require-lightweight-work-item-micro-retrospection.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
+- [Require explicit admission for retrospective findings](requirements/retrospective-findings-require-explicit-admission.md)
 - [Verification precedes integration](requirements/verification-precedes-implementation.md)
 - [Centralized CI verifies integration candidates](requirements/centralized-ci-verifies-integration-candidates.md)
 - [Toolkit evolution](lifecycles/toolkit-evolution.md)
