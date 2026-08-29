@@ -34,6 +34,20 @@ required human semantic review.
 For this repository, every normal, normative or critical change requires a
 linked Work Item and Decision before implementation; an emergency supplies them
 in its mandatory follow-up.
+
+For any **unadmitted finding** produced by a retrospective, experiment,
+evaluation, review, incident analysis or comparable learning surface, read
+`knowledge/requirements/retrospective-findings-require-explicit-admission.md`
+and stop before implementing the finding. Read provider state first and resume
+the existing same-purpose Work Item when one already owns the outcome; otherwise
+create a **focused tracked Work Item** with a desired outcome, bounded acceptance
+criteria, scope boundary and explicit admission condition. Issue creation is
+backlog capture, not implementation admission. Do not create a branch, Pull
+Request or source mutation for that finding until a separate owner/admission step
+selects it under the current classification, Decision, evidence and effect
+boundary. A non-actionable lesson may remain knowledge-only until its admission
+condition occurs.
+
 Before implementation, follow
 `guidance/workflows/develop-verification-first.md`; record expected behavior and
 establish the applicable failing or characterization evidence before editing.
