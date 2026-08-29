@@ -1,7 +1,7 @@
 ---
 type: Source
 title: Nextcloud Mail Phase-A owner-led adaptation retrospective
-description: Formal retrospective of the first positive controlled OWNER-LED Nextcloud Mail adaptation, separating experiment controls, product and validator findings, external evaluation input, H-A scoring and Phase-B implications without rewriting the frozen result.
+description: Formal retrospective of the first positive controlled OWNER-LED Nextcloud Mail adaptation, separating experiment controls, container-first routing, product and validator findings, external evaluation input, H-A scoring and Phase-B implications without rewriting the frozen result.
 status: draft
 generated:
   by: chatgpt/gpt-5.6-sol
@@ -16,6 +16,9 @@ sources:
   - id: phase-b-work-item
     resource: https://github.com/ktogias/gnostoa/issues/158
     title: Run the first real OWNER-LED Mail task on the accepted Phase-A adaptation
+  - id: container-first-routing-reconciliation
+    resource: https://github.com/ktogias/gnostoa/issues/167
+    title: Reconcile the Phase-A container-first routing omission
   - id: owner-led-baseline
     resource: https://github.com/ktogias/gnostoa/blob/main/knowledge/assessments/nextcloud-mail-v0-2-0-owner-led-adoption-trial-baseline.md
     title: Nextcloud Mail v0.2.0 owner-led adoption trial baseline
@@ -30,6 +33,8 @@ x-project-knowledge:
     - gnostoa
   relations:
     - kind: governed-by
+      target: /decisions/0005-container-first-runtime.md
+    - kind: governed-by
       target: /decisions/0052-use-staged-evidence-maturity-for-early-adoption-trials.md
     - kind: references
       target: /decisions/0050-separate-adoption-observations-from-readiness-and-owner-disposition.md
@@ -38,7 +43,9 @@ x-project-knowledge:
     - kind: references
       target: /assessments/nextcloud-mail-v0-2-0-owner-led-adoption-trial-baseline.md
     - kind: references
-      target: /assessments/v0-2-0-release-series-and-staged-evidence-retrospective.md
+      target: /assessments/v0-2-0-release-series-and-staged-evidence-transition-retrospective.md
+    - kind: references
+      target: /failure-modes/container-first-verification-routing-bypass.md
 ---
 
 # Nextcloud Mail Phase-A owner-led adaptation retrospective
@@ -101,7 +108,8 @@ The updated artifact usefully integrates the Phase-A result, but provider state 
 controlled consumer-surface adaptation      PASS
 owner material semantic interventions        0
 fresh semantic review                        ACCEPT
-project verification                         BLOCKED where prerequisites absent
+project verification                         BLOCKED on selected host/native route; container-first route not exhausted
+container-first route conformance             DEVIATION: primary route not attempted or ruled out
 aggregate adoption readiness                 BLOCKED, rc=3
 semantic adoption                            NOT DETERMINED by aggregate gate
 owner disposition                            ACCEPT
@@ -109,12 +117,13 @@ practical task-solving utility               UNKNOWN until Phase B
 full-repository cold adoption                NOT MEASURED
 independent adoption                         NOT ESTABLISHED
 protocol deviation                           YES: synthetic unresolved runtime image
+execution-routing deviation                   YES: container-first route not exhausted before host fallback
 product/template placeholder defect          CONFIRMED
 runtime-lock semantic truth gap               OBSERVED
 runner file-write permission weakness         OBSERVED
 ```
 
-Phase A succeeded at the claim it finally made: a fresh agent could adapt the frozen Mail subject from the admitted sanitized v0.2.0 consumer surface with no material owner semantic intervention, preserve existing project authority, generate deterministic bounded context, report unavailable project suites honestly, and produce a candidate accepted by fresh-context semantic review.
+Phase A succeeded at the claim it finally made: a fresh agent could adapt the frozen Mail subject from the admitted sanitized v0.2.0 consumer surface with no material owner semantic intervention, preserve existing project authority, generate deterministic bounded context, report the project-suite route it actually attempted honestly as `BLOCKED`, and produce a candidate accepted by fresh-context semantic review. A later reconciliation found that this did **not** establish exhaustive project-verification unavailability because the container-first route was neither attempted nor ruled out before the host/native fallback was treated as the effective boundary.
 
 The run also produced stronger negative product-learning evidence than a clean success alone would have provided. The toolkit template encouraged a schema-valid synthetic runtime image, the source-built runtime-lock validator accepted it without observed image binding, and OpenCode's `edit=allow` permitted that semantic write without a human permission checkpoint.
 
@@ -148,7 +157,28 @@ The agent first inventoried only admitted local input and independently reproduc
 
 The agent discovered the existing-project adoption route and the project-owned target surfaces without being handed the expected filenames in the prompt. During execution, however, several shell requests crossed or ambiguously approached the mutation boundary and were rejected. These are part of adaptation-cost evidence rather than hidden corrections to the final result.
 
-### 5. The critical stop occurred before the first planned semantic write
+### 5. Late reconciliation: container-first execution priority was not applied
+
+A later pre-Phase-B review exposed a routing omission that belongs to Phase A rather than to the later task experiment.
+
+The admitted v0.2.0 consumer guidance was container-first. Decision 0005 makes the pinned OCI runtime the primary consumer and CI interface, with native execution as fallback. `guidance/reference/runtime-and-distribution.md` says **Project validation → OCI-compatible runtime image pinned by digest** and **CI validation → pinned runtime image**, with isolated native CLI as the supported fallback. `guidance/workflows/bootstrap-new-project.md` presents immutable OCI as the canonical validation invocation and says to use the native fallback when an OCI runtime is unavailable. `docs/core/adoption.md` likewise includes an immutable toolkit version and matching OCI image digest in the minimum adoption controls.
+
+The substantive Phase-A run did not follow that priority. It used the vendored source directly from the host through `PYTHONPATH=mail/.knowledge-kit python -m tools.cli ...`, authored a verification adapter that preflighted host PHP/Composer/dependencies, and ran adoption-check with `--execution-route source-built`. Retained preflight evidence shows Docker 29.7.2 was available while PHP and Composer were not. The run expected the Mail `fast` and `regression` suites to return 127 and treated that host prerequisite state as the effective project-verification boundary without first recording an attempted or explicitly unavailable container-first route.
+
+There were two contributing causes:
+
+1. **Input-design limitation.** The sanitized consumer projection intentionally excluded release self-knowledge and did not provide the actual published v0.2.0 OCI digest. The agent saw only the generic lock template's placeholder, so the primary published-OCI route was not directly instantiable from admitted bytes even though the owner/orchestration layer knew the immutable release digest.
+2. **Route-selection/discoverability failure.** The exact Gnostoa source, Dockerfile and Docker engine were nevertheless available, so a source-built container route remained available for evaluation. The agent had also read `adopt-existing-project.md`, whose first-slice step lists `native`, `source-built` and `immutable OCI` as supported routes without foregrounding their priority; the bootstrap/runtime reference carries the stronger container-first ordering. The agent selected the locally easy host/source path instead of reconciling those instructions.
+
+The Mail side must be stated separately. The frozen Mail repository had no `.devcontainer/devcontainer.json` and no root `Dockerfile`. Its `make start-docker` target launches `ghcr.io/christophwurst/docker-imap-devel` as an IMAP test service; it is not a full PHP/Node development environment. Therefore current v0.2.0 evidence does **not** justify a retrospective claim that Phase A was required to invent a new Mail Dev Container. The required correction is narrower: inspect and prefer supported containerized validation first, record why it is unavailable when it is unavailable, and only then fall back to host tooling.
+
+The retained suite result is consequently route-scoped:
+
+> Mail `fast` and `regression` were `BLOCKED` on the selected host/native project adapter because its prerequisites were absent. Phase A did not prove that every container-first project-verification route was unavailable.
+
+This is a recurrence of the already canonical `container-first-verification-routing-bypass` failure mode. It does not change the frozen candidate or retroactively change H-A scoring, but it is a distinct Phase-A execution-routing deviation and a required Phase-B retrospective input.
+
+### 6. The critical stop occurred before the first planned semantic write
 
 Before project-owned semantic files were written, inspection of the agent's compacted plan showed two unsupported schema-satisfying placeholders under consideration:
 
@@ -161,7 +191,7 @@ No Mail-specific semantic fact, authority value or implementation decision was s
 
 The agent acknowledged the rule and resumed. Later, however, OpenCode `edit=allow` permitted direct Write/Edit mutation without a human permission dialog, and the agent serialized the template's schema-valid all-zero OCI image into `.knowledge/kit.lock.yaml` while marking the runtime identity `UNRESOLVED`.
 
-### 6. Structural checks passed more than semantic truth justified
+### 7. Structural checks passed more than semantic truth justified
 
 On the staged diagnostic candidate:
 
@@ -171,8 +201,9 @@ On the staged diagnostic candidate:
 - bundle validation: PASS;
 - task-envelope validation: PASS;
 - bounded context generation: first seed invocation failed mechanically, then self-corrected; two retained outputs were byte-identical;
-- Mail `fast`: BLOCKED / exit 127 because `php`, `composer`, `vendor/` and `node_modules/` were unavailable;
-- Mail `regression`: BLOCKED / exit 127 for the same prerequisite gap;
+- Mail `fast`: BLOCKED / exit 127 on the selected host/native project adapter because `php`, `composer`, `vendor/` and `node_modules/` were unavailable;
+- Mail `regression`: BLOCKED / exit 127 on that same route for the same prerequisite gap;
+- Docker was available, but no container-first project-verification attempt or explicit container-unavailability record preceded those suite results;
 - no dependency install/download was attempted.
 
 The source-built `check-runtime` success did not prove that the declared runtime image was factual. It established source/revision/digest/schema consistency under the invocation it received, but no observed runtime-image binding was supplied. This is a concrete instance of the structural-versus-semantic truth gap already seen in ownership/verifier fields during earlier adoption work.
@@ -189,7 +220,7 @@ adoption-rc=3
 
 That layered behavior is evidence in favor of the assurance-v2 split selected around issue #143 and Decision 0050: local structural validity did not automatically become readiness or semantic adoption.
 
-### 7. Exact freeze preserved the raw experiment result before review
+### 8. Exact freeze preserved the raw experiment result before review
 
 The produced candidate was frozen before correction or owner acceptance:
 
@@ -201,7 +232,7 @@ The produced candidate was frozen before correction or owner acceptance:
 
 The exact patch independently retained by adoption-check matched byte-for-byte.
 
-### 8. Fresh-context review accepted the candidate but did not erase protocol deviation
+### 9. Fresh-context review accepted the candidate but did not erase protocol deviation
 
 A separate fresh OpenCode session reviewed read-only base/candidate/evidence material without the adaptation conversation or hidden owner diagnosis. The reviewer independently identified the all-zero OCI placeholder and recommended `ACCEPT`, reasoning that it was explicitly marked unresolved/non-observed rather than asserted as an observed runtime fact.
 
@@ -243,9 +274,9 @@ The fresh agent discovered the adoption route from admitted consumer material an
 
 After a mechanical seed error and self-correction, two context-pack outputs were byte-identical. Determinism previously demonstrated on generic examples therefore reproduced on a real 1,472-file project subject.
 
-### Honest project verification
+### Honest status on the attempted project-verification route
 
-Unavailable PHP/composer/dependency prerequisites were reported `BLOCKED`, never repainted as PASS. No install/download was attempted merely to improve the score.
+Unavailable PHP/composer/dependency prerequisites on the selected host/native adapter were reported `BLOCKED`, never repainted as PASS. No install/download was attempted merely to improve the score. This honesty remains a positive control result, but later reconciliation narrows the claim: the run did not first exhaust or explicitly rule out the container-first route, so `BLOCKED` was route-specific rather than proof of global project-verification unavailability.
 
 ### Layered adoption assurance
 
@@ -279,6 +310,14 @@ OpenCode shell actions were ask-gated, but `edit=allow` allowed project file wri
 
 This is an experiment-runner control weakness, not a Mail semantic intervention. Future comparable experiments should use a stronger file-write gate or OS/container boundary when practical.
 
+### Container-first validation routing was bypassed
+
+Phase A had the container-first policy and relevant runtime guidance in its admitted consumer surface, and Docker was available on the host, yet the execution path settled on direct host/source invocation before a container route was attempted or ruled out. This repeats the canonical `container-first-verification-routing-bypass` failure mode.
+
+The failure has both execution and product/discoverability components. The agent did not reconcile the stronger container-first runtime reference with the neutral route enumeration in the existing-project workflow. The experiment input also omitted the concrete published v0.2.0 OCI digest, making the preferred immutable runtime less discoverable than the immediately executable host Python path. Neither fact excuses the route choice; together they explain why a previously documented failure mode recurred.
+
+For Mail project suites, the evidence is more limited: there was no project Dev Container or root Dockerfile to enter, and the existing Docker target provided only IMAP service infrastructure. Phase A should have recorded that inspection before fallback. Whether Gnostoa should help create a target-project development container when none exists is a separate product/design question and is not admitted by this retrospective correction.
+
 ### Fresh review was not independent review
 
 The review session was context-isolated, but it used the same model alias as adaptation. Fresh context removes transcript contamination; it does not remove correlated model blind spots. Phase B should use a different model/provider alias for fresh technical review where practical, as already frozen in Work Item #158.
@@ -305,6 +344,8 @@ The updated owner-supplied evaluation adds useful interpretation without replaci
 - The roughly 52-minute number is the substantive session span from creation to last observed update, not an exact prompt-enter-to-completion measurement because the exact prompt-enter instant was not bound.
 - Any stale provider presentation in the external artifact, including historical PR state, is overridden by live provider read-back.
 - External code/word ratios and synthetic-adopter measurements remain dated analytical snapshots, not current product truth or real-adoption utility evidence.
+- The retained Mail suite `BLOCKED` result is scoped to the selected host/native adapter; it is not evidence that the container-first route was exhausted or impossible.
+- The frozen Mail repository had IMAP Docker service support but no full project Dev Container/Dockerfile; this retrospective does not invent one as a historical prerequisite.
 
 ## H-A scoring reconciliation
 
@@ -331,13 +372,14 @@ Therefore the canonical reconciliation remains:
 
 ```text
 H-A                               PASS
-protocol deviation                YES
+runtime/image protocol deviation  YES
+container-first routing deviation YES
 runtime-image placeholder defect  RETAINED
 owner disposition                 ACCEPT
 Phase-A practical utility         UNKNOWN
 ```
 
-This is not leniency toward the defect. It is separation of hypothesis scoring from protocol-compliance findings.
+This is not leniency toward either defect. It is separation of hypothesis scoring from protocol-compliance and execution-routing findings. Container-first route compliance was not a predeclared H-A score condition, so it is recorded separately rather than added retroactively to the FAIL enumeration.
 
 ## Narrow claim boundary
 
@@ -353,7 +395,9 @@ It does **not** establish:
 - upstream acceptance;
 - practical productivity gain;
 - long-term maintenance or synchronization cost;
-- resilience to upstream churn; or
+- resilience to upstream churn;
+- container-first execution-route compliance;
+- exhaustive unavailability of project verification outside the attempted host/native adapter; or
 - product-market demand.
 
 ## Durable lessons
@@ -367,7 +411,8 @@ It does **not** establish:
 7. **Freeze the raw candidate before review or correction.** Exact tree and patch evidence made the protocol defect inspectable without rewriting history.
 8. **Fresh review and independent review are different assurance levels.** Different model/provider review is preferable when cheap and relevant.
 9. **Predeclared scoring protects against post-hoc reinterpretation.** Record protocol deviations separately instead of silently moving success criteria after the outcome.
-10. **Practical value is now the priority evidence gap.** Phase B should run before assurance machinery expands further unless a newly discovered defect blocks safe execution.
+10. **Container-first must be a route-selection gate, not background prose.** Before host prerequisite absence becomes `BLOCKED`, attempt the primary container route or retain explicit evidence that it is unavailable; distinguish toolkit runtime from target-project suite runtime.
+11. **Practical value remains the priority evidence gap after route reconciliation.** Phase B should run before assurance machinery expands further unless a newly discovered defect blocks safe execution.
 
 ## Follow-up hypotheses and admission conditions
 
@@ -378,6 +423,7 @@ Findings below are retained separately from implementation admission.
 | Focused product fix when template/adoption usability work is admitted | Make `public_surface_digest` and `runtime.image` template placeholders schema-invalid until replaced; add regression tests. | RETAINED, NOT IMPLEMENTED |
 | Before a claim relies on runtime-image truth rather than lock structure | Separate/strengthen observed runtime-image binding from structural `check-runtime` validity and wording. | RETAINED, NOT IMPLEMENTED |
 | Before the next comparable controlled agent experiment | Replace `edit=allow` with a stronger write checkpoint or isolated filesystem boundary where practical. | RETAINED, NOT IMPLEMENTED |
+| Before another run treats missing host tools as project-suite unavailability | Reuse the existing container-first/workspace-safety follow-up (#7): make primary container-route inspection/attempt and fallback reason explicit before native execution. | RETAINED IN #7, NOT IMPLEMENTED |
 | Later, on a previously unseen target | Run true full-repository cold adoption without a target-specific sanitized projection. | RETAINED, NOT STARTED |
 | Phase B fresh review | Use a different model/provider alias from the Phase-A Big Pickle adaptation/review where practical. | ALREADY FROZEN IN #158, NOT YET EXECUTED |
 | Existing separate backlog | InvalidInput/InternalError distinction, diagnose mode, Decision-number prefix uniqueness and large-function decomposition. | OUTSIDE THIS RETROSPECTIVE SLICE |
@@ -393,9 +439,13 @@ Before Phase-B execution:
 - reconstruct exactly the accepted Phase-A tree `97f0e0a44621e029af5bb3c360b397cd0ef993bf` from the frozen Mail base and retained patch;
 - do not silently repair the Phase-A runtime-image placeholder in that baseline;
 - retain Deny/Reject/stop controls separately from material owner semantic interventions;
+- do not preclassify missing host PHP/Composer as the Phase-B verification result; allow the fresh agent to discover the accepted project-owned route and require the primary container path to be attempted or explicitly ruled out before host fallback;
+- distinguish Gnostoa toolkit container execution from Mail project-suite container/runtime execution in retained evidence;
 - use stronger file-write gating than Phase A where practical without changing task semantics;
 - expose only the exact accepted adaptation and frozen real task statement to the fresh execution agent;
 - use a different model/provider alias for fresh technical review where practical;
 - assess owner utility explicitly as `POSITIVE`, `MIXED`, `NEGATIVE` or `UNKNOWN`.
 
 The purpose of Phase B is not to prove the adaptation can exist. Phase A established that controlled result. Phase B asks the remaining product question: **does the accepted adaptation materially help a fresh agent complete one real bounded Mail development task?**
+
+The late routing correction changes the execution interpretation, not the frozen H-B task statement: Phase B should test whether the accepted adaptation itself leads a fresh agent toward the declared container-first discipline. If the agent again treats missing host tools as final without inspecting the container path, that is product/orientation evidence rather than something the orchestrator should silently repair in advance.
