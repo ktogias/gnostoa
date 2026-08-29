@@ -38,7 +38,7 @@ inherited, copied or loaded by adopting projects.
 - [Define supported update-channel semantics for base-bundled OCI components](decisions/0025-define-supported-update-channel-semantics-for-base-bundled-oci-components.md)
 - [Define effective-runtime component presence for layered OCI publication](decisions/0026-define-effective-runtime-component-presence-for-layered-oci-publication.md)
 - [Remove pip and ensurepip from the published Gnostoa OCI runtime](decisions/0027-remove-pip-and-ensurepip-from-the-published-gnostoa-oci-runtime.md)
-- [Bind the published OCI runtime source to the Git candidate](decisions/0028-bind-the-published-oci-runtime-source-to-the-Git-candidate.md)
+- [Bind the published OCI runtime source to the Git candidate](decisions/0028-bind-the-published-oci-runtime-source-to-the-git-candidate.md)
 - [Define authoritative source membership for the public-surface digest](decisions/0029-define-authoritative-source-membership-for-the-public-surface-digest.md)
 - [Refresh the official Python 3.12 base for CPython security fixes](decisions/0030-refresh-the-official-python-312-base-for-cpython-security-fixes.md)
 - [Accept bounded material Debian security uncertainty for the first OCI candidate](decisions/0031-accept-bounded-material-debian-security-uncertainty-for-the-first-oci-candidate.md)
