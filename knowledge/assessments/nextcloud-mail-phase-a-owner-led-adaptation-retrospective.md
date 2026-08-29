@@ -38,7 +38,7 @@ x-project-knowledge:
     - kind: references
       target: /assessments/nextcloud-mail-v0-2-0-owner-led-adoption-trial-baseline.md
     - kind: references
-      target: /assessments/v0-2-0-release-series-and-staged-evidence-transition-retrospective.md
+      target: /assessments/v0-2-0-release-series-and-staged-evidence-retrospective.md
 ---
 
 # Nextcloud Mail Phase-A owner-led adaptation retrospective
