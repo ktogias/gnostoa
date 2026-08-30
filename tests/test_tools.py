@@ -2247,6 +2247,29 @@ class ContinuousIntegrationTests(unittest.TestCase):
             ["3.11", "3.12"],
             compatibility["strategy"]["matrix"]["python-version"],
         )
+
+        ruff_steps = [
+            step
+            for step in compatibility["steps"]
+            if step.get("name") == "Run per-change Ruff gates"
+        ]
+        self.assertEqual(1, len(ruff_steps), ruff_steps)
+        ruff_step = ruff_steps[0]
+        ruff_step_index = compatibility["steps"].index(ruff_step)
+        self.assertGreater(ruff_step_index, 0)
+        self.assertEqual(
+            "Install the exact development dependencies",
+            compatibility["steps"][ruff_step_index - 1]["name"],
+        )
+        self.assertEqual("matrix.python-version == '3.12'", ruff_step["if"])
+        self.assertEqual(
+            (
+                "python -m ruff format --check tools ci tests\n"
+                "python -m ruff check tools ci tests\n"
+            ),
+            ruff_step["run"],
+        )
+
         self.assertEqual(
             ["policy", "fast", "python-compatibility"], regression["needs"]
         )
