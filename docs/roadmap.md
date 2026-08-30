@@ -20,13 +20,18 @@ dispositions unchanged.
 [Decision 0052](../knowledge/decisions/0052-use-staged-evidence-maturity-for-early-adoption-trials.md)
 now governs early-product evidence through staged classes. The `v0.2.0`
 source and OCI artifact are published and their digest-bound release
-reconciliation is complete. For
-[Work Item #146](https://github.com/ktogias/gnostoa/issues/146), the final
-release-series experiment boundary is integration and provider read-back of
-the
+reconciliation is complete. The release-series experiment boundary was
+satisfied by the integrated and provider-read-back
 [Nextcloud Mail `OWNER-LED` baseline](../knowledge/assessments/nextcloud-mail-v0-2-0-owner-led-adoption-trial-baseline.md).
-The concrete owner-led task run, preliminary assessment and retrospective are
-later separate work; upstream feedback is additive, and strict
+Phase A completed the controlled adaptation with historical owner `ACCEPT` and
+recorded H-A `PASS`; a later independent strict-audit addendum retained that
+history while classifying the frozen subject `H-A FAIL` with protocol
+deviation `YES`. The first
+[real Phase-B task](../knowledge/assessments/nextcloud-mail-phase-b-owner-led-task-result.md)
+also completed as an experiment with raw reviewer `ACCEPT`, owner `CORRECT`,
+owner-assessed utility `UNKNOWN` and `H-B FAIL`. Experiment completion is
+distinct from hypothesis success and does not establish positive causal
+Gnostoa utility. Upstream feedback remains additive, and strict
 `INDEPENDENT` evidence is deferred to a separately admitted maturity-stage
 activity. `ktogias/mail` remains the local mutation workspace and
 `nextcloud/mail` retains Issue and final Change Request authority. Live
@@ -279,18 +284,23 @@ site or hosted service was released by that effect.
 ## Next
 
 B2/P1 and B2/P2 are completed evidence. C4-v0 was rejected and no successor
-control is selected. Nextcloud Mail is selected for an `OWNER-LED`
-early-product evidence stream under Decision 0052. The published `v0.2.0`
-release and digest-bound reconciliation are complete; the release Work
-Item's final experiment-boundary requirement is the integrated and
-provider-read-back owner-led baseline. The concrete task run and
-retrospective are later separate work, while strict `INDEPENDENT` B3
-evidence is deferred to a separately admitted maturity-stage activity.
-Provider state remains authoritative for its live lifecycle.
+control is selected. The `v0.2.0` publication/reconciliation, owner-led
+baseline, Phase-A adaptation and
+[first real Phase-B task](../knowledge/assessments/nextcloud-mail-phase-b-owner-led-task-result.md)
+are complete. Phase B reported `H-B FAIL` and owner-assessed utility `UNKNOWN`;
+no positive causal product-utility claim follows from it.
 
-| Work Items | Problem addressed | Completion signal | Non-goal |
-|---|---|---|---|
-| [#146](https://github.com/ktogias/gnostoa/issues/146) | The immutable `v0.2.0` source and OCI artifact are published and reconciled; the release series still needs its bounded early-product experiment boundary represented durably. | Source, OCI digest, provenance, integrated release verification and public records agree, and the Nextcloud Mail `OWNER-LED` baseline is integrated and provider-read back before lifecycle completion. | Executing or scoring the owner-led task; upstream feedback or strict `INDEPENDENT` evidence; `latest`, extra tags, multi-architecture, reproducibility claims, deployment or a new release framework. |
+The Phase-A result retains two explicit audit layers: historical owner
+`ACCEPT` with recorded H-A `PASS`, and a later independent strict-audit
+classification of `H-A FAIL` with protocol deviation `YES`. Neither layer is
+silently rewritten by the completed Phase-B result.
+
+No successor delivery item is selected by this static page. A later real task,
+behavioral-traceability experiment or other follow-up requires a separate
+current-subject owner admission. Strict `INDEPENDENT` B3 evidence likewise
+remains deferred to a separately admitted maturity-stage activity. Provider
+state remains authoritative for the live selected Work Item, of which there may
+be none.
 
 ## Research
 
@@ -317,11 +327,12 @@ Issue #24 is the completed B2 evidence base, and [Issue #33](https://github.com/
 is the completed C4-v0 experiment whose control was rejected. The strict B3 methodology remains pre-registered for later
 `INDEPENDENT` evidence. The rejected Nextcloud Mail attempts remain
 historical controlled pre-B3 records and produced no accepted or durable
-adoption result. Decision 0052 selects the current stream as `OWNER-LED`.
-Work Item #146 governs only the published release reconciliation and the
-integrated/provider-read-back owner-led baseline; the concrete task run,
-preliminary assessment and retrospective are later work, and a strict
-independent experiment requires separate future admission.
+adoption result. Decision 0052 classified the v0.2.0 Nextcloud Mail trial as
+`OWNER-LED`. Its Phase-A adaptation and
+[Phase-B task result](../knowledge/assessments/nextcloud-mail-phase-b-owner-led-task-result.md)
+are now recorded separately; Phase B completed with `H-B FAIL` and
+owner-assessed utility `UNKNOWN`. A strict independent experiment requires
+separate future admission.
 
 The work in PR #4 is retained here as an exact research input for #3. It is not
 discarded, accepted or part of the first-publication baseline while its review

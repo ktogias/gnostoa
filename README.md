@@ -109,12 +109,20 @@ remain unchanged.
 [Decision 0052](knowledge/decisions/0052-use-staged-evidence-maturity-for-early-adoption-trials.md)
 now governs the early product phase through staged evidence. The `v0.2.0`
 source and immutable OCI execution subject are published, reconciled and
-digest-bound. The release-series experiment boundary is the bounded
+digest-bound. The release-series experiment boundary was satisfied by the bounded
 [Nextcloud Mail `OWNER-LED` baseline](knowledge/assessments/nextcloud-mail-v0-2-0-owner-led-adoption-trial-baseline.md),
-with `human:ktogias` as the initial semantic and evaluation authority. The
-concrete task run, preliminary owner assessment and retrospective are later
-separate work; upstream or project-participant feedback is additive and does
-not block them. `ktogias/mail` is the local mutation workspace, while
+with `human:ktogias` as the initial accountable project-side semantic and
+evaluation authority for the v0.2.0 `OWNER-LED` stream through #158. Phase A
+completed its controlled adaptation with historical owner `ACCEPT` and recorded
+H-A `PASS`; a later independent strict-audit addendum retained that history
+while classifying the same frozen subject `H-A FAIL` with protocol deviation
+`YES`. The first
+[real Phase-B task](knowledge/assessments/nextcloud-mail-phase-b-owner-led-task-result.md)
+also completed as an experiment: the raw different-model reviewer recommended
+`ACCEPT`, the owner disposition was `CORRECT`, owner-assessed utility remained
+`UNKNOWN` and the technically wrong frozen result scored `H-B FAIL`.
+Completion is not hypothesis success, and the run does not establish positive
+causal Gnostoa utility. `ktogias/mail` remains the local mutation workspace, while
 `nextcloud/mail` retains Issue and final Change Request authority. This
 evidence establishes neither independent adoption nor upstream acceptance.
 

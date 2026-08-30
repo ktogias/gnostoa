@@ -179,22 +179,31 @@ dispositions unchanged.
 
 [Decision 0052](../knowledge/decisions/0052-use-staged-evidence-maturity-for-early-adoption-trials.md)
 now governs early-product evidence through distinct `SELF-HOSTED`,
-`OWNER-LED`, `COLLABORATIVE` and `INDEPENDENT` classes. The current
-Nextcloud Mail path is `OWNER-LED`, with `human:ktogias` as the initial
-semantic and evaluation authority. The `v0.2.0` source and immutable OCI
-subject are published, reconciled and digest-bound, and the release-series
-experiment boundary is the
+`OWNER-LED`, `COLLABORATIVE` and `INDEPENDENT` classes. The completed v0.2.0
+Nextcloud Mail stream through #158 is `OWNER-LED`, with `human:ktogias` as its
+initial accountable project-side semantic and evaluation authority. The
+`v0.2.0` source and immutable OCI subject are published, reconciled and
+digest-bound, and the release-series experiment boundary was satisfied by the
 [bounded owner-led baseline](../knowledge/assessments/nextcloud-mail-v0-2-0-owner-led-adoption-trial-baseline.md).
-The concrete task run, preliminary assessment and retrospective are later
-separate work. Upstream feedback is additive rather than blocking, while
-strict `INDEPENDENT` evidence remains a later maturity-stage activity.
+Phase A then completed the controlled adaptation with historical owner
+`ACCEPT` and recorded H-A `PASS`; a later independent strict-audit addendum
+retained that history while classifying the frozen subject `H-A FAIL` with
+protocol deviation `YES`. The first
+[real Phase-B task](../knowledge/assessments/nextcloud-mail-phase-b-owner-led-task-result.md)
+completed with a technically wrong frozen result: the raw reviewer recommendation
+was `ACCEPT`, the owner disposition was `CORRECT`, owner-assessed utility
+remained `UNKNOWN` and the result scored `H-B FAIL`. The experiment completed,
+but its hypothesis did not pass and positive causal Gnostoa utility was not
+demonstrated. Upstream feedback is additive rather than blocking, while strict
+`INDEPENDENT` evidence remains a later maturity-stage activity.
 `ktogias/mail` is the local mutation workspace; `nextcloud/mail` retains
 Issue and final Change Request authority. No independent-adoption or
 upstream-acceptance claim is made.
 
-This page deliberately does not restate delivery chronology, live Work Item
-lifecycle or candidate-bound measured outcomes, because each of those changes
-independently of any source commit. Read instead:
+This page includes only the bounded chronology and outcome summary above, with
+each claim linked to its durable subject-specific record. It deliberately does
+not restate live Work Item lifecycle or free-floating candidate outcomes,
+because those can change independently of any source commit. Read instead:
 
 - **delivery navigation and what each completed slice established** — the
   [Now / Next / Research roadmap](roadmap.md);

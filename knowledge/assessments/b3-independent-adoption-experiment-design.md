@@ -269,12 +269,17 @@ they did not satisfy this design's strict independent-owner eligibility.
 
 [Decision 0052](../decisions/0052-use-staged-evidence-maturity-for-early-adoption-trials.md)
 subsequently introduced staged evidence for Gnostoa's early product phase.
-The current `v0.2.0` Nextcloud Mail path is therefore classified as
-`OWNER-LED`, with `human:ktogias` as the initial semantic and evaluation
-authority. Its integrated baseline, rather than a strict independent
-contract, is the v0.2.0 release-series experiment boundary. The concrete
-task run, preliminary assessment and retrospective are separate later work,
-and upstream feedback is additive rather than an entry gate.
+The completed `v0.2.0` Nextcloud Mail path was classified as `OWNER-LED`, with
+`human:ktogias` as the initial accountable project-side semantic and evaluation
+authority for that run. Its integrated baseline, rather than a strict
+independent contract, satisfied the v0.2.0 release-series experiment boundary.
+Phase A completed with historical owner `ACCEPT` and recorded H-A `PASS`. The
+real Phase-B task then completed with raw reviewer `ACCEPT`, owner `CORRECT`,
+owner-assessed utility `UNKNOWN` and `H-B FAIL`. A later independent strict-audit
+addendum subsequently classified the unchanged Phase-A subject `H-A FAIL` with
+protocol deviation `YES`. Upstream feedback remained additive rather than an
+entry gate. The exact Phase-B result is retained in
+[the Phase-B owner-led task assessment](nextcloud-mail-phase-b-owner-led-task-result.md).
 
 This later choice does not rewrite the historical attempts or satisfy this
 strict methodology. The methodology remains available for a separately
