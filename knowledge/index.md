@@ -117,6 +117,7 @@ inherited, copied or loaded by adopting projects.
 - [Adoption-check project-verification runtime routing](assessments/adoption-check-project-verification-runtime-routing.md)
 - [First-publication provider audit snapshot](assessments/first-publication-provider-audit.md)
 - [First-publication reputation and direction assessment](assessments/first-publication-reputation-and-direction-assessment.md)
+- [Build image inefficiency analysis](assessments/build-inefficiency-analysis.md)
 - [Source-publication name-risk screening](assessments/gnostoa-source-name-screening.md)
 - [Publication-baseline review drift](failure-modes/publication-baseline-review-drift.md)
 - [Container-first verification routing bypass](failure-modes/container-first-verification-routing-bypass.md)
