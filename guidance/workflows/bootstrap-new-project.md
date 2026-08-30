@@ -133,8 +133,9 @@ into a published-OCI claim.
    `toolkit.public_surface_digest`. Do not follow a mutable default branch or
    image tag, and do not treat a revision label as a content digest.
    The two digest-bearing `REPLACE_WITH_*` values in the lock template are
-   intentionally schema-invalid; `check-runtime` reports each field until both
-   are replaced with the observed public-surface and image digests.
+   intentionally schema-invalid. Replace each whole YAML value, including its
+   displayed prefix, with the observed public-surface or image identity;
+   `check-runtime` reports each field until both replacements are complete.
 2. Create `.knowledge/profile.yaml` extending
    `../.knowledge-kit/core/profile.yaml`.
 3. Create `.knowledge/change-control.yaml` from

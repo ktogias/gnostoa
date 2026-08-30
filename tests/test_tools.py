@@ -2919,6 +2919,8 @@ type_rules: {}
                         invalid_paths,
                         issues,
                     )
+                    if not expected_invalid_paths:
+                        self.assertEqual([], issues)
 
     def test_runtime_lock_reports_unreplaced_template_placeholders_actionably(
         self,
@@ -2926,12 +2928,19 @@ type_rules: {}
         template = (ROOT / "templates" / "knowledge-kit.lock.yaml").read_text(
             encoding="utf-8"
         )
+        schema = json.loads(
+            (ROOT / "schemas" / "toolkit-lock.schema.json").read_text(encoding="utf-8")
+        )
         expected = {
             "toolkit.public_surface_digest": (
-                "sha256:REPLACE_WITH_PUBLIC_SURFACE_DIGEST"
+                "sha256:REPLACE_WITH_PUBLIC_SURFACE_DIGEST",
+                schema["properties"]["toolkit"]["properties"]["public_surface_digest"][
+                    "pattern"
+                ],
             ),
             "runtime.image": (
-                "registry.example.org/gnostoa@sha256:REPLACE_WITH_RUNTIME_IMAGE_DIGEST"
+                "registry.example.org/gnostoa@sha256:REPLACE_WITH_RUNTIME_IMAGE_DIGEST",
+                schema["properties"]["runtime"]["properties"]["image"]["pattern"],
             ),
         }
 
@@ -2946,11 +2955,12 @@ type_rules: {}
                 runtime_root=source,
             )
 
-        for path, placeholder in expected.items():
+        for path, (placeholder, pattern) in expected.items():
             matches = [issue for issue in issues if issue.startswith(f"{path}:")]
             self.assertEqual(1, len(matches), issues)
             self.assertIn(placeholder, matches[0])
             self.assertIn("does not match", matches[0])
+            self.assertIn(repr(pattern), matches[0])
 
     def test_runtime_lock_requires_pinned_public_surface_digest(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
