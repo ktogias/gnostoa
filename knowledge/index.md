@@ -106,6 +106,7 @@ inherited, copied or loaded by adopting projects.
 - [B3 independent-adoption experiment design](assessments/b3-independent-adoption-experiment-design.md)
 - [Nextcloud Mail v0.2.0 owner-led adoption trial baseline](assessments/nextcloud-mail-v0-2-0-owner-led-adoption-trial-baseline.md)
 - [Nextcloud Mail Phase-A owner-led adaptation retrospective](assessments/nextcloud-mail-phase-a-owner-led-adaptation-retrospective.md)
+- [Nextcloud Mail Phase-B owner-led task result](assessments/nextcloud-mail-phase-b-owner-led-task-result.md)
 - [Nextcloud Mail adoption baseline and root-cause analysis](assessments/nextcloud-mail-adoption-baseline-and-root-cause.md)
 - [Nextcloud Mail adoption external-practice research and remediation alternatives](assessments/nextcloud-mail-adoption-external-practice-and-remediation-alternatives.md)
 - [Nextcloud Mail adoption route-activation diagnostic design](assessments/nextcloud-mail-adoption-route-activation-diagnostic-design.md)

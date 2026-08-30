@@ -3501,7 +3501,11 @@ class DocumentationTests(unittest.TestCase):
             "## Research", maxsplit=1
         )[0]
         research_section = roadmap.split("## Research", maxsplit=1)[1]
-        self.assertIn("https://github.com/ktogias/gnostoa/issues/146", next_section)
+        self.assertNotIn("https://github.com/ktogias/gnostoa/issues/146", next_section)
+        self.assertIn("nextcloud-mail-phase-b-owner-led-task-result.md", next_section)
+        self.assertIn("H-B FAIL", next_section)
+        self.assertIn("owner-assessed utility", next_section)
+        self.assertIn("`UNKNOWN`", next_section)
         self.assertNotIn("https://github.com/ktogias/gnostoa/issues/24", next_section)
         self.assertIn("https://github.com/ktogias/gnostoa/issues/24", roadmap)
         self.assertNotIn("https://github.com/ktogias/gnostoa/issues/12", next_section)
@@ -3570,7 +3574,7 @@ class DocumentationTests(unittest.TestCase):
 
         # The invariant is that the workflow need stays durably planned while
         # completed B2 evidence remains distinct from the historical pre-B3 attempts
-        # and the currently selected owner-led evidence stream.
+        # and the completed owner-led evidence stream.
         self.assertIn("B2/P1 and B2/P2 are both complete", roadmap)
         self.assertIn("B2/P1 completed", status)
         for projection in (roadmap, status):
@@ -3582,11 +3586,17 @@ class DocumentationTests(unittest.TestCase):
             self.assertIn("Decision 0052", normalized_projection)
             self.assertIn("`OWNER-LED`", normalized_projection)
             self.assertIn("`INDEPENDENT`", normalized_projection)
-            self.assertIn("later separate work", normalized_projection)
+            self.assertIn(
+                "nextcloud-mail-phase-b-owner-led-task-result.md",
+                normalized_projection,
+            )
+            self.assertIn("H-B FAIL", normalized_projection)
+            self.assertIn("owner-assessed utility", normalized_projection)
+            self.assertIn("`UNKNOWN`", normalized_projection)
             self.assertIn("Nextcloud Mail", normalized_projection)
             self.assertNotIn("exact-subject rerun has not begun", normalized_projection)
             self.assertNotIn("Active B2/P1", normalized_projection)
-        self.assertIn("https://github.com/ktogias/gnostoa/issues/146", roadmap)
+        self.assertNotIn("https://github.com/ktogias/gnostoa/issues/146", roadmap)
         self.assertIn("need has already been demonstrated", status)
         self.assertIn(
             "full workflow platform is not a publication prerequisite",
@@ -3668,6 +3678,15 @@ class DocumentationTests(unittest.TestCase):
         self.assertIn("B3 has not begun", frozen_design)
         self.assertIn("Decision 0052", frozen_design)
         self.assertIn("`OWNER-LED`", frozen_design)
+        normalized_frozen_design = " ".join(frozen_design.split())
+        phase_b_completion = "The real Phase-B task then completed"
+        later_phase_a_audit = "A later independent strict-audit addendum"
+        self.assertIn(phase_b_completion, normalized_frozen_design)
+        self.assertIn(later_phase_a_audit, normalized_frozen_design)
+        self.assertLess(
+            normalized_frozen_design.index(phase_b_completion),
+            normalized_frozen_design.index(later_phase_a_audit),
+        )
 
         completion_analysis = (
             ROOT
@@ -3826,7 +3845,13 @@ class DocumentationTests(unittest.TestCase):
             self.assertIn("Decision 0052", normalized_projection)
             self.assertIn("`OWNER-LED`", normalized_projection)
             self.assertIn("`INDEPENDENT`", normalized_projection)
-            self.assertIn("later separate work", normalized_projection)
+            self.assertIn(
+                "nextcloud-mail-phase-b-owner-led-task-result.md",
+                normalized_projection,
+            )
+            self.assertIn("H-B FAIL", normalized_projection)
+            self.assertIn("owner-assessed utility", normalized_projection)
+            self.assertIn("`UNKNOWN`", normalized_projection)
             self.assertIn("Nextcloud Mail", normalized_projection)
             self.assertIn("0052-use-staged-evidence-maturity", normalized_projection)
             self.assertIn("owner-led-adoption-trial-baseline", normalized_projection)
@@ -3836,6 +3861,55 @@ class DocumentationTests(unittest.TestCase):
             self.assertNotIn(
                 "candidate selection — one eligible", normalized_projection
             )
+
+    def test_phase_b_result_projection_preserves_layered_outcome(self) -> None:
+        assessment = (
+            ROOT
+            / "knowledge"
+            / "assessments"
+            / "nextcloud-mail-phase-b-owner-led-task-result.md"
+        ).read_text(encoding="utf-8")
+
+        for required in (
+            "| Raw fresh-review recommendation | `ACCEPT` |",
+            "| Owner disposition | `CORRECT` |",
+            "| Owner-assessed utility (provider `Owner utility`) | `UNKNOWN` |",
+            "| Final H-B against the predeclared contract | `FAIL` |",
+            "| Experiment lifecycle | `COMPLETED` |",
+        ):
+            self.assertIn(required, assessment)
+        normalized_assessment = " ".join(assessment.split())
+        for required in (
+            "historical owner `ACCEPT` with recorded H-A `PASS`",
+            "classification of `H-A FAIL` with protocol deviation `YES`",
+            "exact preservation after an orchestration-side freeze",
+        ):
+            self.assertIn(required, normalized_assessment)
+        self.assertNotIn("| Predeclared H-B |", assessment)
+
+        current_projections = (
+            (ROOT / "README.md").read_text(encoding="utf-8"),
+            (ROOT / "docs" / "status.md").read_text(encoding="utf-8"),
+            (ROOT / "docs" / "roadmap.md").read_text(encoding="utf-8"),
+        )
+        for projection in current_projections:
+            normalized = " ".join(projection.split())
+            self.assertRegex(normalized, r"raw[^.]{0,80}reviewer[^.]{0,80}`ACCEPT`")
+            self.assertRegex(normalized, r"owner[^.]{0,80}`CORRECT`")
+            self.assertRegex(
+                normalized,
+                r"owner-assessed utility[^.]{0,40}`UNKNOWN`",
+            )
+            self.assertIn("H-B FAIL", normalized)
+            self.assertIn("historical owner `ACCEPT`", normalized)
+            self.assertIn("recorded H-A `PASS`", normalized)
+            self.assertIn("strict-audit", normalized)
+            self.assertIn("`H-A FAIL`", normalized)
+            self.assertIn("protocol deviation `YES`", normalized)
+            self.assertIn("experiment boundary was satisfied", normalized)
+            self.assertNotIn("experiment boundary began", normalized)
+            self.assertIn("completed", normalized.lower())
+            self.assertIn("hypothesis", normalized.lower())
 
     def test_repository_documentation_links_resolve(self) -> None:
         paths = [
