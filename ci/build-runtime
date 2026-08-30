@@ -22,7 +22,8 @@
 set -eu
 
 CANDIDATE_REF="${GNOSTOA_CANDIDATE_REF:-}"
-KIT_VERSION="${GNOSTOA_KIT_VERSION:-development}"
+REQUESTED_KIT_VERSION="${GNOSTOA_KIT_VERSION:-}"
+KIT_VERSION=development
 TAG="gnostoa:source-checkout"
 TARGET="runtime"
 
@@ -91,8 +92,19 @@ if [ -n "$CANDIDATE_REF" ]; then
         exit 7
     fi
     rm -f "$CONTEXT/meta/.revision-paths"
+    DECLARED_KIT_VERSION=$(python3 -c \
+        'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+    if [ -n "$REQUESTED_KIT_VERSION" ] \
+        && [ "$REQUESTED_KIT_VERSION" != "$DECLARED_KIT_VERSION" ]; then
+        echo "requested kit version $REQUESTED_KIT_VERSION does not match candidate package version $DECLARED_KIT_VERSION" >&2
+        exit 7
+    fi
+    KIT_VERSION="${REQUESTED_KIT_VERSION:-$DECLARED_KIT_VERSION}"
     VCS_REF="$resolved"
 else
+    if [ -n "$REQUESTED_KIT_VERSION" ]; then
+        KIT_VERSION="$REQUESTED_KIT_VERSION"
+    fi
     VCS_REF="development"
 fi
 

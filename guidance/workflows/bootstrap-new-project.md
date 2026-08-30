@@ -236,7 +236,11 @@ into a published-OCI claim.
     [`templates/CODEOWNERS.project`](../../templates/CODEOWNERS.project) and
     [`templates/knowledge-change-checklist.md`](../../templates/knowledge-change-checklist.md)
     to make ownership and the change loop visible in review.
-15. After steps 11-14 pass and the required provider protections and checks are
+15. Stage the bounded candidate and follow the existing-project workflow's
+    [mechanical completion-evidence boundary](adopt-existing-project.md#mechanical-completion-evidence).
+    The project-owned `ci/verify` adapter must provide its bound runtime
+    observation for adoption-check without changing ordinary suite behavior.
+16. After steps 11-15 pass and the required provider protections and checks are
     verified, publish the validated baseline and integrate it through its
     protected Change Request at the exact tested head.
 
@@ -284,6 +288,8 @@ knowledge validate --profile .knowledge/profile.yaml --bundle knowledge/
 - The first supported behavior has expected and final verification evidence;
   pre-change evidence is present when useful or required by a specialization.
 - A task context pack can be produced from the Project concept.
+- The staged baseline has a retained adoption-check evidence bundle, while
+  semantic acceptance and durable adoption remain accountable-owner decisions.
 
 ## Recovery
 

@@ -10,16 +10,27 @@ records are labelled explicitly, and none is a first-publication blocker unless
 a concrete security, legal, correctness or exposure finding demonstrates that
 dependency.
 
-The first real
+The strict
 [B3 independent-adoption methodology](../knowledge/assessments/b3-independent-adoption-experiment-design.md)
-is pre-registered. B3 has not begun, and candidate selection remains
-its next owner subject after the publication sequence below. The
-[Decision 0043](../knowledge/decisions/0043-prepare-a-bounded-v0-1-2-b3-readiness-candidate.md)
-readiness candidate is integrated. Separately,
-[Decision 0044](../knowledge/decisions/0044-select-the-v0-1-2-source-and-oci-publication-series.md)
-admits its bounded source-and-OCI publication series under
-[Work Item #111](https://github.com/ktogias/gnostoa/issues/111); it selects no B3
-project, and its live lifecycle remains provider-authoritative.
+remains pre-registered as a later maturity-stage `INDEPENDENT` evidence
+method. Four autonomous Nextcloud Mail adoption attempts remain historical
+controlled pre-B3 evidence, with their original `REJECT` / `UNKNOWN` / `NO`
+dispositions unchanged.
+
+[Decision 0052](../knowledge/decisions/0052-use-staged-evidence-maturity-for-early-adoption-trials.md)
+now governs early-product evidence through staged classes. The `v0.2.0`
+source and OCI artifact are published and their digest-bound release
+reconciliation is complete. For
+[Work Item #146](https://github.com/ktogias/gnostoa/issues/146), the final
+release-series experiment boundary is integration and provider read-back of
+the
+[Nextcloud Mail `OWNER-LED` baseline](../knowledge/assessments/nextcloud-mail-v0-2-0-owner-led-adoption-trial-baseline.md).
+The concrete owner-led task run, preliminary assessment and retrospective are
+later separate work; upstream feedback is additive, and strict
+`INDEPENDENT` evidence is deferred to a separately admitted maturity-stage
+activity. `ktogias/mail` remains the local mutation workspace and
+`nextcloud/mail` retains Issue and final Change Request authority. Live
+lifecycle remains provider-authoritative.
 
 ## Now
 
@@ -268,17 +279,18 @@ site or hosted service was released by that effect.
 ## Next
 
 B2/P1 and B2/P2 are completed evidence. C4-v0 was rejected and no successor
-control is selected. The next B3 owner subject is candidate selection under the
-pre-registered methodology; no target project, owner or task is selected yet.
-The source-readiness correction under
-[Work Item #109](https://github.com/ktogias/gnostoa/issues/109) is complete.
-Before that separate choice, the admitted delivery item is the bounded
-`v0.1.2` source-and-OCI publication series below. Provider state remains
-authoritative for its live lifecycle.
+control is selected. Nextcloud Mail is selected for an `OWNER-LED`
+early-product evidence stream under Decision 0052. The published `v0.2.0`
+release and digest-bound reconciliation are complete; the release Work
+Item's final experiment-boundary requirement is the integrated and
+provider-read-back owner-led baseline. The concrete task run and
+retrospective are later separate work, while strict `INDEPENDENT` B3
+evidence is deferred to a separately admitted maturity-stage activity.
+Provider state remains authoritative for its live lifecycle.
 
 | Work Items | Problem addressed | Completion signal | Non-goal |
 |---|---|---|---|
-| [#111](https://github.com/ktogias/gnostoa/issues/111) | The immutable `v0.1.2` source and public OCI artifact exist, while the current release verifier, durable result and public projections still require exact digest-bound reconciliation. | The verifier targets the published `v0.1.2` digest, durable and public records agree with provider read-back, integrated verification succeeds and the Work Item closes last. | B3 selection or execution; `latest`, extra tags, multi-architecture, reproducibility claims, deployment or a new release framework. |
+| [#146](https://github.com/ktogias/gnostoa/issues/146) | The immutable `v0.2.0` source and OCI artifact are published and reconciled; the release series still needs its bounded early-product experiment boundary represented durably. | Source, OCI digest, provenance, integrated release verification and public records agree, and the Nextcloud Mail `OWNER-LED` baseline is integrated and provider-read back before lifecycle completion. | Executing or scoring the owner-led task; upstream feedback or strict `INDEPENDENT` evidence; `latest`, extra tags, multi-architecture, reproducibility claims, deployment or a new release framework. |
 
 ## Research
 
@@ -302,11 +314,14 @@ platform is deferred to Research and is not the contributor interface or an
 active publication prerequisite. The capability direction remains planned by
 [Decision 0016](../knowledge/decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md).
 Issue #24 is the completed B2 evidence base, and [Issue #33](https://github.com/ktogias/gnostoa/issues/33)
-is the completed C4-v0 experiment whose control was rejected. B3 methodology is
-pre-registered but B3 has not begun; its next owner subject is candidate
-selection. The readiness correction under Work Item #109 is complete; Work Item
-#111 separately governs the `v0.1.2` publication sequence and does not select or
-execute that candidate-specific experiment.
+is the completed C4-v0 experiment whose control was rejected. The strict B3 methodology remains pre-registered for later
+`INDEPENDENT` evidence. The rejected Nextcloud Mail attempts remain
+historical controlled pre-B3 records and produced no accepted or durable
+adoption result. Decision 0052 selects the current stream as `OWNER-LED`.
+Work Item #146 governs only the published release reconciliation and the
+integrated/provider-read-back owner-led baseline; the concrete task run,
+preliminary assessment and retrospective are later work, and a strict
+independent experiment requires separate future admission.
 
 The work in PR #4 is retained here as an exact research input for #3. It is not
 discarded, accepted or part of the first-publication baseline while its review

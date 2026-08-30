@@ -40,8 +40,8 @@ case "${suite}" in
     knowledge_cli docs-build --site-dir "${site_dir}"
     ;;
   release)
-    release_image="ghcr.io/ktogias/gnostoa@sha256:0cd31a2a649c4ffede8972680c6779c981decf5ce8605f749fa7d58751472f80" # pragma: allowlist secret -- public registry identity
-    release_public_digest="sha256:bd8078467b0189d535f222072253e1ef9e8f5fb780f55b56269738cb8f4ef095" # pragma: allowlist secret -- public-surface digest
+    release_image="ghcr.io/ktogias/gnostoa@sha256:f89bf32c0c4b86bac71fa008579b2385e6ae39bf4822f685479c4f2cc22bfca4" # pragma: allowlist secret -- public registry identity
+    release_public_digest="sha256:a85ac8dde00f1ed8fb0425de08597828e97c246ec17ce6556f3f222b27ddb1c1" # pragma: allowlist secret -- public-surface digest
     release_notice_digest="sha256:68978e9fc1875f275c0dfb9bd71ed19d025b01f66409bb31d785d86165ee691c" # pragma: allowlist secret -- public notice digest
     release_tmp="$(mktemp -d "${TMPDIR:-/tmp}/gnostoa-release-verify.XXXXXX")"
     release_docker_config="${release_tmp}/docker"
@@ -49,13 +49,15 @@ case "${suite}" in
     trap 'rm -rf -- "${release_tmp}"' EXIT HUP INT TERM
 
     sed 's/  # pragma: allowlist secret -- public SB2 digest$//' > "${release_tmp}/gnostoa-sb2.sha256" <<'EOF'
+e5eb50cc43ba3f212e4543d09df584cef2680a363cd5f872bcf36f42a414a79b  tools/adoption_assurance.py  # pragma: allowlist secret -- public SB2 digest
+bf55db5d4d998b23cb7ab6ee336c89a9f9ef9d31978c268bcbb7f42420feff78  tools/adoption_check.py  # pragma: allowlist secret -- public SB2 digest
 54339d70f04824605a8e7bee0fb8bce02906523109e1c012a20eb312b9cac1cb  tools/build_context_pack.py  # pragma: allowlist secret -- public SB2 digest
 e22de87395da6ff5e32428ed9b8cfc123a3512136aeb12f939868fa68f049676  tools/build_docs.py  # pragma: allowlist secret -- public SB2 digest
 6659c3680ad5ec0ca325f9a4b41fda7ef71b8c8f31ea584624c0c53f5587e156  tools/check_change_policy.py  # pragma: allowlist secret -- public SB2 digest
 9c0ba59484a81e6f9aa00296557e7b66ec698c1e6d44d9df8047563f4882484c  tools/check_ci_policy.py  # pragma: allowlist secret -- public SB2 digest
 dd4839c528451421fa5757468fd4bbc7c9ea475325d22b9e630d884d0fce7ab9  tools/check_guardrails.py  # pragma: allowlist secret -- public SB2 digest
 15cc878aea0a1eda46af40e443f2d87f6123d8def1eb7d22cb1b05649b308c8a  tools/check_runtime_lock.py  # pragma: allowlist secret -- public SB2 digest
-ac9bb147308f26a0d0a4ad0267c934f5021c44527396eb98c7e6149b4c1d3898  tools/cli.py  # pragma: allowlist secret -- public SB2 digest
+8d698a1acccbf9a3622f20954e35e6377217030f387beea058b46c7e4a26fef1  tools/cli.py  # pragma: allowlist secret -- public SB2 digest
 fbbcc38fb82aa572cd92c683ad983fda7398761a9c08b94cbce5d0080d6eb5ed  tools/knowledge_common.py  # pragma: allowlist secret -- public SB2 digest
 a61fc494a84cad5cad6923f072dc05fd2edb41162cf45c7446eb05303d73e5c4  tools/repository_scope.py  # pragma: allowlist secret -- public SB2 digest
 c0f7c63107c941b5bbfc89d4399c5a197f9c0939c06e5b8012c3aeeaa9b54824  tools/self_check.py  # pragma: allowlist secret -- public SB2 digest
@@ -67,8 +69,8 @@ EOF
     DOCKER_CONFIG="${release_docker_config}" docker pull "${release_image}"
     test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "${release_image}")" = "linux/amd64"
     test "$(docker image inspect --format '{{.Config.User}}' "${release_image}")" = "kit"
-    test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "${release_image}")" = "0.1.2"
-    test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${release_image}")" = "56f6c5ede9ff1d6585404d102aba8413994a2697" # pragma: allowlist secret -- public source revision
+    test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "${release_image}")" = "0.2.0"
+    test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${release_image}")" = "39aa4f25bdf46811600d4a0f6f9c0da52b73c542" # pragma: allowlist secret -- public source revision
     docker image inspect "${release_image}" \
       | python -c 'import json,sys; labels=json.load(sys.stdin)[0]["Config"].get("Labels") or {}; assert "org.opencontainers.image.licenses" not in labels'
     test "$(docker run --rm --entrypoint id "${release_image}" -u)" = "10001"
@@ -83,7 +85,7 @@ EOF
     docker run --rm \
       --mount "type=bind,source=${release_tmp}/gnostoa-sb2.sha256,target=/tmp/gnostoa-sb2.sha256,readonly" \
       --entrypoint sh "${release_image}" -ec \
-      'cd /opt/gnostoa; test "$(wc -l < /tmp/gnostoa-sb2.sha256)" -eq 12; sha256sum -c /tmp/gnostoa-sb2.sha256'
+      'cd /opt/gnostoa; test "$(wc -l < /tmp/gnostoa-sb2.sha256)" -eq 14; sha256sum -c /tmp/gnostoa-sb2.sha256'
     docker run --rm "${release_image}" self-check --skip-tests
     echo "PASS: immutable public linux/amd64 release artifact verified; no rebuild-repeatability claim is made"
     ;;

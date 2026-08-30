@@ -34,6 +34,7 @@ from tools.knowledge_common import (
 from tools.release_smoke import (
     ArtifactResult,
     ReleaseSmokeError,
+    _exercise_artifact,
     distribution_metadata_issues,
     release_evidence_manifest,
     release_smoke,
@@ -57,7 +58,7 @@ def _add_tar_bytes(archive: tarfile.TarFile, name: str, content: bytes) -> None:
 def _release_archive_fixtures(
     directory: Path,
     *,
-    version: str = "0.1.2",
+    version: str = "0.2.0",
     include_notice: bool = True,
 ) -> tuple[Path, Path]:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
@@ -242,6 +243,8 @@ class PublicationBaselineTests(unittest.TestCase):
         )[1].split("\n  extended:\n", maxsplit=1)[0]
 
         sb2_paths = (
+            "tools/adoption_assurance.py",
+            "tools/adoption_check.py",
             "tools/build_context_pack.py",
             "tools/build_docs.py",
             "tools/check_change_policy.py",
@@ -270,7 +273,7 @@ class PublicationBaselineTests(unittest.TestCase):
             "surface-digest --root /vendored",
             'test "${source_digest}" = "${runtime_digest}"',
             'test "${source_digest}" = "${vendored_digest}"',
-            'test "$(wc -l < "${sb2_paths_file}")" -eq 12',
+            'test "$(wc -l < "${sb2_paths_file}")" -eq 14',
             'cmp "${source_sb2_manifest}" "${runtime_sb2_manifest}"',
             'cmp "${source_sb2_manifest}" "${vendored_sb2_manifest}"',
             'docker run --rm "${GNOSTOA_CI_IMAGE}" self-check',
@@ -300,14 +303,179 @@ class PublicationBaselineTests(unittest.TestCase):
             binding.index('docker run --rm "${GNOSTOA_CI_IMAGE}" self-check'),
         )
 
+    def test_v0_2_0_source_candidate_version_is_bound(self) -> None:
+        project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+            "project"
+        ]
+        dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        workflow = (ROOT / ".github" / "workflows" / "verification.yml").read_text(
+            encoding="utf-8"
+        )
+        binding = workflow.split(
+            "      - name: Bind the exact PR executable candidate\n", maxsplit=1
+        )[1].split("\n  extended:\n", maxsplit=1)[0]
+
+        self.assertEqual("0.2.0", project["version"])
+        self.assertIn("ARG KIT_VERSION=0.2.0", dockerfile)
+        self.assertEqual(4, workflow.count("GNOSTOA_KIT_VERSION=0.2.0"))
+        self.assertIn("Run clean installed-artifact adoption smoke", workflow)
+        self.assertIn("python ci/release_smoke.py", workflow)
+        self.assertIn("org.opencontainers.image.version", binding)
+        self.assertIn("runtime.cli_version=%s", binding)
+        self.assertIn("runtime.oci_label_version=%s", binding)
+
+    def test_ghcr_v0_2_0_publication_subject_constants_are_exact(self) -> None:
+        workflow_path = ROOT / ".github" / "workflows" / "publish-oci.yml"
+        parsed = load_yaml(workflow_path)
+
+        self.assertEqual(
+            {
+                "RELEASE_VERSION": "0.2.0",
+                "IMAGE_NAME": "ghcr.io/ktogias/gnostoa",
+                "IMAGE_REF": "ghcr.io/ktogias/gnostoa:0.2.0",
+                "SOURCE_TAG": "v0.2.0",
+                "SOURCE_COMMIT": "39aa4f25bdf46811600d4a0f6f9c0da52b73c542",  # pragma: allowlist secret -- public source revision
+                "SOURCE_TREE": "866c8c489c9052c566bd65b6e798567d4a284f16",  # pragma: allowlist secret -- public source tree
+                "TAG_OBJECT": "6d0357e075744ee316c725554d2e2c920b19a4dc",  # pragma: allowlist secret -- public tag object
+                "BASE_DIGEST": (
+                    "sha256:2c941e860699f878900b0edc2403613c234d4b32eda3cc9fa7036991a2a63c4a"
+                ),
+                "PUBLIC_DIGEST": (
+                    "sha256:a85ac8dde00f1ed8fb0425de08597828e97c246ec17ce6556f3f222b27ddb1c1"
+                ),
+                "NOTICE_DIGEST": (
+                    "sha256:68978e9fc1875f275c0dfb9bd71ed19d025b01f66409bb31d785d86165ee691c"
+                ),
+                "BUILD_DATE": "2026-08-27T19:04:17Z",
+            },
+            parsed["env"],
+        )
+
+    def test_ghcr_v0_2_0_publication_boundary_has_14_members(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "publish-oci.yml").read_text(
+            encoding="utf-8"
+        )
+        baseline = re.search(
+            r"write_sb2_baseline\(\) \{.*?<<'EOF'\n(?P<manifest>.*?)\n\s+EOF",
+            workflow,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(baseline)
+        assert baseline is not None
+        manifest = tuple(
+            line.strip()
+            for line in baseline.group("manifest").splitlines()
+            if line.strip()
+        )
+
+        self.assertEqual(14, len(manifest))
+        self.assertTrue(
+            any(line.endswith("tools/adoption_assurance.py") for line in manifest)
+        )
+        self.assertTrue(
+            any(line.endswith("tools/adoption_check.py") for line in manifest)
+        )
+        self.assertIn('test "$(wc -l < /tmp/gnostoa-sb2.sha256)" -eq 14', workflow)
+
+    def test_ghcr_publication_rejects_non_main_dispatch_context(self) -> None:
+        workflow_path = ROOT / ".github" / "workflows" / "publish-oci.yml"
+        workflow = workflow_path.read_text(encoding="utf-8")
+        parsed = load_yaml(workflow_path)
+        authorize = parsed["jobs"]["authorize"]
+        publish = parsed["jobs"]["publish"]
+
+        self.assertEqual({}, authorize["permissions"])
+        self.assertEqual("authorize", publish["needs"])
+        self.assertNotIn("if", publish)
+        authorization_step = next(
+            step
+            for step in authorize["steps"]
+            if step.get("name") == "Reject non-main dispatch context"
+        )
+        authorization_script = authorization_step["run"]
+        assertion_step = next(
+            step
+            for step in publish["steps"]
+            if step.get("name") == "Assert the exact source and build inputs"
+        )
+        assertion_script = assertion_step["run"]
+        guards = (
+            'test "${GITHUB_REPOSITORY}" = "ktogias/gnostoa"',
+            'test "${GITHUB_ACTOR}" = "ktogias"',
+            'test "${GITHUB_TRIGGERING_ACTOR}" = "ktogias"',
+            'test "${GITHUB_RUN_ATTEMPT}" = "1"',
+            'test "${GITHUB_REF}" = "refs/heads/main"',
+            'test "${GITHUB_REF_TYPE}" = "branch"',
+            'test "${GITHUB_REF_NAME}" = "main"',
+            'test "${GITHUB_WORKFLOW_REF}" = "${GITHUB_REPOSITORY}/.github/workflows/publish-oci.yml@refs/heads/main"',
+        )
+        for guard in guards:
+            with self.subTest(guard=guard):
+                self.assertIn(guard, authorization_script)
+                self.assertIn(guard, assertion_script)
+                self.assertLess(
+                    workflow.index(guard),
+                    workflow.index("- name: Authenticate to GHCR"),
+                )
+                self.assertLess(
+                    workflow.index(guard),
+                    workflow.index("assert_tag_absent()"),
+                )
+
+        accepted_environment = os.environ | {
+            "GITHUB_REPOSITORY": "ktogias/gnostoa",
+            "GITHUB_ACTOR": "ktogias",
+            "GITHUB_TRIGGERING_ACTOR": "ktogias",
+            "GITHUB_RUN_ATTEMPT": "1",
+            "GITHUB_REF": "refs/heads/main",
+            "GITHUB_REF_TYPE": "branch",
+            "GITHUB_REF_NAME": "main",
+            "GITHUB_WORKFLOW_REF": (
+                "ktogias/gnostoa/.github/workflows/publish-oci.yml@refs/heads/main"
+            ),
+        }
+        accepted = subprocess.run(
+            ["bash", "-c", authorization_script],
+            env=accepted_environment,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(0, accepted.returncode, accepted.stderr)
+
+        rejected_contexts = (
+            {"GITHUB_TRIGGERING_ACTOR": "other-writer"},
+            {"GITHUB_RUN_ATTEMPT": "2"},
+            {"GITHUB_REF": "refs/heads/agent/publication"},
+            {"GITHUB_REF_TYPE": "tag", "GITHUB_REF_NAME": "v0.2.0"},
+            {"GITHUB_REF_NAME": "agent/publication"},
+            {
+                "GITHUB_WORKFLOW_REF": (
+                    "ktogias/gnostoa/.github/workflows/"
+                    "publish-oci.yml@refs/heads/agent/publication"
+                )
+            },
+        )
+        for changed_environment in rejected_contexts:
+            with self.subTest(changed_environment=changed_environment):
+                rejected = subprocess.run(
+                    ["bash", "-c", authorization_script],
+                    env=accepted_environment | changed_environment,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(0, rejected.returncode)
+
     def test_ghcr_publication_workflow_is_exact_and_write_once(self) -> None:
         workflow_path = ROOT / ".github" / "workflows" / "publish-oci.yml"
         self.assertTrue(workflow_path.is_file())
         workflow = workflow_path.read_text(encoding="utf-8")
         parsed = load_yaml(workflow_path)
 
+        self.assertEqual("Publish Gnostoa v0.2.0 OCI image", parsed["name"])
         self.assertEqual({}, parsed["permissions"])
-        self.assertEqual(["publish"], list(parsed["jobs"]))
+        self.assertEqual(["authorize", "publish"], list(parsed["jobs"]))
         self.assertEqual(
             {
                 "contents": "read",
@@ -318,45 +486,45 @@ class PublicationBaselineTests(unittest.TestCase):
             parsed["jobs"]["publish"]["permissions"],
         )
         self.assertEqual(
-            {"group": "gnostoa-ghcr-0.1.2", "cancel-in-progress": False},
+            {"group": "gnostoa-ghcr-0.2.0", "cancel-in-progress": False},
             parsed["concurrency"],
         )
         self.assertEqual(
             {
-                "RELEASE_VERSION": "0.1.2",
+                "RELEASE_VERSION": "0.2.0",
                 "IMAGE_NAME": "ghcr.io/ktogias/gnostoa",
-                "IMAGE_REF": "ghcr.io/ktogias/gnostoa:0.1.2",
-                "SOURCE_TAG": "v0.1.2",
-                "SOURCE_COMMIT": "56f6c5ede9ff1d6585404d102aba8413994a2697",  # pragma: allowlist secret -- public source revision
-                "SOURCE_TREE": "6db26c9ce2eeaa82882bac82312f675ee19e6d0a",  # pragma: allowlist secret -- public source tree
-                "TAG_OBJECT": "d9ea04ea649132e74bd3d9b8b089b86ea7e0d6a7",  # pragma: allowlist secret -- public tag object
+                "IMAGE_REF": "ghcr.io/ktogias/gnostoa:0.2.0",
+                "SOURCE_TAG": "v0.2.0",
+                "SOURCE_COMMIT": "39aa4f25bdf46811600d4a0f6f9c0da52b73c542",  # pragma: allowlist secret -- public source revision
+                "SOURCE_TREE": "866c8c489c9052c566bd65b6e798567d4a284f16",  # pragma: allowlist secret -- public source tree
+                "TAG_OBJECT": "6d0357e075744ee316c725554d2e2c920b19a4dc",  # pragma: allowlist secret -- public tag object
                 "BASE_DIGEST": (
                     "sha256:2c941e860699f878900b0edc2403613c234d4b32eda3cc9fa7036991a2a63c4a"
                 ),
                 "PUBLIC_DIGEST": (
-                    "sha256:bd8078467b0189d535f222072253e1ef9e8f5fb780f55b56269738cb8f4ef095"
+                    "sha256:a85ac8dde00f1ed8fb0425de08597828e97c246ec17ce6556f3f222b27ddb1c1"
                 ),
                 "NOTICE_DIGEST": (
                     "sha256:68978e9fc1875f275c0dfb9bd71ed19d025b01f66409bb31d785d86165ee691c"
                 ),
-                "BUILD_DATE": "2026-08-24T17:12:02Z",
+                "BUILD_DATE": "2026-08-27T19:04:17Z",
             },
             parsed["env"],
         )
 
         required = (
             "workflow_dispatch:",
-            "group: gnostoa-ghcr-0.1.2",
+            "group: gnostoa-ghcr-0.2.0",
             "cancel-in-progress: false",
             "contents: read",
             "packages: write",
             "id-token: write",
             "attestations: write",
             "ref: refs/tags/${{ env.SOURCE_TAG }}",
-            "56f6c5ede9ff1d6585404d102aba8413994a2697",  # pragma: allowlist secret -- public source revision
-            "6db26c9ce2eeaa82882bac82312f675ee19e6d0a",  # pragma: allowlist secret -- public source tree
-            "d9ea04ea649132e74bd3d9b8b089b86ea7e0d6a7",  # pragma: allowlist secret -- public tag object
-            "ghcr.io/ktogias/gnostoa:0.1.2",
+            "39aa4f25bdf46811600d4a0f6f9c0da52b73c542",  # pragma: allowlist secret -- public source revision
+            "866c8c489c9052c566bd65b6e798567d4a284f16",  # pragma: allowlist secret -- public source tree
+            "6d0357e075744ee316c725554d2e2c920b19a4dc",  # pragma: allowlist secret -- public tag object
+            "ghcr.io/ktogias/gnostoa:0.2.0",
             'GNOSTOA_CANDIDATE_REF="${SOURCE_TAG}"',
             'GNOSTOA_KIT_VERSION="${RELEASE_VERSION}"',
             '--build-arg BUILD_DATE="${BUILD_DATE}"',
@@ -380,7 +548,7 @@ class PublicationBaselineTests(unittest.TestCase):
             "manifest unknown|not found",
             'docker push "${IMAGE_REF}"',
             "--format '{{.Manifest.Digest}}'",
-            "bd8078467b0189d535f222072253e1ef9e8f5fb780f55b56269738cb8f4ef095",  # pragma: allowlist secret -- public-surface digest
+            "a85ac8dde00f1ed8fb0425de08597828e97c246ec17ce6556f3f222b27ddb1c1",  # pragma: allowlist secret -- public-surface digest
             "68978e9fc1875f275c0dfb9bd71ed19d025b01f66409bb31d785d86165ee691c",  # pragma: allowlist secret -- public notice digest
             "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
             "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
@@ -395,23 +563,36 @@ class PublicationBaselineTests(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertIn(marker, workflow)
 
-        sb2_paths = (
-            "tools/build_context_pack.py",
-            "tools/build_docs.py",
-            "tools/check_change_policy.py",
-            "tools/check_ci_policy.py",
-            "tools/check_guardrails.py",
-            "tools/check_runtime_lock.py",
-            "tools/cli.py",
-            "tools/knowledge_common.py",
-            "tools/repository_scope.py",
-            "tools/self_check.py",
-            "tools/task_envelope.py",
-            "tools/validate_bundle.py",
+        expected_sb2 = (
+            "e5eb50cc43ba3f212e4543d09df584cef2680a363cd5f872bcf36f42a414a79b  tools/adoption_assurance.py",
+            "bf55db5d4d998b23cb7ab6ee336c89a9f9ef9d31978c268bcbb7f42420feff78  tools/adoption_check.py",
+            "54339d70f04824605a8e7bee0fb8bce02906523109e1c012a20eb312b9cac1cb  tools/build_context_pack.py",
+            "e22de87395da6ff5e32428ed9b8cfc123a3512136aeb12f939868fa68f049676  tools/build_docs.py",
+            "6659c3680ad5ec0ca325f9a4b41fda7ef71b8c8f31ea584624c0c53f5587e156  tools/check_change_policy.py",
+            "9c0ba59484a81e6f9aa00296557e7b66ec698c1e6d44d9df8047563f4882484c  tools/check_ci_policy.py",
+            "dd4839c528451421fa5757468fd4bbc7c9ea475325d22b9e630d884d0fce7ab9  tools/check_guardrails.py",
+            "15cc878aea0a1eda46af40e443f2d87f6123d8def1eb7d22cb1b05649b308c8a  tools/check_runtime_lock.py",
+            "8d698a1acccbf9a3622f20954e35e6377217030f387beea058b46c7e4a26fef1  tools/cli.py",
+            "fbbcc38fb82aa572cd92c683ad983fda7398761a9c08b94cbce5d0080d6eb5ed  tools/knowledge_common.py",
+            "a61fc494a84cad5cad6923f072dc05fd2edb41162cf45c7446eb05303d73e5c4  tools/repository_scope.py",
+            "c0f7c63107c941b5bbfc89d4399c5a197f9c0939c06e5b8012c3aeeaa9b54824  tools/self_check.py",
+            "da5644815c1ed19d79f320c3c2758a4877f105d440d0a0206650ec8f92f06204  tools/task_envelope.py",
+            "7d728446c8a34e7515c626b1c3b8af6cfafee38318616a44a86303af3beb5ca1  tools/validate_bundle.py",
         )
-        for path in sb2_paths:
-            with self.subTest(sb2_path=path):
-                self.assertEqual(1, workflow.count(path))
+        baseline = re.search(
+            r"write_sb2_baseline\(\) \{.*?<<'EOF'\n(?P<manifest>.*?)\n\s+EOF",
+            workflow,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(baseline)
+        assert baseline is not None
+        actual_sb2 = tuple(
+            line.strip()
+            for line in baseline.group("manifest").splitlines()
+            if line.strip()
+        )
+        self.assertEqual(expected_sb2, actual_sb2)
+        self.assertIn('test "$(wc -l < /tmp/gnostoa-sb2.sha256)" -eq 14', workflow)
 
         self.assertNotIn("inputs:", workflow)
         self.assertNotIn("docker/login-action", workflow)
@@ -419,6 +600,15 @@ class PublicationBaselineTests(unittest.TestCase):
         self.assertNotIn("docker/build-push-action", workflow)
         self.assertNotRegex(workflow, r"ghcr\.io/ktogias/gnostoa:latest\b")
         self.assertNotIn("0.1.1", workflow)
+        for stale in (
+            "0.1.2",
+            "56f6c5ede9ff1d6585404d102aba8413994a2697",  # pragma: allowlist secret -- historical public source revision
+            "6db26c9ce2eeaa82882bac82312f675ee19e6d0a",  # pragma: allowlist secret -- historical public source tree
+            "d9ea04ea649132e74bd3d9b8b089b86ea7e0d6a7",  # pragma: allowlist secret -- historical public tag object
+            "bd8078467b0189d535f222072253e1ef9e8f5fb780f55b56269738cb8f4ef095",  # pragma: allowlist secret -- historical public digest
+        ):
+            with self.subTest(stale=stale):
+                self.assertNotIn(stale, workflow)
         self.assertEqual(3, workflow.count("assert_tag_absent"))
         self.assertEqual(1, workflow.count('docker push "${IMAGE_REF}"'))
 
@@ -433,24 +623,28 @@ class PublicationBaselineTests(unittest.TestCase):
         script = (ROOT / "ci" / "verify").read_text(encoding="utf-8")
         immutable_ref = (
             "ghcr.io/ktogias/gnostoa@sha256:"
-            "0cd31a2a649c4ffede8972680c6779c981decf5ce8605f749fa7d58751472f80"  # pragma: allowlist secret -- public registry identity
+            "f89bf32c0c4b86bac71fa008579b2385e6ae39bf4822f685479c4f2cc22bfca4"  # pragma: allowlist secret -- public registry identity
         )
         self.assertIn(immutable_ref, script)
-        self.assertNotIn("ghcr.io/ktogias/gnostoa:0.1.2", script)
+        self.assertNotIn("ghcr.io/ktogias/gnostoa:0.2.0", script)
         self.assertNotIn("SKIP: deployable_artifact capability is false", script)
         for marker in (
             "DOCKER_CONFIG",
             "docker pull",
             "linux/amd64",
             'id "${release_image}" -g',
-            '"0.1.2"',
-            "56f6c5ede9ff1d6585404d102aba8413994a2697",  # pragma: allowlist secret -- public source revision
+            '"0.2.0"',
+            "39aa4f25bdf46811600d4a0f6f9c0da52b73c542",  # pragma: allowlist secret -- public source revision
             "3.12.14",
             "(2, 8, 3)",
-            "bd8078467b0189d535f222072253e1ef9e8f5fb780f55b56269738cb8f4ef095",  # pragma: allowlist secret -- public-surface digest
+            "a85ac8dde00f1ed8fb0425de08597828e97c246ec17ce6556f3f222b27ddb1c1",  # pragma: allowlist secret -- public-surface digest
             "68978e9fc1875f275c0dfb9bd71ed19d025b01f66409bb31d785d86165ee691c",  # pragma: allowlist secret -- public notice digest
             "gnostoa-sb2.sha256",
+            "e5eb50cc43ba3f212e4543d09df584cef2680a363cd5f872bcf36f42a414a79b",  # pragma: allowlist secret -- public SB2 digest
+            "bf55db5d4d998b23cb7ab6ee336c89a9f9ef9d31978c268bcbb7f42420feff78",  # pragma: allowlist secret -- public SB2 digest
+            "8d698a1acccbf9a3622f20954e35e6377217030f387beea058b46c7e4a26fef1",  # pragma: allowlist secret -- public SB2 digest
             "fbbcc38fb82aa572cd92c683ad983fda7398761a9c08b94cbce5d0080d6eb5ed",  # pragma: allowlist secret -- public SB2 digest
+            'test "$(wc -l < /tmp/gnostoa-sb2.sha256)" -eq 14',
             "self-check --skip-tests",
             "org.opencontainers.image.licenses",
         ):
@@ -2053,6 +2247,29 @@ class ContinuousIntegrationTests(unittest.TestCase):
             ["3.11", "3.12"],
             compatibility["strategy"]["matrix"]["python-version"],
         )
+
+        ruff_steps = [
+            step
+            for step in compatibility["steps"]
+            if step.get("name") == "Run per-change Ruff gates"
+        ]
+        self.assertEqual(1, len(ruff_steps), ruff_steps)
+        ruff_step = ruff_steps[0]
+        ruff_step_index = compatibility["steps"].index(ruff_step)
+        self.assertGreater(ruff_step_index, 0)
+        self.assertEqual(
+            "Install the exact development dependencies",
+            compatibility["steps"][ruff_step_index - 1]["name"],
+        )
+        self.assertEqual("matrix.python-version == '3.12'", ruff_step["if"])
+        self.assertEqual(
+            (
+                "python -m ruff format --check tools ci tests\n"
+                "python -m ruff check tools ci tests\n"
+            ),
+            ruff_step["run"],
+        )
+
         self.assertEqual(
             ["policy", "fast", "python-compatibility"], regression["needs"]
         )
@@ -2411,6 +2628,72 @@ class RuntimeTests(unittest.TestCase):
             ):
                 release_smoke(ROOT, output)
 
+    def test_release_smoke_declares_fixture_project_root(self) -> None:
+        def completed(
+            output: str = "",
+            *,
+            returncode: int = 0,
+            error: str = "",
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(
+                args=[], returncode=returncode, stdout=output, stderr=error
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            smoke_root = Path(directory)
+            wheel, _ = _release_archive_fixtures(smoke_root)
+            workspace = smoke_root / "workspace"
+            workspace.mkdir()
+            environment = smoke_root / "environment"
+            validation = (
+                "OK: bundle conforms to project-knowledge-core 0.1.0 (OKF 0.2)\n"
+            )
+
+            with (
+                patch("tools.release_smoke._run") as run,
+                patch(
+                    "tools.release_smoke._exercise_adoption_check",
+                    return_value="READY",
+                ) as adoption_check,
+            ):
+                run.side_effect = [
+                    completed(),
+                    completed(),
+                    completed(),
+                    completed(
+                        returncode=2,
+                        error="ERROR: KNOWLEDGE_KIT_ROOT is required\n",
+                    ),
+                    completed("0.2.0\n"),
+                    completed(validation),
+                    completed("context pack\n"),
+                    completed(f"sha256:{'0' * 64}\n"),
+                ]
+
+                result = _exercise_artifact(
+                    wheel,
+                    "wheel",
+                    "0.2.0",
+                    ROOT,
+                    workspace,
+                    environment,
+                )
+
+            self.assertEqual("READY", result.adoption_check)
+            adoption_check.assert_called_once()
+            self.assertEqual(
+                environment / "bin" / "knowledge",
+                adoption_check.call_args.args[0],
+            )
+
+            for call_index in (3, 5, 6):
+                command = run.call_args_list[call_index].args[0]
+                project_root_index = command.index("--project-root")
+                self.assertEqual(str(ROOT), command[project_root_index + 1])
+                self.assertEqual(
+                    workspace, run.call_args_list[call_index].kwargs["cwd"]
+                )
+
     def test_execution_wheel_must_not_duplicate_canonical_source(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             wheel = Path(directory) / "gnostoa-test.whl"
@@ -2458,6 +2741,7 @@ class RuntimeTests(unittest.TestCase):
                     validation="validation\n",
                     context_pack="context pack\n",
                     surface_digest="sha256:" + "3" * 64 + "\n",
+                    adoption_check="READY",
                 ),
                 ArtifactResult(
                     artifact=source_distribution,
@@ -2468,6 +2752,7 @@ class RuntimeTests(unittest.TestCase):
                     validation="validation\n",
                     context_pack="context pack\n",
                     surface_digest="sha256:" + "3" * 64 + "\n",
+                    adoption_check="READY",
                 ),
             ]
             revision = "6" * 40
@@ -2476,6 +2761,7 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(first, second)
             self.assertEqual("gnostoa-release-evidence/v1", first["format"])
             self.assertEqual(revision, first["source"]["revision"])
+            self.assertTrue(first["checks"]["installed_adoption_check"])
             self.assertEqual(
                 [wheel.name, source_distribution.name],
                 [artifact["filename"] for artifact in first["artifacts"]],
@@ -3215,7 +3501,7 @@ class DocumentationTests(unittest.TestCase):
             "## Research", maxsplit=1
         )[0]
         research_section = roadmap.split("## Research", maxsplit=1)[1]
-        self.assertIn("https://github.com/ktogias/gnostoa/issues/109", next_section)
+        self.assertIn("https://github.com/ktogias/gnostoa/issues/146", next_section)
         self.assertNotIn("https://github.com/ktogias/gnostoa/issues/24", next_section)
         self.assertIn("https://github.com/ktogias/gnostoa/issues/24", roadmap)
         self.assertNotIn("https://github.com/ktogias/gnostoa/issues/12", next_section)
@@ -3283,19 +3569,186 @@ class DocumentationTests(unittest.TestCase):
             self.assertIn(decision_name, projection)
 
         # The invariant is that the workflow need stays durably planned while
-        # completed B2 evidence remains distinct from the not-yet-started B3
-        # experiment and from the separately admitted readiness correction.
+        # completed B2 evidence remains distinct from the historical pre-B3 attempts
+        # and the currently selected owner-led evidence stream.
         self.assertIn("B2/P1 and B2/P2 are both complete", roadmap)
         self.assertIn("B2/P1 completed", status)
         for projection in (roadmap, status):
-            self.assertIn("https://github.com/ktogias/gnostoa/issues/24", projection)
-            self.assertIn("B3 has not begun", projection)
-            self.assertNotIn("Active B2/P1", projection)
-        self.assertIn("https://github.com/ktogias/gnostoa/issues/109", roadmap)
+            normalized_projection = " ".join(projection.split())
+            self.assertIn(
+                "https://github.com/ktogias/gnostoa/issues/24",
+                normalized_projection,
+            )
+            self.assertIn("Decision 0052", normalized_projection)
+            self.assertIn("`OWNER-LED`", normalized_projection)
+            self.assertIn("`INDEPENDENT`", normalized_projection)
+            self.assertIn("later separate work", normalized_projection)
+            self.assertIn("Nextcloud Mail", normalized_projection)
+            self.assertNotIn("exact-subject rerun has not begun", normalized_projection)
+            self.assertNotIn("Active B2/P1", normalized_projection)
+        self.assertIn("https://github.com/ktogias/gnostoa/issues/146", roadmap)
         self.assertIn("need has already been demonstrated", status)
         self.assertIn(
             "full workflow platform is not a publication prerequisite",
             normalized_readme,
+        )
+
+    def test_current_b3_projection_preserves_operational_chronology(self) -> None:
+        current_projections = {
+            "README": (ROOT / "README.md").read_text(encoding="utf-8"),
+            "roadmap": (ROOT / "docs" / "roadmap.md").read_text(encoding="utf-8"),
+            "status": (ROOT / "docs" / "status.md").read_text(encoding="utf-8"),
+            "B3 design": (
+                ROOT
+                / "knowledge"
+                / "assessments"
+                / "b3-independent-adoption-experiment-design.md"
+            ).read_text(encoding="utf-8"),
+        }
+        detailed_current_projections = {
+            name: current_projections[name] for name in ("README", "B3 design")
+        }
+        historical_projections = {
+            "release result": (
+                ROOT
+                / "knowledge"
+                / "assessments"
+                / "v0-2-0-release-candidate-and-source-boundary-result.md"
+            ).read_text(encoding="utf-8"),
+            "Decision 0051": (
+                ROOT
+                / "knowledge"
+                / "decisions"
+                / "0051-select-the-v0-2-0-source-and-oci-publication-series.md"
+            ).read_text(encoding="utf-8"),
+        }
+
+        for name, projection in current_projections.items():
+            with self.subTest(current_projection=name):
+                normalized = " ".join(projection.split())
+                self.assertIn("four autonomous", normalized.lower())
+                self.assertIn("`REJECT`", normalized)
+                self.assertIn("`UNKNOWN`", normalized)
+                self.assertIn("`NO`", normalized)
+                self.assertIn("controlled pre-B3", normalized)
+                self.assertIn("Decision 0052", normalized)
+                self.assertIn("`OWNER-LED`", normalized)
+                self.assertIn("`INDEPENDENT`", normalized)
+                self.assertNotIn("exact-subject rerun has not begun", normalized)
+                self.assertNotIn("exact B3 contract freeze", normalized)
+                self.assertNotIn("initial-adoption gate", normalized)
+
+        for name, projection in detailed_current_projections.items():
+            with self.subTest(detailed_current_projection=name):
+                normalized = " ".join(projection.split())
+                self.assertIn("#117", normalized)
+                self.assertIn("#122", normalized)
+                self.assertIn("#125", normalized)
+
+        for name, projection in historical_projections.items():
+            with self.subTest(historical_projection=name):
+                normalized = " ".join(projection.split())
+                self.assertIn("Operational work toward B3 has begun", normalized)
+                self.assertIn("four autonomous adoption attempts", normalized.lower())
+                self.assertIn("#117", normalized)
+                self.assertIn("#122", normalized)
+                self.assertIn("#125", normalized)
+                self.assertIn("owner acceptance `REJECT`", normalized)
+                self.assertIn("measured utility `UNKNOWN`", normalized)
+                self.assertIn("durable adoption `NO`", normalized)
+                self.assertIn("controlled pre-B3", normalized)
+                self.assertIn("exact-subject rerun has not begun", normalized)
+                self.assertNotIn("B3 measurement has not begun", normalized)
+                self.assertNotIn("Operational B3 work", normalized)
+                self.assertNotIn("initial-adoption gate", normalized)
+
+        frozen_design = current_projections["B3 design"]
+        self.assertIn("## Later chronology and staged-evidence note", frozen_design)
+        self.assertIn("not a current status projection", frozen_design)
+        self.assertIn("B3 has not begun", frozen_design)
+        self.assertIn("Decision 0052", frozen_design)
+        self.assertIn("`OWNER-LED`", frozen_design)
+
+        completion_analysis = (
+            ROOT
+            / "knowledge"
+            / "assessments"
+            / "nextcloud-mail-adoption-completion-gate-analysis.md"
+        ).read_text(encoding="utf-8")
+        normalized_completion_analysis = " ".join(completion_analysis.split())
+        self.assertIn(
+            "description: Bounded causal synthesis, alternatives and "
+            "executable-contract recommendation after four rejected Nextcloud "
+            "Mail adoption attempts across three Work Item cycles.",
+            normalized_completion_analysis,
+        )
+        self.assertNotIn(
+            "after three rejected Nextcloud Mail adoption attempts",
+            normalized_completion_analysis,
+        )
+        self.assertIn(
+            "four rejected adoption attempts across three Work Item cycles",
+            normalized_completion_analysis,
+        )
+        self.assertIn("#117 frozen fresh-agent rerun", normalized_completion_analysis)
+
+        completion_decision = (
+            ROOT
+            / "knowledge"
+            / "decisions"
+            / "0047-select-a-bounded-adoption-completion-check.md"
+        ).read_text(encoding="utf-8")
+        normalized_completion_decision = " ".join(completion_decision.split())
+        self.assertIn(
+            "Four rejected Nextcloud Mail adoption attempts are recorded "
+            "across three Work Item cycles",
+            normalized_completion_decision,
+        )
+        self.assertIn(
+            "Three mechanically substantive attempts",
+            normalized_completion_decision,
+        )
+        self.assertNotIn(
+            "Three rejected Nextcloud Mail adoption attempts",
+            normalized_completion_decision,
+        )
+
+        runtime_routing = (
+            ROOT
+            / "knowledge"
+            / "assessments"
+            / "adoption-check-project-verification-runtime-routing.md"
+        ).read_text(encoding="utf-8")
+        normalized_runtime_routing = " ".join(runtime_routing.split())
+        self.assertIn(
+            "The baseline, #122 and #125 were the three attempts that reached "
+            "mechanically substantive adoption work",
+            normalized_runtime_routing,
+        )
+        self.assertNotIn("All three rejected Mail attempts", normalized_runtime_routing)
+
+    def test_release_assessment_invalidates_evidence_when_subject_moves(
+        self,
+    ) -> None:
+        assessment = (
+            ROOT
+            / "knowledge"
+            / "assessments"
+            / "v0-2-0-release-candidate-and-source-boundary-result.md"
+        ).read_text(encoding="utf-8")
+        normalized = " ".join(assessment.split())
+
+        self.assertIn("not a floating exact-head status claim", normalized)
+        self.assertIn("cannot name its own containing commit or tree", normalized)
+        self.assertIn("Any later commit", normalized)
+        self.assertIn("historical for acceptance", normalized)
+        self.assertIn("fresh exact-head evidence", normalized)
+        self.assertNotIn("Phase-1 candidate currently reports", normalized)
+        self.assertNotRegex(normalized, r"\b\d+/\d+ PASS\b")
+        self.assertNotIn("75.23% branch-aware coverage", normalized)
+        self.assertIn(
+            "branch-aware coverage above the declared 65% floor",
+            normalized,
         )
 
     def test_container_first_verification_bypass_is_recorded_and_routed(
@@ -3347,31 +3800,42 @@ class DocumentationTests(unittest.TestCase):
         self.assertIn("## Try Gnostoa from this checkout", readme)
         self.assertIn("--seed example.system.processing", readme)
         self.assertIn("python -m pip install --no-deps -e .", readme)
-        self.assertIn("pre-stable v0.1.2 source and OCI release", readme)
+        self.assertIn("pre-stable v0.2.0 source and OCI release", readme)
         self.assertIn(
-            "0cd31a2a649c4ffede8972680c6779c981decf5ce8605f749fa7d58751472f80",  # pragma: allowlist secret -- public registry identity
+            "f89bf32c0c4b86bac71fa008579b2385e6ae39bf4822f685479c4f2cc22bfca4",  # pragma: allowlist secret -- public registry identity
             readme,
         )
         self.assertIn("B3 independent-adoption methodology", readme)
-        self.assertIn("`v0.1.2` is published", index)
+        self.assertIn("`v0.2.0` is published", index)
         self.assertIn("digest-pinned `linux/amd64` OCI image", index)
         self.assertNotIn("not published package, image", index)
         self.assertIn("navigation projection", quick_start)
         self.assertIn("knowledge validate", quick_start)
         self.assertIn("KNOWLEDGE_KIT_ROOT", quick_start)
-        self.assertIn("Published v0.1.2 OCI route", quick_start)
+        self.assertIn("Published v0.2.0 OCI route", quick_start)
         self.assertIn(
-            "0cd31a2a649c4ffede8972680c6779c981decf5ce8605f749fa7d58751472f80",  # pragma: allowlist secret -- public registry identity
+            "f89bf32c0c4b86bac71fa008579b2385e6ae39bf4822f685479c4f2cc22bfca4",  # pragma: allowlist secret -- public registry identity
             quick_start,
         )
         self.assertIn("navigation projection", status)
         self.assertIn("Source and publication status", status)
         self.assertIn("current pre-stable source identity is", status)
-        self.assertIn("v0.1.2", status)
+        self.assertIn("v0.2.0", status)
         for projection in (status, roadmap):
-            self.assertIn("B3 has not begun", projection)
-            self.assertIn("candidate selection", projection)
-            self.assertIn("0043-prepare-a-bounded-v0-1-2", projection)
+            normalized_projection = " ".join(projection.split())
+            self.assertIn("Decision 0052", normalized_projection)
+            self.assertIn("`OWNER-LED`", normalized_projection)
+            self.assertIn("`INDEPENDENT`", normalized_projection)
+            self.assertIn("later separate work", normalized_projection)
+            self.assertIn("Nextcloud Mail", normalized_projection)
+            self.assertIn("0052-use-staged-evidence-maturity", normalized_projection)
+            self.assertIn("owner-led-adoption-trial-baseline", normalized_projection)
+            self.assertNotIn("exact-subject rerun has not begun", normalized_projection)
+            self.assertNotIn("exact B3 contract freeze", normalized_projection)
+            self.assertNotIn("candidate selection remains", normalized_projection)
+            self.assertNotIn(
+                "candidate selection — one eligible", normalized_projection
+            )
 
     def test_repository_documentation_links_resolve(self) -> None:
         paths = [

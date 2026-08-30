@@ -5,10 +5,10 @@ usable by both people and software agents. It validates structured Markdown and
 YAML, enforces non-weakening project profiles and policy boundaries, and builds
 bounded orientation packs without requiring a hosted knowledge service.
 
-> **Status: pre-stable v0.1.2 source and OCI release.** The immutable source tag
-> is [`v0.1.2`](https://github.com/ktogias/gnostoa/releases/tag/v0.1.2). One public
+> **Status: pre-stable v0.2.0 source and OCI release.** The immutable source tag
+> is [`v0.2.0`](https://github.com/ktogias/gnostoa/releases/tag/v0.2.0). One public
 > `linux/amd64` image is available as
-> `ghcr.io/ktogias/gnostoa@sha256:0cd31a2a649c4ffede8972680c6779c981decf5ce8605f749fa7d58751472f80`.
+> `ghcr.io/ktogias/gnostoa@sha256:f89bf32c0c4b86bac71fa008579b2385e6ae39bf4822f685479c4f2cc22bfca4`.
 > No package or site has been released, and artifact availability is not a
 > production-readiness or independent-adoption claim.
 
@@ -97,10 +97,26 @@ self-hosting measurements and narrowed the claim: the envelope and projection
 improve orientation and resumability but are not workflow enforcement. The
 [bootstrap Decision](knowledge/decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md)
 keeps the broader platform off the critical path: the full workflow platform
-is not a publication prerequisite. The first real
+is not a publication prerequisite. The strict
 [B3 independent-adoption methodology](knowledge/assessments/b3-independent-adoption-experiment-design.md)
-is pre-registered, but the experiment has not begun; selecting one eligible
-project, owner and real task remains the next B3 owner decision.
+remains pre-registered for a later `INDEPENDENT` evidence stage. Four
+autonomous Nextcloud Mail adoption attempts are retained as historical
+controlled pre-B3 evidence: the baseline and frozen fresh-agent rerun under
+#117, the route-activation diagnostic under #122, and the post-remediation
+rerun under #125. Their original `REJECT` / `UNKNOWN` / `NO` dispositions
+remain unchanged.
+
+[Decision 0052](knowledge/decisions/0052-use-staged-evidence-maturity-for-early-adoption-trials.md)
+now governs the early product phase through staged evidence. The `v0.2.0`
+source and immutable OCI execution subject are published, reconciled and
+digest-bound. The release-series experiment boundary is the bounded
+[Nextcloud Mail `OWNER-LED` baseline](knowledge/assessments/nextcloud-mail-v0-2-0-owner-led-adoption-trial-baseline.md),
+with `human:ktogias` as the initial semantic and evaluation authority. The
+concrete task run, preliminary owner assessment and retrospective are later
+separate work; upstream or project-participant feedback is additive and does
+not block them. `ktogias/mail` is the local mutation workspace, while
+`nextcloud/mail` retains Issue and final Change Request authority. This
+evidence establishes neither independent adoption nor upstream acceptance.
 
 Gnostoa is not yet a hosted service, a workflow engine, a general-purpose graph
 database or a production-ready release. It does not claim reduced engineering
@@ -122,10 +138,11 @@ planned streamlined self-hosting and external transfer experiments.
 - **Operate changes:** use the [reusable guidance router](guidance/index.md) and
   [continuous-integration workflow](guidance/workflows/configure-continuous-integration.md).
 - **Inspect the evidence:** read the
+  [v0.2.0 publication result](knowledge/assessments/v0-2-0-source-and-oci-publication-result.md),
   [self-dogfood assessment](knowledge/assessments/gnostoa-self-dogfood-bootstrap-assessment.md),
   [reputation and direction assessment](knowledge/assessments/first-publication-reputation-and-direction-assessment.md),
   [provider audit snapshot](knowledge/assessments/first-publication-provider-audit.md)
-  and [first-publication runbook](knowledge/runbooks/prepare-first-publication.md).
+  and [publication runbook](knowledge/runbooks/publish-version-bound-source-and-oci-release.md).
 
 ## Repository surfaces
 
@@ -147,17 +164,17 @@ consumer domain vocabulary.
 For the released pre-stable runtime, prefer the immutable registry digest:
 
 ```bash
-docker pull ghcr.io/ktogias/gnostoa@sha256:0cd31a2a649c4ffede8972680c6779c981decf5ce8605f749fa7d58751472f80
-docker run --rm ghcr.io/ktogias/gnostoa@sha256:0cd31a2a649c4ffede8972680c6779c981decf5ce8605f749fa7d58751472f80 self-check
+docker pull ghcr.io/ktogias/gnostoa@sha256:f89bf32c0c4b86bac71fa008579b2385e6ae39bf4822f685479c4f2cc22bfca4
+docker run --rm ghcr.io/ktogias/gnostoa@sha256:f89bf32c0c4b86bac71fa008579b2385e6ae39bf4822f685479c4f2cc22bfca4 self-check
 ```
 
-The `0.1.2` tag is a human-facing write-once version reference; the registry
+The `0.2.0` tag is a human-facing write-once version reference; the registry
 digest is the
 immutable consumer identity. This public artifact is available and verified for
 `linux/amd64`, but is not claimed reproducible, production-ready, generally
 secure or qualified as legally cleared. No `latest` tag exists. The immutable
-v0.1.1 source and image remain historical. See the
-[v0.1.2 publication result](knowledge/assessments/v0-1-2-source-and-oci-publication-result.md).
+v0.1.1 and v0.1.2 source/image pairs remain historical. See the
+[v0.2.0 publication result](knowledge/assessments/v0-2-0-source-and-oci-publication-result.md).
 
 To build and test the current checkout without publishing, the helper
 materialises exactly the Git-tracked files, using their current working-tree

@@ -255,3 +255,28 @@ scoped. The next owner subject is candidate selection: one target project,
 human owner, real task, permissions and mutation boundary, and review
 availability. Only after that selection may one candidate-specific contract be
 admitted and frozen before execution.
+
+## Later chronology and staged-evidence note
+
+The preceding stop point is the pre-registration state at the time this
+design was frozen, not a current status projection. Four autonomous
+Nextcloud Mail adoption attempts were later recorded: the baseline attempt
+and frozen fresh-agent rerun under #117, the route-activation diagnostic
+under #122, and the post-remediation rerun under #125. All four retain their
+original owner acceptance `REJECT`, measured utility `UNKNOWN` and durable
+adoption `NO`. They remain historical controlled pre-B3 evidence because
+they did not satisfy this design's strict independent-owner eligibility.
+
+[Decision 0052](../decisions/0052-use-staged-evidence-maturity-for-early-adoption-trials.md)
+subsequently introduced staged evidence for Gnostoa's early product phase.
+The current `v0.2.0` Nextcloud Mail path is therefore classified as
+`OWNER-LED`, with `human:ktogias` as the initial semantic and evaluation
+authority. Its integrated baseline, rather than a strict independent
+contract, is the v0.2.0 release-series experiment boundary. The concrete
+task run, preliminary assessment and retrospective are separate later work,
+and upstream feedback is additive rather than an entry gate.
+
+This later choice does not rewrite the historical attempts or satisfy this
+strict methodology. The methodology remains available for a separately
+admitted future `INDEPENDENT` experiment when product maturity and the
+intended claims make its stronger controls proportionate.

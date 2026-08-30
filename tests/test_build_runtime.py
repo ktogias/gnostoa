@@ -35,6 +35,10 @@ def fixture_repository(root: Path) -> None:
     git(root, "config", "user.email", "fixture@example.invalid")
     git(root, "config", "user.name", "Fixture")
     (root / ".gitignore").write_text("ignored/\n*.pyc\n", encoding="utf-8")
+    (root / "pyproject.toml").write_text(
+        '[project]\nname = "fixture"\nversion = "9.8.7"\n',
+        encoding="utf-8",
+    )
     (root / "plain.txt").write_text("plain\n", encoding="utf-8")
     (root / "runnable.sh").write_text("#!/bin/sh\n", encoding="utf-8")
     (root / "runnable.sh").chmod(0o755)
@@ -76,6 +80,40 @@ class BuildRuntimeMaterialisationTests(unittest.TestCase):
             capture_output=True,
             text=True,
         )
+
+    def invoke_helper(
+        self,
+        source: Path,
+        scratch: Path,
+        *,
+        kit_version: str | None = None,
+    ) -> tuple[subprocess.CompletedProcess[str], Path]:
+        fake_bin = scratch / "fake-bin"
+        fake_bin.mkdir()
+        capture = scratch / "docker-arguments"
+        docker = fake_bin / "docker"
+        docker.write_text(
+            '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$GNOSTOA_TEST_DOCKER_ARGS"\n',
+            encoding="utf-8",
+        )
+        docker.chmod(0o755)
+        environment = os.environ.copy() | {
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+            "GNOSTOA_CANDIDATE_REF": git(source, "rev-parse", "HEAD").stdout.strip(),
+            "GNOSTOA_TEST_DOCKER_ARGS": str(capture),
+        }
+        if kit_version is not None:
+            environment["GNOSTOA_KIT_VERSION"] = kit_version
+        else:
+            environment.pop("GNOSTOA_KIT_VERSION", None)
+        result = subprocess.run(
+            [str(HELPER), "--tag", "fixture:candidate"],
+            cwd=source,
+            env=environment,
+            capture_output=True,
+            text=True,
+        )
+        return result, capture
 
     def test_materialises_exactly_the_git_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -211,6 +249,38 @@ class BuildRuntimeMaterialisationTests(unittest.TestCase):
             self.assertFalse((destination / ".dockerignore").exists())
             self.assertTrue((destination / "source" / ".dockerignore").is_file())
             self.assertTrue((destination / "source" / "nested" / "deep.txt").is_file())
+
+    def test_exact_candidate_uses_declared_package_version_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            scratch = Path(directory)
+            source = scratch / "source"
+            source.mkdir()
+            fixture_repository(source)
+
+            result, capture = self.invoke_helper(source, scratch)
+
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertIn(
+                "KIT_VERSION=9.8.7",
+                capture.read_text(encoding="utf-8").splitlines(),
+            )
+
+    def test_exact_candidate_rejects_explicit_version_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            scratch = Path(directory)
+            source = scratch / "source"
+            source.mkdir()
+            fixture_repository(source)
+
+            result, capture = self.invoke_helper(
+                source,
+                scratch,
+                kit_version="0.0.1",
+            )
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertFalse(capture.exists())
+            self.assertIn("does not match candidate package version", result.stderr)
 
 
 if __name__ == "__main__":

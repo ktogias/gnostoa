@@ -41,13 +41,16 @@ x-project-knowledge:
 
 ## Context
 
-Three rejected Nextcloud Mail adoption attempts repeatedly left mechanically
-decidable completion evidence absent or unbound. The final attempt consulted
-the exact A1 and narrow A2 guidance and improved route orientation,
-existing-file preservation and Git representation. It still omitted
-source/runtime-lock validation, retained no context artifact or hash, failed to
-classify unavailable project suites, retained only partial evidence binding and
-overstated completion.
+Four rejected Nextcloud Mail adoption attempts are recorded across three Work
+Item cycles. Three mechanically substantive attempts — the baseline, #122 and
+#125 — repeatedly left mechanically decidable completion evidence absent or
+unbound. The separate #117 frozen fresh-agent rerun stopped before adoption
+mechanics and exposed a route-activation failure. The final mechanically
+substantive attempt consulted the exact A1 and narrow A2 guidance and improved
+route orientation, existing-file preservation and Git representation. It still
+omitted source/runtime-lock validation, retained no context artifact or hash,
+failed to classify unavailable project suites, retained only partial evidence
+binding and overstated completion.
 
 The existing `check-runtime`, policy, bundle, context and Git mechanisms can
 decide or directly acquire most of those facts. The observed gap is their

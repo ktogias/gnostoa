@@ -20,15 +20,15 @@ without a source commit, so this page does not freeze it as timeless truth. Read
 current visibility, permissions and Release presentation from the provider;
 the immutable identities below remain durable historical results.
 
-`v0.1.0` remains the historical first source-only identity, and `v0.1.1`
-remains the historical first OCI publication. The current pre-stable source identity is
-[`v0.1.2`](https://github.com/ktogias/gnostoa/releases/tag/v0.1.2),
-an annotated tag naming commit
-`56f6c5ede9ff1d6585404d102aba8413994a2697` and tree
-`6db26c9ce2eeaa82882bac82312f675ee19e6d0a`. Its public `linux/amd64` OCI
+`v0.1.0` remains the historical first source-only identity, `v0.1.1` remains
+the historical first OCI publication, and `v0.1.2` remains the historical
+B3-readiness patch. The current pre-stable source identity is
+[`v0.2.0`](https://github.com/ktogias/gnostoa/releases/tag/v0.2.0), an annotated
+tag naming commit `39aa4f25bdf46811600d4a0f6f9c0da52b73c542` and tree
+`866c8c489c9052c566bd65b6e798567d4a284f16`. Its public `linux/amd64` OCI
 artifact is
-`ghcr.io/ktogias/gnostoa@sha256:0cd31a2a649c4ffede8972680c6779c981decf5ce8605f749fa7d58751472f80`.
-Pull by that digest rather than relying on the `0.1.2` tag; no `latest` tag
+`ghcr.io/ktogias/gnostoa@sha256:f89bf32c0c4b86bac71fa008579b2385e6ae39bf4822f685479c4f2cc22bfca4`.
+Pull by that digest rather than relying on the `0.2.0` tag; no `latest` tag
 exists.
 
 The source and artifact establish no package or documentation-site publication,
@@ -36,7 +36,7 @@ compatibility, production-readiness or independent-transfer claim. Verified
 artifact availability is not deployment authorization, reproducibility,
 general-security assurance or qualified legal clearance. The durable result and
 its exact evidence limits are in the
-[v0.1.2 publication assessment](../knowledge/assessments/v0-1-2-source-and-oci-publication-result.md).
+[v0.2.0 publication assessment](../knowledge/assessments/v0-2-0-source-and-oci-publication-result.md).
 
 ### Available from source
 
@@ -116,16 +116,19 @@ The source-publication route treated exact disclosure, visibility with `main`
 unchanged, protection, anonymous read-back and protected integration as
 separate effects. All completed for the source baseline; Issue #1 and PR #23
 bind the current integration result. Package and site publication remain
-separate later effects. The `v0.1.1` publication remains historical evidence;
-the current `v0.1.2` source and OCI effects are reconciled in their own
-[durable result](../knowledge/assessments/v0-1-2-source-and-oci-publication-result.md).
+separate later effects. The v0.1.x publications remain historical evidence;
+the current `v0.2.0` source and OCI effects are reconciled in their own
+[durable result](../knowledge/assessments/v0-2-0-source-and-oci-publication-result.md).
 
 Clean wheel and source-distribution candidates now build and run against an
 explicit separate public-source binding; an absent or malformed binding fails
 with an actionable diagnostic, and the wheel does not duplicate the canonical
 schemas or profiles. The release smoke also verifies package metadata, console
-commands, license and notice and can emit a path-neutral evidence manifest with
-the source, public-surface and artifact digests. The
+commands, license and notice, and executes a real `adoption-check` from each
+clean installed artifact. That exercise requires exact byte equality between
+the installed `tools` payload and the pinned public source, acquires the result
+schema from that source, and can emit a path-neutral evidence manifest with the
+source, public-surface and artifact digests. The
 [compatibility note](compatibility.md) states the current exact-pin boundary
 and non-promises. This is release-candidate evidence, not a published package
 claim. The extended suite now enforces Ruff formatting and a bounded lint set,
@@ -167,14 +170,27 @@ resumability and bounded human understanding, and are **not** an enforcement
 mechanism. The failed property that follows from it — critical workflow
 constraints are advisory rather than mechanically enforced — remains
 **unmitigated**, and **no successor control experiment or mitigation is
-selected**. The first real
+selected**. The strict
 [B3 independent-adoption methodology](../knowledge/assessments/b3-independent-adoption-experiment-design.md)
-is now pre-registered. B3 has not begun: candidate selection — one eligible
-independently owned project, human owner, real task and mutation boundary — is
-still the next B3 owner subject. The separate bounded source-hardening candidate
-is governed
-by [Decision 0043](../knowledge/decisions/0043-prepare-a-bounded-v0-1-2-b3-readiness-candidate.md)
-and does not itself count as transfer evidence.
+remains pre-registered for a later `INDEPENDENT` evidence stage. Four
+autonomous Nextcloud Mail adoption attempts remain historical controlled
+pre-B3 evidence, with their original `REJECT` / `UNKNOWN` / `NO`
+dispositions unchanged.
+
+[Decision 0052](../knowledge/decisions/0052-use-staged-evidence-maturity-for-early-adoption-trials.md)
+now governs early-product evidence through distinct `SELF-HOSTED`,
+`OWNER-LED`, `COLLABORATIVE` and `INDEPENDENT` classes. The current
+Nextcloud Mail path is `OWNER-LED`, with `human:ktogias` as the initial
+semantic and evaluation authority. The `v0.2.0` source and immutable OCI
+subject are published, reconciled and digest-bound, and the release-series
+experiment boundary is the
+[bounded owner-led baseline](../knowledge/assessments/nextcloud-mail-v0-2-0-owner-led-adoption-trial-baseline.md).
+The concrete task run, preliminary assessment and retrospective are later
+separate work. Upstream feedback is additive rather than blocking, while
+strict `INDEPENDENT` evidence remains a later maturity-stage activity.
+`ktogias/mail` is the local mutation workspace; `nextcloud/mail` retains
+Issue and final Change Request authority. No independent-adoption or
+upstream-acceptance claim is made.
 
 This page deliberately does not restate delivery chronology, live Work Item
 lifecycle or candidate-bound measured outcomes, because each of those changes

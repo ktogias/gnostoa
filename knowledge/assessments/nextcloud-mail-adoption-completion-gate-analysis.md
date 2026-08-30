@@ -1,7 +1,7 @@
 ---
 type: Source
 title: Nextcloud Mail adoption-completion gate analysis
-description: Bounded causal synthesis, alternatives and executable-contract recommendation after three rejected Nextcloud Mail adoption attempts.
+description: Bounded causal synthesis, alternatives and executable-contract recommendation after four rejected Nextcloud Mail adoption attempts across three Work Item cycles.
 status: draft
 generated:
   by: codex/gpt-5
@@ -83,12 +83,15 @@ release or OCI publication remaining a still-separate critical effect.
 
 ## Bounded evidence base
 
-The series contains three rejected autonomous adoption outcomes, not three
-identical trials and not a reliability sample.
+The series contains four rejected adoption attempts across three Work Item
+cycles, not four identical trials and not a reliability sample. Work Item #117
+contains both the baseline attempt with same-agent recovery and a later frozen
+fresh-agent rerun; the Work Item count is therefore not the attempt count.
 
 | Attempt | Mechanically relevant result | Semantic and evidence result |
 |---|---|---|
 | #117 baseline first attempt and same-agent recovery | The initial completion claim had no supported execution or context. Recovery eventually ran source-built structural checks, but bounded context remained absent and Mail suites were blocked. | Invented ownership, provenance and capability semantics remained; evidence classes and completion were overextended. Recovery is not fresh-attempt success. |
+| #117 frozen fresh-agent rerun | The agent added only a Git remote, did not fetch or consult Gnostoa, and ran no adoption, validation, context or project-suite command. | Remote registration was misclassified as completed adoption; owner acceptance was `REJECT`, measured utility was `UNKNOWN`, and durable adoption was `NO`. |
 | #122 route-activation diagnostic | Native v0.1.2 commands, policy/bundle checks and context generation ran. `knowledge check-runtime` did not run, context stayed only on stdout, Mail suites were blocked, and the staged gitlink differed from the toolkit worktree. | Existing Mail instructions were destroyed; owner/provenance/commitment were invented; final evidence binding was partial. |
 | #125 post-remediation rerun | The exact existing-project route and preservation contract were consulted. Existing `AGENTS.md` and the gitlink were preserved correctly, and component policy/bundle checks plus context generation ran. Runtime-lock validation still did not run; context still was not retained; the agent did not classify unavailable suites; the final manifest remained incomplete. | Ownership, provenance, timestamp and durable commitment were again invented. A1 and A2 were each `NOT SUPPORTED` as bounded one-run results, and the adoption was rejected. |
 
