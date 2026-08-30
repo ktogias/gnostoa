@@ -64,6 +64,7 @@ inherited, copied or loaded by adopting projects.
 - [Select the v0.2.0 source and OCI publication series](decisions/0051-select-the-v0-2-0-source-and-oci-publication-series.md)
 - [Use staged evidence maturity for early adoption trials](decisions/0052-use-staged-evidence-maturity-for-early-adoption-trials.md)
 - [Require lightweight Work Item micro-retrospection](decisions/0053-require-lightweight-work-item-micro-retrospection.md)
+- [Make toolkit-lock template placeholders fail closed](decisions/0054-make-toolkit-lock-template-placeholders-fail-closed.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Require explicit admission for retrospective findings](requirements/retrospective-findings-require-explicit-admission.md)
