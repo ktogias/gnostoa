@@ -88,6 +88,11 @@ jobs:
             --only-binary=:all: \
             --require-hashes \
             -r requirements/development.lock
+      - name: Run per-change Ruff gates
+        if: matrix.python-version == '3.12'
+        run: |
+          python -m ruff format --check tools ci tests
+          python -m ruff check tools ci tests
       - name: Run the source compatibility suite
         run: ./ci/verify fast
       - name: Run clean installed-artifact adoption smoke
