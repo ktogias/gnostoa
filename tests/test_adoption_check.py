@@ -1413,6 +1413,34 @@ raise SystemExit(0)
                     mode in {"malformed", "wrong-binding"}, retained.is_file()
                 )
 
+    def test_runtime_lock_component_reports_structural_pass_without_image_pass(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project, toolkit = self._project(directory)
+            output = Path(directory) / "evidence"
+            result, stdout, stderr = self._run(
+                project,
+                toolkit,
+                output,
+                mode="no-observation",
+            )
+
+            self.assertEqual((3, ""), (result, stderr), stdout)
+            component = (output / "components" / "runtime-lock.stdout").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn(
+                "PASS: runtime-lock declaration and source binding are valid",
+                component,
+            )
+            self.assertNotIn("observed runtime image", component)
+            manifest = json.loads((output / "adoption-check.json").read_text())
+            self.assertEqual(
+                "UNKNOWN",
+                _condition(manifest, "RuntimeObservationAvailable")["status"],
+            )
+
     def test_evidence_artifacts_are_created_once_without_replacement(self) -> None:
         writer = adoption_check.EvidenceWriter([])
         writer.write_text("component.txt", "first\n", origin="gnostoa-test")

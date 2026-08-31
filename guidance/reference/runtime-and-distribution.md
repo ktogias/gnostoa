@@ -73,6 +73,21 @@ also protects the native fallback, where no independent image surface exists.
 Development images and mutable local tags are permitted only for toolkit
 development, never as CI policy dependencies.
 
+`check-runtime` reports two evidence dimensions separately:
+
+| Dimension | Result when satisfied | Result when unavailable |
+|---|---|---|
+| Declaration/source binding | `PASS` after schema, revision, profile and public-surface checks | `FAIL` when a required declaration or binding is invalid |
+| observed-image binding | `PASS` only when a supplied observed image identity equals the declared `runtime.image` | `UNKNOWN` when no observed image identity is supplied |
+
+A supplied identity that conflicts with the declaration produces observed-image
+`FAIL`. A valid declaration/source binding does not establish observed-image
+`PASS`; native fallback therefore retains its structural result while reporting
+the unavailable image observation as `UNKNOWN`. `KNOWLEDGE_KIT_IMAGE` and
+`--expected-image` are comparison inputs acquired by the selected execution
+route. Supplying either value does not create independent registry or execution
+attestation.
+
 ## Usage
 
 Use an OCI-compatible engine such as Docker or Podman. Mount project content

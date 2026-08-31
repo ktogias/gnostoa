@@ -3004,6 +3004,27 @@ runtime:
         )
         self.assertNotIn("UNKNOWN:", output)
 
+    def test_runtime_guidance_separates_declaration_from_image_observation(
+        self,
+    ) -> None:
+        runtime = (
+            ROOT / "guidance" / "reference" / "runtime-and-distribution.md"
+        ).read_text(encoding="utf-8")
+        bootstrap = (
+            ROOT / "guidance" / "workflows" / "bootstrap-new-project.md"
+        ).read_text(encoding="utf-8")
+        adoption = (
+            ROOT / "guidance" / "workflows" / "adopt-existing-project.md"
+        ).read_text(encoding="utf-8")
+
+        for document in (runtime, bootstrap):
+            self.assertIn("declaration/source binding", document)
+            self.assertIn("observed-image binding", document)
+            self.assertIn("UNKNOWN", document)
+        self.assertIn("RuntimeObservationAvailable", adoption)
+        self.assertIn("structural component", adoption)
+        self.assertIn("does not establish observed-image PASS", adoption)
+
     def test_toolkit_lock_template_placeholders_fail_closed(self) -> None:
         template = (ROOT / "templates" / "knowledge-kit.lock.yaml").read_text(
             encoding="utf-8"

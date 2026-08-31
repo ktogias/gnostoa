@@ -140,7 +140,10 @@ into a published-OCI claim.
    complete observed `<registry>/<repository>@sha256:<digest>` identity; do not
    retain or append to the sentinel, and do not replace only a digest suffix.
    `check-runtime` reports each field until both whole-value replacements are
-   complete.
+   complete. Its declaration/source binding and observed-image binding are
+   separate results: the latter is `PASS` only when the execution route supplies
+   an image identity matching the declaration, and is `UNKNOWN` when no image
+   observation is available.
 2. Create `.knowledge/profile.yaml` extending
    `../.knowledge-kit/core/profile.yaml`.
 3. Create `.knowledge/change-control.yaml` from
@@ -275,6 +278,11 @@ knowledge check-change-policy --policy .knowledge/change-control.yaml
 knowledge check-ci-policy --policy .knowledge/continuous-integration.yaml --verification .knowledge/verification.yaml
 knowledge validate --profile .knowledge/profile.yaml --bundle knowledge/
 ```
+
+In this native fallback, a successful `check-runtime` declaration/source binding
+does not establish observed-image binding. Unless the route supplies a real
+observed identity, the command reports the image dimension as `UNKNOWN`; do not
+rewrite that result as observed-image `PASS`.
 
 ## Verification
 

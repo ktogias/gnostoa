@@ -5,8 +5,9 @@ import hashlib
 import json
 import os
 import sys
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from jsonschema import Draft202012Validator
 
@@ -36,6 +37,57 @@ PUBLIC_SURFACE_PATHS = (
 # measured drifting the digest, not because it looked like a cache.
 IGNORED_PARTS = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
 IGNORED_SUFFIXES = {".pyc", ".pyo"}
+
+ObservationStatus = Literal["PASS", "FAIL", "UNKNOWN"]
+
+
+@dataclass(frozen=True)
+class RuntimeImageObservation:
+    status: ObservationStatus
+    declared_image: str | None
+    observed_image: str | None
+
+
+@dataclass(frozen=True)
+class RuntimeLockEvaluation:
+    declaration_issues: tuple[str, ...]
+    image_observation: RuntimeImageObservation
+
+    @property
+    def issues(self) -> tuple[str, ...]:
+        issues = list(self.declaration_issues)
+        observation = self.image_observation
+        if observation.status == "FAIL":
+            issues.append(
+                f"locked runtime image {observation.declared_image!r} does not match "
+                f"executing image reference {observation.observed_image!r}"
+            )
+        return tuple(sorted(set(issues)))
+
+
+def _runtime_image_observation(
+    runtime: object,
+    expected_image: str | None,
+) -> RuntimeImageObservation:
+    observed = (
+        expected_image
+        if expected_image is not None
+        else os.environ.get("KNOWLEDGE_KIT_IMAGE", "")
+    )
+    declared = runtime.get("image") if isinstance(runtime, dict) else None
+    declared_image = declared if isinstance(declared, str) else None
+    observed_image = observed if observed else None
+    if observed_image is None or declared_image is None:
+        return RuntimeImageObservation(
+            status="UNKNOWN",
+            declared_image=declared_image,
+            observed_image=observed_image,
+        )
+    return RuntimeImageObservation(
+        status="PASS" if declared_image == observed_image else "FAIL",
+        declared_image=declared_image,
+        observed_image=observed_image,
+    )
 
 
 def _schema(path: Path) -> dict[str, Any]:
@@ -143,14 +195,14 @@ def public_surface_digest(root: Path) -> str:
     return f"sha256:{digest.hexdigest()}"
 
 
-def check_runtime_lock(
+def evaluate_runtime_lock(
     lock_path: Path,
     project_root: Path,
     expected_revision: str | None = None,
     expected_image: str | None = None,
     schema_path: Path | None = None,
     runtime_root: Path | None = None,
-) -> list[str]:
+) -> RuntimeLockEvaluation:
     root = project_root.resolve()
     lock = load_yaml(lock_path.resolve())
     schema = (
@@ -170,8 +222,9 @@ def check_runtime_lock(
 
     toolkit = lock.get("toolkit", {})
     runtime = lock.get("runtime", {})
+    image_observation = _runtime_image_observation(runtime, expected_image)
     if not isinstance(toolkit, dict) or not isinstance(runtime, dict):
-        return sorted(set(issues))
+        return RuntimeLockEvaluation(tuple(sorted(set(issues))), image_observation)
 
     toolkit_revision = toolkit.get("revision")
     locked_surface_digest = toolkit.get("public_surface_digest")
@@ -199,22 +252,6 @@ def check_runtime_lock(
         issues.append(
             f"runtime revision {runtime_revision!r} does not match "
             f"executing image revision {expected!r}"
-        )
-
-    executing_image = (
-        expected_image
-        if expected_image is not None
-        else os.environ.get("KNOWLEDGE_KIT_IMAGE", "")
-    )
-    locked_image = runtime.get("image")
-    if (
-        executing_image
-        and isinstance(locked_image, str)
-        and locked_image != executing_image
-    ):
-        issues.append(
-            f"locked runtime image {locked_image!r} does not match "
-            f"executing image reference {executing_image!r}"
         )
 
     source_reference = toolkit.get("source")
@@ -271,7 +308,26 @@ def check_runtime_lock(
                     f"runtime: {source_digest} != {runtime_digest}"
                 )
 
-    return sorted(set(issues))
+    return RuntimeLockEvaluation(tuple(sorted(set(issues))), image_observation)
+
+
+def check_runtime_lock(
+    lock_path: Path,
+    project_root: Path,
+    expected_revision: str | None = None,
+    expected_image: str | None = None,
+    schema_path: Path | None = None,
+    runtime_root: Path | None = None,
+) -> list[str]:
+    evaluation = evaluate_runtime_lock(
+        lock_path,
+        project_root,
+        expected_revision,
+        expected_image,
+        schema_path,
+        runtime_root,
+    )
+    return list(evaluation.issues)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -307,7 +363,7 @@ def surface_digest_main(argv: list[str] | None = None) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
-        issues = check_runtime_lock(
+        evaluation = evaluate_runtime_lock(
             args.lock,
             args.project_root,
             args.expected_revision,
@@ -318,12 +374,32 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
-    for issue in issues:
+    for issue in evaluation.declaration_issues:
         print(f"ERROR: {issue}")
-    if issues:
-        return 1
+    if not evaluation.declaration_issues:
+        print(
+            f"PASS: runtime-lock declaration and source binding are valid ({args.lock})"
+        )
 
-    print(f"OK: toolkit source and runtime lock is valid ({args.lock})")
+    observation = evaluation.image_observation
+    if observation.status == "PASS":
+        print(
+            "PASS: observed runtime image matches declared runtime.image "
+            f"({observation.observed_image})"
+        )
+    elif observation.status == "FAIL":
+        print(
+            "FAIL: observed runtime image does not match declared runtime.image: "
+            f"{observation.observed_image!r} != {observation.declared_image!r}"
+        )
+    else:
+        print(
+            "UNKNOWN: runtime image observation was not supplied; "
+            f"runtime.image is declaration only ({observation.declared_image})"
+        )
+
+    if evaluation.declaration_issues or observation.status == "FAIL":
+        return 1
     return 0
 
 

@@ -277,6 +277,7 @@ guardrails:
       - schemas/toolkit-lock.schema.json
       - templates/knowledge-kit.lock.yaml
       - tools/check_runtime_lock.py#check_runtime_lock
+      - tools/check_runtime_lock.py#evaluate_runtime_lock
       - tools/check_runtime_lock.py#public_surface_digest
       - tools/cli.py#main
     tests:
@@ -287,6 +288,8 @@ guardrails:
       - tests/test_tools.py::RuntimeTests.test_runtime_lock_cli_reports_missing_image_observation_as_unknown
       - tests/test_tools.py::RuntimeTests.test_runtime_lock_cli_reports_matching_image_observation_as_pass
       - tests/test_tools.py::RuntimeTests.test_runtime_lock_cli_reports_image_observation_mismatch_as_fail
+      - tests/test_tools.py::RuntimeTests.test_runtime_guidance_separates_declaration_from_image_observation
+      - tests/test_adoption_check.py::AdoptionCheckExecutionTests.test_runtime_lock_component_reports_structural_pass_without_image_pass
       - tests/test_tools.py::RuntimeTests.test_runtime_lock_requires_pinned_public_surface_digest
       - tests/test_tools.py::RuntimeTests.test_runtime_lock_accepts_matching_revisions
       - tests/test_tools.py::RuntimeTests.test_runtime_lock_rejects_image_revision_drift

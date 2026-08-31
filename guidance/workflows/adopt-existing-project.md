@@ -229,6 +229,12 @@ The eight conditions use `TRUE`, `FALSE` or `UNKNOWN` plus stable reasons:
 - `EvidenceIntegrityPreserved`
 - `SemanticReviewRequired`
 
+The `runtime-lock` structural component validates the declaration/source
+binding only. Its component `PASS` does not establish observed-image PASS and
+cannot satisfy `RuntimeObservationAvailable`. That separate condition is derived
+from the invocation-bound project runtime reports; unavailable observation stays
+`UNKNOWN` and therefore keeps readiness `BLOCKED`.
+
 The closed `gnostoa-review-ready/v1` policy requires the first seven
 conditions to be `TRUE` for the exact same candidate. Its canonical bytes and
 SHA-256, and the exact version-2 result schema bytes, are retained under
