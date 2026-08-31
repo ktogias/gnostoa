@@ -146,7 +146,7 @@ class BrandIdentityTests(unittest.TestCase):
 
         self.assertIn(
             "registry.example.org/gnostoa@sha256:",
-            (ROOT / "templates" / "knowledge-kit.lock.yaml").read_text(
+            (ROOT / "guidance" / "workflows" / "bootstrap-new-project.md").read_text(
                 encoding="utf-8"
             ),
         )
@@ -2810,6 +2810,238 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn("build==1.5.0", development_lock)
         self.assertIn("pyproject-hooks==1.2.0", development_lock)
         self.assertIn("setuptools==83.0.0", development_lock)
+
+    def _write_runtime_lock_template_fixture(
+        self,
+        root: Path,
+        template: str,
+    ) -> tuple[Path, Path]:
+        source = root / "source"
+        (source / "core").mkdir(parents=True, exist_ok=True)
+        (source / "core" / "marker.txt").write_text(
+            "same surface\n",
+            encoding="utf-8",
+        )
+        (root / "profile.yaml").write_text(
+            """
+id: test-profile
+version: "0.1.0"
+okf_version: "0.2"
+extends: []
+concept_types: [Project]
+relation_kinds: []
+rules: {}
+type_rules: {}
+""".lstrip(),
+            encoding="utf-8",
+        )
+        lock = root / "kit.lock.yaml"
+        lock.write_text(
+            template.replace("source: .knowledge-kit", "source: source")
+            .replace(
+                "revision: REPLACE_WITH_IMMUTABLE_TOOLKIT_REVISION",
+                "revision: revision-1",
+            )
+            .replace(
+                "profile: .knowledge/profile.yaml",
+                "profile: profile.yaml",
+            ),
+            encoding="utf-8",
+        )
+        return lock, source
+
+    def test_toolkit_lock_template_placeholders_fail_closed(self) -> None:
+        template = (ROOT / "templates" / "knowledge-kit.lock.yaml").read_text(
+            encoding="utf-8"
+        )
+        digest_placeholder = "sha256:REPLACE_WITH_PUBLIC_SURFACE_DIGEST"
+        image_placeholder = (
+            "REPLACE_WITH_DIGEST_PINNED_RUNTIME_IMAGE (replace entire value)"
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _, source = self._write_runtime_lock_template_fixture(root, template)
+            digest = public_surface_digest(source)
+            image = f"registry.example.org/gnostoa@sha256:{'a' * 64}"
+            cases = (
+                (
+                    "untouched",
+                    template,
+                    {"toolkit.public_surface_digest", "runtime.image"},
+                ),
+                (
+                    "digest replaced",
+                    template.replace(digest_placeholder, digest),
+                    {"runtime.image"},
+                ),
+                (
+                    "image replaced",
+                    template.replace(image_placeholder, image),
+                    {"toolkit.public_surface_digest"},
+                ),
+                (
+                    "fully replaced",
+                    template.replace(digest_placeholder, digest).replace(
+                        image_placeholder,
+                        image,
+                    ),
+                    set(),
+                ),
+            )
+
+            for label, candidate, expected_invalid_paths in cases:
+                with self.subTest(label=label):
+                    lock, source = self._write_runtime_lock_template_fixture(
+                        root,
+                        candidate,
+                    )
+                    issues = check_runtime_lock(
+                        lock,
+                        root,
+                        expected_revision="revision-1",
+                        expected_image="",
+                        schema_path=ROOT / "schemas" / "toolkit-lock.schema.json",
+                        runtime_root=source,
+                    )
+                    invalid_paths = {
+                        path
+                        for path in (
+                            "toolkit.public_surface_digest",
+                            "runtime.image",
+                        )
+                        if any(
+                            issue.startswith(f"{path}:") and "does not match" in issue
+                            for issue in issues
+                        )
+                    }
+                    self.assertEqual(
+                        expected_invalid_paths,
+                        invalid_paths,
+                        issues,
+                    )
+                    if not expected_invalid_paths:
+                        self.assertEqual([], issues)
+
+    def test_runtime_lock_reports_unreplaced_template_placeholders_actionably(
+        self,
+    ) -> None:
+        template = (ROOT / "templates" / "knowledge-kit.lock.yaml").read_text(
+            encoding="utf-8"
+        )
+        schema = json.loads(
+            (ROOT / "schemas" / "toolkit-lock.schema.json").read_text(encoding="utf-8")
+        )
+        expected = {
+            "toolkit.public_surface_digest": (
+                "sha256:REPLACE_WITH_PUBLIC_SURFACE_DIGEST",
+                schema["properties"]["toolkit"]["properties"]["public_surface_digest"][
+                    "pattern"
+                ],
+            ),
+            "runtime.image": (
+                "REPLACE_WITH_DIGEST_PINNED_RUNTIME_IMAGE (replace entire value)",
+                schema["properties"]["runtime"]["properties"]["image"]["pattern"],
+            ),
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            lock, source = self._write_runtime_lock_template_fixture(root, template)
+            issues = check_runtime_lock(
+                lock,
+                root,
+                expected_revision="revision-1",
+                expected_image="",
+                schema_path=ROOT / "schemas" / "toolkit-lock.schema.json",
+                runtime_root=source,
+            )
+
+        for path, (placeholder, pattern) in expected.items():
+            matches = [issue for issue in issues if issue.startswith(f"{path}:")]
+            self.assertEqual(1, len(matches), issues)
+            self.assertIn(placeholder, matches[0])
+            self.assertIn("does not match", matches[0])
+            self.assertIn(repr(pattern), matches[0])
+
+    def test_runtime_image_template_rejects_digest_only_replacement(self) -> None:
+        template = (ROOT / "templates" / "knowledge-kit.lock.yaml").read_text(
+            encoding="utf-8"
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _, source = self._write_runtime_lock_template_fixture(root, template)
+            digest = public_surface_digest(source)
+            candidate = template.replace(
+                "sha256:REPLACE_WITH_PUBLIC_SURFACE_DIGEST",
+                digest,
+            ).replace(
+                "REPLACE_WITH_RUNTIME_IMAGE_DIGEST",
+                "a" * 64,
+            )
+            lock, source = self._write_runtime_lock_template_fixture(root, candidate)
+            issues = check_runtime_lock(
+                lock,
+                root,
+                expected_revision="revision-1",
+                expected_image="",
+                schema_path=ROOT / "schemas" / "toolkit-lock.schema.json",
+                runtime_root=source,
+            )
+
+        self.assertTrue(
+            any(
+                issue.startswith("runtime.image:") and "does not match" in issue
+                for issue in issues
+            ),
+            issues,
+        )
+        self.assertEqual(
+            "REPLACE_WITH_DIGEST_PINNED_RUNTIME_IMAGE (replace entire value)",
+            load_yaml(ROOT / "templates" / "knowledge-kit.lock.yaml")["runtime"][
+                "image"
+            ],
+        )
+
+    def test_runtime_image_template_rejects_append_while_sentinel_remains(
+        self,
+    ) -> None:
+        template_path = ROOT / "templates" / "knowledge-kit.lock.yaml"
+        template = template_path.read_text(encoding="utf-8")
+        image_sentinel = load_yaml(template_path)["runtime"]["image"]
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _, source = self._write_runtime_lock_template_fixture(root, template)
+            digest = public_surface_digest(source)
+            appended_image = f"{image_sentinel}@sha256:{'a' * 64}"
+            candidate = template.replace(
+                "sha256:REPLACE_WITH_PUBLIC_SURFACE_DIGEST",
+                digest,
+            ).replace(
+                image_sentinel,
+                appended_image,
+            )
+            self.assertNotEqual(template, candidate)
+            lock, source = self._write_runtime_lock_template_fixture(root, candidate)
+            self.assertEqual(appended_image, load_yaml(lock)["runtime"]["image"])
+            issues = check_runtime_lock(
+                lock,
+                root,
+                expected_revision="revision-1",
+                expected_image="",
+                schema_path=ROOT / "schemas" / "toolkit-lock.schema.json",
+                runtime_root=source,
+            )
+
+        self.assertTrue(
+            any(
+                issue.startswith("runtime.image:") and "does not match" in issue
+                for issue in issues
+            ),
+            issues,
+        )
 
     def test_runtime_lock_requires_pinned_public_surface_digest(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

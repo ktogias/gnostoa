@@ -2,8 +2,8 @@ version: 1
 toolkit:
   source: .knowledge-kit
   revision: REPLACE_WITH_IMMUTABLE_TOOLKIT_REVISION
-  public_surface_digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  public_surface_digest: sha256:REPLACE_WITH_PUBLIC_SURFACE_DIGEST
   profile: .knowledge/profile.yaml
 runtime:
-  image: registry.example.org/gnostoa@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  image: "REPLACE_WITH_DIGEST_PINNED_RUNTIME_IMAGE (replace entire value)"
   revision: REPLACE_WITH_IMMUTABLE_TOOLKIT_REVISION
