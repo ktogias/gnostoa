@@ -38,7 +38,8 @@ COMMANDS: dict[str, tuple[str, Callable[[list[str] | None], int]]] = {
         check_ci_policy.main,
     ),
     "check-runtime": (
-        "report runtime-lock declaration and observed image binding",
+        "report runtime-lock declaration, image-reference comparison and "
+        "observation boundary",
         check_runtime_lock.main,
     ),
     "surface-digest": (

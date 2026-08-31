@@ -73,20 +73,24 @@ also protects the native fallback, where no independent image surface exists.
 Development images and mutable local tags are permitted only for toolkit
 development, never as CI policy dependencies.
 
-`check-runtime` reports two evidence dimensions separately:
+`check-runtime` reports three evidence dimensions separately:
 
-| Dimension | Result when satisfied | Result when unavailable |
+| Dimension | Result when comparable or satisfied | Result when unavailable |
 |---|---|---|
 | Declaration/source binding | `PASS` after schema, revision, profile and public-surface checks | `FAIL` when a required declaration or binding is invalid |
-| observed-image binding | `PASS` only when a supplied observed image identity equals the declared `runtime.image` | `UNKNOWN` when no observed image identity is supplied |
+| supplied-reference comparison | `MATCH` when a caller-supplied image reference equals the declared `runtime.image`; `MISMATCH` conflicts and fails the command | `NOT SUPPLIED` when no comparison reference is available |
+| execution observation | No execution observation is acquired by standalone `check-runtime` | `UNKNOWN` |
 
-A supplied identity that conflicts with the declaration produces observed-image
-`FAIL`. A valid declaration/source binding does not establish observed-image
-`PASS`; native fallback therefore retains its structural result while reporting
-the unavailable image observation as `UNKNOWN`. `KNOWLEDGE_KIT_IMAGE` and
-`--expected-image` are comparison inputs acquired by the selected execution
-route. Supplying either value does not create independent registry or execution
-attestation.
+A supplied identity that conflicts with the declaration produces reference
+`MISMATCH` and remains fail-closed. A valid declaration/source binding or
+reference `MATCH` does not establish execution-observation `PASS`; native
+fallback therefore retains its structural result while reporting execution
+observation as `UNKNOWN`. `KNOWLEDGE_KIT_IMAGE` and `--expected-image` are
+caller-supplied comparison declarations and never execution observation
+evidence. Supplying either value does not show that those image bytes executed
+and does not create independent registry or execution attestation. An execution
+observation requires a separately admitted, invocation-bound acquisition route,
+such as the project-adapter sidecar used by `adoption-check`.
 
 ## Usage
 

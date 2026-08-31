@@ -140,10 +140,13 @@ into a published-OCI claim.
    complete observed `<registry>/<repository>@sha256:<digest>` identity; do not
    retain or append to the sentinel, and do not replace only a digest suffix.
    `check-runtime` reports each field until both whole-value replacements are
-   complete. Its declaration/source binding and observed-image binding are
-   separate results: the latter is `PASS` only when the execution route supplies
-   an image identity matching the declaration, and is `UNKNOWN` when no image
-   observation is available.
+   complete. Its declaration/source binding, supplied-reference comparison and
+   execution observation are separate results. A caller-supplied image identity
+   matching the declaration produces reference `MATCH`, not observation
+   `PASS`; caller-supplied identities are declarations and
+   never execution observation evidence. Standalone `check-runtime` therefore
+   reports execution observation as `UNKNOWN`. Invocation-bound project-adapter
+   evidence remains the separate observation route used by `adoption-check`.
 2. Create `.knowledge/profile.yaml` extending
    `../.knowledge-kit/core/profile.yaml`.
 3. Create `.knowledge/change-control.yaml` from
