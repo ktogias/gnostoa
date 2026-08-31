@@ -14,8 +14,8 @@ Start with `README.md`. Load only the route required by the task.
   `knowledge/lifecycles/evidence-gated-capability-evolution.md`,
   `knowledge/runbooks/deliver-bounded-self-hosted-slice.md`, Decision 0016,
   the current roadmap and the active Work Item before proposing implementation.
-- For Gnostoa-self work with multiple material behaviors, a contradiction or
-  ambiguity, or material correctness risk, also read
+- When the Requirement's applicability criteria hold for Gnostoa-self work,
+  also read
   `knowledge/requirements/bounded-behavioral-traceability.md` before semantic
   production mutation and exact-candidate review.
 - Gnostoa version-bound source-and-OCI release series: after the ordinary

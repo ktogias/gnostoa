@@ -1,0 +1,40 @@
+diff --git a/src/relocate.py b/src/relocate.py
+index 744af01..a95af84 100644
+--- a/src/relocate.py
++++ b/src/relocate.py
+@@ -8,6 +8,9 @@ class Item:
+ 
+ 
+ def relocate(item: Item, destination_id: int | None, mutate: Callable[..., None]) -> None:
++    if item.id == destination_id:
++        return
++
+     if destination_id is None:
+         mutate(item.id, None, item.label)
+         return
+@@ -15,3 +18,4 @@ def relocate(item: Item, destination_id: int | None, mutate: Callable[..., None]) -> None:
+     mutate(item.id, destination_id, item.label)
+diff --git a/tests/test_relocate.py b/tests/test_relocate.py
+index 120ccf3..2e16db5 100644
+--- a/tests/test_relocate.py
++++ b/tests/test_relocate.py
+@@ -18,3 +18,19 @@ def test_different_destination() -> None:
+     mutate.assert_called_once_with(item.id, 9, item.label)
++
++
++def test_self_destination_is_noop() -> None:
++    item = Item(id=7, parent_id=4, label="Reports")
++    mutate = Mock()
++
++    relocate(item, item.id, mutate)
++
++    mutate.assert_not_called()
++
++
++def test_top_level_destination() -> None:
++    item = Item(id=7, parent_id=None, label="Reports")
++    mutate = Mock()
++
++    relocate(item, None, mutate)
++
++    mutate.assert_called_once_with(item.id, None, item.label)

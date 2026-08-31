@@ -410,10 +410,20 @@ guardrails:
       - knowledge/decisions/0056-run-a-bounded-behavioral-traceability-review-experiment.md
       - knowledge/requirements/bounded-behavioral-traceability.md
       - knowledge/runbooks/deliver-bounded-self-hosted-slice.md
-      - tests/fixtures/behavioral-traceability/case-a.yaml
-      - tests/fixtures/behavioral-traceability/case-b.yaml
-      - tests/fixtures/behavioral-traceability/case-c.yaml
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/manifest.yaml
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/review-request.md
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/case-2d91/task.md
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/case-2d91/candidate.patch
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/case-2d91/verification.txt
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/case-7ac4/task.md
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/case-7ac4/candidate.patch
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/case-7ac4/verification.txt
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/case-b683/task.md
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/case-b683/candidate.patch
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/case-b683/verification.txt
     tests:
+      - tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_blind_replay_binds_inspectable_raw_artifacts
+      - tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_blind_replay_does_not_expose_control_answers
       - tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_requirement_defines_bounded_blocking_and_oracle_limits
       - tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_router_and_runbook_make_the_two_checkpoints_discoverable
       - tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_guardrail_binds_the_self_only_contract

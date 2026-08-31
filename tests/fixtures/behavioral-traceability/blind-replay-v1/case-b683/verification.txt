@@ -1,0 +1,6 @@
+candidate_sha256: sha256:d5d4dc4b97fd9df84331d1ac99a9ce4cb828e69968b00d82ebd200bb7d1f78bf
+command: pytest -q tests/test_help_text.py::test_move_help_snapshot
+exit_code: 0
+output:
+.                                                                        [100%]
+1 passed in 0.02s

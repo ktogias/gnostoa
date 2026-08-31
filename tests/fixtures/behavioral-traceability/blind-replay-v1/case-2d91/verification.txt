@@ -1,0 +1,6 @@
+candidate_sha256: sha256:cb91ace6af2132e9719f0c27a16910e5d51c97425e7036f756dcb54c1b68a00d
+command: pytest -q tests/test_relocate.py::test_self_destination_is_noop tests/test_relocate.py::test_top_level_destination
+exit_code: 0
+output:
+..                                                                       [100%]
+2 passed in 0.04s

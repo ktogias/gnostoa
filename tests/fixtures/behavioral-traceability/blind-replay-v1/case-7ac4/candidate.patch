@@ -1,0 +1,27 @@
+diff --git a/src/relocate.py b/src/relocate.py
+index 744af01..39951fc 100644
+--- a/src/relocate.py
++++ b/src/relocate.py
+@@ -12,5 +12,4 @@ def relocate(item: Item, destination_id: int | None, mutate: Callable[..., None]) -> None:
+         mutate(item.id, None, item.label)
+         return
+ 
+-    normalized_label = item.label.strip()
+-    mutate(item.id, destination_id, normalized_label)
++    mutate(item.id, destination_id, item.label)
+diff --git a/tests/test_relocate.py b/tests/test_relocate.py
+index 120ccf3..c45978e 100644
+--- a/tests/test_relocate.py
++++ b/tests/test_relocate.py
+@@ -18,3 +18,12 @@ def test_different_destination() -> None:
+     mutate.assert_called_once_with(item.id, 9, item.label)
++
++
++def test_preserves_exact_label_once() -> None:
++    item = Item(id=7, parent_id=4, label=" Quarterly ")
++    mutate = Mock()
++
++    relocate(item, 9, mutate)
++
++    mutate.assert_called_once_with(item.id, 9, " Quarterly ")
++    assert mutate.call_count == 1

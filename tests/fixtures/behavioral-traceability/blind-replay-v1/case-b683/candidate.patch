@@ -1,0 +1,21 @@
+diff --git a/src/help_text.py b/src/help_text.py
+index 325824d..e89a311 100644
+--- a/src/help_text.py
++++ b/src/help_text.py
+@@ -4,4 +4,4 @@ MOVE_HELP = """Move an item.
+ 
+-Destination:
++Target destination:
+   Optional container identifier.
+ """
+diff --git a/tests/test_help_text.py b/tests/test_help_text.py
+index 3d224ae..e25ea5f 100644
+--- a/tests/test_help_text.py
++++ b/tests/test_help_text.py
+@@ -7,5 +7,5 @@ def test_move_help_snapshot() -> None:
+     assert MOVE_HELP == """Move an item.
+ 
+-Destination:
++Target destination:
+   Optional container identifier.
+ """

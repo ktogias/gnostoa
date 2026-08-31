@@ -54,7 +54,9 @@ evidence-gated capability lifecycle.
 Run one provider-neutral, Gnostoa-self-only experiment that compares the
 historical Phase-B baseline with a compact trace-assisted review. Do not add a
 public schema, CLI, template, readiness predicate, workflow engine or provider
-adapter in this slice.
+adapter in this slice. Existing repository checks may retain the self-only
+contract and replay evidence; no new provider-specific job, status or
+configuration is introduced.
 
 The experiment is a `normative` Gnostoa-self change because it adds a conditional
 execution and review obligation. Its result may be positive or negative.
@@ -81,7 +83,10 @@ The map is required experimentally when a task has multiple material behaviors,
 a contradiction or ambiguity, or material correctness risk. A trivial task may
 record `NOT APPLICABLE` with one bounded reason and no behavior rows.
 
-The executor records the map before the first semantic production mutation. An
+The executor records an initial map in the active Work Item or change record
+before the first semantic production mutation. Candidate and evidence fields
+that do not exist yet remain prospective, `NOT RUN`, `UNKNOWN` and `PENDING`;
+they are re-bound to the exact final candidate and evidence before review. An
 unresolved contradiction, unsupported narrowing, missing material evidence or
 contradictory evidence blocks review-ready disposition. The reviewer then
 reconciles the complete declared behavior set independently against the exact
@@ -95,6 +100,13 @@ Those remain bounded semantic judgments.
 Use a sanitized, product-neutral reconstruction of the Phase-B failure as the
 negative case: code and test agree but contradict a task consequence. Compare it
 with one aligned non-trivial case and one trivial `NOT APPLICABLE` case.
+
+The fresh replay packet contains inspectable raw task, candidate-patch and
+verification artifacts with recomputable SHA-256 identities. Neutral case IDs
+and ordering disclose no role. The packet omits applicability verdicts,
+contradiction and alignment findings, expected results and executor/reviewer
+dispositions; the scoring key remains outside reviewer context until the raw
+response is captured.
 
 The measured result records at least defect recall, false blocks, owner
 interventions, elapsed time and bounded context cost. Historical Phase-B reviewer

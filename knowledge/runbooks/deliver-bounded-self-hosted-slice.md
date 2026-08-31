@@ -93,12 +93,14 @@ result needed for the next owner decision. There is no fixed length limit.
    Work Item recorded for backlog capture satisfies durable tracking only; it does
    not satisfy this admission step until its separately declared admission state is
    observed.
-8. **Make the smallest admitted change.** When the task has multiple material
-   behaviors, a contradiction or ambiguity, or material correctness risk, apply
-   the
+8. **Make the smallest admitted change.** When the Requirement's applicability
+   criteria hold, apply the
    [bounded behavioral-traceability requirement](../requirements/bounded-behavioral-traceability.md)
-   and record its behavior map **before the first semantic production mutation**.
-   An unresolved contradiction or unsupported narrowing blocks review-ready
+   and record its initial behavior map in the active Work Item or change record
+   **before the first semantic production mutation**. Use explicit prospective,
+   `NOT RUN`, `UNKNOWN` and `PENDING` states where candidate or evidence does not
+   exist yet; re-bind the final candidate and evidence before review. An
+   unresolved contradiction or unsupported narrowing blocks review-ready
    disposition. Then follow the
    [verification-first workflow](../../guidance/workflows/develop-verification-first.md)
    and keep specialized semantics in their owning runbooks.
