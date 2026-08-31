@@ -1,0 +1,47 @@
+schema_version: experimental-0
+case:
+  id: aligned-nontrivial
+  applicability: REQUIRED
+  reason: Two material outcomes share one implementation path.
+subject:
+  task:
+    kind: sha256
+    value: sha256:4444444444444444444444444444444444444444444444444444444444444444
+  candidate:
+    kind: git-tree
+    value: git:5555555555555555555555555555555555555555
+  evidence:
+    kind: sha256
+    value: sha256:6666666666666666666666666666666666666666666666666666666666666666
+behaviors:
+  - id: B-NEW-PARENT
+    task_selector: task.behavior.relocate-to-new-parent
+    expected: Relocating to a different parent performs one mutation with the destination identifier.
+    contradiction:
+      status: NONE
+      detail: No material conflict identified.
+    implementation_path: src/relocate.py::relocate
+    evidence:
+      reference: tests/test_relocate.py::test_different_parent
+      actual_result: PASS
+      observed_behavior: Exactly one mutation uses the destination identifier.
+      alignment: SUPPORTS
+    executor_disposition: READY
+    reviewer_disposition: ACCEPT
+  - id: B-LABEL-PRESERVED
+    task_selector: task.behavior.preserve-label
+    expected: Relocation preserves the existing item label.
+    contradiction:
+      status: NONE
+      detail: No material conflict identified.
+    implementation_path: src/relocate.py::relocate
+    evidence:
+      reference: tests/test_relocate.py::test_label_preserved
+      actual_result: PASS
+      observed_behavior: The mutation uses the existing label unchanged.
+      alignment: SUPPORTS
+    executor_disposition: READY
+    reviewer_disposition: ACCEPT
+expected_trace_review:
+  disposition: ACCEPT
+  reason: Both declared material behaviors have aligned passing evidence and no identified contradiction.

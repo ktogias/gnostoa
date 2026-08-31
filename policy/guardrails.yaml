@@ -399,6 +399,22 @@ guardrails:
     tests:
       - tests/test_tools.py::ChangeControlTests.test_generic_policy_requires_verification_first_evidence
 
+  - id: bounded-behavioral-traceability
+    title: Applicable Gnostoa-self work exposes behavior-to-implementation-to-evidence contradictions before review
+    applies_to: [kit]
+    enforcement: hybrid
+    owner: team:gnostoa-maintainers
+    guidance: knowledge/decisions/0056-run-a-bounded-behavioral-traceability-review-experiment.md#decision
+    implementation:
+      - knowledge/decisions/0056-run-a-bounded-behavioral-traceability-review-experiment.md
+      - tests/fixtures/behavioral-traceability/agreeing-but-wrong.yaml
+      - tests/fixtures/behavioral-traceability/aligned-nontrivial.yaml
+      - tests/fixtures/behavioral-traceability/trivial-not-applicable.yaml
+    tests:
+      - tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_requirement_defines_bounded_blocking_and_oracle_limits
+      - tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_router_and_runbook_make_the_two_checkpoints_discoverable
+      - tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_guardrail_binds_the_self_only_contract
+
   - id: authoritative-centralized-ci
     title: Centralized CI authoritatively verifies the latest integration candidate
     applies_to: [kit, adopting-projects]

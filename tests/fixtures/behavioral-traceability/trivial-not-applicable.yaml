@@ -1,0 +1,19 @@
+schema_version: experimental-0
+case:
+  id: trivial-not-applicable
+  applicability: NOT APPLICABLE
+  reason: The change updates one non-semantic label and has no branching observable behavior.
+subject:
+  task:
+    kind: sha256
+    value: sha256:7777777777777777777777777777777777777777777777777777777777777777
+  candidate:
+    kind: git-tree
+    value: git:8888888888888888888888888888888888888888
+  evidence:
+    kind: sha256
+    value: sha256:9999999999999999999999999999999999999999999999999999999999999999
+behaviors: []
+expected_trace_review:
+  disposition: NOT APPLICABLE
+  reason: The bounded applicability rule does not require a behavior map for this trivial change.
