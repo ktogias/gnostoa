@@ -1,6 +1,10 @@
 import hashlib
+import os
 import re
+import shutil
 import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -35,7 +39,7 @@ class BehavioralTraceabilityTests(unittest.TestCase):
         manifest_path = BLIND_REPLAY / "manifest.yaml"
         manifest = load_mapping(manifest_path)
         self.assertEqual(
-            {"packet_version", "review_request", "requirement", "cases"},
+            {"packet_version", "review_request", "requirement", "bases", "cases"},
             set(manifest),
         )
         self.assertEqual(
@@ -51,6 +55,22 @@ class BehavioralTraceabilityTests(unittest.TestCase):
             "../../../../knowledge/requirements/bounded-behavioral-traceability.md",
             manifest["requirement"]["path"],
         )
+        bases = manifest["bases"]
+        self.assertEqual(2, len(bases))
+        self.assertEqual(2, len({base["id"] for base in bases}))
+        base_by_id = {base["id"]: base for base in bases}
+        declared_packet_paths = {"manifest.yaml", "review-request.md"}
+        for base in bases:
+            self.assertEqual({"id", "tree", "files"}, set(base))
+            self.assertRegex(base["id"], r"^base-[0-9a-f]{4}$")
+            self.assertRegex(base["tree"], r"^[a-f0-9]{40}$")
+            self.assertGreaterEqual(len(base["files"]), 2)
+            for entry in base["files"]:
+                self.assertEqual({"path", "sha256"}, set(entry))
+                self.assertTrue(entry["path"].startswith(f"bases/{base['id']}/"))
+                declared_packet_paths.add(entry["path"])
+                entries.append(entry)
+
         cases = manifest["cases"]
         self.assertEqual(3, len(cases))
         self.assertEqual(3, len({case["id"] for case in cases}))
@@ -58,19 +78,29 @@ class BehavioralTraceabilityTests(unittest.TestCase):
             ["case-b683", "case-2d91", "case-7ac4"],
             [case["id"] for case in cases],
         )
-        declared_packet_paths = {"manifest.yaml", "review-request.md"}
+        self.assertNotEqual(cases[0]["base"], cases[1]["base"])
+        self.assertEqual(cases[1]["base"], cases[2]["base"])
         for case in cases:
             self.assertRegex(case["id"], r"^case-[0-9a-f]{4}$")
-            self.assertEqual({"id", "task", "candidate", "verification"}, set(case))
+            self.assertEqual(
+                {"id", "base", "task", "candidate", "verification"}, set(case)
+            )
+            self.assertIn(case["base"], base_by_id)
             for key, filename in (
                 ("task", "task.md"),
                 ("candidate", "candidate.patch"),
-                ("verification", "verification.txt"),
+                ("verification", "verification.yaml"),
             ):
-                self.assertEqual({"path", "sha256"}, set(case[key]))
+                expected_keys = (
+                    {"path", "sha256", "tree"}
+                    if key == "candidate"
+                    else {"path", "sha256"}
+                )
+                self.assertEqual(expected_keys, set(case[key]))
                 expected_path = f"{case['id']}/{filename}"
                 self.assertEqual(expected_path, case[key]["path"])
                 declared_packet_paths.add(expected_path)
+            self.assertRegex(case["candidate"]["tree"], r"^[a-f0-9]{40}$")
             entries.extend([case["task"], case["candidate"], case["verification"]])
 
         for entry in entries:
@@ -93,30 +123,152 @@ class BehavioralTraceabilityTests(unittest.TestCase):
 
         for case in cases:
             candidate_digest = case["candidate"]["sha256"]
+            base_tree = base_by_id[case["base"]]["tree"]
             verification_path = (BLIND_REPLAY / case["verification"]["path"]).resolve()
-            verification = verification_path.read_text(encoding="utf-8")
-            self.assertIn(f"candidate_sha256: sha256:{candidate_digest}", verification)
+            verification = load_mapping(verification_path)
+            self.assertEqual(
+                {
+                    "base_tree",
+                    "candidate_sha256",
+                    "candidate_tree",
+                    "argv",
+                    "exit_code",
+                    "tests_run",
+                    "result",
+                },
+                set(verification),
+            )
+            self.assertEqual(base_tree, verification["base_tree"])
+            self.assertEqual(
+                f"sha256:{candidate_digest}", verification["candidate_sha256"]
+            )
+            self.assertEqual(case["candidate"]["tree"], verification["candidate_tree"])
 
-    def test_blind_replay_candidate_patches_parse_and_cover_commands(self) -> None:
+    def test_blind_replay_candidates_apply_and_verification_is_reproducible(
+        self,
+    ) -> None:
         manifest = load_mapping(BLIND_REPLAY / "manifest.yaml")
+        base_by_id = {base["id"]: base for base in manifest["bases"]}
+        allowed_argv = {
+            "case-b683": ["python", "-m", "unittest", "-q", "tests.test_help_text"],
+            "case-2d91": ["python", "-m", "unittest", "-q", "tests.test_relocate"],
+            "case-7ac4": ["python", "-m", "unittest", "-q", "tests.test_relocate"],
+        }
         for case in manifest["cases"]:
             candidate_path = (BLIND_REPLAY / case["candidate"]["path"]).resolve()
-            parsed = subprocess.run(
-                ["git", "apply", "--numstat", str(candidate_path)],
-                cwd=ROOT,
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-            self.assertEqual(0, parsed.returncode, parsed.stderr)
             for line in candidate_path.read_text(encoding="utf-8").splitlines():
                 self.assertFalse(line.endswith((" ", "\t")), candidate_path)
+            verification = load_mapping(
+                (BLIND_REPLAY / case["verification"]["path"]).resolve()
+            )
+            self.assertEqual(allowed_argv[case["id"]], verification["argv"])
 
-        negative_verification = (
-            BLIND_REPLAY / "case-2d91" / "verification.txt"
-        ).read_text(encoding="utf-8")
-        self.assertIn("test_different_destination", negative_verification)
-        self.assertIn("3 passed", negative_verification)
+            base = base_by_id[case["base"]]
+            with tempfile.TemporaryDirectory(prefix=f"gnostoa-{case['id']}-") as raw:
+                work = Path(raw)
+                for entry in base["files"]:
+                    source = (BLIND_REPLAY / entry["path"]).resolve()
+                    target = work / Path(entry["path"]).relative_to(
+                        f"bases/{base['id']}"
+                    )
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(source, target)
+
+                init = subprocess.run(
+                    ["git", "init", "--quiet", "--object-format=sha1", str(work)],
+                    cwd=ROOT,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(0, init.returncode, init.stderr)
+                subprocess.run(
+                    ["git", "-C", str(work), "add", "--all"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                base_tree = subprocess.run(
+                    ["git", "-C", str(work), "write-tree"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip()
+                self.assertEqual(base["tree"], base_tree)
+
+                check = subprocess.run(
+                    [
+                        "git",
+                        "-C",
+                        str(work),
+                        "apply",
+                        "--check",
+                        "--index",
+                        str(candidate_path),
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(0, check.returncode, check.stderr)
+                subprocess.run(
+                    [
+                        "git",
+                        "-C",
+                        str(work),
+                        "apply",
+                        "--index",
+                        str(candidate_path),
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                candidate_tree = subprocess.run(
+                    ["git", "-C", str(work), "write-tree"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip()
+                self.assertEqual(case["candidate"]["tree"], candidate_tree)
+
+                regenerated = subprocess.run(
+                    [
+                        "git",
+                        "-C",
+                        str(work),
+                        "diff",
+                        "--cached",
+                        "--full-index",
+                        "--binary",
+                        "--no-ext-diff",
+                        "--no-color",
+                    ],
+                    check=True,
+                    capture_output=True,
+                ).stdout
+                self.assertEqual(candidate_path.read_bytes(), regenerated)
+
+                environment = dict(os.environ)
+                environment["PYTHONDONTWRITEBYTECODE"] = "1"
+                environment["PYTHONPATH"] = str(work)
+                executed = subprocess.run(
+                    [sys.executable, *verification["argv"][1:]],
+                    cwd=work,
+                    env=environment,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                combined = executed.stdout + executed.stderr
+                self.assertEqual(
+                    verification["exit_code"], executed.returncode, combined
+                )
+                match = re.search(r"Ran (\d+) tests? in ", combined)
+                self.assertIsNotNone(match, combined)
+                self.assertEqual(verification["tests_run"], int(match.group(1)))
+                self.assertRegex(combined, r"(?m)^OK$")
+                self.assertEqual("OK", verification["result"])
 
     def test_blind_replay_does_not_expose_control_answers(self) -> None:
         manifest = load_mapping(BLIND_REPLAY / "manifest.yaml")
@@ -197,7 +349,6 @@ class BehavioralTraceabilityTests(unittest.TestCase):
             ROOT / "knowledge" / "runbooks" / "deliver-bounded-self-hosted-slice.md"
         ).read_text(encoding="utf-8")
         index = (ROOT / "knowledge" / "index.md").read_text(encoding="utf-8")
-
         self.assertIn("bounded-behavioral-traceability.md", agents)
         self.assertIn("Requirement's applicability criteria", agents)
         self.assertIn("before the first semantic production mutation", runbook)
