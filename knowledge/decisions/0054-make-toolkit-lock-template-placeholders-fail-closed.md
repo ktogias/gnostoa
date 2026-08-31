@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Make toolkit-lock template placeholders fail closed
-description: Replace schema-valid all-zero toolkit-lock template values with self-describing schema-invalid tokens so untouched or partial adaptations fail through the existing runtime-lock validation route.
+description: Replace schema-valid all-zero toolkit-lock template values with self-describing schema-invalid tokens so untouched, one-field-only, and legacy digest-suffix adaptations fail through the existing runtime-lock validation route.
 status: draft
 generated:
   by: chatgpt/gpt-5.6-sol
@@ -72,8 +72,10 @@ existing supported validation route.
 ## Compatibility boundary
 
 - Existing valid project-owned locks and the public schema are unchanged.
-- Future copies of the current template that remain untouched or only partially
-  adapted fail earlier by design.
+- Future copies of the current template that remain untouched, replace only one
+  required field, or use the measured legacy digest-suffix edit fail earlier by
+  design. Arbitrary schema-valid fabricated image identities remain outside
+  this scaffold-integrity claim and are owned by Work Item #163.
 - Automation that replaced only the old runtime-image digest suffix must replace
   the whole `runtime.image` value. This is the intended fail-closed correction,
   not a migration of an already configured lock.

@@ -146,7 +146,7 @@ class BrandIdentityTests(unittest.TestCase):
 
         self.assertIn(
             "registry.example.org/gnostoa@sha256:",
-            (ROOT / "templates" / "knowledge-kit.lock.yaml").read_text(
+            (ROOT / "guidance" / "workflows" / "bootstrap-new-project.md").read_text(
                 encoding="utf-8"
             ),
         )
@@ -2855,9 +2855,7 @@ type_rules: {}
             encoding="utf-8"
         )
         digest_placeholder = "sha256:REPLACE_WITH_PUBLIC_SURFACE_DIGEST"
-        image_placeholder = (
-            "registry.example.org/gnostoa@sha256:REPLACE_WITH_RUNTIME_IMAGE_DIGEST"
-        )
+        image_placeholder = "REPLACE_WITH_DIGEST_PINNED_RUNTIME_IMAGE"
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -2900,6 +2898,7 @@ type_rules: {}
                         lock,
                         root,
                         expected_revision="revision-1",
+                        expected_image="",
                         schema_path=ROOT / "schemas" / "toolkit-lock.schema.json",
                         runtime_root=source,
                     )
@@ -2939,7 +2938,7 @@ type_rules: {}
                 ],
             ),
             "runtime.image": (
-                "registry.example.org/gnostoa@sha256:REPLACE_WITH_RUNTIME_IMAGE_DIGEST",
+                "REPLACE_WITH_DIGEST_PINNED_RUNTIME_IMAGE",
                 schema["properties"]["runtime"]["properties"]["image"]["pattern"],
             ),
         }
@@ -2951,6 +2950,7 @@ type_rules: {}
                 lock,
                 root,
                 expected_revision="revision-1",
+                expected_image="",
                 schema_path=ROOT / "schemas" / "toolkit-lock.schema.json",
                 runtime_root=source,
             )
@@ -2983,6 +2983,7 @@ type_rules: {}
                 lock,
                 root,
                 expected_revision="revision-1",
+                expected_image="",
                 schema_path=ROOT / "schemas" / "toolkit-lock.schema.json",
                 runtime_root=source,
             )

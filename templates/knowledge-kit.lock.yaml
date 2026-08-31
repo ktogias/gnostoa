@@ -5,5 +5,5 @@ toolkit:
   public_surface_digest: sha256:REPLACE_WITH_PUBLIC_SURFACE_DIGEST
   profile: .knowledge/profile.yaml
 runtime:
-  image: registry.example.org/gnostoa@sha256:REPLACE_WITH_RUNTIME_IMAGE_DIGEST
+  image: REPLACE_WITH_DIGEST_PINNED_RUNTIME_IMAGE
   revision: REPLACE_WITH_IMMUTABLE_TOOLKIT_REVISION
