@@ -5,8 +5,9 @@ import hashlib
 import json
 import os
 import sys
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from jsonschema import Draft202012Validator
 
@@ -36,6 +37,65 @@ PUBLIC_SURFACE_PATHS = (
 # measured drifting the digest, not because it looked like a cache.
 IGNORED_PARTS = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
 IGNORED_SUFFIXES = {".pyc", ".pyo"}
+
+ReferenceComparisonStatus = Literal["MATCH", "MISMATCH", "NOT_SUPPLIED"]
+ExecutionObservationStatus = Literal["UNKNOWN"]
+
+
+@dataclass(frozen=True)
+class RuntimeImageReferenceComparison:
+    status: ReferenceComparisonStatus
+    declared_image: str | None
+    supplied_image: str | None
+
+
+@dataclass(frozen=True)
+class RuntimeImageExecutionObservation:
+    status: ExecutionObservationStatus
+    observed_image: str | None
+
+
+@dataclass(frozen=True)
+class RuntimeLockEvaluation:
+    declaration_issues: tuple[str, ...]
+    image_reference_comparison: RuntimeImageReferenceComparison
+    runtime_observation: RuntimeImageExecutionObservation
+
+    @property
+    def issues(self) -> tuple[str, ...]:
+        issues = list(self.declaration_issues)
+        comparison = self.image_reference_comparison
+        if comparison.status == "MISMATCH":
+            issues.append(
+                f"locked runtime image {comparison.declared_image!r} does not match "
+                f"supplied image reference {comparison.supplied_image!r}"
+            )
+        return tuple(sorted(set(issues)))
+
+
+def _runtime_image_reference_comparison(
+    runtime: object,
+    expected_image: str | None,
+) -> RuntimeImageReferenceComparison:
+    supplied = (
+        expected_image
+        if expected_image is not None
+        else os.environ.get("KNOWLEDGE_KIT_IMAGE", "")
+    )
+    declared = runtime.get("image") if isinstance(runtime, dict) else None
+    declared_image = declared if isinstance(declared, str) else None
+    supplied_image = supplied if supplied else None
+    if supplied_image is None:
+        return RuntimeImageReferenceComparison(
+            status="NOT_SUPPLIED",
+            declared_image=declared_image,
+            supplied_image=None,
+        )
+    return RuntimeImageReferenceComparison(
+        status="MATCH" if declared_image == supplied_image else "MISMATCH",
+        declared_image=declared_image,
+        supplied_image=supplied_image,
+    )
 
 
 def _schema(path: Path) -> dict[str, Any]:
@@ -143,14 +203,14 @@ def public_surface_digest(root: Path) -> str:
     return f"sha256:{digest.hexdigest()}"
 
 
-def check_runtime_lock(
+def evaluate_runtime_lock(
     lock_path: Path,
     project_root: Path,
     expected_revision: str | None = None,
     expected_image: str | None = None,
     schema_path: Path | None = None,
     runtime_root: Path | None = None,
-) -> list[str]:
+) -> RuntimeLockEvaluation:
     root = project_root.resolve()
     lock = load_yaml(lock_path.resolve())
     schema = (
@@ -170,8 +230,20 @@ def check_runtime_lock(
 
     toolkit = lock.get("toolkit", {})
     runtime = lock.get("runtime", {})
+    image_reference_comparison = _runtime_image_reference_comparison(
+        runtime,
+        expected_image,
+    )
+    runtime_observation = RuntimeImageExecutionObservation(
+        status="UNKNOWN",
+        observed_image=None,
+    )
     if not isinstance(toolkit, dict) or not isinstance(runtime, dict):
-        return sorted(set(issues))
+        return RuntimeLockEvaluation(
+            tuple(sorted(set(issues))),
+            image_reference_comparison,
+            runtime_observation,
+        )
 
     toolkit_revision = toolkit.get("revision")
     locked_surface_digest = toolkit.get("public_surface_digest")
@@ -199,22 +271,6 @@ def check_runtime_lock(
         issues.append(
             f"runtime revision {runtime_revision!r} does not match "
             f"executing image revision {expected!r}"
-        )
-
-    executing_image = (
-        expected_image
-        if expected_image is not None
-        else os.environ.get("KNOWLEDGE_KIT_IMAGE", "")
-    )
-    locked_image = runtime.get("image")
-    if (
-        executing_image
-        and isinstance(locked_image, str)
-        and locked_image != executing_image
-    ):
-        issues.append(
-            f"locked runtime image {locked_image!r} does not match "
-            f"executing image reference {executing_image!r}"
         )
 
     source_reference = toolkit.get("source")
@@ -271,7 +327,30 @@ def check_runtime_lock(
                     f"runtime: {source_digest} != {runtime_digest}"
                 )
 
-    return sorted(set(issues))
+    return RuntimeLockEvaluation(
+        tuple(sorted(set(issues))),
+        image_reference_comparison,
+        runtime_observation,
+    )
+
+
+def check_runtime_lock(
+    lock_path: Path,
+    project_root: Path,
+    expected_revision: str | None = None,
+    expected_image: str | None = None,
+    schema_path: Path | None = None,
+    runtime_root: Path | None = None,
+) -> list[str]:
+    evaluation = evaluate_runtime_lock(
+        lock_path,
+        project_root,
+        expected_revision,
+        expected_image,
+        schema_path,
+        runtime_root,
+    )
+    return list(evaluation.issues)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -307,7 +386,7 @@ def surface_digest_main(argv: list[str] | None = None) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
-        issues = check_runtime_lock(
+        evaluation = evaluate_runtime_lock(
             args.lock,
             args.project_root,
             args.expected_revision,
@@ -318,12 +397,35 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
-    for issue in issues:
+    for issue in evaluation.declaration_issues:
         print(f"ERROR: {issue}")
-    if issues:
-        return 1
+    if not evaluation.declaration_issues:
+        print(
+            f"PASS: runtime-lock declaration and source binding are valid ({args.lock})"
+        )
 
-    print(f"OK: toolkit source and runtime lock is valid ({args.lock})")
+    comparison = evaluation.image_reference_comparison
+    if comparison.status == "MATCH":
+        print(
+            "MATCH: supplied runtime image reference matches declared "
+            f"runtime.image ({comparison.supplied_image})"
+        )
+    elif comparison.status == "MISMATCH":
+        print(
+            "MISMATCH: supplied runtime image reference does not match declared "
+            f"runtime.image: {comparison.supplied_image!r} != "
+            f"{comparison.declared_image!r}"
+        )
+    else:
+        print(
+            "NOT SUPPLIED: runtime image reference comparison was not requested; "
+            f"runtime.image is declaration only ({comparison.declared_image})"
+        )
+
+    print("UNKNOWN: runtime image execution was not observed by check-runtime")
+
+    if evaluation.declaration_issues or comparison.status == "MISMATCH":
+        return 1
     return 0
 
 

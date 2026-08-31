@@ -27,7 +27,10 @@ from . import (
     check_ci_policy,
     validate_bundle,
 )
-from .check_runtime_lock import check_runtime_lock, public_surface_digest
+from .check_runtime_lock import (
+    evaluate_runtime_lock,
+    public_surface_digest,
+)
 from .knowledge_common import KnowledgeFormatError, load_yaml
 from .repository_scope import SOURCE_MANIFEST, RepositoryScopeError, candidate_paths
 
@@ -1065,21 +1068,22 @@ def _runtime_component(
             and source_binding.get("result") == "PASS"
         ):
             runtime_root = paths.toolkit_source
-        issues = check_runtime_lock(
+        evaluation = evaluate_runtime_lock(
             paths.lock,
             paths.project_root,
             revision if isinstance(revision, str) else "",
             "",
             runtime_root=runtime_root,
         )
-        for issue in issues:
+        for issue in evaluation.declaration_issues:
             print(f"ERROR: {issue}", file=stdout)
-        if issues:
+        if evaluation.declaration_issues:
             code = 1
         else:
             code = 0
             print(
-                f"OK: toolkit source and runtime lock is valid ({paths.lock})",
+                "PASS: runtime-lock declaration and source binding are valid "
+                f"({paths.lock})",
                 file=stdout,
             )
     except (KnowledgeFormatError, OSError, json.JSONDecodeError) as exc:
