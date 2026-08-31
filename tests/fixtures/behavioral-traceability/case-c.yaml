@@ -1,6 +1,6 @@
 schema_version: experimental-0
 case:
-  id: trivial-not-applicable
+  id: case-c
   applicability: NOT APPLICABLE
   reason: The change updates one non-semantic label and has no branching observable behavior.
 subject:

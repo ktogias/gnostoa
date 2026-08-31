@@ -1,6 +1,6 @@
 schema_version: experimental-0
 case:
-  id: aligned-nontrivial
+  id: case-b
   applicability: REQUIRED
   reason: Two material outcomes share one implementation path.
 subject:

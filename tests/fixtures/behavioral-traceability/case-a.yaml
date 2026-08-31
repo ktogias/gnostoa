@@ -1,6 +1,6 @@
 schema_version: experimental-0
 case:
-  id: agreeing-but-wrong
+  id: case-a
   applicability: REQUIRED
   reason: A material no-op behavior conflicts with a narrower suggested implementation.
 subject:

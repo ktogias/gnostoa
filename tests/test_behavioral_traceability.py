@@ -24,7 +24,7 @@ class BehavioralTraceabilityTests(unittest.TestCase):
         return REQUIREMENT.read_text(encoding="utf-8")
 
     def test_sanitized_negative_control_exposes_agreeing_but_wrong(self) -> None:
-        case = load_fixture("agreeing-but-wrong.yaml")
+        case = load_fixture("case-a.yaml")
         serialized = yaml.safe_dump(case).lower()
         for forbidden in ("nextcloud", "mailbox", "movemailbox", "renamemailbox"):
             self.assertNotIn(forbidden, serialized)
@@ -39,8 +39,8 @@ class BehavioralTraceabilityTests(unittest.TestCase):
         self.assertNotIn("expected_trace_review", case)
 
     def test_positive_controls_bound_false_block_burden(self) -> None:
-        aligned = load_fixture("aligned-nontrivial.yaml")
-        trivial = load_fixture("trivial-not-applicable.yaml")
+        aligned = load_fixture("case-b.yaml")
+        trivial = load_fixture("case-c.yaml")
 
         self.assertTrue(aligned["behaviors"])
         for behavior in aligned["behaviors"]:
