@@ -283,6 +283,7 @@ guardrails:
       - tests/test_tools.py::RuntimeTests.test_toolkit_lock_template_placeholders_fail_closed
       - tests/test_tools.py::RuntimeTests.test_runtime_lock_reports_unreplaced_template_placeholders_actionably
       - tests/test_tools.py::RuntimeTests.test_runtime_image_template_rejects_digest_only_replacement
+      - tests/test_tools.py::RuntimeTests.test_runtime_image_template_rejects_append_while_sentinel_remains
       - tests/test_tools.py::RuntimeTests.test_runtime_lock_requires_pinned_public_surface_digest
       - tests/test_tools.py::RuntimeTests.test_runtime_lock_accepts_matching_revisions
       - tests/test_tools.py::RuntimeTests.test_runtime_lock_rejects_image_revision_drift

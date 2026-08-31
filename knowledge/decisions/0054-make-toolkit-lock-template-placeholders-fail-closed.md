@@ -63,11 +63,11 @@ existing supported validation route.
 1. Represent the two digest-bearing template placeholders with self-describing
    `REPLACE_WITH_*` tokens. Retain `sha256:` for
    `toolkit.public_surface_digest`, where only the digest body is unknown. Use
-   a quoted, whitespace-bearing whole-field sentinel containing
-   `REPLACE_WITH_DIGEST_PINNED_RUNTIME_IMAGE` for `runtime.image`, where
-   registry, repository and digest are all unknown. The scaffold must supply no
-   example image prefix, and any partially adapted value that retains the
-   sentinel must remain schema-invalid.
+   the quoted, whitespace-bearing whole-field sentinel
+   `REPLACE_WITH_DIGEST_PINNED_RUNTIME_IMAGE (replace entire value)` for
+   `runtime.image`, where registry, repository and digest are all unknown. The
+   scaffold must supply no example image prefix, and any partially adapted value
+   that retains the sentinel must remain schema-invalid.
 2. Make each token intentionally fail the existing schema pattern. Do not add a
    second placeholder registry, schema keyword or Python validation mechanism.
 3. Verify the behavior through `check_runtime_lock()` for untouched,

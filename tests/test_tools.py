@@ -2855,7 +2855,9 @@ type_rules: {}
             encoding="utf-8"
         )
         digest_placeholder = "sha256:REPLACE_WITH_PUBLIC_SURFACE_DIGEST"
-        image_placeholder = "REPLACE_WITH_DIGEST_PINNED_RUNTIME_IMAGE"
+        image_placeholder = (
+            "REPLACE_WITH_DIGEST_PINNED_RUNTIME_IMAGE (replace entire value)"
+        )
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -2938,7 +2940,7 @@ type_rules: {}
                 ],
             ),
             "runtime.image": (
-                "REPLACE_WITH_DIGEST_PINNED_RUNTIME_IMAGE",
+                "REPLACE_WITH_DIGEST_PINNED_RUNTIME_IMAGE (replace entire value)",
                 schema["properties"]["runtime"]["properties"]["image"]["pattern"],
             ),
         }
@@ -2996,7 +2998,7 @@ type_rules: {}
             issues,
         )
         self.assertEqual(
-            "REPLACE_WITH_DIGEST_PINNED_RUNTIME_IMAGE",
+            "REPLACE_WITH_DIGEST_PINNED_RUNTIME_IMAGE (replace entire value)",
             load_yaml(ROOT / "templates" / "knowledge-kit.lock.yaml")["runtime"][
                 "image"
             ],
@@ -3013,14 +3015,17 @@ type_rules: {}
             root = Path(directory)
             _, source = self._write_runtime_lock_template_fixture(root, template)
             digest = public_surface_digest(source)
+            appended_image = f"{image_sentinel}@sha256:{'a' * 64}"
             candidate = template.replace(
                 "sha256:REPLACE_WITH_PUBLIC_SURFACE_DIGEST",
                 digest,
             ).replace(
                 image_sentinel,
-                f"{image_sentinel}@sha256:{'a' * 64}",
+                appended_image,
             )
+            self.assertNotEqual(template, candidate)
             lock, source = self._write_runtime_lock_template_fixture(root, candidate)
+            self.assertEqual(appended_image, load_yaml(lock)["runtime"]["image"])
             issues = check_runtime_lock(
                 lock,
                 root,
