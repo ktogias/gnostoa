@@ -175,7 +175,6 @@ effectiveness, real-task productivity and causal Gnostoa utility remain
 | General semantic completeness or model independence | `NOT ESTABLISHED` |
 | Causal productivity or real-task utility | `UNKNOWN` |
 | Public or adopting-project promotion | `NOT AUTHORIZED` |
-| Pull Request #178 owner acceptance and merge | `PENDING` |
 
 The evidence supports retaining the bounded Gnostoa-self experimental rule for
 owner review. It does not support adding a schema, validator, workflow engine,

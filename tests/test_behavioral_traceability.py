@@ -404,7 +404,8 @@ class BehavioralTraceabilityTests(unittest.TestCase):
             "Three earlier raw replay results",
             "Executor-checkpoint effectiveness, real-task productivity and causal Gnostoa utility remain `UNKNOWN`",
             "Public or adopting-project promotion | `NOT AUTHORIZED`",
-            "Pull Request #178 owner acceptance and merge | `PENDING`",
+            "does not repair or rescore the frozen Nextcloud Mail Phase-B result",
+            "approve Pull Request #178 or authorize merge, closure, release or publication",
         ):
             self.assertIn(marker, normalized)
 
