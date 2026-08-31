@@ -3002,6 +3002,42 @@ type_rules: {}
             ],
         )
 
+    def test_runtime_image_template_rejects_append_while_sentinel_remains(
+        self,
+    ) -> None:
+        template_path = ROOT / "templates" / "knowledge-kit.lock.yaml"
+        template = template_path.read_text(encoding="utf-8")
+        image_sentinel = load_yaml(template_path)["runtime"]["image"]
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _, source = self._write_runtime_lock_template_fixture(root, template)
+            digest = public_surface_digest(source)
+            candidate = template.replace(
+                "sha256:REPLACE_WITH_PUBLIC_SURFACE_DIGEST",
+                digest,
+            ).replace(
+                image_sentinel,
+                f"{image_sentinel}@sha256:{'a' * 64}",
+            )
+            lock, source = self._write_runtime_lock_template_fixture(root, candidate)
+            issues = check_runtime_lock(
+                lock,
+                root,
+                expected_revision="revision-1",
+                expected_image="",
+                schema_path=ROOT / "schemas" / "toolkit-lock.schema.json",
+                runtime_root=source,
+            )
+
+        self.assertTrue(
+            any(
+                issue.startswith("runtime.image:") and "does not match" in issue
+                for issue in issues
+            ),
+            issues,
+        )
+
     def test_runtime_lock_requires_pinned_public_surface_digest(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
