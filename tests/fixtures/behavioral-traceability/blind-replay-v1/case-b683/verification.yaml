@@ -1,0 +1,12 @@
+base_tree: 71e8d0a4be59658014211a06ea38040d9b36846c
+candidate_sha256: sha256:531e69cc9b5c82ac6f4eccf4e446bbd7d52bd169d8739e78d0132691907e8aa4
+candidate_tree: bd19db56853f2d64682a966d736dcb186a62bbf6
+argv:
+  - python
+  - -m
+  - unittest
+  - -q
+  - tests.test_help_text
+exit_code: 0
+tests_run: 1
+result: OK

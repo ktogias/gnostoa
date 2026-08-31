@@ -157,6 +157,8 @@ class BehavioralTraceabilityTests(unittest.TestCase):
         for case in manifest["cases"]:
             candidate_path = (BLIND_REPLAY / case["candidate"]["path"]).resolve()
             for line in candidate_path.read_text(encoding="utf-8").splitlines():
+                if line == " ":
+                    continue
                 self.assertFalse(line.endswith((" ", "\t")), candidate_path)
             verification = load_mapping(
                 (BLIND_REPLAY / case["verification"]["path"]).resolve()
@@ -204,6 +206,7 @@ class BehavioralTraceabilityTests(unittest.TestCase):
                         "apply",
                         "--check",
                         "--index",
+                        "--unidiff-zero",
                         str(candidate_path),
                     ],
                     check=False,
@@ -218,6 +221,7 @@ class BehavioralTraceabilityTests(unittest.TestCase):
                         str(work),
                         "apply",
                         "--index",
+                        "--unidiff-zero",
                         str(candidate_path),
                     ],
                     check=True,
@@ -239,10 +243,12 @@ class BehavioralTraceabilityTests(unittest.TestCase):
                         str(work),
                         "diff",
                         "--cached",
+                        "--unified=0",
                         "--full-index",
                         "--binary",
                         "--no-ext-diff",
                         "--no-color",
+                        base["tree"],
                     ],
                     check=True,
                     capture_output=True,
@@ -285,14 +291,21 @@ class BehavioralTraceabilityTests(unittest.TestCase):
         forbidden_verdicts = re.compile(
             r"\b(?:supports|contradicts|unknown|blocked|accept|not applicable)\b"
         )
-        for case in manifest["cases"]:
-            for key in ("task", "candidate", "verification"):
-                path = (BLIND_REPLAY / case[key]["path"]).resolve()
-                text = path.read_text(encoding="utf-8")
-                lowered = text.lower()
-                for forbidden in forbidden_fields:
-                    self.assertNotIn(forbidden, lowered, path)
-                self.assertIsNone(forbidden_verdicts.search(lowered), path)
+        reviewer_visible = [
+            entry for base in manifest["bases"] for entry in base["files"]
+        ]
+        reviewer_visible.extend(
+            case[key]
+            for case in manifest["cases"]
+            for key in ("task", "candidate", "verification")
+        )
+        for entry in reviewer_visible:
+            path = (BLIND_REPLAY / entry["path"]).resolve()
+            text = path.read_text(encoding="utf-8")
+            lowered = text.lower()
+            for forbidden in forbidden_fields:
+                self.assertNotIn(forbidden, lowered, path)
+            self.assertIsNone(forbidden_verdicts.search(lowered), path)
 
         metadata = "\n".join(
             (BLIND_REPLAY / name).read_text(encoding="utf-8").lower()
@@ -388,7 +401,7 @@ class BehavioralTraceabilityTests(unittest.TestCase):
         self.assertEqual(expected_implementation, set(guardrail["implementation"]))
         expected_tests = {
             "tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_blind_replay_binds_inspectable_raw_artifacts",
-            "tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_blind_replay_candidate_patches_parse_and_cover_commands",
+            "tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_blind_replay_candidates_apply_and_verification_is_reproducible",
             "tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_blind_replay_does_not_expose_control_answers",
             "tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_requirement_defines_bounded_blocking_and_oracle_limits",
             "tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_router_and_runbook_make_the_two_checkpoints_discoverable",

@@ -1,38 +1,59 @@
 packet_version: behavioral-traceability-blind-replay/v1
 review_request:
   path: review-request.md
-  sha256: 8aa238b0cdcaf5a62f952cc8bc5ae31879f7dd5b4b16e8d3f621b0e6fa0108b5
+  sha256: c5116f0a6f226d9b673786b32a8e319adc55d9c2f2f85ce3eeb97c439c4ff46f
 requirement:
   path: ../../../../knowledge/requirements/bounded-behavioral-traceability.md
   sha256: 44c03227bd1431b68ea65a2679792d42db29286d62807bd99fe29d87733ccb8d
+bases:
+  - id: base-5e72
+    tree: ff112dba1712f1b6c83d6862c295ceffa01acdf3
+    files:
+      - path: bases/base-5e72/src/relocate.py
+        sha256: 2ca675feaa65c32edfb1e8e0fd50d35a9d5b6eae9d74947079aedc8f187bd99f
+      - path: bases/base-5e72/tests/test_relocate.py
+        sha256: 31ecdaf019f86cf5f40e5139542a9ab8ccc2a9c651033439e87dfe8c2a4937fb
+  - id: base-a410
+    tree: 71e8d0a4be59658014211a06ea38040d9b36846c
+    files:
+      - path: bases/base-a410/src/help_text.py
+        sha256: 9094ba99b008ff235864641db651fbe39635b1f4611c6037decc0d10033cac14
+      - path: bases/base-a410/tests/test_help_text.py
+        sha256: aaf76203f18244526d15a5fc525575f7491decca22479bd30bdc2275d3eaaaa2
 cases:
   - id: case-b683
+    base: base-a410
     task:
       path: case-b683/task.md
       sha256: 2b7d16c9c896de71c56ae109cb67e74d914eb3b94688e893dcd439a5d598ca45
     candidate:
       path: case-b683/candidate.patch
-      sha256: 7b8d77ebd847cebc806b4befc45dfba05b32dddaa6476257d6c9599344003a7c
+      sha256: 531e69cc9b5c82ac6f4eccf4e446bbd7d52bd169d8739e78d0132691907e8aa4
+      tree: bd19db56853f2d64682a966d736dcb186a62bbf6
     verification:
-      path: case-b683/verification.txt
-      sha256: 8a51700033896eff6656802971b497cb72e90d2686b734668c355443248e97ab
+      path: case-b683/verification.yaml
+      sha256: 908fe69f886fc8d9c92b7d352e8ad58430be12e96b77efe606ab07447abce9f5
   - id: case-2d91
+    base: base-5e72
     task:
       path: case-2d91/task.md
       sha256: ff3e84d667589fd53ef3cd8aebee133672756c54a6a450f1a5952d9427afdb11
     candidate:
       path: case-2d91/candidate.patch
-      sha256: b5d218261ac21f835c00389b999fc9844596ab475f66c33340e8dbf72d111c39
+      sha256: ed37af27006b01130fdb2343e7253375265b1bad17b18eb57555bf752a3923f5
+      tree: 0038b05f2ef0fcccbee1e2f9c09e3b2abd574603
     verification:
-      path: case-2d91/verification.txt
-      sha256: fc9b1d2b281e18b57657bab220bf313c4746c92f4e7621f786ab2421aa5ffe3f
+      path: case-2d91/verification.yaml
+      sha256: 91616a1f47d62fdfa64f1b80dba4d2d1b966ea890c2bf6f8d03526860db7a2fe
   - id: case-7ac4
+    base: base-5e72
     task:
       path: case-7ac4/task.md
       sha256: c8fbc683855a23548bc7258e589881e344c43ed6503e66445d87f2bee91c01ce
     candidate:
       path: case-7ac4/candidate.patch
-      sha256: 6ab5b0dbf8e5ad76b4c8f480e6d4d58358f69452c0041db4a959fecb38cfeffe
+      sha256: 3588194b2ef6cca6be449122523aa02c5f9c4b5ae90797d5c78ca5d221e14a79
+      tree: 48e9a4bf194908b8a44a87694c2516c02d8b192d
     verification:
-      path: case-7ac4/verification.txt
-      sha256: 8a3d158a64ab9348fda43ca66294a3412ddcb902564ec3362d9293b8f9c99fc8
+      path: case-7ac4/verification.yaml
+      sha256: 25ec5a61c162174534a344154d382681d787874f90959e655d780de18bebf1a2

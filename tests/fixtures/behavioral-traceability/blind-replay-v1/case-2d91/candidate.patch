@@ -1,43 +1,41 @@
 diff --git a/src/relocate.py b/src/relocate.py
-index 744af01..a95af84 100644
+index 983d8a3eaf2d0d304f8634039c5fac7073cbb459..c95f5479ca880553b0a9921d818722456e28dd20 100644
 --- a/src/relocate.py
 +++ b/src/relocate.py
-@@ -10 +10,4 @@
- def relocate(item: Item, destination_id: int | None, mutate: Callable[..., None]) -> None:
+@@ -17,2 +17,4 @@ def relocate(
+-    normalized_label = item.label.strip()
+-    mutate(item.id, destination_id, normalized_label)
 +    if item.id == destination_id:
 +        return
 +
++    mutate(item.id, destination_id, item.label)
 diff --git a/tests/test_relocate.py b/tests/test_relocate.py
-index 120ccf3..2e16db5 100644
+index 62466cc79c031a75438d8f5507513b96a8bc2bbc..3612ef2c6bc7cb04aa47185091c83a51af3a2ba9 100644
 --- a/tests/test_relocate.py
 +++ b/tests/test_relocate.py
-@@ -18 +18,29 @@
-     mutate.assert_called_once_with(item.id, 9, item.label)
+@@ -15,0 +16,25 @@ class RelocateTests(unittest.TestCase):
++    def test_different_destination_preserves_label_once(self) -> None:
++        item = Item(id=7, parent_id=4, label=" Quarterly ")
++        mutate = Mock()
 +
++        relocate(item, 9, mutate)
 +
-+def test_different_destination_preserves_label_once() -> None:
-+    item = Item(id=7, parent_id=4, label=" Quarterly ")
-+    mutate = Mock()
++        mutate.assert_called_once_with(item.id, 9, " Quarterly ")
++        self.assertEqual(1, mutate.call_count)
 +
-+    relocate(item, 9, mutate)
++    def test_self_destination_is_noop(self) -> None:
++        item = Item(id=7, parent_id=4, label="Reports")
++        mutate = Mock()
 +
-+    mutate.assert_called_once_with(item.id, 9, " Quarterly ")
-+    assert mutate.call_count == 1
++        relocate(item, item.id, mutate)
 +
++        mutate.assert_not_called()
 +
-+def test_self_destination_is_noop() -> None:
-+    item = Item(id=7, parent_id=4, label="Reports")
-+    mutate = Mock()
++    def test_top_level_destination(self) -> None:
++        item = Item(id=7, parent_id=None, label="Reports")
++        mutate = Mock()
 +
-+    relocate(item, item.id, mutate)
++        relocate(item, None, mutate)
 +
-+    mutate.assert_not_called()
++        mutate.assert_called_once_with(item.id, None, item.label)
 +
-+
-+def test_top_level_destination() -> None:
-+    item = Item(id=7, parent_id=None, label="Reports")
-+    mutate = Mock()
-+
-+    relocate(item, None, mutate)
-+
-+    mutate.assert_called_once_with(item.id, None, item.label)

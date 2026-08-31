@@ -413,18 +413,22 @@ guardrails:
       - knowledge/runbooks/deliver-bounded-self-hosted-slice.md
       - tests/fixtures/behavioral-traceability/blind-replay-v1/manifest.yaml
       - tests/fixtures/behavioral-traceability/blind-replay-v1/review-request.md
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/bases/base-5e72/src/relocate.py
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/bases/base-5e72/tests/test_relocate.py
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/bases/base-a410/src/help_text.py
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/bases/base-a410/tests/test_help_text.py
       - tests/fixtures/behavioral-traceability/blind-replay-v1/case-2d91/task.md
       - tests/fixtures/behavioral-traceability/blind-replay-v1/case-2d91/candidate.patch
-      - tests/fixtures/behavioral-traceability/blind-replay-v1/case-2d91/verification.txt
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/case-2d91/verification.yaml
       - tests/fixtures/behavioral-traceability/blind-replay-v1/case-7ac4/task.md
       - tests/fixtures/behavioral-traceability/blind-replay-v1/case-7ac4/candidate.patch
-      - tests/fixtures/behavioral-traceability/blind-replay-v1/case-7ac4/verification.txt
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/case-7ac4/verification.yaml
       - tests/fixtures/behavioral-traceability/blind-replay-v1/case-b683/task.md
       - tests/fixtures/behavioral-traceability/blind-replay-v1/case-b683/candidate.patch
-      - tests/fixtures/behavioral-traceability/blind-replay-v1/case-b683/verification.txt
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/case-b683/verification.yaml
     tests:
       - tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_blind_replay_binds_inspectable_raw_artifacts
-      - tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_blind_replay_candidate_patches_parse_and_cover_commands
+      - tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_blind_replay_candidates_apply_and_verification_is_reproducible
       - tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_blind_replay_does_not_expose_control_answers
       - tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_requirement_defines_bounded_blocking_and_oracle_limits
       - tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_router_and_runbook_make_the_two_checkpoints_discoverable

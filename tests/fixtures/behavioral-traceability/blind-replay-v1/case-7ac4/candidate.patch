@@ -1,24 +1,22 @@
 diff --git a/src/relocate.py b/src/relocate.py
-index 744af01..39951fc 100644
+index 983d8a3eaf2d0d304f8634039c5fac7073cbb459..1f98d4e1945e4a923f9d1277d31910fc7fcd7e00 100644
 --- a/src/relocate.py
 +++ b/src/relocate.py
-@@ -15,2 +15 @@
+@@ -17,2 +17 @@ def relocate(
 -    normalized_label = item.label.strip()
 -    mutate(item.id, destination_id, normalized_label)
 +    mutate(item.id, destination_id, item.label)
 diff --git a/tests/test_relocate.py b/tests/test_relocate.py
-index 120ccf3..c45978e 100644
+index 62466cc79c031a75438d8f5507513b96a8bc2bbc..db16aa103a65996234d3493a7828dbfbdecfe0c2 100644
 --- a/tests/test_relocate.py
 +++ b/tests/test_relocate.py
-@@ -18 +18,11 @@
-     mutate.assert_called_once_with(item.id, 9, item.label)
+@@ -15,0 +16,9 @@ class RelocateTests(unittest.TestCase):
++    def test_preserves_exact_label_once(self) -> None:
++        item = Item(id=7, parent_id=4, label=" Quarterly ")
++        mutate = Mock()
 +
++        relocate(item, 9, mutate)
 +
-+def test_preserves_exact_label_once() -> None:
-+    item = Item(id=7, parent_id=4, label=" Quarterly ")
-+    mutate = Mock()
++        mutate.assert_called_once_with(item.id, 9, " Quarterly ")
++        self.assertEqual(1, mutate.call_count)
 +
-+    relocate(item, 9, mutate)
-+
-+    mutate.assert_called_once_with(item.id, 9, " Quarterly ")
-+    assert mutate.call_count == 1

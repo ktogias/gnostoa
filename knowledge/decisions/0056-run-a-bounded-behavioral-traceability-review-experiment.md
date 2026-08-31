@@ -102,11 +102,14 @@ negative case: code and test agree but contradict a task consequence. Compare it
 with one aligned non-trivial case and one trivial `NOT APPLICABLE` case.
 
 The fresh replay packet contains inspectable raw task, candidate-patch and
-verification artifacts with recomputable SHA-256 identities. Neutral case IDs
-and ordering disclose no role. The packet omits applicability verdicts,
-contradiction and alignment findings, expected results and executor/reviewer
-dispositions; the scoring key remains outside reviewer context until the raw
-response is captured.
+verification artifacts with recomputable SHA-256 identities. Each case also
+binds its complete synthetic base tree and resulting candidate tree. Repository
+verification materializes the base, applies and reproduces the exact patch, and
+executes an allowlisted standard-library test command; patch parseability alone
+is not execution evidence. Neutral case IDs and ordering disclose no role. The
+packet omits applicability verdicts, contradiction and alignment findings,
+expected results and executor/reviewer dispositions; the scoring key remains
+outside reviewer context until the raw response is captured.
 
 The measured result records at least defect recall, false blocks, owner
 interventions, elapsed time and bounded context cost. Historical Phase-B reviewer
