@@ -14,6 +14,3 @@ subject:
     kind: sha256
     value: sha256:9999999999999999999999999999999999999999999999999999999999999999
 behaviors: []
-expected_trace_review:
-  disposition: NOT APPLICABLE
-  reason: The bounded applicability rule does not require a behavior map for this trivial change.

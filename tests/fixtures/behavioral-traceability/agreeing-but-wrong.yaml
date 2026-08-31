@@ -28,6 +28,3 @@ behaviors:
       alignment: CONTRADICTS
     executor_disposition: READY
     reviewer_disposition: ACCEPT
-expected_trace_review:
-  disposition: BLOCKED
-  reason: Passing implementation-aligned evidence preserves behavior prohibited by the task.

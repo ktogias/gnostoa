@@ -36,13 +36,12 @@ class BehavioralTraceabilityTests(unittest.TestCase):
         self.assertEqual("CONTRADICTS", behavior["evidence"]["alignment"])
         self.assertEqual("READY", behavior["executor_disposition"])
         self.assertEqual("ACCEPT", behavior["reviewer_disposition"])
-        self.assertEqual("BLOCKED", case["expected_trace_review"]["disposition"])
+        self.assertNotIn("expected_trace_review", case)
 
     def test_positive_controls_bound_false_block_burden(self) -> None:
         aligned = load_fixture("aligned-nontrivial.yaml")
         trivial = load_fixture("trivial-not-applicable.yaml")
 
-        self.assertEqual("ACCEPT", aligned["expected_trace_review"]["disposition"])
         self.assertTrue(aligned["behaviors"])
         for behavior in aligned["behaviors"]:
             self.assertEqual("NONE", behavior["contradiction"]["status"])
@@ -51,9 +50,8 @@ class BehavioralTraceabilityTests(unittest.TestCase):
 
         self.assertEqual("NOT APPLICABLE", trivial["case"]["applicability"])
         self.assertEqual([], trivial["behaviors"])
-        self.assertEqual(
-            "NOT APPLICABLE", trivial["expected_trace_review"]["disposition"]
-        )
+        self.assertNotIn("expected_trace_review", aligned)
+        self.assertNotIn("expected_trace_review", trivial)
 
     def test_requirement_defines_bounded_blocking_and_oracle_limits(self) -> None:
         requirement = self.requirement_text()

@@ -42,6 +42,3 @@ behaviors:
       alignment: SUPPORTS
     executor_disposition: READY
     reviewer_disposition: ACCEPT
-expected_trace_review:
-  disposition: ACCEPT
-  reason: Both declared material behaviors have aligned passing evidence and no identified contradiction.
