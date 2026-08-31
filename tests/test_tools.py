@@ -16,6 +16,7 @@ from io import BytesIO, StringIO
 from pathlib import Path
 from unittest.mock import patch
 
+from tools import check_runtime_lock as runtime_lock_module
 from tools import knowledge_common
 from tools.build_context_pack import build_pack
 from tools.build_docs import prepare_projection
@@ -2849,6 +2850,159 @@ type_rules: {}
             encoding="utf-8",
         )
         return lock, source
+
+    def _write_valid_runtime_lock_fixture(
+        self,
+        root: Path,
+        *,
+        image: str,
+    ) -> tuple[Path, Path]:
+        source = root / "source"
+        (source / "core").mkdir(parents=True)
+        (source / "core" / "marker.txt").write_text(
+            "same surface\n",
+            encoding="utf-8",
+        )
+        (root / "profile.yaml").write_text(
+            """
+id: test-profile
+version: "0.1.0"
+okf_version: "0.2"
+extends: []
+concept_types: [Project]
+relation_kinds: []
+rules: {}
+type_rules: {}
+""".lstrip(),
+            encoding="utf-8",
+        )
+        lock = root / "kit.lock.yaml"
+        lock.write_text(
+            f"""
+version: 1
+toolkit:
+  source: source
+  revision: revision-1
+  public_surface_digest: {public_surface_digest(source)}
+  profile: profile.yaml
+runtime:
+  image: {image}
+  revision: revision-1
+""".lstrip(),
+            encoding="utf-8",
+        )
+        return lock, source
+
+    def _run_runtime_lock_cli(
+        self,
+        root: Path,
+        lock: Path,
+        source: Path,
+        *,
+        expected_image: str | None = None,
+    ) -> tuple[int, str]:
+        arguments = [
+            "--lock",
+            str(lock),
+            "--project-root",
+            str(root),
+            "--expected-revision",
+            "revision-1",
+            "--schema",
+            str(ROOT / "schemas" / "toolkit-lock.schema.json"),
+        ]
+        if expected_image is not None:
+            arguments.extend(("--expected-image", expected_image))
+        output = StringIO()
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(runtime_lock_module, "toolkit_root", return_value=source),
+            redirect_stdout(output),
+            redirect_stderr(output),
+        ):
+            status = runtime_lock_module.main(arguments)
+        return status, output.getvalue()
+
+    def test_runtime_lock_cli_reports_missing_image_observation_as_unknown(
+        self,
+    ) -> None:
+        declared = f"registry.example/kit@sha256:{'a' * 64}"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            lock, source = self._write_valid_runtime_lock_fixture(
+                root,
+                image=declared,
+            )
+            status, output = self._run_runtime_lock_cli(root, lock, source)
+
+        self.assertEqual(0, status, output)
+        self.assertIn(
+            "PASS: runtime-lock declaration and source binding are valid",
+            output,
+        )
+        self.assertIn(
+            "UNKNOWN: runtime image observation was not supplied",
+            output,
+        )
+        self.assertNotIn("observed runtime image matches", output)
+        self.assertNotIn("toolkit source and runtime lock is valid", output)
+
+    def test_runtime_lock_cli_reports_matching_image_observation_as_pass(
+        self,
+    ) -> None:
+        declared = f"registry.example/kit@sha256:{'b' * 64}"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            lock, source = self._write_valid_runtime_lock_fixture(
+                root,
+                image=declared,
+            )
+            status, output = self._run_runtime_lock_cli(
+                root,
+                lock,
+                source,
+                expected_image=declared,
+            )
+
+        self.assertEqual(0, status, output)
+        self.assertIn(
+            "PASS: runtime-lock declaration and source binding are valid",
+            output,
+        )
+        self.assertIn(
+            "PASS: observed runtime image matches declared runtime.image",
+            output,
+        )
+        self.assertNotIn("UNKNOWN:", output)
+
+    def test_runtime_lock_cli_reports_image_observation_mismatch_as_fail(
+        self,
+    ) -> None:
+        declared = f"registry.example/kit@sha256:{'c' * 64}"
+        observed = f"registry.example/kit@sha256:{'d' * 64}"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            lock, source = self._write_valid_runtime_lock_fixture(
+                root,
+                image=declared,
+            )
+            status, output = self._run_runtime_lock_cli(
+                root,
+                lock,
+                source,
+                expected_image=observed,
+            )
+
+        self.assertEqual(1, status, output)
+        self.assertIn(
+            "PASS: runtime-lock declaration and source binding are valid",
+            output,
+        )
+        self.assertIn(
+            "FAIL: observed runtime image does not match declared runtime.image",
+            output,
+        )
+        self.assertNotIn("UNKNOWN:", output)
 
     def test_toolkit_lock_template_placeholders_fail_closed(self) -> None:
         template = (ROOT / "templates" / "knowledge-kit.lock.yaml").read_text(

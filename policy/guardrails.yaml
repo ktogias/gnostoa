@@ -284,6 +284,9 @@ guardrails:
       - tests/test_tools.py::RuntimeTests.test_runtime_lock_reports_unreplaced_template_placeholders_actionably
       - tests/test_tools.py::RuntimeTests.test_runtime_image_template_rejects_digest_only_replacement
       - tests/test_tools.py::RuntimeTests.test_runtime_image_template_rejects_append_while_sentinel_remains
+      - tests/test_tools.py::RuntimeTests.test_runtime_lock_cli_reports_missing_image_observation_as_unknown
+      - tests/test_tools.py::RuntimeTests.test_runtime_lock_cli_reports_matching_image_observation_as_pass
+      - tests/test_tools.py::RuntimeTests.test_runtime_lock_cli_reports_image_observation_mismatch_as_fail
       - tests/test_tools.py::RuntimeTests.test_runtime_lock_requires_pinned_public_surface_digest
       - tests/test_tools.py::RuntimeTests.test_runtime_lock_accepts_matching_revisions
       - tests/test_tools.py::RuntimeTests.test_runtime_lock_rejects_image_revision_drift
