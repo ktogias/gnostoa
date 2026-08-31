@@ -394,10 +394,10 @@ class BehavioralTraceabilityTests(unittest.TestCase):
         result = ASSESSMENT.read_text(encoding="utf-8")
         normalized = " ".join(result.split())
         for marker in (
-            "752e798c88107a1f402baccc8adde5e6504d26f3",
-            "20f907dc44aecbbcedba7eb9ce21448a947e8440",
-            "7b0b4f0bb9aabe4bede3d1148287959b23badd0c23814d3e23a8ce91d89444dd",
-            "be438bdf3dd4b67b39bfe8a405caa2475b2f0c51c7a0c30d17a6c93057638432",
+            "752e798c88107a1f402baccc8adde5e6504d26f3",  # pragma: allowlist secret -- public replay source identity
+            "20f907dc44aecbbcedba7eb9ce21448a947e8440",  # pragma: allowlist secret -- public replay tree identity
+            "7b0b4f0bb9aabe4bede3d1148287959b23badd0c23814d3e23a8ce91d89444dd",  # pragma: allowlist secret -- public replay manifest digest
+            "be438bdf3dd4b67b39bfe8a405caa2475b2f0c51c7a0c30d17a6c93057638432",  # pragma: allowlist secret -- public replay response digest
             "1/1",
             "0/2",
             "13m50s",
