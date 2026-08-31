@@ -40,6 +40,12 @@ public schema before an adopter has replaced them. The same pattern survived
 multiple adaptation and evaluation attempts, including the Phase-A owner-led
 Mail adaptation, because an untouched placeholder looked structurally real.
 
+The first candidate retained the example registry and repository before the
+runtime-image digest token. Replacing only that visible token with 64
+hexadecimal characters therefore produced a schema-valid image reference while
+silently retaining `registry.example.org/gnostoa`. Whole-value guidance cannot
+distinguish that edit from an intentional final value after the fact.
+
 The broader question of whether a syntactically valid runtime-image claim was
 actually observed is separate and remains owned by Work Item #163. This Decision
 addresses only the reusable template's placeholder representation and its
@@ -48,14 +54,18 @@ existing supported validation route.
 ## Decision
 
 1. Represent the two digest-bearing template placeholders with self-describing
-   `REPLACE_WITH_*` tokens while retaining their field-specific prefixes:
-   `sha256:` for `toolkit.public_surface_digest` and the example image plus
-   `@sha256:` for `runtime.image`.
+   `REPLACE_WITH_*` tokens. Retain `sha256:` for
+   `toolkit.public_surface_digest`, where only the digest body is unknown. Use
+   the whole-field sentinel `REPLACE_WITH_DIGEST_PINNED_RUNTIME_IMAGE` for
+   `runtime.image`, where registry, repository and digest are all unknown; the
+   scaffold must supply no example image prefix that can survive a digest-only
+   edit.
 2. Make each token intentionally fail the existing schema pattern. Do not add a
    second placeholder registry, schema keyword or Python validation mechanism.
 3. Verify the behavior through `check_runtime_lock()` for untouched, partially
-   replaced and fully replaced template cases. The field path, token and failed
-   pattern in the existing schema diagnostic are the actionable error.
+   replaced, digest-only runtime-image edit and fully replaced template cases.
+   The field path, token and failed pattern in the existing schema diagnostic
+   are the actionable error.
 4. Keep valid digest-pinned locks valid. Do not generally prohibit an all-zero
    digest, reinterpret historical locks or claim observed runtime-image truth.
 
@@ -64,6 +74,9 @@ existing supported validation route.
 - Existing valid project-owned locks and the public schema are unchanged.
 - Future copies of the current template that remain untouched or only partially
   adapted fail earlier by design.
+- Automation that replaced only the old runtime-image digest suffix must replace
+  the whole `runtime.image` value. This is the intended fail-closed correction,
+  not a migration of an already configured lock.
 - The immutable `v0.2.0` source, released template, source digest, OCI artifact
   and frozen owner-led experiment subjects remain historical and unchanged.
 - Because `templates/` is public source, the next source candidate receives a
@@ -75,7 +88,9 @@ existing supported validation route.
 ## Consequences
 
 - A copied template can no longer pass structural runtime-lock validation merely
-  because both digest-shaped placeholders were left at their defaults.
+  because both digest-shaped placeholders were left at their defaults or
+  because only the runtime-image digest token was replaced while the example
+  registry and repository remained.
 - The correction reuses the existing deterministic validation mechanism and
   adds no new truth or readiness semantics.
 - Work Item #163 remains separately unadmitted, and Phase-A/Phase-B evidence is
