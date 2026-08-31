@@ -2923,7 +2923,7 @@ runtime:
             status = runtime_lock_module.main(arguments)
         return status, output.getvalue()
 
-    def test_runtime_lock_cli_reports_missing_image_observation_as_unknown(
+    def test_runtime_lock_cli_reports_missing_reference_and_unobserved_runtime(
         self,
     ) -> None:
         declared = f"registry.example/kit@sha256:{'a' * 64}"
@@ -2941,13 +2941,17 @@ runtime:
             output,
         )
         self.assertIn(
-            "UNKNOWN: runtime image observation was not supplied",
+            "NOT SUPPLIED: runtime image reference comparison was not requested",
+            output,
+        )
+        self.assertIn(
+            "UNKNOWN: runtime image execution was not observed by check-runtime",
             output,
         )
         self.assertNotIn("observed runtime image matches", output)
         self.assertNotIn("toolkit source and runtime lock is valid", output)
 
-    def test_runtime_lock_cli_reports_matching_image_observation_as_pass(
+    def test_runtime_lock_cli_reports_supplied_reference_match_without_observation_pass(
         self,
     ) -> None:
         declared = f"registry.example/kit@sha256:{'b' * 64}"
@@ -2970,12 +2974,16 @@ runtime:
             output,
         )
         self.assertIn(
-            "PASS: observed runtime image matches declared runtime.image",
+            "MATCH: supplied runtime image reference matches declared runtime.image",
             output,
         )
-        self.assertNotIn("UNKNOWN:", output)
+        self.assertIn(
+            "UNKNOWN: runtime image execution was not observed by check-runtime",
+            output,
+        )
+        self.assertNotIn("PASS: observed runtime image", output)
 
-    def test_runtime_lock_cli_reports_image_observation_mismatch_as_fail(
+    def test_runtime_lock_cli_reports_supplied_reference_mismatch_as_fail(
         self,
     ) -> None:
         declared = f"registry.example/kit@sha256:{'c' * 64}"
@@ -2999,12 +3007,50 @@ runtime:
             output,
         )
         self.assertIn(
-            "FAIL: observed runtime image does not match declared runtime.image",
+            "MISMATCH: supplied runtime image reference does not match "
+            "declared runtime.image",
             output,
         )
-        self.assertNotIn("UNKNOWN:", output)
+        self.assertIn(
+            "UNKNOWN: runtime image execution was not observed by check-runtime",
+            output,
+        )
+        self.assertNotIn("FAIL: observed runtime image", output)
 
-    def test_runtime_guidance_separates_declaration_from_image_observation(
+    def test_runtime_lock_structured_result_keeps_reference_and_observation_distinct(
+        self,
+    ) -> None:
+        declared = f"registry.example/kit@sha256:{'e' * 64}"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            lock, source = self._write_valid_runtime_lock_fixture(
+                root,
+                image=declared,
+            )
+            with patch.object(
+                runtime_lock_module,
+                "toolkit_root",
+                return_value=source,
+            ):
+                evaluation = runtime_lock_module.evaluate_runtime_lock(
+                    lock,
+                    root,
+                    expected_revision="revision-1",
+                    expected_image=declared,
+                    schema_path=ROOT / "schemas" / "toolkit-lock.schema.json",
+                )
+
+        self.assertTrue(
+            hasattr(evaluation, "image_reference_comparison"),
+            evaluation,
+        )
+        comparison = evaluation.image_reference_comparison
+        self.assertEqual("MATCH", comparison.status)
+        self.assertEqual(declared, comparison.supplied_image)
+        self.assertEqual("UNKNOWN", evaluation.runtime_observation.status)
+        self.assertIsNone(evaluation.runtime_observation.observed_image)
+
+    def test_runtime_guidance_separates_reference_comparison_from_observation(
         self,
     ) -> None:
         runtime = (
@@ -3019,11 +3065,15 @@ runtime:
 
         for document in (runtime, bootstrap):
             self.assertIn("declaration/source binding", document)
-            self.assertIn("observed-image binding", document)
+            self.assertIn("supplied-reference comparison", document)
+            self.assertIn("execution observation", document)
+            self.assertIn("MATCH", document)
             self.assertIn("UNKNOWN", document)
+            self.assertIn("caller-supplied", document)
+            self.assertIn("never execution observation", document)
         self.assertIn("RuntimeObservationAvailable", adoption)
         self.assertIn("structural component", adoption)
-        self.assertIn("does not establish observed-image PASS", adoption)
+        self.assertIn("does not establish execution-observation PASS", adoption)
 
     def test_toolkit_lock_template_placeholders_fail_closed(self) -> None:
         template = (ROOT / "templates" / "knowledge-kit.lock.yaml").read_text(
@@ -3362,7 +3412,7 @@ runtime:
                 issues,
             )
             self.assertTrue(
-                any("executing image reference" in issue for issue in issues),
+                any("supplied image reference" in issue for issue in issues),
                 issues,
             )
 
