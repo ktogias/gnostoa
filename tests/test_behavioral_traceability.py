@@ -14,6 +14,12 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests" / "fixtures" / "behavioral-traceability"
 BLIND_REPLAY = FIXTURES / "blind-replay-v1"
 REQUIREMENT = ROOT / "knowledge" / "requirements" / "bounded-behavioral-traceability.md"
+ASSESSMENT = (
+    ROOT
+    / "knowledge"
+    / "assessments"
+    / "bounded-behavioral-traceability-blind-replay-result.md"
+)
 
 
 def load_mapping(path: Path) -> dict[str, object]:
@@ -384,6 +390,24 @@ class BehavioralTraceabilityTests(unittest.TestCase):
         for obsolete in ("case-a.yaml", "case-b.yaml", "case-c.yaml"):
             self.assertFalse((FIXTURES / obsolete).exists(), obsolete)
 
+    def test_result_record_binds_valid_replay_and_limits_claims(self) -> None:
+        result = ASSESSMENT.read_text(encoding="utf-8")
+        normalized = " ".join(result.split())
+        for marker in (
+            "752e798c88107a1f402baccc8adde5e6504d26f3",
+            "20f907dc44aecbbcedba7eb9ce21448a947e8440",
+            "7b0b4f0bb9aabe4bede3d1148287959b23badd0c23814d3e23a8ce91d89444dd",
+            "be438bdf3dd4b67b39bfe8a405caa2475b2f0c51c7a0c30d17a6c93057638432",
+            "1/1",
+            "0/2",
+            "13m50s",
+            "Three earlier raw replay results",
+            "Executor-checkpoint effectiveness, real-task productivity and causal Gnostoa utility remain `UNKNOWN`",
+            "Public or adopting-project promotion | `NOT AUTHORIZED`",
+            "Pull Request #178 owner acceptance and merge | `PENDING`",
+        ):
+            self.assertIn(marker, normalized)
+
     def test_requirement_defines_bounded_blocking_and_oracle_limits(self) -> None:
         requirement = self.requirement_text()
         normalized = " ".join(requirement.split())
@@ -440,6 +464,7 @@ class BehavioralTraceabilityTests(unittest.TestCase):
         expected_implementation = {
             "AGENTS.md",
             "knowledge/index.md",
+            "knowledge/assessments/bounded-behavioral-traceability-blind-replay-result.md",
             "knowledge/decisions/0056-run-a-bounded-behavioral-traceability-review-experiment.md",
             "knowledge/requirements/bounded-behavioral-traceability.md",
             "knowledge/runbooks/deliver-bounded-self-hosted-slice.md",
@@ -455,6 +480,7 @@ class BehavioralTraceabilityTests(unittest.TestCase):
             "tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_blind_replay_candidates_apply_and_verification_is_reproducible",
             "tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_blind_replay_secret_allowlists_are_line_scoped_and_schema_bounded",
             "tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_blind_replay_does_not_expose_control_answers",
+            "tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_result_record_binds_valid_replay_and_limits_claims",
             "tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_requirement_defines_bounded_blocking_and_oracle_limits",
             "tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_router_and_runbook_make_the_two_checkpoints_discoverable",
             "tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_guardrail_binds_the_self_only_contract",
