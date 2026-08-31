@@ -57,6 +57,7 @@ class BehavioralTraceabilityTests(unittest.TestCase):
 
     def test_requirement_defines_bounded_blocking_and_oracle_limits(self) -> None:
         requirement = self.requirement_text()
+        normalized = " ".join(requirement.split())
         for marker in (
             "multiple material behaviors",
             "contradiction or ambiguity",
@@ -70,7 +71,7 @@ class BehavioralTraceabilityTests(unittest.TestCase):
             "SKIPPED",
             "does not establish semantic completeness",
         ):
-            self.assertIn(marker, requirement)
+            self.assertIn(marker, normalized)
 
     def test_router_and_runbook_make_the_two_checkpoints_discoverable(self) -> None:
         agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")

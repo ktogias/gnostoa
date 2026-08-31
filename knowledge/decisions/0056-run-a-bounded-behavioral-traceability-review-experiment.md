@@ -28,6 +28,8 @@ x-project-knowledge:
       target: /decisions/0053-require-lightweight-work-item-micro-retrospection.md
     - kind: derived-from
       target: /assessments/nextcloud-mail-phase-b-owner-led-task-result.md
+    - kind: references
+      target: /requirements/bounded-behavioral-traceability.md
 ---
 
 # Run a bounded behavioral-traceability review experiment
