@@ -276,6 +276,57 @@ class BehavioralTraceabilityTests(unittest.TestCase):
                 self.assertRegex(combined, r"(?m)^OK$")
                 self.assertEqual("OK", verification["result"])
 
+    def test_blind_replay_secret_allowlists_are_line_scoped_and_schema_bounded(
+        self,
+    ) -> None:
+        pragma = "# pragma: allowlist secret -- "
+        manifest_lines = (
+            (BLIND_REPLAY / "manifest.yaml").read_text(encoding="utf-8").splitlines()
+        )
+        manifest_allowlists = [line for line in manifest_lines if pragma in line]
+        content_digest = re.compile(
+            r"^\s+sha256: [a-f0-9]{64}  # pragma: allowlist secret -- "
+            r"content-addressed replay evidence$"
+        )
+        tree_identity = re.compile(
+            r"^\s+tree: [a-f0-9]{40}  # pragma: allowlist secret -- "
+            r"content-addressed replay identity$"
+        )
+        self.assertEqual(
+            15,
+            sum(content_digest.fullmatch(line) is not None for line in manifest_lines),
+        )
+        self.assertEqual(
+            5,
+            sum(tree_identity.fullmatch(line) is not None for line in manifest_lines),
+        )
+        self.assertEqual(20, len(manifest_allowlists))
+
+        verification_identity = re.compile(
+            r"^(?:base_tree|candidate_tree): [a-f0-9]{40}  "
+            r"# pragma: allowlist secret -- content-addressed replay identity$"
+        )
+        verification_allowlists: list[str] = []
+        for path in sorted(BLIND_REPLAY.glob("case-*/verification.yaml")):
+            lines = path.read_text(encoding="utf-8").splitlines()
+            allowlists = [line for line in lines if pragma in line]
+            self.assertEqual(2, len(allowlists), path)
+            self.assertTrue(
+                all(verification_identity.fullmatch(line) for line in allowlists),
+                path,
+            )
+            verification_allowlists.extend(allowlists)
+        self.assertEqual(6, len(verification_allowlists))
+
+        packet_allowlists = [
+            (path, line)
+            for path in BLIND_REPLAY.rglob("*")
+            if path.is_file()
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if pragma in line
+        ]
+        self.assertEqual(26, len(packet_allowlists))
+
     def test_blind_replay_does_not_expose_control_answers(self) -> None:
         manifest = load_mapping(BLIND_REPLAY / "manifest.yaml")
         forbidden_fields = (
@@ -402,6 +453,7 @@ class BehavioralTraceabilityTests(unittest.TestCase):
         expected_tests = {
             "tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_blind_replay_binds_inspectable_raw_artifacts",
             "tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_blind_replay_candidates_apply_and_verification_is_reproducible",
+            "tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_blind_replay_secret_allowlists_are_line_scoped_and_schema_bounded",
             "tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_blind_replay_does_not_expose_control_answers",
             "tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_requirement_defines_bounded_blocking_and_oracle_limits",
             "tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_router_and_runbook_make_the_two_checkpoints_discoverable",
