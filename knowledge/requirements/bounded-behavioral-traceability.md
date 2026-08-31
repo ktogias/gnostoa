@@ -130,9 +130,10 @@ reviewer's semantic result.
 
 ## Experiment and stop rules
 
-Decision 0056 admits one sanitized negative replay, one aligned non-trivial
-control and one trivial not-applicable control. Record defect recall, false
-blocks, owner interventions, elapsed time and bounded context cost.
+Decision 0056 admits one bounded blind replay. Its Decision and result record,
+not this reviewer-facing Requirement, own the control composition and scoring
+key. After the raw response is frozen, record the predeclared measures, owner
+interventions, elapsed time and bounded context cost.
 
 If the map does not improve recall at proportionate cost, retain the negative
 result and narrow or remove this rule. Do not rescue it with a schema, workflow

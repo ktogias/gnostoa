@@ -1,4 +1,4 @@
-candidate_sha256: sha256:edfff1a8cb025732fb2df21d5e0947d73fd947e8376baea109c88731ff38a868
+candidate_sha256: sha256:6ab5b0dbf8e5ad76b4c8f480e6d4d58358f69452c0041db4a959fecb38cfeffe
 command: pytest -q tests/test_relocate.py::test_preserves_exact_label_once
 exit_code: 0
 output:

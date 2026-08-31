@@ -407,6 +407,7 @@ guardrails:
     guidance: knowledge/requirements/bounded-behavioral-traceability.md#required-workflow
     implementation:
       - AGENTS.md
+      - knowledge/index.md
       - knowledge/decisions/0056-run-a-bounded-behavioral-traceability-review-experiment.md
       - knowledge/requirements/bounded-behavioral-traceability.md
       - knowledge/runbooks/deliver-bounded-self-hosted-slice.md
@@ -423,6 +424,7 @@ guardrails:
       - tests/fixtures/behavioral-traceability/blind-replay-v1/case-b683/verification.txt
     tests:
       - tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_blind_replay_binds_inspectable_raw_artifacts
+      - tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_blind_replay_candidate_patches_parse_and_cover_commands
       - tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_blind_replay_does_not_expose_control_answers
       - tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_requirement_defines_bounded_blocking_and_oracle_limits
       - tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_router_and_runbook_make_the_two_checkpoints_discoverable

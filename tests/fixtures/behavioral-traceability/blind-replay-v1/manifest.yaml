@@ -4,35 +4,35 @@ review_request:
   sha256: 8aa238b0cdcaf5a62f952cc8bc5ae31879f7dd5b4b16e8d3f621b0e6fa0108b5
 requirement:
   path: ../../../../knowledge/requirements/bounded-behavioral-traceability.md
-  sha256: e92ce94234906dac3719f93f2d4f0e9d0836629d3dd580f032f5274ea5f2e9fa
+  sha256: 44c03227bd1431b68ea65a2679792d42db29286d62807bd99fe29d87733ccb8d
 cases:
-  - id: case-2d91
-    task:
-      path: case-2d91/task.md
-      sha256: ff3e84d667589fd53ef3cd8aebee133672756c54a6a450f1a5952d9427afdb11
-    candidate:
-      path: case-2d91/candidate.patch
-      sha256: cb91ace6af2132e9719f0c27a16910e5d51c97425e7036f756dcb54c1b68a00d
-    verification:
-      path: case-2d91/verification.txt
-      sha256: 36bec467f7b4baa12953f62a70f5a67b2c9d8d65526e738e2a8584d05e60f9ec
-  - id: case-7ac4
-    task:
-      path: case-7ac4/task.md
-      sha256: c8fbc683855a23548bc7258e589881e344c43ed6503e66445d87f2bee91c01ce
-    candidate:
-      path: case-7ac4/candidate.patch
-      sha256: edfff1a8cb025732fb2df21d5e0947d73fd947e8376baea109c88731ff38a868
-    verification:
-      path: case-7ac4/verification.txt
-      sha256: 09f40fcf33555896b6c8ae56b3d3c6cb04835896ac10c47e3aa9584f2721ba0e
   - id: case-b683
     task:
       path: case-b683/task.md
       sha256: 2b7d16c9c896de71c56ae109cb67e74d914eb3b94688e893dcd439a5d598ca45
     candidate:
       path: case-b683/candidate.patch
-      sha256: d5d4dc4b97fd9df84331d1ac99a9ce4cb828e69968b00d82ebd200bb7d1f78bf
+      sha256: 7b8d77ebd847cebc806b4befc45dfba05b32dddaa6476257d6c9599344003a7c
     verification:
       path: case-b683/verification.txt
-      sha256: fe89205b955c217cbd3a10b90da419f2bb4755cc6b2fc5fa52e8bbe061c27a96
+      sha256: 8a51700033896eff6656802971b497cb72e90d2686b734668c355443248e97ab
+  - id: case-2d91
+    task:
+      path: case-2d91/task.md
+      sha256: ff3e84d667589fd53ef3cd8aebee133672756c54a6a450f1a5952d9427afdb11
+    candidate:
+      path: case-2d91/candidate.patch
+      sha256: b5d218261ac21f835c00389b999fc9844596ab475f66c33340e8dbf72d111c39
+    verification:
+      path: case-2d91/verification.txt
+      sha256: fc9b1d2b281e18b57657bab220bf313c4746c92f4e7621f786ab2421aa5ffe3f
+  - id: case-7ac4
+    task:
+      path: case-7ac4/task.md
+      sha256: c8fbc683855a23548bc7258e589881e344c43ed6503e66445d87f2bee91c01ce
+    candidate:
+      path: case-7ac4/candidate.patch
+      sha256: 6ab5b0dbf8e5ad76b4c8f480e6d4d58358f69452c0041db4a959fecb38cfeffe
+    verification:
+      path: case-7ac4/verification.txt
+      sha256: 8a3d158a64ab9348fda43ca66294a3412ddcb902564ec3362d9293b8f9c99fc8
