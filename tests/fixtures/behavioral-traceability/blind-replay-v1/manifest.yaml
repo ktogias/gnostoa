@@ -1,0 +1,59 @@
+packet_version: behavioral-traceability-blind-replay/v1
+review_request:
+  path: review-request.md
+  sha256: c5116f0a6f226d9b673786b32a8e319adc55d9c2f2f85ce3eeb97c439c4ff46f  # pragma: allowlist secret -- content-addressed replay evidence
+requirement:
+  path: ../../../../knowledge/requirements/bounded-behavioral-traceability.md
+  sha256: 44c03227bd1431b68ea65a2679792d42db29286d62807bd99fe29d87733ccb8d  # pragma: allowlist secret -- content-addressed replay evidence
+bases:
+  - id: base-5e72
+    tree: ff112dba1712f1b6c83d6862c295ceffa01acdf3  # pragma: allowlist secret -- content-addressed replay identity
+    files:
+      - path: bases/base-5e72/src/relocate.py
+        sha256: 2ca675feaa65c32edfb1e8e0fd50d35a9d5b6eae9d74947079aedc8f187bd99f  # pragma: allowlist secret -- content-addressed replay evidence
+      - path: bases/base-5e72/tests/test_relocate.py
+        sha256: 31ecdaf019f86cf5f40e5139542a9ab8ccc2a9c651033439e87dfe8c2a4937fb  # pragma: allowlist secret -- content-addressed replay evidence
+  - id: base-a410
+    tree: 71e8d0a4be59658014211a06ea38040d9b36846c  # pragma: allowlist secret -- content-addressed replay identity
+    files:
+      - path: bases/base-a410/src/help_text.py
+        sha256: 9094ba99b008ff235864641db651fbe39635b1f4611c6037decc0d10033cac14  # pragma: allowlist secret -- content-addressed replay evidence
+      - path: bases/base-a410/tests/test_help_text.py
+        sha256: aaf76203f18244526d15a5fc525575f7491decca22479bd30bdc2275d3eaaaa2  # pragma: allowlist secret -- content-addressed replay evidence
+cases:
+  - id: case-b683
+    base: base-a410
+    task:
+      path: case-b683/task.md
+      sha256: 2b7d16c9c896de71c56ae109cb67e74d914eb3b94688e893dcd439a5d598ca45  # pragma: allowlist secret -- content-addressed replay evidence
+    candidate:
+      path: case-b683/candidate.patch
+      sha256: 531e69cc9b5c82ac6f4eccf4e446bbd7d52bd169d8739e78d0132691907e8aa4  # pragma: allowlist secret -- content-addressed replay evidence
+      tree: bd19db56853f2d64682a966d736dcb186a62bbf6  # pragma: allowlist secret -- content-addressed replay identity
+    verification:
+      path: case-b683/verification.yaml
+      sha256: 2942d2e1599a6e0cdf1a730590595d9b445f12c58ef8b9059a7363d5c8df9231  # pragma: allowlist secret -- content-addressed replay evidence
+  - id: case-2d91
+    base: base-5e72
+    task:
+      path: case-2d91/task.md
+      sha256: ff3e84d667589fd53ef3cd8aebee133672756c54a6a450f1a5952d9427afdb11  # pragma: allowlist secret -- content-addressed replay evidence
+    candidate:
+      path: case-2d91/candidate.patch
+      sha256: ed37af27006b01130fdb2343e7253375265b1bad17b18eb57555bf752a3923f5  # pragma: allowlist secret -- content-addressed replay evidence
+      tree: 0038b05f2ef0fcccbee1e2f9c09e3b2abd574603  # pragma: allowlist secret -- content-addressed replay identity
+    verification:
+      path: case-2d91/verification.yaml
+      sha256: 6867161df04ebe798c2e9b11c5a48eb672cff274797593dae423cae5f02ec97d  # pragma: allowlist secret -- content-addressed replay evidence
+  - id: case-7ac4
+    base: base-5e72
+    task:
+      path: case-7ac4/task.md
+      sha256: c8fbc683855a23548bc7258e589881e344c43ed6503e66445d87f2bee91c01ce  # pragma: allowlist secret -- content-addressed replay evidence
+    candidate:
+      path: case-7ac4/candidate.patch
+      sha256: 3588194b2ef6cca6be449122523aa02c5f9c4b5ae90797d5c78ca5d221e14a79  # pragma: allowlist secret -- content-addressed replay evidence
+      tree: 48e9a4bf194908b8a44a87694c2516c02d8b192d  # pragma: allowlist secret -- content-addressed replay identity
+    verification:
+      path: case-7ac4/verification.yaml
+      sha256: a229f96fce4d5f8f2d2c3de0dd2b632042a44f4ca685d1dd6e8e19b1c3eb5296  # pragma: allowlist secret -- content-addressed replay evidence

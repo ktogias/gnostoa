@@ -1,0 +1,14 @@
+diff --git a/src/help_text.py b/src/help_text.py
+index aebf268e8adb390ad82d23adf04ca68d38c0a8ce..a0d9600c80f1bc0f1beda70b5305104985903750 100644
+--- a/src/help_text.py
++++ b/src/help_text.py
+@@ -3 +3 @@ HELP_TEXT = """Move an item.
+-Destination:
++Target destination:
+diff --git a/tests/test_help_text.py b/tests/test_help_text.py
+index d24fa8b49f206349b0440429172429aac56f7201..d25cd705e46eb0ccbad5f768138c23e928cf1cac 100644
+--- a/tests/test_help_text.py
++++ b/tests/test_help_text.py
+@@ -7 +7 @@ EXPECTED_HELP = """Move an item.
+-Destination:
++Target destination:

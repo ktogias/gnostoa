@@ -93,11 +93,23 @@ result needed for the next owner decision. There is no fixed length limit.
    Work Item recorded for backlog capture satisfies durable tracking only; it does
    not satisfy this admission step until its separately declared admission state is
    observed.
-8. **Make the smallest admitted change.** Follow the
+8. **Make the smallest admitted change.** When the Requirement's applicability
+   criteria hold, apply the
+   [bounded behavioral-traceability requirement](../requirements/bounded-behavioral-traceability.md)
+   and record its initial behavior map in the active Work Item or change record
+   **before the first semantic production mutation**. Use explicit prospective,
+   `NOT RUN`, `UNKNOWN` and `PENDING` states where candidate or evidence does not
+   exist yet; re-bind the final candidate and evidence before review. An
+   unresolved contradiction or unsupported narrowing blocks review-ready
+   disposition. Then follow the
    [verification-first workflow](../../guidance/workflows/develop-verification-first.md)
    and keep specialized semantics in their owning runbooks.
 9. **Verify the exact candidate.** Inspect the final diff, identify the measured
-   subject, run applicable local/runtime checks and record actual results.
+   subject, run applicable local/runtime checks and record actual results. For an
+   applicable behavior map, independently reconcile the behavior map against the
+   exact task, candidate and evidence before recommending review-ready or owner
+   acceptance; a passing test that preserves task-prohibited behavior remains a
+   blocker.
 10. **Verify the exact PR head.** Provider checks must bind to that head; inspect
     required jobs individually. A successful run does not turn `SKIPPED` into
     `PASS`.

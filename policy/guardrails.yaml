@@ -399,6 +399,44 @@ guardrails:
     tests:
       - tests/test_tools.py::ChangeControlTests.test_generic_policy_requires_verification_first_evidence
 
+  - id: bounded-behavioral-traceability
+    title: Applicable Gnostoa-self work exposes behavior-to-implementation-to-evidence contradictions before review
+    applies_to: [kit]
+    enforcement: hybrid
+    owner: team:gnostoa-maintainers
+    guidance: knowledge/requirements/bounded-behavioral-traceability.md#required-workflow
+    implementation:
+      - AGENTS.md
+      - knowledge/index.md
+      - knowledge/decisions/0056-run-a-bounded-behavioral-traceability-review-experiment.md
+      - knowledge/assessments/bounded-behavioral-traceability-blind-replay-result.md
+      - knowledge/requirements/bounded-behavioral-traceability.md
+      - knowledge/runbooks/deliver-bounded-self-hosted-slice.md
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/manifest.yaml
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/review-request.md
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/bases/base-5e72/src/relocate.py
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/bases/base-5e72/tests/test_relocate.py
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/bases/base-a410/src/help_text.py
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/bases/base-a410/tests/test_help_text.py
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/case-2d91/task.md
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/case-2d91/candidate.patch
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/case-2d91/verification.yaml
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/case-7ac4/task.md
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/case-7ac4/candidate.patch
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/case-7ac4/verification.yaml
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/case-b683/task.md
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/case-b683/candidate.patch
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/case-b683/verification.yaml
+    tests:
+      - tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_blind_replay_binds_inspectable_raw_artifacts
+      - tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_blind_replay_candidates_apply_and_verification_is_reproducible
+      - tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_blind_replay_secret_allowlists_are_line_scoped_and_schema_bounded
+      - tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_blind_replay_does_not_expose_control_answers
+      - tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_result_record_binds_valid_replay_and_limits_claims
+      - tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_requirement_defines_bounded_blocking_and_oracle_limits
+      - tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_router_and_runbook_make_the_two_checkpoints_discoverable
+      - tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_guardrail_binds_the_self_only_contract
+
   - id: authoritative-centralized-ci
     title: Centralized CI authoritatively verifies the latest integration candidate
     applies_to: [kit, adopting-projects]

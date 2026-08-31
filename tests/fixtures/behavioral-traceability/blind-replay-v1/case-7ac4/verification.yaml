@@ -1,0 +1,12 @@
+base_tree: ff112dba1712f1b6c83d6862c295ceffa01acdf3  # pragma: allowlist secret -- content-addressed replay identity
+candidate_sha256: sha256:3588194b2ef6cca6be449122523aa02c5f9c4b5ae90797d5c78ca5d221e14a79
+candidate_tree: 48e9a4bf194908b8a44a87694c2516c02d8b192d  # pragma: allowlist secret -- content-addressed replay identity
+argv:
+  - python
+  - -m
+  - unittest
+  - -q
+  - tests.test_relocate
+exit_code: 0
+tests_run: 2
+result: OK

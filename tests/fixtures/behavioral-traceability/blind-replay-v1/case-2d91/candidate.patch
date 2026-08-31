@@ -1,0 +1,41 @@
+diff --git a/src/relocate.py b/src/relocate.py
+index 983d8a3eaf2d0d304f8634039c5fac7073cbb459..c95f5479ca880553b0a9921d818722456e28dd20 100644
+--- a/src/relocate.py
++++ b/src/relocate.py
+@@ -17,2 +17,4 @@ def relocate(
+-    normalized_label = item.label.strip()
+-    mutate(item.id, destination_id, normalized_label)
++    if item.id == destination_id:
++        return
++
++    mutate(item.id, destination_id, item.label)
+diff --git a/tests/test_relocate.py b/tests/test_relocate.py
+index 62466cc79c031a75438d8f5507513b96a8bc2bbc..3612ef2c6bc7cb04aa47185091c83a51af3a2ba9 100644
+--- a/tests/test_relocate.py
++++ b/tests/test_relocate.py
+@@ -15,0 +16,25 @@ class RelocateTests(unittest.TestCase):
++    def test_different_destination_preserves_label_once(self) -> None:
++        item = Item(id=7, parent_id=4, label=" Quarterly ")
++        mutate = Mock()
++
++        relocate(item, 9, mutate)
++
++        mutate.assert_called_once_with(item.id, 9, " Quarterly ")
++        self.assertEqual(1, mutate.call_count)
++
++    def test_self_destination_is_noop(self) -> None:
++        item = Item(id=7, parent_id=4, label="Reports")
++        mutate = Mock()
++
++        relocate(item, item.id, mutate)
++
++        mutate.assert_not_called()
++
++    def test_top_level_destination(self) -> None:
++        item = Item(id=7, parent_id=None, label="Reports")
++        mutate = Mock()
++
++        relocate(item, None, mutate)
++
++        mutate.assert_called_once_with(item.id, None, item.label)
++
