@@ -263,7 +263,6 @@ def create_package(
     )
     staged = Path(staged_name)
     archive: tarfile.TarFile | None = None
-    published = False
     try:
         with os.fdopen(descriptor, "wb") as raw:
             bounded = BoundedWriter(raw, max_bytes)
@@ -286,7 +285,6 @@ def create_package(
             os.link(staged, output_path)
         except FileExistsError as exc:
             raise PackageError("output-already-exists") from exc
-        published = True
         payload: dict[str, object] = {
             "schema": PACKAGE_SCHEMA,
             "status": "PACKAGED",
@@ -327,11 +325,6 @@ def create_package(
             staged.unlink()
         except FileNotFoundError:
             pass
-        if not published:
-            try:
-                output_path.unlink()
-            except FileNotFoundError:
-                pass
 
 
 def build_parser() -> argparse.ArgumentParser:
