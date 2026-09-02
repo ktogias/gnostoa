@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import subprocess
 import sys
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -11,6 +12,18 @@ INTERNAL = ROOT / "tools" / "experiment"
 RUNNER_CLI = ROOT / "tools" / "experiment_runner.py"
 HANDOFF_CLI = ROOT / "tools" / "experiment_handoff.py"
 PACKAGER_CLI = ROOT / "tools" / "experiment_packager.py"
+
+
+def imported_modules(path: Path) -> set[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    observed: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            observed.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            prefix = "." * node.level
+            observed.add(f"{prefix}{node.module}")
+    return observed
 
 
 class ExperimentArchitectureContractTests(unittest.TestCase):
@@ -58,23 +71,42 @@ class ExperimentArchitectureContractTests(unittest.TestCase):
         self.assertIn("--handoff", result.stdout)
         self.assertNotIn("--root", result.stdout)
 
-    def test_packaging_domain_cannot_import_execution_domain(self) -> None:
-        packaging = INTERNAL / "packaging.py"
-        if not packaging.is_file():
-            self.skipTest("RED retained until internal packaging domain exists")
-        tree = ast.parse(packaging.read_text(encoding="utf-8"))
-        forbidden = {
+    def test_internal_package_is_part_of_installed_distribution(self) -> None:
+        with (ROOT / "pyproject.toml").open("rb") as stream:
+            project = tomllib.load(stream)
+        packages = project["tool"]["setuptools"]["packages"]
+        self.assertIn("tools.experiment", packages)
+
+    def test_dependency_direction_is_one_way_through_evidence_and_handoff(self) -> None:
+        expected = {
+            "execution.py": {".evidence"},
+            "handoff.py": {".evidence"},
+            "packaging.py": {".evidence", ".handoff"},
+        }
+        for name, required in expected.items():
+            path = INTERNAL / name
+            if not path.is_file():
+                self.skipTest("RED retained until internal trust-domain modules exist")
+            observed = imported_modules(path)
+            self.assertTrue(required <= observed, (name, required, observed))
+
+        packaging_imports = imported_modules(INTERNAL / "packaging.py")
+        handoff_imports = imported_modules(INTERNAL / "handoff.py")
+        forbidden_packaging = {
+            ".execution",
+            ".coordinator",
             "tools.experiment.execution",
             "tools.experiment.coordinator",
             "tools.experiment_runner",
         }
-        observed: set[str] = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                observed.update(alias.name for alias in node.names)
-            elif isinstance(node, ast.ImportFrom) and node.module:
-                observed.add(node.module)
-        self.assertFalse(forbidden & observed, observed)
+        forbidden_handoff = {
+            ".execution",
+            ".packaging",
+            "tools.experiment.execution",
+            "tools.experiment.packaging",
+        }
+        self.assertFalse(forbidden_packaging & packaging_imports, packaging_imports)
+        self.assertFalse(forbidden_handoff & handoff_imports, handoff_imports)
 
 
 if __name__ == "__main__":
