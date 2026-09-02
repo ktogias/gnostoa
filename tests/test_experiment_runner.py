@@ -1,8 +1,12 @@
 import hashlib
 import json
+import os
+import runpy
+import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -10,6 +14,110 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "tools" / "experiment_runner.py"
+UNSAFE_BASELINE = ROOT / "tests" / "fixtures" / "experiment-runner" / "unsafe_baseline.py"
+UNSAFE = runpy.run_path(str(UNSAFE_BASELINE))
+
+
+class ExperimentRunnerRedBaselineTests(unittest.TestCase):
+    def test_red_baseline_reads_excluded_material(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="gnostoa-runner-red-") as raw:
+            root = Path(raw)
+            admitted = root / "admitted"
+            excluded = root / "excluded"
+            admitted.mkdir()
+            excluded.mkdir()
+            secret = excluded / "secret.txt"
+            secret.write_bytes(b"excluded-host-material")
+
+            observed = UNSAFE["read_bytes"](str(secret))
+
+            self.assertEqual(b"excluded-host-material", observed)
+
+    def test_red_baseline_writes_outside_admitted_root(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="gnostoa-runner-red-") as raw:
+            root = Path(raw)
+            project = root / "project"
+            outside = root / "outside"
+            project.mkdir()
+            outside.mkdir()
+            target = outside / "escaped.txt"
+
+            UNSAFE["write_bytes"](str(target), b"escaped-write")
+
+            self.assertEqual(b"escaped-write", target.read_bytes())
+
+    def test_red_baseline_follows_symlink_escape(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="gnostoa-runner-red-") as raw:
+            root = Path(raw)
+            admitted = root / "admitted"
+            outside = root / "outside"
+            admitted.mkdir()
+            outside.mkdir()
+            secret = outside / "secret.txt"
+            secret.write_bytes(b"symlink-secret")
+            escape = admitted / "escape.txt"
+            escape.symlink_to(secret)
+
+            observed = UNSAFE["read_bytes"](str(escape))
+
+            self.assertEqual(b"symlink-secret", observed)
+
+    def test_red_baseline_imports_unrelated_environment(self) -> None:
+        key = "GNOSTOA_UNRELATED_SECRET_SENTINEL"
+        previous = os.environ.get(key)
+        os.environ[key] = "must-not-be-inherited"
+        try:
+            inherited = UNSAFE["inherited_environment"]()
+        finally:
+            if previous is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = previous
+
+        self.assertEqual("must-not-be-inherited", inherited[key])
+
+    def test_red_baseline_allows_undeclared_egress(self) -> None:
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.settimeout(2)
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        host, port = server.getsockname()
+        received: list[bytes] = []
+
+        def accept_once() -> None:
+            connection, _ = server.accept()
+            with connection:
+                received.append(connection.recv(64))
+
+        thread = threading.Thread(target=accept_once, daemon=True)
+        thread.start()
+        try:
+            UNSAFE["connect"](host, port)
+            thread.join(timeout=2)
+        finally:
+            server.close()
+
+        self.assertEqual([b"unsafe-egress"], received)
+
+    def test_red_baseline_emits_bare_digest_without_producer_binding(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="gnostoa-runner-red-") as raw:
+            artifact = Path(raw) / "artifact.txt"
+            artifact.write_text("unbound evidence\n", encoding="utf-8")
+
+            digest = UNSAFE["bare_sha256"](str(artifact))
+
+            self.assertRegex(digest, r"^[a-f0-9]{64}$")
+            self.assertIsInstance(digest, str)
+
+    def test_red_baseline_materializes_oversize_payload_before_checking(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="gnostoa-runner-red-") as raw:
+            payload = Path(raw) / "payload.bin"
+            payload.write_bytes(b"x" * 131_072)
+
+            result = UNSAFE["materialize_then_check"](str(payload), 1_024)
+
+            self.assertEqual(131_072, result["materialized_bytes"])
+            self.assertTrue(result["oversize"])
 
 
 class ExperimentRunnerContractTests(unittest.TestCase):
