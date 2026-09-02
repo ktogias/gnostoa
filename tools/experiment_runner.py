@@ -26,7 +26,9 @@ SIZE_SCHEMA = "gnostoa-path-size-check/v1"
 RUN_SCHEMA = "gnostoa-experiment-runner-result/v1"
 
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
-_DIGEST_IMAGE_RE = re.compile(r"^.+@sha256:[a-f0-9]{64}$")
+_IMMUTABLE_IMAGE_RE = re.compile(
+    r"^(?:sha256:[a-f0-9]{64}|.+@sha256:[a-f0-9]{64})$"
+)
 _MAX_RELAY_HEADER = 16 * 1024
 _CHUNK_SIZE = 1024 * 1024
 
@@ -93,7 +95,9 @@ def load_profile(path: Path) -> dict[str, object]:
     try:
         import yaml
     except ImportError as exc:
-        raise RunnerError("PyYAML is required to load experiment-runner profiles") from exc
+        raise RunnerError(
+            "PyYAML is required to load experiment-runner profiles"
+        ) from exc
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
@@ -116,6 +120,43 @@ def required_string(profile: Mapping[str, object], key: str) -> str:
     return value
 
 
+def validate_input_identities(values: Sequence[str]) -> list[str]:
+    reasons: list[str] = []
+    identifiers: set[str] = set()
+    for value in values:
+        identifier, separator, digest = value.partition("=")
+        if (
+            not separator
+            or not identifier
+            or identifier in identifiers
+            or not _SHA256_RE.fullmatch(digest)
+        ):
+            reasons.append("invalid-or-duplicate-input-identity")
+            continue
+        identifiers.add(identifier)
+    return reasons
+
+
+def validate_executor(profile: Mapping[str, object]) -> list[str]:
+    executor = profile.get("executor")
+    if not isinstance(executor, dict):
+        return ["executor-must-be-a-mapping"]
+    mapping = cast(dict[str, object], executor)
+    reasons: list[str] = []
+    for key in ("id", "version"):
+        value = mapping.get(key)
+        if not isinstance(value, str) or not value:
+            reasons.append(f"executor-{key}-must-be-a-nonempty-string")
+    config_sha256 = mapping.get("config_sha256")
+    if not isinstance(config_sha256, str) or not _SHA256_RE.fullmatch(config_sha256):
+        reasons.append("executor-config-sha256-invalid")
+    for key in ("model", "small_model"):
+        value = mapping.get(key)
+        if value is not None and (not isinstance(value, str) or not value):
+            reasons.append(f"executor-{key}-invalid")
+    return reasons
+
+
 def validate_profile_data(profile: Mapping[str, object], *, for_run: bool) -> list[str]:
     reasons: list[str] = []
     if profile.get("schema") != PROFILE_SCHEMA:
@@ -134,6 +175,9 @@ def validate_profile_data(profile: Mapping[str, object], *, for_run: bool) -> li
         )
         credential_environment = string_list(
             profile.get("credential_environment", []), "credential_environment"
+        )
+        input_identities = string_list(
+            profile.get("input_identities", []), "input_identities"
         )
         project_text = required_string(profile, "project_root")
         evidence_text = required_string(profile, "evidence_root")
@@ -190,6 +234,8 @@ def validate_profile_data(profile: Mapping[str, object], *, for_run: bool) -> li
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
             reasons.append("invalid-environment-name")
 
+    reasons.extend(validate_input_identities(input_identities))
+
     network = profile.get("network")
     if not isinstance(network, dict):
         reasons.append("network-must-be-a-mapping")
@@ -199,7 +245,9 @@ def validate_profile_data(profile: Mapping[str, object], *, for_run: bool) -> li
         allow = network_mapping.get("allow", [])
         if mode not in {"none", "restricted"}:
             reasons.append("unsupported-network-mode")
-        if not isinstance(allow, list) or not all(isinstance(item, str) for item in allow):
+        if not isinstance(allow, list) or not all(
+            isinstance(item, str) for item in allow
+        ):
             reasons.append("network-allow-must-be-a-string-list")
         elif mode == "none" and allow:
             reasons.append("network-none-must-have-empty-allowlist")
@@ -219,13 +267,16 @@ def validate_profile_data(profile: Mapping[str, object], *, for_run: bool) -> li
         reasons.append("archive-limit-must-be-positive-integer")
 
     if for_run:
+        if not input_identities:
+            reasons.append("input-identities-required-for-run")
+        reasons.extend(validate_executor(profile))
         runtime = profile.get("runtime")
         if not isinstance(runtime, dict):
             reasons.append("runtime-must-be-a-mapping")
         else:
             runtime_mapping = cast(dict[str, object], runtime)
             image = runtime_mapping.get("image")
-            if not isinstance(image, str) or not _DIGEST_IMAGE_RE.fullmatch(image):
+            if not isinstance(image, str) or not _IMMUTABLE_IMAGE_RE.fullmatch(image):
                 reasons.append("runtime-image-must-be-immutable-digest")
             relay_image = runtime_mapping.get("relay_image")
             if (
@@ -233,7 +284,7 @@ def validate_profile_data(profile: Mapping[str, object], *, for_run: bool) -> li
                 and cast(dict[str, object], network).get("mode") == "restricted"
                 and (
                     not isinstance(relay_image, str)
-                    or not _DIGEST_IMAGE_RE.fullmatch(relay_image)
+                    or not _IMMUTABLE_IMAGE_RE.fullmatch(relay_image)
                 )
             ):
                 reasons.append("relay-image-must-be-immutable-digest")
@@ -368,10 +419,14 @@ def handle_relay_client(client: socket.socket, allow: frozenset[str]) -> None:
             client.settimeout(None)
             upstream.settimeout(None)
             outgoing = threading.Thread(
-                target=relay_one_way, args=(client, upstream), daemon=True
+                target=relay_one_way,
+                args=(client, upstream),
+                daemon=True,
             )
             incoming = threading.Thread(
-                target=relay_one_way, args=(upstream, client), daemon=True
+                target=relay_one_way,
+                args=(upstream, client),
+                daemon=True,
             )
             outgoing.start()
             incoming.start()
@@ -399,7 +454,9 @@ def relay_server(listen: str, port: int, allow: Sequence[str]) -> int:
         while True:
             client, _ = server.accept()
             thread = threading.Thread(
-                target=_relay_client_context, args=(client, checked), daemon=True
+                target=_relay_client_context,
+                args=(client, checked),
+                daemon=True,
             )
             thread.start()
 
@@ -454,7 +511,7 @@ def unique_name(prefix: str) -> str:
 
 
 def smoke_script() -> str:
-    return r'''
+    return r"""
 import json
 import os
 import socket
@@ -531,7 +588,7 @@ finally:
     direct.close()
 checks["refuse_undeclared_egress"] = refused_proxy and refused_direct
 print(json.dumps(checks, sort_keys=True))
-'''
+"""
 
 
 def target_script() -> str:
@@ -598,15 +655,39 @@ def run_smoke_oci(image: str, relay_image: str) -> dict[str, object]:
         docker_checked("network", "create", "--internal", internal)
         docker_checked("network", "create", external)
         docker_checked(
-            "run", "-d", "--name", target, "--network", external,
-            "--network-alias", "target", "--entrypoint", "python", image,
-            "-c", target_script(),
+            "run",
+            "-d",
+            "--name",
+            target,
+            "--network",
+            external,
+            "--network-alias",
+            "target",
+            "--entrypoint",
+            "python",
+            image,
+            "-c",
+            target_script(),
         )
         wait_for_log(target, "READY")
         docker_checked(
-            "run", "-d", "--name", relay, "--network", external,
-            "--entrypoint", "python", relay_image, "-m", "tools.experiment_runner",
-            "_relay", "--listen", "0.0.0.0", "--port", "8080", "--allow",
+            "run",
+            "-d",
+            "--name",
+            relay,
+            "--network",
+            external,
+            "--entrypoint",
+            "python",
+            relay_image,
+            "-m",
+            "tools.experiment_runner",
+            "_relay",
+            "--listen",
+            "0.0.0.0",
+            "--port",
+            "8080",
+            "--allow",
             "target:9443",
         )
         wait_for_log(relay, '"event": "READY"')
@@ -632,18 +713,40 @@ def run_smoke_oci(image: str, relay_image: str) -> dict[str, object]:
             env["GNOSTOA_UNRELATED_SECRET_SENTINEL"] = "must-not-be-inherited"
             result = subprocess.run(
                 [
-                    shutil.which("docker") or "docker", "run", "--rm", "--network",
-                    internal, "--read-only", "--cap-drop", "ALL", "--security-opt",
-                    "no-new-privileges", "--user", f"{uid}:{gid}", "--env",
-                    "HOME=/tmp", "--tmpfs",
-                    "/tmp:rw,nosuid,nodev,mode=1777,size=64m", "--mount",
-                    f"type=bind,source={admitted},target=/inputs/0,readonly", "--mount",
-                    f"type=bind,source={project},target=/workspace", "--mount",
-                    f"type=bind,source={evidence},target=/evidence", "--workdir",
-                    "/workspace", "--entrypoint", "python", image,
+                    shutil.which("docker") or "docker",
+                    "run",
+                    "--rm",
+                    "--network",
+                    internal,
+                    "--read-only",
+                    "--cap-drop",
+                    "ALL",
+                    "--security-opt",
+                    "no-new-privileges",
+                    "--user",
+                    f"{uid}:{gid}",
+                    "--env",
+                    "HOME=/tmp",
+                    "--tmpfs",
+                    "/tmp:rw,nosuid,nodev,mode=1777,size=64m",
+                    "--mount",
+                    f"type=bind,source={admitted},target=/inputs/0,readonly",
+                    "--mount",
+                    f"type=bind,source={project},target=/workspace",
+                    "--mount",
+                    f"type=bind,source={evidence},target=/evidence",
+                    "--workdir",
+                    "/workspace",
+                    "--entrypoint",
+                    "python",
+                    image,
                     "/workspace/smoke_probe.py",
                 ],
-                check=False, capture_output=True, text=True, timeout=30, env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                env=env,
             )
             if result.returncode != 0:
                 return failed_smoke("experiment_probe_execution", stderr=result.stderr)
@@ -659,11 +762,16 @@ def run_smoke_oci(image: str, relay_image: str) -> dict[str, object]:
             checks["producer_bound_evidence"] = bool(digest and size > 0)
             failed = sorted(key for key, value in checks.items() if not value)
             mechanical = sum(
-                1 for key in (
-                    "deny_write_to_read_only_input", "deny_outside_write",
-                    "deny_excluded_read", "deny_symlink_escape",
-                    "no_container_control_socket", "refuse_undeclared_egress",
-                ) if checks.get(key)
+                1
+                for key in (
+                    "deny_write_to_read_only_input",
+                    "deny_outside_write",
+                    "deny_excluded_read",
+                    "deny_symlink_escape",
+                    "no_container_control_socket",
+                    "refuse_undeclared_egress",
+                )
+                if checks.get(key)
             )
             return {
                 "schema": SMOKE_SCHEMA,
@@ -691,7 +799,12 @@ def run_smoke_oci(image: str, relay_image: str) -> dict[str, object]:
                     "inputs": [],
                 },
             }
-    except (RunnerError, OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
+    except (
+        RunnerError,
+        OSError,
+        subprocess.TimeoutExpired,
+        json.JSONDecodeError,
+    ) as exc:
         return failed_smoke(f"coordinator_smoke:{type(exc).__name__}:{exc}")
     finally:
         safe_remove_container(relay)
@@ -708,8 +821,11 @@ def parse_input_identity(value: str) -> dict[str, str]:
 
 
 def attest_payload(
-    artifact: Path, producer_id: str, producer_version: str,
-    config_sha256: str, inputs: Sequence[str],
+    artifact: Path,
+    producer_id: str,
+    producer_version: str,
+    config_sha256: str,
+    inputs: Sequence[str],
 ) -> dict[str, object]:
     if not _SHA256_RE.fullmatch(config_sha256):
         raise RunnerError("invalid-config-sha256")
@@ -754,23 +870,27 @@ def command_validate_profile(args: argparse.Namespace) -> int:
         reasons = validate_profile_data(profile, for_run=False)
     except RunnerError as exc:
         reasons = [str(exc)]
-    emit({
-        "schema": VALIDATION_SCHEMA,
-        "status": "VALID" if not reasons else "INVALID",
-        "reasons": reasons,
-    })
+    emit(
+        {
+            "schema": VALIDATION_SCHEMA,
+            "status": "VALID" if not reasons else "INVALID",
+            "reasons": reasons,
+        }
+    )
     return 0 if not reasons else 2
 
 
 def command_probe(args: argparse.Namespace) -> int:
     image = os.environ.get("GNOSTOA_EXPERIMENT_RUNNER_IMAGE")
     result = probe_backend(cast(str, args.backend), image=image)
-    emit({
-        "schema": PROBE_SCHEMA,
-        "status": result.status,
-        "backend": result.backend,
-        "reasons": result.reasons,
-    })
+    emit(
+        {
+            "schema": PROBE_SCHEMA,
+            "status": result.status,
+            "backend": result.backend,
+            "reasons": result.reasons,
+        }
+    )
     return 0
 
 
@@ -795,8 +915,10 @@ def command_smoke(args: argparse.Namespace) -> int:
 def command_attest(args: argparse.Namespace) -> int:
     try:
         payload = attest_payload(
-            Path(cast(str, args.artifact)), cast(str, args.producer_id),
-            cast(str, args.producer_version), cast(str, args.config_sha256),
+            Path(cast(str, args.artifact)),
+            cast(str, args.producer_id),
+            cast(str, args.producer_version),
+            cast(str, args.config_sha256),
             cast(list[str], args.input),
         )
     except (OSError, RunnerError) as exc:
@@ -814,13 +936,15 @@ def command_check_size(args: argparse.Namespace) -> int:
         return 2
     maximum = cast(int, args.max_bytes)
     oversize = observed > maximum
-    emit({
-        "schema": SIZE_SCHEMA,
-        "status": "OVERSIZE" if oversize else "WITHIN_LIMIT",
-        "bytes": observed,
-        "max_bytes": maximum,
-        "measurement": method,
-    })
+    emit(
+        {
+            "schema": SIZE_SCHEMA,
+            "status": "OVERSIZE" if oversize else "WITHIN_LIMIT",
+            "bytes": observed,
+            "max_bytes": maximum,
+            "measurement": method,
+        }
+    )
     return 2 if oversize else 0
 
 
@@ -862,7 +986,9 @@ def profile_paths(
     )
 
 
-def clean_environment_args(profile: Mapping[str, object]) -> tuple[list[str], list[str]]:
+def clean_environment_args(
+    profile: Mapping[str, object],
+) -> tuple[list[str], list[str]]:
     allowed = string_list(
         profile.get("environment_allowlist", []), "environment_allowlist"
     )
@@ -883,7 +1009,8 @@ def clean_environment_args(profile: Mapping[str, object]) -> tuple[list[str], li
 
 
 def create_restricted_network(
-    relay_image: str, allow: Sequence[str]
+    relay_image: str,
+    allow: Sequence[str],
 ) -> tuple[str, str, str]:
     internal = unique_name("gnostoa-run-int")
     external = unique_name("gnostoa-run-ext")
@@ -892,9 +1019,22 @@ def create_restricted_network(
         docker_checked("network", "create", "--internal", internal)
         docker_checked("network", "create", external)
         relay_args = [
-            "run", "-d", "--name", relay, "--network", external,
-            "--entrypoint", "python", relay_image, "-m", "tools.experiment_runner",
-            "_relay", "--listen", "0.0.0.0", "--port", "8080",
+            "run",
+            "-d",
+            "--name",
+            relay,
+            "--network",
+            external,
+            "--entrypoint",
+            "python",
+            relay_image,
+            "-m",
+            "tools.experiment_runner",
+            "_relay",
+            "--listen",
+            "0.0.0.0",
+            "--port",
+            "8080",
         ]
         for target in allow:
             relay_args.extend(["--allow", target])
@@ -909,31 +1049,104 @@ def create_restricted_network(
         raise
 
 
+def run_configuration_digest(
+    profile_path: Path,
+    backend: str,
+    command: Sequence[str],
+) -> str:
+    profile_digest = hashlib.sha256(profile_path.read_bytes()).hexdigest()
+    material = json.dumps(
+        {
+            "backend": backend,
+            "command": list(command),
+            "profile_sha256": profile_digest,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(material).hexdigest()
+
+
+def executor_provenance(profile: Mapping[str, object]) -> dict[str, object]:
+    executor = profile.get("executor")
+    if not isinstance(executor, dict):
+        raise RunnerError("executor-must-be-a-mapping")
+    return dict(cast(dict[str, object], executor))
+
+
+def stream_container_logs(container: str, output: Path) -> None:
+    docker = shutil.which("docker")
+    if docker is None:
+        raise RunnerError("docker-cli-unavailable")
+    with output.open("xb") as target:
+        result = subprocess.run(
+            [docker, "logs", container],
+            check=False,
+            stdout=target,
+            stderr=subprocess.STDOUT,
+            timeout=30,
+        )
+    if result.returncode != 0:
+        raise RunnerError("relay-log-capture-failed")
+
+
+def applied_control_count(
+    read_roots: Sequence[str],
+    temporary_roots: Sequence[str],
+    network_mode: str,
+) -> int:
+    base_controls = 6
+    mount_controls = len(read_roots) + len(temporary_roots) + 2
+    network_controls = 2 if network_mode == "restricted" else 1
+    return base_controls + mount_controls + network_controls
+
+
 def run_profile_command(
-    profile_path: Path, backend: str, command: Sequence[str]
+    profile_path: Path,
+    backend: str,
+    command: Sequence[str],
 ) -> tuple[int, dict[str, object]]:
     profile = load_profile(profile_path)
     reasons = validate_profile_data(profile, for_run=True)
     if reasons:
-        return 2, {"schema": RUN_SCHEMA, "status": "BLOCKED", "reasons": reasons}
+        return 2, {
+            "schema": RUN_SCHEMA,
+            "status": "BLOCKED",
+            "reasons": reasons,
+        }
     if not command:
-        return 2, {"schema": RUN_SCHEMA, "status": "BLOCKED", "reasons": ["empty-command"]}
+        return 2, {
+            "schema": RUN_SCHEMA,
+            "status": "BLOCKED",
+            "reasons": ["empty-command"],
+        }
+
     image, relay_image = profile_runtime(profile)
     probe = probe_backend(backend, image=image)
     if probe.status != "AVAILABLE" or probe.backend != "oci":
         return 0, {
-            "schema": RUN_SCHEMA, "status": "BLOCKED", "backend": None,
+            "schema": RUN_SCHEMA,
+            "status": "BLOCKED",
+            "backend": None,
             "reasons": probe.reasons,
         }
-    read_roots, project_text, evidence_text, temporary_roots, _ = profile_paths(profile)
+
+    read_roots, project_text, evidence_text, temporary_roots, _ = profile_paths(
+        profile
+    )
     project = Path(project_text)
     evidence = Path(evidence_text)
     evidence.mkdir(parents=True, exist_ok=True)
     stdout_path = evidence / "run-stdout.log"
     stderr_path = evidence / "run-stderr.log"
+    relay_log_path = evidence / "run-network.jsonl"
     result_path = evidence / "run-result.json"
-    if any(path.exists() for path in (stdout_path, stderr_path, result_path)):
+    paths_that_must_not_exist = [stdout_path, stderr_path, result_path]
+    if profile_network(profile)[0] == "restricted":
+        paths_that_must_not_exist.append(relay_log_path)
+    if any(path.exists() for path in paths_that_must_not_exist):
         raise RunnerError("evidence-output-already-exists")
+
     mode, allow = profile_network(profile)
     internal = ""
     external = ""
@@ -945,14 +1158,20 @@ def run_profile_command(
             raise RunnerError("relay-image-missing")
         internal, external, relay = create_restricted_network(relay_image, allow)
         network_args = [
-            "--network", internal,
-            "--env", "HTTP_PROXY=http://relay:8080",
-            "--env", "HTTPS_PROXY=http://relay:8080",
-            "--env", "ALL_PROXY=http://relay:8080",
-            "--env", "NO_PROXY=",
+            "--network",
+            internal,
+            "--env",
+            "HTTP_PROXY=http://relay:8080",
+            "--env",
+            "HTTPS_PROXY=http://relay:8080",
+            "--env",
+            "ALL_PROXY=http://relay:8080",
+            "--env",
+            "NO_PROXY=",
         ]
     else:
         raise RunnerError("unsupported-network-mode")
+
     try:
         env_args, admitted_env_names = clean_environment_args(profile)
         uid = os.getuid() if hasattr(os, "getuid") else 10001
@@ -961,66 +1180,125 @@ def run_profile_command(
         if docker is None:
             raise RunnerError("docker-cli-unavailable")
         argv = [
-            docker, "run", "--rm", "--read-only", "--cap-drop", "ALL",
-            "--security-opt", "no-new-privileges", "--user", f"{uid}:{gid}",
-            "--env", "HOME=/tmp", "--tmpfs",
-            "/tmp:rw,nosuid,nodev,mode=1777,size=256m", *network_args, *env_args,
+            docker,
+            "run",
+            "--rm",
+            "--read-only",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges",
+            "--user",
+            f"{uid}:{gid}",
+            "--env",
+            "HOME=/tmp",
+            "--tmpfs",
+            "/tmp:rw,nosuid,nodev,mode=1777,size=256m",
+            *network_args,
+            *env_args,
         ]
         for index, root in enumerate(read_roots):
-            argv.extend([
-                "--mount", f"type=bind,source={root},target=/inputs/{index},readonly"
-            ])
+            argv.extend(
+                [
+                    "--mount",
+                    f"type=bind,source={root},target=/inputs/{index},readonly",
+                ]
+            )
         argv.extend(["--mount", f"type=bind,source={project},target=/workspace"])
         argv.extend(["--mount", f"type=bind,source={evidence},target=/evidence"])
         for index, root in enumerate(temporary_roots):
-            argv.extend(["--mount", f"type=bind,source={root},target=/scratch/{index}"])
+            argv.extend(
+                ["--mount", f"type=bind,source={root},target=/scratch/{index}"]
+            )
         argv.extend(["--workdir", "/workspace", image, *command])
-        with stdout_path.open("xb") as stdout_file, stderr_path.open("xb") as stderr_file:
+
+        with (
+            stdout_path.open("xb") as stdout_file,
+            stderr_path.open("xb") as stderr_file,
+        ):
             completed = subprocess.run(
-                argv, check=False, stdout=stdout_file, stderr=stderr_file,
+                argv,
+                check=False,
+                stdout=stdout_file,
+                stderr=stderr_file,
                 timeout=60 * 60,
             )
-        config_digest = hashlib.sha256(profile_path.read_bytes()).hexdigest()
+
+        if relay:
+            stream_container_logs(relay, relay_log_path)
+
+        config_digest = run_configuration_digest(profile_path, backend, command)
+        input_identities = string_list(
+            profile.get("input_identities", []), "input_identities"
+        )
         stdout_attestation = attest_payload(
-            stdout_path, "gnostoa-experiment-runner", "1", config_digest, []
+            stdout_path,
+            "gnostoa-experiment-runner",
+            "1",
+            config_digest,
+            input_identities,
         )
         stderr_attestation = attest_payload(
-            stderr_path, "gnostoa-experiment-runner", "1", config_digest, []
+            stderr_path,
+            "gnostoa-experiment-runner",
+            "1",
+            config_digest,
+            input_identities,
         )
+        network_attestation: dict[str, object] | None = None
+        if relay:
+            network_attestation = attest_payload(
+                relay_log_path,
+                "gnostoa-experiment-runner-relay",
+                "1",
+                config_digest,
+                input_identities,
+            )
+
         archive_limit = profile.get("archive_limit_bytes")
-        size_state: dict[str, object] | None = None
+        workspace_size_observation: dict[str, object] | None = None
         if isinstance(archive_limit, int) and not isinstance(archive_limit, bool):
             observed, method = measured_path_size(project)
-            size_state = {
-                "bytes": observed, "max_bytes": archive_limit,
+            workspace_size_observation = {
+                "bytes": observed,
+                "configured_archive_limit_bytes": archive_limit,
                 "measurement": method,
-                "status": "OVERSIZE" if observed > archive_limit else "WITHIN_LIMIT",
+                "note": "workspace observation is not an archive-size substitute",
             }
-        size_oversize = bool(
-            size_state is not None and size_state.get("status") == "OVERSIZE"
-        )
-        runner_exit = 2 if size_oversize else completed.returncode
+
         payload: dict[str, object] = {
             "schema": RUN_SCHEMA,
-            "status": "PASS" if runner_exit == 0 else "FAIL",
+            "status": "PASS" if completed.returncode == 0 else "FAIL",
             "backend": "oci",
             "exit_code": completed.returncode,
             "network_mode": mode,
+            "command_argv": list(command),
+            "executor": executor_provenance(profile),
+            "run_config_sha256": config_digest,
+            "input_identities": [
+                parse_input_identity(value) for value in input_identities
+            ],
             "admitted_environment_names": admitted_env_names,
             "stdout": stdout_attestation,
             "stderr": stderr_attestation,
-            "size_guard": size_state,
+            "network_evidence": network_attestation,
+            "workspace_size_observation": workspace_size_observation,
             "counters": {
                 "semantic_owner_interventions": 0,
-                "mechanical_boundary_controls": 0,
+                "mechanical_boundary_controls": applied_control_count(
+                    read_roots,
+                    temporary_roots,
+                    mode,
+                ),
             },
         }
-        encoded = json.dumps(
-            payload, sort_keys=True, separators=(",", ":")
-        ).encode("utf-8") + b"\n"
+        encoded = (
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            + b"\n"
+        )
         with result_path.open("xb") as result_file:
             result_file.write(encoded)
-        return runner_exit, payload
+        return completed.returncode, payload
     finally:
         if relay:
             safe_remove_container(relay)
@@ -1036,14 +1314,18 @@ def command_run(args: argparse.Namespace) -> int:
         command = command[1:]
     try:
         exit_code, payload = run_profile_command(
-            Path(cast(str, args.profile)), cast(str, args.backend), command
+            Path(cast(str, args.profile)),
+            cast(str, args.backend),
+            command,
         )
     except (OSError, RunnerError, subprocess.TimeoutExpired) as exc:
-        emit({
-            "schema": RUN_SCHEMA,
-            "status": "BLOCKED",
-            "reasons": [f"{type(exc).__name__}:{exc}"],
-        })
+        emit(
+            {
+                "schema": RUN_SCHEMA,
+                "status": "BLOCKED",
+                "reasons": [f"{type(exc).__name__}:{exc}"],
+            }
+        )
         return 2
     emit(payload)
     return exit_code
@@ -1051,23 +1333,41 @@ def command_run(args: argparse.Namespace) -> int:
 
 def command_relay(args: argparse.Namespace) -> int:
     return relay_server(
-        cast(str, args.listen), cast(int, args.port), cast(list[str], args.allow)
+        cast(str, args.listen),
+        cast(int, args.port),
+        cast(list[str], args.allow),
     )
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="experiment_runner.py")
     subparsers = parser.add_subparsers(dest="command_name", required=True)
+
     validate = subparsers.add_parser("validate-profile")
     validate.add_argument("--profile", required=True)
     validate.set_defaults(handler=command_validate_profile)
+
     probe = subparsers.add_parser("probe")
-    probe.add_argument("--backend", choices=("auto", "oci", "bwrap"), default="auto")
+    probe.add_argument(
+        "--backend",
+        choices=("auto", "oci", "bwrap"),
+        default="auto",
+    )
     probe.set_defaults(handler=command_probe)
+
     smoke = subparsers.add_parser("smoke")
-    smoke.add_argument("--backend", choices=("auto", "oci", "bwrap"), default="auto")
-    smoke.add_argument("--network", choices=("none", "restricted"), default="restricted")
+    smoke.add_argument(
+        "--backend",
+        choices=("auto", "oci", "bwrap"),
+        default="auto",
+    )
+    smoke.add_argument(
+        "--network",
+        choices=("none", "restricted"),
+        default="restricted",
+    )
     smoke.set_defaults(handler=command_smoke)
+
     attest = subparsers.add_parser("attest")
     attest.add_argument("--artifact", required=True)
     attest.add_argument("--producer-id", required=True)
@@ -1075,15 +1375,22 @@ def build_parser() -> argparse.ArgumentParser:
     attest.add_argument("--config-sha256", required=True)
     attest.add_argument("--input", action="append", default=[])
     attest.set_defaults(handler=command_attest)
+
     size = subparsers.add_parser("check-size")
     size.add_argument("--path", required=True)
     size.add_argument("--max-bytes", required=True, type=int)
     size.set_defaults(handler=command_check_size)
+
     run = subparsers.add_parser("run")
     run.add_argument("--profile", required=True)
-    run.add_argument("--backend", choices=("auto", "oci", "bwrap"), default="auto")
+    run.add_argument(
+        "--backend",
+        choices=("auto", "oci", "bwrap"),
+        default="auto",
+    )
     run.add_argument("command", nargs=argparse.REMAINDER)
     run.set_defaults(handler=command_run)
+
     relay = subparsers.add_parser("_relay")
     relay.add_argument("--listen", default="0.0.0.0")
     relay.add_argument("--port", type=int, default=8080)
