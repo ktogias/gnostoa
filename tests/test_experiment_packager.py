@@ -112,7 +112,9 @@ class ExperimentPackagerContractTests(unittest.TestCase):
                 member = archive.getmember("data-link")
                 self.assertTrue(member.issym())
                 self.assertEqual("nested/data.txt", member.linkname)
-                self.assertEqual(b"payload\n", archive.extractfile("nested/data.txt").read())
+                self.assertEqual(
+                    b"payload\n", archive.extractfile("nested/data.txt").read()
+                )
 
     def test_packager_rejects_output_inside_source_root(self) -> None:
         self.require_packager()
@@ -128,7 +130,9 @@ class ExperimentPackagerContractTests(unittest.TestCase):
             self.assertIn("output-inside-source-root", payload["reasons"])
             self.assertFalse(output.exists())
 
-    def test_packager_removes_partial_output_when_archive_limit_is_exceeded(self) -> None:
+    def test_packager_removes_partial_output_when_archive_limit_is_exceeded(
+        self,
+    ) -> None:
         self.require_packager()
         with tempfile.TemporaryDirectory(prefix="gnostoa-packager-red-") as raw:
             root = Path(raw)
@@ -163,16 +167,10 @@ class ExperimentPackagerContractTests(unittest.TestCase):
                 hashlib.sha256(output.read_bytes()).hexdigest(), payload["sha256"]
             )
             self.assertEqual(output.stat().st_size, payload["bytes"])
-            self.assertEqual(
-                "gnostoa-experiment-packager", payload["producer"]["id"]
-            )
+            self.assertEqual("gnostoa-experiment-packager", payload["producer"]["id"])
             self.assertEqual("1", payload["producer"]["version"])
-            self.assertRegex(
-                payload["producer"]["config_sha256"], r"^[a-f0-9]{64}$"
-            )
-            self.assertEqual(
-                [{"id": "fixture", "sha256": "a" * 64}], payload["inputs"]
-            )
+            self.assertRegex(payload["producer"]["config_sha256"], r"^[a-f0-9]{64}$")
+            self.assertEqual([{"id": "fixture", "sha256": "a" * 64}], payload["inputs"])
 
 
 if __name__ == "__main__":
