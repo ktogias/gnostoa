@@ -54,7 +54,8 @@ run --profile PROFILE --backend auto|oci|bwrap -- COMMAND ...
 
 A run profile is local Gnostoa-self input with schema
 `gnostoa-experiment-runner-profile/v1`. It declares absolute, already-created
-host paths and immutable runtime identities:
+host paths, input identities, executor/configuration provenance and immutable
+runtime identities:
 
 ```yaml
 schema: gnostoa-experiment-runner-profile/v1
@@ -71,6 +72,15 @@ environment_allowlist:
   - LC_ALL
 credential_environment:
   - OPENCODE_API_KEY
+input_identities:
+  - prepared-tree=<64-hex-digest>
+  - frozen-task=<64-hex-digest>
+executor:
+  id: opencode
+  version: "1.18.26"
+  config_sha256: <64-hex-digest>
+  model: opencode/big-pickle
+  small_model: opencode/big-pickle
 network:
   mode: restricted
   allow:
@@ -82,7 +92,10 @@ archive_limit_bytes: 67108864
 ```
 
 The values above are illustrative. The archive limit is a per-run parameter,
-not a universal Gnostoa constant.
+not a universal Gnostoa constant. `input_identities` are stable declared
+identities that every retained run-output digest carries forward. The executor
+mapping records identity/provenance only; the immutable runtime image remains
+the executable authority actually launched by the coordinator.
 
 ## Preconditions
 
@@ -94,15 +107,49 @@ not a universal Gnostoa constant.
    registry pull.
 4. Required credential environment names are explicit. Secret values remain
    outside retained canonical evidence.
-5. `validate-profile` returns `VALID`.
-6. `probe` returns `AVAILABLE` for the selected backend.
-7. The same runner candidate passes the retained `smoke` package on that backend
+5. Every declared run input has a stable `id=sha256` identity and executor
+   provenance includes `id`, `version` and `config_sha256`.
+6. `validate-profile` returns `VALID`.
+7. `probe` returns `AVAILABLE` for the selected backend.
+8. The same runner candidate passes the retained `smoke` package on that backend
    before it is reused for experiment evidence.
 
 A failed capability probe is `BLOCKED`. Never fall back to an unrestricted host
 process and never report a weaker network/filesystem route as equivalent.
 
-## Filesystem boundary
+## Procedure
+
+1. Create a disposable project workspace, a separate evidence directory and any
+   explicitly required temporary/cache directories. Do not reuse the real source
+   checkout as the writable experiment workspace.
+2. Materialize only the exact admitted read-only inputs and calculate the
+   `input_identities` recorded in the profile.
+3. Bind the executor/model configuration and immutable runtime/relay image
+   identities before launch. Do not use mutable image tags for a real run.
+4. Validate the profile. Any invalid path, broad `/` read root, symlink-resolved
+   root, overlap with an excluded surface, malformed egress target or incomplete
+   run identity is a stop.
+5. Probe the required backend. For the current implementation only the
+   coordinator-owned OCI route can become `AVAILABLE`; Bubblewrap remains
+   visible but deliberately `BLOCKED` until separately qualified.
+6. Run the boundary smoke on the exact runner/runtime candidate before reuse.
+   A result other than `PASS` is a stop for that profile/backend claim.
+7. Launch the exact admitted command with `run`. The remainder after `--` is
+   appended as argv to the immutable image's configured entrypoint; it does not
+   replace that entrypoint or create a second unbound executable authority.
+8. Preserve `run-stdout.log`, `run-stderr.log`, `run-result.json` and, for the
+   restricted-network profile, `run-network.jsonl` in the bounded evidence
+   directory. The result binds backend/argv/profile into `run_config_sha256`,
+   retains executor provenance and propagates all declared input identities into
+   the generated output attestations.
+9. If the experiment separately materializes a candidate/archive for sealing,
+   run `check-size` on that exact materialized object before any helper reads the
+   complete payload into memory. Treat `OVERSIZE` as a stop.
+10. Perform the trial-specific post-run identity, dependency and lifecycle
+    checks required by its owning Decision/Plan. The experiment runner does not
+    replace semantic review, oracle execution or accountable-owner disposition.
+
+### Filesystem boundary
 
 For the OCI backend the coordinator launches the experiment with:
 
@@ -120,7 +167,7 @@ whose path resolution crosses a symlink. Disposable Git metadata belongs inside
 the writable project workspace; real host repository metadata is not implicitly
 admitted.
 
-## Network boundary
+### Network boundary
 
 `network.mode: none` uses an isolated no-network container.
 
@@ -139,24 +186,31 @@ proves both an admitted connection and a refused undeclared connection. If the
 executor ignores the proxy or the topology cannot be enforced, the run is
 `BLOCKED` or `FAIL`, not silently widened.
 
-## Evidence and size boundary
+The relay JSONL log is retained and content-addressed as network evidence for a
+real restricted run; it records connection disposition without retaining
+credential values.
+
+### Evidence and size boundary
 
 The coordinator streams command stdout/stderr directly to the evidence root;
 it does not collect unbounded command output in memory. Retained output
-identities include SHA-256, byte count, producer ID/version, producer
-configuration digest and declared input identities.
+identities include SHA-256, byte count, producer ID/version, run-configuration
+digest and declared input identities. `run_config_sha256` binds the profile
+digest, selected backend and exact command argv.
 
-Before any later sealing/materialization helper is called, run `check-size` on
-the already materialized candidate/archive path using the trial's configured
-limit. The size check uses filesystem metadata rather than reading the full file
-into memory. `OVERSIZE` is a stop condition; do not seal first and discover the
-overshoot afterward.
+The run result may retain a metadata-only workspace-size observation when the
+profile declares an archive limit. That observation is **not** an archive-size
+substitute. Before any later sealing/materialization helper is called, run
+`check-size` on the exact materialized candidate/archive path using the trial's
+configured limit. The size check uses filesystem metadata rather than reading
+the full file into memory. `OVERSIZE` is a stop condition; do not seal first and
+discover the overshoot afterward.
 
 The runner's `run` result keeps semantic owner interventions separate from
-mechanical boundary controls. Mechanical denials, capability stops and sandbox
-construction are not semantic owner assistance.
+mechanical boundary controls. Mechanical mount/network/environment controls,
+denials and capability stops are not semantic owner assistance.
 
-## Reuse boundary
+### Reuse boundary
 
 The current implementation qualifies the coordinator-owned OCI route. A native
 Bubblewrap route is visible to capability probing but remains fail-closed as
@@ -166,3 +220,47 @@ binary presence as a qualified fallback.
 Reusing the runner for another experiment requires a new trial-specific profile
 and authority. Passing this runbook's smoke package does not establish semantic
 correctness of an agent, task interpretation or candidate.
+
+## Recovery
+
+- **Invalid profile:** correct only the declaration or prepared disposable
+  surfaces under the owning authority; do not relax validation or add `/` as a
+  broad read root.
+- **Backend `BLOCKED`:** stop the run. Install/qualify a permitted backend under
+  separate authority or move to another already-qualified host. Never degrade to
+  an unrestricted host process.
+- **Boundary smoke `FAIL`:** retain the failed smoke output and investigate the
+  mechanical control. Do not use the backend for experiment evidence until a
+  later exact candidate passes the complete smoke package.
+- **Restricted egress failure:** retain the relay evidence when available. Do not
+  bypass the CONNECT relay, inherit host networking or describe a broader route
+  as equivalent.
+- **Existing evidence output:** treat `evidence-output-already-exists` as a stop;
+  use a fresh evidence directory rather than overwriting retained artifacts.
+- **Oversize candidate/archive:** stop before sealing. Change the admitted
+  candidate boundary or size policy only through an accountable-owner decision;
+  do not hide dependencies inside another unmeasured object.
+- **Host loss:** reconstruct from the frozen profile/input/executor/runtime
+  identities and published evidence. A bare digest whose producer or declared
+  derivation is unknown is not silently reconstructed by inference.
+
+## Verification
+
+For the runner candidate itself, verification is complete only when all of the
+following hold on the same candidate:
+
+1. the unsafe baseline fixtures still demonstrate the pre-runner failure modes;
+2. focused runner contract tests pass on supported Python versions;
+3. Ruff formatting/lint and strict mypy pass for `tools/experiment_runner.py`;
+4. the host-level OCI boundary smoke returns `PASS` with every required check
+   true, including admitted exact egress, refused undeclared egress, excluded
+   read denial, outside-write denial, symlink denial, clean environment and no
+   container-control socket;
+5. normal Gnostoa policy and source verification remain green; and
+6. the final reviewed candidate is the same source head to which those results
+   are bound.
+
+A smoke `PASS` proves only the declared mechanical runner boundary on the tested
+backend/candidate. It does not prove that a model will follow the task correctly,
+that a behavioral map is semantically complete or that another host/runtime has
+the same capability.
