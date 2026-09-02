@@ -32,7 +32,9 @@ class ExperimentRunnerContractTests(unittest.TestCase):
         try:
             value = json.loads(result.stdout)
         except json.JSONDecodeError as exc:
-            self.fail(f"runner stdout must be one JSON object: {exc}: {result.stdout!r}")
+            self.fail(
+                f"runner stdout must be one JSON object: {exc}: {result.stdout!r}"
+            )
         self.assertIsInstance(value, dict)
         return value
 
@@ -73,7 +75,9 @@ class ExperimentRunnerContractTests(unittest.TestCase):
             result = self.invoke("validate-profile", "--profile", str(profile))
             self.assertEqual(2, result.returncode, result.stderr)
             payload = self.parse_json_stdout(result)
-            self.assertEqual("gnostoa-experiment-runner-validation/v1", payload["schema"])
+            self.assertEqual(
+                "gnostoa-experiment-runner-validation/v1", payload["schema"]
+            )
             self.assertEqual("INVALID", payload["status"])
             self.assertIn("broad-read-root-forbidden", payload["reasons"])
 
@@ -167,7 +171,9 @@ class ExperimentRunnerContractTests(unittest.TestCase):
             self.assertEqual(0, result.returncode, result.stderr)
             payload = self.parse_json_stdout(result)
             self.assertEqual("gnostoa-derived-artifact-identity/v1", payload["schema"])
-            self.assertEqual(hashlib.sha256(artifact.read_bytes()).hexdigest(), payload["sha256"])
+            self.assertEqual(
+                hashlib.sha256(artifact.read_bytes()).hexdigest(), payload["sha256"]
+            )
             self.assertEqual(len(artifact.read_bytes()), payload["bytes"])
             self.assertEqual(
                 {
