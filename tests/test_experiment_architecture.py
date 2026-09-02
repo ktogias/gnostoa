@@ -22,7 +22,11 @@ class ExperimentArchitectureContractTests(unittest.TestCase):
             "execution.py",
             "packaging.py",
         }
-        observed = {path.name for path in INTERNAL.glob("*.py")} if INTERNAL.is_dir() else set()
+        observed = (
+            {path.name for path in INTERNAL.glob("*.py")}
+            if INTERNAL.is_dir()
+            else set()
+        )
         self.assertTrue(expected <= observed, (expected, observed))
 
     def test_public_self_clis_are_thin_adapters(self) -> None:
@@ -36,7 +40,9 @@ class ExperimentArchitectureContractTests(unittest.TestCase):
                 definitions = [
                     node.name
                     for node in tree.body
-                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                    if isinstance(
+                        node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+                    )
                 ]
                 self.assertEqual([], definitions, (path, definitions))
 
