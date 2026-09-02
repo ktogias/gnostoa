@@ -1049,13 +1049,15 @@ def create_restricted_network(
 
 def run_configuration_digest(
     profile_path: Path,
-    backend: str,
+    backend_requested: str,
+    backend_resolved: str,
     command: Sequence[str],
 ) -> str:
     profile_digest = hashlib.sha256(profile_path.read_bytes()).hexdigest()
     material = json.dumps(
         {
-            "backend": backend,
+            "backend_requested": backend_requested,
+            "backend_resolved": backend_resolved,
             "command": list(command),
             "profile_sha256": profile_digest,
         },
@@ -1088,6 +1090,24 @@ def stream_container_logs(container: str, output: Path) -> None:
         raise RunnerError("relay-log-capture-failed")
 
 
+def ensure_private_capture_root(
+    capture_root: Path,
+    mounted_roots: Sequence[str],
+) -> None:
+    resolved_capture = capture_root.resolve(strict=True)
+    for root_text in mounted_roots:
+        resolved_root = Path(root_text).resolve(strict=True)
+        if is_same_or_parent(resolved_root, resolved_capture) or is_same_or_parent(
+            resolved_capture, resolved_root
+        ):
+            raise RunnerError("coordinator-capture-overlaps-admitted-surface")
+
+
+def publish_captured_file(source: Path, destination: Path) -> None:
+    with source.open("rb") as captured, destination.open("xb") as retained:
+        shutil.copyfileobj(captured, retained, length=_CHUNK_SIZE)
+
+
 def applied_control_count(
     read_roots: Sequence[str],
     temporary_roots: Sequence[str],
@@ -1110,22 +1130,31 @@ def run_profile_command(
         return 2, {
             "schema": RUN_SCHEMA,
             "status": "BLOCKED",
+            "backend": None,
+            "backend_requested": backend,
+            "backend_resolved": None,
             "reasons": reasons,
         }
     if not command:
         return 2, {
             "schema": RUN_SCHEMA,
             "status": "BLOCKED",
+            "backend": None,
+            "backend_requested": backend,
+            "backend_resolved": None,
             "reasons": ["empty-command"],
         }
 
     image, relay_image = profile_runtime(profile)
     probe = probe_backend(backend, image=image)
-    if probe.status != "AVAILABLE" or probe.backend != "oci":
+    resolved_backend = probe.backend
+    if probe.status != "AVAILABLE" or resolved_backend != "oci":
         return 0, {
             "schema": RUN_SCHEMA,
             "status": "BLOCKED",
             "backend": None,
+            "backend_requested": backend,
+            "backend_resolved": resolved_backend,
             "reasons": probe.reasons,
         }
 
@@ -1206,93 +1235,111 @@ def run_profile_command(
             argv.extend(["--mount", f"type=bind,source={root},target=/scratch/{index}"])
         argv.extend(["--workdir", "/workspace", image, *command])
 
-        with (
-            stdout_path.open("xb") as stdout_file,
-            stderr_path.open("xb") as stderr_file,
-        ):
-            completed = subprocess.run(
-                argv,
-                check=False,
-                stdout=stdout_file,
-                stderr=stderr_file,
-                timeout=60 * 60,
+        mounted_roots = [*read_roots, project_text, evidence_text, *temporary_roots]
+        with tempfile.TemporaryDirectory(prefix="gnostoa-runner-capture-") as raw_capture:
+            capture_root = Path(raw_capture)
+            ensure_private_capture_root(capture_root, mounted_roots)
+            staged_stdout = capture_root / "run-stdout.log"
+            staged_stderr = capture_root / "run-stderr.log"
+            with (
+                staged_stdout.open("xb") as stdout_file,
+                staged_stderr.open("xb") as stderr_file,
+            ):
+                completed = subprocess.run(
+                    argv,
+                    check=False,
+                    stdout=stdout_file,
+                    stderr=stderr_file,
+                    timeout=60 * 60,
+                )
+
+            publish_captured_file(staged_stdout, stdout_path)
+            publish_captured_file(staged_stderr, stderr_path)
+
+            if relay:
+                stream_container_logs(relay, relay_log_path)
+
+            config_digest = run_configuration_digest(
+                profile_path,
+                backend,
+                resolved_backend,
+                command,
             )
-
-        if relay:
-            stream_container_logs(relay, relay_log_path)
-
-        config_digest = run_configuration_digest(profile_path, backend, command)
-        input_identities = string_list(
-            profile.get("input_identities", []), "input_identities"
-        )
-        stdout_attestation = attest_payload(
-            stdout_path,
-            "gnostoa-experiment-runner",
-            "1",
-            config_digest,
-            input_identities,
-        )
-        stderr_attestation = attest_payload(
-            stderr_path,
-            "gnostoa-experiment-runner",
-            "1",
-            config_digest,
-            input_identities,
-        )
-        network_attestation: dict[str, object] | None = None
-        if relay:
-            network_attestation = attest_payload(
-                relay_log_path,
-                "gnostoa-experiment-runner-relay",
+            input_identities = string_list(
+                profile.get("input_identities", []), "input_identities"
+            )
+            stdout_attestation = attest_payload(
+                stdout_path,
+                "gnostoa-experiment-runner",
                 "1",
                 config_digest,
                 input_identities,
             )
+            stderr_attestation = attest_payload(
+                stderr_path,
+                "gnostoa-experiment-runner",
+                "1",
+                config_digest,
+                input_identities,
+            )
+            network_attestation: dict[str, object] | None = None
+            if relay:
+                network_attestation = attest_payload(
+                    relay_log_path,
+                    "gnostoa-experiment-runner-relay",
+                    "1",
+                    config_digest,
+                    input_identities,
+                )
 
-        archive_limit = profile.get("archive_limit_bytes")
-        workspace_size_observation: dict[str, object] | None = None
-        if isinstance(archive_limit, int) and not isinstance(archive_limit, bool):
-            observed, method = measured_path_size(project)
-            workspace_size_observation = {
-                "bytes": observed,
-                "configured_archive_limit_bytes": archive_limit,
-                "measurement": method,
-                "note": "workspace observation is not an archive-size substitute",
+            archive_limit = profile.get("archive_limit_bytes")
+            workspace_size_observation: dict[str, object] | None = None
+            if isinstance(archive_limit, int) and not isinstance(archive_limit, bool):
+                observed, method = measured_path_size(project)
+                workspace_size_observation = {
+                    "bytes": observed,
+                    "configured_archive_limit_bytes": archive_limit,
+                    "measurement": method,
+                    "note": "workspace observation is not an archive-size substitute",
+                }
+
+            payload: dict[str, object] = {
+                "schema": RUN_SCHEMA,
+                "status": "PASS" if completed.returncode == 0 else "FAIL",
+                "backend": resolved_backend,
+                "backend_requested": backend,
+                "backend_resolved": resolved_backend,
+                "exit_code": completed.returncode,
+                "network_mode": mode,
+                "command_argv": list(command),
+                "executor": executor_provenance(profile),
+                "run_config_sha256": config_digest,
+                "input_identities": [
+                    parse_input_identity(value) for value in input_identities
+                ],
+                "admitted_environment_names": admitted_env_names,
+                "stdout": stdout_attestation,
+                "stderr": stderr_attestation,
+                "network_evidence": network_attestation,
+                "workspace_size_observation": workspace_size_observation,
+                "counters": {
+                    "semantic_owner_interventions": 0,
+                    "mechanical_boundary_controls": applied_control_count(
+                        read_roots,
+                        temporary_roots,
+                        mode,
+                    ),
+                },
             }
-
-        payload: dict[str, object] = {
-            "schema": RUN_SCHEMA,
-            "status": "PASS" if completed.returncode == 0 else "FAIL",
-            "backend": "oci",
-            "exit_code": completed.returncode,
-            "network_mode": mode,
-            "command_argv": list(command),
-            "executor": executor_provenance(profile),
-            "run_config_sha256": config_digest,
-            "input_identities": [
-                parse_input_identity(value) for value in input_identities
-            ],
-            "admitted_environment_names": admitted_env_names,
-            "stdout": stdout_attestation,
-            "stderr": stderr_attestation,
-            "network_evidence": network_attestation,
-            "workspace_size_observation": workspace_size_observation,
-            "counters": {
-                "semantic_owner_interventions": 0,
-                "mechanical_boundary_controls": applied_control_count(
-                    read_roots,
-                    temporary_roots,
-                    mode,
-                ),
-            },
-        }
-        encoded = (
-            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-            + b"\n"
-        )
-        with result_path.open("xb") as result_file:
-            result_file.write(encoded)
-        return completed.returncode, payload
+            encoded = (
+                json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
+                    "utf-8"
+                )
+                + b"\n"
+            )
+            with result_path.open("xb") as result_file:
+                result_file.write(encoded)
+            return completed.returncode, payload
     finally:
         if relay:
             safe_remove_container(relay)
@@ -1306,10 +1353,11 @@ def command_run(args: argparse.Namespace) -> int:
     command = cast(list[str], args.command)
     if command and command[0] == "--":
         command = command[1:]
+    requested_backend = cast(str, args.backend)
     try:
         exit_code, payload = run_profile_command(
             Path(cast(str, args.profile)),
-            cast(str, args.backend),
+            requested_backend,
             command,
         )
     except (OSError, RunnerError, subprocess.TimeoutExpired) as exc:
@@ -1317,6 +1365,9 @@ def command_run(args: argparse.Namespace) -> int:
             {
                 "schema": RUN_SCHEMA,
                 "status": "BLOCKED",
+                "backend": None,
+                "backend_requested": requested_backend,
+                "backend_resolved": None,
                 "reasons": [f"{type(exc).__name__}:{exc}"],
             }
         )
