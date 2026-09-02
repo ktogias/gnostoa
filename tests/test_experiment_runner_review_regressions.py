@@ -48,9 +48,7 @@ class ExperimentRunnerReviewRegressionTests(unittest.TestCase):
                 continue
             spec = argv[index + 1]
             fields = dict(
-                field.split("=", 1)
-                for field in spec.split(",")
-                if "=" in field
+                field.split("=", 1) for field in spec.split(",") if "=" in field
             )
             if fields.get("type") != "bind" or "readonly" in spec:
                 continue
@@ -96,7 +94,9 @@ class ExperimentRunnerReviewRegressionTests(unittest.TestCase):
                     "probe_backend",
                     return_value=runner.ProbeResult("AVAILABLE", "oci", []),
                 ),
-                mock.patch.object(runner.shutil, "which", return_value="/usr/bin/docker"),
+                mock.patch.object(
+                    runner.shutil, "which", return_value="/usr/bin/docker"
+                ),
                 mock.patch.object(runner.subprocess, "run", side_effect=fake_run),
             ):
                 exit_code, payload = runner.run_profile_command(
@@ -115,7 +115,9 @@ class ExperimentRunnerReviewRegressionTests(unittest.TestCase):
                 "coordinator evidence identity must bind the bytes captured on its own file descriptor, not a path the untrusted process can replace",
             )
 
-    def test_production_run_retains_requested_and_resolved_backend_identity(self) -> None:
+    def test_production_run_retains_requested_and_resolved_backend_identity(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory(prefix="gnostoa-runner-review-red-") as raw:
             profile_path = self.write_run_profile(Path(raw))
 
@@ -138,7 +140,9 @@ class ExperimentRunnerReviewRegressionTests(unittest.TestCase):
                     "probe_backend",
                     return_value=runner.ProbeResult("AVAILABLE", "oci", []),
                 ),
-                mock.patch.object(runner.shutil, "which", return_value="/usr/bin/docker"),
+                mock.patch.object(
+                    runner.shutil, "which", return_value="/usr/bin/docker"
+                ),
                 mock.patch.object(runner.subprocess, "run", side_effect=fake_run),
             ):
                 exit_code, payload = runner.run_profile_command(
