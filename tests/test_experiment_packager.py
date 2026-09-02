@@ -15,7 +15,9 @@ HANDOFF = ROOT / "tools" / "experiment_handoff.py"
 PACKAGER = ROOT / "tools" / "experiment_packager.py"
 INTERNAL_PACKAGING = ROOT / "tools" / "experiment" / "packaging.py"
 FIXTURE_ID = f"fixture={'a' * 64}"
-GOLDEN_PACKAGE_SHA256 = "63b16ed71e381b7fb2cca2d7a383892bb4dbd84df62eb5fa29ba8be358754b87"
+GOLDEN_PACKAGE_SHA256 = (
+    "63b16ed71e381b7fb2cca2d7a383892bb4dbd84df62eb5fa29ba8be358754b87"
+)
 
 
 class ExperimentPackagerContractTests(unittest.TestCase):
@@ -86,7 +88,9 @@ class ExperimentPackagerContractTests(unittest.TestCase):
             text=True,
         )
 
-    def test_golden_digest_is_stable_across_independent_freezes_and_processes(self) -> None:
+    def test_golden_digest_is_stable_across_independent_freezes_and_processes(
+        self,
+    ) -> None:
         self.assertTrue(HANDOFF.is_file())
         with tempfile.TemporaryDirectory(prefix="gnostoa-packager-red-") as raw:
             root = Path(raw)
@@ -115,7 +119,9 @@ class ExperimentPackagerContractTests(unittest.TestCase):
                 hashlib.sha256(observed[0]).hexdigest(),
             )
 
-    def test_archive_metadata_is_normalized_and_symlink_is_not_dereferenced(self) -> None:
+    def test_archive_metadata_is_normalized_and_symlink_is_not_dereferenced(
+        self,
+    ) -> None:
         self.assertTrue(HANDOFF.is_file())
         with tempfile.TemporaryDirectory(prefix="gnostoa-packager-red-") as raw:
             root = Path(raw)
@@ -172,7 +178,9 @@ class ExperimentPackagerContractTests(unittest.TestCase):
             self.assertEqual("BLOCKED", payload["status"])
             self.assertFalse(output.exists())
 
-    def test_packager_removes_staged_output_when_archive_limit_is_exceeded(self) -> None:
+    def test_packager_removes_staged_output_when_archive_limit_is_exceeded(
+        self,
+    ) -> None:
         self.assertTrue(HANDOFF.is_file())
         with tempfile.TemporaryDirectory(prefix="gnostoa-packager-red-") as raw:
             root = Path(raw)
@@ -188,7 +196,9 @@ class ExperimentPackagerContractTests(unittest.TestCase):
             self.assertEqual("OVERSIZE", payload["status"])
             self.assertFalse(output.exists())
 
-    def test_package_identity_binds_handoff_producer_configuration_and_inputs(self) -> None:
+    def test_package_identity_binds_handoff_producer_configuration_and_inputs(
+        self,
+    ) -> None:
         self.assertTrue(HANDOFF.is_file())
         with tempfile.TemporaryDirectory(prefix="gnostoa-packager-red-") as raw:
             root = Path(raw)
