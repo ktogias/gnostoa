@@ -14,7 +14,9 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "tools" / "experiment_runner.py"
-UNSAFE_BASELINE = ROOT / "tests" / "fixtures" / "experiment-runner" / "unsafe_baseline.py"
+UNSAFE_BASELINE = (
+    ROOT / "tests" / "fixtures" / "experiment-runner" / "unsafe_baseline.py"
+)
 UNSAFE = runpy.run_path(str(UNSAFE_BASELINE))
 
 
