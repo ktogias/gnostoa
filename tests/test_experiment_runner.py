@@ -172,11 +172,8 @@ class ExperimentRunnerContractTests(unittest.TestCase):
         path.write_text(yaml.safe_dump(profile, sort_keys=True), encoding="utf-8")
         return path
 
-    def test_red_runner_entry_point_is_missing(self) -> None:
-        self.assertTrue(
-            RUNNER.is_file(),
-            "RED: #164 has no reusable experiment-runner entry point yet",
-        )
+    def test_runner_entry_point_exists(self) -> None:
+        self.assertTrue(RUNNER.is_file())
 
     def test_profile_rejects_broad_host_root_admission(self) -> None:
         self.require_runner()
@@ -297,6 +294,56 @@ class ExperimentRunnerContractTests(unittest.TestCase):
                 [{"id": "fixture-input", "sha256": input_digest}],
                 payload["inputs"],
             )
+
+    def test_size_guard_rejects_oversize_before_materialization_helper(self) -> None:
+        self.require_runner()
+        with tempfile.TemporaryDirectory(prefix="gnostoa-runner-green-") as raw:
+            artifact = Path(raw) / "candidate.tar"
+            artifact.write_bytes(b"x" * 131_072)
+            result = self.invoke(
+                "check-size",
+                "--path",
+                str(artifact),
+                "--max-bytes",
+                "1024",
+            )
+            self.assertEqual(2, result.returncode, result.stderr)
+            payload = self.parse_json_stdout(result)
+            self.assertEqual("gnostoa-path-size-check/v1", payload["schema"])
+            self.assertEqual("OVERSIZE", payload["status"])
+            self.assertEqual(131_072, payload["bytes"])
+            self.assertEqual(1_024, payload["max_bytes"])
+            self.assertEqual("lstat-size-v1", payload["measurement"])
+
+    def test_run_refuses_mutable_runtime_identity_before_launch(self) -> None:
+        self.require_runner()
+        with tempfile.TemporaryDirectory(prefix="gnostoa-runner-green-") as raw:
+            root = Path(raw)
+            profile_path = self.write_profile(root, read_roots=[])
+            profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+            profile["runtime"] = {
+                "image": "gnostoa-ci:latest",
+                "relay_image": "gnostoa-ci:latest",
+            }
+            profile["archive_limit_bytes"] = 67_108_864
+            profile_path.write_text(
+                yaml.safe_dump(profile, sort_keys=True), encoding="utf-8"
+            )
+            result = self.invoke(
+                "run",
+                "--profile",
+                str(profile_path),
+                "--backend",
+                "oci",
+                "--",
+                "python",
+                "-V",
+            )
+            self.assertEqual(2, result.returncode, result.stderr)
+            payload = self.parse_json_stdout(result)
+            self.assertEqual("BLOCKED", payload["status"])
+            self.assertIn("runtime-image-must-be-immutable-digest", payload["reasons"])
+            self.assertIn("relay-image-must-be-immutable-digest", payload["reasons"])
 
     def test_smoke_separates_semantic_and_mechanical_counts(self) -> None:
         self.require_runner()
