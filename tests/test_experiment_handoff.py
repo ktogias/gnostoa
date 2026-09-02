@@ -66,7 +66,9 @@ class ExperimentHandoffContractTests(unittest.TestCase):
         (source / "link").symlink_to("nested/data.txt")
         return source
 
-    def test_freeze_is_path_neutral_and_independent_from_later_source_mutation(self) -> None:
+    def test_freeze_is_path_neutral_and_independent_from_later_source_mutation(
+        self,
+    ) -> None:
         self.assertTrue(HANDOFF.is_file())
         with tempfile.TemporaryDirectory(prefix="gnostoa-handoff-red-") as raw:
             root = Path(raw)
