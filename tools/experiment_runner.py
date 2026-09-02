@@ -274,7 +274,9 @@ def validate_profile_data(profile: Mapping[str, object], *, for_run: bool) -> li
         else:
             runtime_mapping = cast(dict[str, object], runtime)
             image = runtime_mapping.get("image")
-            if not isinstance(image, str) or not _IMMUTABLE_IMAGE_RE.fullmatch(image):
+            if not isinstance(image, str) or not _IMMUTABLE_IMAGE_RE.fullmatch(
+                cast(str, image)
+            ):
                 reasons.append("runtime-image-must-be-immutable-digest")
             relay_image = runtime_mapping.get("relay_image")
             if (
@@ -282,7 +284,7 @@ def validate_profile_data(profile: Mapping[str, object], *, for_run: bool) -> li
                 and cast(dict[str, object], network).get("mode") == "restricted"
                 and (
                     not isinstance(relay_image, str)
-                    or not _IMMUTABLE_IMAGE_RE.fullmatch(relay_image)
+                    or not _IMMUTABLE_IMAGE_RE.fullmatch(cast(str, relay_image))
                 )
             ):
                 reasons.append("relay-image-must-be-immutable-digest")
