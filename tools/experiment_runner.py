@@ -26,9 +26,7 @@ SIZE_SCHEMA = "gnostoa-path-size-check/v1"
 RUN_SCHEMA = "gnostoa-experiment-runner-result/v1"
 
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
-_IMMUTABLE_IMAGE_RE = re.compile(
-    r"^(?:sha256:[a-f0-9]{64}|.+@sha256:[a-f0-9]{64})$"
-)
+_IMMUTABLE_IMAGE_RE = re.compile(r"^(?:sha256:[a-f0-9]{64}|.+@sha256:[a-f0-9]{64})$")
 _MAX_RELAY_HEADER = 16 * 1024
 _CHUNK_SIZE = 1024 * 1024
 
@@ -1131,9 +1129,7 @@ def run_profile_command(
             "reasons": probe.reasons,
         }
 
-    read_roots, project_text, evidence_text, temporary_roots, _ = profile_paths(
-        profile
-    )
+    read_roots, project_text, evidence_text, temporary_roots, _ = profile_paths(profile)
     project = Path(project_text)
     evidence = Path(evidence_text)
     evidence.mkdir(parents=True, exist_ok=True)
@@ -1207,9 +1203,7 @@ def run_profile_command(
         argv.extend(["--mount", f"type=bind,source={project},target=/workspace"])
         argv.extend(["--mount", f"type=bind,source={evidence},target=/evidence"])
         for index, root in enumerate(temporary_roots):
-            argv.extend(
-                ["--mount", f"type=bind,source={root},target=/scratch/{index}"]
-            )
+            argv.extend(["--mount", f"type=bind,source={root},target=/scratch/{index}"])
         argv.extend(["--workdir", "/workspace", image, *command])
 
         with (
