@@ -67,6 +67,7 @@ inherited, copied or loaded by adopting projects.
 - [Make toolkit-lock template placeholders fail closed](decisions/0054-make-toolkit-lock-template-placeholders-fail-closed.md)
 - [Separate runtime-lock declaration, supplied-reference comparison and execution observation](decisions/0055-separate-runtime-lock-declaration-validity-from-image-observation.md)
 - [Run a bounded behavioral-traceability review experiment](decisions/0056-run-a-bounded-behavioral-traceability-review-experiment.md)
+- [Enforce owner-led experiment boundaries with coordinator-owned sandboxes](decisions/0057-enforce-owner-led-experiment-boundaries-with-coordinator-owned-sandboxes.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Require explicit admission for retrospective findings](requirements/retrospective-findings-require-explicit-admission.md)
