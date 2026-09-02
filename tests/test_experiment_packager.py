@@ -9,6 +9,9 @@ import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
+
+from tools import experiment_packager as packager
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGER = ROOT / "tools" / "experiment_packager.py"
@@ -148,6 +151,32 @@ class ExperimentPackagerContractTests(unittest.TestCase):
             self.assertEqual("OVERSIZE", payload["status"])
             self.assertEqual(1_024, payload["max_bytes"])
             self.assertFalse(output.exists())
+
+    def test_failed_publication_never_deletes_foreign_output(self) -> None:
+        self.require_packager()
+        foreign = b"foreign-output-owned-by-another-actor\n"
+        with tempfile.TemporaryDirectory(prefix="gnostoa-packager-race-red-") as raw:
+            root = Path(raw)
+            source = self.write_source(root)
+            output = root / "candidate.tar"
+
+            def collide(staged: object, destination: object) -> None:
+                del staged
+                Path(destination).write_bytes(foreign)
+                raise FileExistsError("publication collision")
+
+            with mock.patch.object(packager.os, "link", side_effect=collide):
+                exit_code, payload = packager.create_package(
+                    source,
+                    output,
+                    1_048_576,
+                    [f"fixture={'a' * 64}"],
+                )
+
+            self.assertEqual(2, exit_code)
+            self.assertEqual("BLOCKED", payload["status"])
+            self.assertTrue(output.is_file())
+            self.assertEqual(foreign, output.read_bytes())
 
     def test_package_identity_binds_producer_configuration_and_inputs(self) -> None:
         self.require_packager()
