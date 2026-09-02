@@ -1236,7 +1236,9 @@ def run_profile_command(
         argv.extend(["--workdir", "/workspace", image, *command])
 
         mounted_roots = [*read_roots, project_text, evidence_text, *temporary_roots]
-        with tempfile.TemporaryDirectory(prefix="gnostoa-runner-capture-") as raw_capture:
+        with tempfile.TemporaryDirectory(
+            prefix="gnostoa-runner-capture-"
+        ) as raw_capture:
             capture_root = Path(raw_capture)
             ensure_private_capture_root(capture_root, mounted_roots)
             staged_stdout = capture_root / "run-stdout.log"
