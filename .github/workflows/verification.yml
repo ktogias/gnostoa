@@ -55,6 +55,26 @@ jobs:
           GNOSTOA_CANDIDATE_REF="${GITHUB_SHA}" \
           GNOSTOA_KIT_VERSION=0.2.0 \
             ./ci/build-runtime --tag "${GNOSTOA_CI_IMAGE}"
+      - name: Run experiment-runner boundary smoke
+        env:
+          GNOSTOA_EXPERIMENT_RUNNER_IMAGE: ${{ env.GNOSTOA_CI_IMAGE }}
+          GNOSTOA_EXPERIMENT_RUNNER_RELAY_IMAGE: ${{ env.GNOSTOA_CI_IMAGE }}
+        run: |
+          python tools/experiment_runner.py smoke \
+            --backend oci \
+            --network restricted \
+            > "${RUNNER_TEMP}/experiment-runner-smoke.json"
+          cat "${RUNNER_TEMP}/experiment-runner-smoke.json"
+          python - "${RUNNER_TEMP}/experiment-runner-smoke.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          assert payload["status"] == "PASS", payload
+          assert payload["all_required_checks_passed"] is True, payload
+          assert all(payload["checks"].values()), payload
+          PY
       - name: Run fast verification
         run: |
           docker run --rm \
@@ -93,6 +113,9 @@ jobs:
         run: |
           python -m ruff format --check tools ci tests
           python -m ruff check tools ci tests
+      - name: Type-check the experiment runner
+        if: matrix.python-version == '3.12'
+        run: python -m mypy tools/experiment_runner.py
       - name: Run the source compatibility suite
         run: ./ci/verify fast
       - name: Run clean installed-artifact adoption smoke
