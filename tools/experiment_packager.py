@@ -116,7 +116,9 @@ def validate_paths(root: Path, output: Path) -> tuple[Path, Path]:
 
 
 def iter_entries(root: Path) -> Iterator[tuple[Path, str, os.stat_result]]:
-    def walk(directory: Path, prefix: str) -> Iterator[tuple[Path, str, os.stat_result]]:
+    def walk(
+        directory: Path, prefix: str
+    ) -> Iterator[tuple[Path, str, os.stat_result]]:
         try:
             with os.scandir(directory) as scan:
                 entries = sorted(scan, key=lambda entry: os.fsencode(entry.name))
