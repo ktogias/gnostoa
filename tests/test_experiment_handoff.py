@@ -208,7 +208,9 @@ class ExperimentHandoffContractTests(unittest.TestCase):
             )
             self.assertFalse((foreign_bundle / "tree").exists())
             self.assertFalse((foreign_bundle / "handoff.json").exists())
-            self.assertFalse((moved_parent / "bundle").exists())
+            retained_owned = moved_parent / "bundle"
+            self.assertTrue(retained_owned.is_dir())
+            self.assertFalse((retained_owned / "handoff.json").exists())
 
 
 if __name__ == "__main__":
