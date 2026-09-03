@@ -16,6 +16,12 @@ sources:
   - id: final-security-code-green
     resource: https://github.com/ktogias/gnostoa/issues/164#issuecomment-5522547836
     title: Final-security repair code-only GREEN
+  - id: evidence-publication-red
+    resource: https://github.com/ktogias/gnostoa/issues/164#issuecomment-5523078440
+    title: Final evidence-publication RED
+  - id: evidence-publication-code-green
+    resource: https://github.com/ktogias/gnostoa/issues/164#issuecomment-5523192829
+    title: Evidence-root namespace repair code-only GREEN
 x-project-knowledge:
   id: kit.runbook.run-bounded-owner-led-experiment
   owners:
@@ -224,17 +230,22 @@ process and never report a weaker backend/network route as equivalent.
    route. Bubblewrap remains deliberately `BLOCKED` until separately qualified.
 6. **Smoke.** Run the exact-candidate boundary smoke. Any status other than
    `PASS` is a stop for that backend/profile claim.
-7. **Run.** Launch the exact admitted command. The coordinator gives the
+7. **Run.** Launch the exact admitted command. Before launch, the coordinator
+   opens and inode-binds the declared evidence root and checks all reserved
+   evidence names relative to that descriptor. The coordinator then gives the
    experiment container a unique name and applies the profile's
    `timeout_seconds`. Normal exit, command failure and timeout all converge on the
    same lifecycle gate: verify that the named executor container is absent,
    using a coordinator `rm -f` followed by an absence check when necessary.
-8. **Stop if executor absence is unproven.** If the coordinator cannot verify
-   absence of the named container, treat the run as `BLOCKED`. Do not publish
-   captured stdout/stderr as completed evidence and do not freeze the candidate.
-9. **Retain run evidence.** Only after executor absence is established, preserve
-   `run-stdout.log`, `run-stderr.log`, `run-result.json` and, for restricted
-   networking, `run-network.jsonl`. Record the SHA-256 identity of
+8. **Stop if executor absence or evidence namespace is unproven.** If the
+   coordinator cannot verify absence of the named container, or if the
+   caller-visible evidence-root path no longer identifies the pre-launch opened
+   directory, treat the run as `BLOCKED`. Do not publish completed run evidence
+   and do not freeze the candidate.
+9. **Retain run evidence.** Only after executor absence and evidence-root identity
+   are established, publish `run-stdout.log`, `run-stderr.log`, `run-result.json`
+   and, for restricted networking, `run-network.jsonl` create-only relative to
+   the retained evidence-root descriptor. Record the SHA-256 identity of
    `run-result.json` as an input to the handoff where it is material to candidate
    derivation.
 10. **Freeze.** Invoke `experiment_handoff.py freeze` on the exact post-run
@@ -311,14 +322,24 @@ return `BLOCKED`/`FAIL`; never inherit host networking and call it equivalent.
 ## Coordinator evidence boundary
 
 Command stdout/stderr are captured first in coordinator-private staging outside
-all experiment-mounted roots. They are published create-only into the evidence
-root only after the named executor container has been proved absent and are then
-attested. This prevents an experiment from unlinking/replacing the capture
-pathname before the coordinator hashes it and prevents a still-running executor
-from racing the post-run transition.
+all experiment-mounted roots. Before the experiment starts, the coordinator
+opens the evidence-root directory without following a symlink, records its inode
+identity and checks the reserved output names relative to that open directory.
+The descriptor remains authoritative across execution, executor reap and
+publication.
 
-A pre-existing reserved evidence name is a fail-closed collision. Use a fresh
-evidence root; do not overwrite retained or foreign output.
+After the named executor container has been proved absent, the caller-visible
+evidence-root pathname must still identify that same opened directory. Reserved
+names are checked again. Stdout, stderr, optional network evidence and the final
+`run-result.json` commit marker are then created create-only/no-follow relative
+to the retained descriptor. The evidence directory is fsynced and its visible
+identity is checked again after the commit marker.
+
+A pre-existing regular file, symlink or other reserved evidence entry is a
+fail-closed collision. Replacement of the evidence-root directory itself is also
+a fail-closed namespace change; the coordinator does not redirect completed
+evidence into the replacement. Use a fresh evidence root; do not overwrite
+retained or foreign output.
 
 Run attestations bind SHA-256, byte count, producer/version, run configuration
 and declared input identities. `run_config_sha256` binds profile bytes, requested
@@ -339,18 +360,24 @@ During `freeze`:
 - canonical member identities are path-neutral and ordered deterministically;
 - `handoff.json` binds tree identity, producer/configuration and declared inputs;
 - the destination bundle is create-only; and
-- after opening the destination parent, creation/cleanup remain descriptor- and
-  inode-owned.
+- after opening the destination parent, creation remains descriptor- and
+  inode-owned until the manifest commit point.
 
 The coordinator records the inode identity of the newly created bundle
-immediately after `mkdir`. Failure cleanup may recurse through the already-open
-bundle descriptor, or reopen the bundle only relative to the retained original
-parent descriptor after confirming that the name still resolves to the recorded
-inode. A same-name foreign replacement is never cleanup authority.
+immediately after `mkdir` and opens it relative to the retained parent
+descriptor. Parent and bundle identities are rechecked before commit. A
+same-name foreign replacement is never treated as the coordinator-created
+bundle.
+
+Failure before `handoff.json` is committed is deliberately non-destructive. An
+already-created partial bundle may remain as diagnostic state; it is not a valid
+handoff because the manifest commit marker is absent. Do not recursively delete
+partial state through a later pathname lookup, and never delete a same-name
+foreign replacement.
 
 If the caller-visible bundle parent is replaced before commit, freeze fails
-closed while cleanup removes only the coordinator-owned bundle from the retained
-old parent. The manifest is written last as the bundle commit marker.
+closed rather than redirecting creation into the replacement namespace. The
+manifest is written last as the bundle commit marker.
 
 `verify` canonicalizes the manifest locator before returning the retained
 `manifest_path`, `bundle_root` and `snapshot_root`, then reparses the manifest and
@@ -376,22 +403,25 @@ allocated in memory to measure it. `check-size` remains useful for other already
 materialized objects but is not a substitute for the packager's own streaming
 limit.
 
-Destination handling is descriptor- and inode-bound:
+Destination handling is descriptor-bound:
 
-- output parent is opened and identified before staging;
-- staging is create-only in that opened directory;
-- the staging inode identity is recorded at creation;
-- the staging file descriptor stays open through stream, fsync and hashing;
-- hashing does not reopen the stage by pathname;
-- before publication the staging name must still resolve to the recorded inode;
-- final publication is a create-only link within the same opened directory;
+- the output parent is opened and identified before staging;
+- qualified Linux staging uses an unnamed `O_TMPFILE`, so no staging pathname
+  exists for another actor to replace;
+- the staging descriptor stays open through stream, fsync and hashing;
+- hashing never reopens staging by pathname;
+- before publication the caller-visible parent must still identify the opened
+  parent inode;
+- final publication is a create-only link from the open staging descriptor into
+  the retained parent;
 - the published inode must equal the staged inode; and
-- rollback/cleanup unlinks a staging or output name only if that name still
-  resolves to the packager-owned inode.
+- after successful create-only publication, later uncertainty does not trigger a
+  destructive rollback by output pathname.
 
-Caller-visible parent replacement, staging-name replacement and foreign-output
-collision therefore fail closed without redirecting publication or deleting a
-foreign path.
+Caller-visible parent replacement and foreign-output collision therefore fail
+closed without redirecting publication or deleting a foreign path. If unnamed
+staging is unavailable, the qualified packaging route is `BLOCKED` rather than
+silently falling back to weaker named staging.
 
 A successful return binds the bytes at that commit point. It is not a promise
 that a hostile root/administrator cannot later rewrite filesystem namespace or
@@ -441,15 +471,19 @@ surface, not proof of byte identity on every possible platform implementation.
   backend/candidate for experiment evidence.
 - **Restricted egress failure:** retain available relay evidence; do not bypass
   the relay or inherit host networking.
-- **Reserved evidence collision:** use a fresh evidence root; never overwrite.
-- **Handoff `BLOCKED`:** discard/retain the incomplete coordinator-owned bundle as
-  diagnostic state per the owning plan; never delete a same-name foreign
-  replacement and never package the live workspace as a workaround.
+- **Reserved evidence collision or evidence-root namespace change:** `BLOCKED`;
+  use a fresh evidence root and never overwrite or redirect into replacement
+  state.
+- **Handoff `BLOCKED`:** retain incomplete coordinator-owned bundle state as
+  diagnostic material when present; absence of `handoff.json` means it is not a
+  handoff. Never delete a same-name foreign replacement and never package the
+  live workspace as a workaround.
 - **Handoff verification failure:** treat the retained subject as invalidated.
 - **Package `OVERSIZE`:** stop. Change candidate boundary or size policy only
   through accountable authority.
-- **Package publication/staging collision or namespace change:** stop; cleanup may
-  unlink only a name still bound to the packager-owned inode.
+- **Unnamed package staging unavailable, package output collision or output-parent
+  namespace change:** stop; do not fall back to named staging, overwrite output
+  or roll back a possibly replaced output name.
 - **Host loss:** reconstruct only from durable profile/input/executor/runtime,
   handoff and package identities. Do not infer a producer for a bare digest.
 
@@ -460,14 +494,16 @@ The #164 capability is review-ready only when the **same exact candidate** passe
 1. unsafe baseline fixtures that still demonstrate the pre-runner failure modes;
 2. architecture tests proving thin CLIs, no private execution monolith and the
    one-way handoff/packaging import graph;
-3. focused runner/evidence-substitution/backend-identity regressions;
+3. focused runner/evidence-substitution/backend-identity regressions, including
+   reserved evidence-name collisions and evidence-root namespace replacement;
 4. final-security regressions for read-only/writable disjointness, mount grammar,
    explicit timeout, named-container reap and non-zero backend `BLOCKED`;
 5. handoff tests for determinism, mutation, symlink no-dereference, create-only
-   publication, parent-namespace replacement and ownership-safe failure cleanup;
+   publication, parent-namespace replacement and non-destructive uncommitted
+   failure state;
 6. package tests for the fixed golden digest, normalized metadata, handoff-only
    input, canonical containment, mutation, oversize, parent replacement,
-   staging replacement and foreign-output replacement/cleanup;
+   unnamed staging and foreign-output replacement/publication behavior;
 7. Python 3.11 and 3.12 source suites;
 8. Ruff and strict mypy for the experiment trust domains;
 9. the OCI host-level boundary smoke with every required check true;
