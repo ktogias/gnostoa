@@ -267,7 +267,9 @@ class ExperimentPackagerContractTests(unittest.TestCase):
             real_link = packaging.os.link
             swapped = False
 
-            def swap_parent(source: object, target: object, *args: object, **kwargs: object) -> object:
+            def swap_parent(
+                source: object, target: object, *args: object, **kwargs: object
+            ) -> object:
                 nonlocal swapped
                 if not swapped:
                     output_parent.rename(moved_parent)
