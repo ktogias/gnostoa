@@ -4,25 +4,21 @@ import argparse
 import hashlib
 import json
 import os
+import secrets
 import stat
 import tarfile
-import tempfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO, cast
 
-from .evidence import (
-    InputIdentity,
-    configuration_digest,
-    producer_record,
-    sha256_file,
-)
+from .evidence import InputIdentity, configuration_digest, producer_record
 from .handoff import HandoffError, VerifiedHandoff, load_verified_handoff
 
 PACKAGE_SCHEMA = "gnostoa-experiment-package/v2"
 PACKAGE_FORMAT = "pax-tar-v1"
 PACKAGE_PRODUCER_ID = "gnostoa-experiment-packager"
 PACKAGE_PRODUCER_VERSION = "2"
+_CHUNK_SIZE = 1024 * 1024
 _O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
 _O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 
@@ -86,6 +82,14 @@ def _emit(payload: Mapping[str, object]) -> None:
     print(json.dumps(dict(payload), sort_keys=True, separators=(",", ":")))
 
 
+def _same_object(left: os.stat_result, right: os.stat_result) -> bool:
+    return (
+        left.st_dev == right.st_dev
+        and left.st_ino == right.st_ino
+        and stat.S_IFMT(left.st_mode) == stat.S_IFMT(right.st_mode)
+    )
+
+
 def _normalized_mode(mode: int) -> int:
     if stat.S_ISDIR(mode):
         return 0o755
@@ -115,10 +119,7 @@ def _relative_parts(value: str) -> tuple[str, ...]:
 
 
 def _open_root(snapshot_root: Path) -> int:
-    flags = os.O_RDONLY | _O_DIRECTORY
-    if _O_NOFOLLOW:
-        flags |= _O_NOFOLLOW
-    return os.open(snapshot_root, flags)
+    return os.open(snapshot_root, os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW)
 
 
 def _open_parent(root_fd: int, relative: str) -> tuple[int, str]:
@@ -126,10 +127,11 @@ def _open_parent(root_fd: int, relative: str) -> tuple[int, str]:
     current = os.dup(root_fd)
     try:
         for part in parts[:-1]:
-            flags = os.O_RDONLY | _O_DIRECTORY
-            if _O_NOFOLLOW:
-                flags |= _O_NOFOLLOW
-            next_fd = os.open(part, flags, dir_fd=current)
+            next_fd = os.open(
+                part,
+                os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW,
+                dir_fd=current,
+            )
             os.close(current)
             current = next_fd
         return current, parts[-1]
@@ -243,10 +245,11 @@ def _add_member(
         raw_bytes = member.get("bytes")
         if not isinstance(raw_digest, str) or not isinstance(raw_bytes, int):
             raise PackageError("handoff-file-identity-invalid")
-        flags = os.O_RDONLY
-        if _O_NOFOLLOW:
-            flags |= _O_NOFOLLOW
-        source_fd = os.open(name, flags, dir_fd=parent_fd)
+        source_fd = os.open(
+            name,
+            os.O_RDONLY | _O_NOFOLLOW,
+            dir_fd=parent_fd,
+        )
         try:
             opened = os.fstat(source_fd)
             if (
@@ -256,7 +259,7 @@ def _add_member(
                 or opened.st_ctime_ns != observed.st_ctime_ns
             ):
                 raise PackageError("snapshot-file-changed-before-read")
-            with os.fdopen(os.dup(source_fd), "rb") as source:
+            with os.fdopen(os.dup(source_fd), "rb", closefd=True) as source:
                 verifying = VerifyingReader(
                     source,
                     expected_sha256=raw_digest,
@@ -297,7 +300,7 @@ def _package_config_digest(max_bytes: int) -> str:
     )
 
 
-def _validated_output(handoff: VerifiedHandoff, output: Path) -> Path:
+def _validated_output(handoff: VerifiedHandoff, output: Path) -> tuple[Path, str]:
     parent_lexical = Path(os.path.abspath(output.parent))
     try:
         parent_resolved = parent_lexical.resolve(strict=True)
@@ -305,25 +308,63 @@ def _validated_output(handoff: VerifiedHandoff, output: Path) -> Path:
         raise PackageError(f"output-parent-unavailable:{exc}") from exc
     if parent_resolved != parent_lexical or not parent_resolved.is_dir():
         raise PackageError("output-parent-must-be-resolved-directory")
+    if not output.name or output.name in {".", ".."} or "/" in output.name:
+        raise PackageError("output-name-invalid")
     output_path = parent_resolved / output.name
-    if output_path.exists() or output_path.is_symlink():
-        raise PackageError("output-already-exists")
     try:
         output_path.relative_to(handoff.bundle_root)
     except ValueError:
         pass
     else:
         raise PackageError("output-inside-handoff-bundle")
-    return output_path
+    return parent_resolved, output.name
 
 
 def _package_inputs(handoff: VerifiedHandoff) -> list[InputIdentity]:
     if any(item.id == "handoff" for item in handoff.inputs):
         raise PackageError("reserved-handoff-input-identity")
-    return [
-        *handoff.inputs,
-        InputIdentity("handoff", handoff.manifest_sha256),
-    ]
+    return [*handoff.inputs, InputIdentity("handoff", handoff.manifest_sha256)]
+
+
+def _assert_visible_parent(
+    parent_path: Path,
+    expected: os.stat_result,
+) -> None:
+    try:
+        observed = os.stat(parent_path, follow_symlinks=False)
+    except OSError as exc:
+        raise PackageError(f"output-parent-namespace-changed:{exc}") from exc
+    if not stat.S_ISDIR(observed.st_mode) or not _same_object(expected, observed):
+        raise PackageError("output-parent-namespace-changed")
+
+
+def _create_staging(parent_fd: int) -> tuple[int, str]:
+    for _ in range(64):
+        name = f".gnostoa-package-{secrets.token_hex(12)}.tmp"
+        try:
+            descriptor = os.open(
+                name,
+                os.O_RDWR | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW,
+                0o600,
+                dir_fd=parent_fd,
+            )
+        except FileExistsError:
+            continue
+        return descriptor, name
+    raise PackageError("cannot-allocate-staging-entry")
+
+
+def _sha256_fd(descriptor: int) -> tuple[str, int]:
+    digest = hashlib.sha256()
+    total = 0
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    while True:
+        chunk = os.read(descriptor, _CHUNK_SIZE)
+        if not chunk:
+            break
+        digest.update(chunk)
+        total += len(chunk)
+    return digest.hexdigest(), total
 
 
 def create_package(
@@ -337,29 +378,37 @@ def create_package(
             "status": "BLOCKED",
             "reasons": ["max-bytes-must-be-positive"],
         }
+
+    parent_fd = -1
+    staging_fd = -1
+    snapshot_fd = -1
+    staging_name = ""
+    output_name = ""
+    published = False
+    committed = False
+    archive: tarfile.TarFile | None = None
     try:
         handoff = load_verified_handoff(handoff_path)
-        output_path = _validated_output(handoff, output)
+        output_parent, output_name = _validated_output(handoff, output)
         inputs = _package_inputs(handoff)
         config_sha256 = _package_config_digest(max_bytes)
-    except (OSError, HandoffError, PackageError) as exc:
-        return 2, {
-            "schema": PACKAGE_SCHEMA,
-            "status": "BLOCKED",
-            "reasons": [f"{type(exc).__name__}:{exc}"],
-        }
 
-    descriptor, staged_name = tempfile.mkstemp(
-        prefix=".gnostoa-package-",
-        suffix=".tmp",
-        dir=output_path.parent,
-    )
-    staged = Path(staged_name)
-    archive: tarfile.TarFile | None = None
-    snapshot_fd = -1
-    try:
+        parent_fd = os.open(
+            output_parent,
+            os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW,
+        )
+        parent_identity = os.fstat(parent_fd)
+        _assert_visible_parent(output_parent, parent_identity)
+        try:
+            os.stat(output_name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            raise PackageError("output-already-exists")
+
+        staging_fd, staging_name = _create_staging(parent_fd)
         snapshot_fd = _open_root(handoff.snapshot_root)
-        with os.fdopen(descriptor, "wb") as raw:
+        with os.fdopen(os.dup(staging_fd), "wb", closefd=True) as raw:
             bounded = BoundedWriter(raw, max_bytes)
             archive = tarfile.open(
                 fileobj=cast(BinaryIO, bounded),
@@ -372,6 +421,7 @@ def create_package(
             archive = None
             bounded.flush()
             os.fsync(raw.fileno())
+        os.fsync(staging_fd)
 
         after = load_verified_handoff(handoff_path)
         if (
@@ -380,14 +430,35 @@ def create_package(
         ):
             raise PackageError("handoff-changed-during-packaging")
 
-        digest, size = sha256_file(staged)
+        digest, size = _sha256_fd(staging_fd)
         if size > max_bytes:
             raise PackageError("archive-size-exceeds-configured-limit")
+
+        _assert_visible_parent(output_parent, parent_identity)
         try:
-            os.link(staged, output_path)
+            os.link(
+                staging_name,
+                output_name,
+                src_dir_fd=parent_fd,
+                dst_dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
         except FileExistsError as exc:
             raise PackageError("output-already-exists") from exc
+        published = True
+        os.fsync(parent_fd)
 
+        _assert_visible_parent(output_parent, parent_identity)
+        staging_identity = os.fstat(staging_fd)
+        output_identity = os.stat(
+            output_name,
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+        if not _same_object(staging_identity, output_identity):
+            raise PackageError("published-output-identity-mismatch")
+
+        committed = True
         return 0, {
             "schema": PACKAGE_SCHEMA,
             "status": "PACKAGED",
@@ -425,10 +496,20 @@ def create_package(
                 pass
         if snapshot_fd >= 0:
             os.close(snapshot_fd)
-        try:
-            staged.unlink()
-        except FileNotFoundError:
-            pass
+        if published and not committed and parent_fd >= 0 and output_name:
+            try:
+                os.unlink(output_name, dir_fd=parent_fd)
+            except FileNotFoundError:
+                pass
+        if staging_fd >= 0:
+            os.close(staging_fd)
+        if parent_fd >= 0 and staging_name:
+            try:
+                os.unlink(staging_name, dir_fd=parent_fd)
+            except FileNotFoundError:
+                pass
+        if parent_fd >= 0:
+            os.close(parent_fd)
 
 
 def build_parser() -> argparse.ArgumentParser:
