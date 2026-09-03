@@ -213,7 +213,9 @@ def _source_members_and_copy(
                 try:
                     source_fd = os.open(name, flags, dir_fd=directory_fd)
                 except OSError as exc:
-                    raise HandoffError(f"cannot-open-source-file:{relative}:{exc}") from exc
+                    raise HandoffError(
+                        f"cannot-open-source-file:{relative}:{exc}"
+                    ) from exc
                 try:
                     opened = os.fstat(source_fd)
                     if not _same_stat_identity(observed, opened):
@@ -298,9 +300,7 @@ def _snapshot_members(snapshot_root: Path) -> list[dict[str, object]]:
             observed = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
             mode = _normalized_mode(observed.st_mode)
             if stat.S_ISDIR(observed.st_mode):
-                members.append(
-                    {"path": relative, "type": "directory", "mode": mode}
-                )
+                members.append({"path": relative, "type": "directory", "mode": mode})
                 flags = os.O_RDONLY | _O_DIRECTORY
                 if _O_NOFOLLOW:
                     flags |= _O_NOFOLLOW
@@ -479,7 +479,9 @@ def _load_manifest(path: Path) -> tuple[dict[str, object], bytes]:
         raise HandoffError("handoff-must-be-resolved-regular-file")
     raw = resolved.read_bytes()
     try:
-        parsed = json.loads(raw.decode("utf-8"), object_pairs_hook=_reject_duplicate_keys)
+        parsed = json.loads(
+            raw.decode("utf-8"), object_pairs_hook=_reject_duplicate_keys
+        )
     except (UnicodeError, json.JSONDecodeError) as exc:
         raise HandoffError(f"handoff-json-invalid:{exc}") from exc
     if not isinstance(parsed, dict):
