@@ -117,7 +117,9 @@ class ExperimentRunnerReviewRegressionTests(unittest.TestCase):
                     "docker_checked",
                     side_effect=docker_checked,
                 ),
-                mock.patch.object(runner.backend, "container_exit_code", return_value=0),
+                mock.patch.object(
+                    runner.backend, "container_exit_code", return_value=0
+                ),
                 mock.patch.object(runner.backend, "ensure_container_absent"),
                 mock.patch.object(runner.subprocess, "run", side_effect=fake_run),
             ):
@@ -172,7 +174,9 @@ class ExperimentRunnerReviewRegressionTests(unittest.TestCase):
                     "docker_checked",
                     return_value=_CONTAINER_ID,
                 ),
-                mock.patch.object(runner.backend, "container_exit_code", return_value=0),
+                mock.patch.object(
+                    runner.backend, "container_exit_code", return_value=0
+                ),
                 mock.patch.object(runner.backend, "ensure_container_absent"),
                 mock.patch.object(runner.subprocess, "run", side_effect=fake_run),
             ):
@@ -239,7 +243,9 @@ class ExperimentRunnerReviewRegressionTests(unittest.TestCase):
                     "docker_checked",
                     return_value=_CONTAINER_ID,
                 ),
-                mock.patch.object(runner.backend, "container_exit_code", return_value=0),
+                mock.patch.object(
+                    runner.backend, "container_exit_code", return_value=0
+                ),
                 mock.patch.object(runner.backend, "ensure_container_absent"),
                 mock.patch.object(
                     runner.backend,

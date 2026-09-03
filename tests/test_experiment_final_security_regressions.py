@@ -154,7 +154,9 @@ class ExperimentFinalSecurityRegressionTests(unittest.TestCase):
                     "docker_checked",
                     return_value=_CONTAINER_ID,
                 ),
-                mock.patch.object(runner.backend, "ensure_container_absent") as ensure_absent,
+                mock.patch.object(
+                    runner.backend, "ensure_container_absent"
+                ) as ensure_absent,
                 mock.patch.object(runner.subprocess, "run", side_effect=timeout_run),
             ):
                 with self.assertRaises(subprocess.TimeoutExpired):
