@@ -247,7 +247,7 @@ def run_smoke_oci(image: str, relay_image: str) -> dict[str, object]:
             uid = os.getuid() if hasattr(os, "getuid") else 10001
             gid = os.getgid() if hasattr(os, "getgid") else 10001
             env = os.environ.copy()
-            env["GNOSTOA_UNRELATED_SECRET_SENTINEL"] = "must-not-be-inherited"
+            env["GNOSTOA_UNRELATED_SECRET_SENTINEL"] = "must-not-be-inherited"  # pragma: allowlist secret -- non-secret clean-environment inheritance sentinel
             probe_id = _created_id(
                 docker_checked(
                     "create",
