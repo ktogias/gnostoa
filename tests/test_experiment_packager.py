@@ -16,7 +16,7 @@ PACKAGER = ROOT / "tools" / "experiment_packager.py"
 INTERNAL_PACKAGING = ROOT / "tools" / "experiment" / "packaging.py"
 FIXTURE_ID = f"fixture={'a' * 64}"
 GOLDEN_PACKAGE_SHA256 = (
-    "63b16ed71e381b7fb2cca2d7a383892bb4dbd84df62eb5fa29ba8be358754b87"
+    "63b16ed71e381b7fb2cca2d7a383892bb4dbd84df62eb5fa29ba8be358754b87"  # pragma: allowlist secret -- deterministic public golden package digest
 )
 
 
