@@ -113,14 +113,16 @@ result needed for the next owner decision. There is no fixed length limit.
    and keep specialized semantics in their owning runbooks.
 9. **Verify the exact candidate.** Inspect the final diff, identify the measured
    subject, run applicable local/runtime checks and record actual results. For an
-   applicable behavior map, use a bounded two-pass reviewer route when the task
-   has material diagnostic ambiguity or comparable high correctness risk:
-   **independent task-to-code pass** first, then **map reconciliation pass**. In
-   the first pass, inspect the exact task and candidate before consuming the
+   applicable behavior map, independently reconcile the behavior map against the
+   exact task, candidate and evidence. When the task has material diagnostic
+   ambiguity or comparable high correctness risk, use a bounded two-pass reviewer
+   route: **independent task-to-code pass** first, then **map reconciliation pass**.
+   In the first pass, inspect the exact task and candidate before consuming the
    executor's final diagnosis/map conclusions and record materially plausible
    causes, affected paths or interpretation risks. In the second pass, compare
    that view with the executor's hypotheses, rejected alternatives, evidence
-   authority/dependencies and final candidate. A different model or fresh context may reduce correlated blind spots but does not establish evidence independence.
+   authority/dependencies and final candidate. A different model or fresh context
+   may reduce correlated blind spots but does not establish evidence independence.
    Reviewer inference remains inference; unresolved task identification remains
    unresolved rather than becoming acceptance. A passing test that preserves
    task-prohibited behavior remains a blocker.
