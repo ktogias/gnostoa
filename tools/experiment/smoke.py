@@ -160,7 +160,7 @@ def failed_smoke(reason: str, *, stderr: str = "") -> dict[str, object]:
 
 
 def _created_id(output: str, label: str) -> str:
-    return require_docker_object_id(output, label=label)
+    return require_docker_object_id(output, label)
 
 
 def run_smoke_oci(image: str, relay_image: str) -> dict[str, object]:
