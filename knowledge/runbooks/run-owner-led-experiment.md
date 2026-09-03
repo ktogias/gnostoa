@@ -28,6 +28,12 @@ sources:
   - id: relay-evidence-green
     resource: https://github.com/ktogias/gnostoa/issues/164#issuecomment-5523430235
     title: Restricted-network evidence completeness repair full GREEN
+  - id: docker-object-ownership-red
+    resource: https://github.com/ktogias/gnostoa/issues/164#issuecomment-5523578087
+    title: Docker control-plane ownership authoritative RED
+  - id: docker-object-ownership-green
+    resource: https://github.com/ktogias/gnostoa/issues/164#issuecomment-5523862673
+    title: Docker control-plane ownership code-only GREEN
 x-project-knowledge:
   id: kit.runbook.run-bounded-owner-led-experiment
   owners:
@@ -62,16 +68,19 @@ Use the components as a sequence, not as interchangeable helpers:
 validate profile / probe backend / boundary smoke
                     |
                     v
-          run named untrusted executor
+       docker create executor -> retain ID
+                    |
+                    v
+        start/attach owned executor ID
                     |
        exit / timeout / failure occurs
                     |
                     v
-       verify or force executor absence
+      inspect/reap/verify absence by ID
                     |
          restricted network only
                     v
-       stop relay / verify Running=false
+       stop relay ID / verify Running=false
                     |
           capture final relay log
                     |
@@ -89,12 +98,12 @@ validate profile / probe backend / boundary smoke
           retain attestation
 ```
 
-Packaging must never read the live mutable experiment workspace. If the named
-executor container has not been proved absent, do not publish completed run
+Packaging must never read the live mutable experiment workspace. If the owned
+executor container ID has not been proved absent, do not publish completed run
 evidence or start `freeze`. For restricted networking, an active or unverifiably
-stopped relay is also a stop: capture final network evidence only after the relay
-has been verified `Running=false`. If `freeze` has not produced a verifiable
-handoff, do not start packaging.
+stopped relay ID is also a stop: capture final network evidence only after the
+relay has been verified `Running=false`. If `freeze` has not produced a
+verifiable handoff, do not start packaging.
 
 ## Coordinator CLI surfaces
 
@@ -119,8 +128,8 @@ check-size --path PATH --max-bytes BYTES
 
 ### Frozen handoff
 
-After the executor has been proved absent and, for restricted mode, the relay has
-been quiesced and its final log retained:
+After the executor ID has been proved absent and, for restricted mode, the relay
+ID has been quiesced and its final log retained:
 
 ```text
 python tools/experiment_handoff.py freeze \
@@ -245,24 +254,28 @@ process and never report a weaker backend/network route as equivalent.
    route. Bubblewrap remains deliberately `BLOCKED` until separately qualified.
 6. **Smoke.** Run the exact-candidate boundary smoke. Any status other than
    `PASS` is a stop for that backend/profile claim.
-7. **Run.** Launch the exact admitted command. Before launch, the coordinator
-   opens and inode-binds the declared evidence root and checks all reserved
-   evidence names relative to that descriptor. The coordinator then gives the
-   experiment container a unique name and applies the profile's
-   `timeout_seconds`. Normal exit, command failure and timeout all converge on the
-   same lifecycle gate: verify that the named executor container is absent,
-   using a coordinator `rm -f` followed by an absence check when necessary.
-8. **Stop if executor absence or evidence namespace is unproven.** If the
-   coordinator cannot verify absence of the named container, or if the
+7. **Create and run the owned executor.** Before untrusted execution, the
+   coordinator opens and inode-binds the declared evidence root and checks all
+   reserved evidence names relative to that descriptor. It then runs `docker
+   create` for the exact sandbox/command and records the full container ID
+   returned by the trusted daemon. Only that returned ID is ownership authority.
+   With the ID acquired, start the executor via `docker start --attach ID` under
+   the profile's `timeout_seconds` and read its terminal exit state from the
+   daemon by ID.
+8. **Stop if executor ownership/absence or evidence namespace is unproven.**
+   Normal exit, command failure, timeout and local Docker-client failure converge
+   on the same gate: reap/inspect only the owned executor ID and verify its
+   absence. If creation failed before an ID was returned, do not attempt cleanup
+   through a generated/intended name. If absence cannot be proved, or if the
    caller-visible evidence-root path no longer identifies the pre-launch opened
    directory, treat the run as `BLOCKED`. Do not publish completed run evidence
    and do not freeze the candidate.
 9. **Quiesce restricted-network evidence producer.** For `network.mode:
-   restricted`, inspect the retained relay container, stop it if still active and
-   verify `Running=false`. Only then capture `docker logs` into coordinator-private
-   staging. If relay state cannot be inspected, stopped or verified, treat the
-   run as `BLOCKED`; do not retain an active-producer log snapshot as completed
-   network evidence.
+   restricted`, use the daemon-returned relay container ID: inspect running state,
+   stop that ID if still active and verify `Running=false`. Only then capture
+   `docker logs` by ID into coordinator-private staging. If relay state cannot be
+   inspected, stopped or verified, treat the run as `BLOCKED`; do not retain an
+   active-producer log snapshot as completed network evidence.
 10. **Retain run evidence.** Only after executor absence, evidence-root identity
     and any required relay quiescence are established, publish `run-stdout.log`,
     `run-stderr.log`, `run-result.json` and, for restricted networking,
@@ -310,16 +323,38 @@ The Docker/container daemon is a **trusted coordinator dependency**. This profil
 is not a claim that containers isolate an experiment from a hostile daemon or
 host administrator.
 
+## Docker object ownership boundary
+
+A generated Docker name is never cleanup authority. Generated names may be used
+only as creation labels or DNS aliases where the Docker topology needs them.
+Destructive lifecycle operations use the full object IDs returned by successful
+coordinator creation.
+
+For a real executor, the coordinator acquires the container ID with `docker
+create` before untrusted execution begins. `start --attach`, exit-state inspect,
+forced reap and absence verification all target that ID. For restricted mode,
+the internal network, external network and relay container are likewise retained
+by daemon-returned IDs. If setup fails part-way, cleanup may target only IDs that
+were actually returned before the failure; a failed creation with no returned ID
+authorizes no guessed-name stop/remove.
+
+The host-level smoke uses the same rule for its internal/external networks,
+target container, relay container and adversarial probe container. This makes the
+ownership invariant part of the behavior tested before reuse, rather than a
+production-only convention.
+
 ## Executor lifecycle boundary
 
 A real run has no hidden default timeout. `timeout_seconds` is an explicit
 positive profile field and part of the run policy.
 
-The experiment container is coordinator-named. A timeout of the local Docker
-client is not treated as proof that the executor stopped. Before any completed
-run evidence is published, the coordinator verifies container absence; if the
-container still exists it is force-removed and absence is checked again. A
-failed, timed-out or unverifiable reap is a mechanical `BLOCKED` condition.
+The executor container is created before it is started, and its daemon-returned
+full ID is retained as the coordinator ownership handle. A timeout of the local
+Docker client is not treated as proof that the executor stopped. Before any
+completed run evidence is published, the coordinator verifies absence by that
+owned ID; if the container still exists it is force-removed by ID and absence is
+checked again. A failed, timed-out or unverifiable reap is a mechanical
+`BLOCKED` condition.
 
 An unavailable requested backend also returns non-zero `BLOCKED`. It must not be
 mistaken for a successful run merely because no experiment process started.
@@ -330,9 +365,11 @@ mistaken for a successful run merely because no experiment process started.
 
 `network.mode: restricted` uses a coordinator-owned topology:
 
-1. the experiment joins an internal-only network;
-2. a trusted CONNECT relay joins that network and a separate external network;
-3. the experiment receives proxy variables naming the relay; and
+1. the experiment joins an internal-only network identified by its owned daemon
+   network ID;
+2. a trusted CONNECT relay joins that network and a separate externally connected
+   network, with both networks retained by daemon IDs;
+3. the experiment receives proxy variables naming the relay's DNS alias; and
 4. the relay admits only exact predeclared `host:port` targets.
 
 The smoke test must prove both admitted configured egress and refused
@@ -340,14 +377,15 @@ undeclared/direct egress. The provider connection is an admitted external
 service, so this is not offline execution.
 
 The relay is a concurrent evidence producer. After executor absence, the
-coordinator inspects its running state, stops it if necessary and verifies
-`Running=false` before retaining `docker logs`. The stopped container remains
-available until log capture completes and is removed only during final cleanup.
-An active relay log snapshot is not a completed network-evidence state.
+coordinator inspects the owned relay ID, stops it if necessary and verifies
+`Running=false` before retaining `docker logs` by that same ID. The stopped
+container remains available until log capture completes and is removed by ID
+only during final cleanup. An active relay log snapshot is not a completed
+network-evidence state.
 
-If the topology, relay policy or relay-quiescence lifecycle cannot be enforced,
-return `BLOCKED`/`FAIL`; never inherit host networking or treat an active relay
-snapshot as equivalent.
+If the topology, relay policy, Docker-object ownership or relay-quiescence
+lifecycle cannot be enforced, return `BLOCKED`/`FAIL`; never inherit host
+networking or treat an active relay snapshot as equivalent.
 
 ## Coordinator evidence boundary
 
@@ -358,14 +396,14 @@ identity and checks the reserved output names relative to that open directory.
 The descriptor remains authoritative across execution, executor reap, relay
 quiescence and publication.
 
-After the named executor container has been proved absent, the caller-visible
+After the owned executor container ID has been proved absent, the caller-visible
 evidence-root pathname must still identify that same opened directory. Reserved
-names are checked again. For restricted networking, the relay must then be
-verified stopped and its logs captured into coordinator-private staging. Stdout,
-stderr, optional network evidence and the final `run-result.json` commit marker
-are then created create-only/no-follow relative to the retained descriptor. The
-evidence directory is fsynced and its visible identity is checked again after
-the commit marker.
+names are checked again. For restricted networking, the owned relay ID must then
+be verified stopped and its logs captured into coordinator-private staging.
+Stdout, stderr, optional network evidence and the final `run-result.json` commit
+marker are then created create-only/no-follow relative to the retained
+descriptor. The evidence directory is fsynced and its visible identity is checked
+again after the commit marker.
 
 A pre-existing regular file, symlink or other reserved evidence entry is a
 fail-closed collision. Replacement of the evidence-root directory itself is also
@@ -495,13 +533,17 @@ surface, not proof of byte identity on every possible platform implementation.
   mount-source syntax or disable path validation.
 - **Backend `BLOCKED`:** stop or move to another already-qualified environment;
   never silently use unrestricted host execution.
-- **Executor timeout:** treat it as a mechanical stop until the named container is
-  proved absent. Do not assume the Docker client timeout killed the executor.
-- **Executor reap/absence cannot be verified:** `BLOCKED`; retain diagnostics but
-  do not publish completed run evidence or freeze the candidate.
-- **Relay state/stop/quiescence cannot be verified:** `BLOCKED`; do not retain an
-  active-producer relay log as completed network evidence. The relay may be
-  removed during cleanup only after any valid stopped-producer log capture.
+- **Docker creation fails before an object ID is returned:** stop. Do not inspect,
+  stop or remove a generated/intended name; no destructive ownership authority
+  was acquired.
+- **Executor timeout:** treat it as a mechanical stop until the owned executor ID
+  is proved absent. Do not assume the Docker client timeout killed the executor.
+- **Executor reap/absence cannot be verified by ID:** `BLOCKED`; retain diagnostics
+  but do not publish completed run evidence or freeze the candidate.
+- **Relay state/stop/quiescence cannot be verified by ID:** `BLOCKED`; do not
+  retain an active-producer relay log as completed network evidence. The relay
+  may be removed during cleanup only by its owned ID after any valid
+  stopped-producer log capture.
 - **Boundary smoke `FAIL`:** retain the smoke result and do not use that exact
   backend/candidate for experiment evidence.
 - **Restricted egress failure:** retain only evidence that satisfies the same
@@ -531,21 +573,25 @@ The #164 capability is review-ready only when the **same exact candidate** passe
    one-way handoff/packaging import graph;
 3. focused runner/evidence-substitution/backend-identity regressions, including
    reserved evidence-name collisions and evidence-root namespace replacement;
-4. restricted-network lifecycle regression proving the relay is stopped and
+4. restricted-network lifecycle regression proving the relay ID is stopped and
    verified `Running=false` before final relay-log retention;
-5. final-security regressions for read-only/writable disjointness, mount grammar,
-   explicit timeout, named-container reap and non-zero backend `BLOCKED`;
-6. handoff tests for determinism, mutation, symlink no-dereference, create-only
+5. Docker object-ownership regressions proving failed creation never cleans up a
+   guessed name, partial creation cleans only returned IDs, topology returns IDs,
+   the executor ID is acquired before start, and smoke uses the same ownership
+   rule;
+6. final-security regressions for read-only/writable disjointness, mount grammar,
+   explicit timeout, owned-ID reap and non-zero backend `BLOCKED`;
+7. handoff tests for determinism, mutation, symlink no-dereference, create-only
    publication, parent-namespace replacement and non-destructive uncommitted
    failure state;
-7. package tests for the fixed golden digest, normalized metadata, handoff-only
+8. package tests for the fixed golden digest, normalized metadata, handoff-only
    input, canonical containment, mutation, oversize, parent replacement,
    unnamed staging and foreign-output replacement/publication behavior;
-8. Python 3.11 and 3.12 source suites;
-9. Ruff and strict mypy for the experiment trust domains;
-10. the OCI host-level boundary smoke with every required check true;
-11. normal Gnostoa `policy`, `fast`, `regression` and `smoke`; and
-12. final exact PR executable-candidate binding.
+9. Python 3.11 and 3.12 source suites;
+10. Ruff and strict mypy for the experiment trust domains;
+11. the OCI host-level boundary smoke with every required check true;
+12. normal Gnostoa `policy`, `fast`, `regression` and `smoke`; and
+13. final exact PR executable-candidate binding.
 
 A mechanical `PASS` proves only the tested Gnostoa-self boundary. It does not
 prove semantic task correctness, model independence, resistance to a hostile
