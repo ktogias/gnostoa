@@ -30,10 +30,15 @@ class ExperimentArchitectureContractTests(unittest.TestCase):
     def test_internal_trust_domain_modules_exist(self) -> None:
         expected = {
             "__init__.py",
+            "backend.py",
+            "capture.py",
             "evidence.py",
-            "handoff.py",
             "execution.py",
+            "handoff.py",
             "packaging.py",
+            "profile.py",
+            "relay.py",
+            "smoke.py",
         }
         observed = (
             {path.name for path in INTERNAL.glob("*.py")}
@@ -41,6 +46,18 @@ class ExperimentArchitectureContractTests(unittest.TestCase):
             else set()
         )
         self.assertTrue(expected <= observed, (expected, observed))
+
+    def test_execution_domain_has_no_private_monolith(self) -> None:
+        private_engine = INTERNAL / "_execution_engine.py"
+        self.assertFalse(private_engine.exists(), private_engine)
+        imports = imported_modules(INTERNAL / "execution.py")
+        self.assertNotIn("._execution_engine", imports)
+
+        regressions = (
+            ROOT / "tests" / "test_experiment_runner_review_regressions.py"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("_execution_engine", regressions)
+        self.assertIn("from tools.experiment import execution as runner", regressions)
 
     def test_public_self_clis_are_thin_adapters(self) -> None:
         expected = (RUNNER_CLI, HANDOFF_CLI, PACKAGER_CLI)
@@ -79,7 +96,6 @@ class ExperimentArchitectureContractTests(unittest.TestCase):
 
     def test_dependency_direction_is_one_way_through_evidence_and_handoff(self) -> None:
         expected = {
-            "execution.py": {".evidence"},
             "handoff.py": {".evidence"},
             "packaging.py": {".evidence", ".handoff"},
         }
@@ -94,14 +110,22 @@ class ExperimentArchitectureContractTests(unittest.TestCase):
         handoff_imports = imported_modules(INTERNAL / "handoff.py")
         forbidden_packaging = {
             ".execution",
-            ".coordinator",
+            ".backend",
+            ".capture",
+            ".profile",
+            ".relay",
+            ".smoke",
             "tools.experiment.execution",
-            "tools.experiment.coordinator",
             "tools.experiment_runner",
         }
         forbidden_handoff = {
             ".execution",
             ".packaging",
+            ".backend",
+            ".capture",
+            ".profile",
+            ".relay",
+            ".smoke",
             "tools.experiment.execution",
             "tools.experiment.packaging",
         }
