@@ -199,6 +199,7 @@ def run_profile_command(
             )
 
             if relay_name:
+                backend.ensure_container_stopped(relay_name)
                 capture.stream_container_logs(relay_name, staged_network)
 
             config_digest = capture.run_configuration_digest(
