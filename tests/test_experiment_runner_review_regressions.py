@@ -9,7 +9,7 @@ from unittest import mock
 
 import yaml
 
-from tools import experiment_runner as runner
+from tools.experiment import _execution_engine as runner
 
 
 class ExperimentRunnerReviewRegressionTests(unittest.TestCase):
