@@ -401,55 +401,6 @@ def _snapshot_members(snapshot_root: Path) -> list[dict[str, object]]:
     return members
 
 
-def _clear_directory_fd(directory_fd: int) -> None:
-    for name in os.listdir(directory_fd):
-        observed = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
-        if stat.S_ISDIR(observed.st_mode):
-            child_fd = os.open(name, _directory_flags(), dir_fd=directory_fd)
-            try:
-                _clear_directory_fd(child_fd)
-            finally:
-                os.close(child_fd)
-            os.rmdir(name, dir_fd=directory_fd)
-        else:
-            os.unlink(name, dir_fd=directory_fd)
-
-
-def _remove_created_bundle(
-    parent_fd: int,
-    bundle_fd: int,
-    bundle_name: str,
-    expected: os.stat_result,
-) -> None:
-    cleanup_fd = bundle_fd
-    close_cleanup_fd = False
-    if cleanup_fd < 0:
-        try:
-            current = os.stat(bundle_name, dir_fd=parent_fd, follow_symlinks=False)
-        except FileNotFoundError:
-            return
-        if not _same_object(expected, current):
-            return
-        cleanup_fd = os.open(bundle_name, _directory_flags(), dir_fd=parent_fd)
-        close_cleanup_fd = True
-        opened = os.fstat(cleanup_fd)
-        if not _same_object(expected, opened):
-            os.close(cleanup_fd)
-            return
-    try:
-        _clear_directory_fd(cleanup_fd)
-    finally:
-        if close_cleanup_fd:
-            os.close(cleanup_fd)
-    try:
-        current = os.stat(bundle_name, dir_fd=parent_fd, follow_symlinks=False)
-    except FileNotFoundError:
-        return
-    if not _same_object(expected, current):
-        return
-    os.rmdir(bundle_name, dir_fd=parent_fd)
-
-
 def _handoff_config_digest() -> str:
     return configuration_digest(
         {
@@ -458,6 +409,7 @@ def _handoff_config_digest() -> str:
             "regular_files": "o-nofollow-fstat-copy-hash-v1",
             "symlinks": "preserve-without-dereference-v1",
             "manifest": "canonical-json-path-neutral-v1",
+            "failure": "retain-uncommitted-bundle-v1",
         }
     )
 
@@ -490,8 +442,6 @@ def freeze_handoff(
     parent_fd = -1
     bundle_fd = -1
     snapshot_fd = -1
-    created = False
-    bundle_identity: os.stat_result | None = None
     try:
         inputs = parse_input_identities(
             input_values,
@@ -516,7 +466,6 @@ def freeze_handoff(
             raise HandoffError("bundle-already-exists")
 
         os.mkdir(bundle.name, 0o700, dir_fd=parent_fd)
-        created = True
         bundle_identity = os.stat(
             bundle.name,
             dir_fd=parent_fd,
@@ -571,19 +520,6 @@ def freeze_handoff(
             "members": len(members),
         }
     except (OSError, EvidenceError, HandoffError) as exc:
-        if created and parent_fd >= 0 and bundle_identity is not None:
-            try:
-                if snapshot_fd >= 0:
-                    os.close(snapshot_fd)
-                    snapshot_fd = -1
-                _remove_created_bundle(
-                    parent_fd,
-                    bundle_fd,
-                    bundle.name,
-                    bundle_identity,
-                )
-            except OSError:
-                pass
         return 2, {
             "schema": HANDOFF_RESULT_SCHEMA,
             "status": "BLOCKED",
