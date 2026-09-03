@@ -534,11 +534,7 @@ def create_package(
                 pass
         if staging_fd >= 0:
             os.close(staging_fd)
-        if (
-            parent_fd >= 0
-            and staging_name
-            and staging_identity is not None
-        ):
+        if parent_fd >= 0 and staging_name and staging_identity is not None:
             try:
                 _unlink_owned_name(parent_fd, staging_name, staging_identity)
             except FileNotFoundError:
