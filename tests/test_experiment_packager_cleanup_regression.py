@@ -8,7 +8,9 @@ from tools.experiment import handoff, packaging
 
 
 class ExperimentPackagerCleanupRegressionTests(unittest.TestCase):
-    def test_existing_output_is_never_replaced_and_no_named_staging_is_left(self) -> None:
+    def test_existing_output_is_never_replaced_and_no_named_staging_is_left(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory(prefix="gnostoa-package-cleanup-red-") as raw:
             root = Path(raw)
             source = root / "source"
@@ -35,7 +37,11 @@ class ExperimentPackagerCleanupRegressionTests(unittest.TestCase):
             self.assertEqual(b"foreign-output\n", output.read_bytes())
             self.assertEqual(
                 [],
-                [path.name for path in root.iterdir() if path.name.startswith(".gnostoa-package-")],
+                [
+                    path.name
+                    for path in root.iterdir()
+                    if path.name.startswith(".gnostoa-package-")
+                ],
             )
 
 
