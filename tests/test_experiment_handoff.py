@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 HANDOFF = ROOT / "tools" / "experiment_handoff.py"
@@ -155,6 +156,59 @@ class ExperimentHandoffContractTests(unittest.TestCase):
             second = self.invoke_freeze(source, bundle)
             self.assertEqual(2, second.returncode)
             self.assertEqual(original, manifest.read_bytes())
+
+    def test_bundle_parent_replacement_cannot_redirect_freeze(self) -> None:
+        from tools.experiment import handoff
+
+        with tempfile.TemporaryDirectory(prefix="gnostoa-handoff-red-") as raw:
+            root = Path(raw)
+            source = self.write_source(root)
+            publish_parent = root / "publish"
+            publish_parent.mkdir()
+            bundle = publish_parent / "bundle"
+            moved_parent = root / "publish-original"
+            real_mkdir = handoff.os.mkdir
+            swapped = False
+
+            def swap_after_bundle(
+                path: object,
+                mode: int = 0o777,
+                *,
+                dir_fd: int | None = None,
+            ) -> None:
+                nonlocal swapped
+                if dir_fd is None:
+                    real_mkdir(path, mode)
+                else:
+                    real_mkdir(path, mode, dir_fd=dir_fd)
+                if not swapped and Path(str(path)).name == "bundle":
+                    publish_parent.rename(moved_parent)
+                    real_mkdir(publish_parent, 0o700)
+                    foreign_bundle = publish_parent / "bundle"
+                    real_mkdir(foreign_bundle, 0o700)
+                    (foreign_bundle / "sentinel.txt").write_text(
+                        "foreign\n", encoding="utf-8"
+                    )
+                    swapped = True
+
+            with mock.patch.object(handoff.os, "mkdir", side_effect=swap_after_bundle):
+                exit_code, payload = handoff.freeze_handoff(
+                    source,
+                    bundle,
+                    [FIXTURE_ID],
+                )
+
+            self.assertTrue(swapped)
+            self.assertEqual(2, exit_code)
+            self.assertEqual("BLOCKED", payload["status"])
+            foreign_bundle = publish_parent / "bundle"
+            self.assertEqual(
+                "foreign\n",
+                (foreign_bundle / "sentinel.txt").read_text(encoding="utf-8"),
+            )
+            self.assertFalse((foreign_bundle / "tree").exists())
+            self.assertFalse((foreign_bundle / "handoff.json").exists())
+            self.assertFalse((moved_parent / "bundle").exists())
 
 
 if __name__ == "__main__":
