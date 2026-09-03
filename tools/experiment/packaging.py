@@ -4,7 +4,6 @@ import argparse
 import hashlib
 import json
 import os
-import secrets
 import stat
 import tarfile
 from collections.abc import Mapping, Sequence
@@ -21,6 +20,7 @@ PACKAGE_PRODUCER_VERSION = "2"
 _CHUNK_SIZE = 1024 * 1024
 _O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
 _O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_O_TMPFILE = getattr(os, "O_TMPFILE", 0)
 
 
 class PackageError(RuntimeError):
@@ -295,7 +295,7 @@ def _package_config_digest(max_bytes: int) -> str:
             "membership": "verified-handoff-only-v1",
             "metadata": "uid-gid-zero-names-empty-mtime-zero-mode-normalized-v1",
             "ordering": "handoff-member-order-v1",
-            "publication": "hardlink-create-only-owned-name-v2",
+            "publication": "otmpfile-procfd-create-only-v1",
         }
     )
 
@@ -338,20 +338,36 @@ def _assert_visible_parent(
         raise PackageError("output-parent-namespace-changed")
 
 
-def _create_staging(parent_fd: int) -> tuple[int, str]:
-    for _ in range(64):
-        name = f".gnostoa-package-{secrets.token_hex(12)}.tmp"
-        try:
-            descriptor = os.open(
-                name,
-                os.O_RDWR | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW,
-                0o600,
-                dir_fd=parent_fd,
-            )
-        except FileExistsError:
-            continue
-        return descriptor, name
-    raise PackageError("cannot-allocate-staging-entry")
+def _create_staging(parent_fd: int) -> int:
+    if _O_TMPFILE == 0:
+        raise PackageError("unnamed-staging-not-supported")
+    try:
+        return os.open(
+            ".",
+            os.O_RDWR | _O_TMPFILE,
+            0o600,
+            dir_fd=parent_fd,
+        )
+    except OSError as exc:
+        raise PackageError(f"unnamed-staging-unavailable:{exc}") from exc
+
+
+def _publish_unnamed(staging_fd: int, parent_fd: int, output_name: str) -> None:
+    proc_fd = Path("/proc/self/fd")
+    if not proc_fd.is_dir():
+        raise PackageError("proc-self-fd-unavailable")
+    source = f"/proc/self/fd/{staging_fd}"
+    try:
+        os.link(
+            source,
+            output_name,
+            dst_dir_fd=parent_fd,
+            follow_symlinks=True,
+        )
+    except FileExistsError as exc:
+        raise PackageError("output-already-exists") from exc
+    except OSError as exc:
+        raise PackageError(f"unnamed-publication-unavailable:{exc}") from exc
 
 
 def _sha256_fd(descriptor: int) -> tuple[str, int]:
@@ -365,28 +381,6 @@ def _sha256_fd(descriptor: int) -> tuple[str, int]:
         digest.update(chunk)
         total += len(chunk)
     return digest.hexdigest(), total
-
-
-def _owned_name_matches(
-    parent_fd: int,
-    name: str,
-    expected: os.stat_result,
-) -> bool:
-    try:
-        observed = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
-    except FileNotFoundError:
-        return False
-    return _same_object(expected, observed)
-
-
-def _unlink_owned_name(
-    parent_fd: int,
-    name: str,
-    expected: os.stat_result,
-) -> None:
-    if not _owned_name_matches(parent_fd, name, expected):
-        return
-    os.unlink(name, dir_fd=parent_fd)
 
 
 def create_package(
@@ -404,11 +398,7 @@ def create_package(
     parent_fd = -1
     staging_fd = -1
     snapshot_fd = -1
-    staging_name = ""
     output_name = ""
-    published = False
-    committed = False
-    staging_identity: os.stat_result | None = None
     archive: tarfile.TarFile | None = None
     try:
         handoff = load_verified_handoff(handoff_path)
@@ -429,7 +419,7 @@ def create_package(
         else:
             raise PackageError("output-already-exists")
 
-        staging_fd, staging_name = _create_staging(parent_fd)
+        staging_fd = _create_staging(parent_fd)
         staging_identity = os.fstat(staging_fd)
         snapshot_fd = _open_root(handoff.snapshot_root)
         with os.fdopen(os.dup(staging_fd), "wb", closefd=True) as raw:
@@ -459,19 +449,7 @@ def create_package(
             raise PackageError("archive-size-exceeds-configured-limit")
 
         _assert_visible_parent(output_parent, parent_identity)
-        if not _owned_name_matches(parent_fd, staging_name, staging_identity):
-            raise PackageError("staging-entry-identity-mismatch")
-        try:
-            os.link(
-                staging_name,
-                output_name,
-                src_dir_fd=parent_fd,
-                dst_dir_fd=parent_fd,
-                follow_symlinks=False,
-            )
-        except FileExistsError as exc:
-            raise PackageError("output-already-exists") from exc
-        published = True
+        _publish_unnamed(staging_fd, parent_fd, output_name)
         os.fsync(parent_fd)
 
         _assert_visible_parent(output_parent, parent_identity)
@@ -483,7 +461,6 @@ def create_package(
         if not _same_object(staging_identity, output_identity):
             raise PackageError("published-output-identity-mismatch")
 
-        committed = True
         return 0, {
             "schema": PACKAGE_SCHEMA,
             "status": "PACKAGED",
@@ -521,24 +498,8 @@ def create_package(
                 pass
         if snapshot_fd >= 0:
             os.close(snapshot_fd)
-        if (
-            published
-            and not committed
-            and parent_fd >= 0
-            and output_name
-            and staging_identity is not None
-        ):
-            try:
-                _unlink_owned_name(parent_fd, output_name, staging_identity)
-            except FileNotFoundError:
-                pass
         if staging_fd >= 0:
             os.close(staging_fd)
-        if parent_fd >= 0 and staging_name and staging_identity is not None:
-            try:
-                _unlink_owned_name(parent_fd, staging_name, staging_identity)
-            except FileNotFoundError:
-                pass
         if parent_fd >= 0:
             os.close(parent_fd)
 
