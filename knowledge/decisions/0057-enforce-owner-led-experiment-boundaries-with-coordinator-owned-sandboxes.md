@@ -37,6 +37,12 @@ sources:
   - id: relay-evidence-green
     resource: https://github.com/ktogias/gnostoa/issues/164#issuecomment-5523430235
     title: Restricted-network evidence completeness repair full GREEN
+  - id: docker-object-ownership-red
+    resource: https://github.com/ktogias/gnostoa/issues/164#issuecomment-5523578087
+    title: Docker control-plane ownership authoritative RED
+  - id: docker-object-ownership-green
+    resource: https://github.com/ktogias/gnostoa/issues/164#issuecomment-5523862673
+    title: Docker control-plane ownership code-only GREEN
 x-project-knowledge:
   id: kit.decision.0057.enforce-owner-led-experiment-boundaries-with-coordinator-owned-sandboxes
   owners:
@@ -83,16 +89,21 @@ RED-before-GREEN review:
   races;
 - a later source-level read-back found that even create-only evidence files were
   insufficient if the experiment could replace the evidence-root directory
-  pathname itself before coordinator publication; and
+  pathname itself before coordinator publication;
 - a final network-evidence read-back found that retaining `docker logs` while the
   restricted CONNECT relay was still running could snapshot an active producer
-  before its terminal connection events had ceased.
+  before its terminal connection events had ceased; and
+- the final effect-boundary read-back found the same ownership mistake one layer
+  lower in the control plane: generated Docker names were still being used as
+  stop/remove/inspect authority even when the coordinator had not proved that
+  the object currently carrying that name was created by this run.
 
 The accountable owner therefore authorized a whiteboard redesign rather than a
 minimal patch to the original monolithic runner. The resulting contract is not
 "one safer script". It is a sequence of separately testable trust domains with a
 frozen handoff between untrusted execution and deterministic packaging, explicit
-lifecycle termination, and descriptor-bound publication authority.
+lifecycle termination, descriptor-bound publication authority and daemon-bound
+container/network object ownership.
 
 This Decision remains Gnostoa-self-only. It does not establish a generic adopter
 sandbox, complete operating-system isolation, or semantic correctness of an
@@ -152,32 +163,41 @@ inside the admitted sandbox and has no authority to create or reconfigure that
 sandbox.
 
 Every real run profile declares an explicit positive `timeout_seconds`. There is
-no hidden universal execution timeout. The coordinator gives the experiment
-container a unique coordinator-owned name. Whether the command exits normally,
-fails, or the Docker client times out, the coordinator must verify that the
-named executor container is absent, reaping it with `rm -f` when necessary. If
-absence cannot be established, the run is `BLOCKED` and coordinator-captured
-stdout/stderr are not published as completed run evidence.
+no hidden universal execution timeout. The coordinator creates the experiment
+container first and treats the full container ID returned by the trusted Docker
+daemon as the ownership handle. Only after that ID has been acquired does the
+coordinator start and attach to the untrusted executor. Normal exit is read back
+from daemon state by that ID. Timeout, local Docker-client failure and exit-state
+uncertainty all converge on the same fail-closed gate: reap and verify absence by
+the owned container ID. If absence cannot be established, the run is `BLOCKED`
+and coordinator-captured stdout/stderr are not published as completed run
+evidence.
+
+A generated Docker name may be used only where Docker requires a creation label
+or DNS alias. It is never destructive ownership authority. A failed creation
+that returned no object ID authorizes no guessed-name cleanup.
 
 An unavailable requested backend likewise returns a non-zero `BLOCKED` run
 outcome; backend unavailability is not a successful no-op.
 
 For a restricted-network run, executor absence is not yet sufficient to publish
 completed network evidence. The coordinator must also stop the retained relay
-container when it is still active and verify `Running=false`. Only then may it
-capture the relay log as a final stopped-producer snapshot. The stopped relay is
-kept until that log has been retained and is removed only in final cleanup.
-Failure to inspect, stop or verify relay quiescence is `BLOCKED`.
+container by its daemon-returned ID when it is still active and verify
+`Running=false` by that ID. Only then may it capture the relay log as a final
+stopped-producer snapshot. The stopped relay is kept until that log has been
+retained and is removed only in final cleanup. Failure to inspect, stop or verify
+relay quiescence is `BLOCKED`.
 
 Only after the relevant producer lifecycle gates are established may the
 lifecycle continue:
 
 ```text
 validate/probe/smoke
-        -> run untrusted executor under explicit timeout
-        -> verify/reap named executor container
-        -> if restricted: stop relay and verify Running=false
-        -> capture final stopped-relay log
+        -> docker create executor -> retain daemon container ID
+        -> docker start --attach owned ID under explicit timeout
+        -> inspect exit state / reap / verify absence by owned ID
+        -> if restricted: stop relay ID and verify Running=false
+        -> capture final stopped-relay log by ID
         -> publish coordinator-captured run evidence
         -> freeze candidate handoff
         -> verify frozen handoff
@@ -229,6 +249,17 @@ its administrator". The claim is that the untrusted experiment process is not
 given daemon/control authority and is mechanically limited to the demonstrated
 namespace/mount/network surface.
 
+The daemon-returned full object ID is the coordinator's destructive lifecycle
+authority for every container or network it successfully creates. Stop, remove,
+inspect, exit-state checks, log reads and network teardown use those owned IDs.
+Generated names may still be supplied at creation for Docker/DNS convenience,
+but a name collision or a failed creation before ID acquisition never authorizes
+cleanup by that name. Restricted-network setup retains internal-network,
+external-network and relay-container IDs as soon as each creation succeeds and
+may clean up only the IDs actually acquired before a later failure. The host
+boundary smoke follows the same rule, including its target, relay and probe
+containers.
+
 Bubblewrap remains visible to capability probing but is deliberately unqualified:
 until its complete behavioral smoke passes under separate evidence, a Bubblewrap
 request returns `BLOCKED` rather than being treated as an equivalent fallback.
@@ -261,9 +292,9 @@ configured egress and refused undeclared/direct egress.
 
 The relay log is evidence produced by a concurrent coordinator component, not a
 static file. Completed network evidence is retained only after the executor is
-absent and the relay has been stopped and verified not running. Capturing logs
-from an active relay is not a final evidence state because later relay events may
-still be emitted.
+absent and the owned relay container has been stopped and verified not running
+by daemon ID. Capturing logs from an active relay is not a final evidence state
+because later relay events may still be emitted.
 
 The model-provider connection is an admitted external dependency. A restricted
 profile is therefore not offline execution. If the required network topology,
@@ -415,18 +446,24 @@ Before reuse, the exact runner/runtime candidate must behaviorally demonstrate:
 11. generated evidence is producer/input-bound;
 12. coordinator capture bytes cannot be substituted through a writable pathname;
 13. evidence-root namespace replacement and reserved-name symlink/collision attempts fail closed;
-14. a real run has an explicit positive timeout and named executor container;
-15. timeout/backend failure is fail-closed and executor absence is verified
-    before evidence publication;
-16. restricted-mode relay quiescence is verified before final network-log capture;
-17. handoff mutation, parent replacement and uncommitted-state handling cannot
+14. a real run has an explicit positive timeout and acquires its exact executor
+    container ID before untrusted execution starts;
+15. timeout/backend failure is fail-closed and executor absence is verified by
+    owned container ID before evidence publication;
+16. restricted-mode relay quiescence is verified by owned relay ID before final
+    network-log capture;
+17. failed or partial Docker object creation cleans up only daemon-returned IDs
+    actually acquired by this coordinator, never guessed/generated names;
+18. the host-level smoke applies the same Docker-ID ownership rule to its target,
+    relay, probe and network objects;
+19. handoff mutation, parent replacement and uncommitted-state handling cannot
     redirect or delete a foreign replacement;
-18. verified handoff canonicalization prevents lexical aliases from defeating
+20. verified handoff canonicalization prevents lexical aliases from defeating
     package-output containment;
-19. package mutation, oversize, parent replacement and foreign-output replacement
+21. package mutation, oversize, parent replacement and foreign-output replacement
     fail closed without deleting foreign state, while staging has no filesystem name;
-20. requested/resolved backend identities remain separately retained; and
-21. the independent golden archive digest remains byte-stable on both supported
+22. requested/resolved backend identities remain separately retained; and
+23. the independent golden archive digest remains byte-stable on both supported
     hosted Python workers.
 
 Capability probing, mechanical smoke and package determinism are separate from
@@ -462,6 +499,8 @@ analogy.
   failure domains and tests.
 - A real experiment cannot inherit a hidden universal timeout; timeout is explicit
   run policy and executor absence is a mechanical lifecycle gate.
+- Docker control-plane lifecycle authority is bound to daemon-returned container
+  and network IDs; generated names are labels/aliases, not cleanup authority.
 - Restricted-network evidence is retained only after the relay producer has been
   stopped and verified quiescent; an active log snapshot is not a completion
   claim.
