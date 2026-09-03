@@ -413,6 +413,7 @@ guardrails:
       - knowledge/requirements/bounded-behavioral-traceability.md
       - knowledge/runbooks/deliver-bounded-self-hosted-slice.md
       - tests/fixtures/behavioral-traceability/blind-replay-v1/manifest.yaml
+      - tests/fixtures/behavioral-traceability/blind-replay-v1/requirement.md
       - tests/fixtures/behavioral-traceability/blind-replay-v1/review-request.md
       - tests/fixtures/behavioral-traceability/blind-replay-v1/bases/base-5e72/src/relocate.py
       - tests/fixtures/behavioral-traceability/blind-replay-v1/bases/base-5e72/tests/test_relocate.py
