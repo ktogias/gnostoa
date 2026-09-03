@@ -98,8 +98,10 @@ def _normalized_mode(mode: int) -> int:
 
 def _relative_parts(value: str) -> tuple[str, ...]:
     path = PurePosixPath(value)
-    if path.is_absolute() or not path.parts or any(
-        part in {"", ".", ".."} for part in path.parts
+    if (
+        path.is_absolute()
+        or not path.parts
+        or any(part in {"", ".", ".."} for part in path.parts)
     ):
         raise PackageError(f"unsafe-member-path:{value}")
     canonical = "/".join(path.parts)
@@ -175,11 +177,7 @@ def _tar_info(member: Mapping[str, object]) -> tarfile.TarInfo:
         info.size = 0
     elif member_type == "file":
         raw_size = member.get("bytes")
-        if (
-            not isinstance(raw_size, int)
-            or isinstance(raw_size, bool)
-            or raw_size < 0
-        ):
+        if not isinstance(raw_size, int) or isinstance(raw_size, bool) or raw_size < 0:
             raise PackageError("handoff-file-size-invalid")
         info.type = tarfile.REGTYPE
         info.size = raw_size
