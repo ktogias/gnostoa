@@ -235,9 +235,15 @@ class ExperimentPackagerContractTests(unittest.TestCase):
             handoff = self.freeze(self.write_source(root), root / "bundle")
             output = root / "candidate.tar"
 
-            def collide(_source: object, target: object) -> None:
-                Path(target).write_bytes(b"foreign-output\n")
-                raise FileExistsError(str(target))
+            def collide(
+                _source: object,
+                _target: object,
+                *args: object,
+                **kwargs: object,
+            ) -> None:
+                del args, kwargs
+                output.write_bytes(b"foreign-output\n")
+                raise FileExistsError(str(output))
 
             with mock.patch.object(packaging.os, "link", side_effect=collide):
                 exit_code, payload = packaging.create_package(
