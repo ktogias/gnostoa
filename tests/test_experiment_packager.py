@@ -191,7 +191,7 @@ class ExperimentPackagerContractTests(unittest.TestCase):
             output = root / "candidate.tar"
 
             result = self.invoke(handoff, output, max_bytes=1_024)
-            self.assertEqual(2, result.returncode)
+            self.assertEqual(2, result.returncode, result.stderr)
             payload = self.parse_stdout(result)
             self.assertEqual("OVERSIZE", payload["status"])
             self.assertFalse(output.exists())
@@ -249,6 +249,55 @@ class ExperimentPackagerContractTests(unittest.TestCase):
             self.assertEqual(2, exit_code)
             self.assertEqual("BLOCKED", payload["status"])
             self.assertEqual(b"foreign-output\n", output.read_bytes())
+
+    @unittest.skipUnless(
+        INTERNAL_PACKAGING.is_file(),
+        "RED retained until internal packaging domain exists",
+    )
+    def test_output_parent_replacement_cannot_redirect_publication(self) -> None:
+        from tools.experiment import packaging
+
+        with tempfile.TemporaryDirectory(prefix="gnostoa-packager-red-") as raw:
+            root = Path(raw)
+            handoff = self.freeze(self.write_source(root), root / "bundle")
+            output_parent = root / "output"
+            output_parent.mkdir()
+            output = output_parent / "candidate.tar"
+            moved_parent = root / "output-original"
+            real_link = packaging.os.link
+            swapped = False
+
+            def swap_parent(source: object, target: object, *args: object, **kwargs: object) -> object:
+                nonlocal swapped
+                if not swapped:
+                    output_parent.rename(moved_parent)
+                    output_parent.mkdir()
+                    (output_parent / "foreign-sentinel.txt").write_text(
+                        "foreign\n", encoding="utf-8"
+                    )
+                    if kwargs.get("src_dir_fd") is None:
+                        source_path = Path(str(source))
+                        if source_path.is_absolute():
+                            source_path.write_bytes(b"forged-staging-bytes\n")
+                    swapped = True
+                return real_link(source, target, *args, **kwargs)
+
+            with mock.patch.object(packaging.os, "link", side_effect=swap_parent):
+                exit_code, payload = packaging.create_package(
+                    handoff,
+                    output,
+                    1_048_576,
+                )
+
+            self.assertTrue(swapped)
+            self.assertEqual(2, exit_code)
+            self.assertEqual("BLOCKED", payload["status"])
+            self.assertEqual(
+                "foreign\n",
+                (output_parent / "foreign-sentinel.txt").read_text(encoding="utf-8"),
+            )
+            self.assertFalse(output.exists())
+            self.assertFalse((moved_parent / "candidate.tar").exists())
 
 
 if __name__ == "__main__":
