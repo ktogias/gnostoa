@@ -755,7 +755,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    handler = cast(object, getattr(args, "handler"))
+    handler = cast(object, args.handler)
     if not callable(handler):
         raise HandoffError("handoff-handler-invalid")
     return cast(int, handler(args))
