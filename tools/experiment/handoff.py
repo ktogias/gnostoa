@@ -545,7 +545,12 @@ def freeze_handoff(
             "members": len(members),
         }
     except (OSError, EvidenceError, HandoffError) as exc:
-        if created and parent_fd >= 0 and bundle_fd >= 0 and bundle_identity is not None:
+        if (
+            created
+            and parent_fd >= 0
+            and bundle_fd >= 0
+            and bundle_identity is not None
+        ):
             try:
                 if snapshot_fd >= 0:
                     os.close(snapshot_fd)
