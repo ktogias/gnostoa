@@ -699,7 +699,7 @@ def load_verified_handoff(path: Path) -> VerifiedHandoff:
         manifest_sha256=sha256_bytes(raw),
         tree_sha256=tree_sha256,
         members=members,
-        inputs=inputs,
+        inputs=tuple(inputs),
     )
 
 
