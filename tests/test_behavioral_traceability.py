@@ -57,15 +57,16 @@ class BehavioralTraceabilityTests(unittest.TestCase):
         self.assertEqual({"path", "sha256"}, set(manifest["review_request"]))
         self.assertEqual({"path", "sha256"}, set(manifest["requirement"]))
         self.assertEqual("review-request.md", manifest["review_request"]["path"])
-        self.assertEqual(
-            "../../../../knowledge/requirements/bounded-behavioral-traceability.md",
-            manifest["requirement"]["path"],
-        )
+        self.assertEqual("requirement.md", manifest["requirement"]["path"])
         bases = manifest["bases"]
         self.assertEqual(2, len(bases))
         self.assertEqual(2, len({base["id"] for base in bases}))
         base_by_id = {base["id"]: base for base in bases}
-        declared_packet_paths = {"manifest.yaml", "review-request.md"}
+        declared_packet_paths = {
+            "manifest.yaml",
+            "review-request.md",
+            manifest["requirement"]["path"],
+        }
         for base in bases:
             self.assertEqual({"id", "tree", "files"}, set(base))
             self.assertRegex(base["id"], r"^base-[0-9a-f]{4}$")
@@ -111,7 +112,7 @@ class BehavioralTraceabilityTests(unittest.TestCase):
 
         for entry in entries:
             path = (BLIND_REPLAY / entry["path"]).resolve()
-            path.relative_to(ROOT.resolve())
+            path.relative_to(BLIND_REPLAY.resolve())
             self.assertTrue(path.is_file(), path)
             self.assertRegex(entry["sha256"], r"^[a-f0-9]{64}$")
             self.assertEqual(entry["sha256"], sha256(path), path)
@@ -122,10 +123,6 @@ class BehavioralTraceabilityTests(unittest.TestCase):
             if path.is_file()
         }
         self.assertEqual(declared_packet_paths, actual_packet_paths)
-        self.assertEqual(
-            REQUIREMENT.resolve(),
-            (BLIND_REPLAY / manifest["requirement"]["path"]).resolve(),
-        )
 
         for case in cases:
             candidate_digest = case["candidate"]["sha256"]
@@ -379,7 +376,9 @@ class BehavioralTraceabilityTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, metadata)
 
-        requirement = REQUIREMENT.read_text(encoding="utf-8").lower()
+        requirement_path = (BLIND_REPLAY / manifest["requirement"]["path"]).resolve()
+        requirement_path.relative_to(BLIND_REPLAY.resolve())
+        requirement = requirement_path.read_text(encoding="utf-8").lower()
         for leaked_composition in (
             "sanitized negative replay",
             "aligned non-trivial control",

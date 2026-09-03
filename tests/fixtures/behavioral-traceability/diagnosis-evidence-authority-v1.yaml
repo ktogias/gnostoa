@@ -1,0 +1,46 @@
+version: behavioral-diagnosis-evidence-authority/v1
+case_id: circular-task-identification
+claim_boundary: product-neutral synthetic reconstruction of the Phase-C #179 failure shape
+task_obligation:
+  id: task-01
+  expected_behavior: A reproduced one-to-one operation must remain one-to-one for the reported case.
+hypotheses:
+  - id: hypothesis-a
+    claim: A selected recipient-shape scenario is the reported case.
+    resolution: CONFIRMED
+    selected_for_implementation: true
+  - id: hypothesis-b
+    claim: A different identity/classification mechanism explains the reported case.
+    resolution: REJECTED
+    rejected_reason: The alternative appears to require a larger and less local implementation change.
+    discriminating_evidence: null
+evidence:
+  - id: evidence-a
+    authority: executor-authored-regression
+    derived_from_hypothesis: hypothesis-a
+    execution_state: PASS
+    establishes:
+      - base_reproduction
+      - candidate_correction
+    claimed_to_establish:
+      - task_identification
+suspect_classifier:
+  on_questioned_behavior_path: true
+  independently_validated: false
+  used_as_correctness_definition: true
+review:
+  recommendation: ACCEPT
+  independent_task_to_code_pass: false
+  consumed_executor_diagnosis_before_independent_hypothesis_generation: true
+expected_contract_outcome:
+  review_ready: false
+  hypothesis_a_resolution: OPEN
+  task_identification: UNKNOWN
+  evidence_a_may_establish:
+    - base_reproduction
+    - candidate_correction
+  evidence_a_must_not_establish:
+    - task_identification
+  hypothesis_b_rejection_requires_discriminating_evidence: true
+  suspect_classifier_requires_independent_validation: true
+  reviewer_requires_independent_task_to_code_pass: true

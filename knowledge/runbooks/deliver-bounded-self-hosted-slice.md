@@ -21,10 +21,14 @@ x-project-knowledge:
       target: /decisions/0036-canonicalize-bounded-self-hosted-delivery-practice.md
     - kind: governed-by
       target: /decisions/0053-require-lightweight-work-item-micro-retrospection.md
+    - kind: governed-by
+      target: /decisions/0058-harden-behavioral-diagnosis-evidence-authority.md
     - kind: depends-on
       target: /lifecycles/evidence-gated-capability-evolution.md
     - kind: references
       target: /requirements/retrospective-findings-require-explicit-admission.md
+    - kind: references
+      target: /requirements/bounded-behavioral-traceability.md
     - kind: references
       target: /decisions/0024-separate-stable-navigation-from-volatile-state.md
     - kind: references
@@ -101,15 +105,27 @@ result needed for the next owner decision. There is no fixed length limit.
    `NOT RUN`, `UNKNOWN` and `PENDING` states where candidate or evidence does not
    exist yet; re-bind the final candidate and evidence before review. An
    unresolved contradiction or unsupported narrowing blocks review-ready
-   disposition. Then follow the
+   disposition. When material diagnostic ambiguity exists, keep task obligations,
+   semantic hypotheses and implementation claims separate; retain the evidence
+   authority/dependency needed to show what each item can actually establish.
+   Then follow the
    [verification-first workflow](../../guidance/workflows/develop-verification-first.md)
    and keep specialized semantics in their owning runbooks.
 9. **Verify the exact candidate.** Inspect the final diff, identify the measured
    subject, run applicable local/runtime checks and record actual results. For an
    applicable behavior map, independently reconcile the behavior map against the
-   exact task, candidate and evidence before recommending review-ready or owner
-   acceptance; a passing test that preserves task-prohibited behavior remains a
-   blocker.
+   exact task, candidate and evidence. When the task has material diagnostic
+   ambiguity or comparable high correctness risk, use a bounded two-pass reviewer
+   route: **independent task-to-code pass** first, then **map reconciliation pass**.
+   In the first pass, inspect the exact task and candidate before consuming the
+   executor's final diagnosis/map conclusions and record materially plausible
+   causes, affected paths or interpretation risks. In the second pass, compare
+   that view with the executor's hypotheses, rejected alternatives, evidence
+   authority/dependencies and final candidate. A different model or fresh context
+   may reduce correlated blind spots but does not establish evidence independence.
+   Reviewer inference remains inference; unresolved task identification remains
+   unresolved rather than becoming acceptance. A passing test that preserves
+   task-prohibited behavior remains a blocker.
 10. **Verify the exact PR head.** Provider checks must bind to that head; inspect
     required jobs individually. A successful run does not turn `SKIPPED` into
     `PASS`.

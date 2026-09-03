@@ -3,7 +3,7 @@ review_request:
   path: review-request.md
   sha256: c5116f0a6f226d9b673786b32a8e319adc55d9c2f2f85ce3eeb97c439c4ff46f  # pragma: allowlist secret -- content-addressed replay evidence
 requirement:
-  path: ../../../../knowledge/requirements/bounded-behavioral-traceability.md
+  path: requirement.md
   sha256: 44c03227bd1431b68ea65a2679792d42db29286d62807bd99fe29d87733ccb8d  # pragma: allowlist secret -- content-addressed replay evidence
 bases:
   - id: base-5e72
