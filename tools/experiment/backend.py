@@ -152,6 +152,44 @@ def ensure_container_absent(name: str) -> None:
         raise RunnerError(f"container-absence-unverified:{message}")
 
 
+def _container_running_state(name: str) -> bool:
+    try:
+        observed = docker_command(
+            "container",
+            "inspect",
+            "--format",
+            "{{.State.Running}}",
+            name,
+            timeout=10,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RunnerError("container-running-state-timeout") from exc
+    if observed.returncode != 0:
+        message = observed.stderr.strip() or observed.stdout.strip()
+        raise RunnerError(f"container-running-state-unverified:{message}")
+    state = observed.stdout.strip()
+    if state == "true":
+        return True
+    if state == "false":
+        return False
+    raise RunnerError(f"container-running-state-invalid:{state}")
+
+
+def ensure_container_stopped(name: str) -> None:
+    """Stop a retained container and verify that no producer remains active."""
+
+    if _container_running_state(name):
+        try:
+            stopped = docker_command("stop", "--time", "10", name, timeout=20)
+        except subprocess.TimeoutExpired as exc:
+            raise RunnerError("container-stop-timeout") from exc
+        if stopped.returncode != 0:
+            message = stopped.stderr.strip() or stopped.stdout.strip()
+            raise RunnerError(f"container-stop-failed:{message}")
+    if _container_running_state(name):
+        raise RunnerError("container-still-running-after-stop")
+
+
 def safe_remove_network(name: str) -> None:
     try:
         docker_command("network", "rm", name, timeout=10)
