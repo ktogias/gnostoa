@@ -305,7 +305,7 @@ class ExperimentPackagerContractTests(unittest.TestCase):
                 (output_parent / "foreign-sentinel.txt").read_text(encoding="utf-8"),
             )
             self.assertFalse(output.exists())
-            self.assertFalse((moved_parent / "candidate.tar").exists())
+            self.assertTrue((moved_parent / "candidate.tar").is_file())
 
 
 if __name__ == "__main__":
