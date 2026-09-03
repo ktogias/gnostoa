@@ -415,19 +415,20 @@ def _clear_directory_fd(directory_fd: int) -> None:
             os.unlink(name, dir_fd=directory_fd)
 
 
-def _remove_created_bundle(parent_fd: int, bundle_name: str) -> None:
+def _remove_created_bundle(
+    parent_fd: int,
+    bundle_fd: int,
+    bundle_name: str,
+    expected: os.stat_result,
+) -> None:
+    _clear_directory_fd(bundle_fd)
     try:
-        bundle_fd = os.open(bundle_name, _directory_flags(), dir_fd=parent_fd)
+        current = os.stat(bundle_name, dir_fd=parent_fd, follow_symlinks=False)
     except FileNotFoundError:
         return
-    try:
-        _clear_directory_fd(bundle_fd)
-    finally:
-        os.close(bundle_fd)
-    try:
-        os.rmdir(bundle_name, dir_fd=parent_fd)
-    except FileNotFoundError:
-        pass
+    if not _same_object(expected, current):
+        return
+    os.rmdir(bundle_name, dir_fd=parent_fd)
 
 
 def _handoff_config_digest() -> str:
@@ -471,6 +472,7 @@ def freeze_handoff(
     bundle_fd = -1
     snapshot_fd = -1
     created = False
+    bundle_identity: os.stat_result | None = None
     try:
         inputs = parse_input_identities(
             input_values,
@@ -543,15 +545,17 @@ def freeze_handoff(
             "members": len(members),
         }
     except (OSError, EvidenceError, HandoffError) as exc:
-        if created and parent_fd >= 0:
+        if created and parent_fd >= 0 and bundle_fd >= 0 and bundle_identity is not None:
             try:
                 if snapshot_fd >= 0:
                     os.close(snapshot_fd)
                     snapshot_fd = -1
-                if bundle_fd >= 0:
-                    os.close(bundle_fd)
-                    bundle_fd = -1
-                _remove_created_bundle(parent_fd, bundle.name)
+                _remove_created_bundle(
+                    parent_fd,
+                    bundle_fd,
+                    bundle.name,
+                    bundle_identity,
+                )
             except OSError:
                 pass
         return 2, {
@@ -577,14 +581,20 @@ def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]
     return result
 
 
-def _load_manifest_bytes(path: Path) -> tuple[bytes, dict[str, object]]:
+def _load_manifest_bytes(path: Path) -> tuple[bytes, dict[str, object], Path]:
     lexical = Path(os.path.abspath(path))
     if lexical.name != MANIFEST_NAME:
         raise HandoffError("handoff-manifest-name-invalid")
-    if path.is_symlink():
+    if lexical.is_symlink():
         raise HandoffError("handoff-manifest-symlink-forbidden")
     try:
-        raw = lexical.read_bytes()
+        canonical = lexical.resolve(strict=True)
+    except OSError as exc:
+        raise HandoffError(f"cannot-resolve-handoff:{exc}") from exc
+    if canonical.name != MANIFEST_NAME or not canonical.is_file():
+        raise HandoffError("handoff-manifest-invalid")
+    try:
+        raw = canonical.read_bytes()
     except OSError as exc:
         raise HandoffError(f"cannot-read-handoff:{exc}") from exc
     try:
@@ -593,7 +603,7 @@ def _load_manifest_bytes(path: Path) -> tuple[bytes, dict[str, object]]:
         raise HandoffError(f"cannot-parse-handoff:{exc}") from exc
     if not isinstance(parsed, dict):
         raise HandoffError("handoff-must-be-a-mapping")
-    return raw, cast(dict[str, object], parsed)
+    return raw, cast(dict[str, object], parsed), canonical
 
 
 def _validate_member_shape(value: object) -> tuple[dict[str, object], ...]:
@@ -643,7 +653,7 @@ def _validate_member_shape(value: object) -> tuple[dict[str, object], ...]:
 
 
 def load_verified_handoff(path: Path) -> VerifiedHandoff:
-    raw, manifest = _load_manifest_bytes(path)
+    raw, manifest, manifest_path = _load_manifest_bytes(path)
     if manifest.get("schema") != HANDOFF_SCHEMA:
         raise HandoffError("unsupported-handoff-schema")
     if manifest.get("snapshot") != SNAPSHOT_ROOT_NAME:
@@ -679,7 +689,6 @@ def load_verified_handoff(path: Path) -> VerifiedHandoff:
     except EvidenceError as exc:
         raise HandoffError(str(exc)) from exc
 
-    manifest_path = Path(os.path.abspath(path))
     bundle_root = manifest_path.parent
     snapshot_root = bundle_root / SNAPSHOT_ROOT_NAME
     try:
