@@ -10,6 +10,8 @@ import yaml
 
 from tools.experiment import execution as runner
 
+_CONTAINER_ID = "e" * 64
+
 
 class ExperimentEvidencePublicationRegressionTests(unittest.TestCase):
     def write_profile(
@@ -69,9 +71,10 @@ class ExperimentEvidencePublicationRegressionTests(unittest.TestCase):
             ),
             mock.patch.object(
                 runner.backend,
-                "unique_name",
-                return_value="gnostoa-run-experiment-evidence-test",
+                "docker_checked",
+                return_value=_CONTAINER_ID,
             ),
+            mock.patch.object(runner.backend, "container_exit_code", return_value=0),
             mock.patch.object(runner.backend, "ensure_container_absent"),
             mock.patch.object(runner.subprocess, "run", side_effect=side_effect),
         ):

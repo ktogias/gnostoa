@@ -93,9 +93,9 @@ def run_profile_command(
         evidence,
         "evidence-root",
     )
-    internal = ""
-    external = ""
-    relay_name = ""
+    internal_id = ""
+    external_id = ""
+    relay_id = ""
     try:
         capture.ensure_directory_names_absent(
             evidence_fd,
@@ -108,12 +108,12 @@ def run_profile_command(
         elif mode == "restricted":
             if relay_image is None:
                 raise RunnerError("relay-image-missing")
-            internal, external, relay_name = backend.create_restricted_network(
+            internal_id, external_id, relay_id = backend.create_restricted_network(
                 relay_image, allow
             )
             network_args = [
                 "--network",
-                internal,
+                internal_id,
                 "--env",
                 "HTTP_PROXY=http://relay:8080",
                 "--env",
@@ -129,13 +129,7 @@ def run_profile_command(
         env_args, admitted_env_names = clean_environment_args(profile)
         uid = os.getuid() if hasattr(os, "getuid") else 10001
         gid = os.getgid() if hasattr(os, "getgid") else 10001
-        experiment_name = backend.unique_name("gnostoa-run-experiment")
-        argv = [
-            backend.docker_executable(),
-            "run",
-            "--rm",
-            "--name",
-            experiment_name,
+        create_args = [
             "--read-only",
             "--cap-drop",
             "ALL",
@@ -151,17 +145,19 @@ def run_profile_command(
             *env_args,
         ]
         for index, root in enumerate(read_roots):
-            argv.extend(
+            create_args.extend(
                 [
                     "--mount",
                     f"type=bind,source={root},target=/inputs/{index},readonly",
                 ]
             )
-        argv.extend(["--mount", f"type=bind,source={project},target=/workspace"])
-        argv.extend(["--mount", f"type=bind,source={evidence},target=/evidence"])
+        create_args.extend(["--mount", f"type=bind,source={project},target=/workspace"])
+        create_args.extend(["--mount", f"type=bind,source={evidence},target=/evidence"])
         for index, root in enumerate(temporary_roots):
-            argv.extend(["--mount", f"type=bind,source={root},target=/scratch/{index}"])
-        argv.extend(["--workdir", "/workspace", image, *command])
+            create_args.extend(
+                ["--mount", f"type=bind,source={root},target=/scratch/{index}"]
+            )
+        create_args.extend(["--workdir", "/workspace", image, *command])
 
         mounted_roots = [*read_roots, project_text, evidence_text, *temporary_roots]
         with tempfile.TemporaryDirectory(
@@ -172,20 +168,31 @@ def run_profile_command(
             staged_stdout = capture_root / "run-stdout.log"
             staged_stderr = capture_root / "run-stderr.log"
             staged_network = capture_root / "run-network.jsonl"
+            container_id = ""
             with (
                 staged_stdout.open("xb") as stdout_file,
                 staged_stderr.open("xb") as stderr_file,
             ):
+                container_id = backend.require_docker_object_id(
+                    backend.docker_checked("create", *create_args),
+                    "container",
+                )
                 try:
-                    completed = subprocess.run(
-                        argv,
+                    subprocess.run(
+                        [
+                            backend.docker_executable(),
+                            "start",
+                            "--attach",
+                            container_id,
+                        ],
                         check=False,
                         stdout=stdout_file,
                         stderr=stderr_file,
                         timeout=timeout_seconds,
                     )
+                    exit_code = backend.container_exit_code(container_id)
                 finally:
-                    backend.ensure_container_absent(experiment_name)
+                    backend.ensure_container_absent(container_id)
 
             capture.assert_visible_directory(
                 evidence,
@@ -198,9 +205,9 @@ def run_profile_command(
                 label="evidence-output",
             )
 
-            if relay_name:
-                backend.ensure_container_stopped(relay_name)
-                capture.stream_container_logs(relay_name, staged_network)
+            if relay_id:
+                backend.ensure_container_stopped(relay_id)
+                capture.stream_container_logs(relay_id, staged_network)
 
             config_digest = capture.run_configuration_digest(
                 profile_path,
@@ -226,7 +233,7 @@ def run_profile_command(
                 input_identities,
             )
             network_attestation: dict[str, object] | None = None
-            if relay_name:
+            if relay_id:
                 network_attestation = capture.attest_payload(
                     staged_network,
                     "gnostoa-experiment-runner-relay",
@@ -248,11 +255,11 @@ def run_profile_command(
 
             payload: dict[str, object] = {
                 "schema": RUN_SCHEMA,
-                "status": "PASS" if completed.returncode == 0 else "FAIL",
+                "status": "PASS" if exit_code == 0 else "FAIL",
                 "backend": resolved_backend,
                 "backend_requested": requested_backend,
                 "backend_resolved": resolved_backend,
-                "exit_code": completed.returncode,
+                "exit_code": exit_code,
                 "timeout_seconds": timeout_seconds,
                 "network_mode": mode,
                 "command_argv": list(command),
@@ -292,7 +299,7 @@ def run_profile_command(
                 evidence_fd,
                 "run-stderr.log",
             )
-            if relay_name:
+            if relay_id:
                 capture.publish_captured_file_at(
                     staged_network,
                     evidence_fd,
@@ -309,14 +316,14 @@ def run_profile_command(
                 evidence_identity,
                 "evidence-root",
             )
-            return completed.returncode, payload
+            return exit_code, payload
     finally:
-        if relay_name:
-            backend.safe_remove_container(relay_name)
-        if internal:
-            backend.safe_remove_network(internal)
-        if external:
-            backend.safe_remove_network(external)
+        if relay_id:
+            backend.safe_remove_container(relay_id)
+        if internal_id:
+            backend.safe_remove_network(internal_id)
+        if external_id:
+            backend.safe_remove_network(external_id)
         os.close(evidence_fd)
 
 

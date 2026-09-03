@@ -11,6 +11,11 @@ import yaml
 
 from tools.experiment import execution as runner
 
+_CONTAINER_ID = "e" * 64
+_INTERNAL_NETWORK_ID = "a" * 64
+_EXTERNAL_NETWORK_ID = "b" * 64
+_RELAY_ID = "d" * 64
+
 
 class ExperimentRunnerReviewRegressionTests(unittest.TestCase):
     def write_run_profile(self, root: Path) -> Path:
@@ -64,6 +69,13 @@ class ExperimentRunnerReviewRegressionTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory(prefix="gnostoa-runner-review-red-") as raw:
             profile_path = self.write_run_profile(Path(raw))
+            create_argv: list[str] = []
+
+            def docker_checked(*args: str, timeout: int = 60) -> str:
+                del timeout
+                self.assertEqual("create", args[0])
+                create_argv.extend(args)
+                return _CONTAINER_ID
 
             def fake_run(
                 argv: list[str],
@@ -79,7 +91,7 @@ class ExperimentRunnerReviewRegressionTests(unittest.TestCase):
                 stdout_file.flush()
 
                 stdout_path = Path(stdout_file.name)
-                writable_sources = self.writable_mount_sources(argv)
+                writable_sources = self.writable_mount_sources(create_argv)
                 if any(
                     stdout_path == source or stdout_path.is_relative_to(source)
                     for source in writable_sources
@@ -100,6 +112,12 @@ class ExperimentRunnerReviewRegressionTests(unittest.TestCase):
                     "docker_executable",
                     return_value="/usr/bin/docker",
                 ),
+                mock.patch.object(
+                    runner.backend,
+                    "docker_checked",
+                    side_effect=docker_checked,
+                ),
+                mock.patch.object(runner.backend, "container_exit_code", return_value=0),
                 mock.patch.object(runner.backend, "ensure_container_absent"),
                 mock.patch.object(runner.subprocess, "run", side_effect=fake_run),
             ):
@@ -149,6 +167,12 @@ class ExperimentRunnerReviewRegressionTests(unittest.TestCase):
                     "docker_executable",
                     return_value="/usr/bin/docker",
                 ),
+                mock.patch.object(
+                    runner.backend,
+                    "docker_checked",
+                    return_value=_CONTAINER_ID,
+                ),
+                mock.patch.object(runner.backend, "container_exit_code", return_value=0),
                 mock.patch.object(runner.backend, "ensure_container_absent"),
                 mock.patch.object(runner.subprocess, "run", side_effect=fake_run),
             ):
@@ -199,13 +223,23 @@ class ExperimentRunnerReviewRegressionTests(unittest.TestCase):
                 mock.patch.object(
                     runner.backend,
                     "create_restricted_network",
-                    return_value=("internal-test", "external-test", "relay-test"),
+                    return_value=(
+                        _INTERNAL_NETWORK_ID,
+                        _EXTERNAL_NETWORK_ID,
+                        _RELAY_ID,
+                    ),
                 ),
                 mock.patch.object(
                     runner.backend,
                     "docker_executable",
                     return_value="/usr/bin/docker",
                 ),
+                mock.patch.object(
+                    runner.backend,
+                    "docker_checked",
+                    return_value=_CONTAINER_ID,
+                ),
+                mock.patch.object(runner.backend, "container_exit_code", return_value=0),
                 mock.patch.object(runner.backend, "ensure_container_absent"),
                 mock.patch.object(
                     runner.backend,
@@ -240,7 +274,7 @@ class ExperimentRunnerReviewRegressionTests(unittest.TestCase):
 
             self.assertEqual(0, exit_code)
             self.assertEqual("PASS", payload["status"])
-            ensure_stopped.assert_called_once_with("relay-test")
+            ensure_stopped.assert_called_once_with(_RELAY_ID)
             self.assertIsNotNone(payload["network_evidence"])
 
 

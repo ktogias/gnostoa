@@ -9,9 +9,12 @@ from pathlib import Path
 from typing import cast
 
 from .backend import (
+    container_exit_code,
     docker_checked,
     docker_executable,
+    ensure_container_absent,
     probe_backend,
+    require_docker_object_id,
     safe_remove_container,
     safe_remove_network,
     unique_name,
@@ -156,55 +159,76 @@ def failed_smoke(reason: str, *, stderr: str = "") -> dict[str, object]:
     return payload
 
 
+def _created_id(output: str, label: str) -> str:
+    return require_docker_object_id(output, label=label)
+
+
 def run_smoke_oci(image: str, relay_image: str) -> dict[str, object]:
     probe = probe_backend("oci", image=image)
     if probe.status != "AVAILABLE":
         return blocked_smoke(probe.reasons)
-    internal = unique_name("gnostoa-smoke-int")
-    external = unique_name("gnostoa-smoke-ext")
-    target = unique_name("gnostoa-smoke-target")
-    relay = unique_name("gnostoa-smoke-relay")
+    internal_name = unique_name("gnostoa-smoke-int")
+    external_name = unique_name("gnostoa-smoke-ext")
+    target_name = unique_name("gnostoa-smoke-target")
+    relay_name = unique_name("gnostoa-smoke-relay")
+    internal_id = ""
+    external_id = ""
+    target_id = ""
+    relay_id = ""
+    probe_id = ""
     try:
-        docker_checked("network", "create", "--internal", internal)
-        docker_checked("network", "create", external)
-        docker_checked(
-            "run",
-            "-d",
-            "--name",
-            target,
-            "--network",
-            external,
-            "--network-alias",
-            "target",
-            "--entrypoint",
-            "python",
-            image,
-            "-c",
-            target_script(),
+        internal_id = _created_id(
+            docker_checked("network", "create", "--internal", internal_name),
+            "smoke-internal-network",
         )
-        wait_for_log(target, "READY")
-        docker_checked(
-            "run",
-            "-d",
-            "--name",
-            relay,
-            "--network",
-            external,
-            "--entrypoint",
-            "python",
-            relay_image,
-            "-m",
-            "tools.experiment_runner",
-            "_relay",
-            "--listen",
-            "0.0.0.0",
-            "--port",
-            "8080",
-            "--allow",
-            "target:9443",
+        external_id = _created_id(
+            docker_checked("network", "create", external_name),
+            "smoke-external-network",
         )
-        wait_for_log(relay, '"event": "READY"')
-        docker_checked("network", "connect", "--alias", "relay", internal, relay)
+        target_id = _created_id(
+            docker_checked(
+                "run",
+                "-d",
+                "--name",
+                target_name,
+                "--network",
+                external_id,
+                "--network-alias",
+                "target",
+                "--entrypoint",
+                "python",
+                image,
+                "-c",
+                target_script(),
+            ),
+            "smoke-target-container",
+        )
+        wait_for_log(target_id, "READY")
+        relay_id = _created_id(
+            docker_checked(
+                "run",
+                "-d",
+                "--name",
+                relay_name,
+                "--network",
+                external_id,
+                "--entrypoint",
+                "python",
+                relay_image,
+                "-m",
+                "tools.experiment_runner",
+                "_relay",
+                "--listen",
+                "0.0.0.0",
+                "--port",
+                "8080",
+                "--allow",
+                "target:9443",
+            ),
+            "smoke-relay-container",
+        )
+        wait_for_log(relay_id, '"event": "READY"')
+        docker_checked("network", "connect", "--alias", "relay", internal_id, relay_id)
         with tempfile.TemporaryDirectory(prefix="gnostoa-runner-smoke-") as raw:
             root = Path(raw)
             admitted = root / "input"
@@ -224,13 +248,11 @@ def run_smoke_oci(image: str, relay_image: str) -> dict[str, object]:
             gid = os.getgid() if hasattr(os, "getgid") else 10001
             env = os.environ.copy()
             env["GNOSTOA_UNRELATED_SECRET_SENTINEL"] = "must-not-be-inherited"
-            result = subprocess.run(
-                [
-                    docker_executable(),
-                    "run",
-                    "--rm",
+            probe_id = _created_id(
+                docker_checked(
+                    "create",
                     "--network",
-                    internal,
+                    internal_id,
                     "--read-only",
                     "--cap-drop",
                     "ALL",
@@ -254,15 +276,27 @@ def run_smoke_oci(image: str, relay_image: str) -> dict[str, object]:
                     "python",
                     image,
                     "/workspace/smoke_probe.py",
-                ],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=30,
-                env=env,
+                ),
+                "smoke-probe-container",
             )
-            if result.returncode != 0:
-                return failed_smoke("experiment_probe_execution", stderr=result.stderr)
+            try:
+                result = subprocess.run(
+                    [docker_executable(), "start", "--attach", probe_id],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    env=env,
+                )
+                probe_exit_code = container_exit_code(probe_id)
+            finally:
+                ensure_container_absent(probe_id)
+                probe_id = ""
+            if probe_exit_code != 0:
+                return failed_smoke(
+                    "experiment_probe_execution",
+                    stderr=result.stderr,
+                )
             raw_checks = json.loads(result.stdout)
             if not isinstance(raw_checks, dict):
                 raise RunnerError("smoke-probe-result-not-mapping")
@@ -320,7 +354,13 @@ def run_smoke_oci(image: str, relay_image: str) -> dict[str, object]:
     ) as exc:
         return failed_smoke(f"coordinator_smoke:{type(exc).__name__}:{exc}")
     finally:
-        safe_remove_container(relay)
-        safe_remove_container(target)
-        safe_remove_network(internal)
-        safe_remove_network(external)
+        if probe_id:
+            safe_remove_container(probe_id)
+        if relay_id:
+            safe_remove_container(relay_id)
+        if target_id:
+            safe_remove_container(target_id)
+        if internal_id:
+            safe_remove_network(internal_id)
+        if external_id:
+            safe_remove_network(external_id)

@@ -11,6 +11,8 @@ import yaml
 from tools.experiment import execution as runner
 from tools.experiment import handoff, packaging, profile
 
+_CONTAINER_ID = "e" * 64
+
 
 class ExperimentFinalSecurityRegressionTests(unittest.TestCase):
     def make_run_profile(self, root: Path, *, timeout_seconds: int = 17) -> Path:
@@ -116,7 +118,7 @@ class ExperimentFinalSecurityRegressionTests(unittest.TestCase):
 
             self.assertIn("run-timeout-seconds-required", reasons)
 
-    def test_timeout_uses_declared_limit_and_reaps_named_executor_container(
+    def test_timeout_uses_declared_limit_and_reaps_owned_executor_container_id(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory(prefix="gnostoa-final-red-") as raw:
@@ -149,14 +151,10 @@ class ExperimentFinalSecurityRegressionTests(unittest.TestCase):
                 ),
                 mock.patch.object(
                     runner.backend,
-                    "unique_name",
-                    return_value="gnostoa-run-experiment-test",
+                    "docker_checked",
+                    return_value=_CONTAINER_ID,
                 ),
-                mock.patch.object(
-                    runner.backend,
-                    "ensure_container_absent",
-                    create=True,
-                ) as ensure_absent,
+                mock.patch.object(runner.backend, "ensure_container_absent") as ensure_absent,
                 mock.patch.object(runner.subprocess, "run", side_effect=timeout_run),
             ):
                 with self.assertRaises(subprocess.TimeoutExpired):
@@ -168,10 +166,11 @@ class ExperimentFinalSecurityRegressionTests(unittest.TestCase):
 
             self.assertEqual(17, observed.get("timeout"))
             argv = observed.get("argv")
-            self.assertIsInstance(argv, list)
-            self.assertIn("--name", argv)
-            self.assertIn("gnostoa-run-experiment-test", argv)
-            ensure_absent.assert_called_once_with("gnostoa-run-experiment-test")
+            self.assertEqual(
+                ["/usr/bin/docker", "start", "--attach", _CONTAINER_ID],
+                argv,
+            )
+            ensure_absent.assert_called_once_with(_CONTAINER_ID)
 
     def test_run_backend_unavailable_is_nonzero_blocked(self) -> None:
         with tempfile.TemporaryDirectory(prefix="gnostoa-final-red-") as raw:

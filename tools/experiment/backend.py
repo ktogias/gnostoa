@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from .profile import RunnerError
 
 PROBE_SCHEMA = "gnostoa-experiment-runner-probe/v1"
-_DOCKER_OBJECT_ID_RE = re.compile(r"^[0-9a-f]{64}$")
+_DOCKER_OBJECT_ID_RE = re.compile(r"^[a-f0-9]{64}$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,32 +100,31 @@ def docker_checked(*args: str, timeout: int = 60) -> str:
     return result.stdout.strip()
 
 
-def require_docker_object_id(value: str, *, label: str) -> str:
-    if not _DOCKER_OBJECT_ID_RE.fullmatch(value):
-        raise RunnerError(f"{label}-object-id-invalid")
-    return value
-
-
-def docker_created_id(*args: str, timeout: int = 60, label: str) -> str:
-    return require_docker_object_id(
-        docker_checked(*args, timeout=timeout),
-        label=label,
-    )
+def require_docker_object_id(value: str, kind: str) -> str:
+    observed = value.strip().lower()
+    if not _DOCKER_OBJECT_ID_RE.fullmatch(observed):
+        raise RunnerError(f"docker-{kind}-id-invalid")
+    return observed
 
 
 def wait_for_log(container_id: str, marker: str, timeout_seconds: float = 10.0) -> None:
+    owned_id = require_docker_object_id(container_id, "container")
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
-        result = docker_command("logs", container_id, timeout=5)
+        result = docker_command("logs", owned_id, timeout=5)
         if marker in result.stdout:
             return
         time.sleep(0.1)
-    raise RunnerError(f"container-not-ready:{container_id}:{marker}")
+    raise RunnerError(f"container-not-ready:{owned_id}:{marker}")
 
 
 def safe_remove_container(container_id: str) -> None:
     try:
-        docker_command("rm", "-f", container_id, timeout=10)
+        owned_id = require_docker_object_id(container_id, "container")
+    except RunnerError:
+        return
+    try:
+        docker_command("rm", "-f", owned_id, timeout=10)
     except (RunnerError, subprocess.TimeoutExpired):
         pass
 
@@ -136,10 +135,11 @@ def _docker_reports_missing_object(result: subprocess.CompletedProcess[str]) -> 
 
 
 def ensure_container_absent(container_id: str) -> None:
-    """Reap a coordinator-owned container ID and verify that it is absent."""
+    """Reap an owned experiment container ID and verify that it is absent."""
 
+    owned_id = require_docker_object_id(container_id, "container")
     try:
-        observed = docker_command("container", "inspect", container_id, timeout=10)
+        observed = docker_command("container", "inspect", owned_id, timeout=10)
     except subprocess.TimeoutExpired as exc:
         raise RunnerError("container-absence-check-timeout") from exc
     if observed.returncode != 0:
@@ -149,7 +149,7 @@ def ensure_container_absent(container_id: str) -> None:
         raise RunnerError(f"container-absence-unverified:{message}")
 
     try:
-        removed = docker_command("rm", "-f", container_id, timeout=10)
+        removed = docker_command("rm", "-f", owned_id, timeout=10)
     except subprocess.TimeoutExpired as exc:
         raise RunnerError("container-reap-timeout") from exc
     if removed.returncode != 0:
@@ -157,7 +157,7 @@ def ensure_container_absent(container_id: str) -> None:
         raise RunnerError(f"container-reap-failed:{message}")
 
     try:
-        verified = docker_command("container", "inspect", container_id, timeout=10)
+        verified = docker_command("container", "inspect", owned_id, timeout=10)
     except subprocess.TimeoutExpired as exc:
         raise RunnerError("container-absence-check-timeout") from exc
     if verified.returncode == 0:
@@ -168,13 +168,14 @@ def ensure_container_absent(container_id: str) -> None:
 
 
 def _container_running_state(container_id: str) -> bool:
+    owned_id = require_docker_object_id(container_id, "container")
     try:
         observed = docker_command(
             "container",
             "inspect",
             "--format",
             "{{.State.Running}}",
-            container_id,
+            owned_id,
             timeout=10,
         )
     except subprocess.TimeoutExpired as exc:
@@ -191,48 +192,53 @@ def _container_running_state(container_id: str) -> bool:
 
 
 def ensure_container_stopped(container_id: str) -> None:
-    """Stop a retained coordinator-owned container and verify producer quiescence."""
+    """Stop an owned retained container ID and verify no producer remains active."""
 
-    if _container_running_state(container_id):
+    owned_id = require_docker_object_id(container_id, "container")
+    if _container_running_state(owned_id):
         try:
-            stopped = docker_command("stop", "--time", "10", container_id, timeout=20)
+            stopped = docker_command("stop", "--time", "10", owned_id, timeout=20)
         except subprocess.TimeoutExpired as exc:
             raise RunnerError("container-stop-timeout") from exc
         if stopped.returncode != 0:
             message = stopped.stderr.strip() or stopped.stdout.strip()
             raise RunnerError(f"container-stop-failed:{message}")
-    if _container_running_state(container_id):
+    if _container_running_state(owned_id):
         raise RunnerError("container-still-running-after-stop")
 
 
 def container_exit_code(container_id: str) -> int:
+    owned_id = require_docker_object_id(container_id, "container")
     try:
         observed = docker_command(
             "container",
             "inspect",
             "--format",
-            "{{.State.ExitCode}}",
-            container_id,
+            "{{.State.Running}} {{.State.ExitCode}}",
+            owned_id,
             timeout=10,
         )
     except subprocess.TimeoutExpired as exc:
-        raise RunnerError("container-exit-code-timeout") from exc
+        raise RunnerError("container-exit-state-timeout") from exc
     if observed.returncode != 0:
         message = observed.stderr.strip() or observed.stdout.strip()
-        raise RunnerError(f"container-exit-code-unverified:{message}")
-    value = observed.stdout.strip()
+        raise RunnerError(f"container-exit-state-unverified:{message}")
+    parts = observed.stdout.strip().split()
+    if len(parts) != 2 or parts[0] != "false":
+        raise RunnerError("container-exit-state-not-stopped")
     try:
-        code = int(value)
+        return int(parts[1])
     except ValueError as exc:
-        raise RunnerError(f"container-exit-code-invalid:{value}") from exc
-    if code < 0 or code > 255:
-        raise RunnerError(f"container-exit-code-invalid:{value}")
-    return code
+        raise RunnerError("container-exit-code-invalid") from exc
 
 
 def safe_remove_network(network_id: str) -> None:
     try:
-        docker_command("network", "rm", network_id, timeout=10)
+        owned_id = require_docker_object_id(network_id, "network")
+    except RunnerError:
+        return
+    try:
+        docker_command("network", "rm", owned_id, timeout=10)
     except (RunnerError, subprocess.TimeoutExpired):
         pass
 
@@ -247,29 +253,24 @@ def create_restricted_network(
 ) -> tuple[str, str, str]:
     internal_name = unique_name("gnostoa-run-int")
     external_name = unique_name("gnostoa-run-ext")
-    relay_name = unique_name("gnostoa-run-relay")
+    relay_label = unique_name("gnostoa-run-relay")
     internal_id = ""
     external_id = ""
     relay_id = ""
     try:
-        internal_id = docker_created_id(
+        internal_id = require_docker_object_id(
+            docker_checked("network", "create", "--internal", internal_name),
             "network",
-            "create",
-            "--internal",
-            internal_name,
-            label="internal-network",
         )
-        external_id = docker_created_id(
+        external_id = require_docker_object_id(
+            docker_checked("network", "create", external_name),
             "network",
-            "create",
-            external_name,
-            label="external-network",
         )
         relay_args = [
             "run",
             "-d",
-            "--name",
-            relay_name,
+            "--label",
+            f"gnostoa.experiment.label={relay_label}",
             "--network",
             external_id,
             "--entrypoint",
@@ -285,7 +286,10 @@ def create_restricted_network(
         ]
         for target in allow:
             relay_args.extend(["--allow", target])
-        relay_id = docker_created_id(*relay_args, label="relay-container")
+        relay_id = require_docker_object_id(
+            docker_checked(*relay_args),
+            "container",
+        )
         wait_for_log(relay_id, '"event": "READY"')
         docker_checked("network", "connect", "--alias", "relay", internal_id, relay_id)
         return internal_id, external_id, relay_id
