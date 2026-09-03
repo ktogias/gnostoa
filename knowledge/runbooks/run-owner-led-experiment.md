@@ -378,7 +378,7 @@ surface, not proof of byte identity on every possible platform implementation.
 - **Host loss:** reconstruct only from durable profile/input/executor/runtime,
   handoff and package identities. Do not infer a producer for a bare digest.
 
-## Verification for the runner candidate
+## Verification
 
 The #164 capability is review-ready only when the **same exact candidate** passes:
 
