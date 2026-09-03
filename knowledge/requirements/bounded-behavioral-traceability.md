@@ -10,9 +10,15 @@ sources:
   - id: behavioral-traceability-decision
     resource: ../decisions/0056-run-a-bounded-behavioral-traceability-review-experiment.md
     title: Run a bounded behavioral-traceability review experiment
+  - id: diagnosis-evidence-authority-decision
+    resource: ../decisions/0058-harden-behavioral-diagnosis-evidence-authority.md
+    title: Harden behavioral diagnosis evidence authority and hypothesis reconciliation
   - id: behavioral-traceability-work-item
     resource: https://github.com/ktogias/gnostoa/issues/170
     title: Add bounded behavioral traceability to agent execution and review
+  - id: diagnosis-evidence-authority-work-item
+    resource: https://github.com/ktogias/gnostoa/issues/182
+    title: Harden behavioral diagnosis evidence authority and hypothesis reconciliation
 x-project-knowledge:
   id: kit.requirement.bounded-behavioral-traceability
   owners:
@@ -22,6 +28,8 @@ x-project-knowledge:
   relations:
     - kind: governed-by
       target: /decisions/0056-run-a-bounded-behavioral-traceability-review-experiment.md
+    - kind: governed-by
+      target: /decisions/0058-harden-behavioral-diagnosis-evidence-authority.md
     - kind: governed-by
       target: /decisions/0018-adopt-evidence-gated-capability-evolution-for-gnostoa-self-governance.md
     - kind: derived-from
@@ -43,6 +51,12 @@ structural presence **does not establish semantic completeness**, correctness,
 model independence, human approval or owner disposition. People remain
 responsible for finding and interpreting material behavior; deterministic checks
 may only preserve the claims and identities they are given.
+
+Decision 0058 narrows one demonstrated failure class without expanding this
+claim: a map must expose enough diagnostic evidence authority and evidence
+dependency to distinguish a plausible, internally consistent bug scenario from
+identification of the task's reported case. This preserves auditability; it does
+not establish that the map improves diagnostic correctness.
 
 ## Applicability
 
@@ -98,6 +112,61 @@ behavior, unavailable required evidence or evidence marked `CONTRADICTS`
 **blocks review-ready** status. The executor records the blocker instead of
 silently selecting the narrower interpretation.
 
+### Diagnostic evidence authority and hypothesis reconciliation
+
+When an applicable task contains material diagnostic ambiguity, keep three
+semantic object types distinct where they exist:
+
+- **task obligation** — the observable behavior required by the authoritative
+  task or project source;
+- **semantic hypothesis** — a proposed explanation or task interpretation that
+  may still be wrong; and
+- **implementation claim** — what the candidate code, test or implementation
+  path claims will occur.
+
+An implementation claim or test expectation does not become the meaning of a
+task obligation merely because code and test agree.
+
+A task-semantic hypothesis records its resolution state and the evidence used to
+resolve it. Where evidence is used for that resolution, retain the evidence
+authority and the evidence dependency needed to review whether the evidence is
+independent of the hypothesis. At minimum, distinguish as applicable:
+
+- authoritative task/project evidence;
+- pre-existing independent project evidence;
+- executor-authored diagnostic evidence;
+- executor-authored regression evidence derived from the same hypothesis;
+- reviewer inference; and
+- unknown or unclassified evidence.
+
+Execution result and semantic authority remain separate. An
+executor-authored regression may legitimately `PASS` and establish **base
+reproduction** of the selected scenario and **candidate correction** of that
+scenario without establishing **task identification**.
+
+A task-semantic hypothesis must not become `CONFIRMED` solely from evidence
+authored to instantiate that same hypothesis. Such same-hypothesis evidence may
+show that the selected scenario is possible and repaired, but it cannot by
+itself prove that the selected scenario is the one described by the task.
+Without authoritative or sufficiently independent discriminating evidence,
+task identification remains `OPEN` or `UNKNOWN`; when that identification is
+material to correctness, the unresolved state **blocks review-ready** status or
+is escalated to the owner.
+
+When material ambiguity admits competing hypotheses, retain the material
+alternatives identified during diagnosis and, where feasible, a discriminating
+observation or test for each. A rejected material hypothesis retains the reason
+and evidence for rejection. **Implementation convenience must not be used as
+evidence to reject a competing hypothesis.** Locality, size or convenience may
+influence repair selection only after the relevant cause is adequately
+established.
+
+When an identity, classification, routing or other **behavior-classifying
+predicate** lies on the **suspected defect path**, do not use that predicate as
+its own definition of correctness. Treat its relevant behavior as a hypothesis
+or implementation dependency requiring **independent validation** before it can
+close the semantic question it classifies.
+
 ### Reviewer checkpoint
 
 Before recommending acceptance, the reviewer independently reconciles the
@@ -105,9 +174,16 @@ complete declared behavior set against the exact task, candidate and evidence.
 The reviewer checks observable consequences rather than trusting the executor,
 an implementation-shaped test name or a passing result.
 
+For materially ambiguous or high-risk behavioral diagnosis, the operational
+runbook requires the reviewer to form an independent task-to-code view before
+consuming the executor's final diagnosis/map conclusions, then reconcile that
+view with the map, its competing hypotheses and its evidence authority and
+dependencies.
+
 A test may report `PASS` while its asserted behavior contradicts the task. That
 combination remains a blocker. A different reviewer model can reduce correlated
-blind spots but does not become a semantic oracle.
+blind spots but does not become a semantic oracle, and model diversity alone is
+not evidence independence.
 
 ## Execution, alignment and disposition states
 
