@@ -12,9 +12,7 @@ FIXTURE = (
     / "behavioral-traceability"
     / "diagnosis-evidence-authority-v1.yaml"
 )
-REQUIREMENT = (
-    ROOT / "knowledge" / "requirements" / "bounded-behavioral-traceability.md"
-)
+REQUIREMENT = ROOT / "knowledge" / "requirements" / "bounded-behavioral-traceability.md"
 RUNBOOK = ROOT / "knowledge" / "runbooks" / "deliver-bounded-self-hosted-slice.md"
 
 
@@ -46,9 +44,7 @@ class BehavioralDiagnosisEvidenceAuthorityTests(unittest.TestCase):
             ["base_reproduction", "candidate_correction"],
             regression["establishes"],
         )
-        self.assertEqual(
-            ["task_identification"], regression["claimed_to_establish"]
-        )
+        self.assertEqual(["task_identification"], regression["claimed_to_establish"])
 
         rejected = hypotheses["hypothesis-b"]
         self.assertEqual("REJECTED", rejected["resolution"])
