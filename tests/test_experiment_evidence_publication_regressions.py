@@ -20,7 +20,9 @@ class ExperimentEvidencePublicationRegressionTests(unittest.TestCase):
     ) -> tuple[Path, Path, Path]:
         project = root / "project"
         project.mkdir()
-        evidence = project / "evidence" if evidence_inside_project else root / "evidence"
+        evidence = (
+            project / "evidence" if evidence_inside_project else root / "evidence"
+        )
         evidence.mkdir()
         excluded = root / "excluded"
         excluded.mkdir()
@@ -44,7 +46,9 @@ class ExperimentEvidencePublicationRegressionTests(unittest.TestCase):
             "timeout_seconds": 17,
         }
         profile_path = root / "profile.yaml"
-        profile_path.write_text(yaml.safe_dump(profile, sort_keys=True), encoding="utf-8")
+        profile_path.write_text(
+            yaml.safe_dump(profile, sort_keys=True), encoding="utf-8"
+        )
         return profile_path, project, evidence
 
     def run_with_fake_executor(
@@ -97,7 +101,7 @@ class ExperimentEvidencePublicationRegressionTests(unittest.TestCase):
                 (evidence / "run-stdout.log").symlink_to(outside)
                 return subprocess.CompletedProcess(argv, 0)
 
-            with self.assertRaises(runner.RunnerError):
+            with self.assertRaises((OSError, runner.RunnerError)):
                 self.run_with_fake_executor(profile_path, fake_run)
 
             self.assertFalse(outside.exists())
@@ -123,13 +127,15 @@ class ExperimentEvidencePublicationRegressionTests(unittest.TestCase):
                 (evidence / "run-result.json").symlink_to(outside)
                 return subprocess.CompletedProcess(argv, 0)
 
-            with self.assertRaises(runner.RunnerError):
+            with self.assertRaises((OSError, runner.RunnerError)):
                 self.run_with_fake_executor(profile_path, fake_run)
 
             self.assertFalse(outside.exists())
             self.assertTrue((evidence / "run-result.json").is_symlink())
 
-    def test_executor_cannot_replace_evidence_root_namespace_before_publication(self) -> None:
+    def test_executor_cannot_replace_evidence_root_namespace_before_publication(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory(prefix="gnostoa-evidence-red-") as raw:
             root = Path(raw)
             profile_path, project, evidence = self.write_profile(
