@@ -140,9 +140,9 @@ independent of the hypothesis. At minimum, distinguish as applicable:
 - unknown or unclassified evidence.
 
 Execution result and semantic authority remain separate. An
-executor-authored regression may legitimately `PASS` and establish **base
-reproduction** of the selected scenario and **candidate correction** of that
-scenario without establishing **task identification**.
+executor-authored regression may legitimately `PASS` and establish **base reproduction**
+of the selected scenario and **candidate correction** of that scenario without
+establishing **task identification**.
 
 A task-semantic hypothesis must not become `CONFIRMED` solely from evidence
 authored to instantiate that same hypothesis. Such same-hypothesis evidence may
@@ -161,10 +161,10 @@ evidence to reject a competing hypothesis.** Locality, size or convenience may
 influence repair selection only after the relevant cause is adequately
 established.
 
-When an identity, classification, routing or other **behavior-classifying
-predicate** lies on the **suspected defect path**, do not use that predicate as
-its own definition of correctness. Treat its relevant behavior as a hypothesis
-or implementation dependency requiring **independent validation** before it can
+When an identity, classification, routing or other **behavior-classifying predicate**
+lies on the **suspected defect path**, do not use that predicate as its own
+definition of correctness. Treat its relevant behavior as a hypothesis or
+implementation dependency requiring **independent validation** before it can
 close the semantic question it classifies.
 
 ### Reviewer checkpoint
