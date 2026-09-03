@@ -22,6 +22,7 @@ from .profile import (
     profile_network,
     profile_paths,
     profile_runtime,
+    profile_timeout_seconds,
     string_list,
     validate_profile_data,
 )
@@ -66,10 +67,11 @@ def run_profile_command(
         }
 
     image, relay_image = profile_runtime(profile)
+    timeout_seconds = profile_timeout_seconds(profile)
     probe = backend.probe_backend(requested_backend, image=image)
     resolved_backend = probe.backend
     if probe.status != "AVAILABLE" or resolved_backend != "oci":
-        return 0, {
+        return 2, {
             "schema": RUN_SCHEMA,
             "status": "BLOCKED",
             "backend": None,
@@ -123,10 +125,13 @@ def run_profile_command(
         env_args, admitted_env_names = clean_environment_args(profile)
         uid = os.getuid() if hasattr(os, "getuid") else 10001
         gid = os.getgid() if hasattr(os, "getgid") else 10001
+        experiment_name = backend.unique_name("gnostoa-run-experiment")
         argv = [
             backend.docker_executable(),
             "run",
             "--rm",
+            "--name",
+            experiment_name,
             "--read-only",
             "--cap-drop",
             "ALL",
@@ -166,13 +171,16 @@ def run_profile_command(
                 staged_stdout.open("xb") as stdout_file,
                 staged_stderr.open("xb") as stderr_file,
             ):
-                completed = subprocess.run(
-                    argv,
-                    check=False,
-                    stdout=stdout_file,
-                    stderr=stderr_file,
-                    timeout=60 * 60,
-                )
+                try:
+                    completed = subprocess.run(
+                        argv,
+                        check=False,
+                        stdout=stdout_file,
+                        stderr=stderr_file,
+                        timeout=timeout_seconds,
+                    )
+                finally:
+                    backend.ensure_container_absent(experiment_name)
 
             capture.publish_captured_file(staged_stdout, stdout_path)
             capture.publish_captured_file(staged_stderr, stderr_path)
@@ -230,6 +238,7 @@ def run_profile_command(
                 "backend_requested": requested_backend,
                 "backend_resolved": resolved_backend,
                 "exit_code": completed.returncode,
+                "timeout_seconds": timeout_seconds,
                 "network_mode": mode,
                 "command_argv": list(command),
                 "executor": executor_provenance(profile),
