@@ -295,7 +295,7 @@ def _package_config_digest(max_bytes: int) -> str:
             "membership": "verified-handoff-only-v1",
             "metadata": "uid-gid-zero-names-empty-mtime-zero-mode-normalized-v1",
             "ordering": "handoff-member-order-v1",
-            "publication": "hardlink-create-only-v1",
+            "publication": "hardlink-create-only-owned-name-v2",
         }
     )
 
@@ -367,6 +367,28 @@ def _sha256_fd(descriptor: int) -> tuple[str, int]:
     return digest.hexdigest(), total
 
 
+def _owned_name_matches(
+    parent_fd: int,
+    name: str,
+    expected: os.stat_result,
+) -> bool:
+    try:
+        observed = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    return _same_object(expected, observed)
+
+
+def _unlink_owned_name(
+    parent_fd: int,
+    name: str,
+    expected: os.stat_result,
+) -> None:
+    if not _owned_name_matches(parent_fd, name, expected):
+        return
+    os.unlink(name, dir_fd=parent_fd)
+
+
 def create_package(
     handoff_path: Path,
     output: Path,
@@ -386,6 +408,7 @@ def create_package(
     output_name = ""
     published = False
     committed = False
+    staging_identity: os.stat_result | None = None
     archive: tarfile.TarFile | None = None
     try:
         handoff = load_verified_handoff(handoff_path)
@@ -407,6 +430,7 @@ def create_package(
             raise PackageError("output-already-exists")
 
         staging_fd, staging_name = _create_staging(parent_fd)
+        staging_identity = os.fstat(staging_fd)
         snapshot_fd = _open_root(handoff.snapshot_root)
         with os.fdopen(os.dup(staging_fd), "wb", closefd=True) as raw:
             bounded = BoundedWriter(raw, max_bytes)
@@ -435,6 +459,8 @@ def create_package(
             raise PackageError("archive-size-exceeds-configured-limit")
 
         _assert_visible_parent(output_parent, parent_identity)
+        if not _owned_name_matches(parent_fd, staging_name, staging_identity):
+            raise PackageError("staging-entry-identity-mismatch")
         try:
             os.link(
                 staging_name,
@@ -449,7 +475,6 @@ def create_package(
         os.fsync(parent_fd)
 
         _assert_visible_parent(output_parent, parent_identity)
-        staging_identity = os.fstat(staging_fd)
         output_identity = os.stat(
             output_name,
             dir_fd=parent_fd,
@@ -496,16 +521,26 @@ def create_package(
                 pass
         if snapshot_fd >= 0:
             os.close(snapshot_fd)
-        if published and not committed and parent_fd >= 0 and output_name:
+        if (
+            published
+            and not committed
+            and parent_fd >= 0
+            and output_name
+            and staging_identity is not None
+        ):
             try:
-                os.unlink(output_name, dir_fd=parent_fd)
+                _unlink_owned_name(parent_fd, output_name, staging_identity)
             except FileNotFoundError:
                 pass
         if staging_fd >= 0:
             os.close(staging_fd)
-        if parent_fd >= 0 and staging_name:
+        if (
+            parent_fd >= 0
+            and staging_name
+            and staging_identity is not None
+        ):
             try:
-                os.unlink(staging_name, dir_fd=parent_fd)
+                _unlink_owned_name(parent_fd, staging_name, staging_identity)
             except FileNotFoundError:
                 pass
         if parent_fd >= 0:
@@ -529,3 +564,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     _emit(payload)
     return exit_code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
