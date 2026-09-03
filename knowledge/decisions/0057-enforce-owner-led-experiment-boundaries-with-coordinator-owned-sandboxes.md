@@ -25,6 +25,12 @@ sources:
   - id: final-security-code-green
     resource: https://github.com/ktogias/gnostoa/issues/164#issuecomment-5522547836
     title: Final-security repair code-only GREEN
+  - id: evidence-publication-red
+    resource: https://github.com/ktogias/gnostoa/issues/164#issuecomment-5523078440
+    title: Final evidence-publication RED
+  - id: evidence-publication-code-green
+    resource: https://github.com/ktogias/gnostoa/issues/164#issuecomment-5523192829
+    title: Evidence-root namespace repair code-only GREEN
 x-project-knowledge:
   id: kit.decision.0057.enforce-owner-led-experiment-boundaries-with-coordinator-owned-sandboxes
   owners:
@@ -63,18 +69,21 @@ RED-before-GREEN review:
 - coordinator-captured evidence could be substituted if its pathname lived in a
   writable experiment surface;
 - deterministic packaging had independent publication and namespace-race
-  failure modes that did not belong inside execution code; and
+  failure modes that did not belong inside execution code;
 - a final authority-focused read-back after an otherwise fully green CI run found
   that read-only and writable bind sources could overlap, a hidden fixed timeout
   could kill only the Docker client rather than prove executor termination, and
   name-based failure cleanup could delete a foreign replacement after namespace
-  races.
+  races; and
+- a later source-level read-back found that even create-only evidence files were
+  insufficient if the experiment could replace the evidence-root directory
+  pathname itself before coordinator publication.
 
 The accountable owner therefore authorized a whiteboard redesign rather than a
 minimal patch to the original monolithic runner. The resulting contract is not
 "one safer script". It is a sequence of separately testable trust domains with a
 frozen handoff between untrusted execution and deterministic packaging, explicit
-lifecycle termination, and ownership-checked publication/cleanup.
+lifecycle termination, and descriptor-bound publication authority.
 
 This Decision remains Gnostoa-self-only. It does not establish a generic adopter
 sandbox, complete operating-system isolation, or semantic correctness of an
@@ -236,17 +245,27 @@ profile is therefore not offline execution. If the required network topology or
 relay cannot be enforced, the run is `BLOCKED`/`FAIL`; broader host networking
 must not be reported as equivalent.
 
-### G. Keep coordinator-captured evidence outside the experiment write surface
+### G. Keep coordinator-captured evidence outside the experiment write surface and pin publication authority
 
 Stdout and stderr are captured first into coordinator-private staging that does
-not overlap any admitted/mounted experiment root. They are published create-only
-into the bounded evidence root only after the executor has terminated and the
-coordinator has verified that the named experiment container is absent.
+not overlap any admitted/mounted experiment root. Before executor launch, the
+coordinator opens the declared evidence-root directory without following a
+symlink and records its inode identity. That open directory descriptor, not a
+later pathname lookup, is the publication authority for the rest of the run.
 
-This prevents an untrusted experiment from unlinking or replacing a pathname and
-causing the coordinator to hash replacement bytes. A process may still cause a
-fail-closed denial by pre-creating a reserved output name in a surface it can
-write; such a collision is not converted into evidence substitution or overwrite.
+Reserved evidence names are checked relative to the retained directory
+descriptor before launch and again after executor termination. The caller-visible
+evidence-root pathname must still identify the same directory before completed
+evidence is published. Stdout, stderr, network evidence and the final
+`run-result.json` commit marker are created with create-only/no-follow operations
+relative to the retained descriptor. The directory is fsynced and its visible
+identity is checked again after the commit marker.
+
+This prevents both file-name substitution and replacement of the evidence-root
+namespace from redirecting completed evidence. A broken symlink or pre-existing
+reserved name fails closed rather than being followed or overwritten. A process
+may still cause a denial by creating a reserved output name; such a collision is
+not converted into evidence substitution or overwrite.
 
 Every generated evidence identity includes SHA-256, byte count, producer
 identity/version, producer configuration digest and declared derivation inputs.
@@ -266,17 +285,21 @@ symlinks are similarly checked for replacement. Symlinks are preserved as
 symlinks and their external targets are never copied implicitly.
 
 The bundle destination is create-only. Once its parent directory is opened, the
-open parent descriptor is authoritative for creation and cleanup. The coordinator
-captures the inode identity of the newly created bundle immediately after
-creation. Cleanup may recurse only through an already-retained bundle descriptor,
-or through a bundle reopened relative to that retained parent after verifying
-that its inode still matches the created bundle. A same-name foreign replacement
-is never cleanup authority.
+open parent descriptor is authoritative for creation. The coordinator captures
+the inode identity of the newly created bundle and opens that bundle relative to
+the retained parent. Parent and bundle identities are rechecked before the
+commit point; a same-name foreign replacement is never treated as the created
+bundle.
+
+Failure before the canonical manifest is committed is non-destructive: an
+already-created uncommitted bundle may be retained as diagnostic state rather
+than recursively deleted through a later pathname lookup. The absence of
+`handoff.json` means that retained partial state is not a valid frozen handoff.
+The canonical manifest is written last as the bundle commit marker.
 
 The caller-visible parent pathname is checked against the opened parent inode
-before the commit point. Parent replacement therefore fails closed while the
-coordinator can still remove only its own created bundle from the retained old
-parent. The canonical manifest is written last as the bundle commit marker.
+before the commit point. Parent replacement therefore fails closed instead of
+redirecting the freeze into a replacement namespace.
 
 A later `verify` invocation may use a pathname to locate retained evidence, but
 that locator is canonicalized before a verified `manifest_path`, `bundle_root`
@@ -306,17 +329,18 @@ The complete archive is never materialized in memory merely to measure size.
 itself enforces its limit while streaming.
 
 Package staging, hashing and publication remain bound to an opened destination
-parent and an open staging file descriptor. The packager records the staging
-inode when the create-only temporary name is allocated. Hashing does not reopen
-staging by pathname. Before publication, the staging name must still resolve to
-that owned inode. Final publication is a create-only link within the same opened
-parent and verifies that the published inode is the staged inode.
+parent and an open staging file descriptor. On the qualified Linux path the
+staging object is an unnamed `O_TMPFILE`, so there is no staging pathname for an
+untrusted actor to replace or for cleanup to unlink by name. Archive bytes are
+streamed, fsynced and hashed through the open descriptor.
 
-Failure cleanup follows the same ownership rule: a staging or output name is
-unlinked only if it still resolves to the inode created by the packager. A
-same-name foreign replacement is retained. Parent-namespace replacement and
-foreign-output collision therefore fail closed without redirecting publication
-or deleting foreign state.
+Before publication the caller-visible output parent must still identify the
+opened parent inode. Final publication is a create-only link from the open
+staging descriptor into that retained parent and the published inode is verified
+to be the staged inode. If the output name already exists, publication fails
+closed. Once create-only publication has occurred, later uncertainty does not
+trigger destructive rollback by output pathname; a same-name foreign
+replacement is therefore never cleanup authority.
 
 The package result binds the archive bytes to packager producer/version/config,
 the handoff manifest digest and the handoff's declared inputs.
@@ -361,17 +385,18 @@ Before reuse, the exact runner/runtime candidate must behaviorally demonstrate:
 10. configured restricted egress succeeds and undeclared/direct egress fails;
 11. generated evidence is producer/input-bound;
 12. coordinator capture bytes cannot be substituted through a writable pathname;
-13. a real run has an explicit positive timeout and named executor container;
-14. timeout/backend failure is fail-closed and executor absence is verified
+13. evidence-root namespace replacement and reserved-name symlink/collision attempts fail closed;
+14. a real run has an explicit positive timeout and named executor container;
+15. timeout/backend failure is fail-closed and executor absence is verified
     before evidence publication;
-15. handoff mutation, parent replacement and failure cleanup cannot redirect or
-    delete a foreign replacement;
-16. verified handoff canonicalization prevents lexical aliases from defeating
+16. handoff mutation, parent replacement and uncommitted-state handling cannot
+    redirect or delete a foreign replacement;
+17. verified handoff canonicalization prevents lexical aliases from defeating
     package-output containment;
-17. package mutation, oversize, parent replacement, staging replacement and
-    foreign-output replacement all fail closed without deleting foreign state;
-18. requested/resolved backend identities remain separately retained; and
-19. the independent golden archive digest remains byte-stable on both supported
+18. package mutation, oversize, parent replacement and foreign-output replacement
+    fail closed without deleting foreign state, while staging has no filesystem name;
+19. requested/resolved backend identities remain separately retained; and
+20. the independent golden archive digest remains byte-stable on both supported
     hosted Python workers.
 
 Capability probing, mechanical smoke and package determinism are separate from
@@ -409,11 +434,13 @@ analogy.
   run policy and executor absence is a mechanical lifecycle gate.
 - Read-only admission cannot be invalidated by a second writable bind to the same
   host subtree, and Docker mount-source grammar is validated before launch.
+- Coordinator evidence publication remains bound to the pre-launch evidence-root
+  directory identity rather than a later mutable pathname lookup.
 - Packaging can be tested on synthetic trees without launching an agent or
   sandbox.
 - The packager cannot silently choose a different mutable workspace subject; it
   consumes a canonical verified frozen handoff.
-- Namespace replacement, cleanup and publication races fail closed at ownership
+- Namespace replacement and publication races fail closed at ownership
   boundaries instead of redirecting or deleting foreign output.
 - Deterministic archive bytes are independently testable through a fixed golden
   digest.
