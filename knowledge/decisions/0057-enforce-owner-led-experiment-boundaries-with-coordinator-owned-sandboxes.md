@@ -31,6 +31,12 @@ sources:
   - id: evidence-publication-code-green
     resource: https://github.com/ktogias/gnostoa/issues/164#issuecomment-5523192829
     title: Evidence-root namespace repair code-only GREEN
+  - id: relay-evidence-red
+    resource: https://github.com/ktogias/gnostoa/issues/164#issuecomment-5523325006
+    title: Restricted-network evidence completeness RED
+  - id: relay-evidence-green
+    resource: https://github.com/ktogias/gnostoa/issues/164#issuecomment-5523430235
+    title: Restricted-network evidence completeness repair full GREEN
 x-project-knowledge:
   id: kit.decision.0057.enforce-owner-led-experiment-boundaries-with-coordinator-owned-sandboxes
   owners:
@@ -74,10 +80,13 @@ RED-before-GREEN review:
   that read-only and writable bind sources could overlap, a hidden fixed timeout
   could kill only the Docker client rather than prove executor termination, and
   name-based failure cleanup could delete a foreign replacement after namespace
-  races; and
+  races;
 - a later source-level read-back found that even create-only evidence files were
   insufficient if the experiment could replace the evidence-root directory
-  pathname itself before coordinator publication.
+  pathname itself before coordinator publication; and
+- a final network-evidence read-back found that retaining `docker logs` while the
+  restricted CONNECT relay was still running could snapshot an active producer
+  before its terminal connection events had ceased.
 
 The accountable owner therefore authorized a whiteboard redesign rather than a
 minimal patch to the original monolithic runner. The resulting contract is not
@@ -153,12 +162,22 @@ stdout/stderr are not published as completed run evidence.
 An unavailable requested backend likewise returns a non-zero `BLOCKED` run
 outcome; backend unavailability is not a successful no-op.
 
-Only after executor absence is established may the lifecycle continue:
+For a restricted-network run, executor absence is not yet sufficient to publish
+completed network evidence. The coordinator must also stop the retained relay
+container when it is still active and verify `Running=false`. Only then may it
+capture the relay log as a final stopped-producer snapshot. The stopped relay is
+kept until that log has been retained and is removed only in final cleanup.
+Failure to inspect, stop or verify relay quiescence is `BLOCKED`.
+
+Only after the relevant producer lifecycle gates are established may the
+lifecycle continue:
 
 ```text
 validate/probe/smoke
         -> run untrusted executor under explicit timeout
         -> verify/reap named executor container
+        -> if restricted: stop relay and verify Running=false
+        -> capture final stopped-relay log
         -> publish coordinator-captured run evidence
         -> freeze candidate handoff
         -> verify frozen handoff
@@ -240,10 +259,17 @@ relay alone joins an external network and admits only exact predeclared
 `host:port` destinations. The smoke contract must demonstrate both admitted
 configured egress and refused undeclared/direct egress.
 
+The relay log is evidence produced by a concurrent coordinator component, not a
+static file. Completed network evidence is retained only after the executor is
+absent and the relay has been stopped and verified not running. Capturing logs
+from an active relay is not a final evidence state because later relay events may
+still be emitted.
+
 The model-provider connection is an admitted external dependency. A restricted
-profile is therefore not offline execution. If the required network topology or
-relay cannot be enforced, the run is `BLOCKED`/`FAIL`; broader host networking
-must not be reported as equivalent.
+profile is therefore not offline execution. If the required network topology,
+relay policy or relay-quiescence lifecycle cannot be enforced, the run is
+`BLOCKED`/`FAIL`; broader host networking or an active relay log snapshot must
+not be reported as equivalent.
 
 ### G. Keep coordinator-captured evidence outside the experiment write surface and pin publication authority
 
@@ -256,16 +282,19 @@ later pathname lookup, is the publication authority for the rest of the run.
 Reserved evidence names are checked relative to the retained directory
 descriptor before launch and again after executor termination. The caller-visible
 evidence-root pathname must still identify the same directory before completed
-evidence is published. Stdout, stderr, network evidence and the final
-`run-result.json` commit marker are created with create-only/no-follow operations
-relative to the retained descriptor. The directory is fsynced and its visible
-identity is checked again after the commit marker.
+evidence is published. For restricted mode, the network log is first captured
+into coordinator-private staging only after relay quiescence has been verified.
+Stdout, stderr, network evidence and the final `run-result.json` commit marker are
+then created with create-only/no-follow operations relative to the retained
+descriptor. The directory is fsynced and its visible identity is checked again
+after the commit marker.
 
-This prevents both file-name substitution and replacement of the evidence-root
-namespace from redirecting completed evidence. A broken symlink or pre-existing
-reserved name fails closed rather than being followed or overwritten. A process
-may still cause a denial by creating a reserved output name; such a collision is
-not converted into evidence substitution or overwrite.
+This prevents file-name substitution, replacement of the evidence-root namespace
+and active-producer network-log snapshots from being represented as completed
+evidence. A broken symlink or pre-existing reserved name fails closed rather
+than being followed or overwritten. A process may still cause a denial by
+creating a reserved output name; such a collision is not converted into evidence
+substitution or overwrite.
 
 Every generated evidence identity includes SHA-256, byte count, producer
 identity/version, producer configuration digest and declared derivation inputs.
@@ -389,14 +418,15 @@ Before reuse, the exact runner/runtime candidate must behaviorally demonstrate:
 14. a real run has an explicit positive timeout and named executor container;
 15. timeout/backend failure is fail-closed and executor absence is verified
     before evidence publication;
-16. handoff mutation, parent replacement and uncommitted-state handling cannot
+16. restricted-mode relay quiescence is verified before final network-log capture;
+17. handoff mutation, parent replacement and uncommitted-state handling cannot
     redirect or delete a foreign replacement;
-17. verified handoff canonicalization prevents lexical aliases from defeating
+18. verified handoff canonicalization prevents lexical aliases from defeating
     package-output containment;
-18. package mutation, oversize, parent replacement and foreign-output replacement
+19. package mutation, oversize, parent replacement and foreign-output replacement
     fail closed without deleting foreign state, while staging has no filesystem name;
-19. requested/resolved backend identities remain separately retained; and
-20. the independent golden archive digest remains byte-stable on both supported
+20. requested/resolved backend identities remain separately retained; and
+21. the independent golden archive digest remains byte-stable on both supported
     hosted Python workers.
 
 Capability probing, mechanical smoke and package determinism are separate from
@@ -432,6 +462,9 @@ analogy.
   failure domains and tests.
 - A real experiment cannot inherit a hidden universal timeout; timeout is explicit
   run policy and executor absence is a mechanical lifecycle gate.
+- Restricted-network evidence is retained only after the relay producer has been
+  stopped and verified quiescent; an active log snapshot is not a completion
+  claim.
 - Read-only admission cannot be invalidated by a second writable bind to the same
   host subtree, and Docker mount-source grammar is validated before launch.
 - Coordinator evidence publication remains bound to the pre-launch evidence-root
