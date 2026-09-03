@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Enforce owner-led experiment boundaries with coordinator-owned sandboxes
-description: Select a Gnostoa-self runner architecture that uses a trusted coordinator, container-first isolation, fail-closed native fallback, bounded egress and producer-bound evidence without claiming hard isolation when the required backend is unavailable.
+description: Select a Gnostoa-self experiment architecture that separates execution, frozen handoff and deterministic packaging into testable trust domains, uses coordinator-owned isolation and fails closed when the claimed boundary cannot be enforced.
 status: draft
 generated:
   by: chatgpt/gpt-5.6-sol
@@ -16,6 +16,12 @@ sources:
   - id: phase-c-root-cause-analysis
     resource: https://github.com/ktogias/gnostoa/issues/179#issuecomment-5513492802
     title: Complete Phase-C retrospective and root-cause analysis
+  - id: whiteboard-architecture-authority
+    resource: https://github.com/ktogias/gnostoa/issues/164#issuecomment-5517958538
+    title: Accountable-owner whiteboard architecture authority
+  - id: final-code-green
+    resource: https://github.com/ktogias/gnostoa/issues/164#issuecomment-5521936064
+    title: Final code-only GREEN
 x-project-knowledge:
   id: kit.decision.0057.enforce-owner-led-experiment-boundaries-with-coordinator-owned-sandboxes
   owners:
@@ -39,209 +45,321 @@ x-project-knowledge:
 
 ## Context
 
-The owner-led Mail experiments demonstrated that prompt- and tool-level permissions
-are not a sufficient execution boundary. Phase A allowed file-edit capability to
-write after an intended stop. Phase B then demonstrated a materially stronger
-one-off sandbox: admitted inputs were read-only, unrelated host material was
-hidden, the disposable project remained writable and only the minimum provider
-credential was injected. The same work also exposed a dangerous precursor in
-which a broad read-only bind still made the whole host visible.
+The owner-led Mail experiments showed that prompt and tool permissions are not a
+sufficient experiment boundary. Phase A allowed file-edit capability to write
+after an intended stop. Phase B demonstrated a stronger one-off filesystem
+sandbox but also exposed a precursor in which a broad read-only bind still made
+unrelated host material visible. Phase C added further evidence: one namespace
+mechanism was unavailable on a real host, executor identities drifted until
+explicitly pinned, dependency material inflated an assumed candidate boundary,
+and several derived identities were not durable enough to survive host loss.
 
-Phase C added further runner evidence. A namespace mechanism was unavailable in
-one execution environment; executor and auxiliary-model identities drifted until
-explicitly pinned; candidate packaging exceeded an assumed bound because the
-dependency installation was treated as candidate payload; and host loss exposed
-which derived identities had not been bound to their producer or published
-independently. The final paired execution remained valid only after these
-conditions were corrected and checked fail-closed.
+The first #164 implementation then exposed two additional classes of defect
+through RED-before-GREEN review:
 
-These observations justify a reusable Gnostoa-self runner boundary. They do not
-justify a generic adopter sandbox contract, a claim of complete operating-system
-isolation or a new orchestration platform.
+- coordinator-captured evidence could be substituted if its pathname lived in a
+  writable experiment surface; and
+- deterministic packaging had independent publication and namespace-race
+  failure modes that did not belong inside execution code.
+
+The accountable owner therefore authorized a whiteboard redesign rather than a
+minimal patch to the original monolithic runner. The resulting contract is not
+"one safer script". It is a sequence of separately testable trust domains with a
+frozen handoff between untrusted execution and deterministic packaging.
+
+This Decision remains Gnostoa-self-only. It does not establish a generic adopter
+sandbox, complete operating-system isolation, or semantic correctness of an
+agent or its diagnosis.
 
 ## Alternatives considered
 
-| Alternative | Benefit | Material limitation | Disposition |
+| Alternative | Material benefit | Material limitation | Disposition |
 | --- | --- | --- | --- |
-| Prompt and OpenCode permission controls only | Lowest operational cost | Shell and editor capability remain inside the same host authority; tool policy cannot hide arbitrary host reads or mechanically bound all writes | Rejected |
-| Bubblewrap-only runner | Small Linux-native sandbox; Phase-B evidence exists | User namespaces are unavailable on some hosts and inside some containers; making it mandatory would contradict the container-first / native-fallback runtime strategy | Rejected as sole backend; retained as native fallback |
-| OCI-container-only runner | Strong explicit mount and namespace surface; aligns with container-first runtime | A container daemon is a privileged coordinator dependency and is not universally available; Docker socket exposure would destroy the boundary | Rejected as the only backend; selected as primary backend |
-| Full VM / microVM per run | Stronger host separation | Operational cost and platform dependency are disproportionate to the current owner-led experimental need | Deferred |
-| Coordinator-owned OCI primary plus fail-closed native namespace fallback | Aligns with Decision 0005, keeps the agent away from host/container control APIs and permits recovery on compatible native hosts | Requires explicit capability probing and separate network relay policy; some hosts will correctly report BLOCKED | Selected |
+| Prompt/OpenCode permissions only | Lowest machinery | Same host authority remains available through shell/editor capabilities | Rejected |
+| One monolithic runner including execution and packaging | Simple call graph | One component creates evidence, chooses candidate semantics and validates its own packaging; unrelated failure modes become coupled | Rejected |
+| Separate runner and packager but packager accepts a mutable raw directory | Cleaner files | Packaging can observe a different subject from the one execution intended to hand off | Rejected |
+| Tool-permission-only isolation | Useful defense in depth | Cannot mechanically hide arbitrary host reads/writes or container-control authority | Rejected as an isolation backend |
+| Bubblewrap-only | Small Linux-native boundary | Namespace capability is unavailable on some real hosts; binary presence does not prove usable isolation | Rejected as sole backend; retained unqualified and fail-closed |
+| OCI-only | Explicit mount/network namespace surface | Container daemon is a trusted host dependency and is not universal | Selected as the currently qualified backend, not as a universal backend guarantee |
+| VM/microVM backend | Can provide a stronger host boundary | Establishes a different backend assurance contract and is not required to validate the current Gnostoa-self filesystem/network/evidence contract | Deferred as a separately qualified future backend, not rejected on cost grounds |
+| Execution -> frozen handoff -> independent deterministic packaging | Separates authority, failure modes and verification; permits packaging tests without execution | Requires explicit handoff identity and more lifecycle machinery | Selected |
 
 ## Decision
 
-### A. Separate the trusted coordinator from the untrusted experiment process
+### A. Use explicit trust domains and one-way dependencies
 
-The reusable profile has two authority planes:
+The Gnostoa-self implementation is decomposed into owning modules rather than a
+private execution monolith:
 
-- a **trusted coordinator** constructs the sandbox, verifies exact inputs,
-  controls mounts, credentials, egress, packaging and final read-back; and
-- an **experiment process** runs the agent inside the admitted namespace and
-  has no authority to reconfigure that namespace, access the container daemon,
-  obtain provider-management credentials or widen its own read/write/network
-  surface.
+```text
+profile.py   backend.py   relay.py   capture.py   smoke.py
+     \           |          |          |          /
+                  execution.py
+                       |
+               executor terminates
+                       v
+                   handoff.py ---> evidence.py
+                       |
+                       v
+                  packaging.py ---> evidence.py
+```
 
-The experiment process may edit freely inside its admitted writable project
-root. The design does not require owner approval for every ordinary source edit.
-The security property is the mechanically enforced boundary, not repeated
-interactive confirmation.
+The dependency rule is structural:
 
-### B. Use OCI as the primary backend and a native namespace sandbox only as a fallback
+- `handoff` may depend on shared evidence primitives but not on execution,
+  backend, relay, capture, smoke or packaging;
+- `packaging` may depend on the verified-handoff and evidence domains but not on
+  execution or sandbox machinery; and
+- public `experiment_runner.py`, `experiment_handoff.py` and
+  `experiment_packager.py` files are thin CLI adapters, not second
+  implementations.
 
-Consistent with Decision 0005, the primary Gnostoa-self runner uses a
-coordinator-created OCI-compatible container or equivalent container runtime.
-The agent never receives the daemon socket or a container-management client with
-host authority.
+The import graph and thin-adapter property are executable test contracts. The
+separation is therefore observable rather than a documentation promise.
 
-A native Linux namespace backend such as Bubblewrap may be used as a fallback
-only after an explicit capability probe proves the required namespace and bind
-operations. A failed probe yields `BLOCKED`; it must not silently degrade to an
-unrestricted host process.
+### B. Terminate untrusted execution before candidate freezing or packaging
 
-Backend choice is retained as evidence for every run. Equivalent result claims
-require the same declared runner contract even when the backend implementation
-differs.
+The trusted coordinator owns sandbox construction, exact inputs, credentials,
+egress, evidence capture and lifecycle transitions. The experiment process runs
+inside the admitted sandbox and has no authority to create or reconfigure that
+sandbox.
 
-### C. Admit explicit read, write and evidence surfaces
+The experiment process must terminate before a candidate is frozen. Packaging
+never reads the live writable experiment workspace directly. The lifecycle is:
 
-Every run manifest declares resolved absolute roots for:
+```text
+validate/probe/smoke
+        -> run untrusted executor
+        -> executor terminates
+        -> freeze candidate handoff
+        -> verify frozen handoff
+        -> deterministic bounded package
+        -> retain package attestation
+```
 
-- read-only admitted inputs;
-- the writable disposable project root;
-- the writable evidence/output root, which may be a bounded subdirectory of the
-  disposable project;
+This ordering prevents the executor from concurrently changing the subject while
+the packager decides which bytes constitute the candidate.
+
+### C. Keep filesystem isolation mechanically enforced and fail closed
+
+Every run profile declares resolved absolute roots for:
+
+- admitted read-only inputs;
+- one disposable writable project root;
+- a bounded writable evidence root;
 - explicitly writable temporary/cache roots; and
 - excluded host surfaces.
 
-The runner does not expose `/` as a broad read-only bind. Real host Git metadata,
-unrelated repositories, prior agent session state and home-directory material are
-excluded unless individually admitted.
+The runner rejects `/` as a broad admitted read root, lexical traversal,
+symlink-resolved roots and declared overlap with excluded surfaces. Real host Git
+metadata, unrelated repositories, prior agent state and user-home material are
+not implicitly admitted.
 
-Path admission is evaluated on resolved paths. Symlink, `..`, bind-mount or
-nested-path tricks may not expand a declared root. A write outside declared
-writable roots fails mechanically. A read of an excluded sentinel surface must
-fail in the smoke test where the selected backend can enforce the read boundary.
+For the currently qualified OCI backend, the coordinator uses a read-only
+container root filesystem, drops capabilities, enables `no-new-privileges`,
+mounts only declared roots and never mounts the Docker/container-control socket
+inside the experiment. An unavailable required capability yields `BLOCKED`; it
+does not silently degrade to unrestricted host execution.
 
-Disposable Git metadata may be created inside the writable project workspace so
-ordinary Git operations work without exposing the real repository metadata.
+### D. Treat the container daemon as coordinator authority, not experiment authority
 
-### D. Inject only run-specific configuration and credentials
+OCI isolation depends on a host container runtime controlled by the trusted
+coordinator. That daemon is inside the trusted computing base for this profile.
+The security claim is therefore not "Docker is an adversarial boundary against
+its administrator". The claim is that the untrusted experiment process is not
+given daemon/control authority and is mechanically limited to the demonstrated
+namespace/mount/network surface.
 
-The experiment process receives a clean or explicitly allowlisted environment.
-Provider authentication, model configuration and other required secrets are
-injected minimally for the run. Existing user home, prior OpenCode sessions,
-provider CLI state and unrelated configuration are not inherited by default.
+Bubblewrap remains visible to capability probing but is deliberately unqualified:
+until its complete behavioral smoke passes under separate evidence, a Bubblewrap
+request returns `BLOCKED` rather than being treated as an equivalent fallback.
 
-The run record retains configuration identities and secret-free provenance. It
-never retains secret values, tokens, cookies, one-time codes or full credential
-files as canonical evidence.
+### E. Inject only run-specific configuration and credentials
 
-### E. Keep network control separate and truthful
+The experiment receives a clean or explicitly allowlisted environment. Required
+provider credentials are injected only by declared environment name. Prior user
+home, session state, provider CLI state, cookies, tokens and unrelated
+configuration are not inherited by default and are never retained as canonical
+secret-bearing evidence.
 
-Filesystem isolation is not represented as hard network isolation.
+The run identity binds the immutable runtime image, executor identity/version,
+model and auxiliary-model declaration where applicable, non-secret
+configuration digest, requested backend, resolved backend and exact command
+argv. Requested and resolved backend identities remain distinct when `auto`
+selects a concrete backend.
 
-For a controlled experiment that requires restricted egress, the runner uses a
-coordinator-owned deny-by-default network path or relay that admits only the
-predeclared model-provider connection and records admitted/refused connection
-attempts. Direct arbitrary egress from the experiment namespace is denied.
+### F. Keep network control separate and truthful
 
-If the selected platform cannot enforce the declared network boundary, the run
-is `BLOCKED` for that profile. A broader network may be used only under a
-separately declared weaker profile; it cannot be reported as equivalent to the
-restricted profile.
+Filesystem isolation is not represented as network isolation.
 
-The model-provider connection is an admitted external dependency and is never
-misrepresented as offline execution.
+`network.mode: none` uses a no-network experiment namespace.
 
-### F. Bind executors and generated evidence to their producers
+For `network.mode: restricted`, the experiment joins an internal-only network
+and receives proxy variables pointing to a coordinator-owned CONNECT relay. The
+relay alone joins an external network and admits only exact predeclared
+`host:port` destinations. The smoke contract must demonstrate both admitted
+configured egress and refused undeclared/direct egress.
 
-The run manifest binds the executable path or immutable image identity, version,
-model alias, auxiliary/small-model configuration where applicable, complete
-non-secret configuration digest and runner-backend identity before launch.
-Drift stops the run.
+The model-provider connection is an admitted external dependency. A restricted
+profile is therefore not offline execution. If the required network topology or
+relay cannot be enforced, the run is `BLOCKED`/`FAIL`; broader host networking
+must not be reported as equivalent.
 
-Every generated digest record includes, at minimum:
+### G. Keep coordinator-captured evidence outside the experiment write surface
 
-- output path or stable artifact identity;
-- SHA-256 and byte count;
-- producer identity and version;
-- producer configuration digest;
-- declared input identities sufficient to reconstruct the derivation; and
-- the digest algorithm/version where ambiguity is possible.
+Stdout and stderr are captured first into coordinator-private staging that does
+not overlap any admitted/mounted experiment root. Only after the executor exits
+are those bytes published create-only into the bounded evidence root and
+attested.
 
-A bare digest without the producer and declared derivation inputs is not a
-complete portable evidence identity.
+This prevents an untrusted experiment from unlinking or replacing a pathname and
+causing the coordinator to hash replacement bytes. A process may still cause a
+fail-closed denial by pre-creating a reserved output name in a surface it can
+write; such a collision is not converted into evidence substitution or overwrite.
 
-### G. Keep dependencies outside candidate payload unless explicitly admitted
+Every generated evidence identity includes SHA-256, byte count, producer
+identity/version, producer configuration digest and declared derivation inputs.
+A bare digest is not a portable evidence identity.
 
-Large dependency installations are immutable run inputs, not candidate source
-payload, unless the experiment explicitly studies them.
+### H. Freeze a path-neutral candidate handoff after execution
 
-The runner binds the dependency object independently from the candidate and
-allows only declared volatile namespaces such as tool caches. Candidate
-packaging verifies dependency identity before and after execution and excludes
-the exact dependency root from the candidate archive.
+The handoff component copies the post-execution candidate into its own frozen
+bundle and emits a canonical path-neutral `handoff.json` manifest. The manifest
+records ordered member identity, normalized mode, file byte count/SHA-256,
+symlink target without dereferencing, producer identity/configuration and
+explicit input identities.
 
-Candidate and evidence packaging computes size before any helper allocates the
-complete payload in memory. The configured archive limit is a run parameter, not
-a universal 64 MiB Gnostoa constant. Oversize output fails before sealing; a
-future streaming implementation may remove the in-memory helper constraint but
-not the declared size policy.
+Source traversal uses no-follow opens and descriptor-relative operations.
+Regular files are fstat-checked before and after copy/hash; directories and
+symlinks are similarly checked for replacement. Symlinks are preserved as
+symlinks and their external targets are never copied implicitly.
 
-### H. Require a reproducible capability and escape smoke test
+The bundle destination is create-only. Once its parent directory is opened, the
+open directory descriptor is authoritative for creation and cleanup. The
+caller-visible parent pathname is checked against the opened inode before the
+commit point. Replacement of that namespace fails closed and cleanup operates
+only through the original descriptor, so a foreign replacement path is not
+removed. The canonical manifest is written last as the bundle commit marker.
 
-Before the profile is reused, one focused smoke package must demonstrate, on
-the selected backend:
+A later `verify` invocation may use a pathname to locate a retained bundle, but
+trust comes from re-verifying the manifest, complete member set and content
+identities, not from the pathname alone. This is evidence verification, not a
+claim that ordinary filesystem paths become immutable storage forever.
 
-1. admitted read-only input can be read;
-2. write to admitted read-only input is denied;
-3. writable project/evidence roots accept writes;
-4. an outside write is denied;
-5. an excluded read sentinel is denied where the backend claims read isolation;
-6. symlink/path traversal cannot escape admitted roots;
-7. inherited environment/configuration is reduced to the declared allowlist;
-8. container/host control sockets are absent from the experiment process;
-9. declared egress is admitted and an undeclared destination is refused for the
-   restricted-network profile; and
-10. generated evidence identities include producer and input bindings.
+### I. Package only a verified frozen handoff
 
-Capability probing and smoke evidence are separate from semantic task results.
-A profile that cannot pass the smoke suite is unavailable, not partially green.
+The packager accepts `--handoff`; it has no raw-workspace packaging interface.
+It re-verifies the handoff before and after package construction.
 
-### I. Keep semantic and mechanical interventions separate
+Package construction is deterministic PAX tar with:
 
-Run records retain separate counters for:
+- handoff-defined member order;
+- normalized uid/gid/user/group/mtime/mode metadata;
+- no symlink dereference;
+- descriptor-bound snapshot file reads with digest/size rechecks; and
+- a hard streaming byte ceiling enforced before a write could exceed the
+  configured archive limit.
 
-- material semantic owner interventions; and
-- mechanical boundary controls, denials, stops and infrastructure corrections.
+The complete archive is never materialized in memory merely to measure size.
+`check-size` remains available for other materialized objects, but the packager
+itself enforces its limit while streaming.
 
-Mechanical enforcement does not count as semantic owner help. Conversely, a
-semantic correction cannot be hidden as infrastructure troubleshooting.
+Package staging, hashing and publication remain bound to an opened destination
+parent and an open staging file descriptor. Hashing does not reopen staging by
+pathname. Final publication is create-only within that same parent and verifies
+that the published inode is the staged inode. Parent-namespace replacement and
+foreign-output collision fail closed without deleting the foreign pathname.
 
-### J. Keep the first implementation Gnostoa-self-only
+The package result binds the archive bytes to packager producer/version/config,
+the handoff manifest digest and the handoff's declared inputs.
+
+### J. Make determinism independently executable
+
+A fixed synthetic source tree has a committed golden PAX-tar SHA-256. CI freezes
+independent equivalent trees and requires byte-identical output with that exact
+digest on independent Python 3.11 and Python 3.12 hosted workers.
+
+This is stronger than same-process repeatability but remains a bounded
+cross-worker Linux/Python observation. It is not a universal statement about
+every filesystem, Python implementation or future tar library version. A change
+that intentionally changes package bytes must change the package contract and
+golden identity explicitly rather than silently drifting.
+
+### K. Keep dependencies outside the frozen candidate unless they are intentionally candidate material
+
+Dependencies are run inputs, not candidate source, unless the experiment
+explicitly studies them. The preferred design prepares dependency objects outside
+the disposable candidate root and admits them separately as read-only inputs.
+
+The handoff component does not guess that names such as `node_modules` are
+non-candidate. If dependency material is physically inside the root passed to
+`freeze`, it is candidate material and will be frozen. A trial that requires a
+smaller candidate must prepare that boundary explicitly and bind excluded
+immutable dependencies separately. There is no universal exclusion-name list.
+
+### L. Require reproducible boundary and adversarial tests
+
+Before reuse, the exact runner/runtime candidate must behaviorally demonstrate:
+
+1. admitted input read succeeds;
+2. write to read-only input is denied;
+3. project/evidence writes work only where admitted;
+4. outside write is denied;
+5. excluded read is denied where the backend claims read isolation;
+6. symlink/path escape does not widen the boundary;
+7. inherited environment is reduced to the declared set;
+8. container-control sockets are absent;
+9. configured restricted egress succeeds and undeclared/direct egress fails;
+10. generated evidence is producer/input-bound;
+11. coordinator capture bytes cannot be substituted through a writable pathname;
+12. handoff mutation and destination-parent replacement fail closed;
+13. package mutation, oversize, foreign-output collision and destination-parent
+    replacement fail closed; and
+14. requested/resolved backend identities remain separately retained.
+
+Capability probing, mechanical smoke and package determinism are separate from
+semantic task correctness. A backend or candidate that cannot pass the relevant
+contract is unavailable, not partially green.
+
+### M. Keep semantic and mechanical interventions separate
+
+Run records retain separate accounting for material semantic owner interventions
+and mechanical controls/denials/infrastructure corrections. Mechanical boundary
+enforcement is not semantic owner help, and a semantic correction cannot be
+hidden as infrastructure troubleshooting.
+
+### N. Keep the first implementation Gnostoa-self-only and bound the threat claim
 
 This Decision authorizes no generic public sandbox schema, adopter requirement,
-cloud runner, reusable orchestration service or claim that one backend is secure
-for every threat model.
+cloud orchestration service or universal security claim.
 
-The first implementation is a Gnostoa-self profile and smoke package under
-Work Item #164. Promotion or public inheritance requires separate evidence,
-classification and Decision authority.
+The demonstrated claim excludes compromise or hostile control of the host
+kernel, root/administrator, container daemon or other actors with authority to
+rewrite retained filesystem state after a successful verification/commit point.
+It also does not make provider traffic private from the provider or make a model
+semantically correct.
+
+A VM/microVM or another backend may later provide a stronger host boundary, but
+it must be separately qualified against the same logical contract and must
+report its backend-specific assurance rather than inheriting OCI results by
+analogy.
 
 ## Consequences
 
-- Some environments will correctly report `BLOCKED` rather than run with a
-  weaker boundary.
-- The trusted coordinator becomes an explicit part of the experiment trust
-  model and must be identified in evidence.
-- OCI remains the primary route while native namespace execution remains a
-  bounded recovery path, preserving Decision 0005.
-- Network enforcement and filesystem enforcement are independently visible.
-- Host loss is less damaging because derived artifacts carry producer and input
-  identities instead of relying on local naming conventions.
-- Dependency directories no longer inflate candidate identity merely because
-  they share a filesystem root with the task checkout.
-- The runner improves experimental validity and portability; it does not improve
-  semantic diagnosis or substitute for the #179 follow-up triage retained in
-  Work Item #180.
+- Execution, evidence capture, candidate freezing and packaging now have distinct
+  failure domains and tests.
+- Packaging can be tested on synthetic trees without launching an agent or
+  sandbox.
+- The packager cannot silently choose a different mutable workspace subject; it
+  consumes a verified frozen handoff.
+- Namespace replacement and publication races fail closed at the destination
+  commit boundary instead of redirecting or deleting foreign output.
+- Deterministic archive bytes are independently testable through a fixed golden
+  digest.
+- Some environments correctly remain `BLOCKED`; portability is not achieved by
+  weakening the claim.
+- Host loss is less damaging because retained artifacts carry producer/config/
+  input identities rather than relying on local names.
+- The runner improves experimental validity and auditability. It does not improve
+  semantic diagnosis, prove model independence, or replace the #179 follow-up
+  triage retained in Work Item #180.
