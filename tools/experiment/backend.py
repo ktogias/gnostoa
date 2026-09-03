@@ -115,6 +115,43 @@ def safe_remove_container(name: str) -> None:
         pass
 
 
+def _docker_reports_missing_object(result: subprocess.CompletedProcess[str]) -> bool:
+    message = f"{result.stderr}\n{result.stdout}".lower()
+    return "no such container" in message or "no such object" in message
+
+
+def ensure_container_absent(name: str) -> None:
+    """Reap a named experiment container and verify that it is absent."""
+
+    try:
+        observed = docker_command("container", "inspect", name, timeout=10)
+    except subprocess.TimeoutExpired as exc:
+        raise RunnerError("container-absence-check-timeout") from exc
+    if observed.returncode != 0:
+        if _docker_reports_missing_object(observed):
+            return
+        message = observed.stderr.strip() or observed.stdout.strip()
+        raise RunnerError(f"container-absence-unverified:{message}")
+
+    try:
+        removed = docker_command("rm", "-f", name, timeout=10)
+    except subprocess.TimeoutExpired as exc:
+        raise RunnerError("container-reap-timeout") from exc
+    if removed.returncode != 0:
+        message = removed.stderr.strip() or removed.stdout.strip()
+        raise RunnerError(f"container-reap-failed:{message}")
+
+    try:
+        verified = docker_command("container", "inspect", name, timeout=10)
+    except subprocess.TimeoutExpired as exc:
+        raise RunnerError("container-absence-check-timeout") from exc
+    if verified.returncode == 0:
+        raise RunnerError("container-still-present-after-reap")
+    if not _docker_reports_missing_object(verified):
+        message = verified.stderr.strip() or verified.stdout.strip()
+        raise RunnerError(f"container-absence-unverified:{message}")
+
+
 def safe_remove_network(name: str) -> None:
     try:
         docker_command("network", "rm", name, timeout=10)
