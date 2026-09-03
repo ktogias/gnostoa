@@ -35,6 +35,7 @@ class ExperimentRunnerReviewRegressionTests(unittest.TestCase):
             },
             "network": {"mode": "none", "allow": []},
             "runtime": {"image": f"sha256:{'c' * 64}"},
+            "timeout_seconds": 60,
         }
         path = root / "profile.yaml"
         path.write_text(yaml.safe_dump(profile, sort_keys=True), encoding="utf-8")
@@ -99,6 +100,7 @@ class ExperimentRunnerReviewRegressionTests(unittest.TestCase):
                     "docker_executable",
                     return_value="/usr/bin/docker",
                 ),
+                mock.patch.object(runner.backend, "ensure_container_absent"),
                 mock.patch.object(runner.subprocess, "run", side_effect=fake_run),
             ):
                 exit_code, payload = runner.run_profile_command(
@@ -147,6 +149,7 @@ class ExperimentRunnerReviewRegressionTests(unittest.TestCase):
                     "docker_executable",
                     return_value="/usr/bin/docker",
                 ),
+                mock.patch.object(runner.backend, "ensure_container_absent"),
                 mock.patch.object(runner.subprocess, "run", side_effect=fake_run),
             ):
                 exit_code, payload = runner.run_profile_command(
