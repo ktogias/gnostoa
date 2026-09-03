@@ -76,7 +76,9 @@ class ExperimentFinalSecurityRegressionTests(unittest.TestCase):
 
             self.assertIn("read-only-root-overlaps-writable-surface", reasons)
 
-    def test_mount_source_path_with_comma_is_rejected_before_docker_grammar(self) -> None:
+    def test_mount_source_path_with_comma_is_rejected_before_docker_grammar(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory(prefix="gnostoa-final-red-") as raw:
             root = Path(raw)
             read_root = root / "input,readonly"
@@ -114,7 +116,9 @@ class ExperimentFinalSecurityRegressionTests(unittest.TestCase):
 
             self.assertIn("run-timeout-seconds-required", reasons)
 
-    def test_timeout_uses_declared_limit_and_reaps_named_executor_container(self) -> None:
+    def test_timeout_uses_declared_limit_and_reaps_named_executor_container(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory(prefix="gnostoa-final-red-") as raw:
             profile_path = self.make_run_profile(Path(raw), timeout_seconds=17)
             observed: dict[str, object] = {}
@@ -227,7 +231,9 @@ class ExperimentFinalSecurityRegressionTests(unittest.TestCase):
                 (bundle / "sentinel.txt").read_text(encoding="utf-8"),
             )
 
-    def test_packager_failure_cleanup_never_unlinks_post_publish_replacement(self) -> None:
+    def test_packager_failure_cleanup_never_unlinks_post_publish_replacement(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory(prefix="gnostoa-final-red-") as raw:
             root = Path(raw)
             source = root / "source"
@@ -275,7 +281,9 @@ class ExperimentFinalSecurityRegressionTests(unittest.TestCase):
             self.assertTrue(output.is_file())
             self.assertEqual(b"foreign-after-publication\n", output.read_bytes())
 
-    def test_packager_canonicalizes_handoff_bundle_before_output_containment(self) -> None:
+    def test_packager_canonicalizes_handoff_bundle_before_output_containment(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory(prefix="gnostoa-final-red-") as raw:
             root = Path(raw)
             source = root / "source"
