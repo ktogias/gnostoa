@@ -84,44 +84,48 @@ def run_profile_command(
     project = Path(project_text)
     evidence = Path(evidence_text)
     evidence.mkdir(parents=True, exist_ok=True)
-    stdout_path = evidence / "run-stdout.log"
-    stderr_path = evidence / "run-stderr.log"
-    relay_log_path = evidence / "run-network.jsonl"
-    result_path = evidence / "run-result.json"
-    paths_that_must_not_exist = [stdout_path, stderr_path, result_path]
-    if profile_network(profile)[0] == "restricted":
-        paths_that_must_not_exist.append(relay_log_path)
-    if any(path.exists() for path in paths_that_must_not_exist):
-        raise RunnerError("evidence-output-already-exists")
-
     mode, allow = profile_network(profile)
+    reserved_names = ["run-stdout.log", "run-stderr.log", "run-result.json"]
+    if mode == "restricted":
+        reserved_names.append("run-network.jsonl")
+
+    evidence_fd, evidence_identity = capture.open_bound_directory(
+        evidence,
+        "evidence-root",
+    )
     internal = ""
     external = ""
     relay_name = ""
-    if mode == "none":
-        network_args = ["--network", "none"]
-    elif mode == "restricted":
-        if relay_image is None:
-            raise RunnerError("relay-image-missing")
-        internal, external, relay_name = backend.create_restricted_network(
-            relay_image, allow
-        )
-        network_args = [
-            "--network",
-            internal,
-            "--env",
-            "HTTP_PROXY=http://relay:8080",
-            "--env",
-            "HTTPS_PROXY=http://relay:8080",
-            "--env",
-            "ALL_PROXY=http://relay:8080",
-            "--env",
-            "NO_PROXY=",
-        ]
-    else:
-        raise RunnerError("unsupported-network-mode")
-
     try:
+        capture.ensure_directory_names_absent(
+            evidence_fd,
+            reserved_names,
+            label="evidence-output",
+        )
+
+        if mode == "none":
+            network_args = ["--network", "none"]
+        elif mode == "restricted":
+            if relay_image is None:
+                raise RunnerError("relay-image-missing")
+            internal, external, relay_name = backend.create_restricted_network(
+                relay_image, allow
+            )
+            network_args = [
+                "--network",
+                internal,
+                "--env",
+                "HTTP_PROXY=http://relay:8080",
+                "--env",
+                "HTTPS_PROXY=http://relay:8080",
+                "--env",
+                "ALL_PROXY=http://relay:8080",
+                "--env",
+                "NO_PROXY=",
+            ]
+        else:
+            raise RunnerError("unsupported-network-mode")
+
         env_args, admitted_env_names = clean_environment_args(profile)
         uid = os.getuid() if hasattr(os, "getuid") else 10001
         gid = os.getgid() if hasattr(os, "getgid") else 10001
@@ -167,6 +171,7 @@ def run_profile_command(
             capture.ensure_private_capture_root(capture_root, mounted_roots)
             staged_stdout = capture_root / "run-stdout.log"
             staged_stderr = capture_root / "run-stderr.log"
+            staged_network = capture_root / "run-network.jsonl"
             with (
                 staged_stdout.open("xb") as stdout_file,
                 staged_stderr.open("xb") as stderr_file,
@@ -182,10 +187,19 @@ def run_profile_command(
                 finally:
                     backend.ensure_container_absent(experiment_name)
 
-            capture.publish_captured_file(staged_stdout, stdout_path)
-            capture.publish_captured_file(staged_stderr, stderr_path)
+            capture.assert_visible_directory(
+                evidence,
+                evidence_identity,
+                "evidence-root",
+            )
+            capture.ensure_directory_names_absent(
+                evidence_fd,
+                reserved_names,
+                label="evidence-output",
+            )
+
             if relay_name:
-                capture.stream_container_logs(relay_name, relay_log_path)
+                capture.stream_container_logs(relay_name, staged_network)
 
             config_digest = capture.run_configuration_digest(
                 profile_path,
@@ -197,14 +211,14 @@ def run_profile_command(
                 profile.get("input_identities", []), "input_identities"
             )
             stdout_attestation = capture.attest_payload(
-                stdout_path,
+                staged_stdout,
                 "gnostoa-experiment-runner",
                 "1",
                 config_digest,
                 input_identities,
             )
             stderr_attestation = capture.attest_payload(
-                stderr_path,
+                staged_stderr,
                 "gnostoa-experiment-runner",
                 "1",
                 config_digest,
@@ -213,7 +227,7 @@ def run_profile_command(
             network_attestation: dict[str, object] | None = None
             if relay_name:
                 network_attestation = capture.attest_payload(
-                    relay_log_path,
+                    staged_network,
                     "gnostoa-experiment-runner-relay",
                     "1",
                     config_digest,
@@ -266,8 +280,34 @@ def run_profile_command(
                 )
                 + b"\n"
             )
-            with result_path.open("xb") as result_file:
-                result_file.write(encoded)
+
+            capture.publish_captured_file_at(
+                staged_stdout,
+                evidence_fd,
+                "run-stdout.log",
+            )
+            capture.publish_captured_file_at(
+                staged_stderr,
+                evidence_fd,
+                "run-stderr.log",
+            )
+            if relay_name:
+                capture.publish_captured_file_at(
+                    staged_network,
+                    evidence_fd,
+                    "run-network.jsonl",
+                )
+            capture.publish_bytes_at(
+                encoded,
+                evidence_fd,
+                "run-result.json",
+            )
+            os.fsync(evidence_fd)
+            capture.assert_visible_directory(
+                evidence,
+                evidence_identity,
+                "evidence-root",
+            )
             return completed.returncode, payload
     finally:
         if relay_name:
@@ -276,6 +316,7 @@ def run_profile_command(
             backend.safe_remove_network(internal)
         if external:
             backend.safe_remove_network(external)
+        os.close(evidence_fd)
 
 
 def command_validate_profile(args: argparse.Namespace) -> int:
