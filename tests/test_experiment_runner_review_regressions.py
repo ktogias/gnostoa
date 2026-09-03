@@ -162,6 +162,87 @@ class ExperimentRunnerReviewRegressionTests(unittest.TestCase):
             self.assertEqual("auto", payload.get("backend_requested"))
             self.assertEqual("oci", payload.get("backend_resolved"))
 
+    def test_restricted_run_quiesces_relay_before_retaining_network_logs(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="gnostoa-runner-review-red-") as raw:
+            root = Path(raw)
+            profile_path = self.write_run_profile(root)
+            profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+            profile["network"] = {
+                "mode": "restricted",
+                "allow": ["provider.example:443"],
+            }
+            profile["runtime"]["relay_image"] = f"sha256:{'d' * 64}"
+            profile_path.write_text(
+                yaml.safe_dump(profile, sort_keys=True),
+                encoding="utf-8",
+            )
+
+            def fake_run(
+                argv: list[str],
+                *,
+                check: bool,
+                stdout: object,
+                stderr: object,
+                timeout: int,
+            ) -> subprocess.CompletedProcess[bytes]:
+                del check, timeout
+                stdout.write(b"ok\n")
+                stderr.write(b"")
+                return subprocess.CompletedProcess(argv, 0)
+
+            with (
+                mock.patch.object(
+                    runner.backend,
+                    "probe_backend",
+                    return_value=runner.ProbeResult("AVAILABLE", "oci", []),
+                ),
+                mock.patch.object(
+                    runner.backend,
+                    "create_restricted_network",
+                    return_value=("internal-test", "external-test", "relay-test"),
+                ),
+                mock.patch.object(
+                    runner.backend,
+                    "docker_executable",
+                    return_value="/usr/bin/docker",
+                ),
+                mock.patch.object(runner.backend, "ensure_container_absent"),
+                mock.patch.object(
+                    runner.backend,
+                    "ensure_container_stopped",
+                    create=True,
+                ) as ensure_stopped,
+                mock.patch.object(runner.backend, "safe_remove_container"),
+                mock.patch.object(runner.backend, "safe_remove_network"),
+                mock.patch.object(runner.subprocess, "run", side_effect=fake_run),
+            ):
+
+                def retain_logs(_container: str, output: Path) -> None:
+                    self.assertTrue(
+                        ensure_stopped.called,
+                        "relay must be quiesced before network logs are retained",
+                    )
+                    output.write_text(
+                        '{"event":"READY"}\n{"event":"CLOSED"}\n',
+                        encoding="utf-8",
+                    )
+
+                with mock.patch.object(
+                    runner.capture,
+                    "stream_container_logs",
+                    side_effect=retain_logs,
+                ):
+                    exit_code, payload = runner.run_profile_command(
+                        profile_path,
+                        "oci",
+                        ["python", "-V"],
+                    )
+
+            self.assertEqual(0, exit_code)
+            self.assertEqual("PASS", payload["status"])
+            ensure_stopped.assert_called_once_with("relay-test")
+            self.assertIsNotNone(payload["network_evidence"])
+
 
 if __name__ == "__main__":
     unittest.main()
