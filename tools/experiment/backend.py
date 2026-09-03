@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -10,6 +11,7 @@ from dataclasses import dataclass
 from .profile import RunnerError
 
 PROBE_SCHEMA = "gnostoa-experiment-runner-probe/v1"
+_DOCKER_OBJECT_ID_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,19 +100,32 @@ def docker_checked(*args: str, timeout: int = 60) -> str:
     return result.stdout.strip()
 
 
-def wait_for_log(container: str, marker: str, timeout_seconds: float = 10.0) -> None:
+def require_docker_object_id(value: str, *, label: str) -> str:
+    if not _DOCKER_OBJECT_ID_RE.fullmatch(value):
+        raise RunnerError(f"{label}-object-id-invalid")
+    return value
+
+
+def docker_created_id(*args: str, timeout: int = 60, label: str) -> str:
+    return require_docker_object_id(
+        docker_checked(*args, timeout=timeout),
+        label=label,
+    )
+
+
+def wait_for_log(container_id: str, marker: str, timeout_seconds: float = 10.0) -> None:
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
-        result = docker_command("logs", container, timeout=5)
+        result = docker_command("logs", container_id, timeout=5)
         if marker in result.stdout:
             return
         time.sleep(0.1)
-    raise RunnerError(f"container-not-ready:{container}:{marker}")
+    raise RunnerError(f"container-not-ready:{container_id}:{marker}")
 
 
-def safe_remove_container(name: str) -> None:
+def safe_remove_container(container_id: str) -> None:
     try:
-        docker_command("rm", "-f", name, timeout=10)
+        docker_command("rm", "-f", container_id, timeout=10)
     except (RunnerError, subprocess.TimeoutExpired):
         pass
 
@@ -120,11 +135,11 @@ def _docker_reports_missing_object(result: subprocess.CompletedProcess[str]) -> 
     return "no such container" in message or "no such object" in message
 
 
-def ensure_container_absent(name: str) -> None:
-    """Reap a named experiment container and verify that it is absent."""
+def ensure_container_absent(container_id: str) -> None:
+    """Reap a coordinator-owned container ID and verify that it is absent."""
 
     try:
-        observed = docker_command("container", "inspect", name, timeout=10)
+        observed = docker_command("container", "inspect", container_id, timeout=10)
     except subprocess.TimeoutExpired as exc:
         raise RunnerError("container-absence-check-timeout") from exc
     if observed.returncode != 0:
@@ -134,7 +149,7 @@ def ensure_container_absent(name: str) -> None:
         raise RunnerError(f"container-absence-unverified:{message}")
 
     try:
-        removed = docker_command("rm", "-f", name, timeout=10)
+        removed = docker_command("rm", "-f", container_id, timeout=10)
     except subprocess.TimeoutExpired as exc:
         raise RunnerError("container-reap-timeout") from exc
     if removed.returncode != 0:
@@ -142,7 +157,7 @@ def ensure_container_absent(name: str) -> None:
         raise RunnerError(f"container-reap-failed:{message}")
 
     try:
-        verified = docker_command("container", "inspect", name, timeout=10)
+        verified = docker_command("container", "inspect", container_id, timeout=10)
     except subprocess.TimeoutExpired as exc:
         raise RunnerError("container-absence-check-timeout") from exc
     if verified.returncode == 0:
@@ -152,14 +167,14 @@ def ensure_container_absent(name: str) -> None:
         raise RunnerError(f"container-absence-unverified:{message}")
 
 
-def _container_running_state(name: str) -> bool:
+def _container_running_state(container_id: str) -> bool:
     try:
         observed = docker_command(
             "container",
             "inspect",
             "--format",
             "{{.State.Running}}",
-            name,
+            container_id,
             timeout=10,
         )
     except subprocess.TimeoutExpired as exc:
@@ -175,24 +190,49 @@ def _container_running_state(name: str) -> bool:
     raise RunnerError(f"container-running-state-invalid:{state}")
 
 
-def ensure_container_stopped(name: str) -> None:
-    """Stop a retained container and verify that no producer remains active."""
+def ensure_container_stopped(container_id: str) -> None:
+    """Stop a retained coordinator-owned container and verify producer quiescence."""
 
-    if _container_running_state(name):
+    if _container_running_state(container_id):
         try:
-            stopped = docker_command("stop", "--time", "10", name, timeout=20)
+            stopped = docker_command("stop", "--time", "10", container_id, timeout=20)
         except subprocess.TimeoutExpired as exc:
             raise RunnerError("container-stop-timeout") from exc
         if stopped.returncode != 0:
             message = stopped.stderr.strip() or stopped.stdout.strip()
             raise RunnerError(f"container-stop-failed:{message}")
-    if _container_running_state(name):
+    if _container_running_state(container_id):
         raise RunnerError("container-still-running-after-stop")
 
 
-def safe_remove_network(name: str) -> None:
+def container_exit_code(container_id: str) -> int:
     try:
-        docker_command("network", "rm", name, timeout=10)
+        observed = docker_command(
+            "container",
+            "inspect",
+            "--format",
+            "{{.State.ExitCode}}",
+            container_id,
+            timeout=10,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RunnerError("container-exit-code-timeout") from exc
+    if observed.returncode != 0:
+        message = observed.stderr.strip() or observed.stdout.strip()
+        raise RunnerError(f"container-exit-code-unverified:{message}")
+    value = observed.stdout.strip()
+    try:
+        code = int(value)
+    except ValueError as exc:
+        raise RunnerError(f"container-exit-code-invalid:{value}") from exc
+    if code < 0 or code > 255:
+        raise RunnerError(f"container-exit-code-invalid:{value}")
+    return code
+
+
+def safe_remove_network(network_id: str) -> None:
+    try:
+        docker_command("network", "rm", network_id, timeout=10)
     except (RunnerError, subprocess.TimeoutExpired):
         pass
 
@@ -205,19 +245,33 @@ def create_restricted_network(
     relay_image: str,
     allow: Sequence[str],
 ) -> tuple[str, str, str]:
-    internal = unique_name("gnostoa-run-int")
-    external = unique_name("gnostoa-run-ext")
-    relay = unique_name("gnostoa-run-relay")
+    internal_name = unique_name("gnostoa-run-int")
+    external_name = unique_name("gnostoa-run-ext")
+    relay_name = unique_name("gnostoa-run-relay")
+    internal_id = ""
+    external_id = ""
+    relay_id = ""
     try:
-        docker_checked("network", "create", "--internal", internal)
-        docker_checked("network", "create", external)
+        internal_id = docker_created_id(
+            "network",
+            "create",
+            "--internal",
+            internal_name,
+            label="internal-network",
+        )
+        external_id = docker_created_id(
+            "network",
+            "create",
+            external_name,
+            label="external-network",
+        )
         relay_args = [
             "run",
             "-d",
             "--name",
-            relay,
+            relay_name,
             "--network",
-            external,
+            external_id,
             "--entrypoint",
             "python",
             relay_image,
@@ -231,12 +285,15 @@ def create_restricted_network(
         ]
         for target in allow:
             relay_args.extend(["--allow", target])
-        docker_checked(*relay_args)
-        wait_for_log(relay, '"event": "READY"')
-        docker_checked("network", "connect", "--alias", "relay", internal, relay)
-        return internal, external, relay
+        relay_id = docker_created_id(*relay_args, label="relay-container")
+        wait_for_log(relay_id, '"event": "READY"')
+        docker_checked("network", "connect", "--alias", "relay", internal_id, relay_id)
+        return internal_id, external_id, relay_id
     except (RunnerError, subprocess.TimeoutExpired):
-        safe_remove_container(relay)
-        safe_remove_network(internal)
-        safe_remove_network(external)
+        if relay_id:
+            safe_remove_container(relay_id)
+        if internal_id:
+            safe_remove_network(internal_id)
+        if external_id:
+            safe_remove_network(external_id)
         raise
