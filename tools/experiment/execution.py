@@ -32,6 +32,7 @@ SIZE_SCHEMA = capture.SIZE_SCHEMA
 RUN_SCHEMA = "gnostoa-experiment-runner-result/v1"
 ProbeResult = backend.ProbeResult
 Handler = Callable[[argparse.Namespace], int]
+SCHEMA_COMPATIBILITY = (PROFILE_SCHEMA, ATTEST_SCHEMA)
 
 
 def emit(payload: Mapping[str, object]) -> None:
