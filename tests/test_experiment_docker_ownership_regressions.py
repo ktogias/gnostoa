@@ -190,9 +190,7 @@ class ExperimentDockerOwnershipRegressionTests(unittest.TestCase):
                     return_value=0,
                     create=True,
                 ),
-                mock.patch.object(
-                    execution.backend, "ensure_container_absent"
-                ) as reap,
+                mock.patch.object(execution.backend, "ensure_container_absent") as reap,
                 mock.patch.object(
                     execution.subprocess, "run", side_effect=start_attached
                 ),
