@@ -421,7 +421,26 @@ def _remove_created_bundle(
     bundle_name: str,
     expected: os.stat_result,
 ) -> None:
-    _clear_directory_fd(bundle_fd)
+    cleanup_fd = bundle_fd
+    close_cleanup_fd = False
+    if cleanup_fd < 0:
+        try:
+            current = os.stat(bundle_name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return
+        if not _same_object(expected, current):
+            return
+        cleanup_fd = os.open(bundle_name, _directory_flags(), dir_fd=parent_fd)
+        close_cleanup_fd = True
+        opened = os.fstat(cleanup_fd)
+        if not _same_object(expected, opened):
+            os.close(cleanup_fd)
+            return
+    try:
+        _clear_directory_fd(cleanup_fd)
+    finally:
+        if close_cleanup_fd:
+            os.close(cleanup_fd)
     try:
         current = os.stat(bundle_name, dir_fd=parent_fd, follow_symlinks=False)
     except FileNotFoundError:
@@ -498,10 +517,17 @@ def freeze_handoff(
 
         os.mkdir(bundle.name, 0o700, dir_fd=parent_fd)
         created = True
+        bundle_identity = os.stat(
+            bundle.name,
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
         _assert_visible_directory(bundle_parent, parent_identity, "bundle-parent")
 
         bundle_fd = os.open(bundle.name, _directory_flags(), dir_fd=parent_fd)
-        bundle_identity = os.fstat(bundle_fd)
+        opened_bundle_identity = os.fstat(bundle_fd)
+        if not _same_object(bundle_identity, opened_bundle_identity):
+            raise HandoffError("bundle-entry-changed")
         _assert_named_entry(parent_fd, bundle.name, bundle_identity, "bundle")
 
         os.mkdir(SNAPSHOT_ROOT_NAME, 0o700, dir_fd=bundle_fd)
@@ -545,12 +571,7 @@ def freeze_handoff(
             "members": len(members),
         }
     except (OSError, EvidenceError, HandoffError) as exc:
-        if (
-            created
-            and parent_fd >= 0
-            and bundle_fd >= 0
-            and bundle_identity is not None
-        ):
+        if created and parent_fd >= 0 and bundle_identity is not None:
             try:
                 if snapshot_fd >= 0:
                     os.close(snapshot_fd)
