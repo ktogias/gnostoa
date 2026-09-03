@@ -51,7 +51,11 @@ class ExperimentDockerOwnershipRegressionTests(unittest.TestCase):
             mock.patch.object(
                 backend,
                 "unique_name",
-                side_effect=["generated-internal", "generated-external", "generated-relay"],
+                side_effect=[
+                    "generated-internal",
+                    "generated-external",
+                    "generated-relay",
+                ],
             ),
             mock.patch.object(
                 backend,
@@ -75,7 +79,9 @@ class ExperimentDockerOwnershipRegressionTests(unittest.TestCase):
             del timeout
             calls += 1
             if calls == 1:
-                self.assertEqual(("network", "create", "--internal", "generated-internal"), args)
+                self.assertEqual(
+                    ("network", "create", "--internal", "generated-internal"), args
+                )
                 return _INTERNAL_NETWORK_ID
             raise RunnerError("simulated-second-create-collision")
 
@@ -83,7 +89,11 @@ class ExperimentDockerOwnershipRegressionTests(unittest.TestCase):
             mock.patch.object(
                 backend,
                 "unique_name",
-                side_effect=["generated-internal", "generated-external", "generated-relay"],
+                side_effect=[
+                    "generated-internal",
+                    "generated-external",
+                    "generated-relay",
+                ],
             ),
             mock.patch.object(backend, "docker_checked", side_effect=create_then_fail),
             mock.patch.object(backend, "safe_remove_container") as remove_container,
@@ -95,7 +105,9 @@ class ExperimentDockerOwnershipRegressionTests(unittest.TestCase):
         remove_container.assert_not_called()
         remove_network.assert_called_once_with(_INTERNAL_NETWORK_ID)
 
-    def test_restricted_topology_returns_daemon_object_ids_not_generated_names(self) -> None:
+    def test_restricted_topology_returns_daemon_object_ids_not_generated_names(
+        self,
+    ) -> None:
         responses = iter(
             [
                 _INTERNAL_NETWORK_ID,
@@ -113,7 +125,11 @@ class ExperimentDockerOwnershipRegressionTests(unittest.TestCase):
             mock.patch.object(
                 backend,
                 "unique_name",
-                side_effect=["generated-internal", "generated-external", "generated-relay"],
+                side_effect=[
+                    "generated-internal",
+                    "generated-external",
+                    "generated-relay",
+                ],
             ),
             mock.patch.object(backend, "docker_checked", side_effect=checked),
             mock.patch.object(backend, "wait_for_log") as wait_for_log,
@@ -165,15 +181,21 @@ class ExperimentDockerOwnershipRegressionTests(unittest.TestCase):
                     "docker_executable",
                     return_value="/usr/bin/docker",
                 ),
-                mock.patch.object(execution.backend, "docker_checked", side_effect=checked),
+                mock.patch.object(
+                    execution.backend, "docker_checked", side_effect=checked
+                ),
                 mock.patch.object(
                     execution.backend,
                     "container_exit_code",
                     return_value=0,
                     create=True,
                 ),
-                mock.patch.object(execution.backend, "ensure_container_absent") as reap,
-                mock.patch.object(execution.subprocess, "run", side_effect=start_attached),
+                mock.patch.object(
+                    execution.backend, "ensure_container_absent"
+                ) as reap,
+                mock.patch.object(
+                    execution.subprocess, "run", side_effect=start_attached
+                ),
             ):
                 exit_code, payload = execution.run_profile_command(
                     profile_path,
