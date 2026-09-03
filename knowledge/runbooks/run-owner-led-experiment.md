@@ -22,6 +22,12 @@ sources:
   - id: evidence-publication-code-green
     resource: https://github.com/ktogias/gnostoa/issues/164#issuecomment-5523192829
     title: Evidence-root namespace repair code-only GREEN
+  - id: relay-evidence-red
+    resource: https://github.com/ktogias/gnostoa/issues/164#issuecomment-5523325006
+    title: Restricted-network evidence completeness RED
+  - id: relay-evidence-green
+    resource: https://github.com/ktogias/gnostoa/issues/164#issuecomment-5523430235
+    title: Restricted-network evidence completeness repair full GREEN
 x-project-knowledge:
   id: kit.runbook.run-bounded-owner-led-experiment
   owners:
@@ -63,6 +69,12 @@ validate profile / probe backend / boundary smoke
                     v
        verify or force executor absence
                     |
+         restricted network only
+                    v
+       stop relay / verify Running=false
+                    |
+          capture final relay log
+                    |
                     v
       publish coordinator run evidence
                     |
@@ -79,8 +91,10 @@ validate profile / probe backend / boundary smoke
 
 Packaging must never read the live mutable experiment workspace. If the named
 executor container has not been proved absent, do not publish completed run
-evidence or start `freeze`. If `freeze` has not produced a verifiable handoff, do
-not start packaging.
+evidence or start `freeze`. For restricted networking, an active or unverifiably
+stopped relay is also a stop: capture final network evidence only after the relay
+has been verified `Running=false`. If `freeze` has not produced a verifiable
+handoff, do not start packaging.
 
 ## Coordinator CLI surfaces
 
@@ -105,7 +119,8 @@ check-size --path PATH --max-bytes BYTES
 
 ### Frozen handoff
 
-After the executor has been proved absent:
+After the executor has been proved absent and, for restricted mode, the relay has
+been quiesced and its final log retained:
 
 ```text
 python tools/experiment_handoff.py freeze \
@@ -242,25 +257,31 @@ process and never report a weaker backend/network route as equivalent.
    caller-visible evidence-root path no longer identifies the pre-launch opened
    directory, treat the run as `BLOCKED`. Do not publish completed run evidence
    and do not freeze the candidate.
-9. **Retain run evidence.** Only after executor absence and evidence-root identity
-   are established, publish `run-stdout.log`, `run-stderr.log`, `run-result.json`
-   and, for restricted networking, `run-network.jsonl` create-only relative to
-   the retained evidence-root descriptor. Record the SHA-256 identity of
-   `run-result.json` as an input to the handoff where it is material to candidate
-   derivation.
-10. **Freeze.** Invoke `experiment_handoff.py freeze` on the exact post-run
+9. **Quiesce restricted-network evidence producer.** For `network.mode:
+   restricted`, inspect the retained relay container, stop it if still active and
+   verify `Running=false`. Only then capture `docker logs` into coordinator-private
+   staging. If relay state cannot be inspected, stopped or verified, treat the
+   run as `BLOCKED`; do not retain an active-producer log snapshot as completed
+   network evidence.
+10. **Retain run evidence.** Only after executor absence, evidence-root identity
+    and any required relay quiescence are established, publish `run-stdout.log`,
+    `run-stderr.log`, `run-result.json` and, for restricted networking,
+    `run-network.jsonl` create-only relative to the retained evidence-root
+    descriptor. Record the SHA-256 identity of `run-result.json` as an input to
+    the handoff where it is material to candidate derivation.
+11. **Freeze.** Invoke `experiment_handoff.py freeze` on the exact post-run
     candidate root into a fresh create-only handoff bundle. Treat `BLOCKED` as a
     stop; do not package the live project instead.
-11. **Verify.** Invoke `experiment_handoff.py verify` on the retained
+12. **Verify.** Invoke `experiment_handoff.py verify` on the retained
     `handoff.json`. Verification canonicalizes the retained manifest location and
     recomputes the complete member/content identity; a lexical alias is not
     authority.
-12. **Package.** Invoke `experiment_packager.py --handoff ... --max-bytes ...` to
+13. **Package.** Invoke `experiment_packager.py --handoff ... --max-bytes ...` to
     a fresh output name. The packager enforces the byte ceiling while streaming;
     `OVERSIZE`/`BLOCKED` is a stop and leaves no successful package claim.
-13. **Retain package identity.** Keep archive bytes plus the structured package
+14. **Retain package identity.** Keep archive bytes plus the structured package
     result. Do not replace that result with a bare SHA-256.
-14. **Perform trial-specific closeout.** Run any oracle, semantic review,
+15. **Perform trial-specific closeout.** Run any oracle, semantic review,
     dependency recheck and accountable-owner lifecycle gates required by the
     experiment. The mechanical pipeline does not replace semantic disposition.
 
@@ -316,8 +337,17 @@ mistaken for a successful run merely because no experiment process started.
 
 The smoke test must prove both admitted configured egress and refused
 undeclared/direct egress. The provider connection is an admitted external
-service, so this is not offline execution. If the topology cannot be enforced,
-return `BLOCKED`/`FAIL`; never inherit host networking and call it equivalent.
+service, so this is not offline execution.
+
+The relay is a concurrent evidence producer. After executor absence, the
+coordinator inspects its running state, stops it if necessary and verifies
+`Running=false` before retaining `docker logs`. The stopped container remains
+available until log capture completes and is removed only during final cleanup.
+An active relay log snapshot is not a completed network-evidence state.
+
+If the topology, relay policy or relay-quiescence lifecycle cannot be enforced,
+return `BLOCKED`/`FAIL`; never inherit host networking or treat an active relay
+snapshot as equivalent.
 
 ## Coordinator evidence boundary
 
@@ -325,15 +355,17 @@ Command stdout/stderr are captured first in coordinator-private staging outside
 all experiment-mounted roots. Before the experiment starts, the coordinator
 opens the evidence-root directory without following a symlink, records its inode
 identity and checks the reserved output names relative to that open directory.
-The descriptor remains authoritative across execution, executor reap and
-publication.
+The descriptor remains authoritative across execution, executor reap, relay
+quiescence and publication.
 
 After the named executor container has been proved absent, the caller-visible
 evidence-root pathname must still identify that same opened directory. Reserved
-names are checked again. Stdout, stderr, optional network evidence and the final
-`run-result.json` commit marker are then created create-only/no-follow relative
-to the retained descriptor. The evidence directory is fsynced and its visible
-identity is checked again after the commit marker.
+names are checked again. For restricted networking, the relay must then be
+verified stopped and its logs captured into coordinator-private staging. Stdout,
+stderr, optional network evidence and the final `run-result.json` commit marker
+are then created create-only/no-follow relative to the retained descriptor. The
+evidence directory is fsynced and its visible identity is checked again after
+the commit marker.
 
 A pre-existing regular file, symlink or other reserved evidence entry is a
 fail-closed collision. Replacement of the evidence-root directory itself is also
@@ -467,10 +499,13 @@ surface, not proof of byte identity on every possible platform implementation.
   proved absent. Do not assume the Docker client timeout killed the executor.
 - **Executor reap/absence cannot be verified:** `BLOCKED`; retain diagnostics but
   do not publish completed run evidence or freeze the candidate.
+- **Relay state/stop/quiescence cannot be verified:** `BLOCKED`; do not retain an
+  active-producer relay log as completed network evidence. The relay may be
+  removed during cleanup only after any valid stopped-producer log capture.
 - **Boundary smoke `FAIL`:** retain the smoke result and do not use that exact
   backend/candidate for experiment evidence.
-- **Restricted egress failure:** retain available relay evidence; do not bypass
-  the relay or inherit host networking.
+- **Restricted egress failure:** retain only evidence that satisfies the same
+  stopped-producer lifecycle; do not bypass the relay or inherit host networking.
 - **Reserved evidence collision or evidence-root namespace change:** `BLOCKED`;
   use a fresh evidence root and never overwrite or redirect into replacement
   state.
@@ -496,19 +531,21 @@ The #164 capability is review-ready only when the **same exact candidate** passe
    one-way handoff/packaging import graph;
 3. focused runner/evidence-substitution/backend-identity regressions, including
    reserved evidence-name collisions and evidence-root namespace replacement;
-4. final-security regressions for read-only/writable disjointness, mount grammar,
+4. restricted-network lifecycle regression proving the relay is stopped and
+   verified `Running=false` before final relay-log retention;
+5. final-security regressions for read-only/writable disjointness, mount grammar,
    explicit timeout, named-container reap and non-zero backend `BLOCKED`;
-5. handoff tests for determinism, mutation, symlink no-dereference, create-only
+6. handoff tests for determinism, mutation, symlink no-dereference, create-only
    publication, parent-namespace replacement and non-destructive uncommitted
    failure state;
-6. package tests for the fixed golden digest, normalized metadata, handoff-only
+7. package tests for the fixed golden digest, normalized metadata, handoff-only
    input, canonical containment, mutation, oversize, parent replacement,
    unnamed staging and foreign-output replacement/publication behavior;
-7. Python 3.11 and 3.12 source suites;
-8. Ruff and strict mypy for the experiment trust domains;
-9. the OCI host-level boundary smoke with every required check true;
-10. normal Gnostoa `policy`, `fast`, `regression` and `smoke`; and
-11. final exact PR executable-candidate binding.
+8. Python 3.11 and 3.12 source suites;
+9. Ruff and strict mypy for the experiment trust domains;
+10. the OCI host-level boundary smoke with every required check true;
+11. normal Gnostoa `policy`, `fast`, `regression` and `smoke`; and
+12. final exact PR executable-candidate binding.
 
 A mechanical `PASS` proves only the tested Gnostoa-self boundary. It does not
 prove semantic task correctness, model independence, resistance to a hostile
