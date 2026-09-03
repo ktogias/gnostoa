@@ -9,7 +9,7 @@ from unittest import mock
 
 import yaml
 
-from tools.experiment import _execution_engine as runner
+from tools.experiment import execution as runner
 
 
 class ExperimentRunnerReviewRegressionTests(unittest.TestCase):
@@ -90,12 +90,14 @@ class ExperimentRunnerReviewRegressionTests(unittest.TestCase):
 
             with (
                 mock.patch.object(
-                    runner,
+                    runner.backend,
                     "probe_backend",
                     return_value=runner.ProbeResult("AVAILABLE", "oci", []),
                 ),
                 mock.patch.object(
-                    runner.shutil, "which", return_value="/usr/bin/docker"
+                    runner.backend,
+                    "docker_executable",
+                    return_value="/usr/bin/docker",
                 ),
                 mock.patch.object(runner.subprocess, "run", side_effect=fake_run),
             ):
@@ -136,12 +138,14 @@ class ExperimentRunnerReviewRegressionTests(unittest.TestCase):
 
             with (
                 mock.patch.object(
-                    runner,
+                    runner.backend,
                     "probe_backend",
                     return_value=runner.ProbeResult("AVAILABLE", "oci", []),
                 ),
                 mock.patch.object(
-                    runner.shutil, "which", return_value="/usr/bin/docker"
+                    runner.backend,
+                    "docker_executable",
+                    return_value="/usr/bin/docker",
                 ),
                 mock.patch.object(runner.subprocess, "run", side_effect=fake_run),
             ):
