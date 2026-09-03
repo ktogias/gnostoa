@@ -221,7 +221,9 @@ def _source_members_and_copy_fd(
 
             if stat.S_ISDIR(observed.st_mode):
                 os.mkdir(name, 0o700, dir_fd=destination_dir_fd)
-                source_child_fd = os.open(name, _directory_flags(), dir_fd=source_dir_fd)
+                source_child_fd = os.open(
+                    name, _directory_flags(), dir_fd=source_dir_fd
+                )
                 destination_child_fd = os.open(
                     name, _directory_flags(), dir_fd=destination_dir_fd
                 )
