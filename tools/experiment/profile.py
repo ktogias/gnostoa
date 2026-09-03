@@ -157,8 +157,16 @@ def validate_profile_data(profile: Mapping[str, object], *, for_run: bool) -> li
         *(("temporary_root", value) for value in temporary_roots),
         *(("excluded_root", value) for value in excluded_roots),
     ]
+    mounted_kinds = {
+        "read_only_root",
+        "project_root",
+        "evidence_root",
+        "temporary_root",
+    }
     resolved: dict[str, list[Path]] = {}
     for kind, value in all_named:
+        if kind in mounted_kinds and "," in value:
+            reasons.append("mount-source-path-contains-comma")
         try:
             lexical = absolute_lexical(value)
         except RunnerError:
@@ -184,6 +192,12 @@ def validate_profile_data(profile: Mapping[str, object], *, for_run: bool) -> li
         *resolved.get("evidence_root", []),
         *resolved.get("temporary_root", []),
     ]
+    for read_only in resolved.get("read_only_root", []):
+        for writable_root in writable:
+            if is_same_or_parent(read_only, writable_root) or is_same_or_parent(
+                writable_root, read_only
+            ):
+                reasons.append("read-only-root-overlaps-writable-surface")
     for excluded in resolved.get("excluded_root", []):
         for root in writable + resolved.get("read_only_root", []):
             if is_same_or_parent(excluded, root) or is_same_or_parent(root, excluded):
@@ -232,6 +246,13 @@ def validate_profile_data(profile: Mapping[str, object], *, for_run: bool) -> li
         reasons.append("archive-limit-must-be-positive-integer")
 
     if for_run:
+        timeout_seconds = profile.get("timeout_seconds")
+        if (
+            not isinstance(timeout_seconds, int)
+            or isinstance(timeout_seconds, bool)
+            or timeout_seconds <= 0
+        ):
+            reasons.append("run-timeout-seconds-required")
         if not input_identities:
             reasons.append("input-identities-required-for-run")
         reasons.extend(validate_executor(profile))
@@ -292,6 +313,13 @@ def profile_paths(
         string_list(profile.get("temporary_roots", []), "temporary_roots"),
         string_list(profile.get("excluded_roots", []), "excluded_roots"),
     )
+
+
+def profile_timeout_seconds(profile: Mapping[str, object]) -> int:
+    value = profile.get("timeout_seconds")
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise RunnerError("run-timeout-seconds-required")
+    return value
 
 
 def clean_environment_args(
