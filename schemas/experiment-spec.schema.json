@@ -319,6 +319,11 @@
                   }
                 }
               }
+            },
+            "relay_image": {
+              "type": "string",
+              "description": "Immutable relay image digest, required when experimental execution network mode is restricted. Declared, never discovered: no tag is resolved and no image is fetched.",
+              "pattern": "^(?:sha256:[a-f0-9]{64}|.+@sha256:[a-f0-9]{64})$"
             }
           }
         },

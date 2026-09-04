@@ -334,6 +334,22 @@ class RelayImageBindingTests(CapsuleFixture):
             "changing the relay image must change the frozen capsule identity",
         )
 
+    def test_relay_reaches_the_lock_task_payload(self) -> None:
+        """parse -> dataclass -> as_json -> profile -> lock preserves it exactly."""
+        repo, base, ref = self._subject()
+        spec = self._restricted_spec(repo, base, ref, relay_image=RELAY_DIGEST)
+        result = compiler.prepare(
+            load_spec(self.write_spec(spec)), self.workspace, offline=True
+        )
+        # The lock binds exactly this payload for each task.
+        payload = result.task("T1").as_json()
+        self.assertEqual(
+            payload["execution_profile"]["runtime"]["relay_image"], RELAY_DIGEST
+        )
+        # The qualification profiles never carry one.
+        for profile in payload["qualification_profiles"].values():
+            self.assertNotIn("relay_image", profile["runtime"])
+
     def test_relay_is_not_required_when_execution_network_is_none(self) -> None:
         repo, base, ref = self._subject()
         spec = self.base_spec(repo, base, ref)

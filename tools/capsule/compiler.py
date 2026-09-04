@@ -350,10 +350,11 @@ def _build_profiles(
         },
         timeout_seconds=spec.resources.timeout_seconds,
         archive_limit_bytes=spec.resources.archive_limit_bytes,
-        network={
-            "mode": spec.resources.network_mode,
-            "allow": list(spec.resources.network_allow),
-        },
+        # Forced, not defaulted, and not derived from spec.resources. Coordinator-
+        # private qualification must never inherit experimental executor egress, so
+        # no spec field can opt it into a network. A future qualification-network
+        # capability would be designed and authorised separately.
+        network={"mode": "none", "allow": []},
         environment_allowlist=tuple(sorted(harness.invocation.env)),
     )
 
@@ -388,7 +389,23 @@ def _build_profiles(
         },
         environment_allowlist=tuple(task.execution.environment_allowlist),
         credential_environment=tuple(task.execution.credential_environment),
+        relay_image=task.runtime.relay_image,
     )
+    # The runner refuses a restricted profile without an immutable relay identity.
+    # Say so in the spec's own terms rather than letting it surface later as an
+    # opaque profile rejection. Nothing is discovered or defaulted to satisfy it.
+    if spec.resources.network_mode == "restricted" and task.runtime.relay_image is None:
+        blockers.append(
+            {
+                "task": task.id,
+                "code": "restricted-execution-requires-relay-image",
+                "detail": (
+                    "experimental execution declares network mode 'restricted', which the "
+                    "runner serves through a relay; declare runtime.relay_image as an "
+                    "immutable digest. It is never discovered, resolved or pulled"
+                ),
+            }
+        )
     result.execution_profile = profiles.build_profile(
         domain=profiles.EXECUTION,
         roots=profiles.ProfileRoots(
@@ -618,14 +635,38 @@ def _prepare_task(
     # Coordinator-private qualification workspace: a copy of BASE plus the oracle.
     # Kept apart from the pristine materialisation so tree verification stays honest,
     # and apart from the executor workspace so the oracle never reaches an executor.
+    # The adapter owns the staged filename because the constraint belongs to its
+    # runner, not to the experiment. BASE and REFERENCE use the same rule, so one
+    # qualification is comparable with the other.
+    adapter = adapters.get(task.adapter)
+    staged_oracle_name = adapter.staged_oracle_name(
+        oracle_sha256, task.oracle_path.name
+    )
+    oracle_bytes = task.oracle_path.read_bytes()
     for subject, source in (("base", base_dir), ("reference", reference_dir)):
         project = layout[f"qualification_{subject}_project"]
         if not any(project.iterdir()):
             shutil.copytree(source, project, dirs_exist_ok=True, symlinks=True)
-        shutil.copy2(task.oracle_path, project / task.oracle_path.name)
+        destination = project / staged_oracle_name
+        # The staging destination is reserved. If the subject already occupies it
+        # with different bytes, refuse rather than overwrite subject content or
+        # quietly pick another name, which would change what was qualified.
+        if destination.exists() and destination.read_bytes() != oracle_bytes:
+            blockers.append(
+                {
+                    "task": task.id,
+                    "code": "oracle-staging-destination-occupied",
+                    "detail": (
+                        f"the reserved qualification staging path {staged_oracle_name!r} "
+                        "already exists in the subject with different bytes; refusing to "
+                        "overwrite subject content"
+                    ),
+                }
+            )
+            continue
+        shutil.copy2(task.oracle_path, destination)
         result.qualification_paths[subject] = project
 
-    adapter = adapters.get(task.adapter)
     projection: ConfigProjection | None = None
     if task.harness.isolate_test_config:
         projection = project_test_config(test_config, task.runtime.available_plugins)
@@ -633,7 +674,7 @@ def _prepare_task(
     harness = adapter.build(
         task,
         workspace_path="/workspace",
-        oracle_name=task.oracle_path.name,
+        oracle_name=staged_oracle_name,
         test_config=test_config,
         projection=projection,
     )
