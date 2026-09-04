@@ -3,32 +3,82 @@
   "$id": "https://ktogias.github.io/gnostoa/schemas/v1/experiment-spec.schema.json",
   "title": "Gnostoa experiment specification",
   "type": "object",
-  "required": ["schema", "experiment", "tasks"],
+  "required": [
+    "schema",
+    "experiment",
+    "tasks"
+  ],
   "additionalProperties": false,
   "properties": {
-    "schema": {"const": "gnostoa-experiment-spec/v1"},
+    "schema": {
+      "const": "gnostoa-experiment-spec/v1"
+    },
     "experiment": {
       "type": "object",
-      "required": ["id", "executor", "resources"],
+      "required": [
+        "id",
+        "executor",
+        "resources"
+      ],
       "properties": {
-        "id": {"type": "string", "minLength": 1},
-        "question": {"type": "string"},
-        "claim_boundary": {"type": "string"},
-        "executor": {"$ref": "#/$defs/agent"},
-        "reviewer": {"$ref": "#/$defs/agent"},
-        "arms": {"type": "object", "additionalProperties": {"type": "object"}},
-        "assignment": {"type": "object", "additionalProperties": {"type": "string"}},
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "question": {
+          "type": "string"
+        },
+        "claim_boundary": {
+          "type": "string"
+        },
+        "executor": {
+          "$ref": "#/$defs/agent"
+        },
+        "reviewer": {
+          "$ref": "#/$defs/agent"
+        },
+        "arms": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object"
+          }
+        },
+        "assignment": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
         "resources": {
           "type": "object",
-          "required": ["timeout_seconds", "archive_limit_bytes"],
+          "required": [
+            "timeout_seconds",
+            "archive_limit_bytes"
+          ],
           "properties": {
-            "timeout_seconds": {"type": "integer", "exclusiveMinimum": 0},
-            "archive_limit_bytes": {"type": "integer", "exclusiveMinimum": 0},
+            "timeout_seconds": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            "archive_limit_bytes": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
             "network": {
               "type": "object",
               "properties": {
-                "mode": {"enum": ["none", "restricted"]},
-                "allow": {"type": "array", "items": {"type": "string"}}
+                "mode": {
+                  "enum": [
+                    "none",
+                    "restricted"
+                  ]
+                },
+                "allow": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
               }
             }
           }
@@ -48,49 +98,120 @@
           "required_configuration_sha256"
         ],
         "properties": {
-          "capability": {"type": "string"},
-          "certificate": {"type": "string"},
-          "certificate_sha256": {"$ref": "#/$defs/sha256"},
-          "required_implementation_sha256": {"$ref": "#/$defs/sha256"},
-          "required_runtime_identity": {"type": "string"},
-          "required_configuration_sha256": {"$ref": "#/$defs/sha256"},
-          "requested_bounds": {"type": "object", "additionalProperties": {"type": "integer"}}
+          "capability": {
+            "type": "string"
+          },
+          "certificate": {
+            "type": "string"
+          },
+          "certificate_sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "required_implementation_sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "required_runtime_identity": {
+            "type": "string"
+          },
+          "required_configuration_sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "requested_bounds": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          }
         }
       }
     },
-    "tasks": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/task"}}
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/task"
+      }
+    }
   },
   "$defs": {
-    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
     "agent": {
       "type": "object",
-      "required": ["id", "version", "config_sha256"],
+      "required": [
+        "id",
+        "version",
+        "config_sha256"
+      ],
       "properties": {
-        "id": {"type": "string"},
-        "version": {"type": "string"},
-        "config_sha256": {"$ref": "#/$defs/sha256"},
-        "model": {"type": "string"},
-        "small_model": {"type": "string"}
+        "id": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "config_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "model": {
+          "type": "string"
+        },
+        "small_model": {
+          "type": "string"
+        }
       }
     },
     "task": {
       "type": "object",
-      "required": ["id", "adapter", "source", "reference", "runtime", "oracle", "semantics", "expectations"],
+      "required": [
+        "id",
+        "adapter",
+        "source",
+        "reference",
+        "runtime",
+        "oracle",
+        "semantics",
+        "expectations"
+      ],
       "properties": {
-        "id": {"type": "string", "minLength": 1},
-        "adapter": {"enum": ["python-pytest", "node-vitest", "generic-command"]},
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "adapter": {
+          "enum": [
+            "python-pytest",
+            "node-vitest",
+            "generic-command"
+          ]
+        },
         "source": {
           "type": "object",
-          "required": ["repository", "base_commit", "base_tree"],
+          "required": [
+            "repository",
+            "base_commit",
+            "base_tree"
+          ],
           "properties": {
-            "repository": {"type": "string"},
-            "base_commit": {"type": "string"},
-            "base_tree": {"type": "string"}
+            "repository": {
+              "type": "string"
+            },
+            "base_commit": {
+              "type": "string"
+            },
+            "base_tree": {
+              "type": "string"
+            }
           }
         },
         "reference": {
           "type": "object",
-          "required": ["kind", "tree"],
+          "required": [
+            "kind",
+            "tree"
+          ],
           "properties": {
             "kind": {
               "enum": [
@@ -100,72 +221,161 @@
                 "rederived-reference-tree"
               ]
             },
-            "commit": {"type": "string"},
-            "tree": {"type": "string"},
-            "repository": {"type": "string"}
+            "commit": {
+              "type": "string"
+            },
+            "tree": {
+              "type": "string"
+            },
+            "repository": {
+              "type": "string"
+            }
           }
         },
         "runtime": {
           "type": "object",
-          "required": ["image"],
+          "required": [
+            "image"
+          ],
           "properties": {
-            "image": {"type": "string"},
-            "available_plugins": {"type": "array", "items": {"type": "string"}},
+            "image": {
+              "type": "string"
+            },
+            "available_plugins": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
             "preparation_tools": {
               "type": "array",
               "items": {
                 "type": "object",
-                "required": ["name", "artifact"],
-                "properties": {"name": {"type": "string"}, "artifact": {"type": "string"}}
+                "required": [
+                  "name",
+                  "artifact"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "artifact": {
+                    "type": "string"
+                  }
+                }
               }
             }
           }
         },
         "preparation": {
           "type": "object",
-          "properties": {"scheme": {"type": "string"}}
+          "properties": {
+            "scheme": {
+              "type": "string",
+              "enum": [
+                "gnostoa-setuptools-scm-compatible/v1"
+              ]
+            }
+          }
         },
         "oracle": {
           "type": "object",
-          "required": ["path"],
-          "properties": {"path": {"type": "string"}, "sha256": {"$ref": "#/$defs/sha256"}}
+          "required": [
+            "path"
+          ],
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "sha256": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
         },
         "identification_key": {
           "type": "object",
-          "required": ["path"],
-          "properties": {"path": {"type": "string"}, "sha256": {"$ref": "#/$defs/sha256"}}
+          "required": [
+            "path"
+          ],
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "sha256": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
         },
         "prior_qualification": {
           "type": "object",
-          "properties": {"evidence_sha256": {"$ref": "#/$defs/sha256"}}
+          "properties": {
+            "evidence_sha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "receipt": {
+              "type": "string",
+              "description": "Path to a typed, identity-bound qualification receipt reused instead of rerunning."
+            }
+          }
         },
         "semantics": {
           "type": "object",
-          "required": ["requirement", "discriminator"],
+          "required": [
+            "requirement",
+            "discriminator"
+          ],
           "properties": {
-            "requirement": {"type": "string", "minLength": 1},
+            "requirement": {
+              "type": "string",
+              "minLength": 1
+            },
             "discriminator": {
               "type": "object",
-              "required": ["cases"],
+              "required": [
+                "cases"
+              ],
               "properties": {
-                "cases": {"type": "array", "minItems": 1, "items": {"type": "string"}},
-                "behavior_paths": {"type": "array", "items": {"type": "string"}}
+                "cases": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "behavior_paths": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
               }
             },
             "controls": {
               "type": "array",
               "items": {
                 "type": "object",
-                "required": ["case"],
+                "required": [
+                  "case"
+                ],
                 "properties": {
-                  "case": {"type": "string"},
+                  "case": {
+                    "type": "string"
+                  },
                   "corroboration": {
                     "type": "object",
                     "properties": {
-                      "path": {"type": "string"},
-                      "symbol": {"type": "string"},
-                      "value_substitutions": {"type": "object"},
-                      "prior_qualification_sha256": {"$ref": "#/$defs/sha256"}
+                      "path": {
+                        "type": "string"
+                      },
+                      "symbol": {
+                        "type": "string"
+                      },
+                      "value_substitutions": {
+                        "type": "object"
+                      },
+                      "prior_qualification_sha256": {
+                        "$ref": "#/$defs/sha256"
+                      }
                     }
                   }
                 }
@@ -176,17 +386,54 @@
         "harness": {
           "type": "object",
           "properties": {
-            "preload_modules": {"type": "array", "items": {"type": "string"}},
-            "isolate_test_config": {"type": "boolean"},
-            "extra_argv": {"type": "array", "items": {"type": "string"}}
+            "preload_modules": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "isolate_test_config": {
+              "type": "boolean"
+            },
+            "extra_argv": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           }
         },
         "expectations": {
           "type": "object",
-          "required": ["base", "reference"],
+          "required": [
+            "base",
+            "reference"
+          ],
           "properties": {
-            "base": {"type": "object", "additionalProperties": {"type": "integer"}},
-            "reference": {"type": "object", "additionalProperties": {"type": "integer"}}
+            "base": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "integer"
+              }
+            },
+            "reference": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "execution": {
+          "type": "object",
+          "description": "The executor command. Never inferred from the oracle harness, whose invocation belongs to the qualification trust domain only.",
+          "properties": {
+            "command": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           }
         }
       }

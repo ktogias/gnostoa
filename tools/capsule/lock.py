@@ -32,6 +32,7 @@ class ExperimentLock:
         return digest_of(dict(self.payload))
 
     def write(self, root: Path) -> Path:
+        root.mkdir(parents=True, exist_ok=True)
         path = root / LOCK_FILENAME
         serialized = json.dumps(
             {**self.payload, "lock_sha256": self.identity}, indent=2, sort_keys=True

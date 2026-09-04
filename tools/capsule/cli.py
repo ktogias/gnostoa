@@ -13,10 +13,12 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from tools.capsule import lock as lock_module
 from tools.capsule import stages
 from tools.capsule.authority import AuthorityError
 from tools.capsule.authority import load_file as load_authority
 from tools.capsule.compiler import CompileError, prepare, status
+from tools.capsule.execute import ExecuteError, execute_lock
 from tools.capsule.spec import SpecError, load_spec
 
 
@@ -58,6 +60,7 @@ def command_prepare(args: argparse.Namespace) -> int:
             args.workspace,
             offline=True,
             preflight_authority=authority,
+            qualification_backend=args.qualification_backend,
         )
     except CompileError as exc:
         _emit(
@@ -103,28 +106,32 @@ def command_status(args: argparse.Namespace) -> int:
 
 
 def command_execute(args: argparse.Namespace) -> int:
-    payload = status(args.workspace)
-    if payload.get("status") != stages.READY_FOR_OWNER_REVIEW:
+    workspace = Path(args.workspace)
+    lock_path = workspace / "experiment.lock"
+    if not lock_path.is_file():
         _emit(
             {
                 "status": "REFUSED",
-                "reason": "lock-not-ready",
-                "stage": payload.get("stage"),
-                "detail": "execute consumes a frozen READY_FOR_OWNER_REVIEW lock and cannot repair it",
+                "reason": "no-frozen-lock",
+                "detail": "execute consumes a frozen experiment.lock and cannot create one",
             }
         )
         return 2
     if not args.authority:
         _emit({"status": "REFUSED", "reason": "launch-authority-required"})
         return 2
-    _emit(
-        {
-            "status": "REFUSED",
-            "reason": "runner-handoff-not-implemented-in-v1",
-            "detail": "v1 prepares and freezes; handing the frozen profiles to the runner is a separate slice",
-        }
-    )
-    return 2
+    try:
+        result = execute_lock(
+            lock_path,
+            workspace / "execution",
+            backend=args.backend,
+            dry_run=args.dry_run,
+        )
+    except (ExecuteError, lock_module.LockError) as exc:
+        _emit({"status": "REFUSED", "reason": "lock-unusable", "detail": str(exc)})
+        return 2
+    _emit(result.as_json())
+    return 0 if result.status in {"EXECUTED", "MATERIALISED"} else 1
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -137,6 +144,12 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_parser.add_argument("spec")
     prepare_parser.add_argument("--workspace", required=True)
     prepare_parser.add_argument("--offline", action="store_true", default=False)
+    prepare_parser.add_argument(
+        "--qualification-backend",
+        default="local-python",
+        choices=("local-python", "oci"),
+        help="oci runs the compiled invocation through the existing #164 runner",
+    )
     prepare_parser.add_argument(
         "--preflight-authority",
         default=None,
@@ -153,6 +166,12 @@ def build_parser() -> argparse.ArgumentParser:
     execute_parser = sub.add_parser("execute", help="execute a frozen experiment lock")
     execute_parser.add_argument("workspace")
     execute_parser.add_argument("--authority", default=None)
+    execute_parser.add_argument("--backend", default="oci", choices=("oci", "auto"))
+    execute_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="materialise the execution capsule from the lock without running it",
+    )
     execute_parser.set_defaults(func=command_execute)
     return parser
 

@@ -177,6 +177,8 @@ class TaskSpec:
     preparation_scheme: str | None = None
     identification_key_sha256: str | None = None
     prior_qualification_sha256: str | None = None
+    prior_qualification_receipt: Path | None = None
+    execution_command: tuple[str, ...] = ()
 
     def semantic_payload(self) -> dict[str, object]:
         """Exactly the semantic freeze inputs: no mechanics, no runtime."""
@@ -437,13 +439,26 @@ def _parse_task(raw: Mapping[str, Any], index: int, base_dir: Path) -> TaskSpec:
 
     prior_raw = raw.get("prior_qualification")
     prior_sha = None
+    prior_receipt: Path | None = None
     if isinstance(prior_raw, dict):
         prior_sha = prior_raw.get("evidence_sha256")
+        receipt_value = prior_raw.get("receipt")
+        if receipt_value:
+            prior_receipt = Path(str(receipt_value))
+            if not prior_receipt.is_absolute():
+                prior_receipt = base_dir / prior_receipt
+    execution_raw = raw.get("execution", {})
+    if not isinstance(execution_raw, dict):
+        raise SpecError(f"{where}: execution must be a mapping")
+    execution_command = tuple(str(item) for item in execution_raw.get("command", []))
+
     preparation_raw = raw.get("preparation", {})
     if not isinstance(preparation_raw, dict):
         raise SpecError(f"{where}: preparation must be a mapping")
 
     return TaskSpec(
+        execution_command=execution_command,
+        prior_qualification_receipt=prior_receipt,
         preparation_scheme=(
             str(preparation_raw["scheme"]) if preparation_raw.get("scheme") else None
         ),

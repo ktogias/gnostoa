@@ -13,8 +13,10 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from tools.capsule import certificates, compiler, stages
+from tools.capsule import certificates, compiler, execute, profiles, stages
+from tools.capsule import lock as lock_module
 from tools.capsule.authority import PreflightAuthority
 from tools.capsule.preparation import discover_test_config, project_test_config
 from tools.capsule.spec import SpecError, load_spec
@@ -336,32 +338,6 @@ class D3PreparationTests(CapsuleFixture):
             task.runtime_image, IMAGE_A, "the frozen base image is unchanged"
         )
 
-    def test_missing_offline_preparation_tool_blocks_without_acquisition(self) -> None:
-        repo, base = self._scm_repo()
-        (self.root / "oracle.py").write_text(
-            "def test_discriminates():\n    assert True\n"
-        )
-        spec = self.base_spec(
-            repo,
-            base,
-            base,
-            runtime={
-                "image": IMAGE_A,
-                "preparation_tools": [
-                    {
-                        "name": "setuptools-scm",
-                        "artifact": str(self.root / "absent.whl"),
-                    }
-                ],
-            },
-        )
-        result = compiler.prepare(
-            load_spec(self.write_spec(spec)), self.workspace, offline=True
-        )
-        self.assertEqual(result.status, "BLOCKED")
-        codes = [b["code"] for b in result.blockers]
-        self.assertIn("preparation-artifact-unavailable-offline", codes)
-
 
 class D4SemanticPrequalificationTests(CapsuleFixture):
     """D4: an over-strong control is blocked before execution freeze."""
@@ -595,7 +571,7 @@ class GeneratedArtifactTests(CapsuleFixture):
             self.workspace,
             offline=True,
         )
-        profile = result.task("T1").runner_profile
+        profile = result.task("T1").execution_profile
         self.assertEqual(profile["schema"], PROFILE_SCHEMA)
         self.assertEqual(
             validate_profile_data(profile, for_run=True),
@@ -734,13 +710,8 @@ class PreparationReceiptTests(CapsuleFixture):
             repo,
             base,
             base,
-            runtime={
-                "image": IMAGE_A,
-                "preparation_tools": [
-                    {"name": "setuptools-scm", "artifact": str(self.root / "scm.whl")}
-                ],
-            },
-            preparation={"scheme": "setuptools-scm/guess-next-dev+node-and-date"},
+            runtime={"image": IMAGE_A},
+            preparation={"scheme": "gnostoa-setuptools-scm-compatible/v1"},
         )
         result = compiler.prepare(
             load_spec(self.write_spec(spec)), self.workspace, offline=True
@@ -901,6 +872,331 @@ class CorroborationScopeTests(CapsuleFixture):
             [b["code"] for b in result.blockers],
             "evidence must live in the cited symbol, not merely somewhere in the file",
         )
+
+
+class ExecutionBoundaryTests(CapsuleFixture):
+    """The executor must never be able to reach the reference, oracle or key.
+
+    Handing an experimental agent the known-correct reference would invalidate the
+    experiment, so this is a hard boundary rather than a convention.
+    """
+
+    def _capsule(self) -> compiler.PrepareResult:
+        repo = self.make_repo("s", {"src/pkg/__init__.py": 'V = "base"\n'})
+        base = git(repo, "rev-parse", "HEAD")
+        ref = self.commit(repo, {"src/pkg/__init__.py": 'V = "fixed"\n'}, "fix")
+        (self.root / "oracle.py").write_text(
+            "SECRET_ORACLE_MARKER = 1\n\n\ndef test_discriminates():\n    assert True\n"
+        )
+        (self.root / "key.json").write_text('{"task_id": "T1"}\n')
+        spec = self.base_spec(repo, base, ref)
+        spec["tasks"][0]["reference"]["commit"] = ref
+        spec["tasks"][0]["reference"]["tree"] = git(repo, "rev-parse", ref + "^{tree}")
+        spec["tasks"][0]["identification_key"] = {"path": str(self.root / "key.json")}
+        return compiler.prepare(
+            load_spec(self.write_spec(spec)), self.workspace, offline=True
+        )
+
+    def test_execution_profile_admits_no_private_surface(self) -> None:
+        result = self._capsule()
+        task = result.task("T1")
+        admitted = profiles.admitted_paths(task.execution_profile)
+        private = [
+            task.reference_path,
+            *task.qualification_paths.values(),
+            (self.root / "oracle.py"),
+            (self.root / "key.json"),
+        ]
+        for surface in admitted:
+            for secret in private:
+                self.assertFalse(
+                    str(secret).startswith(str(surface)),
+                    f"execution surface {surface} exposes {secret}",
+                )
+
+    def test_executor_workspace_contains_no_oracle_or_reference_content(self) -> None:
+        result = self._capsule()
+        task = result.task("T1")
+        project = Path(task.execution_profile["project_root"])
+        blob = "".join(
+            path.read_text(errors="replace")
+            for path in project.rglob("*")
+            if path.is_file()
+        )
+        self.assertIn("base", blob, "the executor must see the BASE subject")
+        self.assertNotIn("SECRET_ORACLE_MARKER", blob, "the oracle must not be present")
+        self.assertNotIn('V = "fixed"', blob, "the reference must not be present")
+        self.assertFalse((project / "oracle.py").exists())
+
+    def test_qualification_and_execution_are_distinct_trust_domains(self) -> None:
+        result = self._capsule()
+        task = result.task("T1")
+        self.assertEqual(task.execution_profile["trust_domain"], profiles.EXECUTION)
+        for profile in task.qualification_profiles.values():
+            self.assertEqual(profile["trust_domain"], profiles.QUALIFICATION)
+        self.assertNotEqual(
+            task.execution_profile["project_root"],
+            task.qualification_profiles["base"]["project_root"],
+        )
+
+    def test_a_profile_mounting_the_whole_subject_directory_is_refused(self) -> None:
+        """The exact regression the owner review identified."""
+        result = self._capsule()
+        task = result.task("T1")
+        leaky = dict(task.execution_profile)
+        leaky["read_only_roots"] = [str(Path(task.reference_path).parent)]
+        with self.assertRaises(profiles.ProfileBoundaryError):
+            profiles.assert_execution_boundary(
+                leaky, {"reference-subject": Path(task.reference_path)}
+            )
+
+
+class PriorQualificationReuseTests(CapsuleFixture):
+    """D0: an already-valid, identity-bound qualification is reused, not rerun."""
+
+    def _qualified(self) -> tuple[dict, compiler.PrepareResult]:
+        repo = self.make_repo(
+            "s", {"src/pkg/__init__.py": 'def render():\n    return "Basic "\n'}
+        )
+        base = git(repo, "rev-parse", "HEAD")
+        ref = self.commit(
+            repo, {"src/pkg/__init__.py": 'def render():\n    return "Basic"\n'}, "fix"
+        )
+        (self.root / "oracle.py").write_text(
+            "import pkg\n\n\ndef test_discriminates():\n    assert pkg.render() == 'Basic'\n"
+        )
+        spec = self.base_spec(repo, base, ref)
+        spec["tasks"][0]["reference"]["commit"] = ref
+        spec["tasks"][0]["reference"]["tree"] = git(repo, "rev-parse", ref + "^{tree}")
+        result = compiler.prepare(
+            load_spec(self.write_spec(spec)),
+            self.workspace / "first",
+            offline=True,
+            preflight_authority=self.authority(),
+        )
+        return spec, result
+
+    def test_current_receipt_is_reused_without_executing_the_oracle(self) -> None:
+        spec, first = self._qualified()
+        self.assertEqual(first.status, stages.READY_FOR_OWNER_REVIEW, first.blockers)
+        receipt = first.task("T1").qualification
+        receipt_path = self.root / "receipt.json"
+        receipt_path.write_text(json.dumps(receipt.as_json(), indent=2))
+
+        spec["tasks"][0]["prior_qualification"] = {"receipt": str(receipt_path)}
+        with mock.patch.object(
+            compiler,
+            "qualify_subjects",
+            side_effect=AssertionError("oracle was executed"),
+        ):
+            second = compiler.prepare(
+                load_spec(self.write_spec(spec)),
+                self.workspace / "second",
+                offline=True,
+                preflight_authority=self.authority(),
+            )
+        self.assertEqual(second.status, stages.READY_FOR_OWNER_REVIEW, second.blockers)
+        self.assertTrue(second.task("T1").qualification_reused)
+
+    def test_a_receipt_bound_to_other_identities_is_refused(self) -> None:
+        spec, first = self._qualified()
+        stale = dict(first.task("T1").qualification.as_json())
+        stale["bound"] = {**stale["bound"], "base_tree": "0" * 40}
+        receipt_path = self.root / "stale.json"
+        receipt_path.write_text(json.dumps(stale, indent=2))
+
+        spec["tasks"][0]["prior_qualification"] = {"receipt": str(receipt_path)}
+        result = compiler.prepare(
+            load_spec(self.write_spec(spec)),
+            self.workspace / "third",
+            offline=True,
+            preflight_authority=self.authority(),
+        )
+        self.assertEqual(result.status, "BLOCKED")
+        self.assertIn(
+            "prior-qualification-receipt-not-current",
+            [b["code"] for b in result.blockers],
+        )
+
+    def test_a_receipt_without_bound_identities_is_refused(self) -> None:
+        spec, first = self._qualified()
+        naked = dict(first.task("T1").qualification.as_json())
+        naked.pop("bound")
+        receipt_path = self.root / "naked.json"
+        receipt_path.write_text(json.dumps(naked, indent=2))
+
+        spec["tasks"][0]["prior_qualification"] = {"receipt": str(receipt_path)}
+        result = compiler.prepare(
+            load_spec(self.write_spec(spec)),
+            self.workspace / "fourth",
+            offline=True,
+            preflight_authority=self.authority(),
+        )
+        self.assertIn(
+            "prior-qualification-receipt-invalid", [b["code"] for b in result.blockers]
+        )
+
+
+class LockExecutionTests(CapsuleFixture):
+    """The frozen lock must be executable without rediscovery."""
+
+    def _locked(
+        self, *, execution_command: list[str] | None = None
+    ) -> compiler.PrepareResult:
+        repo = self.make_repo(
+            "s", {"src/pkg/__init__.py": 'def render():\n    return "Basic "\n'}
+        )
+        base = git(repo, "rev-parse", "HEAD")
+        ref = self.commit(
+            repo, {"src/pkg/__init__.py": 'def render():\n    return "Basic"\n'}, "fix"
+        )
+        (self.root / "oracle.py").write_text(
+            "import pkg\n\n\ndef test_discriminates():\n    assert pkg.render() == 'Basic'\n"
+        )
+        spec = self.base_spec(repo, base, ref, harness={"preload_modules": ["pkg"]})
+        spec["tasks"][0]["reference"]["commit"] = ref
+        spec["tasks"][0]["reference"]["tree"] = git(repo, "rev-parse", ref + "^{tree}")
+        if execution_command is not None:
+            spec["tasks"][0]["execution"] = {"command": execution_command}
+        return compiler.prepare(
+            load_spec(self.write_spec(spec)),
+            self.workspace,
+            offline=True,
+            preflight_authority=self.authority(),
+        )
+
+    def test_capsule_materialises_from_the_lock_alone(self) -> None:
+        result = self._locked(execution_command=["python", "-c", "print(1)"])
+        self.assertEqual(result.status, stages.READY_FOR_OWNER_REVIEW, result.blockers)
+        outcome = execute.execute_lock(
+            result.lock_path, self.workspace / "exec", dry_run=True
+        )
+        self.assertEqual(outcome.status, "MATERIALISED", outcome.blockers)
+        project = Path(outcome.runs["T1"]["project_root"])
+        self.assertTrue((project / "src/pkg/__init__.py").is_file())
+
+    def test_execution_capsule_excludes_the_oracle_harness(self) -> None:
+        """Qualification-domain artifacts must not reach the executor capsule."""
+        result = self._locked(execution_command=["python", "-c", "print(1)"])
+        outcome = execute.execute_lock(
+            result.lock_path, self.workspace / "exec", dry_run=True
+        )
+        project = Path(outcome.runs["T1"]["project_root"])
+        self.assertFalse(
+            (project / "conftest.py").exists(), "harness is qualification-only"
+        )
+        self.assertFalse((project / "oracle.py").exists())
+
+    def test_execute_refuses_to_reuse_the_oracle_invocation(self) -> None:
+        result = self._locked()
+        outcome = execute.execute_lock(
+            result.lock_path, self.workspace / "exec", dry_run=True
+        )
+        self.assertEqual(outcome.status, "BLOCKED")
+        self.assertIn(
+            "execution-command-not-declared", [b["code"] for b in outcome.blockers]
+        )
+
+    def test_a_tampered_lock_is_refused(self) -> None:
+        result = self._locked(execution_command=["python", "-c", "print(1)"])
+        payload = json.loads(result.lock_path.read_text())
+        payload["tasks"][0]["base_tree"] = "0" * 40
+        result.lock_path.write_text(json.dumps(payload, indent=2, sort_keys=True))
+        with self.assertRaises(lock_module.LockError):
+            execute.execute_lock(
+                result.lock_path, self.workspace / "exec", dry_run=True
+            )
+
+    def test_a_missing_store_artifact_blocks_materialisation(self) -> None:
+        result = self._locked(execution_command=["python", "-c", "print(1)"])
+        payload = json.loads(result.lock_path.read_text())
+        payload["tasks"][0]["stored_artifacts"].append(
+            {
+                "path": "extra.py",
+                "sha256": "0" * 64,
+                "store": "artifacts/missing",
+                "domain": profiles.EXECUTION,
+            }
+        )
+        # Re-seal so the digest check passes and materialisation is what fails.
+        payload.pop("lock_sha256")
+        rebuilt = lock_module.ExperimentLock(payload=payload)
+        rebuilt.write(self.workspace / "resealed")
+        outcome = execute.execute_lock(
+            self.workspace / "resealed" / "experiment.lock",
+            self.workspace / "exec",
+            dry_run=True,
+        )
+        self.assertEqual(outcome.status, "BLOCKED")
+        self.assertIn(
+            "capsule-not-materialisable", [b["code"] for b in outcome.blockers]
+        )
+
+
+def _local_image(reference: str = "python:3.12-slim") -> str | None:
+    """The immutable id of a locally present image, or None."""
+    try:
+        completed = subprocess.run(
+            ["docker", "image", "inspect", "--format", "{{.Id}}", reference],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    identity = completed.stdout.strip()
+    return identity if identity.startswith("sha256:") else None
+
+
+def _oci_available() -> bool:
+    """The OCI suite needs a working container backend bound to a local image."""
+    image = _local_image()
+    if image is None:
+        return False
+    try:
+        from tools.experiment.backend import probe_backend
+
+        return probe_backend("oci", image=image).status == "AVAILABLE"
+    except Exception:
+        return False
+
+
+@unittest.skipUnless(_oci_available(), "no OCI backend available")
+class OciQualificationTests(CapsuleFixture):
+    """BASE/REFERENCE qualification through the existing #164 runner."""
+
+    def test_qualification_runs_through_the_runner_and_classifies_by_cause(
+        self,
+    ) -> None:
+        image = _local_image()
+        assert image is not None
+
+        repo = self.make_repo(
+            "s", {"src/pkg/__init__.py": 'def render():\n    return "Basic "\n'}
+        )
+        base = git(repo, "rev-parse", "HEAD")
+        ref = self.commit(
+            repo, {"src/pkg/__init__.py": 'def render():\n    return "Basic"\n'}, "fix"
+        )
+        (self.root / "oracle.py").write_text(
+            "import pkg\n\n\ndef test_discriminates():\n    assert pkg.render() == 'Basic'\n"
+        )
+        spec = self.base_spec(repo, base, ref, runtime={"image": image})
+        spec["tasks"][0]["reference"]["commit"] = ref
+        spec["tasks"][0]["reference"]["tree"] = git(repo, "rev-parse", ref + "^{tree}")
+        result = compiler.prepare(
+            load_spec(self.write_spec(spec)),
+            self.workspace,
+            offline=True,
+            preflight_authority=self.authority(),
+            qualification_backend="oci",
+        )
+        receipt = result.task("T1").qualification
+        # python:3.12-slim carries no pytest, so this must classify as infrastructure
+        # rather than be mistaken for a behavioural outcome.
+        self.assertIsNotNone(receipt)
+        self.assertEqual(receipt.backend, "oci")
+        self.assertEqual(receipt.base.classification, "INFRASTRUCTURE")
 
 
 if __name__ == "__main__":

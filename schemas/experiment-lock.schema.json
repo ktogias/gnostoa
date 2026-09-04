@@ -4,64 +4,236 @@
   "title": "Gnostoa immutable experiment lock",
   "description": "Written once at EXECUTION_FROZEN. Binds every identity a later execute needs, so execution requires no rediscovery, acquisition or reinterpretation.",
   "type": "object",
-  "required": ["schema", "producer", "experiment", "authority", "launch", "tasks", "stage_receipts", "lock_sha256"],
+  "required": [
+    "schema",
+    "producer",
+    "experiment",
+    "authority",
+    "launch",
+    "tasks",
+    "stage_receipts",
+    "lock_sha256"
+  ],
   "properties": {
-    "schema": {"const": "gnostoa-experiment-lock/v1"},
-    "producer": {"type": "string"},
-    "lock_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "schema": {
+      "const": "gnostoa-experiment-lock/v1"
+    },
+    "producer": {
+      "type": "string"
+    },
+    "lock_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
     "experiment": {
       "type": "object",
-      "required": ["id"],
+      "required": [
+        "id"
+      ],
       "properties": {
-        "id": {"type": "string"},
-        "question": {"type": "string"},
-        "claim_boundary": {"type": "string"}
+        "id": {
+          "type": "string"
+        },
+        "question": {
+          "type": "string"
+        },
+        "claim_boundary": {
+          "type": "string"
+        }
       }
     },
     "authority": {
       "type": "object",
-      "required": ["id", "experiment_id", "scope"],
+      "required": [
+        "id",
+        "experiment_id",
+        "scope"
+      ],
       "properties": {
-        "id": {"type": "string"},
-        "experiment_id": {"type": "string"},
-        "scope": {"type": "array", "items": {"type": "string"}}
+        "id": {
+          "type": "string"
+        },
+        "experiment_id": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       }
     },
     "launch": {
       "type": "object",
-      "required": ["executor", "resources"],
+      "required": [
+        "executor",
+        "resources"
+      ],
       "properties": {
-        "executor": {"type": "object"},
-        "reviewer": {"type": ["object", "null"]},
-        "arms": {"type": "object"},
-        "assignment": {"type": "object"},
-        "resources": {"type": "object"}
+        "executor": {
+          "type": "object"
+        },
+        "reviewer": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "arms": {
+          "type": "object"
+        },
+        "assignment": {
+          "type": "object"
+        },
+        "resources": {
+          "type": "object"
+        }
       }
     },
-    "capabilities": {"type": "array", "items": {"type": "object"}},
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
     "stage_receipts": {
       "type": "object",
       "description": "Content-addressed receipt per completed stage; readiness is impossible without all required stages present.",
-      "additionalProperties": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      }
     },
     "tasks": {
       "type": "array",
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["id", "base_tree", "reference_tree", "runtime_image", "oracle_sha256", "capsule_identity", "runner_profile", "qualification"],
+        "required": [
+          "id",
+          "base_tree",
+          "reference_tree",
+          "runtime_image",
+          "oracle_sha256",
+          "capsule_identity",
+          "execution_profile",
+          "qualification_profiles",
+          "qualification",
+          "source_repository",
+          "private_material"
+        ],
         "properties": {
-          "id": {"type": "string"},
-          "base_tree": {"type": "string"},
-          "reference_tree": {"type": "string"},
-          "runtime_image": {"type": "string"},
-          "prepared_runtime_identity": {"type": ["string", "null"]},
-          "oracle_sha256": {"type": "string"},
-          "identification_key_sha256": {"type": ["string", "null"]},
-          "preparation_receipt": {"type": ["object", "null"]},
-          "runner_profile": {"type": "object"},
-          "qualification": {"type": "object"},
-          "capsule_identity": {"type": "string"}
+          "id": {
+            "type": "string"
+          },
+          "base_tree": {
+            "type": "string"
+          },
+          "reference_tree": {
+            "type": "string"
+          },
+          "runtime_image": {
+            "type": "string"
+          },
+          "prepared_runtime_identity": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "oracle_sha256": {
+            "type": "string"
+          },
+          "identification_key_sha256": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "preparation_receipt": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "qualification": {
+            "type": "object"
+          },
+          "capsule_identity": {
+            "type": "string"
+          },
+          "source_repository": {
+            "type": "string"
+          },
+          "execution_command": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "execution_profile": {
+            "type": "object",
+            "description": "Executor trust domain. Must never admit the reference, oracle or key."
+          },
+          "qualification_profiles": {
+            "type": "object",
+            "description": "Coordinator-private trust domain, one profile per subject."
+          },
+          "stored_artifacts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "path",
+                "sha256",
+                "store",
+                "domain"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "store": {
+                  "type": "string",
+                  "description": "content-addressed location the bytes are recoverable from"
+                },
+                "domain": {
+                  "enum": [
+                    "qualification",
+                    "execution"
+                  ]
+                }
+              }
+            }
+          },
+          "private_material": {
+            "type": "object",
+            "description": "Identity plus an owner-private locator. Bytes never enter the lock.",
+            "additionalProperties": {
+              "type": "object",
+              "required": [
+                "sha256",
+                "resolver",
+                "locator"
+              ],
+              "properties": {
+                "sha256": {
+                  "type": "string"
+                },
+                "resolver": {
+                  "type": "string"
+                },
+                "locator": {
+                  "type": "string"
+                }
+              }
+            }
+          }
         }
       }
     }

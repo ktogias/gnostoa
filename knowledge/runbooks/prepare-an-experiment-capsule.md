@@ -59,6 +59,7 @@ Author one specification. Intent is declared; everything mechanical is derived.
                                                           "value_substitutions": {"mine": "theirs"}}}]
     },
     "harness": {"preload_modules": [], "isolate_test_config": false},
+    "execution": {"command": ["<the executor command; never the oracle invocation>"]},
     "expectations": {"base": {"failed": 1, "passed": 0}, "reference": {"failed": 0, "passed": 1}}
   }]
 }
@@ -110,11 +111,42 @@ one you intend. Read blockers as follows.
 | `base-reference-qualification-failed` | observed outcome or cause differs from the frozen expectation | read the classification: `INFRASTRUCTURE`, `WRONG_CAUSE` or `COUNT_MISMATCH` |
 | `preflight-authority-out-of-scope` | the authority does not name this experiment and scope | obtain an authority bound to this experiment |
 | `readiness-missing-stage-receipts` | a required stage has no completed receipt | readiness is receipt-gated; complete the named stages |
+| `execution-profile-admits-private-surface` | the executor profile could reach the reference, oracle or key | a containment defect; the capsule is refused until the surfaces are separated |
+| `execution-command-not-declared` | the lock binds no executor command | declare `execution.command`; the oracle invocation is qualification-only and is never reused |
+| `preparation-tool-not-used-by-scheme` | a producer artifact is declared that cannot change the produced bytes | remove it; the scheme is a Gnostoa-owned algorithm |
+| `prior-qualification-receipt-not-current` | the receipt does not bind today's identities | requalify, or drop the prior-qualification claim |
+| `qualification-backend-unavailable` | the declared backend is not one of the supported ones | use `local-python` or `oci` |
 | `base-reference-qualification-requires-preflight-authority` | static preparation is complete | obtain explicit owner preflight authority |
 
 A control blocker is the system refusing to guess. If no citation exists, the control is
 probably over-strong for the subject, and the oracle needs a new identity rather than a
 harness or runtime workaround.
+
+## Trust domains
+
+Qualification and experimental execution are separate domains and are never the same capsule.
+
+| | qualification | execution |
+| --- | --- | --- |
+| sees BASE | yes | yes |
+| sees REFERENCE | yes | **never** |
+| sees the hidden oracle | yes | **never** |
+| sees the identification key | yes | **never** |
+| command | the compiled oracle invocation | the declared `execution.command` |
+
+The compiler checks the execution profile against those forbidden surfaces before freezing, and
+`execute` re-checks them before handing anything to the runner. If either check fails the capsule
+is refused: handing an executor the known-correct reference would invalidate the experiment.
+
+## Execute a frozen lock
+
+```sh
+python -m tools.capsule.cli execute WORKSPACE --authority AUTHORITY --dry-run
+python -m tools.capsule.cli execute WORKSPACE --authority AUTHORITY
+```
+
+`execute` rebuilds the execution capsule from the lock, the content-addressed artifact store and
+the declared private locators only. It performs no discovery and cannot reinterpret the lock.
 
 ## Recovery
 
