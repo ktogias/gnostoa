@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import ast
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -34,7 +35,7 @@ _JS_STRING = re.compile(r"""(['"])(?P<value>(?:(?!\1).){1,200})\1""")
 @dataclass(frozen=True, slots=True)
 class OracleCase:
     name: str
-    literals: tuple[str, ...]
+    literals: tuple[object, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,7 +60,7 @@ def _python_shape(source: str) -> OracleShape:
         # Only the asserted expected value counts as the case's expectation. Any
         # other string in the body is incidental setup and must never be able to
         # corroborate a control by accident.
-        literals: list[str] = []
+        literals: list[object] = []
         for inner in ast.walk(node):
             if not isinstance(inner, ast.Assert):
                 continue
@@ -67,7 +68,7 @@ def _python_shape(source: str) -> OracleShape:
             if not isinstance(test, ast.Compare):
                 continue
             for operand in (test.left, *test.comparators):
-                if isinstance(operand, ast.Constant) and isinstance(operand.value, str):
+                if isinstance(operand, ast.Constant):
                     literals.append(operand.value)
         cases.append(OracleCase(name=node.name, literals=tuple(literals)))
     return OracleShape(language="python", cases=tuple(cases))
@@ -89,8 +90,8 @@ def _javascript_shape(source: str) -> OracleShape:
     return OracleShape(language="javascript", cases=tuple(cases))
 
 
-def _symbol_literals(source: str, symbol: str) -> tuple[str, ...] | None:
-    """String constants inside the named function, or None when it is absent."""
+def _symbol_literals(source: str, symbol: str) -> tuple[object, ...] | None:
+    """Constants inside the named function, or None when it is absent."""
     try:
         tree = ast.parse(source)
     except SyntaxError:
@@ -103,9 +104,33 @@ def _symbol_literals(source: str, symbol: str) -> tuple[str, ...] | None:
             return tuple(
                 inner.value
                 for inner in ast.walk(node)
-                if isinstance(inner, ast.Constant) and isinstance(inner.value, str)
+                if isinstance(inner, ast.Constant)
             )
     return None
+
+
+def _corroborates(
+    expected: object, evidence: Sequence[object], substitutions: Mapping[str, str]
+) -> bool:
+    """A string expectation is compared after declared substitutions; other scalars exactly.
+
+    Booleans and None are never corroborating: they are too common to bind a control
+    to a specific behaviour.
+    """
+    if isinstance(expected, str):
+        candidate = expected
+        for source_value, evidence_value in substitutions.items():
+            candidate = candidate.replace(source_value, evidence_value)
+        return bool(candidate) and candidate in [
+            item for item in evidence if isinstance(item, str)
+        ]
+    if expected is None or isinstance(expected, bool):
+        return False
+    return any(
+        type(item) is type(expected) and item == expected
+        for item in evidence
+        if not isinstance(item, (str, bool))
+    )
 
 
 def read_shape(path: Path) -> OracleShape:
@@ -238,14 +263,10 @@ def qualify(
             continue
 
         substitutions = control.corroboration.value_substitutions
-        corroborated = False
-        for literal in literals_by_case.get(control.case, ()):
-            candidate = literal
-            for source_value, evidence_value in substitutions.items():
-                candidate = candidate.replace(source_value, evidence_value)
-            if candidate and candidate in evidence_literals:
-                corroborated = True
-                break
+        corroborated = any(
+            _corroborates(literal, evidence_literals, substitutions)
+            for literal in literals_by_case.get(control.case, ())
+        )
         if not corroborated:
             blockers.append(
                 {
