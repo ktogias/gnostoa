@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from tools.capsule.adapters import Adapter, GeneratedFile, HarnessResult, Invocation
 from tools.capsule.identity import provenance
-from tools.capsule.preparation import TestConfig
+from tools.capsule.preparation import ConfigProjection, TestConfig
 from tools.capsule.spec import TaskSpec
 
 CONFIG = "phase-d-vitest.config.mjs"
@@ -21,6 +21,7 @@ class NodeVitestAdapter(Adapter):
         workspace_path: str,
         oracle_name: str,
         test_config: TestConfig,
+        projection: ConfigProjection | None = None,
     ) -> HarnessResult:
         generated: list[GeneratedFile] = []
         setup_files: list[str] = []
@@ -33,7 +34,10 @@ class NodeVitestAdapter(Adapter):
                     path=SETUP,
                     content="\n".join(body) + "\n",
                     provenance=provenance(
-                        {"preload_modules": list(task.harness.preload_modules), "task": task.id}
+                        {
+                            "preload_modules": list(task.harness.preload_modules),
+                            "task": task.id,
+                        }
                     ),
                 )
             )

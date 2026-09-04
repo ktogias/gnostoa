@@ -8,7 +8,7 @@ guessed: the compiler never invents an adapter, a reference or an expectation.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
@@ -51,12 +51,14 @@ class Corroboration:
     """
 
     path: str | None = None
+    symbol: str | None = None
     value_substitutions: Mapping[str, str] = field(default_factory=dict)
     prior_qualification_sha256: str | None = None
 
     def as_json(self) -> dict[str, object]:
         return {
             "path": self.path,
+            "symbol": self.symbol,
             "value_substitutions": dict(self.value_substitutions),
             "prior_qualification_sha256": self.prior_qualification_sha256,
         }
@@ -70,7 +72,9 @@ class Control:
     def as_json(self) -> dict[str, object]:
         return {
             "case": self.case,
-            "corroboration": self.corroboration.as_json() if self.corroboration else None,
+            "corroboration": self.corroboration.as_json()
+            if self.corroboration
+            else None,
         }
 
 
@@ -170,6 +174,8 @@ class TaskSpec:
     semantics: Semantics
     harness: Harness
     expectations: Expectations
+    preparation_scheme: str | None = None
+    identification_key_sha256: str | None = None
     prior_qualification_sha256: str | None = None
 
     def semantic_payload(self) -> dict[str, object]:
@@ -188,17 +194,67 @@ class TaskSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class Executor:
+    """Executor identity required by the runner profile."""
+
+    id: str
+    version: str
+    config_sha256: str
+    model: str | None = None
+    small_model: str | None = None
+
+    def as_json(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "id": self.id,
+            "version": self.version,
+            "config_sha256": self.config_sha256,
+        }
+        if self.model:
+            payload["model"] = self.model
+        if self.small_model:
+            payload["small_model"] = self.small_model
+        return payload
+
+
+@dataclass(frozen=True, slots=True)
+class Resources:
+    timeout_seconds: int
+    archive_limit_bytes: int
+    network_mode: str
+    network_allow: tuple[str, ...] = ()
+
+    def as_json(self) -> dict[str, object]:
+        return {
+            "timeout_seconds": self.timeout_seconds,
+            "archive_limit_bytes": self.archive_limit_bytes,
+            "network": {"mode": self.network_mode, "allow": list(self.network_allow)},
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class CapabilityRequest:
-    """An expensive qualification the experiment needs, and the certificate offered."""
+    """An expensive qualification the experiment needs, and the certificate offered.
+
+    The expected identities are declared here, externally to the certificate, so a
+    certificate can never self-match the fields it is being checked against.
+    """
 
     capability: str
     certificate_path: Path
+    certificate_sha256: str
+    required_implementation_sha256: str
+    required_runtime_identity: str
+    required_configuration_sha256: str
     requested_bounds: Mapping[str, int]
 
     def as_json(self) -> dict[str, object]:
         return {
             "capability": self.capability,
             "certificate": str(self.certificate_path),
+            "certificate_sha256": self.certificate_sha256,
+            "required_implementation_sha256": self.required_implementation_sha256,
+            "required_runtime_identity": self.required_runtime_identity,
+            "required_configuration_sha256": self.required_configuration_sha256,
             "requested_bounds": dict(self.requested_bounds),
         }
 
@@ -210,7 +266,22 @@ class ExperimentSpec:
     claim_boundary: str
     tasks: tuple[TaskSpec, ...]
     source_path: Path
+    executor: Executor
+    resources: Resources
     capabilities: tuple[CapabilityRequest, ...] = ()
+    reviewer: Executor | None = None
+    arms: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
+    assignment: Mapping[str, str] = field(default_factory=dict)
+
+    def launch_payload(self) -> dict[str, object]:
+        """Every launch-critical identity the lock must carry."""
+        return {
+            "executor": self.executor.as_json(),
+            "reviewer": self.reviewer.as_json() if self.reviewer else None,
+            "arms": {name: dict(value) for name, value in self.arms.items()},
+            "assignment": dict(self.assignment),
+            "resources": self.resources.as_json(),
+        }
 
     def task(self, identifier: str) -> TaskSpec:
         for task in self.tasks:
@@ -224,7 +295,11 @@ def _parse_semantics(raw: Mapping[str, Any], where: str) -> Semantics:
     if not isinstance(discriminator, dict):
         raise SpecError(f"{where}: discriminator must be a mapping")
     cases = discriminator.get("cases", [])
-    if not isinstance(cases, list) or not cases or not all(isinstance(c, str) for c in cases):
+    if (
+        not isinstance(cases, list)
+        or not cases
+        or not all(isinstance(c, str) for c in cases)
+    ):
         raise SpecError(f"{where}: discriminator.cases must be a non-empty string list")
     behavior_paths = discriminator.get("behavior_paths", [])
     if not isinstance(behavior_paths, list):
@@ -234,7 +309,7 @@ def _parse_semantics(raw: Mapping[str, Any], where: str) -> Semantics:
     if not isinstance(controls_raw, list):
         raise SpecError(f"{where}: controls must be a list")
     controls: list[Control] = []
-    for item in cast(list[Any], controls_raw):
+    for item in controls_raw:
         if not isinstance(item, dict):
             raise SpecError(f"{where}: each control must be a mapping")
         case = _require_str(item, "case", f"{where}.controls")
@@ -253,8 +328,10 @@ def _parse_semantics(raw: Mapping[str, Any], where: str) -> Semantics:
                     f"{where}: corroboration needs either a base-tree path or a "
                     "prior_qualification_sha256"
                 )
+            symbol_value = corroboration_raw.get("symbol")
             corroboration = Corroboration(
                 path=str(path_value) if path_value is not None else None,
+                symbol=str(symbol_value) if symbol_value is not None else None,
                 value_substitutions={str(k): str(v) for k, v in substitutions.items()},
                 prior_qualification_sha256=str(prior) if prior is not None else None,
             )
@@ -263,7 +340,7 @@ def _parse_semantics(raw: Mapping[str, Any], where: str) -> Semantics:
     return Semantics(
         requirement=_require_str(raw, "requirement", where),
         discriminator_cases=tuple(cast(list[str], cases)),
-        behavior_paths=tuple(str(p) for p in cast(list[Any], behavior_paths)),
+        behavior_paths=tuple(str(p) for p in behavior_paths),
         controls=tuple(controls),
     )
 
@@ -273,7 +350,9 @@ def _parse_task(raw: Mapping[str, Any], index: int, base_dir: Path) -> TaskSpec:
     identifier = _require_str(raw, "id", where)
     adapter = _require_str(raw, "adapter", f"{where}({identifier})")
     if adapter not in ADAPTERS:
-        raise SpecError(f"{where}: unsupported adapter {adapter!r}; declare one of {sorted(ADAPTERS)}")
+        raise SpecError(
+            f"{where}: unsupported adapter {adapter!r}; declare one of {sorted(ADAPTERS)}"
+        )
 
     source_raw = _require(raw, "source", where)
     if not isinstance(source_raw, dict):
@@ -308,12 +387,14 @@ def _parse_task(raw: Mapping[str, Any], index: int, base_dir: Path) -> TaskSpec:
             name=_require_str(tool, "name", f"{where}.preparation_tools"),
             artifact=_require_str(tool, "artifact", f"{where}.preparation_tools"),
         )
-        for tool in cast(list[Any], tools_raw)
+        for tool in tools_raw
         if isinstance(tool, dict)
     )
     runtime = Runtime(
         image=_require_str(runtime_raw, "image", f"{where}.runtime"),
-        available_plugins=tuple(str(p) for p in runtime_raw.get("available_plugins", [])),
+        available_plugins=tuple(
+            str(p) for p in runtime_raw.get("available_plugins", [])
+        ),
         preparation_tools=tools,
     )
 
@@ -326,10 +407,13 @@ def _parse_task(raw: Mapping[str, Any], index: int, base_dir: Path) -> TaskSpec:
 
     key_raw = raw.get("identification_key")
     key_path: Path | None = None
+    key_sha256: str | None = None
     if isinstance(key_raw, dict) and "path" in key_raw:
         key_path = Path(str(key_raw["path"]))
         if not key_path.is_absolute():
             key_path = base_dir / key_path
+        declared_key_sha = key_raw.get("sha256")
+        key_sha256 = str(declared_key_sha) if declared_key_sha else None
 
     harness_raw = raw.get("harness", {})
     if not isinstance(harness_raw, dict):
@@ -355,7 +439,15 @@ def _parse_task(raw: Mapping[str, Any], index: int, base_dir: Path) -> TaskSpec:
     prior_sha = None
     if isinstance(prior_raw, dict):
         prior_sha = prior_raw.get("evidence_sha256")
+    preparation_raw = raw.get("preparation", {})
+    if not isinstance(preparation_raw, dict):
+        raise SpecError(f"{where}: preparation must be a mapping")
+
     return TaskSpec(
+        preparation_scheme=(
+            str(preparation_raw["scheme"]) if preparation_raw.get("scheme") else None
+        ),
+        identification_key_sha256=key_sha256,
         prior_qualification_sha256=str(prior_sha) if prior_sha else None,
         id=identifier,
         adapter=adapter,
@@ -366,7 +458,8 @@ def _parse_task(raw: Mapping[str, Any], index: int, base_dir: Path) -> TaskSpec:
         oracle_sha256=oracle_raw.get("sha256"),
         identification_key_path=key_path,
         semantics=_parse_semantics(
-            cast(Mapping[str, Any], _require(raw, "semantics", where)), f"{where}.semantics"
+            cast(Mapping[str, Any], _require(raw, "semantics", where)),
+            f"{where}.semantics",
         ),
         harness=harness,
         expectations=expectations,
@@ -375,7 +468,9 @@ def _parse_task(raw: Mapping[str, Any], index: int, base_dir: Path) -> TaskSpec:
 
 def parse_spec(payload: Mapping[str, Any], *, source_path: Path) -> ExperimentSpec:
     if payload.get("schema") != SPEC_SCHEMA:
-        raise SpecError(f"unsupported spec schema {payload.get('schema')!r}; expected {SPEC_SCHEMA}")
+        raise SpecError(
+            f"unsupported spec schema {payload.get('schema')!r}; expected {SPEC_SCHEMA}"
+        )
     experiment = payload.get("experiment")
     if not isinstance(experiment, dict):
         raise SpecError("experiment must be a mapping")
@@ -385,16 +480,57 @@ def parse_spec(payload: Mapping[str, Any], *, source_path: Path) -> ExperimentSp
     base_dir = source_path.parent
     tasks = tuple(
         _parse_task(cast(Mapping[str, Any], task), index, base_dir)
-        for index, task in enumerate(cast(list[Any], tasks_raw))
+        for index, task in enumerate(tasks_raw)
     )
     identifiers = [task.id for task in tasks]
     if len(set(identifiers)) != len(identifiers):
         raise SpecError("duplicate task id")
+
+    def _executor(raw_value: object, where: str) -> Executor:
+        if not isinstance(raw_value, dict):
+            raise SpecError(f"{where} must be a mapping")
+        return Executor(
+            id=_require_str(raw_value, "id", where),
+            version=_require_str(raw_value, "version", where),
+            config_sha256=_require_str(raw_value, "config_sha256", where),
+            model=raw_value.get("model"),
+            small_model=raw_value.get("small_model"),
+        )
+
+    executor = _executor(
+        _require(experiment, "executor", "experiment"), "experiment.executor"
+    )
+    reviewer_raw = experiment.get("reviewer")
+    reviewer = _executor(reviewer_raw, "experiment.reviewer") if reviewer_raw else None
+
+    resources_raw = _require(experiment, "resources", "experiment")
+    if not isinstance(resources_raw, dict):
+        raise SpecError("experiment.resources must be a mapping")
+    network_raw = resources_raw.get("network", {})
+    if not isinstance(network_raw, dict):
+        raise SpecError("experiment.resources.network must be a mapping")
+    mode = str(network_raw.get("mode", "none"))
+    if mode not in {"none", "restricted"}:
+        raise SpecError(f"unsupported network mode {mode!r}")
+    resources = Resources(
+        timeout_seconds=int(
+            _require(resources_raw, "timeout_seconds", "experiment.resources")
+        ),
+        archive_limit_bytes=int(
+            _require(resources_raw, "archive_limit_bytes", "experiment.resources")
+        ),
+        network_mode=mode,
+        network_allow=tuple(str(item) for item in network_raw.get("allow", [])),
+    )
+
+    arms_raw = experiment.get("arms", {})
+    assignment_raw = experiment.get("assignment", {})
+
     capabilities_raw = payload.get("capabilities", [])
     if not isinstance(capabilities_raw, list):
         raise SpecError("capabilities must be a list")
     capabilities: list[CapabilityRequest] = []
-    for index, item in enumerate(cast(list[Any], capabilities_raw)):
+    for index, item in enumerate(capabilities_raw):
         if not isinstance(item, dict):
             raise SpecError(f"capabilities[{index}] must be a mapping")
         certificate = Path(_require_str(item, "certificate", f"capabilities[{index}]"))
@@ -402,23 +538,68 @@ def parse_spec(payload: Mapping[str, Any], *, source_path: Path) -> ExperimentSp
             certificate = base_dir / certificate
         bounds = item.get("requested_bounds", {})
         if not isinstance(bounds, dict):
-            raise SpecError(f"capabilities[{index}]: requested_bounds must be a mapping")
+            raise SpecError(
+                f"capabilities[{index}]: requested_bounds must be a mapping"
+            )
         capabilities.append(
             CapabilityRequest(
                 capability=_require_str(item, "capability", f"capabilities[{index}]"),
                 certificate_path=certificate,
+                certificate_sha256=_require_str(
+                    item, "certificate_sha256", f"capabilities[{index}]"
+                ),
+                required_implementation_sha256=_require_str(
+                    item, "required_implementation_sha256", f"capabilities[{index}]"
+                ),
+                required_runtime_identity=_require_str(
+                    item, "required_runtime_identity", f"capabilities[{index}]"
+                ),
+                required_configuration_sha256=_require_str(
+                    item, "required_configuration_sha256", f"capabilities[{index}]"
+                ),
                 requested_bounds={str(k): int(v) for k, v in bounds.items()},
             )
         )
 
     return ExperimentSpec(
         capabilities=tuple(capabilities),
+        executor=executor,
+        reviewer=reviewer,
+        resources=resources,
+        arms={
+            str(name): {str(k): str(v) for k, v in value.items()}
+            for name, value in (arms_raw or {}).items()
+            if isinstance(value, dict)
+        },
+        assignment={str(k): str(v) for k, v in (assignment_raw or {}).items()},
         id=_require_str(experiment, "id", "experiment"),
         question=str(experiment.get("question", "")),
         claim_boundary=str(experiment.get("claim_boundary", "")),
         tasks=tasks,
         source_path=source_path,
     )
+
+
+SCHEMA_PATH = (
+    Path(__file__).resolve().parents[2] / "schemas" / "experiment-spec.schema.json"
+)
+
+
+def validate_against_schema(payload: Mapping[str, Any]) -> None:
+    """Validate the declarative surface before interpreting it."""
+    if not SCHEMA_PATH.is_file():  # pragma: no cover - packaging fallback
+        return
+    import jsonschema
+
+    schema = json.loads(SCHEMA_PATH.read_text())
+    errors = sorted(
+        jsonschema.Draft202012Validator(schema).iter_errors(dict(payload)),
+        key=lambda error: list(error.path),
+    )
+    if errors:
+        first = errors[0]
+        location = "/".join(str(part) for part in first.path) or "<root>"
+        raise SpecError(f"spec schema violation at {location}: {first.message}")
 
 
 def load_spec(path: str | Path) -> ExperimentSpec:
@@ -432,4 +613,5 @@ def load_spec(path: str | Path) -> ExperimentSpec:
         payload = json.loads(text)
     if not isinstance(payload, dict):
         raise SpecError("spec must be a mapping")
+    validate_against_schema(cast(Mapping[str, Any], payload))
     return parse_spec(cast(Mapping[str, Any], payload), source_path=source_path)

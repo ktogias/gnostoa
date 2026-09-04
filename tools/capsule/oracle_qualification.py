@@ -6,6 +6,11 @@ where its expected behaviour is already evidenced in the frozen base tree. A
 control that asserts an expectation nobody can corroborate is blocked before
 execution freeze -- the Phase-D D4 class.
 
+Citations are symbol-scoped, not file-scoped: the spec names the exact function in
+the cited file whose behaviour is the evidence, and only strings inside that symbol
+can corroborate. An unrelated occurrence of the same value elsewhere in the file
+cannot stand in for the relevant behaviour.
+
 Nothing here reads or emits oracle content into a public artifact: only case
 names, digests and blocker codes leave this module.
 """
@@ -14,14 +19,15 @@ from __future__ import annotations
 
 import ast
 import re
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from tools.capsule.spec import Semantics
 
 _JS_CASE = re.compile(r"\b(?:it|test)\(\s*['\"](?P<title>[^'\"]+)['\"]")
-_JS_EXPECT = re.compile(r'\b(?:toBe|toEqual|toStrictEqual)\(\s*(?P<argument>[^)]{0,400})\)')
+_JS_EXPECT = re.compile(
+    r"\b(?:toBe|toEqual|toStrictEqual)\(\s*(?P<argument>[^)]{0,400})\)"
+)
 _JS_STRING = re.compile(r"""(['"])(?P<value>(?:(?!\1).){1,200})\1""")
 
 
@@ -81,6 +87,25 @@ def _javascript_shape(source: str) -> OracleShape:
         )
         cases.append(OracleCase(name=match.group("title"), literals=literals))
     return OracleShape(language="javascript", cases=tuple(cases))
+
+
+def _symbol_literals(source: str, symbol: str) -> tuple[str, ...] | None:
+    """String constants inside the named function, or None when it is absent."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == symbol
+        ):
+            return tuple(
+                inner.value
+                for inner in ast.walk(node)
+                if isinstance(inner, ast.Constant) and isinstance(inner.value, str)
+            )
+    return None
 
 
 def read_shape(path: Path) -> OracleShape:
@@ -153,7 +178,10 @@ def qualify(
 
         declared_prior = control.corroboration.prior_qualification_sha256
         if declared_prior is not None:
-            if prior_qualification_sha256 and declared_prior == prior_qualification_sha256:
+            if (
+                prior_qualification_sha256
+                and declared_prior == prior_qualification_sha256
+            ):
                 continue
             blockers.append(
                 {
@@ -181,14 +209,41 @@ def qualify(
             )
             continue
 
-        evidence = citation.read_text()
+        symbol = control.corroboration.symbol
+        if not symbol:
+            blockers.append(
+                {
+                    "task": task_id,
+                    "code": "oracle-control-corroboration-symbol-required",
+                    "detail": (
+                        f"control {control.case!r} cites a file but no symbol; name the exact "
+                        "function whose behaviour is the evidence"
+                    ),
+                }
+            )
+            continue
+
+        evidence_literals = _symbol_literals(citation.read_text(), symbol)
+        if evidence_literals is None:
+            blockers.append(
+                {
+                    "task": task_id,
+                    "code": "oracle-control-corroboration-symbol-missing",
+                    "detail": (
+                        f"control {control.case!r} cites symbol {symbol!r} in "
+                        f"{control.corroboration.path!r}, which does not define it"
+                    ),
+                }
+            )
+            continue
+
         substitutions = control.corroboration.value_substitutions
         corroborated = False
         for literal in literals_by_case.get(control.case, ()):
             candidate = literal
             for source_value, evidence_value in substitutions.items():
                 candidate = candidate.replace(source_value, evidence_value)
-            if candidate and candidate in evidence:
+            if candidate and candidate in evidence_literals:
                 corroborated = True
                 break
         if not corroborated:
@@ -198,8 +253,8 @@ def qualify(
                     "code": "oracle-control-not-corroborated",
                     "detail": (
                         f"control {control.case!r} asserts an expectation that does not appear in "
-                        f"{control.corroboration.path!r} under the declared value substitutions; "
-                        "the control may be over-strong for this subject"
+                        f"{control.corroboration.path}::{control.corroboration.symbol} under the "
+                        "declared value substitutions; the control may be over-strong for this subject"
                     ),
                 }
             )

@@ -18,7 +18,9 @@ from typing import Any, cast
 CERTIFICATE_SCHEMA = "gnostoa-capability-certificate/v1"
 
 # Bound semantics must be declared, not inferred from the name.
-_MAXIMUM_BOUNDS = frozenset({"max_plaintext_bytes", "max_payload_bytes", "max_archive_bytes"})
+_MAXIMUM_BOUNDS = frozenset(
+    {"max_plaintext_bytes", "max_payload_bytes", "max_archive_bytes"}
+)
 _MINIMUM_BOUNDS = frozenset({"min_hold_seconds", "min_liveness_samples"})
 
 
@@ -81,7 +83,9 @@ class CapabilityCertificate:
 
 def load(payload: Mapping[str, Any]) -> CapabilityCertificate:
     if payload.get("schema") != CERTIFICATE_SCHEMA:
-        raise CertificateError(f"unsupported certificate schema {payload.get('schema')!r}")
+        raise CertificateError(
+            f"unsupported certificate schema {payload.get('schema')!r}"
+        )
     bounds = payload.get("bounds")
     if not isinstance(bounds, dict):
         raise CertificateError("bounds must be a mapping")

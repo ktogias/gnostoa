@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from tools.capsule.adapters import Adapter, HarnessResult, Invocation
-from tools.capsule.preparation import TestConfig
+from tools.capsule.preparation import ConfigProjection, TestConfig
 from tools.capsule.spec import TaskSpec
 
 
@@ -17,6 +17,7 @@ class GenericCommandAdapter(Adapter):
         workspace_path: str,
         oracle_name: str,
         test_config: TestConfig,
+        projection: ConfigProjection | None = None,
     ) -> HarnessResult:
         blockers: list[dict[str, object]] = []
         if not task.harness.extra_argv:

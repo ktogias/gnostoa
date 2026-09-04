@@ -14,6 +14,8 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from tools.capsule import stages
+from tools.capsule.authority import AuthorityError
+from tools.capsule.authority import load_file as load_authority
 from tools.capsule.compiler import CompileError, prepare, status
 from tools.capsule.spec import SpecError, load_spec
 
@@ -29,17 +31,41 @@ def command_prepare(args: argparse.Namespace) -> int:
     try:
         spec = load_spec(args.spec)
     except SpecError as exc:
-        _emit({"status": "BLOCKED", "blockers": [{"code": "spec-invalid", "detail": str(exc)}]})
+        _emit(
+            {
+                "status": "BLOCKED",
+                "blockers": [{"code": "spec-invalid", "detail": str(exc)}],
+            }
+        )
         return 2
+    authority = None
+    if args.preflight_authority:
+        try:
+            authority = load_authority(Path(args.preflight_authority))
+        except (AuthorityError, OSError, json.JSONDecodeError) as exc:
+            _emit(
+                {
+                    "status": "BLOCKED",
+                    "blockers": [
+                        {"code": "preflight-authority-invalid", "detail": str(exc)}
+                    ],
+                }
+            )
+            return 2
     try:
         result = prepare(
             spec,
             args.workspace,
             offline=True,
-            preflight_authority=args.preflight_authority,
+            preflight_authority=authority,
         )
     except CompileError as exc:
-        _emit({"status": "BLOCKED", "blockers": [{"code": "compile-error", "detail": str(exc)}]})
+        _emit(
+            {
+                "status": "BLOCKED",
+                "blockers": [{"code": "compile-error", "detail": str(exc)}],
+            }
+        )
         return 2
     _emit(
         {
@@ -47,6 +73,8 @@ def command_prepare(args: argparse.Namespace) -> int:
             "stage": result.stage,
             "blockers": result.blockers,
             "reused_stages": result.reused_stages,
+            "stage_receipts": result.stage_receipts(),
+            "lock_sha256": result.lock_identity,
             "tasks": {
                 task_id: {
                     "capsule_identity": task.capsule_identity,
@@ -64,7 +92,13 @@ def command_prepare(args: argparse.Namespace) -> int:
 
 def command_status(args: argparse.Namespace) -> int:
     payload = status(args.workspace)
-    _emit({"stage": payload.get("stage"), "status": payload.get("status"), "blockers": payload.get("blockers", [])})
+    _emit(
+        {
+            "stage": payload.get("stage"),
+            "status": payload.get("status"),
+            "blockers": payload.get("blockers", []),
+        }
+    )
     return 0
 
 
@@ -97,14 +131,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="gnostoa-experiment")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    prepare_parser = sub.add_parser("prepare", help="prepare and qualify an experiment spec")
+    prepare_parser = sub.add_parser(
+        "prepare", help="prepare and qualify an experiment spec"
+    )
     prepare_parser.add_argument("spec")
     prepare_parser.add_argument("--workspace", required=True)
     prepare_parser.add_argument("--offline", action="store_true", default=False)
-    prepare_parser.add_argument("--preflight-authority", default=None)
+    prepare_parser.add_argument(
+        "--preflight-authority",
+        default=None,
+        help="path to a preflight authority naming this experiment and its scope",
+    )
     prepare_parser.set_defaults(func=command_prepare)
 
-    status_parser = sub.add_parser("status", help="report the retained stage and blockers")
+    status_parser = sub.add_parser(
+        "status", help="report the retained stage and blockers"
+    )
     status_parser.add_argument("workspace")
     status_parser.set_defaults(func=command_status)
 

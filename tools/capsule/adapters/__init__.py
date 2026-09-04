@@ -8,12 +8,11 @@ qualification lives in tools.capsule.oracle_qualification.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
-from pathlib import Path
+from collections.abc import Mapping
+from dataclasses import dataclass
 
-from tools.capsule.identity import digest_of, provenance
-from tools.capsule.preparation import TestConfig
+from tools.capsule.identity import digest_of
+from tools.capsule.preparation import ConfigProjection, TestConfig
 from tools.capsule.spec import TaskSpec
 
 
@@ -62,7 +61,8 @@ class HarnessResult:
             "identity": self.identity,
             "preload_modules": list(self.preload_modules),
             "generated_files": [
-                {"path": f.path, "sha256": digest_of(f.content)} for f in self.generated_files
+                {"path": f.path, "sha256": digest_of(f.content)}
+                for f in self.generated_files
             ],
             "invocation": self.invocation.as_json(),
             "added_runtime_packages": list(self.added_runtime_packages),
@@ -82,6 +82,7 @@ class Adapter:
         workspace_path: str,
         oracle_name: str,
         test_config: TestConfig,
+        projection: ConfigProjection | None = None,
     ) -> HarnessResult:  # pragma: no cover - abstract
         raise NotImplementedError
 

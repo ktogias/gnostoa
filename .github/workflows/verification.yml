@@ -120,7 +120,8 @@ jobs:
             tools/experiment_runner.py \
             tools/experiment_handoff.py \
             tools/experiment_packager.py \
-            tools/experiment
+            tools/experiment \
+            tools/capsule
       - name: Verify frozen-handoff package golden digest
         run: |
           python tests/test_experiment_packager.py \

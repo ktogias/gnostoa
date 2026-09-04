@@ -11,7 +11,7 @@ from pathlib import Path
 
 from tools.experiment.evidence import canonical_json_bytes, sha256_bytes, sha256_file
 
-__all__ = ["digest_of", "digest_text", "digest_path", "PRODUCER"]
+__all__ = ["PRODUCER", "digest_of", "digest_path", "digest_text"]
 
 PRODUCER = "gnostoa.capsule/v1"
 

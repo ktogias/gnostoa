@@ -70,10 +70,23 @@ Adapters are never inferred. A reference may live in another object store via
 ```sh
 python -m tools.capsule.cli prepare EXPERIMENT_SPEC --workspace WORKSPACE --offline
 python -m tools.capsule.cli status WORKSPACE
+python -m tools.capsule.cli prepare EXPERIMENT_SPEC --workspace WORKSPACE --offline \
+  --preflight-authority AUTHORITY.json
 ```
 
 `prepare` is idempotent: an unchanged rerun reuses retained stage records, and a changed
-input invalidates that stage and everything downstream.
+input invalidates that stage and everything downstream. Only a *completed* stage is reusable.
+
+Base/reference qualification runs the declared oracle and therefore needs a preflight authority
+naming this experiment and the `base-reference-qualification` scope:
+
+```json
+{"schema": "gnostoa-preflight-authority/v1", "id": "...", "experiment_id": "...",
+ "scope": ["base-reference-qualification"]}
+```
+
+Readiness is receipt-gated. `READY_FOR_OWNER_REVIEW` is reachable only when every required stage
+carries a completed content-addressed receipt, and it writes the write-once `experiment.lock`.
 
 ## Verification
 
@@ -89,6 +102,14 @@ one you intend. Read blockers as follows.
 | `oracle-case-undeclared` | an oracle case has no declared role | declare it as a discriminator case or as a control |
 | `oracle-control-not-corroborated` | a control asserts an expectation nothing corroborates | cite base-tree evidence, bind a prior qualification, or correct the oracle |
 | `capability-bounds-not-certified` | the request exceeds the certified bounds | requalify; bounds are never widened to fit |
+| `preparation-scheme-undeclared` | a build artifact is needed but no scheme is declared | declare `preparation.scheme`; the compiler never picks a versioning scheme for you |
+| `materialised-subject-identity-mismatch` | retained subject bytes do not reconstruct to the declared tree | the workspace is stale or tampered; remove it and rerun |
+| `capability-certificate-identity-mismatch` | the certificate file digest is not the declared one | bind the certificate you actually reviewed |
+| `oracle-control-corroboration-symbol-required` | a citation names a file but no symbol | name the exact function whose behaviour is the evidence |
+| `qualification-backend-unavailable` | the declared backend cannot qualify in v1 | only `local-python` is implemented; a containerised subject needs a runner-backed backend |
+| `base-reference-qualification-failed` | observed outcome or cause differs from the frozen expectation | read the classification: `INFRASTRUCTURE`, `WRONG_CAUSE` or `COUNT_MISMATCH` |
+| `preflight-authority-out-of-scope` | the authority does not name this experiment and scope | obtain an authority bound to this experiment |
+| `readiness-missing-stage-receipts` | a required stage has no completed receipt | readiness is receipt-gated; complete the named stages |
 | `base-reference-qualification-requires-preflight-authority` | static preparation is complete | obtain explicit owner preflight authority |
 
 A control blocker is the system refusing to guess. If no citation exists, the control is

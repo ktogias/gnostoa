@@ -132,11 +132,21 @@ Stages are `DISCOVERED`, `SEMANTIC_FROZEN`, `RUNTIME_PREPARED`, `STATIC_QUALIFIE
 `BASE_REFERENCE_QUALIFIED`, `BOUNDARY_QUALIFIED`, `EXECUTION_FROZEN`,
 `READY_FOR_OWNER_REVIEW`.
 
-Every stage record binds a digest over its complete declared inputs and emits
-content-addressed outputs. A stage is reusable only when its recomputed input digest is
-unchanged; a changed input invalidates that stage and its entire downstream closure. State
-lives in retained files, so preparation resumes after interruption without reconstructing
-anything from conversation history.
+Every stage record binds a digest over its complete declared inputs, records whether it was
+merely entered or actually completed, and emits a content-addressed receipt on completion. A
+stage is reusable only when its recomputed input digest is unchanged **and** its record is
+complete, so an interrupted stage can never be mistaken for a qualified one. A changed input
+invalidates that stage and its entire downstream closure. State lives in retained files, so
+preparation resumes after interruption without reconstructing anything from conversation
+history.
+
+Readiness is gated by receipts, not by a flag: `READY_FOR_OWNER_REVIEW` is unreachable unless
+every required stage carries a completed receipt, and preflight authority is an object bound to
+an experiment identity and scope rather than a truthy value.
+
+Materialised subjects are create-only per source identity and their Git tree identity is
+independently reconstructed on every run, so retained bytes are verified rather than trusted
+because the directory is non-empty.
 
 ### D. Keep adapters mechanical and semantics-free
 
@@ -156,9 +166,20 @@ dynamic version configuration, `setuptools_scm` version files, pytest configurat
 plugin requirements — and classifies the tree as directly runnable or as requiring a named
 deterministic preparation.
 
-A required preparation that changes the runtime produces a new runtime identity. Any input
-that preparation needs must be locally available; in `--offline` mode a missing input is
-`BLOCKED` with the exact missing artifact, never an implicit acquisition.
+A required preparation actually runs: it derives its inputs from authoritative Git metadata,
+writes the declared artifact, verifies the artifact, and emits a receipt binding the derivation
+and the generated digests. The tracked tree must still reconstruct to its declared identity with
+the generated paths ignored, so preparation adds and never edits the subject. A required
+preparation produces a new prepared-runtime identity; the frozen image identity is unchanged.
+Any input that preparation needs must be locally available; in `--offline` mode a missing input
+is `BLOCKED` with the exact missing artifact, never an implicit acquisition. Whether the prepared
+subject runs end to end is established by BASE/REFERENCE qualification, not asserted by
+preparation.
+
+Test-configuration isolation is a provenance-bound projection, not a reset: every declared key is
+carried forward except the options attributable to a plugin the runtime does not provide, and the
+removed options are inventoried. Warning filters, markers and strictness are never silently
+dropped.
 
 ### F. Prequalify oracle semantics against declared roles and cited corroboration
 
@@ -171,6 +192,11 @@ Before execution freeze the compiler statically checks the oracle against the se
 - a control must carry a declared corroboration citing where in the frozen base tree its
   expected behaviour is already evidenced, and the compiler verifies that the cited evidence
   exists and matches the control's declared expectation.
+
+Citations are symbol-scoped: the spec names the exact function in the cited file whose behaviour
+is the evidence, and only strings inside that symbol can corroborate. A matching value elsewhere
+in the same file cannot stand in for the relevant behaviour. A control may instead bind a prior
+qualification receipt, which is how an already-valid qualification is reused without a rerun.
 
 An oracle case that asserts behaviour neither changed by the reference nor corroborated in
 the subject is `BLOCKED` before execution freeze. This is the D4 class, and it is caught
@@ -195,15 +221,21 @@ sealed-sink qualification and reusable runtime-adapter qualification become cont
 certificates binding implementation identity, runtime identity, configuration identity,
 certified bounds and evidence identity.
 
-Preparation consumes a certificate only when the requested bounds fit inside the certified
-bounds under an exact identity match. Otherwise it requalifies or returns `BLOCKED`. It never
-widens a bound to fit. This is what makes the D0 case reusable without a rerun.
+The expected implementation, runtime and configuration identities are declared in the request,
+externally to the certificate, and the certificate artifact is itself bound by digest. A
+certificate can therefore never self-match the fields it is being checked against. Preparation
+consumes a certificate only when those external identities match and the requested bounds fit
+inside the certified bounds. Otherwise it requalifies or returns `BLOCKED`. It never widens a
+bound to fit.
 
 ### I. Keep the public surface small and fail closed
 
 `prepare` performs mechanical preparation and qualification and returns either
 `READY_FOR_OWNER_REVIEW` with a complete immutable lock or `BLOCKED` with structured
-blockers naming the missing capability or input. `status` reports the current stage and
+blockers naming the missing capability or input. The lock is a separate write-once artifact
+emitted at execution freeze, binding source, reference, runtime, preparation, harness, oracle,
+key, runner profile, executor, reviewer, arm, assignment and resource identities plus every
+stage receipt; working state is kept apart from it and is never presented as a lock. `status` reports the current stage and
 blockers from retained artifacts alone. `execute` consumes a frozen lock under explicit
 launch authority and cannot repair, reinterpret or rediscover anything.
 
@@ -227,7 +259,10 @@ Spec authoring is deliberately more demanding than the previous ad-hoc path: con
 cited corroboration, and ambiguity is rejected rather than guessed. That is the intended
 trade, because the alternative silently produced an invalid oracle in #183.
 
-Two risks are accepted and bounded. Container image bytes are not reproducible in general, so
+Three risks are accepted and bounded. Container image bytes are not reproducible in general, so
 equivalence is claimed as exact immutable image identity plus producer provenance, not
-byte-identical rebuilds. And semantic prequalification verifies declared corroboration rather
-than adjudicating subject behaviour: it catches unsupported assertions, not every wrong one.
+byte-identical rebuilds. Semantic prequalification verifies declared corroboration rather than
+adjudicating subject behaviour: it catches unsupported assertions, not every wrong one. And v1
+qualifies subjects through a local Python backend only; qualifying a containerised subject needs
+a backend that reuses the runner rather than duplicating its isolation, so a container-backed
+task returns a structured blocker instead of a weaker claim.
