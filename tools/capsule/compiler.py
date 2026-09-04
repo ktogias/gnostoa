@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from tools.capsule import adapters, stages
+from tools.capsule import adapters, certificates, stages
 from tools.capsule.adapters import GeneratedFile, HarnessResult, Invocation
 from tools.capsule.identity import PRODUCER, digest_of, digest_path, digest_text, provenance
 from tools.capsule.oracle_qualification import OracleShape, qualify, read_shape
@@ -126,6 +126,7 @@ class PrepareResult:
     acquisitions: list[str] = field(default_factory=list)
     reused_stages: list[str] = field(default_factory=list)
     lock_path: Path | None = None
+    reused_certificates: list[dict[str, object]] = field(default_factory=list)
     _identities: dict[str, str] = field(default_factory=dict)
 
     def task(self, identifier: str) -> TaskResult:
@@ -206,8 +207,9 @@ def _prepare_task(
                 "detail": f"declared {task.source.base_tree}, resolved {observed_base}",
             }
         )
+    reference_repo = Path(task.reference.repository) if task.reference.repository else repo
     reference_ref = task.reference.commit or task.reference.tree
-    observed_reference = _git(repo, "rev-parse", f"{reference_ref}^{{tree}}")
+    observed_reference = _git(reference_repo, "rev-parse", f"{reference_ref}^{{tree}}")
     if observed_reference != task.reference.tree:
         blockers.append(
             {
@@ -220,7 +222,7 @@ def _prepare_task(
     if not base_dir.exists() or not any(base_dir.iterdir()):
         _materialize(repo, task.source.base_tree, base_dir)
     if not reference_dir.exists() or not any(reference_dir.iterdir()):
-        _materialize(repo, task.reference.tree, reference_dir)
+        _materialize(reference_repo, task.reference.tree, reference_dir)
 
     test_config = discover_test_config(base_dir)
     preparation = discover_preparation(base_dir)
@@ -298,7 +300,15 @@ def _prepare_task(
     result.harness = harness
 
     shape = read_shape(task.oracle_path)
-    blockers.extend(qualify(shape, task.semantics, base_tree=base_dir, task_id=task.id))
+    blockers.extend(
+        qualify(
+            shape,
+            task.semantics,
+            base_tree=base_dir,
+            task_id=task.id,
+            prior_qualification_sha256=task.prior_qualification_sha256,
+        )
+    )
 
     profile = _runner_profile(task, roots, oracle_sha256, harness)
     reasons = validate_profile_data(profile, for_run=False)
@@ -389,6 +399,17 @@ def prepare(
     )
     result.stage = stages.STATIC_QUALIFIED
 
+    reused_certificates = _consume_certificates(spec, blockers)
+    result.reused_certificates = reused_certificates
+    if blockers:
+        result.blockers = blockers
+        result.status = "BLOCKED"
+        result._identities = ledger.identities()
+        result.reused_stages = list(ledger.reused)
+        ledger.save()
+        _write_state(root, result)
+        return result
+
     if preflight_authority is None:
         blockers.append(
             {
@@ -416,6 +437,61 @@ def prepare(
     return result
 
 
+def _consume_certificates(
+    spec: ExperimentSpec, blockers: list[dict[str, object]]
+) -> list[dict[str, object]]:
+    """Reuse an exact certificate, or block. Bounds are never widened to fit."""
+    reused: list[dict[str, object]] = []
+    for request in spec.capabilities:
+        if not request.certificate_path.is_file():
+            blockers.append(
+                {
+                    "task": None,
+                    "code": "capability-certificate-missing",
+                    "detail": f"{request.capability}: {request.certificate_path} is not present",
+                }
+            )
+            continue
+        try:
+            certificate = certificates.load_file(request.certificate_path)
+        except certificates.CertificateError as exc:
+            blockers.append(
+                {
+                    "task": None,
+                    "code": "capability-certificate-invalid",
+                    "detail": f"{request.capability}: {exc}",
+                }
+            )
+            continue
+        if certificate.satisfies(
+            capability=request.capability,
+            runtime_identity=certificate.runtime_identity,
+            implementation_sha256=certificate.implementation_sha256,
+            configuration_sha256=certificate.configuration_sha256,
+            requested=request.requested_bounds,
+        ):
+            reused.append(
+                {
+                    "capability": request.capability,
+                    "evidence_sha256": certificate.evidence_sha256,
+                    "requested_bounds": dict(request.requested_bounds),
+                    "reused": True,
+                }
+            )
+        else:
+            blockers.append(
+                {
+                    "task": None,
+                    "code": "capability-bounds-not-certified",
+                    "detail": (
+                        f"{request.capability}: requested {dict(request.requested_bounds)} exceeds or "
+                        f"does not match certified {dict(certificate.bounds)}; requalify or block"
+                    ),
+                }
+            )
+    return reused
+
+
 def _write_state(root: Path, result: PrepareResult) -> None:
     payload = {
         "schema": LOCK_SCHEMA,
@@ -423,6 +499,7 @@ def _write_state(root: Path, result: PrepareResult) -> None:
         "status": result.status,
         "stage": result.stage,
         "blockers": result.blockers,
+        "reused_certificates": result.reused_certificates,
         "tasks": {task_id: task.as_json() for task_id, task in result.tasks.items()},
     }
     (root / "experiment-state.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")

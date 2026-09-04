@@ -134,6 +134,7 @@ inherited, copied or loaded by adopting projects.
 - [Reverse-centaur review overload](failure-modes/reverse-centaur-review-overload.md)
 - [Post-effect current-state drift](failure-modes/post-effect-current-state-drift.md)
 - [Maintain the toolkit](runbooks/maintain-the-kit.md)
+- [Prepare an experiment capsule](runbooks/prepare-an-experiment-capsule.md)
 - [Deliver a bounded self-hosted slice](runbooks/deliver-bounded-self-hosted-slice.md)
 - [Run a bounded owner-led experiment](runbooks/run-owner-led-experiment.md)
 - [Prepare the first public repository publication](runbooks/prepare-first-publication.md)

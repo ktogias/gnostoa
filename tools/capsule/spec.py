@@ -44,13 +44,22 @@ def _require_str(mapping: Mapping[str, Any], key: str, where: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class Corroboration:
-    """Where a control's expected behaviour is already evidenced in the base tree."""
+    """Where a control's expected behaviour is already evidenced.
 
-    path: str
+    Either by citation into the frozen base tree, or by a prior qualification of
+    the exact same oracle, base and reference identities.
+    """
+
+    path: str | None = None
     value_substitutions: Mapping[str, str] = field(default_factory=dict)
+    prior_qualification_sha256: str | None = None
 
     def as_json(self) -> dict[str, object]:
-        return {"path": self.path, "value_substitutions": dict(self.value_substitutions)}
+        return {
+            "path": self.path,
+            "value_substitutions": dict(self.value_substitutions),
+            "prior_qualification_sha256": self.prior_qualification_sha256,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +145,7 @@ class Reference:
     kind: str
     commit: str | None
     tree: str
+    repository: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +170,7 @@ class TaskSpec:
     semantics: Semantics
     harness: Harness
     expectations: Expectations
+    prior_qualification_sha256: str | None = None
 
     def semantic_payload(self) -> dict[str, object]:
         """Exactly the semantic freeze inputs: no mechanics, no runtime."""
@@ -177,12 +188,29 @@ class TaskSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class CapabilityRequest:
+    """An expensive qualification the experiment needs, and the certificate offered."""
+
+    capability: str
+    certificate_path: Path
+    requested_bounds: Mapping[str, int]
+
+    def as_json(self) -> dict[str, object]:
+        return {
+            "capability": self.capability,
+            "certificate": str(self.certificate_path),
+            "requested_bounds": dict(self.requested_bounds),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class ExperimentSpec:
     id: str
     question: str
     claim_boundary: str
     tasks: tuple[TaskSpec, ...]
     source_path: Path
+    capabilities: tuple[CapabilityRequest, ...] = ()
 
     def task(self, identifier: str) -> TaskSpec:
         for task in self.tasks:
@@ -218,9 +246,17 @@ def _parse_semantics(raw: Mapping[str, Any], where: str) -> Semantics:
             substitutions = corroboration_raw.get("value_substitutions", {})
             if not isinstance(substitutions, dict):
                 raise SpecError(f"{where}: value_substitutions must be a mapping")
+            prior = corroboration_raw.get("prior_qualification_sha256")
+            path_value = corroboration_raw.get("path")
+            if path_value is None and prior is None:
+                raise SpecError(
+                    f"{where}: corroboration needs either a base-tree path or a "
+                    "prior_qualification_sha256"
+                )
             corroboration = Corroboration(
-                path=_require_str(corroboration_raw, "path", f"{where}.corroboration"),
+                path=str(path_value) if path_value is not None else None,
                 value_substitutions={str(k): str(v) for k, v in substitutions.items()},
+                prior_qualification_sha256=str(prior) if prior is not None else None,
             )
         controls.append(Control(case=case, corroboration=corroboration))
 
@@ -258,6 +294,7 @@ def _parse_task(raw: Mapping[str, Any], index: int, base_dir: Path) -> TaskSpec:
         kind=kind,
         commit=reference_raw.get("commit"),
         tree=_require_str(reference_raw, "tree", f"{where}.reference"),
+        repository=reference_raw.get("repository"),
     )
 
     runtime_raw = _require(raw, "runtime", where)
@@ -314,7 +351,12 @@ def _parse_task(raw: Mapping[str, Any], index: int, base_dir: Path) -> TaskSpec:
         reference={k: int(v) for k, v in expectations_raw["reference"].items()},
     )
 
+    prior_raw = raw.get("prior_qualification")
+    prior_sha = None
+    if isinstance(prior_raw, dict):
+        prior_sha = prior_raw.get("evidence_sha256")
     return TaskSpec(
+        prior_qualification_sha256=str(prior_sha) if prior_sha else None,
         id=identifier,
         adapter=adapter,
         source=source,
@@ -348,7 +390,29 @@ def parse_spec(payload: Mapping[str, Any], *, source_path: Path) -> ExperimentSp
     identifiers = [task.id for task in tasks]
     if len(set(identifiers)) != len(identifiers):
         raise SpecError("duplicate task id")
+    capabilities_raw = payload.get("capabilities", [])
+    if not isinstance(capabilities_raw, list):
+        raise SpecError("capabilities must be a list")
+    capabilities: list[CapabilityRequest] = []
+    for index, item in enumerate(cast(list[Any], capabilities_raw)):
+        if not isinstance(item, dict):
+            raise SpecError(f"capabilities[{index}] must be a mapping")
+        certificate = Path(_require_str(item, "certificate", f"capabilities[{index}]"))
+        if not certificate.is_absolute():
+            certificate = base_dir / certificate
+        bounds = item.get("requested_bounds", {})
+        if not isinstance(bounds, dict):
+            raise SpecError(f"capabilities[{index}]: requested_bounds must be a mapping")
+        capabilities.append(
+            CapabilityRequest(
+                capability=_require_str(item, "capability", f"capabilities[{index}]"),
+                certificate_path=certificate,
+                requested_bounds={str(k): int(v) for k, v in bounds.items()},
+            )
+        )
+
     return ExperimentSpec(
+        capabilities=tuple(capabilities),
         id=_require_str(experiment, "id", "experiment"),
         question=str(experiment.get("question", "")),
         claim_boundary=str(experiment.get("claim_boundary", "")),

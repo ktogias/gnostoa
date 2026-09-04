@@ -1,0 +1,111 @@
+---
+type: Runbook
+title: Prepare an experiment capsule
+description: Author a declarative experiment specification, prepare and qualify it offline into content-addressed capsules and an experiment lock, and read the structured blockers when preparation fails closed.
+status: draft
+generated:
+  by: claude/opus-5
+  at: "2026-09-04T15:40:00Z"
+sources:
+  - id: capsule-work-item
+    resource: https://github.com/ktogias/gnostoa/issues/187
+    title: Build declarative Experiment Capsule preparation and qualification system
+x-project-knowledge:
+  id: kit.runbook.prepare-an-experiment-capsule
+  owners:
+    - team:gnostoa-maintainers
+  scope:
+    - gnostoa
+  relations:
+    - kind: governed-by
+      target: /decisions/0059-compile-declarative-experiment-capsules-over-the-owner-led-runner.md
+---
+
+# Prepare an experiment capsule
+
+## Outcome
+
+A declarative experiment specification becomes content-addressed task capsules, generated
+runner profiles and an experiment lock, or a structured `BLOCKED` result naming the missing
+capability or input. No per-task Dockerfile is written by hand and no harness is repaired by
+shell archaeology.
+
+## Preconditions
+
+- Frozen sources and references reachable in local no-remote Git object stores.
+- Hidden oracles and identification keys inside the owner-private boundary.
+- Immutable runtime image identities already present locally.
+- Any build-preparation tool artifact already present locally; offline never acquires.
+
+## Procedure
+
+Author one specification. Intent is declared; everything mechanical is derived.
+
+```json
+{
+  "schema": "gnostoa-experiment-spec/v1",
+  "experiment": {"id": "...", "question": "...", "claim_boundary": "..."},
+  "tasks": [{
+    "id": "D1-example",
+    "adapter": "python-pytest",
+    "source": {"repository": "/path/to/mirror.git", "base_commit": "...", "base_tree": "..."},
+    "reference": {"kind": "accepted-merge-commit", "commit": "...", "tree": "..."},
+    "runtime": {"image": "sha256:...", "available_plugins": ["pytest"]},
+    "oracle": {"path": "/private/oracle.py"},
+    "semantics": {
+      "requirement": "...",
+      "discriminator": {"cases": ["test_..."]},
+      "controls": [{"case": "test_...", "corroboration": {"path": "tests/test_x.py",
+                                                          "value_substitutions": {"mine": "theirs"}}}]
+    },
+    "harness": {"preload_modules": [], "isolate_test_config": false},
+    "expectations": {"base": {"failed": 1, "passed": 0}, "reference": {"failed": 0, "passed": 1}}
+  }]
+}
+```
+
+Adapters are never inferred. A reference may live in another object store via
+`reference.repository`. Then prepare and inspect:
+
+```sh
+python -m tools.capsule.cli prepare EXPERIMENT_SPEC --workspace WORKSPACE --offline
+python -m tools.capsule.cli status WORKSPACE
+```
+
+`prepare` is idempotent: an unchanged rerun reuses retained stage records, and a changed
+input invalidates that stage and everything downstream.
+
+## Verification
+
+Preparation is correct when `status` reports the expected stage from retained state alone,
+each generated runner profile is accepted by the runner's own validator, and every blocker is
+one you intend. Read blockers as follows.
+
+| Code | Meaning | Fix |
+| --- | --- | --- |
+| `test-config-requires-absent-plugin` | repository test options need a plugin the runtime does not carry | declare `harness.isolate_test_config`, or qualify a runtime that provides it |
+| `preparation-tool-undeclared` | the tree needs a build-generated file and no tool is declared | declare `runtime.preparation_tools` with a locally available artifact |
+| `preparation-artifact-unavailable-offline` | the declared tool artifact is not present locally | make it locally available; preparation never downloads |
+| `oracle-case-undeclared` | an oracle case has no declared role | declare it as a discriminator case or as a control |
+| `oracle-control-not-corroborated` | a control asserts an expectation nothing corroborates | cite base-tree evidence, bind a prior qualification, or correct the oracle |
+| `capability-bounds-not-certified` | the request exceeds the certified bounds | requalify; bounds are never widened to fit |
+| `base-reference-qualification-requires-preflight-authority` | static preparation is complete | obtain explicit owner preflight authority |
+
+A control blocker is the system refusing to guess. If no citation exists, the control is
+probably over-strong for the subject, and the oracle needs a new identity rather than a
+harness or runtime workaround.
+
+## Recovery
+
+Preparation never repairs itself. Correct the specification or make the missing artifact
+locally available, then rerun `prepare` against the same workspace: unaffected stages are
+reused and only the invalidated closure is recomputed. If a blocker names a semantic defect,
+amend the semantic freeze deliberately and accept the new semantic identity rather than
+editing generated artifacts.
+
+## Boundaries
+
+`prepare` never executes a hidden oracle without explicit preflight authority, never acquires
+a dependency, and never repairs semantics. `execute` consumes an already-frozen lock and
+cannot reinterpret it. Hidden oracle and key content stays inside the private workspace;
+locks and logs carry identities and blocker codes only.

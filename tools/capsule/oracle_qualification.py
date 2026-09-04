@@ -21,6 +21,7 @@ from pathlib import Path
 from tools.capsule.spec import Semantics
 
 _JS_CASE = re.compile(r"\b(?:it|test)\(\s*['\"](?P<title>[^'\"]+)['\"]")
+_JS_EXPECT = re.compile(r'\b(?:toBe|toEqual|toStrictEqual)\(\s*(?P<argument>[^)]{0,400})\)')
 _JS_STRING = re.compile(r"""(['"])(?P<value>(?:(?!\1).){1,200})\1""")
 
 
@@ -49,10 +50,19 @@ def _python_shape(source: str) -> OracleShape:
     for node in tree.body:
         if not isinstance(node, ast.FunctionDef) or not node.name.startswith("test"):
             continue
+        # Only the asserted expected value counts as the case's expectation. Any
+        # other string in the body is incidental setup and must never be able to
+        # corroborate a control by accident.
         literals: list[str] = []
         for inner in ast.walk(node):
-            if isinstance(inner, ast.Constant) and isinstance(inner.value, str):
-                literals.append(inner.value)
+            if not isinstance(inner, ast.Assert):
+                continue
+            test = inner.test
+            if not isinstance(test, ast.Compare):
+                continue
+            for operand in (test.left, *test.comparators):
+                if isinstance(operand, ast.Constant) and isinstance(operand.value, str):
+                    literals.append(operand.value)
         cases.append(OracleCase(name=node.name, literals=tuple(literals)))
     return OracleShape(language="python", cases=tuple(cases))
 
@@ -63,7 +73,12 @@ def _javascript_shape(source: str) -> OracleShape:
     for index, match in enumerate(matches):
         end = matches[index + 1].start() if index + 1 < len(matches) else len(source)
         body = source[match.end() : end]
-        literals = tuple(m.group("value") for m in _JS_STRING.finditer(body))
+        # Same restriction as Python: only asserted expectations, not incidental strings.
+        literals = tuple(
+            m.group("value")
+            for assertion in _JS_EXPECT.finditer(body)
+            for m in _JS_STRING.finditer(assertion.group("argument"))
+        )
         cases.append(OracleCase(name=match.group("title"), literals=literals))
     return OracleShape(language="javascript", cases=tuple(cases))
 
@@ -81,6 +96,7 @@ def qualify(
     *,
     base_tree: Path,
     task_id: str,
+    prior_qualification_sha256: str | None = None,
 ) -> list[dict[str, object]]:
     """Return structured blockers. An empty list means the oracle prequalifies."""
     blockers: list[dict[str, object]] = []
@@ -135,6 +151,22 @@ def qualify(
             )
             continue
 
+        declared_prior = control.corroboration.prior_qualification_sha256
+        if declared_prior is not None:
+            if prior_qualification_sha256 and declared_prior == prior_qualification_sha256:
+                continue
+            blockers.append(
+                {
+                    "task": task_id,
+                    "code": "prior-qualification-not-current",
+                    "detail": (
+                        f"control {control.case!r} cites a prior qualification that the task does "
+                        "not bind; requalify or cite base-tree evidence"
+                    ),
+                }
+            )
+            continue
+        assert control.corroboration.path is not None
         citation = base_tree / control.corroboration.path
         if not citation.is_file():
             blockers.append(
