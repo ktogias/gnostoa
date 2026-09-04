@@ -13,6 +13,15 @@ sources:
   - id: capsule-decision
     resource: https://github.com/ktogias/gnostoa/blob/main/knowledge/decisions/0059-compile-declarative-experiment-capsules-over-the-owner-led-runner.md
     title: Compile declarative Experiment Capsules over the owner-led runner
+x-project-knowledge:
+  id: kit.assessment.187-experiment-capsule-execution-plan
+  owners:
+    - team:gnostoa-maintainers
+  scope:
+    - gnostoa
+  relations:
+    - kind: governed-by
+      target: /decisions/0059-compile-declarative-experiment-capsules-over-the-owner-led-runner.md
 ---
 
 # Work Item 187 Experiment Capsule system v1 execution plan
