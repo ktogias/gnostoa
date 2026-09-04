@@ -54,6 +54,7 @@
         },
         "assignment": {
           "type": "object",
+          "description": "Assignment order is preregistered experiment material. When arms are declared an explicit ordered schedule is required; the compiler never derives one.",
           "properties": {
             "repetitions": {
               "type": "integer",
@@ -63,6 +64,42 @@
               "type": "array",
               "items": {
                 "type": "string"
+              }
+            },
+            "schedule": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "task",
+                  "arm"
+                ],
+                "properties": {
+                  "task": {
+                    "type": "string"
+                  },
+                  "repetition": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  },
+                  "arm": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "schedule_artifact": {
+              "type": "object",
+              "required": [
+                "path"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "sha256": {
+                  "$ref": "#/$defs/sha256"
+                }
               }
             }
           }

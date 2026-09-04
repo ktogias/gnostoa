@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import cast
 
 from tools.capsule.identity import digest_of
 
@@ -40,6 +41,8 @@ class RunEntry:
 @dataclass(frozen=True, slots=True)
 class RunPlan:
     entries: tuple[RunEntry, ...]
+    schedule_source: str = "none"
+    schedule_sha256: str | None = None
 
     @property
     def identity(self) -> str:
@@ -51,6 +54,8 @@ class RunPlan:
     def as_json(self) -> dict[str, object]:
         return {
             "schema": PLAN_SCHEMA,
+            "schedule_source": self.schedule_source,
+            "schedule_sha256": self.schedule_sha256,
             "runs": [entry.as_json() for entry in self.entries],
             "count": len(self.entries),
         }
@@ -58,27 +63,32 @@ class RunPlan:
 
 def compile_plan(
     *,
-    task_ids: Sequence[str],
-    arms: Sequence[str],
-    repetitions: int,
+    schedule: Sequence[Mapping[str, object]],
     arm_inputs: Mapping[str, Sequence[Mapping[str, str]]],
+    schedule_source: str,
+    schedule_sha256: str | None,
 ) -> RunPlan:
-    """Expand task x repetition x arm into an explicit, ordered list of runs."""
-    entries: list[RunEntry] = []
-    selected_arms = list(arms) if arms else ["default"]
-    for task in task_ids:
-        for repetition in range(1, repetitions + 1):
-            for arm in selected_arms:
-                entries.append(
-                    RunEntry(
-                        id=f"{task}/r{repetition}/{arm}",
-                        task=task,
-                        arm=arm,
-                        repetition=repetition,
-                        # Only this arm's packet. The sibling arm is never attached.
-                        arm_inputs=tuple(
-                            dict(item) for item in arm_inputs.get(arm, ())
-                        ),
-                    )
-                )
-    return RunPlan(entries=tuple(entries))
+    """Expand the preregistered schedule verbatim, preserving its exact order.
+
+    The compiler does not choose an order. Assignment order is experiment material,
+    so it is declared and frozen; re-deriving or re-randomising it here would silently
+    replace preregistered material with a default.
+    """
+    entries = tuple(
+        RunEntry(
+            id=f"{item['task']}/r{item['repetition']}/{item['arm']}",
+            task=str(item["task"]),
+            arm=str(item["arm"]),
+            repetition=int(cast(int, item["repetition"])),
+            # Only this arm's packet. The sibling arm is never attached.
+            arm_inputs=tuple(
+                dict(entry) for entry in arm_inputs.get(str(item["arm"]), ())
+            ),
+        )
+        for item in schedule
+    )
+    return RunPlan(
+        entries=entries,
+        schedule_source=schedule_source,
+        schedule_sha256=schedule_sha256,
+    )

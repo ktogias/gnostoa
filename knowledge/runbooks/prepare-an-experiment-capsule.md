@@ -111,6 +111,9 @@ one you intend. Read blockers as follows.
 | `base-reference-qualification-failed` | observed outcome or cause differs from the frozen expectation | read the classification: `INFRASTRUCTURE`, `WRONG_CAUSE` or `COUNT_MISMATCH` |
 | `preflight-authority-out-of-scope` | the authority does not name this experiment and scope | obtain an authority bound to this experiment |
 | `readiness-missing-stage-receipts` | a required stage has no completed receipt | readiness is receipt-gated; complete the named stages |
+| `assignment-schedule-required` | arms are declared without an ordered schedule | declare `assignment.schedule` or bind `assignment.schedule_artifact`; order is preregistered material |
+| `execution-input-unavailable` | a declared executor input is not present locally | make it available; offline never acquires it |
+| `runner-refused-run` | the runner rejected the profile, e.g. a declared credential name is absent | supply the credential value in the environment; values never live in the lock |
 | `execution-profile-admits-private-surface` | the executor profile could reach the reference, oracle or key | a containment defect; the capsule is refused until the surfaces are separated |
 | `execution-command-not-declared` | the lock binds no executor command | declare `execution.command`; the oracle invocation is qualification-only and is never reused |
 | `preparation-tool-not-used-by-scheme` | a producer artifact is declared that cannot change the produced bytes | remove it; the scheme is a Gnostoa-owned algorithm |
@@ -143,8 +146,22 @@ is refused: handing an executor the known-correct reference would invalidate the
 
 ## Execute a frozen lock
 
-The lock binds a **run plan**: the exact task x repetition x arm entries it authorises. `execute`
-consumes those entries rather than re-deriving them, and each run receives only its own arm packet.
+The lock binds a **run plan**: the exact ordered entries it authorises. `execute` consumes those
+entries in that order, and each run receives only its own arm packet plus the task's declared
+executor inputs.
+
+Assignment order is preregistered experiment material, so when arms are declared the spec must
+carry an explicit schedule; the compiler never derives one:
+
+```json
+"assignment": {
+  "repetitions": 2, "arms": ["control", "treatment"],
+  "schedule": [{"task": "T1", "repetition": 1, "arm": "treatment"}, ...]
+}
+```
+
+or `"schedule_artifact": {"path": "...", "sha256": "..."}` to bind a frozen schedule file. Omitting
+both while arms exist is `assignment-schedule-required`.
 
 Real execution needs a **launch authority**, which is a different record from the preflight
 authority and is bound to one exact lock:

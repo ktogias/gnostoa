@@ -235,6 +235,34 @@
                 }
               }
             }
+          },
+          "execution_inputs": {
+            "type": "array",
+            "description": "Executor read-only inputs, recoverable from the artifact store at execute time.",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "name",
+                "sha256",
+                "store"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "store": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       }
@@ -245,7 +273,8 @@
       "required": [
         "schema",
         "runs",
-        "count"
+        "count",
+        "schedule_source"
       ],
       "properties": {
         "schema": {
@@ -285,6 +314,16 @@
               }
             }
           }
+        },
+        "schedule_source": {
+          "type": "string",
+          "description": "inline, artifact:<path>, or none. Records where the frozen order came from."
+        },
+        "schedule_sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       }
     },

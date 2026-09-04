@@ -7,6 +7,7 @@ guessed: the compiler never invents an adapter, a reference or an expectation.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -203,12 +204,33 @@ class Arm:
 
 
 @dataclass(frozen=True, slots=True)
-class Assignment:
-    repetitions: int = 1
-    arms: tuple[str, ...] = ()
+class ScheduleEntry:
+    task: str
+    repetition: int
+    arm: str
 
     def as_json(self) -> dict[str, object]:
-        return {"repetitions": self.repetitions, "arms": list(self.arms)}
+        return {"task": self.task, "repetition": self.repetition, "arm": self.arm}
+
+
+@dataclass(frozen=True, slots=True)
+class Assignment:
+    """The preregistered ordered schedule, never re-derived by the compiler."""
+
+    repetitions: int = 1
+    arms: tuple[str, ...] = ()
+    schedule: tuple[ScheduleEntry, ...] = ()
+    source: str = "none"
+    schedule_sha256: str | None = None
+
+    def as_json(self) -> dict[str, object]:
+        return {
+            "repetitions": self.repetitions,
+            "arms": list(self.arms),
+            "source": self.source,
+            "schedule_sha256": self.schedule_sha256,
+            "schedule": [entry.as_json() for entry in self.schedule],
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -639,7 +661,69 @@ def parse_spec(payload: Mapping[str, Any], *, source_path: Path) -> ExperimentSp
     unknown = [name for name in declared_arms if name not in known]
     if unknown:
         raise SpecError(f"experiment.assignment names undeclared arms {unknown}")
-    assignment = Assignment(repetitions=repetitions, arms=declared_arms)
+
+    schedule_raw = assignment_raw.get("schedule")
+    schedule_source = "none"
+    schedule_sha256: str | None = None
+    if schedule_raw is None:
+        artifact = assignment_raw.get("schedule_artifact")
+        if isinstance(artifact, dict):
+            path = Path(
+                _require_str(
+                    artifact, "path", "experiment.assignment.schedule_artifact"
+                )
+            )
+            if not path.is_absolute():
+                path = base_dir / path
+            raw_bytes = path.read_bytes()
+            observed = hashlib.sha256(raw_bytes).hexdigest()
+            declared_digest = artifact.get("sha256")
+            if declared_digest and str(declared_digest) != observed:
+                raise SpecError(
+                    "experiment.assignment.schedule_artifact digest does not match the file"
+                )
+            schedule_raw = json.loads(raw_bytes)
+            schedule_source = f"artifact:{path}"
+            schedule_sha256 = observed
+    else:
+        schedule_source = "inline"
+
+    entries: list[ScheduleEntry] = []
+    if isinstance(schedule_raw, list):
+        task_names = {
+            str(task.get("id")) for task in tasks_raw if isinstance(task, dict)
+        }
+        for index, item in enumerate(schedule_raw):
+            if not isinstance(item, dict):
+                raise SpecError(
+                    f"experiment.assignment.schedule[{index}] must be a mapping"
+                )
+            entry = ScheduleEntry(
+                task=_require_str(
+                    item, "task", f"experiment.assignment.schedule[{index}]"
+                ),
+                repetition=int(item.get("repetition", 1)),
+                arm=_require_str(
+                    item, "arm", f"experiment.assignment.schedule[{index}]"
+                ),
+            )
+            if entry.task not in task_names:
+                raise SpecError(f"schedule[{index}] names unknown task {entry.task!r}")
+            if declared_arms and entry.arm not in declared_arms:
+                raise SpecError(f"schedule[{index}] names unassigned arm {entry.arm!r}")
+            entries.append(entry)
+        if schedule_sha256 is None:
+            schedule_sha256 = hashlib.sha256(
+                json.dumps([e.as_json() for e in entries], sort_keys=True).encode()
+            ).hexdigest()
+
+    assignment = Assignment(
+        repetitions=repetitions,
+        arms=declared_arms,
+        schedule=tuple(entries),
+        source=schedule_source,
+        schedule_sha256=schedule_sha256,
+    )
 
     capabilities_raw = payload.get("capabilities", [])
     if not isinstance(capabilities_raw, list):

@@ -1346,9 +1346,16 @@ class RunPlanTests(CapsuleFixture):
                 "inputs": [{"id": "packet", "source": str(self.root / "treatment.md")}]
             },
         }
+        # Assignment order is preregistered material, declared rather than derived.
         spec["experiment"]["assignment"] = {
             "repetitions": 2,
             "arms": ["control", "treatment"],
+            "schedule": [
+                {"task": "T1", "repetition": 1, "arm": "treatment"},
+                {"task": "T1", "repetition": 1, "arm": "control"},
+                {"task": "T1", "repetition": 2, "arm": "control"},
+                {"task": "T1", "repetition": 2, "arm": "treatment"},
+            ],
         }
         return compiler.prepare(
             load_spec(self.write_spec(spec)),
@@ -1357,12 +1364,133 @@ class RunPlanTests(CapsuleFixture):
             preflight_authority=self.authority(),
         )
 
-    def test_plan_expands_task_repetition_and_arm(self) -> None:
+    def test_plan_follows_the_declared_schedule_order_verbatim(self) -> None:
         result = self._planned()
         self.assertEqual(result.status, stages.READY_FOR_OWNER_REVIEW, result.blockers)
         self.assertEqual(len(result.run_plan), 4)
         payload = json.loads(result.lock_path.read_text())
-        self.assertEqual(payload["run_plan"]["count"], 4)
+        plan = payload["run_plan"]
+        self.assertEqual(plan["count"], 4)
+        self.assertEqual(plan["schedule_source"], "inline")
+        self.assertIsNotNone(plan["schedule_sha256"])
+        self.assertEqual(
+            [(run["repetition"], run["arm"]) for run in plan["runs"]],
+            [(1, "treatment"), (1, "control"), (2, "control"), (2, "treatment")],
+            "the compiler must not reorder preregistered assignment material",
+        )
+
+    def test_declared_arms_without_a_schedule_are_blocked(self) -> None:
+        repo = self.make_repo(
+            "s", {"src/pkg/__init__.py": 'def render():\n    return "Basic "\n'}
+        )
+        base = git(repo, "rev-parse", "HEAD")
+        ref = self.commit(
+            repo, {"src/pkg/__init__.py": 'def render():\n    return "Basic"\n'}, "fix"
+        )
+        (self.root / "oracle.py").write_text(
+            "import pkg\n\n\ndef test_discriminates():\n    assert pkg.render() == 'Basic'\n"
+        )
+        (self.root / "control.md").write_text("control packet\n")
+        spec = self.base_spec(repo, base, ref)
+        spec["tasks"][0]["reference"]["commit"] = ref
+        spec["tasks"][0]["reference"]["tree"] = git(repo, "rev-parse", ref + "^{tree}")
+        spec["experiment"]["arms"] = {
+            "control": {
+                "inputs": [{"id": "packet", "source": str(self.root / "control.md")}]
+            }
+        }
+        spec["experiment"]["assignment"] = {"repetitions": 2, "arms": ["control"]}
+        result = compiler.prepare(
+            load_spec(self.write_spec(spec)),
+            self.workspace,
+            offline=True,
+            preflight_authority=self.authority(),
+        )
+        self.assertEqual(result.status, "BLOCKED")
+        self.assertIn(
+            "assignment-schedule-required", [b["code"] for b in result.blockers]
+        )
+
+    def test_a_schedule_artifact_is_bound_by_digest(self) -> None:
+        repo = self.make_repo(
+            "s", {"src/pkg/__init__.py": 'def render():\n    return "Basic "\n'}
+        )
+        base = git(repo, "rev-parse", "HEAD")
+        ref = self.commit(
+            repo, {"src/pkg/__init__.py": 'def render():\n    return "Basic"\n'}, "fix"
+        )
+        (self.root / "oracle.py").write_text(
+            "import pkg\n\n\ndef test_discriminates():\n    assert pkg.render() == 'Basic'\n"
+        )
+        (self.root / "control.md").write_text("control packet\n")
+        schedule_path = self.root / "schedule.json"
+        schedule_path.write_text(
+            json.dumps([{"task": "T1", "repetition": 1, "arm": "control"}])
+        )
+        spec = self.base_spec(repo, base, ref)
+        spec["tasks"][0]["reference"]["commit"] = ref
+        spec["tasks"][0]["reference"]["tree"] = git(repo, "rev-parse", ref + "^{tree}")
+        spec["experiment"]["arms"] = {
+            "control": {
+                "inputs": [{"id": "packet", "source": str(self.root / "control.md")}]
+            }
+        }
+        spec["experiment"]["assignment"] = {
+            "repetitions": 1,
+            "arms": ["control"],
+            "schedule_artifact": {"path": str(schedule_path), "sha256": "0" * 64},
+        }
+        with self.assertRaises(SpecError):
+            load_spec(self.write_spec(spec))
+
+    def test_declared_executor_inputs_survive_rematerialisation(self) -> None:
+        """A READY lock must not promise an executor input the executor never sees."""
+        repo = self.make_repo(
+            "s", {"src/pkg/__init__.py": 'def render():\n    return "Basic "\n'}
+        )
+        base = git(repo, "rev-parse", "HEAD")
+        ref = self.commit(
+            repo, {"src/pkg/__init__.py": 'def render():\n    return "Basic"\n'}, "fix"
+        )
+        (self.root / "oracle.py").write_text(
+            "import pkg\n\n\ndef test_discriminates():\n    assert pkg.render() == 'Basic'\n"
+        )
+        (self.root / "task.md").write_text("the declared task statement\n")
+        (self.root / "control.md").write_text("control packet\n")
+        spec = self.base_spec(repo, base, ref)
+        spec["tasks"][0]["reference"]["commit"] = ref
+        spec["tasks"][0]["reference"]["tree"] = git(repo, "rev-parse", ref + "^{tree}")
+        spec["tasks"][0]["execution"]["read_only_inputs"] = [
+            {"id": "task-statement", "source": str(self.root / "task.md")}
+        ]
+        spec["experiment"]["arms"] = {
+            "control": {
+                "inputs": [{"id": "packet", "source": str(self.root / "control.md")}]
+            }
+        }
+        spec["experiment"]["assignment"] = {
+            "repetitions": 1,
+            "arms": ["control"],
+            "schedule": [{"task": "T1", "repetition": 1, "arm": "control"}],
+        }
+        result = compiler.prepare(
+            load_spec(self.write_spec(spec)),
+            self.workspace,
+            offline=True,
+            preflight_authority=self.authority(),
+        )
+        self.assertEqual(result.status, stages.READY_FOR_OWNER_REVIEW, result.blockers)
+
+        # Fresh workspace: only the lock and the bound store may be consulted.
+        outcome = execute.execute_lock(
+            result.lock_path, self.workspace / "fresh", dry_run=True
+        )
+        self.assertEqual(outcome.status, "MATERIALISED", outcome.blockers)
+        run = next(iter(outcome.runs.values()))
+        capsule = Path(run["project_root"]).parent
+        statements = list(capsule.rglob("task.md"))
+        self.assertTrue(statements, "the declared executor input must be materialised")
+        self.assertIn("the declared task statement", statements[0].read_text())
 
     def test_every_planned_run_materialises_with_only_its_own_arm(self) -> None:
         result = self._planned()

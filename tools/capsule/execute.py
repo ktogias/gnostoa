@@ -8,6 +8,7 @@ reinterpret the lock, and it never touches the qualification trust domain.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import tarfile
@@ -19,7 +20,6 @@ from typing import Any, cast
 from tools.capsule import lock as lock_module
 from tools.capsule import profiles
 from tools.capsule.authority import LaunchAuthority
-from tools.capsule.identity import digest_text
 
 _GIT_ENV = {
     "GIT_CONFIG_GLOBAL": "/dev/null",
@@ -84,10 +84,10 @@ def materialize_capsule(
     for path in (project, evidence, scratch, arm_root):
         path.mkdir(parents=True, exist_ok=True)
 
+    store = Path(str(lock_payload.get("artifact_store") or (workspace / "artifacts")))
     if not any(project.iterdir()):
         _materialize(Path(task["source_repository"]), task["base_tree"], project)
 
-    store = Path(str(lock_payload.get("artifact_store") or (workspace / "artifacts")))
     for artifact in cast(
         Sequence[Mapping[str, str]], task.get("stored_artifacts") or []
     ):
@@ -100,26 +100,49 @@ def materialize_capsule(
             raise ExecuteError(
                 f"artifact {artifact['path']!r} is not recoverable from the bound store"
             )
-        content = source.read_text()
-        if digest_text(content) != artifact["sha256"]:
+        payload = source.read_bytes()
+        if hashlib.sha256(payload).hexdigest() != artifact["sha256"]:
             raise ExecuteError(f"artifact {artifact['path']!r} failed its digest check")
-        (project / artifact["path"]).write_text(content)
+        destination = project / artifact["path"]
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(payload)
+
+    read_only: list[str] = []
+
+    # Task-level executor inputs the lock declares must survive rematerialisation.
+    inputs_root = root / "inputs"
+    for declared in cast(
+        Sequence[Mapping[str, str]], task.get("execution_inputs") or []
+    ):
+        source = store / Path(str(declared["store"])).name
+        if not source.is_file():
+            raise ExecuteError(
+                f"execution input {declared['id']!r} is not recoverable from the bound store"
+            )
+        payload = source.read_bytes()
+        if hashlib.sha256(payload).hexdigest() != declared["sha256"]:
+            raise ExecuteError(
+                f"execution input {declared['id']!r} failed its digest check"
+            )
+        target = inputs_root / str(declared["id"])
+        target.mkdir(parents=True, exist_ok=True)
+        (target / str(declared["name"])).write_bytes(payload)
+        read_only.append(str(target))
 
     # Only this run's arm packet is attached. The sibling arm is never materialised.
-    read_only: list[str] = []
     for item in arm_inputs:
         source = Path(str(item.get("source", "")))
         if not source.is_file():
             raise ExecuteError(
                 f"arm input {item.get('id')!r} is not available at its bound locator"
             )
-        observed = digest_text(source.read_text())
-        declared = item.get("sha256")
-        if declared and declared != observed:
+        observed = hashlib.sha256(source.read_bytes()).hexdigest()
+        declared_digest = str(item.get("sha256") or "")
+        if declared_digest and declared_digest != observed:
             raise ExecuteError(f"arm input {item.get('id')!r} failed its digest check")
         target = arm_root / str(item.get("id"))
         target.mkdir(parents=True, exist_ok=True)
-        (target / source.name).write_text(source.read_text())
+        (target / source.name).write_bytes(source.read_bytes())
         read_only.append(str(target))
 
     profile["project_root"] = str(project)
