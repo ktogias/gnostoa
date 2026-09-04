@@ -1599,5 +1599,111 @@ class ContainmentDirectionTests(CapsuleFixture):
             )
 
 
+class ScheduleCompletenessTests(CapsuleFixture):
+    """A frozen order must also be exactly the preregistered set of runs."""
+
+    def _spec_with_schedule(self, schedule: list[dict]) -> dict:
+        repo = self.make_repo(
+            "s", {"src/pkg/__init__.py": 'def render():\n    return "Basic "\n'}
+        )
+        base = git(repo, "rev-parse", "HEAD")
+        ref = self.commit(
+            repo, {"src/pkg/__init__.py": 'def render():\n    return "Basic"\n'}, "fix"
+        )
+        (self.root / "oracle.py").write_text(
+            "import pkg\n\n\ndef test_discriminates():\n    assert pkg.render() == 'Basic'\n"
+        )
+        (self.root / "control.md").write_text("control packet\n")
+        (self.root / "treatment.md").write_text("treatment packet\n")
+        spec = self.base_spec(repo, base, ref)
+        spec["tasks"][0]["reference"]["commit"] = ref
+        spec["tasks"][0]["reference"]["tree"] = git(repo, "rev-parse", ref + "^{tree}")
+        spec["experiment"]["arms"] = {
+            "control": {
+                "inputs": [{"id": "packet", "source": str(self.root / "control.md")}]
+            },
+            "treatment": {
+                "inputs": [{"id": "packet", "source": str(self.root / "treatment.md")}]
+            },
+        }
+        spec["experiment"]["assignment"] = {
+            "repetitions": 2,
+            "arms": ["control", "treatment"],
+            "schedule": schedule,
+        }
+        return spec
+
+    def _prepare(self, schedule: list[dict], name: str) -> compiler.PrepareResult:
+        return compiler.prepare(
+            load_spec(self.write_spec(self._spec_with_schedule(schedule))),
+            self.workspace / name,
+            offline=True,
+            preflight_authority=self.authority(),
+        )
+
+    @staticmethod
+    def _complete() -> list[dict]:
+        return [
+            {"task": "T1", "repetition": repetition, "arm": arm}
+            for repetition in (1, 2)
+            for arm in ("control", "treatment")
+        ]
+
+    def test_a_valid_shuffled_complete_schedule_is_accepted(self) -> None:
+        shuffled = [
+            {"task": "T1", "repetition": 2, "arm": "treatment"},
+            {"task": "T1", "repetition": 1, "arm": "control"},
+            {"task": "T1", "repetition": 2, "arm": "control"},
+            {"task": "T1", "repetition": 1, "arm": "treatment"},
+        ]
+        result = self._prepare(shuffled, "shuffled")
+        self.assertEqual(result.status, stages.READY_FOR_OWNER_REVIEW, result.blockers)
+        self.assertEqual(len(result.run_plan), 4)
+        self.assertEqual(
+            [(e.repetition, e.arm) for e in result.run_plan.entries],
+            [(2, "treatment"), (1, "control"), (2, "control"), (1, "treatment")],
+        )
+
+    def test_a_duplicated_run_is_refused(self) -> None:
+        schedule = self._complete()
+        schedule.append(dict(schedule[0]))
+        result = self._prepare(schedule, "duplicate")
+        self.assertEqual(result.status, "BLOCKED")
+        blocker = next(
+            b
+            for b in result.blockers
+            if b["code"] == "assignment-schedule-not-a-complete-permutation"
+        )
+        self.assertIn("duplicate scheduled runs", str(blocker["detail"]))
+
+    def test_an_omitted_run_is_refused(self) -> None:
+        result = self._prepare(self._complete()[:-1], "omission")
+        self.assertEqual(result.status, "BLOCKED")
+        blocker = next(
+            b
+            for b in result.blockers
+            if b["code"] == "assignment-schedule-not-a-complete-permutation"
+        )
+        self.assertIn("missing scheduled runs", str(blocker["detail"]))
+
+    def test_a_repetition_outside_the_declared_range_is_refused(self) -> None:
+        schedule = self._complete()
+        schedule.append({"task": "T1", "repetition": 9, "arm": "control"})
+        result = self._prepare(schedule, "range")
+        self.assertEqual(result.status, "BLOCKED")
+        blocker = next(
+            b
+            for b in result.blockers
+            if b["code"] == "assignment-schedule-not-a-complete-permutation"
+        )
+        self.assertIn("outside 1..2", str(blocker["detail"]))
+
+    def test_run_identities_are_unique_across_the_plan(self) -> None:
+        result = self._prepare(self._complete(), "unique")
+        self.assertEqual(result.status, stages.READY_FOR_OWNER_REVIEW, result.blockers)
+        identities = [entry.id for entry in result.run_plan.entries]
+        self.assertEqual(len(set(identities)), len(identities))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1225,11 +1225,32 @@ def prepare(
         )
         return finish(stages.BOUNDARY_QUALIFIED)
 
+    scheduled_arms = list(spec.assignment.arms) or ["default"]
     schedule = [entry.as_json() for entry in spec.assignment.schedule] or [
         {"task": task.id, "repetition": repetition, "arm": "default"}
         for task in spec.tasks
         for repetition in range(1, spec.assignment.repetitions + 1)
     ]
+    # A frozen order is not enough: it must be exactly the preregistered set of runs.
+    schedule_reasons = runplan.validate_schedule(
+        schedule=schedule,
+        task_ids=[task.id for task in spec.tasks],
+        arms=scheduled_arms,
+        repetitions=spec.assignment.repetitions,
+    )
+    if schedule_reasons:
+        blockers.append(
+            {
+                "task": None,
+                "code": "assignment-schedule-not-a-complete-permutation",
+                "detail": (
+                    "the schedule must be exactly one permutation of "
+                    "tasks x repetitions x arms: " + "; ".join(schedule_reasons)
+                ),
+            }
+        )
+        return finish(stages.BOUNDARY_QUALIFIED)
+
     plan = runplan.compile_plan(
         schedule=schedule,
         schedule_source=spec.assignment.source,

@@ -112,6 +112,7 @@ one you intend. Read blockers as follows.
 | `preflight-authority-out-of-scope` | the authority does not name this experiment and scope | obtain an authority bound to this experiment |
 | `readiness-missing-stage-receipts` | a required stage has no completed receipt | readiness is receipt-gated; complete the named stages |
 | `assignment-schedule-required` | arms are declared without an ordered schedule | declare `assignment.schedule` or bind `assignment.schedule_artifact`; order is preregistered material |
+| `assignment-schedule-not-a-complete-permutation` | the schedule duplicates, omits or adds a run, or names a repetition out of range | correct the schedule; it must be exactly tasks x repetitions x arms |
 | `execution-input-unavailable` | a declared executor input is not present locally | make it available; offline never acquires it |
 | `runner-refused-run` | the runner rejected the profile, e.g. a declared credential name is absent | supply the credential value in the environment; values never live in the lock |
 | `execution-profile-admits-private-surface` | the executor profile could reach the reference, oracle or key | a containment defect; the capsule is refused until the surfaces are separated |
@@ -162,6 +163,11 @@ carry an explicit schedule; the compiler never derives one:
 
 or `"schedule_artifact": {"path": "...", "sha256": "..."}` to bind a frozen schedule file. Omitting
 both while arms exist is `assignment-schedule-required`.
+
+The schedule must be exactly one permutation of tasks x repetitions x arms. Any duplicate, omitted
+or extra entry, or a repetition outside `1..repetitions`, is refused: a frozen order alone would
+not tell you whether the experiment performs the preregistered number of runs, and two identical
+entries would collide on one run identity and evidence path.
 
 Real execution needs a **launch authority**, which is a different record from the preflight
 authority and is bound to one exact lock:

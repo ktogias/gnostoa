@@ -11,6 +11,7 @@ qualification workspace.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import cast
@@ -18,6 +19,53 @@ from typing import cast
 from tools.capsule.identity import digest_of
 
 PLAN_SCHEMA = "gnostoa-experiment-run-plan/v1"
+
+
+def validate_schedule(
+    *,
+    schedule: Sequence[Mapping[str, object]],
+    task_ids: Sequence[str],
+    arms: Sequence[str],
+    repetitions: int,
+) -> list[str]:
+    """Reasons the schedule is not exactly the preregistered set of runs.
+
+    A frozen order is not enough on its own. The schedule must be a permutation of
+    tasks x repetitions x arms: an omitted, duplicated or extra entry would silently
+    change how many runs the experiment actually performs, and two identical entries
+    would additionally collide on one run identity, evidence path and result key.
+    """
+    expected = Counter(
+        (task, repetition, arm)
+        for task in task_ids
+        for repetition in range(1, repetitions + 1)
+        for arm in arms
+    )
+    observed: Counter[tuple[str, int, str]] = Counter()
+    reasons: list[str] = []
+    for index, entry in enumerate(schedule):
+        try:
+            repetition = int(cast(int, entry["repetition"]))
+        except (KeyError, TypeError, ValueError):
+            reasons.append(f"schedule[{index}] has no usable repetition")
+            continue
+        if not 1 <= repetition <= repetitions:
+            reasons.append(
+                f"schedule[{index}] repetition {repetition} is outside 1..{repetitions}"
+            )
+            continue
+        observed[(str(entry["task"]), repetition, str(entry["arm"]))] += 1
+
+    duplicated = sorted(key for key, count in observed.items() if count > 1)
+    if duplicated:
+        reasons.append(f"duplicate scheduled runs: {duplicated}")
+    missing = sorted((expected - observed).elements())
+    if missing:
+        reasons.append(f"missing scheduled runs: {missing}")
+    extra = sorted(key for key in (observed - expected) if key not in set(duplicated))
+    if extra:
+        reasons.append(f"unexpected scheduled runs: {extra}")
+    return reasons
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +122,13 @@ def compile_plan(
     so it is declared and frozen; re-deriving or re-randomising it here would silently
     replace preregistered material with a default.
     """
+    identities = [
+        f"{item['task']}/r{item['repetition']}/{item['arm']}" for item in schedule
+    ]
+    if len(set(identities)) != len(identities):
+        collisions = sorted({name for name in identities if identities.count(name) > 1})
+        raise ValueError(f"schedule produces colliding run identities: {collisions}")
+
     entries = tuple(
         RunEntry(
             id=f"{item['task']}/r{item['repetition']}/{item['arm']}",
