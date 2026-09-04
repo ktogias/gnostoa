@@ -15,7 +15,7 @@ from pathlib import Path
 
 from tools.capsule import lock as lock_module
 from tools.capsule import stages
-from tools.capsule.authority import AuthorityError
+from tools.capsule.authority import AuthorityError, load_launch_file
 from tools.capsule.authority import load_file as load_authority
 from tools.capsule.compiler import CompileError, prepare, status
 from tools.capsule.execute import ExecuteError, execute_lock
@@ -117,15 +117,35 @@ def command_execute(args: argparse.Namespace) -> int:
             }
         )
         return 2
-    if not args.authority:
-        _emit({"status": "REFUSED", "reason": "launch-authority-required"})
-        return 2
+    launch = None
+    if not args.dry_run:
+        if not args.authority:
+            _emit(
+                {
+                    "status": "REFUSED",
+                    "reason": "launch-authority-required",
+                    "detail": "pass a typed launch authority bound to this exact lock",
+                }
+            )
+            return 2
+        try:
+            launch = load_launch_file(Path(args.authority))
+        except (AuthorityError, OSError, json.JSONDecodeError, KeyError) as exc:
+            _emit(
+                {
+                    "status": "REFUSED",
+                    "reason": "launch-authority-invalid",
+                    "detail": str(exc),
+                }
+            )
+            return 2
     try:
         result = execute_lock(
             lock_path,
             workspace / "execution",
             backend=args.backend,
             dry_run=args.dry_run,
+            launch_authority=launch,
         )
     except (ExecuteError, lock_module.LockError) as exc:
         _emit({"status": "REFUSED", "reason": "lock-unusable", "detail": str(exc)})

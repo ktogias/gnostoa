@@ -183,6 +183,7 @@ BOUND_IDENTITY_FIELDS = (
     "runtime_image",
     "harness_identity",
     "expectations_digest",
+    "preparation_identity",
 )
 
 

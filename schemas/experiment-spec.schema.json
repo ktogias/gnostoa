@@ -39,14 +39,32 @@
         },
         "arms": {
           "type": "object",
+          "description": "Arm-visible packets. A run entry attaches only its own arm.",
           "additionalProperties": {
-            "type": "object"
+            "type": "object",
+            "properties": {
+              "inputs": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/execution_input"
+                }
+              }
+            }
           }
         },
         "assignment": {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
+          "properties": {
+            "repetitions": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            "arms": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           }
         },
         "resources": {
@@ -426,15 +444,52 @@
         },
         "execution": {
           "type": "object",
-          "description": "The executor command. Never inferred from the oracle harness, whose invocation belongs to the qualification trust domain only.",
+          "description": "Executor mechanics. Never inferred from the oracle harness, whose invocation belongs to the qualification trust domain only.",
           "properties": {
             "command": {
               "type": "array",
               "items": {
                 "type": "string"
               }
+            },
+            "environment_allowlist": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "credential_environment": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Names only. A secret value never enters a spec, profile or lock."
+            },
+            "read_only_inputs": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/execution_input"
+              }
             }
           }
+        }
+      }
+    },
+    "execution_input": {
+      "type": "object",
+      "required": [
+        "id",
+        "source"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
         }
       }
     }

@@ -162,6 +162,56 @@ class Expectations:
 
 
 @dataclass(frozen=True, slots=True)
+class ExecutionInput:
+    """A read-only surface the experimental executor is meant to see."""
+
+    id: str
+    source: Path
+    sha256: str | None = None
+
+    def as_json(self) -> dict[str, object]:
+        return {"id": self.id, "source": str(self.source), "sha256": self.sha256}
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionEnvelope:
+    """Executor mechanics, declared separately from qualification mechanics."""
+
+    command: tuple[str, ...] = ()
+    environment_allowlist: tuple[str, ...] = ()
+    credential_environment: tuple[str, ...] = ()
+    read_only_inputs: tuple[ExecutionInput, ...] = ()
+
+    def as_json(self) -> dict[str, object]:
+        return {
+            "command": list(self.command),
+            "environment_allowlist": list(self.environment_allowlist),
+            "credential_environment": list(self.credential_environment),
+            "read_only_inputs": [item.as_json() for item in self.read_only_inputs],
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class Arm:
+    """One experimental arm and the packet only that arm may see."""
+
+    name: str
+    inputs: tuple[ExecutionInput, ...] = ()
+
+    def as_json(self) -> dict[str, object]:
+        return {"name": self.name, "inputs": [item.as_json() for item in self.inputs]}
+
+
+@dataclass(frozen=True, slots=True)
+class Assignment:
+    repetitions: int = 1
+    arms: tuple[str, ...] = ()
+
+    def as_json(self) -> dict[str, object]:
+        return {"repetitions": self.repetitions, "arms": list(self.arms)}
+
+
+@dataclass(frozen=True, slots=True)
 class TaskSpec:
     id: str
     adapter: str
@@ -178,7 +228,7 @@ class TaskSpec:
     identification_key_sha256: str | None = None
     prior_qualification_sha256: str | None = None
     prior_qualification_receipt: Path | None = None
-    execution_command: tuple[str, ...] = ()
+    execution: ExecutionEnvelope = field(default_factory=ExecutionEnvelope)
 
     def semantic_payload(self) -> dict[str, object]:
         """Exactly the semantic freeze inputs: no mechanics, no runtime."""
@@ -272,16 +322,16 @@ class ExperimentSpec:
     resources: Resources
     capabilities: tuple[CapabilityRequest, ...] = ()
     reviewer: Executor | None = None
-    arms: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
-    assignment: Mapping[str, str] = field(default_factory=dict)
+    arms: tuple[Arm, ...] = ()
+    assignment: Assignment = field(default_factory=Assignment)
 
     def launch_payload(self) -> dict[str, object]:
         """Every launch-critical identity the lock must carry."""
         return {
             "executor": self.executor.as_json(),
             "reviewer": self.reviewer.as_json() if self.reviewer else None,
-            "arms": {name: dict(value) for name, value in self.arms.items()},
-            "assignment": dict(self.assignment),
+            "arms": [arm.as_json() for arm in self.arms],
+            "assignment": self.assignment.as_json(),
             "resources": self.resources.as_json(),
         }
 
@@ -290,6 +340,20 @@ class ExperimentSpec:
             if task.id == identifier:
                 return task
         raise SpecError(f"unknown task {identifier!r}")
+
+
+def _execution_input(raw: object, where: str, base_dir: Path) -> ExecutionInput:
+    if not isinstance(raw, dict):
+        raise SpecError(f"{where}: each input must be a mapping")
+    source = Path(_require_str(raw, "source", where))
+    if not source.is_absolute():
+        source = base_dir / source
+    digest = raw.get("sha256")
+    return ExecutionInput(
+        id=_require_str(raw, "id", where),
+        source=source,
+        sha256=str(digest) if digest else None,
+    )
 
 
 def _parse_semantics(raw: Mapping[str, Any], where: str) -> Semantics:
@@ -450,14 +514,26 @@ def _parse_task(raw: Mapping[str, Any], index: int, base_dir: Path) -> TaskSpec:
     execution_raw = raw.get("execution", {})
     if not isinstance(execution_raw, dict):
         raise SpecError(f"{where}: execution must be a mapping")
-    execution_command = tuple(str(item) for item in execution_raw.get("command", []))
+    execution = ExecutionEnvelope(
+        command=tuple(str(item) for item in execution_raw.get("command", [])),
+        environment_allowlist=tuple(
+            str(item) for item in execution_raw.get("environment_allowlist", [])
+        ),
+        credential_environment=tuple(
+            str(item) for item in execution_raw.get("credential_environment", [])
+        ),
+        read_only_inputs=tuple(
+            _execution_input(item, f"{where}.execution.read_only_inputs", base_dir)
+            for item in execution_raw.get("read_only_inputs", [])
+        ),
+    )
 
     preparation_raw = raw.get("preparation", {})
     if not isinstance(preparation_raw, dict):
         raise SpecError(f"{where}: preparation must be a mapping")
 
     return TaskSpec(
-        execution_command=execution_command,
+        execution=execution,
         prior_qualification_receipt=prior_receipt,
         preparation_scheme=(
             str(preparation_raw["scheme"]) if preparation_raw.get("scheme") else None
@@ -539,7 +615,31 @@ def parse_spec(payload: Mapping[str, Any], *, source_path: Path) -> ExperimentSp
     )
 
     arms_raw = experiment.get("arms", {})
+    if not isinstance(arms_raw, dict):
+        raise SpecError("experiment.arms must be a mapping")
+    arms = tuple(
+        Arm(
+            name=str(name),
+            inputs=tuple(
+                _execution_input(item, f"experiment.arms.{name}.inputs", base_dir)
+                for item in (value or {}).get("inputs", [])
+            ),
+        )
+        for name, value in arms_raw.items()
+        if isinstance(value, dict)
+    )
     assignment_raw = experiment.get("assignment", {})
+    if not isinstance(assignment_raw, dict):
+        raise SpecError("experiment.assignment must be a mapping")
+    repetitions = int(assignment_raw.get("repetitions", 1))
+    if repetitions <= 0:
+        raise SpecError("experiment.assignment.repetitions must be positive")
+    declared_arms = tuple(str(item) for item in assignment_raw.get("arms", []))
+    known = {arm.name for arm in arms}
+    unknown = [name for name in declared_arms if name not in known]
+    if unknown:
+        raise SpecError(f"experiment.assignment names undeclared arms {unknown}")
+    assignment = Assignment(repetitions=repetitions, arms=declared_arms)
 
     capabilities_raw = payload.get("capabilities", [])
     if not isinstance(capabilities_raw, list):
@@ -581,12 +681,8 @@ def parse_spec(payload: Mapping[str, Any], *, source_path: Path) -> ExperimentSp
         executor=executor,
         reviewer=reviewer,
         resources=resources,
-        arms={
-            str(name): {str(k): str(v) for k, v in value.items()}
-            for name, value in (arms_raw or {}).items()
-            if isinstance(value, dict)
-        },
-        assignment={str(k): str(v) for k, v in (assignment_raw or {}).items()},
+        arms=arms,
+        assignment=assignment,
         id=_require_str(experiment, "id", "experiment"),
         question=str(experiment.get("question", "")),
         claim_boundary=str(experiment.get("claim_boundary", "")),

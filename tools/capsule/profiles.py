@@ -37,6 +37,8 @@ class ProfileCommon:
     archive_limit_bytes: int
     network: Mapping[str, object]
     environment_allowlist: tuple[str, ...]
+    # Names only. A secret value never enters a profile or a lock.
+    credential_environment: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,7 +64,7 @@ def build_profile(
         "read_only_roots": [str(path) for path in roots.read_only],
         "excluded_roots": [],
         "environment_allowlist": sorted(common.environment_allowlist),
-        "credential_environment": [],
+        "credential_environment": sorted(common.credential_environment),
         "input_identities": list(input_identities),
         "network": dict(common.network),
         "archive_limit_bytes": common.archive_limit_bytes,
@@ -85,29 +87,42 @@ def admitted_paths(profile: Mapping[str, object]) -> list[Path]:
     return surfaces
 
 
-def _contains(parent: Path, child: Path) -> bool:
+def _resolve(path: Path) -> Path:
+    """Resolve without requiring existence, so a planned surface can still be checked."""
     try:
-        child.relative_to(parent)
-    except ValueError:
-        return False
-    return True
+        return path.resolve()
+    except OSError:  # pragma: no cover - platform dependent
+        return path.absolute()
+
+
+def _overlaps(left: Path, right: Path) -> bool:
+    """True when either path contains the other, or they are the same path.
+
+    Both directions matter. An admitted surface containing a private path exposes it
+    directly; an admitted surface nested *inside* a private directory means the
+    execution capsule was laid out within the coordinator-private domain, which is
+    just as unacceptable.
+    """
+    left, right = _resolve(left), _resolve(right)
+    if left == right:
+        return True
+    return left.is_relative_to(right) or right.is_relative_to(left)
 
 
 def assert_execution_boundary(
     profile: Mapping[str, object], forbidden: Mapping[str, Path]
 ) -> None:
-    """Refuse an execution profile that admits any private surface.
+    """Refuse an execution profile that admits, or sits inside, any private surface.
 
     `forbidden` maps a human name (reference subject, oracle, identification key,
-    qualification workspace, ...) to the path that must remain invisible.
+    qualification workspace, sibling arm, ...) to the path that must stay invisible.
     """
     if profile.get("trust_domain") != EXECUTION:
         raise ProfileBoundaryError("not-an-execution-profile")
     admitted = admitted_paths(profile)
     for name, secret in forbidden.items():
-        secret = Path(secret)
         for surface in admitted:
-            if _contains(surface, secret) or surface == secret:
+            if _overlaps(surface, Path(secret)):
                 raise ProfileBoundaryError(
-                    f"execution-profile-admits-{name}: {surface} exposes {secret}"
+                    f"execution-profile-admits-{name}: {surface} overlaps {secret}"
                 )

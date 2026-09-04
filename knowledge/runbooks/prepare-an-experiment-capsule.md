@@ -133,6 +133,9 @@ Qualification and experimental execution are separate domains and are never the 
 | sees the hidden oracle | yes | **never** |
 | sees the identification key | yes | **never** |
 | command | the compiled oracle invocation | the declared `execution.command` |
+| sibling arm packet | not applicable | **never** |
+| generated subject preparation | yes | yes, carried as an execution artifact |
+| environment/credential envelope | qualification harness | declared `execution` envelope |
 
 The compiler checks the execution profile against those forbidden surfaces before freezing, and
 `execute` re-checks them before handing anything to the runner. If either check fails the capsule
@@ -140,13 +143,30 @@ is refused: handing an executor the known-correct reference would invalidate the
 
 ## Execute a frozen lock
 
-```sh
-python -m tools.capsule.cli execute WORKSPACE --authority AUTHORITY --dry-run
-python -m tools.capsule.cli execute WORKSPACE --authority AUTHORITY
+The lock binds a **run plan**: the exact task x repetition x arm entries it authorises. `execute`
+consumes those entries rather than re-deriving them, and each run receives only its own arm packet.
+
+Real execution needs a **launch authority**, which is a different record from the preflight
+authority and is bound to one exact lock:
+
+```json
+{"schema": "gnostoa-launch-authority/v1", "id": "...", "experiment_id": "...",
+ "lock_sha256": "<the exact experiment.lock digest>",
+ "scope": ["experimental-execution"], "max_runs": 4}
 ```
 
-`execute` rebuilds the execution capsule from the lock, the content-addressed artifact store and
-the declared private locators only. It performs no discovery and cannot reinterpret the lock.
+```sh
+python -m tools.capsule.cli execute WORKSPACE --dry-run
+python -m tools.capsule.cli execute WORKSPACE --authority LAUNCH_AUTHORITY.json
+```
+
+A stale authority for another lock, a preflight-only scope, or a plan larger than `max_runs` is
+refused. `--dry-run` materialises every planned run without executing anything.
+
+`execute` rebuilds each capsule from the lock, the content-addressed artifact store and the
+declared private locators only. It performs no discovery and cannot reinterpret the lock.
+Credential **names** travel in the lock; values come from the environment at run time and the
+runner refuses to start if a declared name is absent.
 
 ## Recovery
 

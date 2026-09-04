@@ -17,7 +17,7 @@ from unittest import mock
 
 from tools.capsule import certificates, compiler, execute, profiles, stages
 from tools.capsule import lock as lock_module
-from tools.capsule.authority import PreflightAuthority
+from tools.capsule.authority import LaunchAuthority, PreflightAuthority
 from tools.capsule.preparation import discover_test_config, project_test_config
 from tools.capsule.spec import SpecError, load_spec
 
@@ -104,6 +104,10 @@ class CapsuleFixture(unittest.TestCase):
                 "base": {"failed": 1, "passed": 0},
                 "reference": {"failed": 0, "passed": 1},
             },
+            "execution": {
+                "command": ["python", "-c", "print('executor')"],
+                "environment_allowlist": ["HOME"],
+            },
         }
         entry.update(task)
         return {
@@ -121,6 +125,21 @@ class CapsuleFixture(unittest.TestCase):
             },
             "tasks": [entry],
         }
+
+    def launch_authority(
+        self,
+        lock_sha256: str,
+        *,
+        experiment_id: str = "E1",
+        max_runs: int | None = None,
+    ) -> LaunchAuthority:
+        return LaunchAuthority(
+            id="launch-1",
+            experiment_id=experiment_id,
+            lock_sha256=lock_sha256,
+            scope=("experimental-execution",),
+            max_runs=max_runs,
+        )
 
     def authority(self, experiment_id: str = "E1") -> PreflightAuthority:
         return PreflightAuthority(
@@ -1018,6 +1037,29 @@ class PriorQualificationReuseTests(CapsuleFixture):
             [b["code"] for b in result.blockers],
         )
 
+    def test_a_receipt_bound_to_a_different_preparation_is_refused(self) -> None:
+        """A changed generated preparation must invalidate a prior qualification."""
+        spec, first = self._qualified()
+        stale = dict(first.task("T1").qualification.as_json())
+        stale["bound"] = {**stale["bound"], "preparation_identity": "other-preparation"}
+        receipt_path = self.root / "prep.json"
+        receipt_path.write_text(json.dumps(stale, indent=2))
+
+        spec["tasks"][0]["prior_qualification"] = {"receipt": str(receipt_path)}
+        result = compiler.prepare(
+            load_spec(self.write_spec(spec)),
+            self.workspace / "prep",
+            offline=True,
+            preflight_authority=self.authority(),
+        )
+        self.assertEqual(result.status, "BLOCKED")
+        blocker = next(
+            b
+            for b in result.blockers
+            if b["code"] == "prior-qualification-receipt-not-current"
+        )
+        self.assertIn("preparation_identity", str(blocker["detail"]))
+
     def test_a_receipt_without_bound_identities_is_refused(self) -> None:
         spec, first = self._qualified()
         naked = dict(first.task("T1").qualification.as_json())
@@ -1058,6 +1100,8 @@ class LockExecutionTests(CapsuleFixture):
         spec["tasks"][0]["reference"]["tree"] = git(repo, "rev-parse", ref + "^{tree}")
         if execution_command is not None:
             spec["tasks"][0]["execution"] = {"command": execution_command}
+        elif execution_command is None:
+            spec["tasks"][0].pop("execution", None)
         return compiler.prepare(
             load_spec(self.write_spec(spec)),
             self.workspace,
@@ -1072,7 +1116,7 @@ class LockExecutionTests(CapsuleFixture):
             result.lock_path, self.workspace / "exec", dry_run=True
         )
         self.assertEqual(outcome.status, "MATERIALISED", outcome.blockers)
-        project = Path(outcome.runs["T1"]["project_root"])
+        project = Path(next(iter(outcome.runs.values()))["project_root"])
         self.assertTrue((project / "src/pkg/__init__.py").is_file())
 
     def test_execution_capsule_excludes_the_oracle_harness(self) -> None:
@@ -1081,20 +1125,19 @@ class LockExecutionTests(CapsuleFixture):
         outcome = execute.execute_lock(
             result.lock_path, self.workspace / "exec", dry_run=True
         )
-        project = Path(outcome.runs["T1"]["project_root"])
+        project = Path(next(iter(outcome.runs.values()))["project_root"])
         self.assertFalse(
             (project / "conftest.py").exists(), "harness is qualification-only"
         )
         self.assertFalse((project / "oracle.py").exists())
 
-    def test_execute_refuses_to_reuse_the_oracle_invocation(self) -> None:
+    def test_a_lock_without_an_execution_command_is_never_frozen(self) -> None:
+        """A READY lock must already be executable, so this blocks before freeze."""
         result = self._locked()
-        outcome = execute.execute_lock(
-            result.lock_path, self.workspace / "exec", dry_run=True
-        )
-        self.assertEqual(outcome.status, "BLOCKED")
+        self.assertEqual(result.status, "BLOCKED")
         self.assertIn(
-            "execution-command-not-declared", [b["code"] for b in outcome.blockers]
+            "execution-command-required-for-freeze",
+            [b["code"] for b in result.blockers],
         )
 
     def test_a_tampered_lock_is_refused(self) -> None:
@@ -1197,6 +1240,235 @@ class OciQualificationTests(CapsuleFixture):
         self.assertIsNotNone(receipt)
         self.assertEqual(receipt.backend, "oci")
         self.assertEqual(receipt.base.classification, "INFRASTRUCTURE")
+
+
+class LaunchAuthorityTests(CapsuleFixture):
+    """Real execution needs an authority bound to this exact lock."""
+
+    def _locked(self) -> compiler.PrepareResult:
+        repo = self.make_repo(
+            "s", {"src/pkg/__init__.py": 'def render():\n    return "Basic "\n'}
+        )
+        base = git(repo, "rev-parse", "HEAD")
+        ref = self.commit(
+            repo, {"src/pkg/__init__.py": 'def render():\n    return "Basic"\n'}, "fix"
+        )
+        (self.root / "oracle.py").write_text(
+            "import pkg\n\n\ndef test_discriminates():\n    assert pkg.render() == 'Basic'\n"
+        )
+        spec = self.base_spec(repo, base, ref)
+        spec["tasks"][0]["reference"]["commit"] = ref
+        spec["tasks"][0]["reference"]["tree"] = git(repo, "rev-parse", ref + "^{tree}")
+        return compiler.prepare(
+            load_spec(self.write_spec(spec)),
+            self.workspace,
+            offline=True,
+            preflight_authority=self.authority(),
+        )
+
+    def test_execution_without_an_authority_is_refused(self) -> None:
+        result = self._locked()
+        outcome = execute.execute_lock(
+            result.lock_path, self.workspace / "x", dry_run=False
+        )
+        self.assertEqual(outcome.status, "BLOCKED")
+        self.assertIn(
+            "launch-authority-required", [b["code"] for b in outcome.blockers]
+        )
+
+    def test_an_authority_for_another_lock_is_refused(self) -> None:
+        result = self._locked()
+        stale = self.launch_authority("0" * 64)
+        outcome = execute.execute_lock(
+            result.lock_path,
+            self.workspace / "x",
+            dry_run=False,
+            launch_authority=stale,
+        )
+        self.assertEqual(outcome.status, "BLOCKED")
+        self.assertIn(
+            "launch-authority-does-not-cover-this-lock",
+            [b["code"] for b in outcome.blockers],
+        )
+
+    def test_an_authority_with_the_wrong_scope_is_refused(self) -> None:
+        result = self._locked()
+        # right lock, wrong scope: a preflight scope must not open execution
+        capped = LaunchAuthority(
+            id="c",
+            experiment_id="E1",
+            lock_sha256=result.lock_identity,
+            scope=("base-reference-qualification",),
+        )
+        outcome = execute.execute_lock(
+            result.lock_path,
+            self.workspace / "x",
+            dry_run=False,
+            launch_authority=capped,
+        )
+        self.assertEqual(outcome.status, "BLOCKED")
+        self.assertIn(
+            "launch-authority-does-not-cover-this-lock",
+            [b["code"] for b in outcome.blockers],
+        )
+
+    def test_a_truthy_string_is_not_an_authority(self) -> None:
+        from tools.capsule.authority import AuthorityError, parse_launch
+
+        with self.assertRaises(AuthorityError):
+            parse_launch({"schema": "gnostoa-launch-authority/v1", "id": "yes"})
+
+
+class RunPlanTests(CapsuleFixture):
+    """The lock binds what will run; execute consumes exactly that."""
+
+    def _planned(self) -> compiler.PrepareResult:
+        repo = self.make_repo(
+            "s", {"src/pkg/__init__.py": 'def render():\n    return "Basic "\n'}
+        )
+        base = git(repo, "rev-parse", "HEAD")
+        ref = self.commit(
+            repo, {"src/pkg/__init__.py": 'def render():\n    return "Basic"\n'}, "fix"
+        )
+        (self.root / "oracle.py").write_text(
+            "import pkg\n\n\ndef test_discriminates():\n    assert pkg.render() == 'Basic'\n"
+        )
+        (self.root / "control.md").write_text("control packet\n")
+        (self.root / "treatment.md").write_text("treatment packet\n")
+        spec = self.base_spec(repo, base, ref)
+        spec["tasks"][0]["reference"]["commit"] = ref
+        spec["tasks"][0]["reference"]["tree"] = git(repo, "rev-parse", ref + "^{tree}")
+        spec["experiment"]["arms"] = {
+            "control": {
+                "inputs": [{"id": "packet", "source": str(self.root / "control.md")}]
+            },
+            "treatment": {
+                "inputs": [{"id": "packet", "source": str(self.root / "treatment.md")}]
+            },
+        }
+        spec["experiment"]["assignment"] = {
+            "repetitions": 2,
+            "arms": ["control", "treatment"],
+        }
+        return compiler.prepare(
+            load_spec(self.write_spec(spec)),
+            self.workspace,
+            offline=True,
+            preflight_authority=self.authority(),
+        )
+
+    def test_plan_expands_task_repetition_and_arm(self) -> None:
+        result = self._planned()
+        self.assertEqual(result.status, stages.READY_FOR_OWNER_REVIEW, result.blockers)
+        self.assertEqual(len(result.run_plan), 4)
+        payload = json.loads(result.lock_path.read_text())
+        self.assertEqual(payload["run_plan"]["count"], 4)
+
+    def test_every_planned_run_materialises_with_only_its_own_arm(self) -> None:
+        result = self._planned()
+        outcome = execute.execute_lock(
+            result.lock_path, self.workspace / "exec", dry_run=True
+        )
+        self.assertEqual(outcome.status, "MATERIALISED", outcome.blockers)
+        self.assertEqual(len(outcome.runs), 4)
+        for run_id, run in outcome.runs.items():
+            capsule = Path(run["project_root"]).parent
+            blob = "".join(
+                path.read_text(errors="replace")
+                for path in capsule.rglob("*")
+                if path.is_file()
+            )
+            if run["arm"] == "control":
+                self.assertIn("control packet", blob)
+                self.assertNotIn("treatment packet", blob, run_id)
+            else:
+                self.assertIn("treatment packet", blob)
+                self.assertNotIn("control packet", blob, run_id)
+
+
+class PreparedExecutionCapsuleTests(CapsuleFixture):
+    """D3: the generated subject artifact must survive into the executor capsule."""
+
+    def test_generated_version_artifact_reaches_the_execution_capsule(self) -> None:
+        repo = self.make_repo(
+            "pt",
+            {
+                "src/pkg/__init__.py": (
+                    "from pkg._version import version\n\n\ndef render():\n    return 'old'\n"
+                ),
+                ".gitignore": "src/pkg/_version.py\n",
+                "pyproject.toml": (
+                    "[build-system]\nrequires = ['setuptools', 'setuptools-scm']\n\n"
+                    "[project]\nname='pkg'\ndynamic = ['version']\n\n"
+                    "[tool.setuptools_scm]\nwrite_to = 'src/pkg/_version.py'\n"
+                ),
+            },
+        )
+        git(repo, "tag", "1.0.0.dev0")
+        base = self.commit(repo, {"src/pkg/extra.py": "x = 1\n"}, "more")
+        ref = self.commit(
+            repo,
+            {
+                "src/pkg/__init__.py": (
+                    "from pkg._version import version\n\n\ndef render():\n    return 'new'\n"
+                )
+            },
+            "fix",
+        )
+        (self.root / "oracle.py").write_text(
+            "import pkg\n\n\ndef test_discriminates():\n    assert pkg.render() == 'new'\n"
+        )
+        spec = self.base_spec(
+            repo,
+            base,
+            ref,
+            runtime={"image": IMAGE_A},
+            preparation={"scheme": "gnostoa-setuptools-scm-compatible/v1"},
+        )
+        spec["tasks"][0]["reference"]["commit"] = ref
+        spec["tasks"][0]["reference"]["tree"] = git(repo, "rev-parse", ref + "^{tree}")
+        result = compiler.prepare(
+            load_spec(self.write_spec(spec)),
+            self.workspace,
+            offline=True,
+            preflight_authority=self.authority(),
+        )
+        self.assertEqual(result.status, stages.READY_FOR_OWNER_REVIEW, result.blockers)
+        execution_artifacts = [
+            item
+            for item in result.task("T1").stored_artifacts
+            if item["domain"] == profiles.EXECUTION
+        ]
+        self.assertTrue(
+            execution_artifacts, "the generated artifact must be an execution artifact"
+        )
+
+        outcome = execute.execute_lock(
+            result.lock_path, self.workspace / "exec", dry_run=True
+        )
+        self.assertEqual(outcome.status, "MATERIALISED", outcome.blockers)
+        project = Path(next(iter(outcome.runs.values()))["project_root"])
+        generated = project / "src/pkg/_version.py"
+        self.assertTrue(
+            generated.is_file(),
+            "the executor would otherwise hit the original D3 failure after READY",
+        )
+        self.assertIn("__version__ = version =", generated.read_text())
+
+
+class ContainmentDirectionTests(CapsuleFixture):
+    def test_an_admitted_surface_inside_a_forbidden_parent_is_refused(self) -> None:
+        profile = {
+            "trust_domain": profiles.EXECUTION,
+            "project_root": "/w/qualification/base/project",
+            "evidence_root": "/w/evidence",
+            "temporary_roots": [],
+            "read_only_roots": [],
+        }
+        with self.assertRaises(profiles.ProfileBoundaryError):
+            profiles.assert_execution_boundary(
+                profile, {"qualification": Path("/w/qualification")}
+            )
 
 
 if __name__ == "__main__":

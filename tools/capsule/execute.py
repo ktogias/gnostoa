@@ -18,6 +18,7 @@ from typing import Any, cast
 
 from tools.capsule import lock as lock_module
 from tools.capsule import profiles
+from tools.capsule.authority import LaunchAuthority
 from tools.capsule.identity import digest_text
 
 _GIT_ENV = {
@@ -61,24 +62,32 @@ def _materialize(repo: Path, tree: str, destination: Path) -> None:
 
 
 def materialize_capsule(
-    lock_payload: Mapping[str, Any], workspace: Path, task_id: str
+    lock_payload: Mapping[str, Any],
+    workspace: Path,
+    task_id: str,
+    *,
+    run_id: str | None = None,
+    arm_inputs: Sequence[Mapping[str, str]] = (),
 ) -> tuple[Path, dict[str, Any]]:
-    """Rebuild one task's execution capsule from the lock and the artifact store."""
+    """Rebuild one run's execution capsule from the lock and the artifact store."""
     task = next((item for item in lock_payload["tasks"] if item["id"] == task_id), None)
     if task is None:
         raise ExecuteError(f"unknown task {task_id!r} in lock")
 
     profile = dict(task["execution_profile"])
-    project = workspace / "capsule" / task_id / "project"
-    evidence = workspace / "capsule" / task_id / "evidence"
-    scratch = workspace / "capsule" / task_id / "tmp"
-    for path in (project, evidence, scratch):
+    slug = (run_id or task_id).replace("/", "__")
+    root = workspace / "capsule" / slug
+    project = root / "project"
+    evidence = root / "evidence"
+    scratch = root / "tmp"
+    arm_root = root / "arm"
+    for path in (project, evidence, scratch, arm_root):
         path.mkdir(parents=True, exist_ok=True)
 
     if not any(project.iterdir()):
         _materialize(Path(task["source_repository"]), task["base_tree"], project)
 
-    store = workspace / "artifacts"
+    store = Path(str(lock_payload.get("artifact_store") or (workspace / "artifacts")))
     for artifact in cast(
         Sequence[Mapping[str, str]], task.get("stored_artifacts") or []
     ):
@@ -96,24 +105,110 @@ def materialize_capsule(
             raise ExecuteError(f"artifact {artifact['path']!r} failed its digest check")
         (project / artifact["path"]).write_text(content)
 
+    # Only this run's arm packet is attached. The sibling arm is never materialised.
+    read_only: list[str] = []
+    for item in arm_inputs:
+        source = Path(str(item.get("source", "")))
+        if not source.is_file():
+            raise ExecuteError(
+                f"arm input {item.get('id')!r} is not available at its bound locator"
+            )
+        observed = digest_text(source.read_text())
+        declared = item.get("sha256")
+        if declared and declared != observed:
+            raise ExecuteError(f"arm input {item.get('id')!r} failed its digest check")
+        target = arm_root / str(item.get("id"))
+        target.mkdir(parents=True, exist_ok=True)
+        (target / source.name).write_text(source.read_text())
+        read_only.append(str(target))
+
     profile["project_root"] = str(project)
     profile["evidence_root"] = str(evidence)
     profile["temporary_roots"] = [str(scratch)]
-    profile["read_only_roots"] = []
+    profile["read_only_roots"] = read_only
     return project, profile
 
 
 def execute_lock(
-    lock_path: Path, workspace: Path, *, backend: str = "oci", dry_run: bool = False
+    lock_path: Path,
+    workspace: Path,
+    *,
+    backend: str = "oci",
+    dry_run: bool = False,
+    launch_authority: LaunchAuthority | None = None,
 ) -> ExecutionResult:
     payload = lock_module.load(lock_path)
     result = ExecutionResult(status="BLOCKED")
     workspace.mkdir(parents=True, exist_ok=True)
 
-    for task in cast(Sequence[Mapping[str, Any]], payload["tasks"]):
-        task_id = str(task["id"])
+    plan = cast(Mapping[str, Any], payload.get("run_plan") or {})
+    entries = cast(Sequence[Mapping[str, Any]], plan.get("runs") or [])
+    if not entries:
+        result.blockers.append(
+            {
+                "task": None,
+                "code": "run-plan-missing",
+                "detail": "the lock binds no run plan",
+            }
+        )
+        return result
+
+    # A real run effect requires a launch authority bound to this exact lock.
+    if not dry_run:
+        if launch_authority is None:
+            result.blockers.append(
+                {
+                    "task": None,
+                    "code": "launch-authority-required",
+                    "detail": "experimental execution needs a typed launch authority",
+                }
+            )
+            return result
+        reasons = launch_authority.covers(
+            experiment_id=str(cast(Mapping[str, Any], payload["experiment"])["id"]),
+            lock_sha256=str(payload["lock_sha256"]),
+            runs=len(entries),
+        )
+        if reasons:
+            result.blockers.append(
+                {
+                    "task": None,
+                    "code": "launch-authority-does-not-cover-this-lock",
+                    "detail": "; ".join(reasons),
+                }
+            )
+            return result
+
+    for entry in entries:
+        run_id = str(entry["id"])
+        task_id = str(entry["task"])
+        task = next(
+            (
+                item
+                for item in cast(Sequence[Mapping[str, Any]], payload["tasks"])
+                if item["id"] == task_id
+            ),
+            None,
+        )
+        if task is None:
+            result.blockers.append(
+                {
+                    "task": task_id,
+                    "code": "run-plan-names-unknown-task",
+                    "detail": run_id,
+                }
+            )
+            continue
         try:
-            project, profile = materialize_capsule(payload, workspace, task_id)
+            project, profile = materialize_capsule(
+                payload,
+                workspace,
+                task_id,
+                run_id=run_id,
+                arm_inputs=cast(
+                    Sequence[Mapping[str, str]], entry.get("arm_inputs") or []
+                ),
+            )
         except ExecuteError as exc:
             result.blockers.append(
                 {
@@ -124,10 +219,20 @@ def execute_lock(
             )
             continue
 
-        # The frozen execution profile must still refuse every private surface.
         forbidden: dict[str, Path] = {}
-        for name, material in (task.get("private_material") or {}).items():
+        private = cast(
+            Mapping[str, Mapping[str, Any]], task.get("private_material") or {}
+        )
+        for name, material in private.items():
             forbidden[name] = Path(str(material["locator"]))
+        for other in cast(Sequence[Mapping[str, Any]], plan.get("runs") or []):
+            if other["arm"] != entry["arm"]:
+                for sibling in cast(
+                    Sequence[Mapping[str, str]], other.get("arm_inputs") or []
+                ):
+                    forbidden[f"sibling-arm-{other['arm']}-{sibling.get('id')}"] = Path(
+                        str(sibling.get("source", ""))
+                    )
         try:
             profiles.assert_execution_boundary(profile, forbidden)
         except profiles.ProfileBoundaryError as exc:
@@ -148,34 +253,54 @@ def execute_lock(
                     "code": "execution-command-not-declared",
                     "detail": (
                         "the lock binds no execution command; the qualification invocation "
-                        "runs the hidden oracle and must never be reused as the executor "
-                        "command, so the spec has to declare execution.command explicitly"
+                        "runs the hidden oracle and is never reused as the executor command"
                     ),
                 }
             )
             continue
 
         if dry_run:
-            result.runs[task_id] = {
+            result.runs[run_id] = {
                 "status": "MATERIALISED",
+                "task": task_id,
+                "arm": entry["arm"],
+                "repetition": entry["repetition"],
                 "project_root": str(project),
                 "argv": argv,
-                "files": sum(1 for _ in project.rglob("*") if _.is_file()),
+                "files": sum(1 for path in project.rglob("*") if path.is_file()),
             }
             continue
 
         from tools.experiment.execution import run_profile_command
+        from tools.experiment.profile import RunnerError
 
-        profile_path = workspace / "capsule" / task_id / "execution-profile.json"
+        profile_path = (
+            workspace / "capsule" / run_id.replace("/", "__") / "profile.json"
+        )
         profile_path.write_text(json.dumps(profile, indent=2, sort_keys=True))
-        exit_code, run_payload = run_profile_command(profile_path, backend, argv)
-        result.runs[task_id] = {
+        try:
+            exit_code, run_payload = run_profile_command(profile_path, backend, argv)
+        except (RunnerError, OSError) as exc:
+            # The runner enforces its own contract, including that every declared
+            # credential name is actually present. Report it, never work around it.
+            result.blockers.append(
+                {
+                    "task": task_id,
+                    "code": "runner-refused-run",
+                    "detail": f"{run_id}: {type(exc).__name__}: {exc}",
+                }
+            )
+            continue
+        result.runs[run_id] = {
             "status": run_payload.get("status"),
+            "task": task_id,
+            "arm": entry["arm"],
+            "repetition": entry["repetition"],
             "exit_code": exit_code,
             "evidence_root": profile["evidence_root"],
             "reasons": run_payload.get("reasons"),
         }
 
     if not result.blockers:
-        result.status = "EXECUTED" if not dry_run else "MATERIALISED"
+        result.status = "MATERIALISED" if dry_run else "EXECUTED"
     return result

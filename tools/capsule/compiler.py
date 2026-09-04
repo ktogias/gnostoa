@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from tools.capsule import adapters, certificates, profiles, stages
+from tools.capsule import adapters, certificates, profiles, runplan, stages
 from tools.capsule import lock as lock_module
 from tools.capsule.adapters import HarnessResult, Invocation
 from tools.capsule.authority import PreflightAuthority
@@ -174,7 +174,10 @@ def _store_artifact(root: Path, content: str) -> dict[str, str]:
     store.mkdir(parents=True, exist_ok=True)
     digest = digest_text(content)
     target = store / digest
-    if not target.is_file():
+    if target.is_file():
+        if digest_text(target.read_text()) != digest:
+            raise CompileError(f"artifact store entry {digest} does not match its name")
+    else:
         target.write_text(content)
     return {"sha256": digest, "store": f"artifacts/{digest}"}
 
@@ -209,6 +212,8 @@ class TaskResult:
     qualification_reused: bool = False
     source_repository: str = ""
     execution_command: tuple[str, ...] = ()
+    execution_inputs: list[dict[str, str]] = field(default_factory=list)
+    pending_execution_artifacts: list[tuple[str, str]] = field(default_factory=list)
     private_material: dict[str, dict[str, str]] = field(default_factory=dict)
     semantic_identity: str = ""
     capsule_identity: str = ""
@@ -233,6 +238,7 @@ class TaskResult:
                 self.harness.invocation.as_json() if self.harness else None
             ),
             "execution_command": list(self.execution_command),
+            "execution_inputs": list(self.execution_inputs),
             "base_tree": self.base_tree,
             "reference_tree": self.reference_tree,
             "runtime_image": self.runtime_image,
@@ -270,6 +276,7 @@ class PrepareResult:
     reused_certificates: list[dict[str, object]] = field(default_factory=list)
     lock_path: Path | None = None
     lock_identity: str | None = None
+    run_plan: runplan.RunPlan | None = None
     _identities: dict[str, str] = field(default_factory=dict)
     _receipts: dict[str, str] = field(default_factory=dict)
 
@@ -329,7 +336,13 @@ def _build_profiles(
     """
     common = profiles.ProfileCommon(
         image=task.runtime.image,
-        executor=spec.executor.as_json(),
+        # Qualification is a coordinator-run oracle check, not an experimental model
+        # run; it must not be attributed to the experiment's executor.
+        executor={
+            "id": "gnostoa.capsule.qualification",
+            "version": "1",
+            "config_sha256": digest_text(PRODUCER),
+        },
         timeout_seconds=spec.resources.timeout_seconds,
         archive_limit_bytes=spec.resources.archive_limit_bytes,
         network={
@@ -357,15 +370,33 @@ def _build_profiles(
         for subject in ("base", "reference")
     }
 
+    # The executor envelope is declared in the spec. Deriving it from the
+    # qualification harness would take mechanics from the wrong trust domain.
+    execution_common = profiles.ProfileCommon(
+        image=task.runtime.image,
+        executor=spec.executor.as_json(),
+        timeout_seconds=spec.resources.timeout_seconds,
+        archive_limit_bytes=spec.resources.archive_limit_bytes,
+        network={
+            "mode": spec.resources.network_mode,
+            "allow": list(spec.resources.network_allow),
+        },
+        environment_allowlist=tuple(task.execution.environment_allowlist),
+        credential_environment=tuple(task.execution.credential_environment),
+    )
     result.execution_profile = profiles.build_profile(
         domain=profiles.EXECUTION,
         roots=profiles.ProfileRoots(
             project=layout["execution_project"],
             evidence=layout["execution_evidence"],
             temporary=layout["execution_tmp"],
+            read_only=tuple(
+                layout["execution_inputs"] / item.id
+                for item in task.execution.read_only_inputs
+            ),
         ),
         input_identities=_identities(result, harness),
-        common=common,
+        common=execution_common,
     )
 
     forbidden = {
@@ -438,6 +469,7 @@ def _prepare_task(
         "execution_project": task_root / "execution" / "project",
         "execution_evidence": task_root / "execution" / "evidence",
         "execution_tmp": task_root / "execution" / "tmp",
+        "execution_inputs": task_root / "execution" / "inputs",
     }
     for key, path in layout.items():
         if key not in {"subject", "qualification", "execution"}:
@@ -550,7 +582,7 @@ def _prepare_task(
         base_path=base_dir,
         reference_path=reference_dir,
         source_repository=str(repo),
-        execution_command=task.execution_command,
+        execution_command=task.execution.command,
         # Private material is bound by identity and by an explicit owner-private
         # locator. The bytes never enter the lock.
         private_material={
@@ -614,6 +646,14 @@ def _prepare_task(
         )
     )
 
+    for relative, content in result.pending_execution_artifacts:
+        result.stored_artifacts.append(
+            {
+                "path": relative,
+                "domain": profiles.EXECUTION,
+                **_store_artifact(workspace, content),
+            }
+        )
     for generated in harness.generated_files:
         result.stored_artifacts.append(
             {
@@ -628,6 +668,33 @@ def _prepare_task(
         ):
             if destination.is_dir():
                 (destination / generated.path).write_text(generated.content)
+
+    for item in task.execution.read_only_inputs:
+        destination = layout["execution_inputs"] / item.id
+        destination.mkdir(parents=True, exist_ok=True)
+        if not item.source.is_file():
+            blockers.append(
+                {
+                    "task": task.id,
+                    "code": "execution-input-unavailable",
+                    "detail": f"{item.id}: {item.source} is not present locally",
+                }
+            )
+            continue
+        observed = digest_path(item.source)
+        if item.sha256 and item.sha256 != observed:
+            blockers.append(
+                {
+                    "task": task.id,
+                    "code": "execution-input-identity-mismatch",
+                    "detail": f"{item.id}: declared {item.sha256}, observed {observed}",
+                }
+            )
+            continue
+        shutil.copy2(item.source, destination / item.source.name)
+        result.execution_inputs.append(
+            {"id": item.id, "sha256": observed, "name": item.source.name}
+        )
 
     _build_profiles(spec, task, layout, result, harness, blockers)
     result.capsule_identity = digest_of(result.as_json())
@@ -748,6 +815,14 @@ def _apply_task_preparation(
 
     if receipts:
         result.preparation_receipt = receipts[0]
+        # The executor materialises a pristine BASE, so any generated subject file the
+        # subject needs to import must travel with the lock as an execution artifact.
+        for relative in result.preparation.generated_paths:
+            generated_file = base_dir / relative
+            if generated_file.is_file():
+                result.pending_execution_artifacts.append(
+                    (relative, generated_file.read_text())
+                )
     result.prepared_runtime_identity = digest_of(
         {
             "base_image": task.runtime.image,
@@ -985,6 +1060,18 @@ def prepare(
     )
     for task in spec.tasks:
         current = tasks[task.id]
+        if qualification_backend == "oci" and task.adapter != "python-pytest":
+            blockers.append(
+                {
+                    "task": task.id,
+                    "code": "oci-qualification-unsupported-for-adapter",
+                    "detail": (
+                        f"the OCI result parser is pytest-specific; adapter {task.adapter!r} "
+                        "has no OCI qualification support in v1"
+                    ),
+                }
+            )
+            continue
         if current.base_path is None or current.reference_path is None:
             blockers.append(
                 {
@@ -1002,6 +1089,13 @@ def prepare(
             "runtime_image": current.runtime_image,
             "harness_identity": harness.identity if harness else "",
             "expectations_digest": digest_of(task.expectations.as_json()),
+            # A changed generated preparation must invalidate a prior qualification even
+            # when the Git trees and base image are unchanged.
+            "preparation_identity": (
+                current.preparation_receipt.identity
+                if current.preparation_receipt
+                else (current.prepared_runtime_identity or "none")
+            ),
         }
 
         # A current, identity-bound prior receipt is reused instead of rerun. This is
@@ -1087,6 +1181,37 @@ def prepare(
         stages.BOUNDARY_QUALIFIED, {"certificates": len(reused_certificates)}
     )
 
+    for task in spec.tasks:
+        if not task.execution.command:
+            blockers.append(
+                {
+                    "task": task.id,
+                    "code": "execution-command-required-for-freeze",
+                    "detail": (
+                        "a lock reported READY_FOR_OWNER_REVIEW must already be executable; "
+                        "declare execution.command, which is never inferred from the "
+                        "qualification invocation"
+                    ),
+                }
+            )
+    if blockers:
+        return finish(stages.BOUNDARY_QUALIFIED)
+
+    # finding 5: what will run is fixed at execution freeze, not re-derived later
+    plan = runplan.compile_plan(
+        task_ids=[task.id for task in spec.tasks],
+        arms=list(spec.assignment.arms),
+        repetitions=spec.assignment.repetitions,
+        arm_inputs={
+            arm.name: [
+                {"id": item.id, "sha256": item.sha256 or "", "source": str(item.source)}
+                for item in arm.inputs
+            ]
+            for arm in spec.arms
+        },
+    )
+    result.run_plan = plan
+
     ledger.enter(
         stages.EXECUTION_FROZEN,
         {
@@ -1094,6 +1219,7 @@ def prepare(
                 task_id: task.capsule_identity for task_id, task in tasks.items()
             },
             "launch": spec.launch_payload(),
+            "run_plan": plan.identity,
         },
     )
     experiment_lock = lock_module.build(
@@ -1105,6 +1231,8 @@ def prepare(
         capabilities=reused_certificates,
         stage_receipts=ledger.receipts(),
         authority=preflight_authority.as_json(),
+        run_plan=plan.as_json(),
+        artifact_store=str(root / "artifacts"),
     )
     try:
         result.lock_path = experiment_lock.write(root)
