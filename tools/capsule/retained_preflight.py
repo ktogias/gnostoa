@@ -54,8 +54,12 @@ def _outcome(payload: object) -> SubjectOutcome:
         return SubjectOutcome(
             subject=str(data["subject"]),
             collected=bool(data["collected"]),
-            passed=tuple(str(item) for item in cast(Sequence[object], data.get("passed") or [])),
-            failed=tuple(str(item) for item in cast(Sequence[object], data.get("failed") or [])),
+            passed=tuple(
+                str(item) for item in cast(Sequence[object], data.get("passed") or [])
+            ),
+            failed=tuple(
+                str(item) for item in cast(Sequence[object], data.get("failed") or [])
+            ),
             error_types={
                 str(key): str(value)
                 for key, value in cast(
@@ -114,13 +118,17 @@ def load_completed_qualifications(
     try:
         observed = path.lstat()
     except OSError as exc:
-        raise RetainedPreflightError(f"retained public state is unavailable: {exc}") from exc
+        raise RetainedPreflightError(
+            f"retained public state is unavailable: {exc}"
+        ) from exc
     if not stat.S_ISREG(observed.st_mode):
         raise RetainedPreflightError("retained public state is not a regular file")
     try:
         payload = json.loads(path.read_text())
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise RetainedPreflightError(f"retained public state is unreadable: {exc}") from exc
+        raise RetainedPreflightError(
+            f"retained public state is unreadable: {exc}"
+        ) from exc
     if not isinstance(payload, dict) or payload.get("schema") != STATE_SCHEMA:
         raise RetainedPreflightError("retained public state has an unsupported schema")
     if payload.get("preflight_candidate_sha256") != candidate_sha256:
