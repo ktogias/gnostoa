@@ -20,7 +20,14 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from tools.capsule import adapters, certificates, effect_claim, profiles, runplan, stages
+from tools.capsule import (
+    adapters,
+    certificates,
+    effect_claim,
+    profiles,
+    runplan,
+    stages,
+)
 from tools.capsule import lock as lock_module
 from tools.capsule.adapters import HarnessResult, Invocation
 from tools.capsule.authority import (
