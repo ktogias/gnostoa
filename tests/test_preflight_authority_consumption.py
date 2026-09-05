@@ -270,6 +270,41 @@ class ReviewBlockerRedTests(ConsumptionFixture):
             claim.exists(), "a deterministic zero-effect refusal must not consume"
         )
 
+    def test_unknown_future_zero_effect_refusal_does_not_burn_claim(self) -> None:
+        observed = self.prepare()
+        candidate = observed.preflight_candidate_sha256
+        self.assertIsNotNone(candidate)
+        assert candidate is not None
+        refusal = {
+            "task": "T1",
+            "code": "synthetic-future-pre-effect-refusal",
+            "detail": "a future deterministic refusal unknown to today's code list",
+        }
+        effects: list[str] = []
+
+        def forbidden(*args, **kwargs):  # type: ignore[no-untyped-def]
+            del args, kwargs
+            effects.append("unexpected")
+            raise AssertionError("future zero-effect refusal reached qualification")
+
+        with (
+            mock.patch.object(
+                compiler, "_deterministic_pre_effect_blocker", return_value=refusal
+            ),
+            mock.patch.object(compiler, "qualify_subjects", side_effect=forbidden),
+        ):
+            result = self.prepare(authority=self.authority(candidate))
+
+        self.assertIn(
+            "synthetic-future-pre-effect-refusal",
+            [blocker["code"] for blocker in result.blockers],
+        )
+        self.assertEqual(effects, [])
+        claim = self.workspace / effect_claim.CLAIM_DIRECTORY / f"{candidate}.json"
+        self.assertFalse(
+            claim.exists(), "any zero-effect refusal before the first effect must not consume"
+        )
+
 
 class ConsumptionBoundaryGuards(ConsumptionFixture):
     def test_authority_less_prepare_remains_effect_free_and_replayable(self) -> None:
