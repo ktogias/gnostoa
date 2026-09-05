@@ -1147,11 +1147,10 @@ def _deterministic_pre_effect_blocker(
 ) -> dict[str, object] | None:
     """Return a deterministic refusal that proves this task cannot reach an effect.
 
-    This is the single source of truth for guards that must run before a fresh
-    candidate is irreversibly claimed and again in the real task loop. The pre-claim
-    caller intentionally applies it only to candidate tasks already bound as
-    ``fresh``; the real loop applies it to every task so the existing ``reuse``
-    ordering remains unchanged for #194.
+    The real qualification loop is the single place these guards run. Fresh effect
+    claims are created only after all pre-effect work for the first actual fresh
+    qualification has completed, immediately before ``qualify_subjects()``. Reuse
+    tasks deliberately keep this guard ordering; #194 owns that ordering separately.
     """
     if qualification_backend == "oci" and task.adapter != "python-pytest":
         return {
@@ -1474,37 +1473,8 @@ def prepare(
             ledger.reused.append(stages.BASE_REFERENCE_QUALIFIED)
 
     if not qualification_reused:
-        modes = {entry["id"]: entry["qualification_mode"] for entry in candidate_tasks}
-        # Deterministic guards that can prove a fresh task cannot reach an effect run
-        # before the irreversible claim. Reuse tasks deliberately stay on their
-        # existing path; #194 owns their adapter/backend ordering separately.
-        for task in spec.tasks:
-            if modes.get(task.id) != "fresh":
-                continue
-            current = tasks[task.id]
-            guard = _deterministic_pre_effect_blocker(
-                task, current, qualification_backend=qualification_backend
-            )
-            if guard is not None:
-                blockers.append(guard)
-        if blockers:
-            return finish(stages.STATIC_QUALIFIED)
-
-        if any(entry["qualification_mode"] == "fresh" for entry in candidate_tasks):
-            try:
-                effect_claim.claim_fresh_candidate(
-                    root,
-                    experiment_id=spec.id,
-                    scope=BASE_REFERENCE_QUALIFICATION,
-                    candidate_sha256=candidate_sha256,
-                    authority=preflight_authority,
-                    candidate_tasks=tuple(candidate_tasks),
-                )
-            except effect_claim.EffectClaimError as exc:
-                blockers.append({"task": None, "code": exc.code, "detail": exc.detail})
-                return finish(stages.STATIC_QUALIFIED)
-
         ledger.enter(stages.BASE_REFERENCE_QUALIFIED, qualification_stage_inputs)
+        effect_claimed = False
         for task in spec.tasks:
             current = tasks[task.id]
             guard = _deterministic_pre_effect_blocker(
@@ -1530,6 +1500,29 @@ def prepare(
                 current.qualification = approved_prior
                 current.qualification_reused = True
                 continue
+
+            # No effect-bearing operation has started while the claim is absent. If
+            # any earlier task or future pre-effect refusal accumulated a blocker,
+            # stop before consuming the candidate. Once the claim succeeds, the very
+            # next top-level operation is the first actual qualification effect.
+            if blockers and not effect_claimed:
+                return finish(stages.STATIC_QUALIFIED)
+            if not effect_claimed:
+                try:
+                    effect_claim.claim_fresh_candidate(
+                        root,
+                        experiment_id=spec.id,
+                        scope=BASE_REFERENCE_QUALIFICATION,
+                        candidate_sha256=candidate_sha256,
+                        authority=preflight_authority,
+                        candidate_tasks=tuple(candidate_tasks),
+                    )
+                except effect_claim.EffectClaimError as exc:
+                    blockers.append(
+                        {"task": None, "code": exc.code, "detail": exc.detail}
+                    )
+                    return finish(stages.STATIC_QUALIFIED)
+                effect_claimed = True
 
             outcome = qualify_subjects(
                 task_id=task.id,
