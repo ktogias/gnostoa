@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import shutil
 import unittest
+from pathlib import Path
 
 from tools.capsule import authority as authority_module
 from tools.capsule import compiler, stages
@@ -292,3 +293,177 @@ class AuthorityV2ContractTests(CandidateFixture):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PreparationReplayFixture(CapsuleFixture):
+    """A synthetic D3-shaped task: the frozen tree omits a build-generated file.
+
+    Nothing here is Phase-D. The shape is what matters: a declared setuptools-scm
+    version file that the frozen trees do not carry.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.repo = self.make_repo(
+            "pt",
+            {
+                "src/pkg/__init__.py": (
+                    "from pkg._version import version\n\n\ndef render():\n"
+                    "    return 'old'\n"
+                ),
+                ".gitignore": "src/pkg/_version.py\n",
+                "pyproject.toml": (
+                    "[build-system]\nrequires = ['setuptools', 'setuptools-scm']\n\n"
+                    "[project]\nname='pkg'\ndynamic = ['version']\n\n"
+                    "[tool.setuptools_scm]\nwrite_to = 'src/pkg/_version.py'\n"
+                ),
+            },
+        )
+        git(self.repo, "tag", "1.0.0.dev0")
+        self.base = self.commit(self.repo, {"src/pkg/extra.py": "x = 1\n"}, "more")
+        self.ref = self.commit(
+            self.repo,
+            {
+                "src/pkg/__init__.py": (
+                    "from pkg._version import version\n\n\ndef render():\n"
+                    "    return 'new'\n"
+                )
+            },
+            "fix",
+        )
+        (self.root / "oracle.py").write_text(
+            "import pkg\n\n\ndef test_discriminates():\n"
+            "    assert pkg.render() == 'new'\n"
+        )
+        spec = self.base_spec(
+            self.repo,
+            self.base,
+            self.ref,
+            runtime={"image": IMAGE_A},
+            preparation={"scheme": "gnostoa-setuptools-scm-compatible/v1"},
+        )
+        spec["tasks"][0]["reference"]["commit"] = self.ref
+        spec["tasks"][0]["reference"]["tree"] = git(
+            self.repo, "rev-parse", self.ref + "^{tree}"
+        )
+        self.spec_path = self.write_spec(spec)
+
+    def run_prepare(self, authority=None):
+        return compiler.prepare(
+            load_spec(self.spec_path),
+            self.workspace,
+            offline=True,
+            preflight_authority=authority,
+        )
+
+    @staticmethod
+    def identities(result) -> dict[str, object]:
+        """Every identity an owner's approval depends on."""
+        task = result.task("T1")
+        receipt = task.preparation_receipt
+        return {
+            "required": task.preparation.required,
+            "generated_paths": tuple(task.preparation.generated_paths),
+            "receipt_identity": receipt.identity if receipt else None,
+            "prepared_runtime_identity": task.prepared_runtime_identity,
+            "capsule_identity": task.capsule_identity,
+            "static_qualified": result.stage_receipts().get(stages.STATIC_QUALIFIED),
+            "candidate": result.preflight_candidate_sha256,
+        }
+
+
+class PreparationReplayStabilityTests(PreparationReplayFixture):
+    """An unchanged replay must present the identities the owner approved."""
+
+    def test_unchanged_replay_keeps_every_authorization_identity(self) -> None:
+        first = self.identities(self.run_prepare())
+        second = self.identities(self.run_prepare())
+        third = self.identities(self.run_prepare())
+        self.assertEqual(first, second, "second prepare drifted from the first")
+        self.assertEqual(second, third, "third prepare drifted")
+        # The requirement comes from the frozen tree, not from what a previous
+        # prepare happened to leave in the mutable workspace.
+        self.assertTrue(first["required"])
+        self.assertIsNotNone(first["receipt_identity"])
+        self.assertIsNotNone(first["prepared_runtime_identity"])
+
+    def test_authority_attachment_does_not_change_the_candidate(self) -> None:
+        observed = self.run_prepare()
+        digest = observed.preflight_candidate_sha256
+        assert digest is not None
+        granted = authority_module.PreflightAuthority(
+            id="auth-prep",
+            experiment_id="E1",
+            scope=("base-reference-qualification",),
+            preflight_candidate_sha256=digest,
+        )
+        authorized = self.run_prepare(authority=granted)
+        # Attaching authority must not move the candidate it was issued against.
+        self.assertEqual(authorized.preflight_candidate_sha256, digest)
+        self.assertNotIn(
+            "preflight-authority-candidate-mismatch",
+            [b["code"] for b in authorized.blockers],
+        )
+
+
+class GeneratedPathExclusionSafetyTests(PreparationReplayFixture):
+    """Excluding generated output must never mask real subject mutation."""
+
+    def _materialised(self, kind: str) -> Path:
+        roots = sorted((self.workspace / "subject").glob(f"{kind}-*"))
+        self.assertTrue(roots, f"no materialised {kind} subject")
+        return roots[0]
+
+    def test_generated_output_is_not_reported_as_tampering(self) -> None:
+        self.run_prepare()
+        result = self.run_prepare()
+        self.assertNotIn(
+            "materialised-subject-identity-mismatch",
+            [b["code"] for b in result.blockers],
+        )
+
+    def test_tracked_source_mutation_is_still_detected(self) -> None:
+        self.run_prepare()
+        tracked = self._materialised("base") / "src" / "pkg" / "extra.py"
+        tracked.write_text("x = 999  # tampered\n")
+        result = self.run_prepare()
+        self.assertIn(
+            "materialised-subject-identity-mismatch",
+            [b["code"] for b in result.blockers],
+        )
+
+    def test_reference_tracked_mutation_is_detected_independently(self) -> None:
+        self.run_prepare()
+        tracked = self._materialised("reference") / "src" / "pkg" / "extra.py"
+        tracked.write_text("x = 42  # tampered on the reference side\n")
+        result = self.run_prepare()
+        self.assertIn(
+            "materialised-subject-identity-mismatch",
+            [b["code"] for b in result.blockers],
+        )
+
+    def test_changed_generated_bytes_fail_closed(self) -> None:
+        self.run_prepare()
+        generated = self._materialised("base") / "src" / "pkg" / "_version.py"
+        self.assertTrue(generated.is_file())
+        generated.write_text("version = 'not-what-the-scheme-derives'\n")
+        result = self.run_prepare()
+        codes = [b["code"] for b in result.blockers]
+        self.assertTrue(
+            any("preparation" in code or "identity-mismatch" in code for code in codes),
+            f"a changed generated artifact must fail closed, got {codes}",
+        )
+        self.assertNotEqual(result.status, stages.READY_FOR_OWNER_REVIEW)
+
+    def test_non_regular_generated_occupant_fails_closed_without_following(
+        self,
+    ) -> None:
+        self.run_prepare()
+        generated = self._materialised("base") / "src" / "pkg" / "_version.py"
+        generated.unlink()
+        generated.symlink_to(Path("extra.py"))
+        result = self.run_prepare()
+        self.assertNotEqual(result.status, stages.READY_FOR_OWNER_REVIEW)
+        # The link target keeps the subject's own bytes.
+        target = self._materialised("base") / "src" / "pkg" / "extra.py"
+        self.assertEqual(target.read_text(), "x = 1\n")
