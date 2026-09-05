@@ -122,7 +122,9 @@ class ConsumptionFixture(CapsuleFixture):
 
 
 class FreshAuthorityConsumptionRedTests(ConsumptionFixture):
-    def test_same_fresh_candidate_and_authority_cannot_open_effect_path_twice(self) -> None:
+    def test_same_fresh_candidate_and_authority_cannot_open_effect_path_twice(
+        self,
+    ) -> None:
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         self.assertIsNotNone(candidate)
@@ -179,7 +181,9 @@ class FreshAuthorityConsumptionRedTests(ConsumptionFixture):
                 }
             ]
 
-        with mock.patch.object(compiler, "qualify_subjects", side_effect=abort_then_probe):
+        with mock.patch.object(
+            compiler, "qualify_subjects", side_effect=abort_then_probe
+        ):
             with self.assertRaises(SyntheticAbort):
                 self.prepare(authority=granted)
             replay = self.prepare(authority=granted)
@@ -207,7 +211,9 @@ class ConsumptionBoundaryGuards(ConsumptionFixture):
             second = self.prepare()
 
         self.assertEqual(first.stage, stages.STATIC_QUALIFIED)
-        self.assertEqual(first.preflight_candidate_sha256, second.preflight_candidate_sha256)
+        self.assertEqual(
+            first.preflight_candidate_sha256, second.preflight_candidate_sha256
+        )
         self.assertEqual(effects, [])
         self.assertIn(
             "base-reference-qualification-requires-preflight-authority",
