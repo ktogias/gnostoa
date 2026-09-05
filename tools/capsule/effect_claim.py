@@ -336,7 +336,7 @@ def claim_fresh_candidate(
                     0o600,
                     dir_fd=claim_fd,
                 )
-            except FileExistsError:
+            except FileExistsError as exc:
                 _raise_if_existing(
                     claim_fd,
                     name,
@@ -348,7 +348,7 @@ def claim_fresh_candidate(
                 raise EffectClaimError(
                     INVALID_CLAIM,
                     "candidate claim appeared concurrently but cannot be trusted",
-                )
+                ) from exc
             except OSError as exc:
                 raise EffectClaimError(
                     WRITE_FAILED, f"cannot create candidate claim: {exc}"
