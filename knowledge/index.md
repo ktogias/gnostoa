@@ -113,6 +113,7 @@ inherited, copied or loaded by adopting projects.
 - [B3 independent-adoption experiment design](assessments/b3-independent-adoption-experiment-design.md)
 - [Work Item 187 Experiment Capsule system v1 execution plan](assessments/187-experiment-capsule-execution-plan.md)
 - [Work Item 190 Capsule qualification and network-envelope integration repair plan](assessments/190-capsule-integration-repair-plan.md)
+- [Work Item 192 preflight candidate authority binding plan](assessments/192-preflight-candidate-binding-plan.md)
 - [Nextcloud Mail v0.2.0 owner-led adoption trial baseline](assessments/nextcloud-mail-v0-2-0-owner-led-adoption-trial-baseline.md)
 - [Nextcloud Mail Phase-A owner-led adaptation retrospective](assessments/nextcloud-mail-phase-a-owner-led-adaptation-retrospective.md)
 - [Nextcloud Mail Phase-B owner-led task result](assessments/nextcloud-mail-phase-b-owner-led-task-result.md)

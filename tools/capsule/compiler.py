@@ -16,14 +16,18 @@ import subprocess
 import tarfile
 import tempfile
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 from tools.capsule import adapters, certificates, profiles, runplan, stages
 from tools.capsule import lock as lock_module
 from tools.capsule.adapters import HarnessResult, Invocation
-from tools.capsule.authority import PreflightAuthority
+from tools.capsule.authority import (
+    BASE_REFERENCE_QUALIFICATION,
+    PreflightAuthority,
+    preflight_candidate_identity,
+)
 from tools.capsule.identity import PRODUCER, digest_of, digest_path, digest_text
 from tools.capsule.oracle_qualification import qualify, read_shape
 from tools.capsule.preparation import (
@@ -34,6 +38,7 @@ from tools.capsule.preparation import (
     PreparationRequirement,
     TestConfig,
     apply_preparation,
+    declared_generated_paths,
     discover_preparation,
     discover_test_config,
     project_test_config,
@@ -92,6 +97,18 @@ def _materialize(repo: Path, tree: str, destination: Path) -> None:
         archive.unlink(missing_ok=True)
 
 
+def _frozen_tree_paths(repo: Path, tree: str) -> frozenset[str]:
+    """Every path the frozen Git tree carries. The source of truth about absence."""
+    listed = subprocess.run(
+        ["git", "-C", str(repo), "ls-tree", "-r", "--name-only", tree],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=_GIT_ENV,
+    )
+    return frozenset(line for line in listed.stdout.splitlines() if line)
+
+
 def _observed_tree(repo: Path, worktree: Path, ignore: Sequence[str] = ()) -> str:
     """Independently reconstruct the Git tree identity of a materialised directory."""
     with tempfile.TemporaryDirectory() as scratch:
@@ -120,11 +137,16 @@ def _observed_tree(repo: Path, worktree: Path, ignore: Sequence[str] = ()) -> st
                     str(repo),
                     "rm",
                     "--cached",
+                    # Index-only, and forced: without -f git refuses to drop a path
+                    # whose staged content differs from HEAD, which silently left the
+                    # generated artifact in the reconstructed tree whenever the same
+                    # path happened to be tracked at HEAD.
+                    "-f",
                     "-q",
                     "--ignore-unmatch",
                     *ignore,
                 ],
-                check=False,
+                check=True,
                 capture_output=True,
                 env=env,
             )
@@ -155,6 +177,19 @@ def _materialize_verified(
     if not destination.exists() or not any(destination.iterdir()):
         _materialize(repo, tree, destination)
     observed = _observed_tree(repo, destination)
+    if observed != tree:
+        # A rerun sees the subject as preparation left it. This compiler's own
+        # deterministic output is not evidence of tampering. But "declared by build
+        # configuration" is not enough on its own: a declared path that the frozen
+        # tree actually tracks is ordinary source, and excluding it would let a real
+        # mutation hide. Exclude only paths that are both declared and provably
+        # absent from the frozen tree, so tracked content stays fully verified.
+        frozen = _frozen_tree_paths(repo, tree)
+        generated = [
+            path for path in declared_generated_paths(destination) if path not in frozen
+        ]
+        if generated:
+            observed = _observed_tree(repo, destination, ignore=generated)
     if observed != tree:
         blockers.append(
             {
@@ -282,6 +317,11 @@ class PrepareResult:
     reused_certificates: list[dict[str, object]] = field(default_factory=list)
     lock_path: Path | None = None
     lock_identity: str | None = None
+    # The exact prepared qualification request an owner authorises. Present once
+    # static qualification is genuinely complete, so the digest can be approved
+    # before any hidden-oracle effect; None while earlier blockers mean no
+    # well-defined candidate exists yet.
+    preflight_candidate_sha256: str | None = None
     run_plan: runplan.RunPlan | None = None
     _identities: dict[str, str] = field(default_factory=dict)
     _receipts: dict[str, str] = field(default_factory=dict)
@@ -613,7 +653,19 @@ def _prepare_task(
         )
 
     test_config = discover_test_config(base_dir)
-    preparation = discover_preparation(base_dir)
+    # The task needs preparation when *either* subject's frozen tree omits a declared
+    # target. Asking BASE alone would miss the inverse case, where BASE already tracks
+    # the target and only REFERENCE must be prepared: the requirement would read
+    # false and preparation would never run for the subject that needs it. The
+    # per-subject application below then decides where generation actually happens.
+    base_preparation = discover_preparation(
+        base_dir, frozen_paths=_frozen_tree_paths(repo, task.source.base_tree)
+    )
+    reference_preparation = discover_preparation(
+        reference_dir,
+        frozen_paths=_frozen_tree_paths(reference_repo, task.reference.tree),
+    )
+    preparation = _union_preparation(base_preparation, reference_preparation)
 
     result = TaskResult(
         id=task.id,
@@ -871,23 +923,45 @@ def _apply_task_preparation(
         return
 
     receipts: list[PreparationReceipt] = []
+    # Each subject answers for its own frozen tree. A target the BASE tree omits may
+    # be tracked source in the REFERENCE tree, and there it is ordinary content: it
+    # must not be generated over, nor excluded from that subject's verification.
+    subjects = (
+        ("base", base_dir, task.source.base_commit, repo, task.source.base_tree),
+        (
+            "reference",
+            reference_dir,
+            task.reference.commit or task.reference.tree,
+            reference_repo,
+            task.reference.tree,
+        ),
+    )
+    per_subject_generated: dict[str, tuple[str, ...]] = {}
     try:
-        for subject_dir, commit in (
-            (base_dir, task.source.base_commit),
-            (reference_dir, task.reference.commit or task.reference.tree),
-        ):
-            source_repo = repo if subject_dir is base_dir else reference_repo
-            if all(
-                (subject_dir / p).exists() for p in result.preparation.generated_paths
-            ):
+        for kind, subject_dir, commit, source_repo, subject_tree in subjects:
+            frozen = _frozen_tree_paths(source_repo, subject_tree)
+            generated_here = tuple(
+                path
+                for path in result.preparation.generated_paths
+                if path not in frozen
+            )
+            per_subject_generated[kind] = generated_here
+            if not generated_here:
+                # This subject already carries every declared target as tracked
+                # source, so there is nothing to prepare and nothing to exclude.
                 continue
+            requirement = replace(result.preparation, generated_paths=generated_here)
+            # A previous prepare may already have written this artifact. Verify and
+            # reuse it rather than skipping, so the replay reproduces the same
+            # receipt and identity instead of losing them.
             receipts.append(
                 apply_preparation(
                     subject_dir,
-                    result.preparation,
+                    requirement,
                     repository=source_repo,
                     commit=commit,
                     scheme=task.preparation_scheme,
+                    allow_existing=True,
                 )
             )
     except PreparationError as exc:
@@ -896,24 +970,31 @@ def _apply_task_preparation(
         )
         return
 
-    # The tracked tree must still reconstruct to its declared identity once the
-    # generated artifact is ignored: preparation adds, it never edits the subject.
-    observed = _observed_tree(repo, base_dir, ignore=result.preparation.generated_paths)
-    if observed != task.source.base_tree:
-        blockers.append(
-            {
-                "task": task.id,
-                "code": "preparation-modified-tracked-source",
-                "detail": f"tracked tree became {observed}, expected {task.source.base_tree}",
-            }
+    # Both tracked trees must still reconstruct to their declared identities once
+    # that subject's own generated artifacts are ignored: preparation adds, it never
+    # edits the subject. Verified per subject, because a reference-side edit is no
+    # less a modification than a base-side one.
+    for kind, subject_dir, _commit, source_repo, subject_tree in subjects:
+        observed = _observed_tree(
+            source_repo, subject_dir, ignore=list(per_subject_generated[kind])
         )
-        return
+        if observed != subject_tree:
+            blockers.append(
+                {
+                    "task": task.id,
+                    "code": "preparation-modified-tracked-source",
+                    "detail": (
+                        f"{kind} tracked tree became {observed}, expected {subject_tree}"
+                    ),
+                }
+            )
+            return
 
     if receipts:
         result.preparation_receipt = receipts[0]
         # The executor materialises a pristine BASE, so any generated subject file the
         # subject needs to import must travel with the lock as an execution artifact.
-        for relative in result.preparation.generated_paths:
+        for relative in per_subject_generated["base"]:
             generated_file = base_dir / relative
             if generated_file.is_file():
                 result.pending_execution_artifacts.append(
@@ -928,6 +1009,50 @@ def _apply_task_preparation(
             "receipts": [receipt.as_json() for receipt in receipts],
         }
     )
+
+
+def _union_preparation(
+    base: PreparationRequirement, reference: PreparationRequirement
+) -> PreparationRequirement:
+    """One task-level requirement covering what either frozen tree omits.
+
+    Union rather than intersection: a target missing from only one subject still has
+    to be generated for that subject. Order is deterministic -- BASE's targets first,
+    then any REFERENCE-only ones -- so the requirement, and every identity derived
+    from it, is stable across replays.
+    """
+    if not base.required and not reference.required:
+        return base
+    targets = list(base.generated_paths)
+    targets += [
+        path for path in reference.generated_paths if path not in base.generated_paths
+    ]
+    primary = base if base.required else reference
+    inference = list(base.inference)
+    inference += [item for item in reference.inference if item not in inference]
+    return replace(
+        primary,
+        required=True,
+        generated_paths=tuple(targets),
+        inference=tuple(inference),
+    )
+
+
+def _qualification_bound(task: TaskSpec, current: TaskResult) -> dict[str, str]:
+    """The identities a qualification receipt must bind to stand in for this task."""
+    harness = current.harness
+    return {
+        "base_tree": current.base_tree,
+        "reference_tree": current.reference_tree,
+        "oracle_sha256": current.oracle_sha256,
+        "runtime_image": current.runtime_image,
+        "harness_identity": harness.identity if harness else "",
+        "expectations_digest": digest_of(task.expectations.as_json()),
+        # The combined prepared identity, not the BASE receipt alone: it digests the
+        # receipts for both subjects, so a reference-side preparation change cannot
+        # leave a stale qualification looking current. Unprepared tasks keep "none".
+        "preparation_identity": (current.prepared_runtime_identity or "none"),
+    }
 
 
 def _harness_json(task: TaskResult) -> dict[str, object] | None:
@@ -1115,39 +1240,143 @@ def prepare(
     if blockers:
         return finish(stages.STATIC_QUALIFIED)
 
+    # What will actually happen per task, decided before the candidate is emitted.
+    # Reading and validating a declared prior receipt is read-only, and it must be
+    # settled here: approving subjects and a backend is not approval of an effect if
+    # the same digest could stand for either running the hidden oracle or reusing a
+    # receipt instead.
+    resolved_priors: dict[str, QualificationReceipt] = {}
+    candidate_tasks: list[dict[str, str]] = []
+    for task in spec.tasks:
+        current = tasks[task.id]
+        entry = {"id": task.id, "capsule_identity": current.capsule_identity}
+        if task.prior_qualification_receipt is None:
+            entry["qualification_mode"] = "fresh"
+            candidate_tasks.append(entry)
+            continue
+        try:
+            prior = load_receipt(task.prior_qualification_receipt)
+        except (ReceiptError, OSError, json.JSONDecodeError) as exc:
+            blockers.append(
+                {
+                    "task": task.id,
+                    "code": "prior-qualification-receipt-invalid",
+                    "detail": str(exc),
+                }
+            )
+            continue
+        # A receipt earned through one backend is not evidence about another: the
+        # hidden-oracle effect path differs, so it cannot stand in for this request.
+        if prior.backend != qualification_backend:
+            blockers.append(
+                {
+                    "task": task.id,
+                    "code": "prior-qualification-backend-mismatch",
+                    "detail": (
+                        f"the prior receipt was produced by backend {prior.backend!r}, but "
+                        f"this request qualifies through {qualification_backend!r}; a receipt "
+                        "from another backend cannot stand in for it"
+                    ),
+                }
+            )
+            continue
+        covers, mismatched = prior.covers(_qualification_bound(task, current))
+        if not covers:
+            blockers.append(
+                {
+                    "task": task.id,
+                    "code": "prior-qualification-receipt-not-current",
+                    "detail": (
+                        f"the receipt does not bind {mismatched or 'a qualified outcome'}; "
+                        "requalify or remove the prior-qualification claim"
+                    ),
+                }
+            )
+            continue
+        resolved_priors[task.id] = prior
+        entry["qualification_mode"] = "reuse"
+        entry["prior_receipt_identity"] = prior.identity
+        candidate_tasks.append(entry)
+
+    if blockers:
+        # A request whose disposition cannot be settled has no well-defined candidate,
+        # so none is emitted: an owner must never approve a digest that misrepresents
+        # what would run.
+        return finish(stages.STATIC_QUALIFIED)
+
+    # The exact request about to be authorised, computed here rather than after an
+    # authority arrives, so an authority-less prepare can report the digest the
+    # owner is being asked to approve. Task order is qualification order.
+    candidate_sha256 = preflight_candidate_identity(
+        experiment_id=spec.id,
+        scope=BASE_REFERENCE_QUALIFICATION,
+        qualification_backend=qualification_backend,
+        tasks=tuple(candidate_tasks),
+    )
+    result.preflight_candidate_sha256 = candidate_sha256
+
     if preflight_authority is None:
         blockers.append(
             {
                 "task": None,
                 "code": "base-reference-qualification-requires-preflight-authority",
                 "detail": (
-                    "static preparation is complete; executing the declared oracle against BASE "
-                    "and REFERENCE requires an explicit owner preflight authority naming this "
-                    "experiment"
+                    "static preparation is complete; executing the declared oracle against "
+                    "BASE and REFERENCE requires an explicit owner preflight authority "
+                    f"naming preflight candidate {candidate_sha256}"
                 ),
             }
         )
         return finish(stages.STATIC_QUALIFIED)
 
-    if not preflight_authority.covers(spec.id, "base-reference-qualification"):
-        blockers.append(
-            {
-                "task": None,
-                "code": "preflight-authority-out-of-scope",
-                "detail": (
-                    f"authority {preflight_authority.id!r} covers experiment "
-                    f"{preflight_authority.experiment_id!r} scopes "
-                    f"{list(preflight_authority.scope)}, not base-reference-qualification for "
-                    f"{spec.id!r}"
-                ),
-            }
-        )
+    if not preflight_authority.covers(
+        spec.id, BASE_REFERENCE_QUALIFICATION, candidate_sha256=candidate_sha256
+    ):
+        # Distinguish the two refusals: a wrong experiment or scope is a different
+        # mistake from an authority issued against a candidate that has since changed.
+        if (
+            preflight_authority.experiment_id != spec.id
+            or BASE_REFERENCE_QUALIFICATION not in preflight_authority.scope
+        ):
+            blockers.append(
+                {
+                    "task": None,
+                    "code": "preflight-authority-out-of-scope",
+                    "detail": (
+                        f"authority {preflight_authority.id!r} covers experiment "
+                        f"{preflight_authority.experiment_id!r} scopes "
+                        f"{list(preflight_authority.scope)}, not "
+                        f"{BASE_REFERENCE_QUALIFICATION} for {spec.id!r}"
+                    ),
+                }
+            )
+        else:
+            blockers.append(
+                {
+                    "task": None,
+                    "code": "preflight-authority-candidate-mismatch",
+                    "detail": (
+                        f"authority {preflight_authority.id!r} approves preflight candidate "
+                        f"{preflight_authority.preflight_candidate_sha256}, but this prepared "
+                        f"request is {candidate_sha256}; the qualification inputs or backend "
+                        "changed since the authority was issued, so it is refused before any "
+                        "oracle runs"
+                    ),
+                }
+            )
         return finish(stages.STATIC_QUALIFIED)
 
     ledger.enter(
         stages.BASE_REFERENCE_QUALIFIED,
         {
             "authority": preflight_authority.as_json(),
+            # Recorded from what this run computed, not copied from the authority, so
+            # the evidence shows the executed request independently of the approval
+            # it was matched against. Equality above is what makes them agree.
+            "preflight_candidate_sha256": candidate_sha256,
+            "authorised_candidate_sha256": (
+                preflight_authority.preflight_candidate_sha256
+            ),
             "backend": qualification_backend,
             "capsules": {
                 task_id: task.capsule_identity for task_id, task in tasks.items()
@@ -1178,51 +1407,16 @@ def prepare(
             )
             continue
         harness = current.harness
-        bound = {
-            "base_tree": current.base_tree,
-            "reference_tree": current.reference_tree,
-            "oracle_sha256": current.oracle_sha256,
-            "runtime_image": current.runtime_image,
-            "harness_identity": harness.identity if harness else "",
-            "expectations_digest": digest_of(task.expectations.as_json()),
-            # A changed generated preparation must invalidate a prior qualification even
-            # when the Git trees and base image are unchanged.
-            "preparation_identity": (
-                current.preparation_receipt.identity
-                if current.preparation_receipt
-                else (current.prepared_runtime_identity or "none")
-            ),
-        }
+        bound = _qualification_bound(task, current)
 
-        # A current, identity-bound prior receipt is reused instead of rerun. This is
-        # what makes an already-valid qualification (the D0 case) reusable.
-        if task.prior_qualification_receipt is not None:
-            try:
-                prior = load_receipt(task.prior_qualification_receipt)
-            except (ReceiptError, OSError, json.JSONDecodeError) as exc:
-                blockers.append(
-                    {
-                        "task": task.id,
-                        "code": "prior-qualification-receipt-invalid",
-                        "detail": str(exc),
-                    }
-                )
-                continue
-            covers, mismatched = prior.covers(bound)
-            if covers:
-                current.qualification = prior
-                current.qualification_reused = True
-                continue
-            blockers.append(
-                {
-                    "task": task.id,
-                    "code": "prior-qualification-receipt-not-current",
-                    "detail": (
-                        f"the receipt does not bind {mismatched or 'a qualified outcome'}; "
-                        "requalify or remove the prior-qualification claim"
-                    ),
-                }
-            )
+        # The disposition was settled before the candidate was emitted and the owner
+        # authorised that exact digest, so it is consumed here rather than decided
+        # again. This is what makes an already-valid qualification (the D0 case)
+        # reusable without the reuse being substitutable for a fresh run.
+        approved_prior = resolved_priors.get(task.id)
+        if approved_prior is not None:
+            current.qualification = approved_prior
+            current.qualification_reused = True
             continue
 
         outcome = qualify_subjects(
@@ -1412,6 +1606,7 @@ def _write_state(root: Path, result: PrepareResult) -> None:
         "reused_certificates": result.reused_certificates,
         "stage_receipts": result.stage_receipts(),
         "lock_sha256": result.lock_identity,
+        "preflight_candidate_sha256": result.preflight_candidate_sha256,
         "tasks": {task_id: task.as_json() for task_id, task in result.tasks.items()},
     }
     (root / STATE_FILENAME).write_text(

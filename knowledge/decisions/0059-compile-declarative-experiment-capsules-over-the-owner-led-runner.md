@@ -142,7 +142,13 @@ history.
 
 Readiness is gated by receipts, not by a flag: `READY_FOR_OWNER_REVIEW` is unreachable unless
 every required stage carries a completed receipt, and preflight authority is an object bound to
-an experiment identity and scope rather than a truthy value.
+one exact prepared qualification candidate rather than a truthy value. Naming an experiment is not
+enough, because the same experiment identity can be prepared into materially different requests and
+run through different backends: a `gnostoa-preflight-authority/v2` record carries the digest of the
+experiment, scope, backend and ordered task capsule identities, and the compiler compares it against
+the identity it computes itself. That digest is reported by an authority-less prepare, so an owner
+approves the exact candidate before any hidden oracle runs, and a candidate that changes afterwards
+is refused at the gate.
 
 Materialised subjects are create-only per source identity and their Git tree identity is
 independently reconstructed on every run, so retained bytes are verified rather than trusted

@@ -298,11 +298,9 @@ class OracleStagingOciTests(CapsuleFixture):
         )
         spec["tasks"][0]["reference"]["commit"] = ref
         spec["tasks"][0]["reference"]["tree"] = git(repo, "rev-parse", ref + "^{tree}")
-        result = compiler.prepare(
+        result = self.prepare_authorized(
             load_spec(self.write_spec(spec)),
             self.workspace,
-            offline=True,
-            preflight_authority=self.authority(),
             qualification_backend="oci",
         )
         receipt = result.task("T1").qualification
