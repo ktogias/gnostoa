@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ast
 import inspect
+import textwrap
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,18 +10,68 @@ from types import SimpleNamespace
 from tools.capsule import compiler
 
 
+def _contains_call(node: ast.AST, name: str) -> bool:
+    return any(
+        isinstance(item, ast.Call)
+        and (
+            isinstance(item.func, ast.Name)
+            and item.func.id == name
+            or isinstance(item.func, ast.Attribute)
+            and item.func.attr == name
+        )
+        for item in ast.walk(node)
+    )
+
+
 class DeterministicPreEffectGuardTests(unittest.TestCase):
-    def test_prepare_routes_both_guard_phases_through_one_helper(self) -> None:
+    def test_prepare_claims_just_in_time_after_single_guard_path(self) -> None:
         prepare_source = inspect.getsource(compiler.prepare)
         helper_source = inspect.getsource(compiler._deterministic_pre_effect_blocker)
 
-        self.assertEqual(prepare_source.count("_deterministic_pre_effect_blocker("), 2)
+        # The real task loop is the only guard caller. There is no dry-run copy to
+        # keep synchronized with it, and the two current refusal codes live only in
+        # the helper.
+        self.assertEqual(prepare_source.count("_deterministic_pre_effect_blocker("), 1)
         self.assertNotIn('"oci-qualification-unsupported-for-adapter"', prepare_source)
         self.assertNotIn('"qualification-subject-unavailable"', prepare_source)
         self.assertEqual(
             helper_source.count('"oci-qualification-unsupported-for-adapter"'), 1
         )
         self.assertEqual(helper_source.count('"qualification-subject-unavailable"'), 1)
+
+        # The irreversible claim belongs inside the same loop as the effect. An
+        # accumulated blocker must be checked immediately before the one-shot claim,
+        # and the next top-level statement after that claim block must be the first
+        # actual qualification effect. This makes any earlier future refusal precede
+        # consumption by construction rather than by a duplicated guard list.
+        self.assertEqual(prepare_source.count("claim_fresh_candidate("), 1)
+        self.assertEqual(prepare_source.count("qualify_subjects("), 1)
+        tree = ast.parse(textwrap.dedent(prepare_source))
+        effect_loops = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.For) and _contains_call(node, "qualify_subjects")
+        ]
+        self.assertEqual(len(effect_loops), 1)
+        loop = effect_loops[0]
+        claim_index = next(
+            index
+            for index, statement in enumerate(loop.body)
+            if _contains_call(statement, "claim_fresh_candidate")
+        )
+        effect_index = next(
+            index
+            for index, statement in enumerate(loop.body)
+            if _contains_call(statement, "qualify_subjects")
+        )
+        self.assertEqual(effect_index, claim_index + 1)
+        self.assertGreater(claim_index, 0)
+        blocker_gate = loop.body[claim_index - 1]
+        self.assertIsInstance(blocker_gate, ast.If)
+        self.assertEqual(
+            ast.unparse(blocker_gate.test),  # type: ignore[union-attr]
+            "blockers and (not effect_claimed)",
+        )
 
     def test_shared_helper_preserves_current_deterministic_refusals(self) -> None:
         task = SimpleNamespace(id="task", adapter="node-vitest")
