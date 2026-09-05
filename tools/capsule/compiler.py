@@ -1382,9 +1382,7 @@ def prepare(
         "preflight_candidate_sha256": candidate_sha256,
         "authorised_candidate_sha256": preflight_authority.preflight_candidate_sha256,
         "backend": qualification_backend,
-        "capsules": {
-            task_id: task.capsule_identity for task_id, task in tasks.items()
-        },
+        "capsules": {task_id: task.capsule_identity for task_id, task in tasks.items()},
     }
     completed_qualification = retained_preflight.matching_completed_stage(
         ledger, qualification_stage_inputs
@@ -1444,9 +1442,7 @@ def prepare(
             ledger.reused.append(stages.BASE_REFERENCE_QUALIFIED)
 
     if not qualification_reused:
-        modes = {
-            entry["id"]: entry["qualification_mode"] for entry in candidate_tasks
-        }
+        modes = {entry["id"]: entry["qualification_mode"] for entry in candidate_tasks}
         # Deterministic guards that can prove a fresh task cannot reach an effect run
         # before the irreversible claim. Reuse tasks deliberately stay on their
         # existing path; #194 owns their adapter/backend ordering separately.
