@@ -901,5 +901,121 @@ class AsymmetricFrozenTreeTests(CapsuleFixture):
         )
 
 
+class InversePreparationDiscoveryTests(CapsuleFixture):
+    """BASE tracks the declared target; only REFERENCE omits it."""
+
+    def _spec(self):
+        repo = self.make_repo(
+            "inverse",
+            {
+                "src/pkg/__init__.py": (
+                    "from pkg._version import version\n\n\ndef render():\n"
+                    "    return 'old'\n"
+                ),
+                # BASE carries the declared target as ordinary tracked source.
+                "src/pkg/_version.py": "version = '1.0.0'\n__version__ = version\n",
+                "pyproject.toml": (
+                    "[build-system]\nrequires = ['setuptools', 'setuptools-scm']\n\n"
+                    "[project]\nname='pkg'\ndynamic = ['version']\n\n"
+                    "[tool.setuptools_scm]\nwrite_to = 'src/pkg/_version.py'\n"
+                ),
+            },
+        )
+        git(repo, "tag", "1.0.0")
+        base = git(repo, "rev-parse", "HEAD")
+        # The reference drops it, so only that subject needs preparation.
+        (repo / "src" / "pkg" / "_version.py").unlink()
+        git(repo, "rm", "-q", "--cached", "src/pkg/_version.py")
+        ref = self.commit(
+            repo,
+            {
+                ".gitignore": "src/pkg/_version.py\n",
+                "src/pkg/__init__.py": (
+                    "from pkg._version import version\n\n\ndef render():\n"
+                    "    return 'new'\n"
+                ),
+            },
+            "reference stops tracking the version file",
+        )
+        (self.root / "oracle.py").write_text(
+            "import pkg\n\n\ndef test_discriminates():\n"
+            "    assert pkg.render() == 'new'\n"
+        )
+        spec = self.base_spec(
+            repo,
+            base,
+            ref,
+            runtime={"image": IMAGE_A},
+            preparation={"scheme": "gnostoa-setuptools-scm-compatible/v1"},
+        )
+        spec["tasks"][0]["reference"]["commit"] = ref
+        spec["tasks"][0]["reference"]["tree"] = git(repo, "rev-parse", ref + "^{tree}")
+        return self.write_spec(spec)
+
+    def _subject(self, kind: str) -> Path:
+        found = [
+            path
+            for path in self.workspace.rglob(f"{kind}-*")
+            if path.is_dir() and (path / "pyproject.toml").is_file()
+        ]
+        self.assertTrue(found, f"no materialised {kind}")
+        return found[0]
+
+    def test_reference_only_target_is_discovered_and_prepared(self) -> None:
+        spec_path = self._spec()
+        result = compiler.prepare(load_spec(spec_path), self.workspace, offline=True)
+        codes = [b["code"] for b in result.blockers]
+        self.assertNotIn("preparation-failed", codes)
+        self.assertNotIn("preparation-modified-tracked-source", codes)
+        self.assertNotIn("materialised-subject-identity-mismatch", codes)
+
+        # Discovery must not stop at BASE: the reference omission is what requires it.
+        self.assertTrue(result.task("T1").preparation.required)
+        self.assertIn(
+            "src/pkg/_version.py", result.task("T1").preparation.generated_paths
+        )
+
+        # BASE keeps its own tracked bytes, untouched by preparation.
+        base_file = self._subject("base") / "src" / "pkg" / "_version.py"
+        self.assertEqual(
+            base_file.read_text(), "version = '1.0.0'\n__version__ = version\n"
+        )
+        # REFERENCE was prepared, so the file exists and is the derived output.
+        reference_file = self._subject("reference") / "src" / "pkg" / "_version.py"
+        self.assertTrue(reference_file.is_file())
+        self.assertNotEqual(reference_file.read_text(), base_file.read_text())
+
+        # Both frozen trees still verify, and a candidate exists to be approved.
+        digest = result.preflight_candidate_sha256
+        self.assertIsNotNone(digest)
+
+        # The replay presents the same candidate.
+        replay = compiler.prepare(load_spec(spec_path), self.workspace, offline=True)
+        self.assertEqual(replay.preflight_candidate_sha256, digest)
+        self.assertEqual(
+            replay.task("T1").prepared_runtime_identity,
+            result.task("T1").prepared_runtime_identity,
+        )
+
+    def test_base_tracked_target_stays_verified(self) -> None:
+        spec_path = self._spec()
+        compiler.prepare(load_spec(spec_path), self.workspace, offline=True)
+        victim = self._subject("base") / "src" / "pkg" / "_version.py"
+        victim.write_text("version = 'tampered'\n__version__ = version\n")
+        again = compiler.prepare(load_spec(spec_path), self.workspace, offline=True)
+        self.assertTrue(
+            any(
+                code
+                in {
+                    "materialised-subject-identity-mismatch",
+                    "preparation-modified-tracked-source",
+                    "preparation-failed",
+                }
+                for code in [b["code"] for b in again.blockers]
+            ),
+            f"base tampering must be caught, got {[b['code'] for b in again.blockers]}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

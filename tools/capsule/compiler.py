@@ -653,9 +653,19 @@ def _prepare_task(
         )
 
     test_config = discover_test_config(base_dir)
-    preparation = discover_preparation(
+    # The task needs preparation when *either* subject's frozen tree omits a declared
+    # target. Asking BASE alone would miss the inverse case, where BASE already tracks
+    # the target and only REFERENCE must be prepared: the requirement would read
+    # false and preparation would never run for the subject that needs it. The
+    # per-subject application below then decides where generation actually happens.
+    base_preparation = discover_preparation(
         base_dir, frozen_paths=_frozen_tree_paths(repo, task.source.base_tree)
     )
+    reference_preparation = discover_preparation(
+        reference_dir,
+        frozen_paths=_frozen_tree_paths(reference_repo, task.reference.tree),
+    )
+    preparation = _union_preparation(base_preparation, reference_preparation)
 
     result = TaskResult(
         id=task.id,
@@ -998,6 +1008,33 @@ def _apply_task_preparation(
             "tools": available,
             "receipts": [receipt.as_json() for receipt in receipts],
         }
+    )
+
+
+def _union_preparation(
+    base: PreparationRequirement, reference: PreparationRequirement
+) -> PreparationRequirement:
+    """One task-level requirement covering what either frozen tree omits.
+
+    Union rather than intersection: a target missing from only one subject still has
+    to be generated for that subject. Order is deterministic -- BASE's targets first,
+    then any REFERENCE-only ones -- so the requirement, and every identity derived
+    from it, is stable across replays.
+    """
+    if not base.required and not reference.required:
+        return base
+    targets = list(base.generated_paths)
+    targets += [
+        path for path in reference.generated_paths if path not in base.generated_paths
+    ]
+    primary = base if base.required else reference
+    inference = list(base.inference)
+    inference += [item for item in reference.inference if item not in inference]
+    return replace(
+        primary,
+        required=True,
+        generated_paths=tuple(targets),
+        inference=tuple(inference),
     )
 
 
