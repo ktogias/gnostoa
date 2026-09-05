@@ -1139,6 +1139,38 @@ def _consume_certificates(
     return reused
 
 
+def _deterministic_pre_effect_blocker(
+    task: TaskSpec,
+    current: TaskResult,
+    *,
+    qualification_backend: str,
+) -> dict[str, object] | None:
+    """Return a deterministic refusal that proves this task cannot reach an effect.
+
+    This is the single source of truth for guards that must run before a fresh
+    candidate is irreversibly claimed and again in the real task loop. The pre-claim
+    caller intentionally applies it only to candidate tasks already bound as
+    ``fresh``; the real loop applies it to every task so the existing ``reuse``
+    ordering remains unchanged for #194.
+    """
+    if qualification_backend == "oci" and task.adapter != "python-pytest":
+        return {
+            "task": task.id,
+            "code": "oci-qualification-unsupported-for-adapter",
+            "detail": (
+                "the OCI result parser is pytest-specific; adapter "
+                f"{task.adapter!r} has no OCI qualification support in v1"
+            ),
+        }
+    if current.base_path is None or current.reference_path is None:
+        return {
+            "task": task.id,
+            "code": "qualification-subject-unavailable",
+            "detail": "a materialised subject is missing; nothing can be qualified",
+        }
+    return None
+
+
 def prepare(
     spec: ExperimentSpec,
     workspace: str | Path,
@@ -1450,28 +1482,11 @@ def prepare(
             if modes.get(task.id) != "fresh":
                 continue
             current = tasks[task.id]
-            if qualification_backend == "oci" and task.adapter != "python-pytest":
-                blockers.append(
-                    {
-                        "task": task.id,
-                        "code": "oci-qualification-unsupported-for-adapter",
-                        "detail": (
-                            "the OCI result parser is pytest-specific; adapter "
-                            f"{task.adapter!r} has no OCI qualification support in v1"
-                        ),
-                    }
-                )
-                continue
-            if current.base_path is None or current.reference_path is None:
-                blockers.append(
-                    {
-                        "task": task.id,
-                        "code": "qualification-subject-unavailable",
-                        "detail": (
-                            "a materialised subject is missing; nothing can be qualified"
-                        ),
-                    }
-                )
+            guard = _deterministic_pre_effect_blocker(
+                task, current, qualification_backend=qualification_backend
+            )
+            if guard is not None:
+                blockers.append(guard)
         if blockers:
             return finish(stages.STATIC_QUALIFIED)
 
@@ -1492,26 +1507,11 @@ def prepare(
         ledger.enter(stages.BASE_REFERENCE_QUALIFIED, qualification_stage_inputs)
         for task in spec.tasks:
             current = tasks[task.id]
-            if qualification_backend == "oci" and task.adapter != "python-pytest":
-                blockers.append(
-                    {
-                        "task": task.id,
-                        "code": "oci-qualification-unsupported-for-adapter",
-                        "detail": (
-                            f"the OCI result parser is pytest-specific; adapter {task.adapter!r} "
-                            "has no OCI qualification support in v1"
-                        ),
-                    }
-                )
-                continue
-            if current.base_path is None or current.reference_path is None:
-                blockers.append(
-                    {
-                        "task": task.id,
-                        "code": "qualification-subject-unavailable",
-                        "detail": "a materialised subject is missing; nothing can be qualified",
-                    }
-                )
+            guard = _deterministic_pre_effect_blocker(
+                task, current, qualification_backend=qualification_backend
+            )
+            if guard is not None:
+                blockers.append(guard)
                 continue
             harness = current.harness
             bound = _qualification_bound(task, current)
