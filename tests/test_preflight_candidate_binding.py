@@ -8,12 +8,14 @@ identification key or evidence byte is used, and no Phase-D attempt is consumed.
 
 from __future__ import annotations
 
+import json
 import shutil
 import unittest
 from pathlib import Path
 
 from tools.capsule import authority as authority_module
-from tools.capsule import compiler, stages
+from tools.capsule import compiler, qualification, stages
+from tools.capsule.identity import digest_of
 from tools.capsule.spec import load_spec
 
 try:
@@ -410,7 +412,11 @@ class GeneratedPathExclusionSafetyTests(PreparationReplayFixture):
     """Excluding generated output must never mask real subject mutation."""
 
     def _materialised(self, kind: str) -> Path:
-        roots = sorted((self.workspace / "subject").glob(f"{kind}-*"))
+        roots = [
+            path
+            for path in self.workspace.rglob(f"{kind}-*")
+            if path.is_dir() and (path / "pyproject.toml").is_file()
+        ]
         self.assertTrue(roots, f"no materialised {kind} subject")
         return roots[0]
 
@@ -467,3 +473,163 @@ class GeneratedPathExclusionSafetyTests(PreparationReplayFixture):
         # The link target keeps the subject's own bytes.
         target = self._materialised("base") / "src" / "pkg" / "extra.py"
         self.assertEqual(target.read_text(), "x = 1\n")
+
+
+class DeclaredButTrackedPathTests(CapsuleFixture):
+    """A declared generated path that the frozen tree tracks is ordinary source."""
+
+    def test_declared_path_present_in_the_frozen_tree_is_still_verified(self) -> None:
+        # Same build declaration, but here the version file IS committed, so the
+        # frozen tree carries it and preparation is not required.
+        repo = self.make_repo(
+            "tracked",
+            {
+                "src/pkg/__init__.py": (
+                    "from pkg._version import version\n\n\ndef render():\n"
+                    "    return 'old'\n"
+                ),
+                "src/pkg/_version.py": "version = '1.0.0'\n__version__ = version\n",
+                "pyproject.toml": (
+                    "[build-system]\nrequires = ['setuptools', 'setuptools-scm']\n\n"
+                    "[project]\nname='pkg'\ndynamic = ['version']\n\n"
+                    "[tool.setuptools_scm]\nwrite_to = 'src/pkg/_version.py'\n"
+                ),
+            },
+        )
+        git(repo, "tag", "1.0.0")
+        base = git(repo, "rev-parse", "HEAD")
+        ref = self.commit(
+            repo,
+            {
+                "src/pkg/__init__.py": (
+                    "from pkg._version import version\n\n\ndef render():\n"
+                    "    return 'new'\n"
+                )
+            },
+            "fix",
+        )
+        (self.root / "oracle.py").write_text(
+            "import pkg\n\n\ndef test_discriminates():\n"
+            "    assert pkg.render() == 'new'\n"
+        )
+        spec = self.base_spec(
+            repo,
+            base,
+            ref,
+            runtime={"image": IMAGE_A},
+            preparation={"scheme": "gnostoa-setuptools-scm-compatible/v1"},
+        )
+        spec["tasks"][0]["reference"]["commit"] = ref
+        spec["tasks"][0]["reference"]["tree"] = git(repo, "rev-parse", ref + "^{tree}")
+        spec_path = self.write_spec(spec)
+
+        first = compiler.prepare(load_spec(spec_path), self.workspace, offline=True)
+        # The frozen tree carries the declared target, so nothing is generated.
+        self.assertFalse(first.task("T1").preparation.required)
+
+        materialised = [
+            path
+            for path in self.workspace.rglob("base-*")
+            if path.is_dir() and (path / "pyproject.toml").is_file()
+        ]
+        self.assertTrue(materialised)
+        victim = materialised[0] / "src" / "pkg" / "_version.py"
+        victim.write_text("version = 'tampered'\n__version__ = version\n")
+
+        result = compiler.prepare(load_spec(spec_path), self.workspace, offline=True)
+        # It is declared by the build configuration, but it is tracked source here,
+        # so it must never be excluded from tree verification.
+        self.assertIn(
+            "materialised-subject-identity-mismatch",
+            [b["code"] for b in result.blockers],
+        )
+
+
+class PreparationReuseRegressionTests(PreparationReplayFixture):
+    """A receipt covering the first prepare stays current on an unchanged replay."""
+
+    def test_prior_receipt_is_reused_with_zero_fresh_oracle_executions(self) -> None:
+        first = self.run_prepare()
+        task = first.task("T1")
+        receipt_identity = (
+            task.preparation_receipt.identity if task.preparation_receipt else None
+        )
+        self.assertIsNotNone(receipt_identity)
+
+        # The identity the qualification receipt actually binds.
+        bound = {
+            "base_tree": task.base_tree,
+            "reference_tree": task.reference_tree,
+            "oracle_sha256": task.oracle_sha256,
+            "runtime_image": task.runtime_image,
+            "harness_identity": task.harness.identity if task.harness else "",
+            "expectations_digest": digest_of(
+                load_spec(self.spec_path).tasks[0].expectations.as_json()
+            ),
+            "preparation_identity": receipt_identity,
+        }
+        receipt = {
+            "schema": qualification.RECEIPT_SCHEMA,
+            "task": "T1",
+            "backend": "local-python",
+            "base": {
+                "subject": "base",
+                "collected": True,
+                "passed": [],
+                "failed": ["test_discriminates"],
+                "error_types": {},
+                "classification": qualification.MATCH,
+                "detail": "synthetic prior qualification; no execution",
+            },
+            "reference": {
+                "subject": "reference",
+                "collected": True,
+                "passed": ["test_discriminates"],
+                "failed": [],
+                "error_types": {},
+                "classification": qualification.MATCH,
+                "detail": "synthetic prior qualification; no execution",
+            },
+            "bound": bound,
+            "qualified": True,
+        }
+        receipt_path = self.root / "prior-receipt.json"
+        receipt_path.write_text(json.dumps(receipt, indent=1, sort_keys=True))
+
+        spec = json.loads(Path(self.spec_path).read_text())
+        spec["tasks"][0]["prior_qualification"] = {"receipt": str(receipt_path)}
+        self.spec_path = self.write_spec(spec)
+
+        # The unchanged replay must present the same candidate the owner approves.
+        observed = self.run_prepare()
+        digest = observed.preflight_candidate_sha256
+        assert digest is not None
+        granted = authority_module.PreflightAuthority(
+            id="auth-reuse",
+            experiment_id="E1",
+            scope=("base-reference-qualification",),
+            preflight_candidate_sha256=digest,
+        )
+
+        executed: list[str] = []
+        original = qualification.qualify_subjects
+
+        def refuse(*args, **kwargs):
+            executed.append("fresh-qualification")
+            return original(*args, **kwargs)
+
+        qualification.qualify_subjects = refuse
+        compiler.qualify_subjects = refuse
+        try:
+            authorized = self.run_prepare(authority=granted)
+        finally:
+            qualification.qualify_subjects = original
+            compiler.qualify_subjects = original
+
+        self.assertEqual(authorized.preflight_candidate_sha256, digest)
+        self.assertEqual(
+            executed, [], "a current prior receipt must not trigger fresh qualification"
+        )
+        reused = authorized.task("T1").qualification
+        self.assertIsNotNone(reused)
+        self.assertTrue(reused.qualified)

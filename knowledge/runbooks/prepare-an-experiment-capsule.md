@@ -79,12 +79,20 @@ python -m tools.capsule.cli prepare EXPERIMENT_SPEC --workspace WORKSPACE --offl
 input invalidates that stage and everything downstream. Only a *completed* stage is reusable.
 
 Base/reference qualification runs the declared oracle and therefore needs a preflight authority
-naming this experiment and the `base-reference-qualification` scope:
+naming this experiment, the `base-reference-qualification` scope, and the exact prepared candidate.
+Run `prepare` without authority first: it reports `preflight_candidate_sha256`, the digest of the
+request you are being asked to approve.
 
 ```json
-{"schema": "gnostoa-preflight-authority/v1", "id": "...", "experiment_id": "...",
- "scope": ["base-reference-qualification"]}
+{"schema": "gnostoa-preflight-authority/v2", "id": "...", "experiment_id": "...",
+ "scope": ["base-reference-qualification"],
+ "preflight_candidate_sha256": "<the digest the authority-less prepare reported>"}
 ```
+
+The digest covers the experiment, scope, qualification backend and the ordered task capsule
+identities, so a changed input, a changed backend or a reordered request is a different candidate
+and is refused before any oracle runs. A `v1` authority named only the experiment and can no longer
+authorise a preflight; it remains readable as historical evidence.
 
 Readiness is receipt-gated. `READY_FOR_OWNER_REVIEW` is reachable only when every required stage
 carries a completed content-addressed receipt, and it writes the write-once `experiment.lock`.
@@ -110,6 +118,7 @@ one you intend. Read blockers as follows.
 | `qualification-backend-unavailable` | the declared backend cannot qualify in v1 | only `local-python` is implemented; a containerised subject needs a runner-backed backend |
 | `base-reference-qualification-failed` | observed outcome or cause differs from the frozen expectation | read the classification: `INFRASTRUCTURE`, `WRONG_CAUSE` or `COUNT_MISMATCH` |
 | `preflight-authority-out-of-scope` | the authority does not name this experiment and scope | obtain an authority bound to this experiment |
+| `preflight-authority-candidate-mismatch` | the authority approves a different prepared candidate | the inputs or backend changed since it was issued; re-observe the digest and obtain a new authority |
 | `readiness-missing-stage-receipts` | a required stage has no completed receipt | readiness is receipt-gated; complete the named stages |
 | `assignment-schedule-required` | arms are declared without an ordered schedule | declare `assignment.schedule` or bind `assignment.schedule_artifact`; order is preregistered material |
 | `assignment-schedule-not-a-complete-permutation` | the schedule duplicates, omits or adds a run, or names a repetition out of range | correct the schedule; it must be exactly tasks x repetitions x arms |

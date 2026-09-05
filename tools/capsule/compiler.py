@@ -31,7 +31,6 @@ from tools.capsule.authority import (
 from tools.capsule.identity import PRODUCER, digest_of, digest_path, digest_text
 from tools.capsule.oracle_qualification import qualify, read_shape
 from tools.capsule.preparation import (
-    declared_generated_paths,
     SCM_COMPATIBLE_SCHEME,
     ConfigProjection,
     PreparationError,
@@ -39,6 +38,7 @@ from tools.capsule.preparation import (
     PreparationRequirement,
     TestConfig,
     apply_preparation,
+    declared_generated_paths,
     discover_preparation,
     discover_test_config,
     project_test_config,
@@ -95,6 +95,18 @@ def _materialize(repo: Path, tree: str, destination: Path) -> None:
             handle.extractall(destination, filter="data")
     finally:
         archive.unlink(missing_ok=True)
+
+
+def _frozen_tree_paths(repo: Path, tree: str) -> frozenset[str]:
+    """Every path the frozen Git tree carries. The source of truth about absence."""
+    listed = subprocess.run(
+        ["git", "-C", str(repo), "ls-tree", "-r", "--name-only", tree],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=_GIT_ENV,
+    )
+    return frozenset(line for line in listed.stdout.splitlines() if line)
 
 
 def _observed_tree(repo: Path, worktree: Path, ignore: Sequence[str] = ()) -> str:
@@ -161,15 +173,18 @@ def _materialize_verified(
         _materialize(repo, tree, destination)
     observed = _observed_tree(repo, destination)
     if observed != tree:
-        # A rerun sees the subject as preparation left it. Files the declared
-        # preparation scheme generates are not evidence of tampering: they are this
-        # compiler's own deterministic output, already covered by the preparation
-        # receipt. Ignore exactly those and re-verify, so preparation tasks stay
-        # idempotent across the observe-then-authorise sequence. Anything else still
-        # fails, so genuine drift is still caught.
-        generated = declared_generated_paths(destination)
+        # A rerun sees the subject as preparation left it. This compiler's own
+        # deterministic output is not evidence of tampering. But "declared by build
+        # configuration" is not enough on its own: a declared path that the frozen
+        # tree actually tracks is ordinary source, and excluding it would let a real
+        # mutation hide. Exclude only paths that are both declared and provably
+        # absent from the frozen tree, so tracked content stays fully verified.
+        frozen = _frozen_tree_paths(repo, tree)
+        generated = [
+            path for path in declared_generated_paths(destination) if path not in frozen
+        ]
         if generated:
-            observed = _observed_tree(repo, destination, ignore=list(generated))
+            observed = _observed_tree(repo, destination, ignore=generated)
     if observed != tree:
         blockers.append(
             {
@@ -633,7 +648,9 @@ def _prepare_task(
         )
 
     test_config = discover_test_config(base_dir)
-    preparation = discover_preparation(base_dir)
+    preparation = discover_preparation(
+        base_dir, frozen_paths=_frozen_tree_paths(repo, task.source.base_tree)
+    )
 
     result = TaskResult(
         id=task.id,
@@ -897,10 +914,9 @@ def _apply_task_preparation(
             (reference_dir, task.reference.commit or task.reference.tree),
         ):
             source_repo = repo if subject_dir is base_dir else reference_repo
-            if all(
-                (subject_dir / p).exists() for p in result.preparation.generated_paths
-            ):
-                continue
+            # A previous prepare may already have written this artifact. Verify and
+            # reuse it rather than skipping, so the replay reproduces the same
+            # receipt and identity instead of losing them.
             receipts.append(
                 apply_preparation(
                     subject_dir,
@@ -908,6 +924,7 @@ def _apply_task_preparation(
                     repository=source_repo,
                     commit=commit,
                     scheme=task.preparation_scheme,
+                    allow_existing=True,
                 )
             )
     except PreparationError as exc:

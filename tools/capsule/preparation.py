@@ -9,6 +9,7 @@ records its source; nothing is guessed silently and nothing tracked is modified.
 from __future__ import annotations
 
 import re
+import stat
 import subprocess
 import tomllib
 from collections.abc import Mapping, Sequence
@@ -364,8 +365,17 @@ def declared_generated_paths(tree: Path) -> tuple[str, ...]:
     )
 
 
-def discover_preparation(tree: Path) -> PreparationRequirement:
-    """Detect build-generated files the frozen tree omits (the D3 class)."""
+def discover_preparation(
+    tree: Path, *, frozen_paths: frozenset[str] | None = None
+) -> PreparationRequirement:
+    """Detect build-generated files the frozen tree omits (the D3 class).
+
+    Whether preparation is required is a property of the frozen source contract, so
+    `frozen_paths` -- the paths the frozen Git tree actually carries -- decides it
+    when supplied. Falling back to file presence would let a previous prepare's own
+    output convince a later prepare that the task never needed preparation, which
+    changes the identities an owner authorised.
+    """
     data, origin = _load_pyproject(tree)
     if not data:
         return PreparationRequirement(required=False)
@@ -387,7 +397,10 @@ def discover_preparation(tree: Path) -> PreparationRequirement:
             targets.append(value)
             inference.append(f"{origin} [tool.setuptools_scm] {key} = {value}")
 
-    missing = tuple(target for target in targets if not (tree / target).exists())
+    if frozen_paths is None:
+        missing = tuple(target for target in targets if not (tree / target).exists())
+    else:
+        missing = tuple(target for target in targets if target not in frozen_paths)
     if not missing:
         return PreparationRequirement(
             required=False,
@@ -476,8 +489,15 @@ def apply_preparation(
     repository: Path,
     commit: str,
     scheme: str,
+    allow_existing: bool = False,
 ) -> PreparationReceipt:
-    """Generate the declared build artifact into `tree` and return a receipt."""
+    """Generate the declared build artifact into `tree` and return a receipt.
+
+    With `allow_existing`, an artifact this same deterministic scheme already wrote
+    is verified rather than rewritten, so an unchanged replay reproduces the very
+    same receipt instead of losing it. Verification is byte-exact and never follows
+    a non-regular occupant: a changed or substituted artifact fails closed.
+    """
     if requirement.kind != "setuptools-scm-version-file":
         raise PreparationError(f"unsupported preparation kind {requirement.kind!r}")
     if scheme != SCM_COMPATIBLE_SCHEME:
@@ -492,10 +512,26 @@ def apply_preparation(
     generated: dict[str, str] = {}
     for relative in requirement.generated_paths:
         target = tree / relative
-        if target.exists():
-            raise PreparationError(f"refusing to overwrite existing {relative!r}")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content)
+        try:
+            occupant = target.lstat()
+        except OSError:
+            occupant = None
+        if occupant is not None:
+            if not allow_existing:
+                raise PreparationError(f"refusing to overwrite existing {relative!r}")
+            if not stat.S_ISREG(occupant.st_mode):
+                raise PreparationError(
+                    f"generated path {relative!r} is not a regular file; refusing to "
+                    "follow or replace it"
+                )
+            if target.read_text() != content:
+                raise PreparationError(
+                    f"retained {relative!r} does not match the deterministic output of "
+                    f"{scheme}; refusing to overwrite a changed artifact"
+                )
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content)
         generated[relative] = digest_text(content)
 
     # Bounded verification: the generated module must be well-formed and expose the
