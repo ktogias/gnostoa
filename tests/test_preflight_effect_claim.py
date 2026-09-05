@@ -27,7 +27,9 @@ except ImportError:  # invoked as tests.<module> from the repository root
 
 
 class FreshClaimIntegrationTests(ConsumptionFixture):
-    def test_second_authority_for_same_candidate_cannot_reopen_effect_path(self) -> None:
+    def test_second_authority_for_same_candidate_cannot_reopen_effect_path(
+        self,
+    ) -> None:
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         self.assertIsNotNone(candidate)
@@ -66,7 +68,9 @@ class FreshClaimIntegrationTests(ConsumptionFixture):
     def test_authority_less_prepare_creates_no_effect_claim(self) -> None:
         first = self.prepare()
         second = self.prepare()
-        self.assertEqual(first.preflight_candidate_sha256, second.preflight_candidate_sha256)
+        self.assertEqual(
+            first.preflight_candidate_sha256, second.preflight_candidate_sha256
+        )
         self.assertFalse((self.workspace / effect_claim.CLAIM_DIRECTORY).exists())
 
     def test_all_reuse_candidate_creates_no_effect_claim(self) -> None:
@@ -80,9 +84,13 @@ class FreshClaimIntegrationTests(ConsumptionFixture):
         with mock.patch.object(
             compiler,
             "qualify_subjects",
-            side_effect=AssertionError("all-reuse candidate reached fresh qualification"),
+            side_effect=AssertionError(
+                "all-reuse candidate reached fresh qualification"
+            ),
         ):
-            authorised = self.prepare(authority=self.authority(candidate), receipt=receipt)
+            authorised = self.prepare(
+                authority=self.authority(candidate), receipt=receipt
+            )
 
         self.assertTrue(authorised.task("T1").qualification_reused)
         self.assertFalse((self.workspace / effect_claim.CLAIM_DIRECTORY).exists())
@@ -183,11 +191,7 @@ raise SystemExit(3)
 
     def test_tampered_canonical_claim_fails_closed(self) -> None:
         self.claim()
-        path = (
-            self.workspace
-            / effect_claim.CLAIM_DIRECTORY
-            / f"{self.candidate}.json"
-        )
+        path = self.workspace / effect_claim.CLAIM_DIRECTORY / f"{self.candidate}.json"
         payload = json.loads(path.read_text())
         payload["authority_sha256"] = "0" * 64
         path.write_bytes(canonical_json_bytes(payload))
