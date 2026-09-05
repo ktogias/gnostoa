@@ -23,7 +23,9 @@ class DeterministicPreEffectGuardTests(unittest.TestCase):
 
     def test_shared_helper_preserves_current_deterministic_refusals(self) -> None:
         task = SimpleNamespace(id="task", adapter="node-vitest")
-        current = SimpleNamespace(base_path=Path("/base"), reference_path=Path("/reference"))
+        current = SimpleNamespace(
+            base_path=Path("/base"), reference_path=Path("/reference")
+        )
 
         self.assertEqual(
             compiler._deterministic_pre_effect_blocker(
