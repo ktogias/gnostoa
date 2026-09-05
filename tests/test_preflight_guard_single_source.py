@@ -66,12 +66,32 @@ class DeterministicPreEffectGuardTests(unittest.TestCase):
         )
         self.assertEqual(effect_index, claim_index + 1)
         self.assertGreater(claim_index, 0)
+
         blocker_gate = loop.body[claim_index - 1]
         self.assertIsInstance(blocker_gate, ast.If)
+        assert isinstance(blocker_gate, ast.If)
         self.assertEqual(
-            ast.unparse(blocker_gate.test),  # type: ignore[union-attr]
-            "blockers and (not effect_claimed)",
+            ast.unparse(blocker_gate.test), "blockers and (not effect_claimed)"
         )
+
+        # Also close the nested version of the drift: after the claim call succeeds,
+        # the claim block may only mark the transaction claimed. A future refusal or
+        # other operation inserted inside this block would fail this test even though
+        # the top-level claim/effect statements would still look adjacent.
+        claim_block = loop.body[claim_index]
+        self.assertIsInstance(claim_block, ast.If)
+        assert isinstance(claim_block, ast.If)
+        self.assertEqual(ast.unparse(claim_block.test), "not effect_claimed")
+        self.assertEqual(len(claim_block.body), 2)
+        claim_try, claimed_assignment = claim_block.body
+        self.assertIsInstance(claim_try, ast.Try)
+        assert isinstance(claim_try, ast.Try)
+        self.assertEqual(len(claim_try.body), 1)
+        self.assertTrue(_contains_call(claim_try.body[0], "claim_fresh_candidate"))
+        self.assertIsInstance(claimed_assignment, ast.Assign)
+        assert isinstance(claimed_assignment, ast.Assign)
+        self.assertEqual(ast.unparse(claimed_assignment.targets[0]), "effect_claimed")
+        self.assertEqual(ast.unparse(claimed_assignment.value), "True")
 
     def test_shared_helper_preserves_current_deterministic_refusals(self) -> None:
         task = SimpleNamespace(id="task", adapter="node-vitest")
