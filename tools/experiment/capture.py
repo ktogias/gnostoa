@@ -150,6 +150,36 @@ def attest_payload(
     }
 
 
+def _directory_total(root: Path) -> int:
+    """Total the bytes a directory tree occupies without ever consulting a target.
+
+    Traversal is explicit rather than os.walk: os.walk classifies entries through
+    DirEntry.is_dir(), which follows symlinks by default, so even with
+    followlinks=False a target metadata lookup can occur. Every decision here comes
+    from one stat taken with follow_symlinks=False, so a link's target is never
+    stat-followed, opened or entered.
+
+    A link contributes only the bytes it occupies itself. Refusing it instead would
+    discard a completed run's evidence over a file the subject's own frozen tree
+    legitimately carries. Recursion enters only real directories, so a link cycle
+    cannot recur.
+    """
+    total = 0
+    pending = [root]
+    while pending:
+        current = pending.pop()
+        with os.scandir(current) as entries:
+            for entry in entries:
+                item = entry.stat(follow_symlinks=False)
+                if stat.S_ISLNK(item.st_mode):
+                    total += item.st_size
+                elif stat.S_ISDIR(item.st_mode):
+                    pending.append(Path(entry.path))
+                elif stat.S_ISREG(item.st_mode):
+                    total += item.st_size
+    return total
+
+
 def measured_path_size(path: Path) -> tuple[int, str]:
     stat_result = path.lstat()
     if path.is_symlink():
@@ -158,24 +188,7 @@ def measured_path_size(path: Path) -> tuple[int, str]:
         return stat_result.st_size, "lstat-size-v1"
     if not path.is_dir():
         raise RunnerError("size-check-supports-regular-file-or-directory")
-    total = 0
-    for current, dirnames, filenames in os.walk(path, followlinks=False):
-        current_path = Path(current)
-        for name in [*dirnames, *filenames]:
-            candidate = current_path / name
-            item = candidate.lstat()
-            if stat.S_ISLNK(item.st_mode):
-                # A link contributes only the bytes it occupies itself, taken from
-                # the lstat already in hand. Its target is never followed, opened,
-                # stat-followed or walked, so nothing outside the workspace is read
-                # or counted and a link cycle cannot recur. Refusing instead would
-                # discard a completed run's evidence over a subject file the
-                # subject's own frozen tree legitimately carries.
-                total += item.st_size
-                continue
-            if stat.S_ISREG(item.st_mode):
-                total += item.st_size
-    return total, "recursive-lstat-size-v2"
+    return _directory_total(path), "recursive-lstat-size-v2"
 
 
 def run_configuration_digest(

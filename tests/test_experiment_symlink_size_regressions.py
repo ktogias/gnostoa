@@ -101,21 +101,98 @@ class SymlinkSizeObservationTests(unittest.TestCase):
         observed, method = capture.measured_path_size(single)
         self.assertEqual((observed, method), (7, "lstat-size-v1"))
 
-    def test_no_symlink_target_is_opened_or_stat_followed(self) -> None:
-        target = self.project / "target.txt"
-        target.write_bytes(b"t" * 32)
-        (self.project / "link.txt").symlink_to("target.txt")
-        followed: list[str] = []
-        real_stat = os.stat
+    def test_traversal_never_performs_a_following_metadata_lookup(self) -> None:
+        """The contract is non-following traversal, so prove it at the traversal.
 
-        def watched_stat(path, *args, **kwargs):  # type: ignore[no-untyped-def]
-            if str(path).endswith("link.txt") and kwargs.get("follow_symlinks", True):
-                followed.append(str(path))
-            return real_stat(path, *args, **kwargs)
+        Patching os.stat cannot see this: os.walk classifies entries through
+        DirEntry.is_dir(), which follows by default and resolves in the C layer.
+        Wrapping the directory entries themselves is what actually catches it.
+        """
+        target_dir = self.project / "real-dir"
+        target_dir.mkdir()
+        (target_dir / "inner.txt").write_bytes(b"i" * 12)
+        (self.project / "file.txt").write_bytes(b"f" * 8)
+        (self.project / "link-to-dir").symlink_to(target_dir, target_is_directory=True)
+        (self.project / "link-to-file").symlink_to("file.txt")
 
-        with mock.patch.object(os, "stat", side_effect=watched_stat):
-            capture.measured_path_size(self.project)
-        self.assertEqual(followed, [], "a link must never be stat-followed")
+        following: list[str] = []
+
+        class WatchedEntry:
+            def __init__(self, entry: os.DirEntry) -> None:
+                self._entry = entry
+
+            @property
+            def path(self) -> str:
+                return self._entry.path
+
+            @property
+            def name(self) -> str:
+                return self._entry.name
+
+            def stat(self, *, follow_symlinks: bool = True):  # type: ignore[no-untyped-def]
+                if follow_symlinks:
+                    following.append(f"stat:{self._entry.path}")
+                return self._entry.stat(follow_symlinks=follow_symlinks)
+
+            def is_dir(self, *, follow_symlinks: bool = True) -> bool:
+                if follow_symlinks:
+                    following.append(f"is_dir:{self._entry.path}")
+                return self._entry.is_dir(follow_symlinks=follow_symlinks)
+
+            def is_file(self, *, follow_symlinks: bool = True) -> bool:
+                if follow_symlinks:
+                    following.append(f"is_file:{self._entry.path}")
+                return self._entry.is_file(follow_symlinks=follow_symlinks)
+
+            def is_symlink(self) -> bool:
+                return self._entry.is_symlink()
+
+        real_scandir = os.scandir
+
+        class WatchedScandir:
+            """A faithful drop-in: iterator and context manager, like os.scandir.
+
+            Faithful on purpose. A mock that merely breaks under the old traversal
+            would fail for its own reasons rather than because a following lookup
+            was detected, and would prove nothing.
+            """
+
+            def __init__(self, path):  # type: ignore[no-untyped-def]
+                self._inner = real_scandir(path)
+
+            def __enter__(self):  # type: ignore[no-untyped-def]
+                self._inner.__enter__()
+                return self
+
+            def __exit__(self, *exc):  # type: ignore[no-untyped-def]
+                return self._inner.__exit__(*exc)
+
+            def __iter__(self):  # type: ignore[no-untyped-def]
+                return self
+
+            def __next__(self):  # type: ignore[no-untyped-def]
+                return WatchedEntry(next(self._inner))
+
+            def close(self):  # type: ignore[no-untyped-def]
+                self._inner.close()
+
+        with mock.patch.object(capture.os, "scandir", WatchedScandir):
+            observed, method = capture.measured_path_size(self.project)
+
+        self.assertEqual(method, _METHOD)
+        self.assertEqual(
+            following,
+            [],
+            f"traversal performed a following metadata lookup: {following}",
+        )
+        # 12 (inner.txt) + 8 (file.txt) + both links' own sizes, and nothing else.
+        expected = (
+            12
+            + 8
+            + (self.project / "link-to-dir").lstat().st_size
+            + (self.project / "link-to-file").lstat().st_size
+        )
+        self.assertEqual(observed, expected)
 
 
 class SymlinkBearingRunRetainsEvidenceTests(unittest.TestCase):
