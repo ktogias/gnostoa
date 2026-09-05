@@ -164,11 +164,18 @@ def measured_path_size(path: Path) -> tuple[int, str]:
         for name in [*dirnames, *filenames]:
             candidate = current_path / name
             item = candidate.lstat()
-            if candidate.is_symlink():
-                raise RunnerError(f"size-check-refuses-symlink:{candidate}")
-            if candidate.is_file():
+            if stat.S_ISLNK(item.st_mode):
+                # A link contributes only the bytes it occupies itself, taken from
+                # the lstat already in hand. Its target is never followed, opened,
+                # stat-followed or walked, so nothing outside the workspace is read
+                # or counted and a link cycle cannot recur. Refusing instead would
+                # discard a completed run's evidence over a subject file the
+                # subject's own frozen tree legitimately carries.
                 total += item.st_size
-    return total, "recursive-lstat-size-v1"
+                continue
+            if stat.S_ISREG(item.st_mode):
+                total += item.st_size
+    return total, "recursive-lstat-size-v2"
 
 
 def run_configuration_digest(
