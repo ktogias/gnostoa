@@ -203,7 +203,9 @@ class FreshAuthorityConsumptionRedTests(ConsumptionFixture):
 
 
 class ReviewBlockerRedTests(ConsumptionFixture):
-    def test_completed_identical_rerun_preserves_retained_success_without_new_effect(self) -> None:
+    def test_completed_identical_rerun_preserves_retained_success_without_new_effect(
+        self,
+    ) -> None:
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         self.assertIsNotNone(candidate)
@@ -264,7 +266,9 @@ class ReviewBlockerRedTests(ConsumptionFixture):
         )
         self.assertEqual(effects, [])
         claim = self.workspace / effect_claim.CLAIM_DIRECTORY / f"{candidate}.json"
-        self.assertFalse(claim.exists(), "a deterministic zero-effect refusal must not consume")
+        self.assertFalse(
+            claim.exists(), "a deterministic zero-effect refusal must not consume"
+        )
 
 
 class ConsumptionBoundaryGuards(ConsumptionFixture):
