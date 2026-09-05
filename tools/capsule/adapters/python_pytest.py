@@ -10,9 +10,23 @@ from tools.capsule.spec import TaskSpec
 CONFTEST = "conftest.py"
 ISOLATED_INI = "phase-d-pytest.ini"
 
+# Reserved qualification-only staging prefix. pytest derives a module name from the
+# test file's path, so the staged name must be a plain Python identifier: an interior
+# dot would be read as a dotted package path, and a leading digit, a keyword or the
+# name of a real module would each fail or shadow subject code. Deriving the name from
+# the oracle digest instead of sanitising the owner's basename makes it safe for every
+# such basename at once, keeps it deterministic, and keeps it out of the subject's own
+# namespace. The prefix is reserved: a collision fails closed rather than overwriting.
+_STAGED_ORACLE_PREFIX = "_gnostoa_staged_oracle_"
+
 
 class PythonPytestAdapter(Adapter):
     name = "python-pytest"
+
+    def staged_oracle_name(self, oracle_sha256: str, source_name: str) -> str:
+        # The whole digest, not a prefix: it costs nothing and leaves no room to
+        # argue about staged-name collisions.
+        return f"{_STAGED_ORACLE_PREFIX}{oracle_sha256}.py"
 
     def build(
         self,

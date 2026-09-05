@@ -39,6 +39,9 @@ class ProfileCommon:
     environment_allowlist: tuple[str, ...]
     # Names only. A secret value never enters a profile or a lock.
     credential_environment: tuple[str, ...] = ()
+    # Only the experimental execution domain ever carries one: the runner requires
+    # it for restricted egress, and qualification is never network-restricted.
+    relay_image: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +50,14 @@ class ProfileRoots:
     evidence: Path
     temporary: Path
     read_only: tuple[Path, ...] = ()
+
+
+def _runtime(common: ProfileCommon) -> dict[str, object]:
+    """The runner's runtime block. relay_image appears only when one is declared."""
+    runtime: dict[str, object] = {"image": common.image}
+    if common.relay_image is not None:
+        runtime["relay_image"] = common.relay_image
+    return runtime
 
 
 def build_profile(
@@ -70,7 +81,7 @@ def build_profile(
         "archive_limit_bytes": common.archive_limit_bytes,
         "timeout_seconds": common.timeout_seconds,
         "executor": dict(common.executor),
-        "runtime": {"image": common.image},
+        "runtime": _runtime(common),
         "trust_domain": domain,
     }
 

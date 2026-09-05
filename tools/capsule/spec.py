@@ -9,12 +9,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
 SPEC_SCHEMA = "gnostoa-experiment-spec/v1"
+
+# Mirrors the immutable image syntax tools/experiment/profile.py already enforces.
+# Declared here so a malformed relay identity is refused at spec load rather than
+# surfacing later as an opaque runner rejection.
+IMMUTABLE_IMAGE_RE = re.compile(r"^(?:sha256:[a-f0-9]{64}|.+@sha256:[a-f0-9]{64})$")
 ADAPTERS = frozenset({"python-pytest", "node-vitest", "generic-command"})
 REFERENCE_KINDS = frozenset(
     {
@@ -129,12 +135,17 @@ class Runtime:
     image: str
     available_plugins: tuple[str, ...] = ()
     preparation_tools: tuple[PreparationTool, ...] = ()
+    # The runner requires an immutable relay identity whenever experimental
+    # execution is network-restricted. It is declared, never discovered: no tag
+    # is resolved to a digest and no image is fetched.
+    relay_image: str | None = None
 
     def as_json(self) -> dict[str, object]:
         return {
             "image": self.image,
             "available_plugins": list(self.available_plugins),
             "preparation_tools": [tool.as_json() for tool in self.preparation_tools],
+            "relay_image": self.relay_image,
         }
 
 
@@ -478,12 +489,22 @@ def _parse_task(raw: Mapping[str, Any], index: int, base_dir: Path) -> TaskSpec:
         for tool in tools_raw
         if isinstance(tool, dict)
     )
+    relay_raw = runtime_raw.get("relay_image")
+    if relay_raw is not None:
+        if not isinstance(relay_raw, str) or not IMMUTABLE_IMAGE_RE.fullmatch(
+            relay_raw
+        ):
+            raise SpecError(
+                f"{where}.runtime.relay_image must be an immutable digest reference, "
+                "either sha256:<64 hex> or <name>@sha256:<64 hex>"
+            )
     runtime = Runtime(
         image=_require_str(runtime_raw, "image", f"{where}.runtime"),
         available_plugins=tuple(
             str(p) for p in runtime_raw.get("available_plugins", [])
         ),
         preparation_tools=tools,
+        relay_image=relay_raw,
     )
 
     oracle_raw = _require(raw, "oracle", where)

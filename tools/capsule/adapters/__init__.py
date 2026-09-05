@@ -75,6 +75,17 @@ class Adapter:
 
     name = "abstract"
 
+    def staged_oracle_name(self, oracle_sha256: str, source_name: str) -> str:
+        """The filename the oracle bytes are staged under for qualification.
+
+        Staging is qualification mechanics, not semantics: the authoritative oracle
+        identity stays the digest of the original owner-private bytes, which are
+        copied unchanged. By default an adapter keeps the original basename, because
+        most runners address the file by exact name. An adapter whose runner imposes
+        constraints on the filename overrides this.
+        """
+        return source_name
+
     def build(
         self,
         task: TaskSpec,
