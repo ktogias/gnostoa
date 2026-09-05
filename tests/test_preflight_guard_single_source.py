@@ -14,10 +14,8 @@ def _contains_call(node: ast.AST, name: str) -> bool:
     return any(
         isinstance(item, ast.Call)
         and (
-            isinstance(item.func, ast.Name)
-            and item.func.id == name
-            or isinstance(item.func, ast.Attribute)
-            and item.func.attr == name
+            (isinstance(item.func, ast.Name) and item.func.id == name)
+            or (isinstance(item.func, ast.Attribute) and item.func.attr == name)
         )
         for item in ast.walk(node)
     )
