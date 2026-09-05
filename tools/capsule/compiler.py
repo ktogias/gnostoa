@@ -23,10 +23,15 @@ from typing import Any
 from tools.capsule import adapters, certificates, profiles, runplan, stages
 from tools.capsule import lock as lock_module
 from tools.capsule.adapters import HarnessResult, Invocation
-from tools.capsule.authority import PreflightAuthority
+from tools.capsule.authority import (
+    BASE_REFERENCE_QUALIFICATION,
+    PreflightAuthority,
+    preflight_candidate_identity,
+)
 from tools.capsule.identity import PRODUCER, digest_of, digest_path, digest_text
 from tools.capsule.oracle_qualification import qualify, read_shape
 from tools.capsule.preparation import (
+    declared_generated_paths,
     SCM_COMPATIBLE_SCHEME,
     ConfigProjection,
     PreparationError,
@@ -156,6 +161,16 @@ def _materialize_verified(
         _materialize(repo, tree, destination)
     observed = _observed_tree(repo, destination)
     if observed != tree:
+        # A rerun sees the subject as preparation left it. Files the declared
+        # preparation scheme generates are not evidence of tampering: they are this
+        # compiler's own deterministic output, already covered by the preparation
+        # receipt. Ignore exactly those and re-verify, so preparation tasks stay
+        # idempotent across the observe-then-authorise sequence. Anything else still
+        # fails, so genuine drift is still caught.
+        generated = declared_generated_paths(destination)
+        if generated:
+            observed = _observed_tree(repo, destination, ignore=list(generated))
+    if observed != tree:
         blockers.append(
             {
                 "task": task_id,
@@ -282,6 +297,11 @@ class PrepareResult:
     reused_certificates: list[dict[str, object]] = field(default_factory=list)
     lock_path: Path | None = None
     lock_identity: str | None = None
+    # The exact prepared qualification request an owner authorises. Present once
+    # static qualification is genuinely complete, so the digest can be approved
+    # before any hidden-oracle effect; None while earlier blockers mean no
+    # well-defined candidate exists yet.
+    preflight_candidate_sha256: str | None = None
     run_plan: runplan.RunPlan | None = None
     _identities: dict[str, str] = field(default_factory=dict)
     _receipts: dict[str, str] = field(default_factory=dict)
@@ -1115,39 +1135,79 @@ def prepare(
     if blockers:
         return finish(stages.STATIC_QUALIFIED)
 
+    # The exact request about to be authorised, computed here rather than after an
+    # authority arrives, so an authority-less prepare can report the digest the
+    # owner is being asked to approve. Task order is qualification order.
+    candidate_sha256 = preflight_candidate_identity(
+        experiment_id=spec.id,
+        scope=BASE_REFERENCE_QUALIFICATION,
+        qualification_backend=qualification_backend,
+        tasks=tuple((task.id, tasks[task.id].capsule_identity) for task in spec.tasks),
+    )
+    result.preflight_candidate_sha256 = candidate_sha256
+
     if preflight_authority is None:
         blockers.append(
             {
                 "task": None,
                 "code": "base-reference-qualification-requires-preflight-authority",
                 "detail": (
-                    "static preparation is complete; executing the declared oracle against BASE "
-                    "and REFERENCE requires an explicit owner preflight authority naming this "
-                    "experiment"
+                    "static preparation is complete; executing the declared oracle against "
+                    "BASE and REFERENCE requires an explicit owner preflight authority "
+                    f"naming preflight candidate {candidate_sha256}"
                 ),
             }
         )
         return finish(stages.STATIC_QUALIFIED)
 
-    if not preflight_authority.covers(spec.id, "base-reference-qualification"):
-        blockers.append(
-            {
-                "task": None,
-                "code": "preflight-authority-out-of-scope",
-                "detail": (
-                    f"authority {preflight_authority.id!r} covers experiment "
-                    f"{preflight_authority.experiment_id!r} scopes "
-                    f"{list(preflight_authority.scope)}, not base-reference-qualification for "
-                    f"{spec.id!r}"
-                ),
-            }
-        )
+    if not preflight_authority.covers(
+        spec.id, BASE_REFERENCE_QUALIFICATION, candidate_sha256=candidate_sha256
+    ):
+        # Distinguish the two refusals: a wrong experiment or scope is a different
+        # mistake from an authority issued against a candidate that has since changed.
+        if (
+            preflight_authority.experiment_id != spec.id
+            or BASE_REFERENCE_QUALIFICATION not in preflight_authority.scope
+        ):
+            blockers.append(
+                {
+                    "task": None,
+                    "code": "preflight-authority-out-of-scope",
+                    "detail": (
+                        f"authority {preflight_authority.id!r} covers experiment "
+                        f"{preflight_authority.experiment_id!r} scopes "
+                        f"{list(preflight_authority.scope)}, not "
+                        f"{BASE_REFERENCE_QUALIFICATION} for {spec.id!r}"
+                    ),
+                }
+            )
+        else:
+            blockers.append(
+                {
+                    "task": None,
+                    "code": "preflight-authority-candidate-mismatch",
+                    "detail": (
+                        f"authority {preflight_authority.id!r} approves preflight candidate "
+                        f"{preflight_authority.preflight_candidate_sha256}, but this prepared "
+                        f"request is {candidate_sha256}; the qualification inputs or backend "
+                        "changed since the authority was issued, so it is refused before any "
+                        "oracle runs"
+                    ),
+                }
+            )
         return finish(stages.STATIC_QUALIFIED)
 
     ledger.enter(
         stages.BASE_REFERENCE_QUALIFIED,
         {
             "authority": preflight_authority.as_json(),
+            # Recorded from what this run computed, not copied from the authority, so
+            # the evidence shows the executed request independently of the approval
+            # it was matched against. Equality above is what makes them agree.
+            "preflight_candidate_sha256": candidate_sha256,
+            "authorised_candidate_sha256": (
+                preflight_authority.preflight_candidate_sha256
+            ),
             "backend": qualification_backend,
             "capsules": {
                 task_id: task.capsule_identity for task_id, task in tasks.items()
@@ -1412,6 +1472,7 @@ def _write_state(root: Path, result: PrepareResult) -> None:
         "reused_certificates": result.reused_certificates,
         "stage_receipts": result.stage_receipts(),
         "lock_sha256": result.lock_identity,
+        "preflight_candidate_sha256": result.preflight_candidate_sha256,
         "tasks": {task_id: task.as_json() for task_id, task in result.tasks.items()},
     }
     (root / STATE_FILENAME).write_text(

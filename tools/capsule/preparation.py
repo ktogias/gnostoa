@@ -343,6 +343,27 @@ def project_test_config(
     )
 
 
+def declared_generated_paths(tree: Path) -> tuple[str, ...]:
+    """Paths the tree's own build configuration declares as generated.
+
+    Unlike discover_preparation this does not care whether the file is present. A
+    rerun sees the subject as preparation left it, and a path is no less
+    generated for having been generated already.
+    """
+    data, _ = _load_pyproject(tree)
+    if not data:
+        return ()
+    tool = data.get("tool")
+    scm = tool.get("setuptools_scm") if isinstance(tool, dict) else None
+    if not isinstance(scm, dict):
+        return ()
+    return tuple(
+        value
+        for key in ("write_to", "version_file")
+        if isinstance(value := scm.get(key), str) and value
+    )
+
+
 def discover_preparation(tree: Path) -> PreparationRequirement:
     """Detect build-generated files the frozen tree omits (the D3 class)."""
     data, origin = _load_pyproject(tree)

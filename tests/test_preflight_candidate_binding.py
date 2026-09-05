@@ -10,11 +10,9 @@ from __future__ import annotations
 
 import shutil
 import unittest
-from pathlib import Path
 
 from tools.capsule import authority as authority_module
-from tools.capsule import compiler
-from tools.capsule import stages
+from tools.capsule import compiler, stages
 from tools.capsule.spec import load_spec
 
 try:

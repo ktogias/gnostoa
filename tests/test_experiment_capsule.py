@@ -141,11 +141,34 @@ class CapsuleFixture(unittest.TestCase):
             max_runs=max_runs,
         )
 
-    def authority(self, experiment_id: str = "E1") -> PreflightAuthority:
+    def authority(
+        self, experiment_id: str = "E1", candidate: str | None = None
+    ) -> PreflightAuthority:
         return PreflightAuthority(
             id="auth-1",
             experiment_id=experiment_id,
             scope=("base-reference-qualification",),
+            preflight_candidate_sha256=candidate or "",
+        )
+
+    def prepare_authorized(self, spec, workspace, *, experiment_id="E1", **kwargs):
+        """Observe the prepared candidate, authorise that exact one, then run it.
+
+        This is the operational sequence itself, not a shortcut around it: an
+        authority-less prepare reports the candidate digest, the owner approves that
+        digest, and the unchanged candidate is re-prepared under it. prepare is
+        idempotent, so the second call reuses the retained stages.
+        """
+        observed = compiler.prepare(spec, workspace, offline=True, **kwargs)
+        return compiler.prepare(
+            spec,
+            workspace,
+            offline=True,
+            preflight_authority=self.authority(
+                experiment_id=experiment_id,
+                candidate=observed.preflight_candidate_sha256,
+            ),
+            **kwargs,
         )
 
 
@@ -635,11 +658,9 @@ class EndToEndReadinessTests(CapsuleFixture):
 
     def test_full_pipeline_reaches_readiness_with_an_immutable_lock(self) -> None:
         spec, _ = self._pipeline_spec()
-        result = compiler.prepare(
+        result = self.prepare_authorized(
             load_spec(self.write_spec(spec)),
             self.workspace,
-            offline=True,
-            preflight_authority=self.authority(),
         )
         self.assertEqual(result.status, stages.READY_FOR_OWNER_REVIEW, result.blockers)
         for stage in stages.REQUIRED_FOR_READINESS:
@@ -655,7 +676,10 @@ class EndToEndReadinessTests(CapsuleFixture):
     def test_authority_out_of_scope_cannot_grant_readiness(self) -> None:
         spec, _ = self._pipeline_spec()
         wrong = PreflightAuthority(
-            id="a", experiment_id="OTHER", scope=("base-reference-qualification",)
+            id="a",
+            experiment_id="OTHER",
+            scope=("base-reference-qualification",),
+            preflight_candidate_sha256="0" * 64,
         )
         result = compiler.prepare(
             load_spec(self.write_spec(spec)),
@@ -685,11 +709,9 @@ class EndToEndReadinessTests(CapsuleFixture):
         spec = self.base_spec(repo, base, ref)
         spec["tasks"][0]["reference"]["commit"] = ref
         spec["tasks"][0]["reference"]["tree"] = git(repo, "rev-parse", ref + "^{tree}")
-        result = compiler.prepare(
+        result = self.prepare_authorized(
             load_spec(self.write_spec(spec)),
             self.workspace,
-            offline=True,
-            preflight_authority=self.authority(),
         )
         self.assertEqual(result.status, "BLOCKED")
         self.assertIn(
@@ -987,11 +1009,9 @@ class PriorQualificationReuseTests(CapsuleFixture):
         spec = self.base_spec(repo, base, ref)
         spec["tasks"][0]["reference"]["commit"] = ref
         spec["tasks"][0]["reference"]["tree"] = git(repo, "rev-parse", ref + "^{tree}")
-        result = compiler.prepare(
+        result = self.prepare_authorized(
             load_spec(self.write_spec(spec)),
             self.workspace / "first",
-            offline=True,
-            preflight_authority=self.authority(),
         )
         return spec, result
 
@@ -1008,11 +1028,9 @@ class PriorQualificationReuseTests(CapsuleFixture):
             "qualify_subjects",
             side_effect=AssertionError("oracle was executed"),
         ):
-            second = compiler.prepare(
+            second = self.prepare_authorized(
                 load_spec(self.write_spec(spec)),
                 self.workspace / "second",
-                offline=True,
-                preflight_authority=self.authority(),
             )
         self.assertEqual(second.status, stages.READY_FOR_OWNER_REVIEW, second.blockers)
         self.assertTrue(second.task("T1").qualification_reused)
@@ -1025,11 +1043,9 @@ class PriorQualificationReuseTests(CapsuleFixture):
         receipt_path.write_text(json.dumps(stale, indent=2))
 
         spec["tasks"][0]["prior_qualification"] = {"receipt": str(receipt_path)}
-        result = compiler.prepare(
+        result = self.prepare_authorized(
             load_spec(self.write_spec(spec)),
             self.workspace / "third",
-            offline=True,
-            preflight_authority=self.authority(),
         )
         self.assertEqual(result.status, "BLOCKED")
         self.assertIn(
@@ -1046,11 +1062,9 @@ class PriorQualificationReuseTests(CapsuleFixture):
         receipt_path.write_text(json.dumps(stale, indent=2))
 
         spec["tasks"][0]["prior_qualification"] = {"receipt": str(receipt_path)}
-        result = compiler.prepare(
+        result = self.prepare_authorized(
             load_spec(self.write_spec(spec)),
             self.workspace / "prep",
-            offline=True,
-            preflight_authority=self.authority(),
         )
         self.assertEqual(result.status, "BLOCKED")
         blocker = next(
@@ -1068,11 +1082,9 @@ class PriorQualificationReuseTests(CapsuleFixture):
         receipt_path.write_text(json.dumps(naked, indent=2))
 
         spec["tasks"][0]["prior_qualification"] = {"receipt": str(receipt_path)}
-        result = compiler.prepare(
+        result = self.prepare_authorized(
             load_spec(self.write_spec(spec)),
             self.workspace / "fourth",
-            offline=True,
-            preflight_authority=self.authority(),
         )
         self.assertIn(
             "prior-qualification-receipt-invalid", [b["code"] for b in result.blockers]
@@ -1102,11 +1114,9 @@ class LockExecutionTests(CapsuleFixture):
             spec["tasks"][0]["execution"] = {"command": execution_command}
         elif execution_command is None:
             spec["tasks"][0].pop("execution", None)
-        return compiler.prepare(
+        return self.prepare_authorized(
             load_spec(self.write_spec(spec)),
             self.workspace,
-            offline=True,
-            preflight_authority=self.authority(),
         )
 
     def test_capsule_materialises_from_the_lock_alone(self) -> None:
@@ -1227,11 +1237,9 @@ class OciQualificationTests(CapsuleFixture):
         spec = self.base_spec(repo, base, ref, runtime={"image": image})
         spec["tasks"][0]["reference"]["commit"] = ref
         spec["tasks"][0]["reference"]["tree"] = git(repo, "rev-parse", ref + "^{tree}")
-        result = compiler.prepare(
+        result = self.prepare_authorized(
             load_spec(self.write_spec(spec)),
             self.workspace,
-            offline=True,
-            preflight_authority=self.authority(),
             qualification_backend="oci",
         )
         receipt = result.task("T1").qualification
@@ -1259,11 +1267,9 @@ class LaunchAuthorityTests(CapsuleFixture):
         spec = self.base_spec(repo, base, ref)
         spec["tasks"][0]["reference"]["commit"] = ref
         spec["tasks"][0]["reference"]["tree"] = git(repo, "rev-parse", ref + "^{tree}")
-        return compiler.prepare(
+        return self.prepare_authorized(
             load_spec(self.write_spec(spec)),
             self.workspace,
-            offline=True,
-            preflight_authority=self.authority(),
         )
 
     def test_execution_without_an_authority_is_refused(self) -> None:
@@ -1357,11 +1363,9 @@ class RunPlanTests(CapsuleFixture):
                 {"task": "T1", "repetition": 2, "arm": "treatment"},
             ],
         }
-        return compiler.prepare(
+        return self.prepare_authorized(
             load_spec(self.write_spec(spec)),
             self.workspace,
-            offline=True,
-            preflight_authority=self.authority(),
         )
 
     def test_plan_follows_the_declared_schedule_order_verbatim(self) -> None:
@@ -1400,11 +1404,9 @@ class RunPlanTests(CapsuleFixture):
             }
         }
         spec["experiment"]["assignment"] = {"repetitions": 2, "arms": ["control"]}
-        result = compiler.prepare(
+        result = self.prepare_authorized(
             load_spec(self.write_spec(spec)),
             self.workspace,
-            offline=True,
-            preflight_authority=self.authority(),
         )
         self.assertEqual(result.status, "BLOCKED")
         self.assertIn(
@@ -1473,11 +1475,9 @@ class RunPlanTests(CapsuleFixture):
             "arms": ["control"],
             "schedule": [{"task": "T1", "repetition": 1, "arm": "control"}],
         }
-        result = compiler.prepare(
+        result = self.prepare_authorized(
             load_spec(self.write_spec(spec)),
             self.workspace,
-            offline=True,
-            preflight_authority=self.authority(),
         )
         self.assertEqual(result.status, stages.READY_FOR_OWNER_REVIEW, result.blockers)
 
@@ -1555,11 +1555,9 @@ class PreparedExecutionCapsuleTests(CapsuleFixture):
         )
         spec["tasks"][0]["reference"]["commit"] = ref
         spec["tasks"][0]["reference"]["tree"] = git(repo, "rev-parse", ref + "^{tree}")
-        result = compiler.prepare(
+        result = self.prepare_authorized(
             load_spec(self.write_spec(spec)),
             self.workspace,
-            offline=True,
-            preflight_authority=self.authority(),
         )
         self.assertEqual(result.status, stages.READY_FOR_OWNER_REVIEW, result.blockers)
         execution_artifacts = [
@@ -1634,11 +1632,9 @@ class ScheduleCompletenessTests(CapsuleFixture):
         return spec
 
     def _prepare(self, schedule: list[dict], name: str) -> compiler.PrepareResult:
-        return compiler.prepare(
+        return self.prepare_authorized(
             load_spec(self.write_spec(self._spec_with_schedule(schedule))),
             self.workspace / name,
-            offline=True,
-            preflight_authority=self.authority(),
         )
 
     @staticmethod
