@@ -18,14 +18,15 @@ ISOLATED_INI = "phase-d-pytest.ini"
 # such basename at once, keeps it deterministic, and keeps it out of the subject's own
 # namespace. The prefix is reserved: a collision fails closed rather than overwriting.
 _STAGED_ORACLE_PREFIX = "_gnostoa_staged_oracle_"
-_STAGED_DIGEST_CHARS = 32
 
 
 class PythonPytestAdapter(Adapter):
     name = "python-pytest"
 
     def staged_oracle_name(self, oracle_sha256: str, source_name: str) -> str:
-        return f"{_STAGED_ORACLE_PREFIX}{oracle_sha256[:_STAGED_DIGEST_CHARS]}.py"
+        # The whole digest, not a prefix: it costs nothing and leaves no room to
+        # argue about staged-name collisions.
+        return f"{_STAGED_ORACLE_PREFIX}{oracle_sha256}.py"
 
     def build(
         self,

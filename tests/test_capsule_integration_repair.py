@@ -13,7 +13,13 @@ import subprocess
 import unittest
 from pathlib import Path
 
-from tests.test_experiment_capsule import CapsuleFixture, git
+try:
+    # unittest discovery puts tests/ itself on sys.path, and the repository's own
+    # self-check runs that way against an installed artifact where `tests` is not
+    # an importable package.
+    from test_experiment_capsule import CapsuleFixture, git
+except ImportError:  # invoked as tests.<module> from the repository root
+    from tests.test_experiment_capsule import CapsuleFixture, git
 from tools.capsule import compiler
 from tools.capsule.adapters import get as get_adapter
 from tools.capsule.spec import SpecError, load_spec
@@ -196,6 +202,74 @@ class OracleStagingCompilerTests(CapsuleFixture):
         self.assertIn("oracle-staging-destination-occupied", codes)
 
 
+class OracleStagingOccupancyTests(CapsuleFixture):
+    """The reserved staging path is never followed, replaced or copied through."""
+
+    def _spec_with_occupant(self, make_occupant) -> dict:
+        repo = self.make_repo(
+            "s", {"src/pkg/__init__.py": 'def render():\n    return "Basic "\n'}
+        )
+        base = git(repo, "rev-parse", "HEAD")
+        ref = self.commit(
+            repo, {"src/pkg/__init__.py": 'def render():\n    return "Basic"\n'}, "fix"
+        )
+        oracle = self.root / "synthetic.case.oracle.py"
+        oracle.write_text(
+            "import pkg\n\n\ndef test_discriminates():\n"
+            "    assert pkg.render() == 'Basic'\n"
+        )
+        staged = get_adapter("python-pytest").staged_oracle_name(
+            compiler.digest_path(oracle), oracle.name
+        )
+        make_occupant(repo, staged)
+        git(repo, "add", "-A")
+        git(repo, "commit", "-q", "-m", "occupy")
+        spec = self.base_spec(repo, base, ref, oracle={"path": str(oracle)})
+        spec["tasks"][0]["source"]["base_commit"] = git(repo, "rev-parse", "HEAD")
+        spec["tasks"][0]["source"]["base_tree"] = git(repo, "rev-parse", "HEAD^{tree}")
+        spec["tasks"][0]["reference"]["commit"] = ref
+        spec["tasks"][0]["reference"]["tree"] = git(repo, "rev-parse", ref + "^{tree}")
+        return spec
+
+    def test_symlink_occupant_is_refused_without_being_followed(self) -> None:
+        """A relative in-subject link. An absolute one is already refused earlier,
+        by the materialiser's own archive guard, so this exercises staging itself."""
+
+        def occupy(repo: Path, staged: str) -> None:
+            (repo / staged).symlink_to(Path("src") / "pkg" / "__init__.py")
+
+        spec = self._spec_with_occupant(occupy)
+        result = compiler.prepare(
+            load_spec(self.write_spec(spec)), self.workspace, offline=True
+        )
+        codes = {b["code"] for b in result.blockers}
+        self.assertIn("oracle-staging-destination-occupied", codes)
+        # The link target keeps the subject's own bytes: never written through.
+        materialised = (
+            Path(result.task("T1").qualification_paths.get("base", self.workspace))
+            if result.task("T1").qualification_paths
+            else None
+        )
+        if materialised is not None:
+            target = materialised / "src" / "pkg" / "__init__.py"
+            if target.is_file():
+                self.assertIn("def render()", target.read_text())
+                self.assertNotIn("test_discriminates", target.read_text())
+
+    def test_directory_occupant_is_a_structured_blocker_not_an_exception(self) -> None:
+        def occupy(repo: Path, staged: str) -> None:
+            (repo / staged).mkdir()
+            (repo / staged / "keep.txt").write_text("subject content\n")
+
+        result = compiler.prepare(
+            load_spec(self.write_spec(self._spec_with_occupant(occupy))),
+            self.workspace,
+            offline=True,
+        )
+        codes = {b["code"] for b in result.blockers}
+        self.assertIn("oracle-staging-destination-occupied", codes)
+
+
 @unittest.skipUnless(_PYTEST_IMAGE, "no locally present image carries pytest")
 class OracleStagingOciTests(CapsuleFixture):
     """Defect 1, the reproduced failure: interior-dot oracle must collect via #164."""
@@ -333,6 +407,23 @@ class RelayImageBindingTests(CapsuleFixture):
             identities[1],
             "changing the relay image must change the frozen capsule identity",
         )
+
+    def test_declared_relay_cannot_reach_a_network_none_execution_profile(self) -> None:
+        """Cross-field: no egress means no relay, whatever the task declares."""
+        repo, base, ref = self._subject()
+        spec = self.base_spec(
+            repo, base, ref, runtime={"image": IMAGE_A, "relay_image": RELAY_DIGEST}
+        )
+        spec["tasks"][0]["reference"]["commit"] = ref
+        spec["tasks"][0]["reference"]["tree"] = git(repo, "rev-parse", ref + "^{tree}")
+        # experiment network stays the default: {"mode": "none", "allow": []}
+        result = compiler.prepare(
+            load_spec(self.write_spec(spec)), self.workspace, offline=True
+        )
+        codes = {b["code"] for b in result.blockers}
+        self.assertIn("relay-image-requires-restricted-execution", codes)
+        profile = result.task("T1").execution_profile
+        self.assertNotIn("relay_image", profile["runtime"])
 
     def test_relay_reaches_the_lock_task_payload(self) -> None:
         """parse -> dataclass -> as_json -> profile -> lock preserves it exactly."""

@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -389,11 +390,35 @@ def _build_profiles(
         },
         environment_allowlist=tuple(task.execution.environment_allowlist),
         credential_environment=tuple(task.execution.credential_environment),
-        relay_image=task.runtime.relay_image,
+        # Only a restricted envelope may carry one. A relay reaches the execution
+        # profile because the runner needs it for egress; with no egress there is
+        # nothing for it to serve, and passing it anyway would put an unused image
+        # identity into the frozen lock.
+        relay_image=(
+            task.runtime.relay_image
+            if spec.resources.network_mode == "restricted"
+            else None
+        ),
     )
     # The runner refuses a restricted profile without an immutable relay identity.
     # Say so in the spec's own terms rather than letting it surface later as an
     # opaque profile rejection. Nothing is discovered or defaulted to satisfy it.
+    if (
+        spec.resources.network_mode != "restricted"
+        and task.runtime.relay_image is not None
+    ):
+        blockers.append(
+            {
+                "task": task.id,
+                "code": "relay-image-requires-restricted-execution",
+                "detail": (
+                    "runtime.relay_image is declared while experimental execution network "
+                    f"mode is {spec.resources.network_mode!r}; a relay serves restricted "
+                    "egress only, so declaring one here would bind an image identity the "
+                    "experiment never uses"
+                ),
+            }
+        )
     if spec.resources.network_mode == "restricted" and task.runtime.relay_image is None:
         blockers.append(
             {
@@ -648,10 +673,29 @@ def _prepare_task(
         if not any(project.iterdir()):
             shutil.copytree(source, project, dirs_exist_ok=True, symlinks=True)
         destination = project / staged_oracle_name
-        # The staging destination is reserved. If the subject already occupies it
-        # with different bytes, refuse rather than overwrite subject content or
-        # quietly pick another name, which would change what was qualified.
-        if destination.exists() and destination.read_bytes() != oracle_bytes:
+        # The staging destination is reserved. If the subject already occupies it,
+        # refuse rather than overwrite subject content or quietly pick another name,
+        # which would change what was qualified. lstat, so a symlink is judged as a
+        # symlink: anything that is not a plain regular file is refused without ever
+        # being followed, read or copied through.
+        try:
+            occupant = destination.lstat()
+        except OSError:
+            occupant = None
+        if occupant is not None and not stat.S_ISREG(occupant.st_mode):
+            blockers.append(
+                {
+                    "task": task.id,
+                    "code": "oracle-staging-destination-occupied",
+                    "detail": (
+                        f"the reserved qualification staging path {staged_oracle_name!r} "
+                        "exists in the subject and is not a regular file; refusing to "
+                        "follow or replace it"
+                    ),
+                }
+            )
+            continue
+        if occupant is not None and destination.read_bytes() != oracle_bytes:
             blockers.append(
                 {
                     "task": task.id,
