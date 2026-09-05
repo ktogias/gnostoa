@@ -302,7 +302,8 @@ class ReviewBlockerRedTests(ConsumptionFixture):
         self.assertEqual(effects, [])
         claim = self.workspace / effect_claim.CLAIM_DIRECTORY / f"{candidate}.json"
         self.assertFalse(
-            claim.exists(), "any zero-effect refusal before the first effect must not consume"
+            claim.exists(),
+            "any zero-effect refusal before the first effect must not consume",
         )
 
 
