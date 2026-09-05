@@ -1,4 +1,4 @@
-"""Focused RED for Work Item #197: fresh preflight authority is replayable.
+"""Focused authority-consumption tests for Work Item #197.
 
 Every fixture is synthetic. No Phase-D subject, oracle, key or retained evidence byte
 is used. The tests patch the qualification effect path so no real hidden oracle or
@@ -13,7 +13,7 @@ from pathlib import Path
 from unittest import mock
 
 from tools.capsule import authority as authority_module
-from tools.capsule import compiler, qualification, stages
+from tools.capsule import compiler, effect_claim, qualification, stages
 from tools.capsule.identity import digest_of
 from tools.capsule.spec import load_spec
 
@@ -64,12 +64,19 @@ class ConsumptionFixture(CapsuleFixture):
             payload["tasks"][0]["prior_qualification"] = {"receipt": str(receipt)}
         return load_spec(self.write_spec(payload))
 
-    def prepare(self, *, authority=None, receipt: Path | None = None):
+    def prepare(
+        self,
+        *,
+        authority=None,
+        receipt: Path | None = None,
+        qualification_backend: str = qualification.LOCAL_PYTHON,
+    ):
         return compiler.prepare(
             self._spec(receipt),
             self.workspace,
             offline=True,
             preflight_authority=authority,
+            qualification_backend=qualification_backend,
         )
 
     @staticmethod
@@ -136,8 +143,6 @@ class FreshAuthorityConsumptionRedTests(ConsumptionFixture):
         def reached(*args, **kwargs):  # type: ignore[no-untyped-def]
             del args, kwargs
             effects.append("qualify_subjects")
-            # Stop after proving the effect path was reached. This is synthetic and
-            # deliberately avoids running an oracle or runner.
             return [
                 {
                     "task": "T1",
@@ -195,6 +200,71 @@ class FreshAuthorityConsumptionRedTests(ConsumptionFixture):
             "a crash/exception after the first effect must leave durable consumption state",
         )
         self.assertIn(CONSUMED_CODE, [b["code"] for b in replay.blockers])
+
+
+class ReviewBlockerRedTests(ConsumptionFixture):
+    def test_completed_identical_rerun_preserves_retained_success_without_new_effect(self) -> None:
+        observed = self.prepare()
+        candidate = observed.preflight_candidate_sha256
+        self.assertIsNotNone(candidate)
+        assert candidate is not None
+        granted = self.authority(candidate)
+        retained = qualification.load_receipt(self.prior_receipt(observed))
+        effects: list[str] = []
+
+        def qualify_once(*args, **kwargs):  # type: ignore[no-untyped-def]
+            del args, kwargs
+            effects.append("qualify_subjects")
+            return retained
+
+        with mock.patch.object(compiler, "qualify_subjects", side_effect=qualify_once):
+            first = self.prepare(authority=granted)
+            first_state = compiler.status(self.workspace)
+            second = self.prepare(authority=granted)
+            second_state = compiler.status(self.workspace)
+
+        self.assertEqual(first.status, stages.READY_FOR_OWNER_REVIEW)
+        self.assertEqual(first.stage, stages.READY_FOR_OWNER_REVIEW)
+        self.assertIsNotNone(first.lock_identity)
+        self.assertEqual(second.status, stages.READY_FOR_OWNER_REVIEW)
+        self.assertEqual(second.stage, stages.READY_FOR_OWNER_REVIEW)
+        self.assertEqual(second.lock_identity, first.lock_identity)
+        self.assertEqual(second_state["lock_sha256"], first_state["lock_sha256"])
+        self.assertIsNotNone(second_state["tasks"]["T1"]["qualification"])
+        self.assertEqual(
+            effects,
+            ["qualify_subjects"],
+            "an unchanged completed rerun must reuse retained qualification",
+        )
+
+    def test_deterministic_unsupported_fresh_adapter_does_not_burn_claim(self) -> None:
+        self.payload["tasks"][0]["adapter"] = "generic-command"
+        self.payload["tasks"][0]["harness"] = {"extra_argv": ["true"]}
+        observed = self.prepare(qualification_backend=qualification.OCI)
+        candidate = observed.preflight_candidate_sha256
+        self.assertIsNotNone(candidate)
+        assert candidate is not None
+
+        effects: list[str] = []
+
+        def forbidden(*args, **kwargs):  # type: ignore[no-untyped-def]
+            del args, kwargs
+            effects.append("unexpected")
+            raise AssertionError("deterministic unsupported adapter reached effect")
+
+        with mock.patch.object(compiler, "qualify_subjects", side_effect=forbidden):
+            result = self.prepare(
+                authority=self.authority(candidate),
+                qualification_backend=qualification.OCI,
+            )
+
+        self.assertIn(
+            "oci-qualification-unsupported-for-adapter",
+            [blocker["code"] for blocker in result.blockers],
+        )
+        self.assertEqual(effects, [])
+        claim = self.workspace / effect_claim.CLAIM_DIRECTORY / f"{candidate}.json"
+        self.assertFalse(claim.exists(), "a deterministic zero-effect refusal must not consume")
 
 
 class ConsumptionBoundaryGuards(ConsumptionFixture):
