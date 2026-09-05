@@ -20,7 +20,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from tools.capsule import adapters, certificates, profiles, runplan, stages
+from tools.capsule import adapters, certificates, effect_claim, profiles, runplan, stages
 from tools.capsule import lock as lock_module
 from tools.capsule.adapters import HarnessResult, Invocation
 from tools.capsule.authority import (
@@ -1365,6 +1365,20 @@ def prepare(
                 }
             )
         return finish(stages.STATIC_QUALIFIED)
+
+    if any(entry["qualification_mode"] == "fresh" for entry in candidate_tasks):
+        try:
+            effect_claim.claim_fresh_candidate(
+                root,
+                experiment_id=spec.id,
+                scope=BASE_REFERENCE_QUALIFICATION,
+                candidate_sha256=candidate_sha256,
+                authority=preflight_authority,
+                candidate_tasks=tuple(candidate_tasks),
+            )
+        except effect_claim.EffectClaimError as exc:
+            blockers.append({"task": None, "code": exc.code, "detail": exc.detail})
+            return finish(stages.STATIC_QUALIFIED)
 
     ledger.enter(
         stages.BASE_REFERENCE_QUALIFIED,
