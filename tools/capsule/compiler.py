@@ -16,7 +16,7 @@ import subprocess
 import tarfile
 import tempfile
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -137,11 +137,16 @@ def _observed_tree(repo: Path, worktree: Path, ignore: Sequence[str] = ()) -> st
                     str(repo),
                     "rm",
                     "--cached",
+                    # Index-only, and forced: without -f git refuses to drop a path
+                    # whose staged content differs from HEAD, which silently left the
+                    # generated artifact in the reconstructed tree whenever the same
+                    # path happened to be tracked at HEAD.
+                    "-f",
                     "-q",
                     "--ignore-unmatch",
                     *ignore,
                 ],
-                check=False,
+                check=True,
                 capture_output=True,
                 env=env,
             )
@@ -908,19 +913,41 @@ def _apply_task_preparation(
         return
 
     receipts: list[PreparationReceipt] = []
+    # Each subject answers for its own frozen tree. A target the BASE tree omits may
+    # be tracked source in the REFERENCE tree, and there it is ordinary content: it
+    # must not be generated over, nor excluded from that subject's verification.
+    subjects = (
+        ("base", base_dir, task.source.base_commit, repo, task.source.base_tree),
+        (
+            "reference",
+            reference_dir,
+            task.reference.commit or task.reference.tree,
+            reference_repo,
+            task.reference.tree,
+        ),
+    )
+    per_subject_generated: dict[str, tuple[str, ...]] = {}
     try:
-        for subject_dir, commit in (
-            (base_dir, task.source.base_commit),
-            (reference_dir, task.reference.commit or task.reference.tree),
-        ):
-            source_repo = repo if subject_dir is base_dir else reference_repo
+        for kind, subject_dir, commit, source_repo, subject_tree in subjects:
+            frozen = _frozen_tree_paths(source_repo, subject_tree)
+            generated_here = tuple(
+                path
+                for path in result.preparation.generated_paths
+                if path not in frozen
+            )
+            per_subject_generated[kind] = generated_here
+            if not generated_here:
+                # This subject already carries every declared target as tracked
+                # source, so there is nothing to prepare and nothing to exclude.
+                continue
+            requirement = replace(result.preparation, generated_paths=generated_here)
             # A previous prepare may already have written this artifact. Verify and
             # reuse it rather than skipping, so the replay reproduces the same
             # receipt and identity instead of losing them.
             receipts.append(
                 apply_preparation(
                     subject_dir,
-                    result.preparation,
+                    requirement,
                     repository=source_repo,
                     commit=commit,
                     scheme=task.preparation_scheme,
@@ -933,24 +960,31 @@ def _apply_task_preparation(
         )
         return
 
-    # The tracked tree must still reconstruct to its declared identity once the
-    # generated artifact is ignored: preparation adds, it never edits the subject.
-    observed = _observed_tree(repo, base_dir, ignore=result.preparation.generated_paths)
-    if observed != task.source.base_tree:
-        blockers.append(
-            {
-                "task": task.id,
-                "code": "preparation-modified-tracked-source",
-                "detail": f"tracked tree became {observed}, expected {task.source.base_tree}",
-            }
+    # Both tracked trees must still reconstruct to their declared identities once
+    # that subject's own generated artifacts are ignored: preparation adds, it never
+    # edits the subject. Verified per subject, because a reference-side edit is no
+    # less a modification than a base-side one.
+    for kind, subject_dir, _commit, source_repo, subject_tree in subjects:
+        observed = _observed_tree(
+            source_repo, subject_dir, ignore=list(per_subject_generated[kind])
         )
-        return
+        if observed != subject_tree:
+            blockers.append(
+                {
+                    "task": task.id,
+                    "code": "preparation-modified-tracked-source",
+                    "detail": (
+                        f"{kind} tracked tree became {observed}, expected {subject_tree}"
+                    ),
+                }
+            )
+            return
 
     if receipts:
         result.preparation_receipt = receipts[0]
         # The executor materialises a pristine BASE, so any generated subject file the
         # subject needs to import must travel with the lock as an execution artifact.
-        for relative in result.preparation.generated_paths:
+        for relative in per_subject_generated["base"]:
             generated_file = base_dir / relative
             if generated_file.is_file():
                 result.pending_execution_artifacts.append(
@@ -965,6 +999,23 @@ def _apply_task_preparation(
             "receipts": [receipt.as_json() for receipt in receipts],
         }
     )
+
+
+def _qualification_bound(task: TaskSpec, current: TaskResult) -> dict[str, str]:
+    """The identities a qualification receipt must bind to stand in for this task."""
+    harness = current.harness
+    return {
+        "base_tree": current.base_tree,
+        "reference_tree": current.reference_tree,
+        "oracle_sha256": current.oracle_sha256,
+        "runtime_image": current.runtime_image,
+        "harness_identity": harness.identity if harness else "",
+        "expectations_digest": digest_of(task.expectations.as_json()),
+        # The combined prepared identity, not the BASE receipt alone: it digests the
+        # receipts for both subjects, so a reference-side preparation change cannot
+        # leave a stale qualification looking current. Unprepared tasks keep "none".
+        "preparation_identity": (current.prepared_runtime_identity or "none"),
+    }
 
 
 def _harness_json(task: TaskResult) -> dict[str, object] | None:
@@ -1152,6 +1203,70 @@ def prepare(
     if blockers:
         return finish(stages.STATIC_QUALIFIED)
 
+    # What will actually happen per task, decided before the candidate is emitted.
+    # Reading and validating a declared prior receipt is read-only, and it must be
+    # settled here: approving subjects and a backend is not approval of an effect if
+    # the same digest could stand for either running the hidden oracle or reusing a
+    # receipt instead.
+    resolved_priors: dict[str, QualificationReceipt] = {}
+    candidate_tasks: list[dict[str, str]] = []
+    for task in spec.tasks:
+        current = tasks[task.id]
+        entry = {"id": task.id, "capsule_identity": current.capsule_identity}
+        if task.prior_qualification_receipt is None:
+            entry["qualification_mode"] = "fresh"
+            candidate_tasks.append(entry)
+            continue
+        try:
+            prior = load_receipt(task.prior_qualification_receipt)
+        except (ReceiptError, OSError, json.JSONDecodeError) as exc:
+            blockers.append(
+                {
+                    "task": task.id,
+                    "code": "prior-qualification-receipt-invalid",
+                    "detail": str(exc),
+                }
+            )
+            continue
+        # A receipt earned through one backend is not evidence about another: the
+        # hidden-oracle effect path differs, so it cannot stand in for this request.
+        if prior.backend != qualification_backend:
+            blockers.append(
+                {
+                    "task": task.id,
+                    "code": "prior-qualification-backend-mismatch",
+                    "detail": (
+                        f"the prior receipt was produced by backend {prior.backend!r}, but "
+                        f"this request qualifies through {qualification_backend!r}; a receipt "
+                        "from another backend cannot stand in for it"
+                    ),
+                }
+            )
+            continue
+        covers, mismatched = prior.covers(_qualification_bound(task, current))
+        if not covers:
+            blockers.append(
+                {
+                    "task": task.id,
+                    "code": "prior-qualification-receipt-not-current",
+                    "detail": (
+                        f"the receipt does not bind {mismatched or 'a qualified outcome'}; "
+                        "requalify or remove the prior-qualification claim"
+                    ),
+                }
+            )
+            continue
+        resolved_priors[task.id] = prior
+        entry["qualification_mode"] = "reuse"
+        entry["prior_receipt_identity"] = prior.identity
+        candidate_tasks.append(entry)
+
+    if blockers:
+        # A request whose disposition cannot be settled has no well-defined candidate,
+        # so none is emitted: an owner must never approve a digest that misrepresents
+        # what would run.
+        return finish(stages.STATIC_QUALIFIED)
+
     # The exact request about to be authorised, computed here rather than after an
     # authority arrives, so an authority-less prepare can report the digest the
     # owner is being asked to approve. Task order is qualification order.
@@ -1159,7 +1274,7 @@ def prepare(
         experiment_id=spec.id,
         scope=BASE_REFERENCE_QUALIFICATION,
         qualification_backend=qualification_backend,
-        tasks=tuple((task.id, tasks[task.id].capsule_identity) for task in spec.tasks),
+        tasks=tuple(candidate_tasks),
     )
     result.preflight_candidate_sha256 = candidate_sha256
 
@@ -1255,51 +1370,16 @@ def prepare(
             )
             continue
         harness = current.harness
-        bound = {
-            "base_tree": current.base_tree,
-            "reference_tree": current.reference_tree,
-            "oracle_sha256": current.oracle_sha256,
-            "runtime_image": current.runtime_image,
-            "harness_identity": harness.identity if harness else "",
-            "expectations_digest": digest_of(task.expectations.as_json()),
-            # A changed generated preparation must invalidate a prior qualification even
-            # when the Git trees and base image are unchanged.
-            "preparation_identity": (
-                current.preparation_receipt.identity
-                if current.preparation_receipt
-                else (current.prepared_runtime_identity or "none")
-            ),
-        }
+        bound = _qualification_bound(task, current)
 
-        # A current, identity-bound prior receipt is reused instead of rerun. This is
-        # what makes an already-valid qualification (the D0 case) reusable.
-        if task.prior_qualification_receipt is not None:
-            try:
-                prior = load_receipt(task.prior_qualification_receipt)
-            except (ReceiptError, OSError, json.JSONDecodeError) as exc:
-                blockers.append(
-                    {
-                        "task": task.id,
-                        "code": "prior-qualification-receipt-invalid",
-                        "detail": str(exc),
-                    }
-                )
-                continue
-            covers, mismatched = prior.covers(bound)
-            if covers:
-                current.qualification = prior
-                current.qualification_reused = True
-                continue
-            blockers.append(
-                {
-                    "task": task.id,
-                    "code": "prior-qualification-receipt-not-current",
-                    "detail": (
-                        f"the receipt does not bind {mismatched or 'a qualified outcome'}; "
-                        "requalify or remove the prior-qualification claim"
-                    ),
-                }
-            )
+        # The disposition was settled before the candidate was emitted and the owner
+        # authorised that exact digest, so it is consumed here rather than decided
+        # again. This is what makes an already-valid qualification (the D0 case)
+        # reusable without the reuse being substitutable for a fresh run.
+        approved_prior = resolved_priors.get(task.id)
+        if approved_prior is not None:
+            current.qualification = approved_prior
+            current.qualification_reused = True
             continue
 
         outcome = qualify_subjects(

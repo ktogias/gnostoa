@@ -41,7 +41,7 @@ def preflight_candidate_payload(
     experiment_id: str,
     scope: str,
     qualification_backend: str,
-    tasks: Sequence[tuple[str, str]],
+    tasks: Sequence[Mapping[str, str]],
 ) -> dict[str, object]:
     """The exact qualification request an owner authorises, as canonical data.
 
@@ -50,16 +50,18 @@ def preflight_candidate_payload(
     reordered request is a different request; it is not sorted away. Nothing
     caller-supplied enters the payload, and no oracle, key or credential material
     does either -- every value here is already a digest or a declared identity.
+
+    Each task also carries the disposition that will actually occur: a fresh
+    hidden-oracle qualification, or reuse of one exact prior receipt. Approving the
+    subjects and backend is not enough if the same digest could stand for either
+    running the oracle or not running it.
     """
     return {
         "schema": CANDIDATE_SCHEMA,
         "experiment_id": experiment_id,
         "scope": scope,
         "qualification_backend": qualification_backend,
-        "tasks": [
-            {"id": task_id, "capsule_identity": capsule_identity}
-            for task_id, capsule_identity in tasks
-        ],
+        "tasks": [dict(entry) for entry in tasks],
     }
 
 
@@ -68,7 +70,7 @@ def preflight_candidate_identity(
     experiment_id: str,
     scope: str,
     qualification_backend: str,
-    tasks: Sequence[tuple[str, str]],
+    tasks: Sequence[Mapping[str, str]],
 ) -> str:
     """The canonical digest of one exact prepared qualification request."""
     from tools.capsule.identity import digest_of

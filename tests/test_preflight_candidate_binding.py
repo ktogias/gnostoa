@@ -191,7 +191,13 @@ class CandidateIdentityTests(CandidateFixture):
             experiment_id="E1",
             scope="base-reference-qualification",
             qualification_backend="local-python",
-            tasks=(("T1", "c" * 64),),
+            tasks=(
+                {
+                    "id": "T1",
+                    "capsule_identity": "c" * 64,
+                    "qualification_mode": "fresh",
+                },
+            ),
         )
         self.assertEqual(payload["schema"], authority_module.CANDIDATE_SCHEMA)
         self.assertNotIn("id", payload)
@@ -291,10 +297,6 @@ class AuthorityV2ContractTests(CandidateFixture):
                 "E1", "base-reference-qualification", candidate_sha256=digest
             )
         )
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class PreparationReplayFixture(CapsuleFixture):
@@ -566,7 +568,8 @@ class PreparationReuseRegressionTests(PreparationReplayFixture):
             "expectations_digest": digest_of(
                 load_spec(self.spec_path).tasks[0].expectations.as_json()
             ),
-            "preparation_identity": receipt_identity,
+            # The combined prepared identity covering BASE and REFERENCE.
+            "preparation_identity": task.prepared_runtime_identity,
         }
         receipt = {
             "schema": qualification.RECEIPT_SCHEMA,
@@ -633,3 +636,270 @@ class PreparationReuseRegressionTests(PreparationReplayFixture):
         reused = authorized.task("T1").qualification
         self.assertIsNotNone(reused)
         self.assertTrue(reused.qualified)
+
+
+class QualificationDispositionTests(CandidateFixture):
+    """The candidate must bind whether the oracle will run, not only on what."""
+
+    def _receipt(self, result, *, backend: str = "local-python") -> Path:
+        task = result.task("T1")
+        spec = load_spec(self.write_spec(json.loads(json.dumps(self._payload))))
+        bound = {
+            "base_tree": task.base_tree,
+            "reference_tree": task.reference_tree,
+            "oracle_sha256": task.oracle_sha256,
+            "runtime_image": task.runtime_image,
+            "harness_identity": task.harness.identity if task.harness else "",
+            "expectations_digest": digest_of(spec.tasks[0].expectations.as_json()),
+            "preparation_identity": task.prepared_runtime_identity or "none",
+        }
+        payload = {
+            "schema": qualification.RECEIPT_SCHEMA,
+            "task": "T1",
+            "backend": backend,
+            "base": {
+                "subject": "base",
+                "collected": True,
+                "passed": [],
+                "failed": ["test_discriminates"],
+                "error_types": {},
+                "classification": qualification.MATCH,
+                "detail": "synthetic",
+            },
+            "reference": {
+                "subject": "reference",
+                "collected": True,
+                "passed": ["test_discriminates"],
+                "failed": [],
+                "error_types": {},
+                "classification": qualification.MATCH,
+                "detail": "synthetic",
+            },
+            "bound": bound,
+            "qualified": True,
+        }
+        path = self.root / f"prior-{backend}.json"
+        path.write_text(json.dumps(payload, indent=1, sort_keys=True))
+        return path
+
+    def setUp(self) -> None:
+        super().setUp()
+        spec = self.base_spec(
+            self._repo, self._base, self._ref, runtime={"image": IMAGE_A}
+        )
+        spec["tasks"][0]["reference"]["commit"] = self._ref
+        spec["tasks"][0]["reference"]["tree"] = git(
+            self._repo, "rev-parse", self._ref + "^{tree}"
+        )
+        # Held in memory: write_spec reuses one path, so re-reading it would carry a
+        # previous call's prior_qualification claim into the next request.
+        self._payload = spec
+        self.spec_path = self.write_spec(spec)
+
+    def _prepare(
+        self,
+        *,
+        receipt: Path | None = None,
+        backend="local-python",
+        authority=None,
+        arena="disp",
+    ):
+        spec = json.loads(json.dumps(self._payload))
+        if receipt is not None:
+            spec["tasks"][0]["prior_qualification"] = {"receipt": str(receipt)}
+        target = self.root / arena
+        target.mkdir(exist_ok=True)
+        return compiler.prepare(
+            load_spec(self.write_spec(spec)),
+            target,
+            offline=True,
+            qualification_backend=backend,
+            preflight_authority=authority,
+        )
+
+    def test_reuse_and_fresh_are_different_candidates(self) -> None:
+        fresh = self._prepare()
+        receipt = self._receipt(fresh)
+        reuse = self._prepare(receipt=receipt)
+        self.assertIsNotNone(reuse.preflight_candidate_sha256)
+        # Same subjects, same backend, same capsule -- but a different effect.
+        self.assertNotEqual(
+            fresh.preflight_candidate_sha256, reuse.preflight_candidate_sha256
+        )
+
+    def test_authority_for_reuse_cannot_authorize_a_fresh_run(self) -> None:
+        fresh = self._prepare()
+        receipt = self._receipt(fresh)
+        reuse = self._prepare(receipt=receipt)
+        granted = authority_module.PreflightAuthority(
+            id="auth-reuse",
+            experiment_id="E1",
+            scope=("base-reference-qualification",),
+            preflight_candidate_sha256=reuse.preflight_candidate_sha256 or "",
+        )
+        executed: list[str] = []
+        original = compiler.qualify_subjects
+
+        def counted(*args, **kwargs):
+            executed.append("fresh")
+            return original(*args, **kwargs)
+
+        compiler.qualify_subjects = counted
+        try:
+            # The prior-qualification claim is removed: the same authority must not
+            # now buy a hidden-oracle run.
+            result = self._prepare(authority=granted)
+        finally:
+            compiler.qualify_subjects = original
+        self.assertIn(
+            "preflight-authority-candidate-mismatch",
+            [b["code"] for b in result.blockers],
+        )
+        self.assertEqual(executed, [], "no oracle effect may occur on a mismatch")
+
+    def test_changed_receipt_changes_the_candidate(self) -> None:
+        fresh = self._prepare()
+        receipt = self._receipt(fresh)
+        before = self._prepare(receipt=receipt).preflight_candidate_sha256
+        payload = json.loads(receipt.read_text())
+        payload["base"]["detail"] = "a different retained detail"
+        receipt.write_text(json.dumps(payload, indent=1, sort_keys=True))
+        after = self._prepare(receipt=receipt).preflight_candidate_sha256
+        self.assertNotEqual(before, after)
+
+    def test_backend_mismatched_receipt_is_refused_with_no_effect(self) -> None:
+        fresh = self._prepare()
+        local_receipt = self._receipt(fresh, backend="local-python")
+        executed: list[str] = []
+        original = compiler.qualify_subjects
+
+        def counted(*args, **kwargs):
+            executed.append("fresh")
+            return original(*args, **kwargs)
+
+        compiler.qualify_subjects = counted
+        try:
+            result = self._prepare(receipt=local_receipt, backend="oci", arena="bk")
+        finally:
+            compiler.qualify_subjects = original
+        self.assertIn(
+            "prior-qualification-backend-mismatch",
+            [b["code"] for b in result.blockers],
+        )
+        # No candidate may be emitted for a request whose disposition is unsettled.
+        self.assertIsNone(result.preflight_candidate_sha256)
+        self.assertEqual(executed, [])
+
+    def test_invalid_prior_receipt_yields_no_candidate(self) -> None:
+        broken = self.root / "broken-receipt.json"
+        broken.write_text('{"schema": "not-a-receipt"}')
+        result = self._prepare(receipt=broken, arena="broken")
+        self.assertIn(
+            "prior-qualification-receipt-invalid",
+            [b["code"] for b in result.blockers],
+        )
+        self.assertIsNone(result.preflight_candidate_sha256)
+
+
+class ReferencePreparationDriftTests(PreparationReplayFixture):
+    """Reference-side preparation evidence must invalidate a stale qualification."""
+
+    def test_reference_drift_refuses_a_stale_prior_qualification(self) -> None:
+        first = self.run_prepare()
+        task = first.task("T1")
+        combined = task.prepared_runtime_identity
+        self.assertIsNotNone(combined)
+        # A qualification receipt bound to today's combined preparation identity.
+        self.assertNotEqual(
+            combined,
+            task.preparation_receipt.identity if task.preparation_receipt else None,
+            "the bound identity must cover more than the BASE receipt alone",
+        )
+
+
+class AsymmetricFrozenTreeTests(CapsuleFixture):
+    """BASE omits the declared target; REFERENCE tracks it as ordinary source."""
+
+    def test_reference_tracked_target_is_not_treated_as_generated(self) -> None:
+        repo = self.make_repo(
+            "asym",
+            {
+                "src/pkg/__init__.py": (
+                    "from pkg._version import version\n\n\ndef render():\n"
+                    "    return 'old'\n"
+                ),
+                ".gitignore": "src/pkg/_version.py\n",
+                "pyproject.toml": (
+                    "[build-system]\nrequires = ['setuptools', 'setuptools-scm']\n\n"
+                    "[project]\nname='pkg'\ndynamic = ['version']\n\n"
+                    "[tool.setuptools_scm]\nwrite_to = 'src/pkg/_version.py'\n"
+                ),
+            },
+        )
+        git(repo, "tag", "1.0.0.dev0")
+        base = git(repo, "rev-parse", "HEAD")
+        # The reference commits the declared target: there it is frozen source.
+        (repo / ".gitignore").write_text("")
+        ref = self.commit(
+            repo,
+            {
+                "src/pkg/_version.py": "version = '9.9.9'\n__version__ = version\n",
+                "src/pkg/__init__.py": (
+                    "from pkg._version import version\n\n\ndef render():\n"
+                    "    return 'new'\n"
+                ),
+            },
+            "reference tracks the version file",
+        )
+        (self.root / "oracle.py").write_text(
+            "import pkg\n\n\ndef test_discriminates():\n"
+            "    assert pkg.render() == 'new'\n"
+        )
+        spec = self.base_spec(
+            repo,
+            base,
+            ref,
+            runtime={"image": IMAGE_A},
+            preparation={"scheme": "gnostoa-setuptools-scm-compatible/v1"},
+        )
+        spec["tasks"][0]["reference"]["commit"] = ref
+        spec["tasks"][0]["reference"]["tree"] = git(repo, "rev-parse", ref + "^{tree}")
+        spec_path = self.write_spec(spec)
+
+        result = compiler.prepare(load_spec(spec_path), self.workspace, offline=True)
+        codes = [b["code"] for b in result.blockers]
+        # The reference file is frozen source, not this compiler's output, so it is
+        # neither overwritten nor compared against a generated version.
+        self.assertNotIn("preparation-failed", codes)
+        self.assertNotIn("preparation-modified-tracked-source", codes)
+
+        reference = [
+            path
+            for path in self.workspace.rglob("reference-*")
+            if path.is_dir() and (path / "pyproject.toml").is_file()
+        ]
+        self.assertTrue(reference)
+        tracked = reference[0] / "src" / "pkg" / "_version.py"
+        self.assertEqual(
+            tracked.read_text(), "version = '9.9.9'\n__version__ = version\n"
+        )
+
+        # And it stays fully verified: mutating it is still caught.
+        tracked.write_text("version = 'tampered'\n__version__ = version\n")
+        again = compiler.prepare(load_spec(spec_path), self.workspace, offline=True)
+        self.assertTrue(
+            any(
+                code
+                in {
+                    "materialised-subject-identity-mismatch",
+                    "preparation-modified-tracked-source",
+                    "preparation-failed",
+                }
+                for code in [b["code"] for b in again.blockers]
+            ),
+            f"reference tampering must be caught, got {[b['code'] for b in again.blockers]}",
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
