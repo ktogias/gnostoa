@@ -18,7 +18,7 @@ import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from tools.capsule import (
     adapters,
@@ -1515,6 +1515,11 @@ def prepare(
                 continue
             harness = current.harness
             bound = _qualification_bound(task, current)
+            # The helper above is the sole runtime check for subject availability;
+            # these casts preserve that proven invariant for static type checking
+            # without duplicating the guard conditions here.
+            base_path = cast(Path, current.base_path)
+            reference_path = cast(Path, current.reference_path)
 
             # The disposition was settled before the candidate was emitted and the owner
             # authorised that exact digest, so it is consumed here rather than decided
@@ -1529,9 +1534,9 @@ def prepare(
             outcome = qualify_subjects(
                 task_id=task.id,
                 backend=qualification_backend,
-                base_tree=current.qualification_paths.get("base", current.base_path),
+                base_tree=current.qualification_paths.get("base", base_path),
                 reference_tree=current.qualification_paths.get(
-                    "reference", current.reference_path
+                    "reference", reference_path
                 ),
                 oracle=task.oracle_path,
                 import_roots=_IMPORT_ROOTS,
