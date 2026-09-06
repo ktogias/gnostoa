@@ -1582,7 +1582,7 @@ def prepare(
                     blockers.append(
                         {"task": None, "code": exc.code, "detail": exc.detail}
                     )
-                    return finish(stages.STATIC_QUALIFIED)
+                    return finish_without_persisting(stages.STATIC_QUALIFIED)
                 effect_claimed = True
 
             outcome = qualify_subjects(
