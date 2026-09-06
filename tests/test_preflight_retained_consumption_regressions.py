@@ -12,6 +12,7 @@ from unittest import mock
 
 from tools.capsule import authority as authority_module
 from tools.capsule import compiler, effect_claim, qualification, stages
+from tools.capsule.identity import digest_of
 from tools.experiment.evidence import canonical_json_bytes
 
 try:
@@ -132,6 +133,38 @@ class RetainedConsumptionReviewRedTests(ConsumptionFixture):
             effects,
             ["qualify_subjects"],
             "tampered consumption evidence must not reopen qualification",
+        )
+        self.assertEqual(replay.status, "BLOCKED")
+        self.assertIn(
+            effect_claim.INVALID_CLAIM,
+            [blocker["code"] for blocker in replay.blockers],
+        )
+        self._assert_retained_success_preserved(before)
+
+    def test_completed_fresh_qualification_rejects_claim_authority_substitution(
+        self,
+    ) -> None:
+        candidate, _, effects = self._complete_once()
+        before = self._retained_snapshot()
+        claim = self.workspace / effect_claim.CLAIM_DIRECTORY / f"{candidate}.json"
+        replacement = authority_module.PreflightAuthority(
+            id="auth-197-substituted",
+            experiment_id="E1",
+            scope=(authority_module.BASE_REFERENCE_QUALIFICATION,),
+            preflight_candidate_sha256=candidate,
+        )
+        payload = json.loads(claim.read_text())
+        replacement_payload = replacement.as_json()
+        payload["authority"] = replacement_payload
+        payload["authority_sha256"] = digest_of(replacement_payload)
+        claim.write_bytes(canonical_json_bytes(payload))
+
+        replay = self.prepare(authority=replacement)
+
+        self.assertEqual(
+            effects,
+            ["qualify_subjects"],
+            "self-consistent claim substitution must not reopen qualification",
         )
         self.assertEqual(replay.status, "BLOCKED")
         self.assertIn(
