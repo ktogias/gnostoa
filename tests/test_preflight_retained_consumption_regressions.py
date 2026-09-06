@@ -35,7 +35,9 @@ class RetainedConsumptionReviewRedTests(ConsumptionFixture):
             effects.append("qualify_subjects")
             return retained
 
-        patcher = mock.patch.object(compiler, "qualify_subjects", side_effect=qualify_once)
+        patcher = mock.patch.object(
+            compiler, "qualify_subjects", side_effect=qualify_once
+        )
         patched = patcher.start()
         self.addCleanup(patcher.stop)
         del patched
@@ -116,7 +118,9 @@ class RetainedConsumptionReviewRedTests(ConsumptionFixture):
         )
         self._assert_retained_success_preserved(before)
 
-    def test_completed_fresh_qualification_rejects_tampered_retained_claim(self) -> None:
+    def test_completed_fresh_qualification_rejects_tampered_retained_claim(
+        self,
+    ) -> None:
         candidate, authority, effects = self._complete_once()
         before = self._retained_snapshot()
         claim = self.workspace / effect_claim.CLAIM_DIRECTORY / f"{candidate}.json"
