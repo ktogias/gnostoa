@@ -362,7 +362,9 @@ def _validate_completed_stage_binding(
         )
     tasks = state.get("tasks")
     if not isinstance(tasks, dict) or not tasks:
-        raise EffectClaimError(INVALID_CLAIM, "retained public state has no task records")
+        raise EffectClaimError(
+            INVALID_CLAIM, "retained public state has no task records"
+        )
 
     capsules: dict[str, str] = {}
     backends: set[str] = set()
