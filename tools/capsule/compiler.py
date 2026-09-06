@@ -1364,6 +1364,29 @@ def prepare(
     )
     result.preflight_candidate_sha256 = candidate_sha256
 
+    preserve_completed_candidate = False
+    existing_qualification = ledger.records.get(stages.BASE_REFERENCE_QUALIFIED)
+    if existing_qualification is not None and existing_qualification.complete:
+        try:
+            preserve_completed_candidate = (
+                retained_preflight.matching_completed_candidate_stage(
+                    root,
+                    ledger,
+                    candidate_sha256=candidate_sha256,
+                )
+                is not None
+            )
+        except retained_preflight.RetainedPreflightError:
+            # A completed qualification whose retained public state cannot be safely
+            # matched is forensic evidence. An authority refusal must not rewrite it;
+            # a later authorised replay will surface the retained-integrity blocker.
+            preserve_completed_candidate = True
+
+    def finish_authority_refusal() -> PrepareResult:
+        if preserve_completed_candidate:
+            return finish_without_persisting(stages.STATIC_QUALIFIED)
+        return finish(stages.STATIC_QUALIFIED)
+
     if preflight_authority is None:
         blockers.append(
             {
@@ -1376,7 +1399,7 @@ def prepare(
                 ),
             }
         )
-        return finish(stages.STATIC_QUALIFIED)
+        return finish_authority_refusal()
 
     if not preflight_authority.covers(
         spec.id, BASE_REFERENCE_QUALIFICATION, candidate_sha256=candidate_sha256
@@ -1413,7 +1436,7 @@ def prepare(
                     ),
                 }
             )
-        return finish(stages.STATIC_QUALIFIED)
+        return finish_authority_refusal()
 
     qualification_stage_inputs: dict[str, object] = {
         "authority": preflight_authority.as_json(),
