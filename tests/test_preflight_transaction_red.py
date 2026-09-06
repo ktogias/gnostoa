@@ -336,10 +336,13 @@ class ConcurrentReconciliationTests(ConsumptionFixture):
         waiter_reached_candidate = threading.Event()
         effects: list[str] = []
         results: dict[str, object] = {}
-        waiter_identity: dict[str, int] = {}
+        roles: dict[int, str] = {}
         threads: dict[str, threading.Thread] = {}
 
         real_identity = compiler.preflight_candidate_identity
+
+        def role_of() -> str:
+            return roles.get(threading.get_ident(), "unattributed")
 
         def identity_seam(**kwargs):  # type: ignore[no-untyped-def]
             value = real_identity(**kwargs)
@@ -347,15 +350,20 @@ class ConcurrentReconciliationTests(ConsumptionFixture):
             # computed the same candidate while the owner still holds the
             # transaction. A flag set by the test thread would only prove the
             # waiter was launched, which any sequential rerun also satisfies.
-            if threading.get_ident() == waiter_identity.get("id"):
+            if role_of() == "waiter":
                 waiter_reached_candidate.set()
             return value
 
         def qualify(*args, **kwargs):  # type: ignore[no-untyped-def]
             del args
-            effects.append("qualify_subjects")
-            owner_in_effect.set()
-            waiter_reached_candidate.wait(timeout=15)
+            # Attributed by role, and the patch stays installed until both threads
+            # have joined, so a second effect opened by the waiter at any point --
+            # including after the owner has finished -- is recorded rather than
+            # escaping to the real implementation and going uncounted.
+            effects.append(role_of())
+            if role_of() == "owner":
+                owner_in_effect.set()
+                waiter_reached_candidate.wait(timeout=15)
             return _receipt(
                 kwargs.get("task_id", "T1"), dict(kwargs.get("bound") or {})
             )
@@ -365,39 +373,30 @@ class ConcurrentReconciliationTests(ConsumptionFixture):
         # rather than in the code under test.
         shared_spec = self._spec()
 
-        def run(role: str, patch_effect: bool) -> None:
-            if role == "waiter":
-                waiter_identity["id"] = threading.get_ident()
+        def run(role: str) -> None:
+            roles[threading.get_ident()] = role
             try:
-                if patch_effect:
-                    with mock.patch.object(
-                        compiler, "qualify_subjects", side_effect=qualify
-                    ):
-                        results[role] = compiler.prepare(
-                            shared_spec,
-                            self.workspace,
-                            offline=True,
-                            preflight_authority=authority,
-                        )
-                else:
-                    results[role] = compiler.prepare(
-                        shared_spec,
-                        self.workspace,
-                        offline=True,
-                        preflight_authority=authority,
-                    )
+                results[role] = compiler.prepare(
+                    shared_spec,
+                    self.workspace,
+                    offline=True,
+                    preflight_authority=authority,
+                )
             except Exception as exc:  # recorded rather than raised across threads
                 results[f"{role}_error"] = exc
 
-        with mock.patch.object(
-            compiler, "preflight_candidate_identity", side_effect=identity_seam
+        with (
+            mock.patch.object(
+                compiler, "preflight_candidate_identity", side_effect=identity_seam
+            ),
+            mock.patch.object(compiler, "qualify_subjects", side_effect=qualify),
         ):
-            threads["owner"] = threading.Thread(target=run, args=("owner", True))
+            threads["owner"] = threading.Thread(target=run, args=("owner",))
             threads["owner"].start()
             self.assertTrue(
                 owner_in_effect.wait(timeout=30), "the owner never entered its effect"
             )
-            threads["waiter"] = threading.Thread(target=run, args=("waiter", False))
+            threads["waiter"] = threading.Thread(target=run, args=("waiter",))
             threads["waiter"].start()
             # Overlap is proven either by the waiter reaching the candidate while the
             # owner is mid-effect, or by it still running then -- a design that blocks
@@ -415,7 +414,11 @@ class ConcurrentReconciliationTests(ConsumptionFixture):
         )
         self.assertNotIn("owner_error", results)
         self.assertNotIn("waiter_error", results)
-        self.assertEqual(effects, ["qualify_subjects"], "exactly one effect may run")
+        self.assertEqual(
+            effects,
+            ["owner"],
+            "exactly one effect may run, and it must be the owner's",
+        )
 
         owner_result = results["owner"]
         waiter_result = results["waiter"]
