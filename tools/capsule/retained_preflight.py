@@ -33,6 +33,27 @@ class RetainedPreflightError(RuntimeError):
     """A completed stage and its public retained state cannot be trusted together."""
 
 
+def _load_public_state(root: Path) -> dict[str, object]:
+    path = root / STATE_FILENAME
+    try:
+        observed = path.lstat()
+    except OSError as exc:
+        raise RetainedPreflightError(
+            f"retained public state is unavailable: {exc}"
+        ) from exc
+    if not stat.S_ISREG(observed.st_mode):
+        raise RetainedPreflightError("retained public state is not a regular file")
+    try:
+        decoded = json.loads(path.read_text())
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RetainedPreflightError(
+            f"retained public state is unreadable: {exc}"
+        ) from exc
+    if not isinstance(decoded, dict) or decoded.get("schema") != STATE_SCHEMA:
+        raise RetainedPreflightError("retained public state has an unsupported schema")
+    return cast(dict[str, object], decoded)
+
+
 def matching_completed_stage(
     ledger: stages.StageLedger,
     inputs: Mapping[str, object],
@@ -43,6 +64,37 @@ def matching_completed_stage(
         return None
     if existing.inputs_sha256 != digest_of(dict(inputs)):
         return None
+    return existing
+
+
+def matching_completed_candidate_stage(
+    root: Path,
+    ledger: stages.StageLedger,
+    *,
+    candidate_sha256: str,
+) -> stages.StageRecord | None:
+    """Match retained completion by candidate before authority metadata can invalidate it.
+
+    The candidate already binds the backend, ordered task capsules and fresh/reuse
+    disposition. A differently named authority for that same candidate must therefore
+    be handled as replay against the retained transaction, not as changed qualification
+    inputs that first invalidate its evidence.
+    """
+    existing = ledger.records.get(stages.BASE_REFERENCE_QUALIFIED)
+    if existing is None or not existing.complete:
+        return None
+
+    payload = _load_public_state(root)
+    if payload.get("preflight_candidate_sha256") != candidate_sha256:
+        return None
+
+    receipts = payload.get("stage_receipts")
+    if not isinstance(receipts, dict):
+        raise RetainedPreflightError("retained public state has no stage receipts")
+    if receipts.get(stages.BASE_REFERENCE_QUALIFIED) != existing.receipt_sha256:
+        raise RetainedPreflightError(
+            "retained public state disagrees with the completed qualification receipt"
+        )
     return existing
 
 
@@ -114,23 +166,7 @@ def load_completed_qualifications(
     task_ids: Sequence[str],
 ) -> dict[str, QualificationReceipt]:
     """Cross-check public state against one exact COMPLETE qualification stage."""
-    path = root / STATE_FILENAME
-    try:
-        observed = path.lstat()
-    except OSError as exc:
-        raise RetainedPreflightError(
-            f"retained public state is unavailable: {exc}"
-        ) from exc
-    if not stat.S_ISREG(observed.st_mode):
-        raise RetainedPreflightError("retained public state is not a regular file")
-    try:
-        payload = json.loads(path.read_text())
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise RetainedPreflightError(
-            f"retained public state is unreadable: {exc}"
-        ) from exc
-    if not isinstance(payload, dict) or payload.get("schema") != STATE_SCHEMA:
-        raise RetainedPreflightError("retained public state has an unsupported schema")
+    payload = _load_public_state(root)
     if payload.get("preflight_candidate_sha256") != candidate_sha256:
         raise RetainedPreflightError(
             "retained public state names a different preflight candidate"

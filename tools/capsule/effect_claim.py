@@ -93,6 +93,42 @@ def _open_visible_directory(path: Path, *, label: str) -> int:
     return descriptor
 
 
+def _open_existing_claim_directory(root_fd: int) -> int:
+    try:
+        observed = os.stat(CLAIM_DIRECTORY, dir_fd=root_fd, follow_symlinks=False)
+    except FileNotFoundError as exc:
+        raise EffectClaimError(
+            INVALID_CLAIM,
+            f"retained {CLAIM_DIRECTORY} directory is missing for a completed fresh qualification",
+        ) from exc
+    except OSError as exc:
+        raise EffectClaimError(
+            INVALID_CLAIM, f"cannot inspect retained {CLAIM_DIRECTORY}: {exc}"
+        ) from exc
+    if not stat.S_ISDIR(observed.st_mode):
+        raise EffectClaimError(
+            INVALID_CLAIM, f"{CLAIM_DIRECTORY} exists but is not a directory"
+        )
+
+    try:
+        descriptor = os.open(
+            CLAIM_DIRECTORY,
+            os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW,
+            dir_fd=root_fd,
+        )
+        identity = os.fstat(descriptor)
+    except OSError as exc:
+        raise EffectClaimError(
+            INVALID_CLAIM, f"cannot safely open retained {CLAIM_DIRECTORY}: {exc}"
+        ) from exc
+    if not stat.S_ISDIR(identity.st_mode) or not _same_object(observed, identity):
+        os.close(descriptor)
+        raise EffectClaimError(
+            INVALID_CLAIM, f"{CLAIM_DIRECTORY} namespace changed while opening"
+        )
+    return descriptor
+
+
 def _open_claim_directory(root_fd: int) -> int:
     created = False
     try:
@@ -206,7 +242,7 @@ def _validate_existing_claim(
     scope: str,
     candidate_sha256: str,
     disposition: Sequence[Mapping[str, str]],
-) -> None:
+) -> dict[str, Any]:
     try:
         decoded = json.loads(data.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -266,6 +302,44 @@ def _validate_existing_claim(
         raise EffectClaimError(
             INVALID_CLAIM, "candidate claim authority does not cover the claim"
         )
+    return payload
+
+
+def load_consumed_candidate(
+    workspace: Path,
+    *,
+    experiment_id: str,
+    scope: str,
+    candidate_sha256: str,
+    candidate_tasks: Sequence[Mapping[str, str]],
+) -> dict[str, object]:
+    """Read and validate the irreversible claim for one completed fresh candidate."""
+    disposition = _disposition_summary(candidate_tasks)
+    name = f"{candidate_sha256}.json"
+
+    root_fd = _open_visible_directory(workspace, label="retained workspace")
+    try:
+        claim_fd = _open_existing_claim_directory(root_fd)
+        try:
+            existing = _read_existing_claim(claim_fd, name)
+            if existing is None:
+                raise EffectClaimError(
+                    INVALID_CLAIM,
+                    f"completed fresh candidate {candidate_sha256} has no retained effect claim",
+                )
+            return dict(
+                _validate_existing_claim(
+                    existing,
+                    experiment_id=experiment_id,
+                    scope=scope,
+                    candidate_sha256=candidate_sha256,
+                    disposition=disposition,
+                )
+            )
+        finally:
+            os.close(claim_fd)
+    finally:
+        os.close(root_fd)
 
 
 def _raise_if_existing(

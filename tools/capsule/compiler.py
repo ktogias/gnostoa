@@ -1206,6 +1206,16 @@ def prepare(
         _write_state(root, result)
         return result
 
+    def finish_without_persisting(stage: str) -> PrepareResult:
+        """Return a retained-evidence refusal without overwriting successful evidence."""
+        result.blockers = blockers
+        result.stage = stage
+        result.status = "BLOCKED"
+        result._identities = ledger.identities()
+        result._receipts = ledger.receipts()
+        result.reused_stages = list(ledger.reused)
+        return result
+
     ledger.enter(
         stages.DISCOVERED,
         {"spec": str(spec.source_path), "tasks": [t.id for t in spec.tasks]},
@@ -1418,8 +1428,59 @@ def prepare(
     completed_qualification = retained_preflight.matching_completed_stage(
         ledger, qualification_stage_inputs
     )
+    if completed_qualification is None:
+        try:
+            completed_qualification = retained_preflight.matching_completed_candidate_stage(
+                root,
+                ledger,
+                candidate_sha256=candidate_sha256,
+            )
+        except retained_preflight.RetainedPreflightError as exc:
+            blockers.append(
+                {
+                    "task": None,
+                    "code": retained_preflight.INVALID_RETAINED_QUALIFICATION,
+                    "detail": str(exc),
+                }
+            )
+            return finish_without_persisting(stages.STATIC_QUALIFIED)
+
     qualification_reused = completed_qualification is not None
     if completed_qualification is not None:
+        has_fresh_task = any(
+            entry.get("qualification_mode") == "fresh" for entry in candidate_tasks
+        )
+        if has_fresh_task:
+            try:
+                consumed = effect_claim.load_consumed_candidate(
+                    root,
+                    experiment_id=spec.id,
+                    scope=BASE_REFERENCE_QUALIFICATION,
+                    candidate_sha256=candidate_sha256,
+                    candidate_tasks=tuple(candidate_tasks),
+                )
+            except effect_claim.EffectClaimError as exc:
+                blockers.append(
+                    {"task": None, "code": exc.code, "detail": exc.detail}
+                )
+                return finish_without_persisting(stages.STATIC_QUALIFIED)
+
+            if consumed.get("authority_sha256") != digest_of(
+                preflight_authority.as_json()
+            ):
+                blockers.append(
+                    {
+                        "task": None,
+                        "code": effect_claim.ALREADY_CONSUMED,
+                        "detail": (
+                            f"preflight candidate {candidate_sha256} completed under a "
+                            "different authority; issuing another authority does not reopen "
+                            "or replace the retained transaction"
+                        ),
+                    }
+                )
+                return finish_without_persisting(stages.STATIC_QUALIFIED)
+
         try:
             restored = retained_preflight.load_completed_qualifications(
                 root,
@@ -1435,7 +1496,7 @@ def prepare(
                     "detail": str(exc),
                 }
             )
-            return finish(stages.STATIC_QUALIFIED)
+            return finish_without_persisting(stages.STATIC_QUALIFIED)
 
         for task in spec.tasks:
             current = tasks[task.id]
@@ -1468,7 +1529,7 @@ def prepare(
             current.qualification = receipt
             current.qualification_reused = True
         if blockers:
-            return finish(stages.STATIC_QUALIFIED)
+            return finish_without_persisting(stages.STATIC_QUALIFIED)
         if stages.BASE_REFERENCE_QUALIFIED not in ledger.reused:
             ledger.reused.append(stages.BASE_REFERENCE_QUALIFIED)
 
