@@ -304,5 +304,140 @@ class CoherentSnapshotTests(ConsumptionFixture):
         self.assertEqual(current["lock_sha256"], winner["lock_sha256"])
 
 
+class ConcurrentReconciliationTests(ConsumptionFixture):
+    """Liveness, not only safety: a legitimate waiter must converge, not fail.
+
+    The other six invariants can all be satisfied by a protocol that simply refuses
+    everyone except the transaction owner. That would be safe and operationally
+    wrong, so this states the semantics a reservation must not collapse into: an
+    exclusive right to perform the effect-bearing transaction, rather than an
+    exclusive right to touch the workspace at all.
+
+    Unlike the safety cases this one needs genuine concurrency, because the waiter's
+    required behaviour is to still be waiting while the owner is mid-transaction. It
+    asserts outcomes only -- never how long anything took, nor that any particular
+    primitive was used -- so waiting, optimistic retry or any other correct design
+    satisfies it.
+    """
+
+    def test_identical_authorised_waiter_reconciles_to_the_single_winner(self) -> None:
+        import threading
+
+        observed = self.prepare()
+        candidate = observed.preflight_candidate_sha256
+        assert candidate is not None
+        authority = self.authority(candidate)
+
+        owner_in_effect = threading.Event()
+        waiter_started = threading.Event()
+        effects: list[str] = []
+        results: dict[str, object] = {}
+
+        def qualify(*args, **kwargs):  # type: ignore[no-untyped-def]
+            del args
+            effects.append("qualify_subjects")
+            owner_in_effect.set()
+            # Hold the transaction open until the waiter has genuinely arrived.
+            waiter_started.wait(timeout=30)
+            return _receipt(
+                kwargs.get("task_id", "T1"), dict(kwargs.get("bound") or {})
+            )
+
+        # Built once, before either thread starts: the fixture writes the spec to a
+        # shared path, so letting both threads build it would race in the harness
+        # rather than in the code under test.
+        shared_spec = self._spec()
+
+        def run_owner() -> None:
+            with mock.patch.object(compiler, "qualify_subjects", side_effect=qualify):
+                results["owner"] = compiler.prepare(
+                    shared_spec,
+                    self.workspace,
+                    offline=True,
+                    preflight_authority=authority,
+                )
+
+        def run_waiter() -> None:
+            try:
+                results["waiter"] = compiler.prepare(
+                    shared_spec,
+                    self.workspace,
+                    offline=True,
+                    preflight_authority=authority,
+                )
+            except Exception as exc:  # recorded rather than raised across threads
+                results["waiter_error"] = exc
+
+        owner = threading.Thread(target=run_owner)
+        owner.start()
+        self.assertTrue(
+            owner_in_effect.wait(timeout=30), "the owner never entered its effect"
+        )
+        waiter = threading.Thread(target=run_waiter)
+        waiter.start()
+        waiter_started.set()
+        owner.join(timeout=60)
+        waiter.join(timeout=60)
+        self.assertFalse(owner.is_alive())
+        self.assertFalse(waiter.is_alive())
+
+        self.assertEqual(effects, ["qualify_subjects"], "exactly one effect may run")
+        self.assertNotIn("waiter_error", results)
+        owner_result = results["owner"]
+        waiter_result = results["waiter"]
+
+        self.assertEqual(owner_result.status, "READY_FOR_OWNER_REVIEW")
+        self.assertEqual(
+            waiter_result.status,
+            "READY_FOR_OWNER_REVIEW",
+            "an identical authorised waiter must reconcile onto the winning "
+            "transaction, not receive a terminal concurrency refusal",
+        )
+        self.assertNotIn(
+            retained_commit.CONCURRENT_STATE_CHANGED,
+            [blocker["code"] for blocker in waiter_result.blockers],
+        )
+        current = compiler.status(self.workspace)
+        self.assertEqual(current["status"], "READY_FOR_OWNER_REVIEW")
+        self.assertIsNotNone(current["lock_sha256"])
+
+
+class ConcurrentAuthorityLessCallerTests(ConsumptionFixture):
+    """A caller with no authority may stay blocked, but must not fence the owner."""
+
+    def test_authority_less_caller_stays_blocked_without_disturbing_the_winner(
+        self,
+    ) -> None:
+        observed = self.prepare()
+        candidate = observed.preflight_candidate_sha256
+        assert candidate is not None
+        effects: list[str] = []
+
+        def qualify_then_let_an_authority_less_caller_run(*args, **kwargs):  # type: ignore[no-untyped-def]
+            del args
+            effects.append("qualify_subjects")
+            results["authority_less"] = self.prepare()
+            return _receipt(
+                kwargs.get("task_id", "T1"), dict(kwargs.get("bound") or {})
+            )
+
+        results: dict[str, object] = {}
+        with mock.patch.object(
+            compiler,
+            "qualify_subjects",
+            side_effect=qualify_then_let_an_authority_less_caller_run,
+        ):
+            owner = self.prepare(authority=self.authority(candidate))
+
+        self.assertEqual(effects, ["qualify_subjects"])
+        # The authority-less caller is entitled to remain blocked ...
+        self.assertEqual(results["authority_less"].status, "BLOCKED")
+        # ... but not to cost the owner its committed transaction.
+        self.assertEqual(owner.status, "READY_FOR_OWNER_REVIEW")
+        current = compiler.status(self.workspace)
+        self.assertEqual(current["status"], "READY_FOR_OWNER_REVIEW")
+        self.assertIsNotNone(current["lock_sha256"])
+
+
 if __name__ == "__main__":
     unittest.main()
