@@ -316,3 +316,43 @@ host-local one for pure-Python subjects and an OCI one that reuses the runner; a
 structured blocker rather than a weaker claim. And the execution boundary is enforced over
 declared filesystem surfaces, which catches the containment failures this system can create; it
 is not a claim about what a hostile process could infer by other means.
+
+## Addendum — single-transaction fresh preflight authority (#197)
+
+A `gnostoa-preflight-authority/v2` record continues to bind exactly one experiment,
+scope and prepared candidate. Its public schema is unchanged. Exact candidate binding is
+necessary but not sufficient for an effect-bearing preflight: a fresh qualification also has
+a retained-workspace consumption boundary.
+
+1. A prepared candidate containing at least one ordered task with
+   `qualification_mode: fresh` is one effect-bearing BASE/REFERENCE qualification
+   transaction.
+2. After the compiler recomputes that candidate and exact experiment/scope/candidate
+   authority coverage succeeds, but **before the first `qualify_subjects()` call,
+   runner/container start or hidden-oracle effect**, the retained workspace must
+   durably and create-only claim that exact fresh candidate as consumed.
+3. The consumption claim is append-only evidence separate from resumable stage
+   completion. Once present, the same fresh candidate cannot be opened again whether
+   the first invocation succeeded, failed, raised, crashed or stopped after BASE
+   before REFERENCE.
+4. A different or newly issued authority does not reopen an already-consumed
+   candidate. A replacement attempt requires a new prospective experiment identity,
+   a newly observed candidate identity and a new exact authority.
+5. One uninterrupted invocation may still execute the preregistered ordered
+   BASE→REFERENCE sequence and any additional ordered fresh tasks as that single
+   transaction. The claim is not a per-subject token that permits later continuation.
+6. A candidate whose ordered task dispositions are all `qualification_mode: reuse`
+   is zero-effect for hidden-oracle qualification and does not consume a fresh-effect
+   transaction claim. Existing exact prior-receipt currentness and candidate binding
+   remain unchanged.
+7. Authority-less preparation remains replayable and effect-free; observing a
+   candidate cannot consume it.
+8. The guarantee is durability within one retained workspace across process restart.
+   It makes no distributed exactly-once claim across independently copied or
+   concurrently diverged workspaces.
+
+The selected implementation shape for a later admitted slice is a separate retained
+create-only effect record keyed by the exact prospective candidate and recording the exact
+canonical authority payload/identity. It must be durably established before effect and must
+not overload `StageLedger`, because stage invalidation/re-entry semantics are intentionally
+resumable while an effect-bearing authority consumption record is intentionally irreversible.
