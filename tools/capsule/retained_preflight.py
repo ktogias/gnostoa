@@ -14,6 +14,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import cast
 
+from tools.capsule import lock as lock_module
 from tools.capsule import stages
 from tools.capsule.identity import digest_of
 from tools.capsule.qualification import (
@@ -98,6 +99,29 @@ def matching_completed_candidate_stage(
     return existing
 
 
+#: Every top-level field an experiment lock carries, partitioned by the role it
+#: plays in deciding whether a retained READY is still current. The partition is
+#: exhaustive by test: a new lock field must be classified deliberately rather than
+#: silently defaulting to "not compared", which is how a currentness check quietly
+#: goes stale.
+LOCK_FIELDS_COMPARED_FOR_CURRENTNESS = frozenset(
+    {"experiment", "launch", "capabilities", "artifact_store"}
+)
+#: Deterministically derived from material already compared above, so comparing it
+#: again could only restate the same fact. The run plan is a projection of the
+#: schedule, arms and repetitions carried in the launch payload.
+LOCK_FIELDS_DERIVED_FROM_COMPARED = frozenset({"run_plan"})
+#: Differing on the authority is exactly what an authority refusal does, so it
+#: cannot participate in deciding whether the retained transaction is current.
+LOCK_FIELDS_AUTHORITY_DEPENDENT = frozenset({"authority"})
+#: Depend on qualification outcomes that are not recomputed at the point this
+#: decision is taken.
+LOCK_FIELDS_QUALIFICATION_DEPENDENT = frozenset({"tasks", "stage_receipts"})
+#: Identity and integrity metadata, enforced by loading the lock canonically rather
+#: than by field comparison.
+LOCK_FIELDS_INTEGRITY_METADATA = frozenset({"schema", "producer", "lock_sha256"})
+
+
 def retained_lock_material_matches(
     root: Path,
     *,
@@ -117,13 +141,18 @@ def retained_lock_material_matches(
     completed READY on candidate equality alone would therefore keep presenting an
     old lock as current after that downstream material had drifted.
 
-    Only authority-independent fields are compared. The authority itself, and the
-    task and run-plan payloads that depend on qualification outcomes, are excluded:
-    the first is exactly what an authority refusal is allowed to differ on, and the
-    others are not yet recomputed at the point this decision is taken.
+    Only authority-independent fields are compared, per the partition above. The
+    authority is excluded because differing on it is exactly what an authority
+    refusal does. The task payloads and stage receipts are excluded because they
+    depend on qualification outcomes not recomputed here. The run plan is excluded
+    because it is a deterministic derivation of launch material already compared --
+    schedule, arms and repetitions all travel in the launch payload -- so comparing
+    it again could only restate the same fact.
 
-    Read-only. A missing or unreadable lock is not a match, so preservation is never
-    granted on the strength of a lock nobody can compare against.
+    Read-only. A missing, unreadable or invalid lock is not a match, so preservation
+    is never granted on the strength of a lock nobody can compare against -- and the
+    lock is loaded through the same canonical contract execution uses, so retained
+    state can never report READY while the lock it names would be refused as invalid.
     """
     path = root / "experiment.lock"
     try:
@@ -133,10 +162,12 @@ def retained_lock_material_matches(
     if not stat.S_ISREG(observed.st_mode):
         return False
     try:
-        retained = json.loads(path.read_text())
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        # Schema and recorded digest are enforced here, not merely parsed: a lock that
+        # execute would reject must never prove a retained READY is current.
+        retained = lock_module.load(path)
+    except (lock_module.LockError, OSError, UnicodeDecodeError, json.JSONDecodeError):
         return False
-    if not isinstance(retained, dict):
+    if not isinstance(retained, Mapping):
         return False
     return (
         retained.get("experiment")

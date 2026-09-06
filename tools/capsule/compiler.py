@@ -25,6 +25,7 @@ from tools.capsule import (
     certificates,
     effect_claim,
     profiles,
+    retained_commit,
     retained_preflight,
     runplan,
     stages,
@@ -1187,6 +1188,10 @@ def prepare(
     root = root.resolve()
     ledger = stages.StageLedger(root=root)
     ledger.load()
+    # Read once, next to the snapshot it describes. Every later decision about
+    # retained state is a decision about this generation, and the persistence guard
+    # refuses to write if the workspace has moved on since.
+    retained_generation = retained_commit.read_generation(root)
 
     blockers: list[dict[str, object]] = []
     result = PrepareResult(status="BLOCKED", stage=stages.DISCOVERED)
@@ -1202,8 +1207,31 @@ def prepare(
         result._identities = ledger.identities()
         result._receipts = ledger.receipts()
         result.reused_stages = list(ledger.reused)
-        ledger.save()
-        _write_state(root, result)
+
+        def persist() -> None:
+            ledger.save()
+            _write_state(root, result)
+
+        # Every write this function performs goes through the same guard, so a stale
+        # snapshot can never overwrite newer retained state regardless of which branch
+        # reached here. Refusal branches that must not write at all use
+        # finish_without_persisting instead; this protects the writes that remain.
+        if not retained_commit.commit_if_current(
+            root, expected=retained_generation, persist=persist
+        ):
+            blockers.append(
+                {
+                    "task": None,
+                    "code": retained_commit.CONCURRENT_STATE_CHANGED,
+                    "detail": (
+                        "another invocation persisted this workspace after the retained "
+                        "state was read; refusing to overwrite newer evidence with a "
+                        "stale snapshot"
+                    ),
+                }
+            )
+            result.blockers = blockers
+            result.status = "BLOCKED"
         return result
 
     def finish_without_persisting(stage: str) -> PrepareResult:
