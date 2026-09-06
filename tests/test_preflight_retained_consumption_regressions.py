@@ -207,6 +207,31 @@ class RetainedConsumptionReviewRedTests(ConsumptionFixture):
         self._assert_retained_success_preserved(before)
         self._assert_correct_authority_still_recovers(authority, effects)
 
+    def test_authority_refusal_does_not_preserve_ready_after_question_drift(self) -> None:
+        candidate, _, effects = self._complete_once()
+        before = compiler.status(self.workspace)
+        self.assertEqual(before["status"], stages.READY_FOR_OWNER_REVIEW)
+        self.assertIsNotNone(before["lock_sha256"])
+        self.payload["experiment"]["question"] = "changed downstream question"
+
+        replay = self.prepare()
+
+        self.assertEqual(replay.preflight_candidate_sha256, candidate)
+        self.assertEqual(replay.status, "BLOCKED")
+        self.assertIn(
+            "base-reference-qualification-requires-preflight-authority",
+            [blocker["code"] for blocker in replay.blockers],
+        )
+        self.assertEqual(effects, ["qualify_subjects"])
+        current = compiler.status(self.workspace)
+        self.assertEqual(
+            current["status"],
+            "BLOCKED",
+            "same preflight candidate must not make an old lock current after question drift",
+        )
+        self.assertEqual(current["stage"], stages.STATIC_QUALIFIED)
+        self.assertIsNone(current["lock_sha256"])
+
     def test_completed_success_survives_out_of_scope_authority(self) -> None:
         candidate, authority, effects = self._complete_once()
         before = self._retained_snapshot()
