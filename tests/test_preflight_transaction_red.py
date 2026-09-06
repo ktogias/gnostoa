@@ -5,10 +5,14 @@ workspace must contain after an interleaving, so that whichever protocol is chos
 -- generation CAS, effect-aware reservation, or something else -- has to satisfy the
 same observable contract.
 
-Every case is deterministic: concurrency is simulated by driving a second
-invocation from inside a patched seam of the first, never by threads or timing.
-All fixtures are synthetic and the qualification effect is patched and counted; no
-Phase-D material and no hidden oracle participates.
+The safety interleavings are deterministic: a second invocation is driven from
+inside a patched seam of the first, never by threads or timing. The reconciliation
+invariant needs controlled real concurrency, because a waiter's required behaviour
+is to still be waiting while the owner holds the transaction; it is ordered by
+explicit events signalled from inside the waiter, never by sleeps or scheduling
+luck, and it asserts outcomes rather than timings. All fixtures are synthetic and
+the qualification effect is patched and counted; no Phase-D material and no hidden
+oracle participates.
 
 At head 4d4d2a6b these are expected to be RED. They are the evidence a repair must
 turn green, and they are deliberately written before any repair exists.
@@ -329,16 +333,29 @@ class ConcurrentReconciliationTests(ConsumptionFixture):
         authority = self.authority(candidate)
 
         owner_in_effect = threading.Event()
-        waiter_started = threading.Event()
+        waiter_reached_candidate = threading.Event()
         effects: list[str] = []
         results: dict[str, object] = {}
+        waiter_identity: dict[str, int] = {}
+        threads: dict[str, threading.Thread] = {}
+
+        real_identity = compiler.preflight_candidate_identity
+
+        def identity_seam(**kwargs):  # type: ignore[no-untyped-def]
+            value = real_identity(**kwargs)
+            # Signalled by the waiter itself, from a point that proves it has
+            # computed the same candidate while the owner still holds the
+            # transaction. A flag set by the test thread would only prove the
+            # waiter was launched, which any sequential rerun also satisfies.
+            if threading.get_ident() == waiter_identity.get("id"):
+                waiter_reached_candidate.set()
+            return value
 
         def qualify(*args, **kwargs):  # type: ignore[no-untyped-def]
             del args
             effects.append("qualify_subjects")
             owner_in_effect.set()
-            # Hold the transaction open until the waiter has genuinely arrived.
-            waiter_started.wait(timeout=30)
+            waiter_reached_candidate.wait(timeout=15)
             return _receipt(
                 kwargs.get("task_id", "T1"), dict(kwargs.get("bound") or {})
             )
@@ -348,44 +365,60 @@ class ConcurrentReconciliationTests(ConsumptionFixture):
         # rather than in the code under test.
         shared_spec = self._spec()
 
-        def run_owner() -> None:
-            with mock.patch.object(compiler, "qualify_subjects", side_effect=qualify):
-                results["owner"] = compiler.prepare(
-                    shared_spec,
-                    self.workspace,
-                    offline=True,
-                    preflight_authority=authority,
-                )
-
-        def run_waiter() -> None:
+        def run(role: str, patch_effect: bool) -> None:
+            if role == "waiter":
+                waiter_identity["id"] = threading.get_ident()
             try:
-                results["waiter"] = compiler.prepare(
-                    shared_spec,
-                    self.workspace,
-                    offline=True,
-                    preflight_authority=authority,
-                )
+                if patch_effect:
+                    with mock.patch.object(
+                        compiler, "qualify_subjects", side_effect=qualify
+                    ):
+                        results[role] = compiler.prepare(
+                            shared_spec,
+                            self.workspace,
+                            offline=True,
+                            preflight_authority=authority,
+                        )
+                else:
+                    results[role] = compiler.prepare(
+                        shared_spec,
+                        self.workspace,
+                        offline=True,
+                        preflight_authority=authority,
+                    )
             except Exception as exc:  # recorded rather than raised across threads
-                results["waiter_error"] = exc
+                results[f"{role}_error"] = exc
 
-        owner = threading.Thread(target=run_owner)
-        owner.start()
+        with mock.patch.object(
+            compiler, "preflight_candidate_identity", side_effect=identity_seam
+        ):
+            threads["owner"] = threading.Thread(target=run, args=("owner", True))
+            threads["owner"].start()
+            self.assertTrue(
+                owner_in_effect.wait(timeout=30), "the owner never entered its effect"
+            )
+            threads["waiter"] = threading.Thread(target=run, args=("waiter", False))
+            threads["waiter"].start()
+            # Overlap is proven either by the waiter reaching the candidate while the
+            # owner is mid-effect, or by it still running then -- a design that blocks
+            # even earlier overlaps at least as much.
+            reached = waiter_reached_candidate.wait(timeout=15)
+            overlapped = reached or threads["waiter"].is_alive()
+            waiter_reached_candidate.set()
+            for thread in threads.values():
+                thread.join(timeout=60)
+
+        for name, thread in threads.items():
+            self.assertFalse(thread.is_alive(), f"{name} did not finish")
         self.assertTrue(
-            owner_in_effect.wait(timeout=30), "the owner never entered its effect"
+            overlapped, "the waiter never overlapped the owner's transaction"
         )
-        waiter = threading.Thread(target=run_waiter)
-        waiter.start()
-        waiter_started.set()
-        owner.join(timeout=60)
-        waiter.join(timeout=60)
-        self.assertFalse(owner.is_alive())
-        self.assertFalse(waiter.is_alive())
-
-        self.assertEqual(effects, ["qualify_subjects"], "exactly one effect may run")
+        self.assertNotIn("owner_error", results)
         self.assertNotIn("waiter_error", results)
+        self.assertEqual(effects, ["qualify_subjects"], "exactly one effect may run")
+
         owner_result = results["owner"]
         waiter_result = results["waiter"]
-
         self.assertEqual(owner_result.status, "READY_FOR_OWNER_REVIEW")
         self.assertEqual(
             waiter_result.status,
@@ -397,9 +430,17 @@ class ConcurrentReconciliationTests(ConsumptionFixture):
             retained_commit.CONCURRENT_STATE_CHANGED,
             [blocker["code"] for blocker in waiter_result.blockers],
         )
+
         current = compiler.status(self.workspace)
-        self.assertEqual(current["status"], "READY_FOR_OWNER_REVIEW")
-        self.assertIsNotNone(current["lock_sha256"])
+        # Returning some READY is not enough: the waiter must have converged on the
+        # same committed transaction rather than produced one of its own.
+        self.assertEqual(waiter_result.lock_identity, owner_result.lock_identity)
+        self.assertEqual(current["lock_sha256"], owner_result.lock_identity)
+        self.assertEqual(
+            waiter_result.stage_receipts(),
+            owner_result.stage_receipts(),
+            "both callers must observe the same retained stage receipts",
+        )
 
 
 class ConcurrentAuthorityLessCallerTests(ConsumptionFixture):
