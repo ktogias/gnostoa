@@ -8,6 +8,7 @@ content-addressed receipt it does not hold.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import shutil
@@ -1179,467 +1180,494 @@ def prepare(
     preflight_authority: PreflightAuthority | None = None,
     qualification_backend: str = LOCAL_PYTHON,
 ) -> PrepareResult:
-    if not offline:
-        raise CompileError(
-            "online preparation is not implemented in v1; dependency acquisition is out of scope"
-        )
-    root = Path(workspace)
-    root.mkdir(parents=True, exist_ok=True)
-    root = root.resolve()
-    ledger = stages.StageLedger(root=root)
-    ledger.load()
-    # Read once, next to the snapshot it describes. Every later decision about
-    # retained state is a decision about this generation, and the persistence guard
-    # refuses to write if the workspace has moved on since.
-    retained_generation = retained_commit.read_generation(root)
-
-    blockers: list[dict[str, object]] = []
-    result = PrepareResult(status="BLOCKED", stage=stages.DISCOVERED)
-
-    def finish(stage: str) -> PrepareResult:
-        result.blockers = blockers
-        result.stage = stage
-        result.status = (
-            stages.READY_FOR_OWNER_REVIEW
-            if stage == stages.READY_FOR_OWNER_REVIEW and not blockers
-            else "BLOCKED"
-        )
-        result._identities = ledger.identities()
-        result._receipts = ledger.receipts()
-        result.reused_stages = list(ledger.reused)
-
-        def persist() -> None:
-            ledger.save()
-            _write_state(root, result)
-
-        # Every write this function performs goes through the same guard, so a stale
-        # snapshot can never overwrite newer retained state regardless of which branch
-        # reached here. Refusal branches that must not write at all use
-        # finish_without_persisting instead; this protects the writes that remain.
-        if not retained_commit.commit_if_current(
-            root, expected=retained_generation, persist=persist
-        ):
-            blockers.append(
-                {
-                    "task": None,
-                    "code": retained_commit.CONCURRENT_STATE_CHANGED,
-                    "detail": (
-                        "another invocation persisted this workspace after the retained "
-                        "state was read; refusing to overwrite newer evidence with a "
-                        "stale snapshot"
-                    ),
-                }
+    # The liveness lock a reservation is judged by is held for the whole
+    # transaction, including an effect that raises. Releasing it on the return
+    # paths alone would leave a crashed transaction looking alive forever.
+    with contextlib.ExitStack() as transaction_stack:
+        if not offline:
+            raise CompileError(
+                "online preparation is not implemented in v1; dependency acquisition is out of scope"
             )
+        root = Path(workspace)
+        root.mkdir(parents=True, exist_ok=True)
+        root = root.resolve()
+        blockers: list[dict[str, object]] = []
+        result = PrepareResult(status="BLOCKED", stage=stages.DISCOVERED)
+        ledger = stages.StageLedger(root=root)
+        transaction_id = retained_commit.new_transaction_id()
+        transaction_state: dict[str, object] = {"reserved": False}
+
+        def refuse_without_persisting(code: str, detail: str) -> PrepareResult:
+            """A retained-state refusal that writes nothing at all."""
+            blockers.append({"task": None, "code": code, "detail": detail})
             result.blockers = blockers
+            result.stage = stages.STATIC_QUALIFIED
             result.status = "BLOCKED"
-        return result
+            transaction_stack.close()
+            return result
 
-    def finish_without_persisting(stage: str) -> PrepareResult:
-        """Return a retained-evidence refusal without overwriting successful evidence."""
-        result.blockers = blockers
-        result.stage = stage
-        result.status = "BLOCKED"
-        result._identities = ledger.identities()
-        result._receipts = ledger.receipts()
-        result.reused_stages = list(ledger.reused)
-        return result
-
-    ledger.enter(
-        stages.DISCOVERED,
-        {"spec": str(spec.source_path), "tasks": [t.id for t in spec.tasks]},
-    )
-    ledger.complete(stages.DISCOVERED, {"tasks": len(spec.tasks)})
-
-    semantic_inputs = {task.id: task.semantic_payload() for task in spec.tasks}
-    ledger.enter(stages.SEMANTIC_FROZEN, semantic_inputs)
-    ledger.complete(
-        stages.SEMANTIC_FROZEN,
-        {task_id: digest_of(payload) for task_id, payload in semantic_inputs.items()},
-    )
-
-    tasks = {
-        task.id: _prepare_task(spec, task, root, blockers=blockers)
-        for task in spec.tasks
-    }
-    result.tasks = tasks
-
-    ledger.enter(
-        stages.RUNTIME_PREPARED,
-        {
-            task.id: {
-                "runtime": task.runtime.as_json(),
-                "source": {
-                    "base_tree": task.source.base_tree,
-                    "reference_tree": task.reference.tree,
-                },
-                "preparation": tasks[task.id].preparation.as_json(),
-                "scheme": task.preparation_scheme,
-            }
-            for task in spec.tasks
-        },
-    )
-    if blockers:
-        return finish(stages.RUNTIME_PREPARED)
-    ledger.complete(
-        stages.RUNTIME_PREPARED,
-        {
-            task_id: {
-                "prepared_runtime_identity": task.prepared_runtime_identity,
-                "preparation_receipt": (
-                    task.preparation_receipt.identity
-                    if task.preparation_receipt
-                    else None
-                ),
-            }
-            for task_id, task in tasks.items()
-        },
-    )
-
-    ledger.enter(
-        stages.STATIC_QUALIFIED,
-        {
-            task.id: {
-                "harness": _harness_json(tasks[task.id]),
-                "oracle_sha256": tasks[task.id].oracle_sha256,
-                "qualification_profiles": tasks[task.id].qualification_profiles,
-                "execution_profile": tasks[task.id].execution_profile,
-            }
-            for task in spec.tasks
-        },
-    )
-    ledger.complete(
-        stages.STATIC_QUALIFIED,
-        {task_id: task.capsule_identity for task_id, task in tasks.items()},
-    )
-
-    reused_certificates = _consume_certificates(spec, blockers)
-    result.reused_certificates = reused_certificates
-    if blockers:
-        return finish(stages.STATIC_QUALIFIED)
-
-    # What will actually happen per task, decided before the candidate is emitted.
-    # Reading and validating a declared prior receipt is read-only, and it must be
-    # settled here: approving subjects and a backend is not approval of an effect if
-    # the same digest could stand for either running the hidden oracle or reusing a
-    # receipt instead.
-    resolved_priors: dict[str, QualificationReceipt] = {}
-    candidate_tasks: list[dict[str, str]] = []
-    for task in spec.tasks:
-        current = tasks[task.id]
-        entry = {"id": task.id, "capsule_identity": current.capsule_identity}
-        if task.prior_qualification_receipt is None:
-            entry["qualification_mode"] = "fresh"
-            candidate_tasks.append(entry)
-            continue
+        # The snapshot and the record describing it are read together under the
+        # coordination lock. Reading them separately lets an invocation pair an old
+        # snapshot with a token another invocation has already advanced, after which any
+        # equality check on that token passes and the stale write proceeds.
         try:
-            prior = load_receipt(task.prior_qualification_receipt)
-        except (ReceiptError, OSError, json.JSONDecodeError) as exc:
-            blockers.append(
-                {
-                    "task": task.id,
-                    "code": "prior-qualification-receipt-invalid",
-                    "detail": str(exc),
-                }
+            with retained_commit.coordination_lock(root):
+                base_snapshot = retained_commit.read_committed(root)
+                ledger.load()
+        except retained_commit.RetainedTransactionError as exc:
+            return refuse_without_persisting(exc.code, exc.detail)
+
+        def finish(stage: str) -> PrepareResult:
+            result.blockers = blockers
+            result.stage = stage
+            result.status = (
+                stages.READY_FOR_OWNER_REVIEW
+                if stage == stages.READY_FOR_OWNER_REVIEW and not blockers
+                else "BLOCKED"
             )
-            continue
-        # A receipt earned through one backend is not evidence about another: the
-        # hidden-oracle effect path differs, so it cannot stand in for this request.
-        if prior.backend != qualification_backend:
-            blockers.append(
-                {
-                    "task": task.id,
-                    "code": "prior-qualification-backend-mismatch",
-                    "detail": (
-                        f"the prior receipt was produced by backend {prior.backend!r}, but "
-                        f"this request qualifies through {qualification_backend!r}; a receipt "
-                        "from another backend cannot stand in for it"
-                    ),
-                }
-            )
-            continue
-        covers, mismatched = prior.covers(_qualification_bound(task, current))
-        if not covers:
-            blockers.append(
-                {
-                    "task": task.id,
-                    "code": "prior-qualification-receipt-not-current",
-                    "detail": (
-                        f"the receipt does not bind {mismatched or 'a qualified outcome'}; "
-                        "requalify or remove the prior-qualification claim"
-                    ),
-                }
-            )
-            continue
-        resolved_priors[task.id] = prior
-        entry["qualification_mode"] = "reuse"
-        entry["prior_receipt_identity"] = prior.identity
-        candidate_tasks.append(entry)
+            result._identities = ledger.identities()
+            result._receipts = ledger.receipts()
+            result.reused_stages = list(ledger.reused)
 
-    if blockers:
-        # A request whose disposition cannot be settled has no well-defined candidate,
-        # so none is emitted: an owner must never approve a digest that misrepresents
-        # what would run.
-        return finish(stages.STATIC_QUALIFIED)
-
-    # The exact request about to be authorised, computed here rather than after an
-    # authority arrives, so an authority-less prepare can report the digest the
-    # owner is being asked to approve. Task order is qualification order.
-    candidate_sha256 = preflight_candidate_identity(
-        experiment_id=spec.id,
-        scope=BASE_REFERENCE_QUALIFICATION,
-        qualification_backend=qualification_backend,
-        tasks=tuple(candidate_tasks),
-    )
-    result.preflight_candidate_sha256 = candidate_sha256
-
-    preserve_completed_candidate = False
-    existing_qualification = ledger.records.get(stages.BASE_REFERENCE_QUALIFIED)
-    if existing_qualification is not None and existing_qualification.complete:
-        try:
-            preserve_completed_candidate = (
-                retained_preflight.matching_completed_candidate_stage(
-                    root,
-                    ledger,
-                    candidate_sha256=candidate_sha256,
-                )
-                is not None
-                # The candidate proves the qualification transaction is the same one.
-                # It says nothing about the downstream material the lock also binds,
-                # so an unchanged candidate alone must not keep an old READY and its
-                # lock presented as current after that material has drifted.
-                and retained_preflight.retained_lock_material_matches(
-                    root,
-                    experiment_id=spec.id,
-                    question=spec.question,
-                    claim_boundary=spec.claim_boundary,
-                    launch=spec.launch_payload(),
-                    capabilities=reused_certificates,
-                    artifact_store=str(root / "artifacts"),
-                )
-            )
-        except retained_preflight.RetainedPreflightError:
-            # A completed qualification whose retained public state cannot be safely
-            # matched is forensic evidence. An authority refusal must not rewrite it;
-            # a later authorised replay will surface the retained-integrity blocker.
-            preserve_completed_candidate = True
-
-    def finish_authority_refusal() -> PrepareResult:
-        if preserve_completed_candidate:
-            return finish_without_persisting(stages.STATIC_QUALIFIED)
-        return finish(stages.STATIC_QUALIFIED)
-
-    if preflight_authority is None:
-        blockers.append(
-            {
-                "task": None,
-                "code": "base-reference-qualification-requires-preflight-authority",
-                "detail": (
-                    "static preparation is complete; executing the declared oracle against "
-                    "BASE and REFERENCE requires an explicit owner preflight authority "
-                    f"naming preflight candidate {candidate_sha256}"
-                ),
+            staged: dict[str, bytes] = {
+                retained_commit.LEDGER_FILENAME: ledger.serialised().encode(),
+                retained_commit.STATE_FILENAME: _state_payload(result).encode(),
             }
-        )
-        return finish_authority_refusal()
+            staged_lock = transaction_state.get("staged_lock")
+            if isinstance(staged_lock, bytes):
+                staged[retained_commit.LOCK_FILENAME] = staged_lock
 
-    if not preflight_authority.covers(
-        spec.id, BASE_REFERENCE_QUALIFICATION, candidate_sha256=candidate_sha256
-    ):
-        # Distinguish the two refusals: a wrong experiment or scope is a different
-        # mistake from an authority issued against a candidate that has since changed.
-        if (
-            preflight_authority.experiment_id != spec.id
-            or BASE_REFERENCE_QUALIFICATION not in preflight_authority.scope
-        ):
-            blockers.append(
-                {
-                    "task": None,
-                    "code": "preflight-authority-out-of-scope",
-                    "detail": (
-                        f"authority {preflight_authority.id!r} covers experiment "
-                        f"{preflight_authority.experiment_id!r} scopes "
-                        f"{list(preflight_authority.scope)}, not "
-                        f"{BASE_REFERENCE_QUALIFICATION} for {spec.id!r}"
-                    ),
-                }
-            )
-        else:
-            blockers.append(
-                {
-                    "task": None,
-                    "code": "preflight-authority-candidate-mismatch",
-                    "detail": (
-                        f"authority {preflight_authority.id!r} approves preflight candidate "
-                        f"{preflight_authority.preflight_candidate_sha256}, but this prepared "
-                        f"request is {candidate_sha256}; the qualification inputs or backend "
-                        "changed since the authority was issued, so it is refused before any "
-                        "oracle runs"
-                    ),
-                }
-            )
-        return finish_authority_refusal()
-
-    qualification_stage_inputs: dict[str, object] = {
-        "authority": preflight_authority.as_json(),
-        # Recorded from what this run computed, not copied from the authority, so
-        # the evidence shows the executed request independently of the approval it
-        # was matched against. Equality above is what makes them agree.
-        "preflight_candidate_sha256": candidate_sha256,
-        "authorised_candidate_sha256": preflight_authority.preflight_candidate_sha256,
-        "backend": qualification_backend,
-        "capsules": {task_id: task.capsule_identity for task_id, task in tasks.items()},
-    }
-    completed_qualification = retained_preflight.matching_completed_stage(
-        ledger, qualification_stage_inputs
-    )
-    if completed_qualification is None:
-        try:
-            completed_qualification = (
-                retained_preflight.matching_completed_candidate_stage(
-                    root,
-                    ledger,
-                    candidate_sha256=candidate_sha256,
-                )
-            )
-        except retained_preflight.RetainedPreflightError as exc:
-            blockers.append(
-                {
-                    "task": None,
-                    "code": retained_preflight.INVALID_RETAINED_QUALIFICATION,
-                    "detail": str(exc),
-                }
-            )
-            return finish_without_persisting(stages.STATIC_QUALIFIED)
-
-    qualification_reused = completed_qualification is not None
-    if completed_qualification is not None:
-        has_fresh_task = any(
-            entry.get("qualification_mode") == "fresh" for entry in candidate_tasks
-        )
-        if has_fresh_task:
+            # Publication happens as one transaction: the lock is published with the
+            # state that records it, so a commit that does not happen cannot leave an
+            # immutable lock behind for a transaction nobody committed.
             try:
-                consumed = effect_claim.load_consumed_candidate(
-                    root,
-                    experiment_id=spec.id,
-                    scope=BASE_REFERENCE_QUALIFICATION,
-                    candidate_sha256=candidate_sha256,
-                    candidate_tasks=tuple(candidate_tasks),
-                )
-            except effect_claim.EffectClaimError as exc:
-                blockers.append({"task": None, "code": exc.code, "detail": exc.detail})
-                return finish_without_persisting(stages.STATIC_QUALIFIED)
+                with retained_commit.coordination_lock(root):
+                    current = retained_commit.read_committed(root)
+                    reservation = retained_commit.read_reservation(root)
+                    if (
+                        reservation is not None
+                        and reservation.transaction_id != transaction_id
+                        and retained_commit.owner_is_live(root, reservation)
+                    ):
+                        # Another transaction holds the right to finish. Nothing this
+                        # invocation did is irreversible, so it yields rather than
+                        # writing over work that is still in flight.
+                        return refuse_without_persisting(
+                            retained_commit.TRANSACTION_RESERVED,
+                            "another transaction holds the reservation for this workspace; "
+                            "refusing to persist over an in-flight transaction",
+                        )
+                    held = bool(transaction_state.get("reserved"))
+                    if not held and _snapshot_identity(current) != _snapshot_identity(
+                        base_snapshot
+                    ):
+                        return refuse_without_persisting(
+                            retained_commit.CONCURRENT_STATE_CHANGED,
+                            "another invocation committed this workspace after the retained "
+                            "state was read; refusing to overwrite newer evidence with a "
+                            "stale snapshot",
+                        )
+                    retained_commit.publish(
+                        root,
+                        transaction_id=transaction_id,
+                        generation=(current.generation + 1 if current else 1),
+                        staged=staged,
+                    )
+                    if held:
+                        retained_commit.clear_reservation(root)
+                        transaction_state["reserved"] = False
+            except retained_commit.RetainedTransactionError as exc:
+                return refuse_without_persisting(exc.code, exc.detail)
+            transaction_stack.close()
+            return result
 
-            if consumed.get("authority_sha256") != digest_of(
-                preflight_authority.as_json()
-            ):
-                blockers.append(
-                    {
-                        "task": None,
-                        "code": effect_claim.ALREADY_CONSUMED,
-                        "detail": (
-                            f"preflight candidate {candidate_sha256} completed under a "
-                            "different authority; issuing another authority does not reopen "
-                            "or replace the retained transaction"
-                        ),
-                    }
-                )
-                return finish_without_persisting(stages.STATIC_QUALIFIED)
+        def finish_without_persisting(stage: str) -> PrepareResult:
+            """Return a retained-evidence refusal without overwriting successful evidence."""
+            result.blockers = blockers
+            result.stage = stage
+            result.status = "BLOCKED"
+            result._identities = ledger.identities()
+            result._receipts = ledger.receipts()
+            result.reused_stages = list(ledger.reused)
+            # A post-claim refusal is not rolled back. The reservation is deliberately
+            # left where a later caller can find it; releasing liveness is what marks
+            # it as interrupted rather than in flight.
+            transaction_stack.close()
+            return result
 
-        try:
-            restored = retained_preflight.load_completed_qualifications(
-                root,
-                candidate_sha256=candidate_sha256,
-                stage_record=completed_qualification,
-                task_ids=tuple(task.id for task in spec.tasks),
-            )
-        except retained_preflight.RetainedPreflightError as exc:
-            blockers.append(
-                {
-                    "task": None,
-                    "code": retained_preflight.INVALID_RETAINED_QUALIFICATION,
-                    "detail": str(exc),
+        ledger.enter(
+            stages.DISCOVERED,
+            {"spec": str(spec.source_path), "tasks": [t.id for t in spec.tasks]},
+        )
+        ledger.complete(stages.DISCOVERED, {"tasks": len(spec.tasks)})
+
+        semantic_inputs = {task.id: task.semantic_payload() for task in spec.tasks}
+        ledger.enter(stages.SEMANTIC_FROZEN, semantic_inputs)
+        ledger.complete(
+            stages.SEMANTIC_FROZEN,
+            {
+                task_id: digest_of(payload)
+                for task_id, payload in semantic_inputs.items()
+            },
+        )
+
+        tasks = {
+            task.id: _prepare_task(spec, task, root, blockers=blockers)
+            for task in spec.tasks
+        }
+        result.tasks = tasks
+
+        ledger.enter(
+            stages.RUNTIME_PREPARED,
+            {
+                task.id: {
+                    "runtime": task.runtime.as_json(),
+                    "source": {
+                        "base_tree": task.source.base_tree,
+                        "reference_tree": task.reference.tree,
+                    },
+                    "preparation": tasks[task.id].preparation.as_json(),
+                    "scheme": task.preparation_scheme,
                 }
-            )
-            return finish_without_persisting(stages.STATIC_QUALIFIED)
+                for task in spec.tasks
+            },
+        )
+        if blockers:
+            return finish(stages.RUNTIME_PREPARED)
+        ledger.complete(
+            stages.RUNTIME_PREPARED,
+            {
+                task_id: {
+                    "prepared_runtime_identity": task.prepared_runtime_identity,
+                    "preparation_receipt": (
+                        task.preparation_receipt.identity
+                        if task.preparation_receipt
+                        else None
+                    ),
+                }
+                for task_id, task in tasks.items()
+            },
+        )
 
+        ledger.enter(
+            stages.STATIC_QUALIFIED,
+            {
+                task.id: {
+                    "harness": _harness_json(tasks[task.id]),
+                    "oracle_sha256": tasks[task.id].oracle_sha256,
+                    "qualification_profiles": tasks[task.id].qualification_profiles,
+                    "execution_profile": tasks[task.id].execution_profile,
+                }
+                for task in spec.tasks
+            },
+        )
+        ledger.complete(
+            stages.STATIC_QUALIFIED,
+            {task_id: task.capsule_identity for task_id, task in tasks.items()},
+        )
+
+        reused_certificates = _consume_certificates(spec, blockers)
+        result.reused_certificates = reused_certificates
+        if blockers:
+            return finish(stages.STATIC_QUALIFIED)
+
+        # What will actually happen per task, decided before the candidate is emitted.
+        # Reading and validating a declared prior receipt is read-only, and it must be
+        # settled here: approving subjects and a backend is not approval of an effect if
+        # the same digest could stand for either running the hidden oracle or reusing a
+        # receipt instead.
+        resolved_priors: dict[str, QualificationReceipt] = {}
+        candidate_tasks: list[dict[str, str]] = []
         for task in spec.tasks:
             current = tasks[task.id]
-            receipt = restored[task.id]
-            if receipt.backend != qualification_backend:
+            entry = {"id": task.id, "capsule_identity": current.capsule_identity}
+            if task.prior_qualification_receipt is None:
+                entry["qualification_mode"] = "fresh"
+                candidate_tasks.append(entry)
+                continue
+            try:
+                prior = load_receipt(task.prior_qualification_receipt)
+            except (ReceiptError, OSError, json.JSONDecodeError) as exc:
                 blockers.append(
                     {
                         "task": task.id,
-                        "code": retained_preflight.INVALID_RETAINED_QUALIFICATION,
+                        "code": "prior-qualification-receipt-invalid",
+                        "detail": str(exc),
+                    }
+                )
+                continue
+            # A receipt earned through one backend is not evidence about another: the
+            # hidden-oracle effect path differs, so it cannot stand in for this request.
+            if prior.backend != qualification_backend:
+                blockers.append(
+                    {
+                        "task": task.id,
+                        "code": "prior-qualification-backend-mismatch",
                         "detail": (
-                            f"retained qualification backend {receipt.backend!r} does not "
-                            f"match current backend {qualification_backend!r}"
+                            f"the prior receipt was produced by backend {prior.backend!r}, but "
+                            f"this request qualifies through {qualification_backend!r}; a receipt "
+                            "from another backend cannot stand in for it"
                         ),
                     }
                 )
                 continue
-            covers, mismatched = receipt.covers(_qualification_bound(task, current))
+            covers, mismatched = prior.covers(_qualification_bound(task, current))
             if not covers:
                 blockers.append(
                     {
                         "task": task.id,
-                        "code": retained_preflight.INVALID_RETAINED_QUALIFICATION,
+                        "code": "prior-qualification-receipt-not-current",
                         "detail": (
-                            "retained qualification is no longer current for "
-                            f"{mismatched or 'the qualified outcome'}"
+                            f"the receipt does not bind {mismatched or 'a qualified outcome'}; "
+                            "requalify or remove the prior-qualification claim"
                         ),
                     }
                 )
                 continue
-            current.qualification = receipt
-            current.qualification_reused = True
+            resolved_priors[task.id] = prior
+            entry["qualification_mode"] = "reuse"
+            entry["prior_receipt_identity"] = prior.identity
+            candidate_tasks.append(entry)
+
         if blockers:
-            return finish_without_persisting(stages.STATIC_QUALIFIED)
-        if stages.BASE_REFERENCE_QUALIFIED not in ledger.reused:
-            ledger.reused.append(stages.BASE_REFERENCE_QUALIFIED)
+            # A request whose disposition cannot be settled has no well-defined candidate,
+            # so none is emitted: an owner must never approve a digest that misrepresents
+            # what would run.
+            return finish(stages.STATIC_QUALIFIED)
 
-    if not qualification_reused:
-        ledger.enter(stages.BASE_REFERENCE_QUALIFIED, qualification_stage_inputs)
-        effect_claimed = False
-        for task in spec.tasks:
-            current = tasks[task.id]
-            guard = _deterministic_pre_effect_blocker(
-                task, current, qualification_backend=qualification_backend
-            )
-            if guard is not None:
-                blockers.append(guard)
-                continue
-            harness = current.harness
-            bound = _qualification_bound(task, current)
-            # The helper above is the sole runtime check for subject availability;
-            # these casts preserve that proven invariant for static type checking
-            # without duplicating the guard conditions here.
-            base_path = cast(Path, current.base_path)
-            reference_path = cast(Path, current.reference_path)
+        # The exact request about to be authorised, computed here rather than after an
+        # authority arrives, so an authority-less prepare can report the digest the
+        # owner is being asked to approve. Task order is qualification order.
+        candidate_sha256 = preflight_candidate_identity(
+            experiment_id=spec.id,
+            scope=BASE_REFERENCE_QUALIFICATION,
+            qualification_backend=qualification_backend,
+            tasks=tuple(candidate_tasks),
+        )
+        result.preflight_candidate_sha256 = candidate_sha256
+        authority_sha256 = (
+            digest_of(preflight_authority.as_json())
+            if preflight_authority is not None
+            else None
+        )
 
-            # The disposition was settled before the candidate was emitted and the owner
-            # authorised that exact digest, so it is consumed here rather than decided
-            # again. This is what makes an already-valid qualification (the D0 case)
-            # reusable without the reuse being substitutable for a fresh run.
-            approved_prior = resolved_priors.get(task.id)
-            if approved_prior is not None:
-                current.qualification = approved_prior
-                current.qualification_reused = True
-                continue
+        def rendezvous_with_owner() -> PrepareResult | None:
+            """Converge on, or yield to, a transaction already holding the workspace.
 
-            # No effect-bearing operation has started while the claim is absent. If
-            # any earlier task or future pre-effect refusal accumulated a blocker,
-            # stop before consuming the candidate. Once the claim succeeds, the very
-            # next top-level operation is the first actual qualification effect.
-            if blockers and not effect_claimed:
-                return finish(stages.STATIC_QUALIFIED)
-            if not effect_claimed:
+            A reservation is the right to cross the next effect boundary, not the
+            right to own the workspace. A caller asking for exactly the same
+            authorised effect waits for the owner and then reconciles onto whatever
+            the owner committed, so the answer is one transaction rather than one
+            survivor. Anything else -- a different candidate, a different authority,
+            none at all -- has nothing irreversible in flight, so it is refused
+            without touching a workspace whose owner does.
+            """
+            nonlocal base_snapshot
+            while True:
                 try:
-                    effect_claim.claim_fresh_candidate(
+                    with retained_commit.coordination_lock(root):
+                        reservation = retained_commit.read_reservation(root)
+                        live = (
+                            reservation is not None
+                            and reservation.transaction_id != transaction_id
+                            and retained_commit.owner_is_live(root, reservation)
+                        )
+                    if reservation is None or not live:
+                        return None
+                    if not (
+                        reservation.experiment_id == spec.id
+                        and reservation.scope == BASE_REFERENCE_QUALIFICATION
+                        and reservation.candidate_sha256 == candidate_sha256
+                        and authority_sha256 is not None
+                        and reservation.authority_sha256 == authority_sha256
+                    ):
+                        return refuse_without_persisting(
+                            retained_commit.TRANSACTION_RESERVED,
+                            "another transaction holds the effect reservation for this "
+                            "workspace; refusing to act while it is in flight",
+                        )
+                    # The same authorised request. Wait for the owner, then adopt what
+                    # it committed rather than recomputing a competing view of it.
+                    retained_commit.wait_for_owner(root, reservation)
+                    with retained_commit.coordination_lock(root):
+                        base_snapshot = retained_commit.read_committed(root)
+                        ledger.records.clear()
+                        ledger.reused.clear()
+                        ledger.load()
+                except retained_commit.RetainedTransactionError as exc:
+                    return refuse_without_persisting(exc.code, exc.detail)
+
+        def reserve() -> PrepareResult | None:
+            """Take the right to cross the effect boundary, before crossing it.
+
+            Liveness is acquired before the durable record: a reservation another
+            caller could read while its owner is not yet observable would be read as
+            abandoned, which is the one reading that must never be possible.
+            """
+            if transaction_state.get("reserved"):
+                return None
+            if authority_sha256 is None:  # pragma: no cover - defensive
+                return None
+            try:
+                transaction_stack.enter_context(
+                    retained_commit.owner_liveness(root, transaction_id)
+                )
+                with retained_commit.coordination_lock(root):
+                    retained_commit.write_reservation(
+                        root,
+                        retained_commit.Reservation(
+                            transaction_id=transaction_id,
+                            base_identity=(
+                                base_snapshot.identity if base_snapshot else None
+                            ),
+                            experiment_id=spec.id,
+                            scope=BASE_REFERENCE_QUALIFICATION,
+                            candidate_sha256=candidate_sha256,
+                            authority_sha256=authority_sha256,
+                        ),
+                    )
+            except retained_commit.RetainedTransactionError as exc:
+                return refuse_without_persisting(exc.code, exc.detail)
+            transaction_state["reserved"] = True
+            return None
+
+        yielded = rendezvous_with_owner()
+        if yielded is not None:
+            return yielded
+
+        preserve_completed_candidate = False
+        existing_qualification = ledger.records.get(stages.BASE_REFERENCE_QUALIFIED)
+        if existing_qualification is not None and existing_qualification.complete:
+            try:
+                preserve_completed_candidate = (
+                    retained_preflight.matching_completed_candidate_stage(
+                        root,
+                        ledger,
+                        candidate_sha256=candidate_sha256,
+                    )
+                    is not None
+                    # The candidate proves the qualification transaction is the same one.
+                    # It says nothing about the downstream material the lock also binds,
+                    # so an unchanged candidate alone must not keep an old READY and its
+                    # lock presented as current after that material has drifted.
+                    and retained_preflight.retained_lock_material_matches(
+                        root,
+                        experiment_id=spec.id,
+                        question=spec.question,
+                        claim_boundary=spec.claim_boundary,
+                        launch=spec.launch_payload(),
+                        capabilities=reused_certificates,
+                        artifact_store=str(root / "artifacts"),
+                    )
+                )
+            except retained_preflight.RetainedPreflightError:
+                # A completed qualification whose retained public state cannot be safely
+                # matched is forensic evidence. An authority refusal must not rewrite it;
+                # a later authorised replay will surface the retained-integrity blocker.
+                preserve_completed_candidate = True
+
+        def finish_authority_refusal() -> PrepareResult:
+            if preserve_completed_candidate:
+                return finish_without_persisting(stages.STATIC_QUALIFIED)
+            return finish(stages.STATIC_QUALIFIED)
+
+        if preflight_authority is None:
+            blockers.append(
+                {
+                    "task": None,
+                    "code": "base-reference-qualification-requires-preflight-authority",
+                    "detail": (
+                        "static preparation is complete; executing the declared oracle against "
+                        "BASE and REFERENCE requires an explicit owner preflight authority "
+                        f"naming preflight candidate {candidate_sha256}"
+                    ),
+                }
+            )
+            return finish_authority_refusal()
+
+        if not preflight_authority.covers(
+            spec.id, BASE_REFERENCE_QUALIFICATION, candidate_sha256=candidate_sha256
+        ):
+            # Distinguish the two refusals: a wrong experiment or scope is a different
+            # mistake from an authority issued against a candidate that has since changed.
+            if (
+                preflight_authority.experiment_id != spec.id
+                or BASE_REFERENCE_QUALIFICATION not in preflight_authority.scope
+            ):
+                blockers.append(
+                    {
+                        "task": None,
+                        "code": "preflight-authority-out-of-scope",
+                        "detail": (
+                            f"authority {preflight_authority.id!r} covers experiment "
+                            f"{preflight_authority.experiment_id!r} scopes "
+                            f"{list(preflight_authority.scope)}, not "
+                            f"{BASE_REFERENCE_QUALIFICATION} for {spec.id!r}"
+                        ),
+                    }
+                )
+            else:
+                blockers.append(
+                    {
+                        "task": None,
+                        "code": "preflight-authority-candidate-mismatch",
+                        "detail": (
+                            f"authority {preflight_authority.id!r} approves preflight candidate "
+                            f"{preflight_authority.preflight_candidate_sha256}, but this prepared "
+                            f"request is {candidate_sha256}; the qualification inputs or backend "
+                            "changed since the authority was issued, so it is refused before any "
+                            "oracle runs"
+                        ),
+                    }
+                )
+            return finish_authority_refusal()
+
+        qualification_stage_inputs: dict[str, object] = {
+            "authority": preflight_authority.as_json(),
+            # Recorded from what this run computed, not copied from the authority, so
+            # the evidence shows the executed request independently of the approval it
+            # was matched against. Equality above is what makes them agree.
+            "preflight_candidate_sha256": candidate_sha256,
+            "authorised_candidate_sha256": preflight_authority.preflight_candidate_sha256,
+            "backend": qualification_backend,
+            "capsules": {
+                task_id: task.capsule_identity for task_id, task in tasks.items()
+            },
+        }
+        completed_qualification = retained_preflight.matching_completed_stage(
+            ledger, qualification_stage_inputs
+        )
+        if completed_qualification is None:
+            try:
+                completed_qualification = (
+                    retained_preflight.matching_completed_candidate_stage(
+                        root,
+                        ledger,
+                        candidate_sha256=candidate_sha256,
+                    )
+                )
+            except retained_preflight.RetainedPreflightError as exc:
+                blockers.append(
+                    {
+                        "task": None,
+                        "code": retained_preflight.INVALID_RETAINED_QUALIFICATION,
+                        "detail": str(exc),
+                    }
+                )
+                return finish_without_persisting(stages.STATIC_QUALIFIED)
+
+        qualification_reused = completed_qualification is not None
+        if completed_qualification is not None:
+            has_fresh_task = any(
+                entry.get("qualification_mode") == "fresh" for entry in candidate_tasks
+            )
+            if has_fresh_task:
+                try:
+                    consumed = effect_claim.load_consumed_candidate(
                         root,
                         experiment_id=spec.id,
                         scope=BASE_REFERENCE_QUALIFICATION,
                         candidate_sha256=candidate_sha256,
-                        authority=preflight_authority,
                         candidate_tasks=tuple(candidate_tasks),
                     )
                 except effect_claim.EffectClaimError as exc:
@@ -1647,187 +1675,325 @@ def prepare(
                         {"task": None, "code": exc.code, "detail": exc.detail}
                     )
                     return finish_without_persisting(stages.STATIC_QUALIFIED)
-                effect_claimed = True
 
-            outcome = qualify_subjects(
-                task_id=task.id,
-                backend=qualification_backend,
-                base_tree=current.qualification_paths.get("base", base_path),
-                reference_tree=current.qualification_paths.get(
-                    "reference", reference_path
-                ),
-                oracle=task.oracle_path,
-                import_roots=_IMPORT_ROOTS,
-                subject_profiles=current.qualification_profiles or None,
-                argv=list(harness.invocation.argv) if harness else None,
-                bound=bound,
-                expectations={
-                    "base": task.expectations.base,
-                    "reference": task.expectations.reference,
+                if consumed.get("authority_sha256") != digest_of(
+                    preflight_authority.as_json()
+                ):
+                    blockers.append(
+                        {
+                            "task": None,
+                            "code": effect_claim.ALREADY_CONSUMED,
+                            "detail": (
+                                f"preflight candidate {candidate_sha256} completed under a "
+                                "different authority; issuing another authority does not reopen "
+                                "or replace the retained transaction"
+                            ),
+                        }
+                    )
+                    return finish_without_persisting(stages.STATIC_QUALIFIED)
+
+            try:
+                restored = retained_preflight.load_completed_qualifications(
+                    root,
+                    candidate_sha256=candidate_sha256,
+                    stage_record=completed_qualification,
+                    task_ids=tuple(task.id for task in spec.tasks),
+                )
+            except retained_preflight.RetainedPreflightError as exc:
+                blockers.append(
+                    {
+                        "task": None,
+                        "code": retained_preflight.INVALID_RETAINED_QUALIFICATION,
+                        "detail": str(exc),
+                    }
+                )
+                return finish_without_persisting(stages.STATIC_QUALIFIED)
+
+            for task in spec.tasks:
+                current = tasks[task.id]
+                receipt = restored[task.id]
+                if receipt.backend != qualification_backend:
+                    blockers.append(
+                        {
+                            "task": task.id,
+                            "code": retained_preflight.INVALID_RETAINED_QUALIFICATION,
+                            "detail": (
+                                f"retained qualification backend {receipt.backend!r} does not "
+                                f"match current backend {qualification_backend!r}"
+                            ),
+                        }
+                    )
+                    continue
+                covers, mismatched = receipt.covers(_qualification_bound(task, current))
+                if not covers:
+                    blockers.append(
+                        {
+                            "task": task.id,
+                            "code": retained_preflight.INVALID_RETAINED_QUALIFICATION,
+                            "detail": (
+                                "retained qualification is no longer current for "
+                                f"{mismatched or 'the qualified outcome'}"
+                            ),
+                        }
+                    )
+                    continue
+                current.qualification = receipt
+                current.qualification_reused = True
+            if blockers:
+                return finish_without_persisting(stages.STATIC_QUALIFIED)
+            if stages.BASE_REFERENCE_QUALIFIED not in ledger.reused:
+                ledger.reused.append(stages.BASE_REFERENCE_QUALIFIED)
+
+        if not qualification_reused:
+            ledger.enter(stages.BASE_REFERENCE_QUALIFIED, qualification_stage_inputs)
+            effect_claimed = False
+            for task in spec.tasks:
+                current = tasks[task.id]
+                guard = _deterministic_pre_effect_blocker(
+                    task, current, qualification_backend=qualification_backend
+                )
+                if guard is not None:
+                    blockers.append(guard)
+                    continue
+                harness = current.harness
+                bound = _qualification_bound(task, current)
+                # The helper above is the sole runtime check for subject availability;
+                # these casts preserve that proven invariant for static type checking
+                # without duplicating the guard conditions here.
+                base_path = cast(Path, current.base_path)
+                reference_path = cast(Path, current.reference_path)
+
+                # The disposition was settled before the candidate was emitted and the owner
+                # authorised that exact digest, so it is consumed here rather than decided
+                # again. This is what makes an already-valid qualification (the D0 case)
+                # reusable without the reuse being substitutable for a fresh run.
+                approved_prior = resolved_priors.get(task.id)
+                if approved_prior is not None:
+                    current.qualification = approved_prior
+                    current.qualification_reused = True
+                    continue
+
+                # No effect-bearing operation has started while the claim is absent. If
+                # any earlier task or future pre-effect refusal accumulated a blocker,
+                # stop before consuming the candidate. Once the claim succeeds, the very
+                # next top-level operation is the first actual qualification effect.
+                reservation_refused = reserve()
+                if reservation_refused is not None:
+                    return reservation_refused
+                if blockers and not effect_claimed:
+                    return finish(stages.STATIC_QUALIFIED)
+                if not effect_claimed:
+                    try:
+                        effect_claim.claim_fresh_candidate(
+                            root,
+                            experiment_id=spec.id,
+                            scope=BASE_REFERENCE_QUALIFICATION,
+                            candidate_sha256=candidate_sha256,
+                            authority=preflight_authority,
+                            candidate_tasks=tuple(candidate_tasks),
+                        )
+                    except effect_claim.EffectClaimError as exc:
+                        blockers.append(
+                            {"task": None, "code": exc.code, "detail": exc.detail}
+                        )
+                        return finish_without_persisting(stages.STATIC_QUALIFIED)
+                    effect_claimed = True
+
+                outcome = qualify_subjects(
+                    task_id=task.id,
+                    backend=qualification_backend,
+                    base_tree=current.qualification_paths.get("base", base_path),
+                    reference_tree=current.qualification_paths.get(
+                        "reference", reference_path
+                    ),
+                    oracle=task.oracle_path,
+                    import_roots=_IMPORT_ROOTS,
+                    subject_profiles=current.qualification_profiles or None,
+                    argv=list(harness.invocation.argv) if harness else None,
+                    bound=bound,
+                    expectations={
+                        "base": task.expectations.base,
+                        "reference": task.expectations.reference,
+                    },
+                    discriminator_cases=task.semantics.discriminator_cases,
+                )
+                if isinstance(outcome, list):
+                    blockers.extend(outcome)
+                    continue
+                current.qualification = outcome
+                if not outcome.qualified:
+                    blockers.append(
+                        {
+                            "task": task.id,
+                            "code": "base-reference-qualification-failed",
+                            "detail": (
+                                f"base {outcome.base.classification}: {outcome.base.detail}; "
+                                f"reference {outcome.reference.classification}: "
+                                f"{outcome.reference.detail}"
+                            ),
+                        }
+                    )
+            if blockers:
+                return finish(stages.STATIC_QUALIFIED)
+            ledger.complete(
+                stages.BASE_REFERENCE_QUALIFIED,
+                {
+                    task_id: task.qualification.identity
+                    for task_id, task in tasks.items()
+                    if task.qualification
                 },
-                discriminator_cases=task.semantics.discriminator_cases,
             )
-            if isinstance(outcome, list):
-                blockers.extend(outcome)
-                continue
-            current.qualification = outcome
-            if not outcome.qualified:
+
+        ledger.enter(
+            stages.BOUNDARY_QUALIFIED,
+            {
+                "certificates": reused_certificates,
+                "resources": spec.resources.as_json(),
+            },
+        )
+        ledger.complete(
+            stages.BOUNDARY_QUALIFIED, {"certificates": len(reused_certificates)}
+        )
+
+        for task in spec.tasks:
+            if not task.execution.command:
                 blockers.append(
                     {
                         "task": task.id,
-                        "code": "base-reference-qualification-failed",
+                        "code": "execution-command-required-for-freeze",
                         "detail": (
-                            f"base {outcome.base.classification}: {outcome.base.detail}; "
-                            f"reference {outcome.reference.classification}: "
-                            f"{outcome.reference.detail}"
+                            "a lock reported READY_FOR_OWNER_REVIEW must already be executable; "
+                            "declare execution.command, which is never inferred from the "
+                            "qualification invocation"
                         ),
                     }
                 )
         if blockers:
-            return finish(stages.STATIC_QUALIFIED)
-        ledger.complete(
-            stages.BASE_REFERENCE_QUALIFIED,
-            {
-                task_id: task.qualification.identity
-                for task_id, task in tasks.items()
-                if task.qualification
-            },
-        )
+            return finish(stages.BOUNDARY_QUALIFIED)
 
-    ledger.enter(
-        stages.BOUNDARY_QUALIFIED,
-        {"certificates": reused_certificates, "resources": spec.resources.as_json()},
-    )
-    ledger.complete(
-        stages.BOUNDARY_QUALIFIED, {"certificates": len(reused_certificates)}
-    )
-
-    for task in spec.tasks:
-        if not task.execution.command:
+        # What runs, and in what order, is preregistered experiment material. If arms are
+        # declared, an explicit schedule is required: a default ordering would silently
+        # stand in for material the owner is supposed to have frozen.
+        if spec.arms and not spec.assignment.schedule:
             blockers.append(
                 {
-                    "task": task.id,
-                    "code": "execution-command-required-for-freeze",
+                    "task": None,
+                    "code": "assignment-schedule-required",
                     "detail": (
-                        "a lock reported READY_FOR_OWNER_REVIEW must already be executable; "
-                        "declare execution.command, which is never inferred from the "
-                        "qualification invocation"
+                        "arms are declared but experiment.assignment carries no ordered schedule; "
+                        "declare assignment.schedule inline or bind assignment.schedule_artifact "
+                        "with its sha256. The compiler never derives assignment order."
                     ),
                 }
             )
-    if blockers:
-        return finish(stages.BOUNDARY_QUALIFIED)
+            return finish(stages.BOUNDARY_QUALIFIED)
 
-    # What runs, and in what order, is preregistered experiment material. If arms are
-    # declared, an explicit schedule is required: a default ordering would silently
-    # stand in for material the owner is supposed to have frozen.
-    if spec.arms and not spec.assignment.schedule:
-        blockers.append(
-            {
-                "task": None,
-                "code": "assignment-schedule-required",
-                "detail": (
-                    "arms are declared but experiment.assignment carries no ordered schedule; "
-                    "declare assignment.schedule inline or bind assignment.schedule_artifact "
-                    "with its sha256. The compiler never derives assignment order."
-                ),
-            }
+        scheduled_arms = list(spec.assignment.arms) or ["default"]
+        schedule = [entry.as_json() for entry in spec.assignment.schedule] or [
+            {"task": task.id, "repetition": repetition, "arm": "default"}
+            for task in spec.tasks
+            for repetition in range(1, spec.assignment.repetitions + 1)
+        ]
+        # A frozen order is not enough: it must be exactly the preregistered set of runs.
+        schedule_reasons = runplan.validate_schedule(
+            schedule=schedule,
+            task_ids=[task.id for task in spec.tasks],
+            arms=scheduled_arms,
+            repetitions=spec.assignment.repetitions,
         )
-        return finish(stages.BOUNDARY_QUALIFIED)
+        if schedule_reasons:
+            blockers.append(
+                {
+                    "task": None,
+                    "code": "assignment-schedule-not-a-complete-permutation",
+                    "detail": (
+                        "the schedule must be exactly one permutation of "
+                        "tasks x repetitions x arms: " + "; ".join(schedule_reasons)
+                    ),
+                }
+            )
+            return finish(stages.BOUNDARY_QUALIFIED)
 
-    scheduled_arms = list(spec.assignment.arms) or ["default"]
-    schedule = [entry.as_json() for entry in spec.assignment.schedule] or [
-        {"task": task.id, "repetition": repetition, "arm": "default"}
-        for task in spec.tasks
-        for repetition in range(1, spec.assignment.repetitions + 1)
-    ]
-    # A frozen order is not enough: it must be exactly the preregistered set of runs.
-    schedule_reasons = runplan.validate_schedule(
-        schedule=schedule,
-        task_ids=[task.id for task in spec.tasks],
-        arms=scheduled_arms,
-        repetitions=spec.assignment.repetitions,
-    )
-    if schedule_reasons:
-        blockers.append(
-            {
-                "task": None,
-                "code": "assignment-schedule-not-a-complete-permutation",
-                "detail": (
-                    "the schedule must be exactly one permutation of "
-                    "tasks x repetitions x arms: " + "; ".join(schedule_reasons)
-                ),
-            }
-        )
-        return finish(stages.BOUNDARY_QUALIFIED)
-
-    plan = runplan.compile_plan(
-        schedule=schedule,
-        schedule_source=spec.assignment.source,
-        schedule_sha256=spec.assignment.schedule_sha256,
-        arm_inputs={
-            arm.name: [
-                {"id": item.id, "sha256": item.sha256 or "", "source": str(item.source)}
-                for item in arm.inputs
-            ]
-            for arm in spec.arms
-        },
-    )
-    result.run_plan = plan
-
-    ledger.enter(
-        stages.EXECUTION_FROZEN,
-        {
-            "capsules": {
-                task_id: task.capsule_identity for task_id, task in tasks.items()
+        plan = runplan.compile_plan(
+            schedule=schedule,
+            schedule_source=spec.assignment.source,
+            schedule_sha256=spec.assignment.schedule_sha256,
+            arm_inputs={
+                arm.name: [
+                    {
+                        "id": item.id,
+                        "sha256": item.sha256 or "",
+                        "source": str(item.source),
+                    }
+                    for item in arm.inputs
+                ]
+                for arm in spec.arms
             },
-            "launch": spec.launch_payload(),
-            "run_plan": plan.identity,
-        },
-    )
-    experiment_lock = lock_module.build(
-        experiment_id=spec.id,
-        question=spec.question,
-        claim_boundary=spec.claim_boundary,
-        launch=spec.launch_payload(),
-        tasks=[task.as_json() for task in tasks.values()],
-        capabilities=reused_certificates,
-        stage_receipts=ledger.receipts(),
-        authority=preflight_authority.as_json(),
-        run_plan=plan.as_json(),
-        artifact_store=str(root / "artifacts"),
-    )
-    try:
-        result.lock_path = experiment_lock.write(root)
-    except lock_module.LockError as exc:
-        blockers.append(
-            {"task": None, "code": "experiment-lock-conflict", "detail": str(exc)}
         )
-        return finish(stages.BOUNDARY_QUALIFIED)
-    result.lock_identity = experiment_lock.identity
-    ledger.complete(stages.EXECUTION_FROZEN, {"lock_sha256": experiment_lock.identity})
+        result.run_plan = plan
 
-    missing = ledger.missing_for_readiness()
-    if missing:
-        blockers.append(
+        ledger.enter(
+            stages.EXECUTION_FROZEN,
             {
-                "task": None,
-                "code": "readiness-missing-stage-receipts",
-                "detail": f"no completed receipt for {missing}",
-            }
+                "capsules": {
+                    task_id: task.capsule_identity for task_id, task in tasks.items()
+                },
+                "launch": spec.launch_payload(),
+                "run_plan": plan.identity,
+            },
         )
-        return finish(stages.EXECUTION_FROZEN)
+        experiment_lock = lock_module.build(
+            experiment_id=spec.id,
+            question=spec.question,
+            claim_boundary=spec.claim_boundary,
+            launch=spec.launch_payload(),
+            tasks=[task.as_json() for task in tasks.values()],
+            capabilities=reused_certificates,
+            stage_receipts=ledger.receipts(),
+            authority=preflight_authority.as_json(),
+            run_plan=plan.as_json(),
+            artifact_store=str(root / "artifacts"),
+        )
+        try:
+            transaction_state["staged_lock"] = experiment_lock.stage(root)
+        except lock_module.LockError as exc:
+            blockers.append(
+                {"task": None, "code": "experiment-lock-conflict", "detail": str(exc)}
+            )
+            return finish(stages.BOUNDARY_QUALIFIED)
+        result.lock_path = root / lock_module.LOCK_FILENAME
+        result.lock_identity = experiment_lock.identity
+        ledger.complete(
+            stages.EXECUTION_FROZEN, {"lock_sha256": experiment_lock.identity}
+        )
 
-    ledger.enter(
-        stages.READY_FOR_OWNER_REVIEW, {"lock_sha256": experiment_lock.identity}
-    )
-    ledger.complete(
-        stages.READY_FOR_OWNER_REVIEW, {"lock_sha256": experiment_lock.identity}
-    )
-    return finish(stages.READY_FOR_OWNER_REVIEW)
+        missing = ledger.missing_for_readiness()
+        if missing:
+            blockers.append(
+                {
+                    "task": None,
+                    "code": "readiness-missing-stage-receipts",
+                    "detail": f"no completed receipt for {missing}",
+                }
+            )
+            return finish(stages.EXECUTION_FROZEN)
+
+        ledger.enter(
+            stages.READY_FOR_OWNER_REVIEW, {"lock_sha256": experiment_lock.identity}
+        )
+        ledger.complete(
+            stages.READY_FOR_OWNER_REVIEW, {"lock_sha256": experiment_lock.identity}
+        )
+        return finish(stages.READY_FOR_OWNER_REVIEW)
 
 
-def _write_state(root: Path, result: PrepareResult) -> None:
+def _snapshot_identity(snapshot: retained_commit.CommittedSnapshot | None) -> str:
+    """A comparable identity for a committed snapshot, or for never having committed."""
+    return snapshot.identity if snapshot is not None else "uncommitted"
+
+
+def _state_payload(result: PrepareResult) -> str:
+    """The public state exactly as _write_state would write it, without writing it."""
     payload = {
         "schema": "gnostoa-capsule-state/v1",
         "producer": PRODUCER,
@@ -1840,9 +2006,11 @@ def _write_state(root: Path, result: PrepareResult) -> None:
         "preflight_candidate_sha256": result.preflight_candidate_sha256,
         "tasks": {task_id: task.as_json() for task_id, task in result.tasks.items()},
     }
-    (root / STATE_FILENAME).write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n"
-    )
+    return json.dumps(payload, indent=2, sort_keys=True) + "\n"
+
+
+def _write_state(root: Path, result: PrepareResult) -> None:
+    (root / STATE_FILENAME).write_text(_state_payload(result))
 
 
 def status(workspace: str | Path) -> dict[str, Any]:
@@ -1856,4 +2024,19 @@ def status(workspace: str | Path) -> dict[str, Any]:
             "blockers": [],
         }
     payload: dict[str, Any] = json.loads(path.read_text())
+    # The state file asserts a readiness; the commit record says which files that
+    # assertion was made about. A lock that is canonically valid but is not the one
+    # the successful transaction recorded would otherwise be presented as current,
+    # so provenance is checked here rather than trusted. Nothing is rewritten: a
+    # workspace that disagrees with its record is evidence, and reporting it BLOCKED
+    # is a read, not a repair. A workspace with no record at all predates the
+    # transaction model and is reported as it always was.
+    try:
+        retained_commit.read_committed(root)
+    except retained_commit.RetainedTransactionError as exc:
+        payload["status"] = "BLOCKED"
+        payload["blockers"] = [
+            *payload.get("blockers", []),
+            {"task": None, "code": exc.code, "detail": exc.detail},
+        ]
     return payload

@@ -35,21 +35,44 @@ class ExperimentLock:
     def identity(self) -> str:
         return digest_of(dict(self.payload))
 
-    def write(self, root: Path) -> Path:
-        root.mkdir(parents=True, exist_ok=True)
-        path = root / LOCK_FILENAME
-        serialized = json.dumps(
-            {**self.payload, "lock_sha256": self.identity}, indent=2, sort_keys=True
+    def serialised(self) -> str:
+        """The lock exactly as it is persisted, without persisting it."""
+        return (
+            json.dumps(
+                {**self.payload, "lock_sha256": self.identity}, indent=2, sort_keys=True
+            )
+            + "\n"
         )
-        if path.is_file():
-            existing = path.read_text()
-            if existing.strip() != serialized.strip():
-                raise LockError(
-                    "an experiment lock already exists with different content; a lock is "
-                    "immutable and is never silently overwritten"
-                )
-            return path
-        path.write_text(serialized + "\n")
+
+    def stage(self, root: Path) -> bytes:
+        """Check immutability against the published lock and return bytes to publish.
+
+        A lock is deliberately not written here. Emitting it directly would leave an
+        immutable lock behind for a transaction that never commits, and that orphan
+        then refuses every later attempt to reach the same readiness. Publication is
+        the transaction's job, so the lock appears exactly when the state recording
+        it does.
+        """
+        path = root / LOCK_FILENAME
+        serialized = self.serialised()
+        if path.is_file() and path.read_text().strip() != serialized.strip():
+            raise LockError(
+                "an experiment lock already exists with different content; a lock is "
+                "immutable and is never silently overwritten"
+            )
+        return serialized.encode()
+
+    def write(self, root: Path) -> Path:
+        """Emit a lock directly, for materialisation outside a retained transaction.
+
+        prepare() never uses this: inside a workspace transaction the lock is staged
+        and published with the state that records it.
+        """
+        root.mkdir(parents=True, exist_ok=True)
+        payload = self.stage(root)
+        path = root / LOCK_FILENAME
+        if not path.is_file():
+            path.write_bytes(payload)
         return path
 
 
