@@ -305,6 +305,109 @@ def _validate_existing_claim(
     return payload
 
 
+def _load_retained_json(path: Path, *, label: str) -> dict[str, Any]:
+    try:
+        observed = path.lstat()
+    except OSError as exc:
+        raise EffectClaimError(INVALID_CLAIM, f"{label} is unavailable: {exc}") from exc
+    if not stat.S_ISREG(observed.st_mode):
+        raise EffectClaimError(INVALID_CLAIM, f"{label} is not a regular file")
+    try:
+        decoded = json.loads(path.read_text())
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise EffectClaimError(INVALID_CLAIM, f"{label} is unreadable: {exc}") from exc
+    if not isinstance(decoded, dict):
+        raise EffectClaimError(INVALID_CLAIM, f"{label} must be a JSON object")
+    return cast(dict[str, Any], decoded)
+
+
+def _validate_completed_stage_binding(
+    workspace: Path,
+    *,
+    candidate_sha256: str,
+    claim_payload: Mapping[str, object],
+) -> None:
+    """Bind retained consumption to the authority that completed qualification.
+
+    A claim is candidate-keyed, so a differently named authority for the same candidate
+    must not be able to replace the retained claim and become indistinguishable from the
+    authority that actually opened the completed qualification transaction. Reconstruct
+    the original BASE_REFERENCE_QUALIFIED stage inputs from retained qualified state and
+    require the claim's authority to reproduce the already-complete stage input digest.
+    """
+    stage_ledger = _load_retained_json(
+        workspace / "stages.json", label="retained stage ledger"
+    )
+    records = stage_ledger.get("records")
+    if not isinstance(records, dict):
+        raise EffectClaimError(INVALID_CLAIM, "retained stage ledger has no records")
+    raw_stage = records.get("BASE_REFERENCE_QUALIFIED")
+    if not isinstance(raw_stage, dict) or raw_stage.get("status") != "COMPLETE":
+        raise EffectClaimError(
+            INVALID_CLAIM,
+            "completed fresh qualification has no complete retained qualification stage",
+        )
+    expected_inputs_sha256 = raw_stage.get("inputs_sha256")
+    if not isinstance(expected_inputs_sha256, str):
+        raise EffectClaimError(
+            INVALID_CLAIM, "retained qualification stage has no input identity"
+        )
+
+    state = _load_retained_json(
+        workspace / "experiment-state.json", label="retained public state"
+    )
+    if state.get("preflight_candidate_sha256") != candidate_sha256:
+        raise EffectClaimError(
+            INVALID_CLAIM, "retained public state names a different preflight candidate"
+        )
+    tasks = state.get("tasks")
+    if not isinstance(tasks, dict) or not tasks:
+        raise EffectClaimError(INVALID_CLAIM, "retained public state has no task records")
+
+    capsules: dict[str, str] = {}
+    backends: set[str] = set()
+    for task_id, raw_task in tasks.items():
+        if not isinstance(task_id, str) or not isinstance(raw_task, dict):
+            raise EffectClaimError(INVALID_CLAIM, "retained task record is malformed")
+        capsule_identity = raw_task.get("capsule_identity")
+        qualification = raw_task.get("qualification")
+        if not isinstance(capsule_identity, str) or not capsule_identity:
+            raise EffectClaimError(
+                INVALID_CLAIM, f"retained task {task_id!r} has no capsule identity"
+            )
+        if not isinstance(qualification, dict):
+            raise EffectClaimError(
+                INVALID_CLAIM, f"retained task {task_id!r} has no qualification receipt"
+            )
+        backend = qualification.get("backend")
+        if not isinstance(backend, str) or not backend:
+            raise EffectClaimError(
+                INVALID_CLAIM, f"retained task {task_id!r} has no qualification backend"
+            )
+        capsules[task_id] = capsule_identity
+        backends.add(backend)
+    if len(backends) != 1:
+        raise EffectClaimError(
+            INVALID_CLAIM, "retained qualifications disagree on qualification backend"
+        )
+
+    authority_payload = claim_payload.get("authority")
+    if not isinstance(authority_payload, dict):
+        raise EffectClaimError(INVALID_CLAIM, "candidate claim authority is malformed")
+    retained_stage_inputs: dict[str, object] = {
+        "authority": dict(authority_payload),
+        "preflight_candidate_sha256": candidate_sha256,
+        "authorised_candidate_sha256": candidate_sha256,
+        "backend": next(iter(backends)),
+        "capsules": capsules,
+    }
+    if digest_of(retained_stage_inputs) != expected_inputs_sha256:
+        raise EffectClaimError(
+            INVALID_CLAIM,
+            "retained effect claim authority does not bind the completed qualification stage",
+        )
+
+
 def load_consumed_candidate(
     workspace: Path,
     *,
@@ -327,7 +430,7 @@ def load_consumed_candidate(
                     INVALID_CLAIM,
                     f"completed fresh candidate {candidate_sha256} has no retained effect claim",
                 )
-            return dict(
+            payload = dict(
                 _validate_existing_claim(
                     existing,
                     experiment_id=experiment_id,
@@ -336,6 +439,12 @@ def load_consumed_candidate(
                     disposition=disposition,
                 )
             )
+            _validate_completed_stage_binding(
+                workspace,
+                candidate_sha256=candidate_sha256,
+                claim_payload=payload,
+            )
+            return payload
         finally:
             os.close(claim_fd)
     finally:
