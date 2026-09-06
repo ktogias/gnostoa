@@ -1430,10 +1430,12 @@ def prepare(
     )
     if completed_qualification is None:
         try:
-            completed_qualification = retained_preflight.matching_completed_candidate_stage(
-                root,
-                ledger,
-                candidate_sha256=candidate_sha256,
+            completed_qualification = (
+                retained_preflight.matching_completed_candidate_stage(
+                    root,
+                    ledger,
+                    candidate_sha256=candidate_sha256,
+                )
             )
         except retained_preflight.RetainedPreflightError as exc:
             blockers.append(
@@ -1460,9 +1462,7 @@ def prepare(
                     candidate_tasks=tuple(candidate_tasks),
                 )
             except effect_claim.EffectClaimError as exc:
-                blockers.append(
-                    {"task": None, "code": exc.code, "detail": exc.detail}
-                )
+                blockers.append({"task": None, "code": exc.code, "detail": exc.detail})
                 return finish_without_persisting(stages.STATIC_QUALIFIED)
 
             if consumed.get("authority_sha256") != digest_of(
