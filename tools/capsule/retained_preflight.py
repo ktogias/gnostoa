@@ -98,6 +98,59 @@ def matching_completed_candidate_stage(
     return existing
 
 
+def retained_lock_material_matches(
+    root: Path,
+    *,
+    experiment_id: str,
+    question: str,
+    claim_boundary: str,
+    launch: Mapping[str, object],
+    capabilities: Sequence[Mapping[str, object]],
+    artifact_store: str,
+) -> bool:
+    """True when the retained lock still describes today's downstream experiment.
+
+    The preflight candidate covers the qualification transaction only: subjects,
+    backend and disposition. ``experiment.lock`` additionally binds downstream
+    material -- the question, claim boundary, launch payload, capabilities and
+    artifact store -- none of which changes the candidate digest. Preserving a
+    completed READY on candidate equality alone would therefore keep presenting an
+    old lock as current after that downstream material had drifted.
+
+    Only authority-independent fields are compared. The authority itself, and the
+    task and run-plan payloads that depend on qualification outcomes, are excluded:
+    the first is exactly what an authority refusal is allowed to differ on, and the
+    others are not yet recomputed at the point this decision is taken.
+
+    Read-only. A missing or unreadable lock is not a match, so preservation is never
+    granted on the strength of a lock nobody can compare against.
+    """
+    path = root / "experiment.lock"
+    try:
+        observed = path.lstat()
+    except OSError:
+        return False
+    if not stat.S_ISREG(observed.st_mode):
+        return False
+    try:
+        retained = json.loads(path.read_text())
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(retained, dict):
+        return False
+    return (
+        retained.get("experiment")
+        == {
+            "id": experiment_id,
+            "question": question,
+            "claim_boundary": claim_boundary,
+        }
+        and retained.get("launch") == dict(launch)
+        and retained.get("capabilities") == [dict(item) for item in capabilities]
+        and retained.get("artifact_store") == artifact_store
+    )
+
+
 def _outcome(payload: object) -> SubjectOutcome:
     if not isinstance(payload, dict):
         raise RetainedPreflightError("retained qualification outcome is not an object")

@@ -1375,6 +1375,19 @@ def prepare(
                     candidate_sha256=candidate_sha256,
                 )
                 is not None
+                # The candidate proves the qualification transaction is the same one.
+                # It says nothing about the downstream material the lock also binds,
+                # so an unchanged candidate alone must not keep an old READY and its
+                # lock presented as current after that material has drifted.
+                and retained_preflight.retained_lock_material_matches(
+                    root,
+                    experiment_id=spec.id,
+                    question=spec.question,
+                    claim_boundary=spec.claim_boundary,
+                    launch=spec.launch_payload(),
+                    capabilities=reused_certificates,
+                    artifact_store=str(root / "artifacts"),
+                )
             )
         except retained_preflight.RetainedPreflightError:
             # A completed qualification whose retained public state cannot be safely

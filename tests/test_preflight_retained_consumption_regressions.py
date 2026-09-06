@@ -234,6 +234,55 @@ class RetainedConsumptionReviewRedTests(ConsumptionFixture):
         self.assertEqual(current["stage"], stages.STATIC_QUALIFIED)
         self.assertIsNone(current["lock_sha256"])
 
+    def test_authority_refusal_does_not_preserve_ready_after_claim_boundary_drift(
+        self,
+    ) -> None:
+        """The invariant is about downstream lock material, not about one field.
+
+        `question` is what the reported reproducer changed; proving a second
+        authority-independent field behaves identically is what shows the repair binds
+        the retained lock rather than special-casing a name.
+        """
+        candidate, _, effects = self._complete_once()
+        before = compiler.status(self.workspace)
+        self.assertEqual(before["status"], stages.READY_FOR_OWNER_REVIEW)
+        self.payload["experiment"]["claim_boundary"] = "a different claim boundary"
+
+        replay = self.prepare()
+
+        self.assertEqual(replay.preflight_candidate_sha256, candidate)
+        self.assertEqual(replay.status, "BLOCKED")
+        self.assertEqual(effects, ["qualify_subjects"])
+        current = compiler.status(self.workspace)
+        self.assertEqual(
+            current["status"],
+            "BLOCKED",
+            "drift in any authority-independent lock field must not keep the old lock current",
+        )
+        self.assertEqual(current["stage"], stages.STATIC_QUALIFIED)
+        self.assertIsNone(current["lock_sha256"])
+
+    def test_unchanged_downstream_material_still_preserves_completed_success(
+        self,
+    ) -> None:
+        """The repair must not make preservation unreachable.
+
+        With no drift, an authority refusal on a completed workspace must still leave
+        the retained READY transaction and its lock intact.
+        """
+        candidate, _, effects = self._complete_once()
+        before = compiler.status(self.workspace)
+        self.assertEqual(before["status"], stages.READY_FOR_OWNER_REVIEW)
+
+        replay = self.prepare()
+
+        self.assertEqual(replay.preflight_candidate_sha256, candidate)
+        self.assertEqual(replay.status, "BLOCKED")
+        self.assertEqual(effects, ["qualify_subjects"])
+        current = compiler.status(self.workspace)
+        self.assertEqual(current["status"], stages.READY_FOR_OWNER_REVIEW)
+        self.assertEqual(current["lock_sha256"], before["lock_sha256"])
+
     def test_completed_success_survives_out_of_scope_authority(self) -> None:
         candidate, authority, effects = self._complete_once()
         before = self._retained_snapshot()
