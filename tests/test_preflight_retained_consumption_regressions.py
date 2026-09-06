@@ -207,7 +207,9 @@ class RetainedConsumptionReviewRedTests(ConsumptionFixture):
         self._assert_retained_success_preserved(before)
         self._assert_correct_authority_still_recovers(authority, effects)
 
-    def test_authority_refusal_does_not_preserve_ready_after_question_drift(self) -> None:
+    def test_authority_refusal_does_not_preserve_ready_after_question_drift(
+        self,
+    ) -> None:
         candidate, _, effects = self._complete_once()
         before = compiler.status(self.workspace)
         self.assertEqual(before["status"], stages.READY_FOR_OWNER_REVIEW)
