@@ -116,7 +116,9 @@ class SameWorkspaceConcurrencyRedTests(ConsumptionFixture):
                 raise errors["loser"]
 
         loser = results["loser"]
-        self.assertEqual(effects, ["winner"], "the loser must never open a second effect")
+        self.assertEqual(
+            effects, ["winner"], "the loser must never open a second effect"
+        )
         self.assertIn(
             effect_claim.ALREADY_CONSUMED,
             [blocker["code"] for blocker in loser.blockers],
