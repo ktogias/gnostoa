@@ -62,9 +62,7 @@ class RetainedConsumptionReviewRedTests(ConsumptionFixture):
         self.assertEqual(after_state["status"], before_state["status"])
         self.assertEqual(after_state["stage"], before_state["stage"])
         self.assertEqual(after_state["lock_sha256"], before_state["lock_sha256"])
-        self.assertEqual(
-            after_state["stage_receipts"], before_state["stage_receipts"]
-        )
+        self.assertEqual(after_state["stage_receipts"], before_state["stage_receipts"])
         self.assertEqual(
             after_state["tasks"]["T1"]["qualification"],
             before_state["tasks"]["T1"]["qualification"],
