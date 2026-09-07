@@ -49,6 +49,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from tools.capsule import lock as lock_module
+
 try:  # POSIX advisory locking
     import fcntl
 except ImportError:  # pragma: no cover - platform dependent
@@ -1182,18 +1184,27 @@ def clear_publication_intent(root: Path) -> None:
 
 
 def _published_lock_identity(root: Path) -> str | None:
-    """The canonical identity carried by the published lock, if one is published."""
+    """The canonical identity the published lock carries, if one is published.
+
+    Validated through the same contract execution uses, over bytes read by this
+    module's own descriptor-bound reader rather than by reopening the path. Reading
+    the recorded ``lock_sha256`` field and returning it would establish only that the
+    lock *names* an identity: a payload altered while that field is left intact, with
+    the commit record re-sealed over the new bytes, would then satisfy every digest
+    this layer compares and let a workspace report ready while holding a lock
+    execution refuses.
+    """
     raw = _read_file(root / LOCK_FILENAME)
     if raw is None:
         return None
     try:
-        payload = json.loads(raw)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        payload = lock_module.load_bytes(raw)
+    except lock_module.LockError as exc:
         raise RetainedTransactionError(
-            INCONSISTENT_STATE, f"the published experiment lock is unreadable: {exc}"
+            INCONSISTENT_STATE, f"the published experiment lock is invalid: {exc}"
         ) from exc
-    carried = payload.get("lock_sha256") if isinstance(payload, dict) else None
-    if not isinstance(carried, str):
+    carried = payload.get("lock_sha256")
+    if not isinstance(carried, str):  # pragma: no cover - load_bytes enforces this
         raise RetainedTransactionError(
             INCONSISTENT_STATE, "the published experiment lock carries no identity"
         )

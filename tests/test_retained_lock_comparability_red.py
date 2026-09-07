@@ -1,33 +1,38 @@
-"""RED for the difference between a lock proved different and a lock not comparable.
+"""RED for a retained lock that becomes uncomparable between two observations.
 
-``retained_lock_material_matches`` answers a single False for both, and its caller
-reads that as downstream drift: the retained READY is treated as stale and an
-authority refusal publishes over it. Those are not the same answer.
+A lock that is already invalid when a prepare begins is refused by the retained
+transaction layer, which validates it canonically -- see
+``test_retained_lock_validity_red``. That is the lower layer, and it is the right
+place for the check.
 
-    the lock loads and differs        the retained READY is genuinely stale
-    the lock cannot be loaded at all  nothing is known about whether it is stale
+It is not the only place the question is asked. Between the committed read at the
+start of a prepare and the currentness comparison later in it, the lock is observed
+again, and it can stop being comparable in between. These cases damage it exactly
+there, from the seam that resolves the retained completion, and require the retained
+success to survive whatever the prepare does next.
 
-Only the first justifies replacing a completed success. The second is ambiguous
-retained evidence, which everywhere else in this model is preserved and reported
-rather than overwritten.
+What they pin is the end-to-end guarantee, not a particular layer, and that
+distinction is deliberate. With canonical validation in the transaction layer, the
+refusal these cases observe comes from ``finish()`` re-reading the committed
+snapshot, which reports ``retained-state-inconsistent``. Disabling the upper-layer
+preservation leaves them passing for that reason. The upper layer -- treating a lock
+that cannot be compared as ambiguity rather than drift -- is kept as depth, but no
+case here isolates it, and no case in this file should be read as evidence that it
+does.
 
 The fixture is synthetic and the qualification effect is patched and counted; no
 Phase-D material, hidden oracle, runner or container effect participates.
-
-At head 88828bb63e0893d4066c63340506dbc847def436 these are expected to be RED.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import unittest
 from typing import Any
 from unittest import mock
 
 from tools.capsule import authority as authority_module
-from tools.capsule import compiler, qualification, retained_commit
-from tools.capsule import lock as lock_module
+from tools.capsule import compiler, qualification, retained_commit, retained_preflight
 
 try:
     from test_preflight_authority_consumption import ConsumptionFixture
@@ -63,8 +68,8 @@ def _receipt(task_id: str, bound: dict[str, str]) -> qualification.Qualification
     )
 
 
-class UncomparableLockTests(ConsumptionFixture):
-    """Ambiguous retained evidence must be preserved, not replaced."""
+class UncomparableLockRaceTests(ConsumptionFixture):
+    """A retained success survives a lock that stops being comparable mid-prepare."""
 
     def patched_effect(self, effects: list[str]) -> Any:
         def qualify(*args: object, **kwargs: object) -> Any:
@@ -78,109 +83,107 @@ class UncomparableLockTests(ConsumptionFixture):
 
         return mock.patch.object(compiler, "qualify_subjects", side_effect=qualify)
 
-    def _ready_with_an_uncomparable_lock(self, effects: list[str]) -> dict[str, bytes]:
-        """A legitimately READY workspace whose lock no longer loads canonically.
-
-        The commit record is re-sealed over the altered bytes, so the workspace stays
-        internally coherent: this is not the accidental-damage case, which the
-        transaction layer already refuses at read_committed.
-        """
+    def _reach_ready(self, effects: list[str]) -> tuple[str, dict[str, bytes]]:
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
         with self.patched_effect(effects):
             self.prepare(authority=self.authority(candidate))
-        return self._damage_the_lock()
-
-    def _damage_the_lock(self) -> dict[str, bytes]:
         self.assertEqual(
             compiler.status(self.workspace)["status"], "READY_FOR_OWNER_REVIEW"
         )
-
-        lock_path = self.workspace / retained_commit.LOCK_FILENAME
-        payload = json.loads(lock_path.read_text())
-        payload["artifact_store"] = "/somewhere/else"
-        lock_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-        record_path = self.workspace / retained_commit.COMMIT_RECORD_FILENAME
-        record = json.loads(record_path.read_text())
-        record["lock_file_sha256"] = hashlib.sha256(lock_path.read_bytes()).hexdigest()
-        record_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
-
-        # The workspace vouches for itself, and the lock still cannot be compared.
-        retained_commit.read_committed(self.workspace)
-        with self.assertRaises(lock_module.LockError):
-            lock_module.load(lock_path)
-
-        return {
+        retained = {
             name: (self.workspace / name).read_bytes()
             for name in (
                 retained_commit.STATE_FILENAME,
                 retained_commit.LEDGER_FILENAME,
-                retained_commit.LOCK_FILENAME,
             )
         }
+        return candidate, retained
 
-    def _assert_intact(self, before: dict[str, bytes], result: Any) -> None:
+    def _invalidate_the_lock(self) -> None:
+        """Leave the recorded identity in place so only canonical loading refuses."""
+        path = self.workspace / retained_commit.LOCK_FILENAME
+        payload = json.loads(path.read_text())
+        payload["artifact_store"] = "/somewhere/else"
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+    def _damaging_seam(self, damaged: list[str]) -> Any:
+        """Damage the lock after the retained completion is resolved.
+
+        That is the statement immediately before the currentness comparison, so the
+        prepare has already read and accepted the committed snapshot and everything
+        after it is deciding on a workspace that has changed underneath.
+        """
+        real = retained_preflight.matching_completed_candidate_stage
+
+        def damage_after_matching(root: Any, ledger: Any, **kwargs: Any) -> Any:
+            stage = real(root, ledger, **kwargs)
+            if not damaged:
+                damaged.append("damaged")
+                self._invalidate_the_lock()
+            return stage
+
+        return mock.patch.object(
+            retained_preflight,
+            "matching_completed_candidate_stage",
+            side_effect=damage_after_matching,
+        )
+
+    def _assert_preserved(
+        self, damaged: list[str], retained: dict[str, bytes], result: Any
+    ) -> None:
+        self.assertEqual(damaged, ["damaged"], "the lock never became uncomparable")
         self.assertNotEqual(result.status, "READY_FOR_OWNER_REVIEW")
-        for name, contents in before.items():
+        for name, contents in retained.items():
             self.assertEqual(
                 (self.workspace / name).read_bytes(),
                 contents,
                 f"retained {name} must survive byte for byte",
             )
 
-    def test_an_authority_less_prepare_does_not_replace_an_uncomparable_ready(
-        self,
-    ) -> None:
+    def test_an_authority_less_prepare_preserves_across_the_race(self) -> None:
         effects: list[str] = []
-        before = self._ready_with_an_uncomparable_lock(effects)
-        with self.patched_effect(effects):
+        _, retained = self._reach_ready(effects)
+        damaged: list[str] = []
+        with self.patched_effect(effects), self._damaging_seam(damaged):
             refused = self.prepare()
         self.assertEqual(effects, ["effect"], "no new effect may run")
-        self._assert_intact(before, refused)
+        self._assert_preserved(damaged, retained, refused)
 
-    def test_a_non_covering_authority_does_not_replace_an_uncomparable_ready(
-        self,
-    ) -> None:
+    def test_a_non_covering_authority_preserves_across_the_race(self) -> None:
         effects: list[str] = []
-        before = self._ready_with_an_uncomparable_lock(effects)
+        _, retained = self._reach_ready(effects)
         elsewhere = authority_module.PreflightAuthority(
             id="auth-elsewhere",
             experiment_id="E1",
             scope=(authority_module.BASE_REFERENCE_QUALIFICATION,),
             preflight_candidate_sha256="0" * 64,
         )
-        with self.patched_effect(effects):
+        damaged: list[str] = []
+        with self.patched_effect(effects), self._damaging_seam(damaged):
             refused = self.prepare(authority=elsewhere)
         self.assertEqual(effects, ["effect"], "no new effect may run")
-        self._assert_intact(before, refused)
+        self._assert_preserved(damaged, retained, refused)
 
-    def test_the_correct_authority_does_not_replace_an_uncomparable_ready(
-        self,
-    ) -> None:
-        """The same ambiguity one step later, reached by the authorised caller.
+    def test_the_correct_authority_preserves_across_the_race(self) -> None:
+        """The same ambiguity reached one step later, through the lock conflict.
 
-        With the correct authority the preparation runs on to rebuild the lock and
-        meets the retained one, which it cannot reconcile with. The conflict says
-        the two differ; it does not say the retained success is obsolete.
+        With the correct authority the preparation runs on and rebuilds the lock,
+        which no longer reconciles with the damaged one on disk. Whichever refusal
+        arrives first, the completed success must still be there afterwards.
         """
         effects: list[str] = []
-        observed = self.prepare()
-        candidate = observed.preflight_candidate_sha256
-        assert candidate is not None
-        with self.patched_effect(effects):
-            self.prepare(authority=self.authority(candidate))
-        before = self._damage_the_lock()
-
-        with self.patched_effect(effects):
+        candidate, retained = self._reach_ready(effects)
+        damaged: list[str] = []
+        with self.patched_effect(effects), self._damaging_seam(damaged):
             refused = self.prepare(authority=self.authority(candidate))
-
         self.assertEqual(effects, ["effect"], "no new effect may run")
         self.assertIn(
             "experiment-lock-conflict",
             [blocker["code"] for blocker in refused.blockers],
         )
-        self._assert_intact(before, refused)
+        self._assert_preserved(damaged, retained, refused)
 
 
 if __name__ == "__main__":

@@ -115,8 +115,23 @@ def build(
     return ExperimentLock(payload=payload)
 
 
-def load(path: Path) -> Mapping[str, object]:
-    payload: Mapping[str, object] = json.loads(path.read_text())
+def load_bytes(raw: bytes) -> Mapping[str, object]:
+    """Decode and canonically validate a lock from bytes already in hand.
+
+    Separated from `load` so a caller that has read the lock through its own contract
+    -- a descriptor-bound retained read, say -- can apply exactly this validation
+    without opening the path a second time. Declaring an identity and carrying it are
+    different claims, and the recomputation below is what tells them apart. Every
+    reader that decides anything about a lock has to make that distinction, or a lock
+    execution would refuse can still prove a workspace ready.
+    """
+    try:
+        decoded = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise LockError(f"lock is not readable json: {exc}") from exc
+    if not isinstance(decoded, dict):
+        raise LockError("lock is not an object")
+    payload: Mapping[str, object] = decoded
     if payload.get("schema") != LOCK_SCHEMA:
         raise LockError(f"unsupported lock schema {payload.get('schema')!r}")
     recorded = payload.get("lock_sha256")
@@ -124,3 +139,8 @@ def load(path: Path) -> Mapping[str, object]:
     if recorded != recomputed:
         raise LockError("lock digest does not match its content")
     return payload
+
+
+def load(path: Path) -> Mapping[str, object]:
+    """Read and canonically validate the lock at this path."""
+    return load_bytes(path.read_bytes())
