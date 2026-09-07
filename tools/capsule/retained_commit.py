@@ -824,19 +824,31 @@ def stage(
 def read_staged(root: Path, transaction_id: str) -> StagedTransaction | None:
     """A complete, self-consistent staged transaction, or None.
 
-    None means "not a recovery source". It never means "safe to start again": that
-    judgement belongs to whoever knows whether the effect boundary was crossed.
+    None means "not a recovery source": there is nothing complete here. It never
+    means "safe to start again" -- that judgement belongs to whoever knows whether
+    the effect boundary was crossed -- and it never stands in for a workspace that
+    could not be inspected. An unreadable manifest or member is refused rather than
+    reported as incomplete, because recovery deletes what it decides is incomplete.
     """
     directory = _staging_directory(root, transaction_id, create=False)
     if directory is None:
         return None
     manifest = directory / MANIFEST_FILENAME
-    if not manifest.is_file():
+    if not _present(manifest):
         return None
     try:
-        payload = _load_json_document(
-            manifest, label="transaction manifest", schema=MANIFEST_SCHEMA
-        )
+        text = manifest.read_text()
+    except OSError as exc:
+        raise RetainedTransactionError(
+            INCONSISTENT_STATE, f"cannot read the transaction manifest: {exc}"
+        ) from exc
+    try:
+        payload = json.loads(text)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict) or payload.get("schema") != MANIFEST_SCHEMA:
+        return None
+    try:
         staged = StagedTransaction(
             transaction_id=_validated_transaction_id(
                 _required_str(payload, "transaction_id", "manifest")
@@ -880,10 +892,9 @@ def read_staged(root: Path, transaction_id: str) -> StagedTransaction | None:
     if (staged.lock_file_sha256 is None) != (staged.lock_identity is None):
         return None
     for name, expected in staged.members().items():
-        try:
-            if _digest_file(directory / name) != expected:
-                return None
-        except RetainedTransactionError:
+        # _digest_file refuses a member it cannot inspect and reports an absent one
+        # as None; only the latter makes this staging incomplete.
+        if _digest_file(directory / name) != expected:
             return None
     return staged
 
@@ -1060,29 +1071,42 @@ class Decision:
     detail: str = ""
 
 
+def _matches_reservation(staged: StagedTransaction, reservation: Reservation) -> bool:
+    """Whether staged output is the output of the transaction that reserved."""
+    return (
+        staged.transaction_id == reservation.transaction_id
+        and staged.base_identity == reservation.base_identity
+        and staged.candidate_sha256 == reservation.candidate_sha256
+        and staged.authority_sha256 == reservation.authority_sha256
+    )
+
+
 def recover(root: Path) -> bool:
     """Finish or release an interrupted transaction. Caller holds the coordination lock.
 
-    Recovery is forward-only and never re-runs anything. It is driven by the
-    publication intent, not by the effect reservation, because publishing and
-    reserving are different acts performed by different callers: an invocation with
-    no authority never reserves and still writes canonical files.
+    Recovery is forward-only and never re-runs anything. It reads two records,
+    because a transaction becomes recoverable before it becomes discoverable
+    through the intent: the output is staged and durable first, and the intent is
+    written inside publication. A crash in that window leaves a complete commit
+    that only the reservation points at.
 
-      an interrupted publication whose staged output is exactly the output the
-      intent was recorded for, still describes the transaction the record names,
-      and -- where a reservation covers it -- matches that reservation's request
-          finished forward from its own durable bytes, running nothing again
-      an interrupted publication whose staged output is not those bytes
-          refused, with the intent and the staging both kept as evidence
-      any other interrupted publication
-          abandoned without publishing; the workspace keeps whatever it had
-      an abandoned reservation
-          released
+    With a publication intent, the intent decides: it names the exact bytes, and
+    staged output that is not those bytes is refused with everything left in place.
 
-    Releasing is not permission to run the effect again. That is the effect claim's
-    job, and a released reservation leaves it exactly as it was: a candidate whose
-    boundary was crossed stays consumed, and one whose boundary was never reached
-    stays runnable. Absence of recoverable evidence is never turned into a retry.
+    Without one, a dead reservation is asked what it left behind:
+
+      complete staged output matching the reservation, based on what is committed
+          finished forward, running nothing again
+      complete staged output matching the reservation, but superseded
+          discarded; another transaction has committed since and this describes a
+          workspace that no longer exists
+      complete staged output that does not match the reservation
+          refused and kept as evidence
+      nothing complete
+          released; the effect claim, if the boundary was crossed, remains the fence
+
+    Whether an effect ran is not asked. Complete staged output is the transaction's
+    own intended commit either way, and releasing is never permission to run again.
 
     Returns whether the workspace changed.
     """
@@ -1117,9 +1141,7 @@ def recover(root: Path) -> bool:
             # describes a different request is not that transaction's commit, however
             # complete and self-consistent it is.
             publishable = reservation.transaction_id == intent.transaction_id and (
-                staged.base_identity == reservation.base_identity
-                and staged.candidate_sha256 == reservation.candidate_sha256
-                and staged.authority_sha256 == reservation.authority_sha256
+                _matches_reservation(staged, reservation)
             )
         if publishable:
             assert staged is not None  # implied by publishable
@@ -1135,6 +1157,31 @@ def recover(root: Path) -> bool:
 
     existing = read_reservation(root)
     if existing is not None and not owner_is_live(root, existing):
+        if intent is None:
+            # The transaction may have died between staging its output and
+            # recording that it was publishing it. That output is complete and is
+            # the only evidence of an effect that cannot be run again, so it is
+            # finished forward rather than discarded with the reservation.
+            staged = read_staged(root, existing.transaction_id)
+            if staged is not None:
+                if not _matches_reservation(staged, existing):
+                    raise RetainedTransactionError(
+                        INCONSISTENT_STATE,
+                        "the staged output under this reservation is not the output "
+                        "of the transaction that reserved; refusing to publish it, "
+                        "and keeping both as evidence",
+                    )
+                recorded = _recorded_snapshot(root)
+                if staged.base_identity == (
+                    recorded.identity if recorded is not None else None
+                ):
+                    publish(
+                        root,
+                        staged=staged,
+                        generation=(
+                            recorded.generation + 1 if recorded is not None else 1
+                        ),
+                    )
         clear_reservation(root, expected_transaction_id=existing.transaction_id)
         discard_staging(root, existing.transaction_id)
         changed = True

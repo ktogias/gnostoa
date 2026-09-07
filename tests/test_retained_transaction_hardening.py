@@ -484,6 +484,85 @@ class StagedRecoverySourceTests(CompletedWorkspaceFixture):
         ).write_text('{"tampered": true}\n')
         self.assertIsNone(retained_commit.read_staged(self.workspace, transaction))
 
+    def test_an_uninspectable_manifest_is_not_read_as_incomplete_staging(
+        self,
+    ) -> None:
+        """Recovery deletes what it decides is incomplete, so unknown must not be it."""
+        transaction = self._stage_one()
+        directory = retained_commit.staging_directory(self.workspace, transaction)
+        original = directory.stat().st_mode
+        directory.chmod(0o000)
+        try:
+            with self.assertRaises(retained_commit.RetainedTransactionError):
+                retained_commit.read_staged(self.workspace, transaction)
+        finally:
+            directory.chmod(original)
+
+    def test_staged_output_that_does_not_match_its_reservation_is_refused(self) -> None:
+        """The fallback recovery path needs provenance too, not only completeness.
+
+        Without a publication intent the reservation is the only thing that says
+        which transaction this staged output belongs to. Publishing a complete tree
+        that describes a different request would commit, as this transaction, output
+        it never produced.
+        """
+        observed = self.prepare()
+        candidate = observed.preflight_candidate_sha256
+        assert candidate is not None
+        authority = self.authority(candidate)
+        before = (self.workspace / "experiment-state.json").read_text()
+        effects: list[str] = []
+
+        def qualify(*args: object, **kwargs: object) -> Any:
+            del args
+            effects.append("effect")
+            task_id = kwargs.get("task_id", "T1")
+            bound = kwargs.get("bound") or {}
+            assert isinstance(task_id, str)
+            assert isinstance(bound, dict)
+            return _receipt(task_id, dict(bound))
+
+        with mock.patch.object(compiler, "qualify_subjects", side_effect=qualify):
+            with mock.patch.object(
+                retained_commit,
+                "_write_publication_intent",
+                side_effect=RuntimeError("died before the intent became durable"),
+            ):
+                with self.assertRaises(RuntimeError):
+                    self.prepare(authority=authority)
+
+            reservation = retained_commit.read_reservation(self.workspace)
+            assert reservation is not None
+            manifest_path = (
+                retained_commit.staging_directory(
+                    self.workspace, reservation.transaction_id
+                )
+                / retained_commit.MANIFEST_FILENAME
+            )
+            manifest = json.loads(manifest_path.read_text())
+            manifest["candidate_sha256"] = "9" * 64
+            manifest_path.write_text(
+                json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+            )
+
+            refused = self.prepare(authority=authority)
+
+        self.assertEqual(effects, ["effect"], "nothing may be re-run here")
+        self.assertNotEqual(refused.status, "READY_FOR_OWNER_REVIEW")
+        self.assertIn(
+            retained_commit.INCONSISTENT_STATE,
+            [blocker["code"] for blocker in refused.blockers],
+        )
+        self.assertEqual(
+            (self.workspace / "experiment-state.json").read_text(),
+            before,
+            "output that does not match its reservation must not be published",
+        )
+        self.assertTrue(
+            manifest_path.is_file(),
+            "the mismatched staging must be kept as evidence, not swept away",
+        )
+
     def test_an_interrupted_transaction_with_broken_staging_is_not_recovered(
         self,
     ) -> None:
