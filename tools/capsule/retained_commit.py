@@ -316,11 +316,6 @@ def _unlink_file(path: Path) -> bool:
         return True
 
 
-def _fsync_directory(path: Path) -> None:
-    with _open_directory(path) as descriptor:
-        os.fsync(descriptor)
-
-
 def _open_lock_file_at(directory_fd: int, name: str) -> int:
     """Open a lock file refusing symlinks and anything that is not a regular file.
 

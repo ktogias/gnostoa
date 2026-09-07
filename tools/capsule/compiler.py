@@ -1616,10 +1616,21 @@ def prepare(
                 # a later authorised replay will surface the retained-integrity blocker.
                 preserve_completed_candidate = True
 
-        def finish_authority_refusal() -> PrepareResult:
+        def finish_preserving(stage: str) -> PrepareResult:
+            """Refuse without replacing retained evidence that may still be current.
+
+            ``preserve_completed_candidate`` is set when a completed qualification is
+            retained here and nothing has shown it to be stale -- including the case
+            where the retained lock cannot be compared at all, which is ambiguity
+            rather than proof of drift. Publishing a refusal over that would destroy
+            a completed success on the strength of a question nobody answered.
+            """
             if preserve_completed_candidate:
-                return finish_without_persisting(stages.STATIC_QUALIFIED)
-            return finish(stages.STATIC_QUALIFIED)
+                return finish_without_persisting(stage)
+            return finish(stage)
+
+        def finish_authority_refusal() -> PrepareResult:
+            return finish_preserving(stages.STATIC_QUALIFIED)
 
         if preflight_authority is None:
             blockers.append(
@@ -2006,7 +2017,12 @@ def prepare(
             blockers.append(
                 {"task": None, "code": "experiment-lock-conflict", "detail": str(exc)}
             )
-            return finish(stages.BOUNDARY_QUALIFIED)
+            # A lock this preparation cannot reconcile with is the same ambiguity one
+            # step later: either the retained lock is damaged or the material drifted,
+            # and the conflict alone does not say which. When a completed
+            # qualification is retained and nothing has shown it stale, the refusal is
+            # reported without publishing over it.
+            return finish_preserving(stages.BOUNDARY_QUALIFIED)
         result.lock_path = root / lock_module.LOCK_FILENAME
         result.lock_identity = experiment_lock.identity
         ledger.complete(

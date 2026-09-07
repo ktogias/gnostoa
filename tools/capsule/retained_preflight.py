@@ -149,26 +149,48 @@ def retained_lock_material_matches(
     schedule, arms and repetitions all travel in the launch payload -- so comparing
     it again could only restate the same fact.
 
-    Read-only. A missing, unreadable or invalid lock is not a match, so preservation
-    is never granted on the strength of a lock nobody can compare against -- and the
-    lock is loaded through the same canonical contract execution uses, so retained
+    Read-only, and it answers three things rather than two. A lock that loads and
+    differs means the retained READY is genuinely stale, and False says so. A lock
+    that cannot be loaded at all means nothing is known about whether it is stale,
+    and that is not the same answer: returning False for it would let a caller treat
+    ambiguous retained evidence as proof of obsolescence and publish over a completed
+    success. Those cases raise instead, so the decision is made by whoever knows what
+    preserving costs.
+
+    An absent lock is neither: no lock was ever emitted here, so there is no retained
+    READY resting on one. A lock recorded by the commit record and then removed is
+    already refused by the retained transaction layer before this is reached.
+
+    The lock is loaded through the same canonical contract execution uses, so retained
     state can never report READY while the lock it names would be refused as invalid.
     """
     path = root / "experiment.lock"
     try:
         observed = path.lstat()
-    except OSError:
+    except FileNotFoundError:
         return False
+    except OSError as exc:
+        raise RetainedPreflightError(
+            f"retained experiment lock cannot be inspected: {exc}"
+        ) from exc
     if not stat.S_ISREG(observed.st_mode):
-        return False
+        raise RetainedPreflightError("retained experiment lock is not a regular file")
     try:
         # Schema and recorded digest are enforced here, not merely parsed: a lock that
-        # execute would reject must never prove a retained READY is current.
+        # execute would reject must never prove a retained READY is current -- and it
+        # must not be read as proof that the retained READY is obsolete either.
         retained = lock_module.load(path)
-    except (lock_module.LockError, OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return False
+    except (
+        lock_module.LockError,
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+    ) as exc:
+        raise RetainedPreflightError(
+            f"retained experiment lock cannot be compared safely: {exc}"
+        ) from exc
     if not isinstance(retained, Mapping):
-        return False
+        raise RetainedPreflightError("retained experiment lock is not a mapping")
     return (
         retained.get("experiment")
         == {
