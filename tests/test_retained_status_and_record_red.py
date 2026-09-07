@@ -249,6 +249,57 @@ class MandatoryRecordDigestTests(StatusFixture):
         )
         self.assertEqual((self.workspace / "experiment-state.json").read_text(), before)
 
+    def test_a_valid_but_false_state_digest_is_not_supersession_authority(
+        self,
+    ) -> None:
+        """Structural validity is not agreement with the files it describes.
+
+        With no publication intent, no canonical publication is in flight, so the
+        record and the canonical files must agree. Deciding supersession from a
+        structurally valid record without checking that agreement lets a digest that
+        is simply false discard a sealed reservation and the staged evidence of a
+        consumed effect -- the same harm as a nulled digest, arriving through a
+        shape the parser cannot reject.
+        """
+        effects: list[str] = []
+        reservation, authority = self._sealed_pre_intent(effects)
+        self.assertIsNone(
+            retained_commit.read_publication_intent(self.workspace),
+            "no publication may be in flight for this branch to be under test",
+        )
+        before = (self.workspace / "experiment-state.json").read_text()
+
+        record_path = self.workspace / retained_commit.COMMIT_RECORD_FILENAME
+        record = json.loads(record_path.read_text())
+        false_digest = "f" * 64
+        self.assertNotEqual(record["state_sha256"], false_digest)
+        record["state_sha256"] = false_digest
+        record_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+
+        with self.patched_effect(effects):
+            refused = self.prepare(authority=authority)
+
+        self.assertEqual(effects, ["effect"], "nothing may be re-run here")
+        self.assertNotEqual(refused.status, "READY_FOR_OWNER_REVIEW")
+        self.assertIn(
+            retained_commit.INCONSISTENT_STATE,
+            [blocker["code"] for blocker in refused.blockers],
+        )
+        self.assertIsNotNone(
+            retained_commit.read_reservation(self.workspace),
+            "a record that disagrees with the files must not discard sealed evidence",
+        )
+        self.assertTrue(
+            (
+                retained_commit.staging_directory(
+                    self.workspace, reservation.transaction_id
+                )
+                / retained_commit.MANIFEST_FILENAME
+            ).is_file(),
+            "the staged output must survive as evidence",
+        )
+        self.assertEqual((self.workspace / "experiment-state.json").read_text(), before)
+
     def test_a_record_naming_a_lock_identity_with_no_lock_digest_is_refused(
         self,
     ) -> None:

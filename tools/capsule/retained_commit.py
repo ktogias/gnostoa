@@ -1477,7 +1477,13 @@ def recover(root: Path) -> bool:
                         "of the transaction that reserved; refusing to publish it, "
                         "and keeping both as evidence",
                     )
-                recorded = _recorded_snapshot(root)
+                # No publication intent means no canonical publication is in
+                # flight, so the record and the files it describes must agree here.
+                # Deciding supersession from the record's structure alone would let
+                # a digest that is merely well-formed, and simply false, discard
+                # this evidence. The relaxed reading is for the intent path, where
+                # the files are legitimately mid-publication.
+                recorded = read_committed(root)
                 if staged.base_identity == (
                     recorded.identity if recorded is not None else None
                 ):
