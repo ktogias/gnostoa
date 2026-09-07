@@ -410,6 +410,24 @@ def _validate_completed_stage_binding(
         )
 
 
+def candidate_is_claimed(workspace: Path, *, candidate_sha256: str) -> bool:
+    """Whether anything occupies this candidate's claim name.
+
+    Coarse by design and used only for arbitration: it answers "may the irreversible
+    boundary have been crossed for this candidate", so anything at all under that
+    name -- including something unreadable -- answers yes. Validity is decided by the
+    claim path itself, which must never learn permission from this.
+    """
+    path = workspace / CLAIM_DIRECTORY / f"{candidate_sha256}.json"
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
 def load_consumed_candidate(
     workspace: Path,
     *,

@@ -1,0 +1,450 @@
+"""Focused coverage for the retained-transaction filesystem and identity surface.
+
+Every check here exists because the alternative behaviour is silently unsafe rather
+than merely wrong: a reservation that cannot be read must not be reported as no
+reservation, a lock file whose path can be redirected serialises nobody, a
+reservation must only be cleared by the transaction that owns it, and staged output
+that is not provably complete must never become a recovery source.
+
+The fixtures are synthetic and the qualification effect is patched; no Phase-D
+material, hidden oracle, runner or container effect participates.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import unittest
+from pathlib import Path
+from typing import Any
+from unittest import mock
+
+from tools.capsule import compiler, qualification, retained_commit
+
+try:
+    from test_preflight_authority_consumption import ConsumptionFixture
+except ImportError:  # invoked as tests.<module> from the repository root
+    from tests.test_preflight_authority_consumption import ConsumptionFixture
+
+
+def _receipt(task_id: str, bound: dict[str, str]) -> qualification.QualificationReceipt:
+    base = qualification.SubjectOutcome(
+        subject="base",
+        collected=True,
+        passed=(),
+        failed=("test_discriminates",),
+        error_types={},
+        classification=qualification.MATCH,
+        detail="synthetic",
+    )
+    reference = qualification.SubjectOutcome(
+        subject="reference",
+        collected=True,
+        passed=("test_discriminates",),
+        failed=(),
+        error_types={},
+        classification=qualification.MATCH,
+        detail="synthetic",
+    )
+    return qualification.QualificationReceipt(
+        task=task_id,
+        backend="local-python",
+        base=base,
+        reference=reference,
+        bound=bound,
+    )
+
+
+def _reservation(**overrides: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "schema": retained_commit.RESERVATION_SCHEMA,
+        "transaction_id": "a" * 32,
+        "base_identity": None,
+        "experiment_id": "E1",
+        "scope": "base-reference-qualification",
+        "candidate_sha256": "b" * 64,
+        "authority_sha256": "c" * 64,
+    }
+    payload.update(overrides)
+    return payload
+
+
+class ReservationReadingTests(ConsumptionFixture):
+    def _write(self, payload: object) -> Path:
+        path = self.workspace / retained_commit.RESERVATION_FILENAME
+        self.workspace.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload))
+        return path
+
+    def test_an_uninspectable_reservation_is_not_read_as_absence(self) -> None:
+        """A failed stat means "unknown", and unknown must never mean "unreserved".
+
+        The failure is produced by the filesystem rather than by patching a reader,
+        so it lands on the existence check itself. ``Path.exists`` answers False for
+        a path it cannot stat, which is exactly the reading that must not happen: it
+        would report a live reservation as absent and hand away the effect boundary.
+        """
+        self._write(_reservation())
+        original = self.workspace.stat().st_mode
+        self.workspace.chmod(0o000)
+        try:
+            with self.assertRaises(retained_commit.RetainedTransactionError) as raised:
+                retained_commit.read_reservation(self.workspace)
+        finally:
+            self.workspace.chmod(original)
+        self.assertEqual(raised.exception.code, retained_commit.INCONSISTENT_STATE)
+
+    def test_an_unreadable_reservation_is_not_read_as_absence(self) -> None:
+        path = self.workspace / retained_commit.RESERVATION_FILENAME
+        self.workspace.mkdir(parents=True, exist_ok=True)
+        path.write_text("{ not valid json")
+        with self.assertRaises(retained_commit.RetainedTransactionError):
+            retained_commit.read_reservation(self.workspace)
+
+    def test_a_non_regular_reservation_is_refused(self) -> None:
+        self.workspace.mkdir(parents=True, exist_ok=True)
+        (self.workspace / retained_commit.RESERVATION_FILENAME).mkdir()
+        with self.assertRaises(retained_commit.RetainedTransactionError):
+            retained_commit.read_reservation(self.workspace)
+
+    def test_fields_are_validated_rather_than_coerced(self) -> None:
+        """str() on a malformed field manufactures a reservation nobody wrote."""
+        for overrides in (
+            {"transaction_id": 17},
+            {"transaction_id": ""},
+            {"candidate_sha256": "not-a-digest"},
+            {"candidate_sha256": "B" * 64},
+            {"authority_sha256": None},
+            {"base_identity": "short"},
+            {"experiment_id": {"nested": True}},
+            {"scope": 3.5},
+        ):
+            with self.subTest(overrides=overrides):
+                self._write(_reservation(**overrides))
+                with self.assertRaises(retained_commit.RetainedTransactionError):
+                    retained_commit.read_reservation(self.workspace)
+
+    def test_a_missing_reservation_is_absence(self) -> None:
+        self.workspace.mkdir(parents=True, exist_ok=True)
+        self.assertIsNone(retained_commit.read_reservation(self.workspace))
+
+
+class ReservationClearingTests(ConsumptionFixture):
+    def test_clearing_is_owner_bound(self) -> None:
+        """Clearing another transaction's reservation gives away a live right."""
+        self.workspace.mkdir(parents=True, exist_ok=True)
+        path = self.workspace / retained_commit.RESERVATION_FILENAME
+        path.write_text(json.dumps(_reservation(transaction_id="b" * 32)))
+        before = path.read_bytes()
+
+        with self.assertRaises(retained_commit.RetainedTransactionError):
+            retained_commit.clear_reservation(
+                self.workspace, expected_transaction_id="a" * 32
+            )
+        self.assertEqual(path.read_bytes(), before)
+
+        retained_commit.clear_reservation(
+            self.workspace, expected_transaction_id="b" * 32
+        )
+        self.assertFalse(path.exists())
+
+    def test_clearing_an_absent_reservation_is_not_an_error(self) -> None:
+        self.workspace.mkdir(parents=True, exist_ok=True)
+        retained_commit.clear_reservation(
+            self.workspace, expected_transaction_id="a" * 32
+        )
+
+
+class LockPathTests(ConsumptionFixture):
+    def test_a_redirected_coordination_lock_is_refused(self) -> None:
+        """A lock reachable through a symlink serialises against somebody else's file."""
+        self.workspace.mkdir(parents=True, exist_ok=True)
+        elsewhere = self.root / "elsewhere.lock"
+        elsewhere.write_text("")
+        (self.workspace / retained_commit.COORDINATION_LOCK_FILENAME).symlink_to(
+            elsewhere
+        )
+        with self.assertRaises(retained_commit.RetainedTransactionError):
+            with retained_commit.coordination_lock(self.workspace):
+                pass
+
+    def test_a_redirected_liveness_lock_is_refused(self) -> None:
+        transaction = retained_commit.new_transaction_id()
+        path = retained_commit.owner_lock_path(self.workspace, transaction)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        elsewhere = self.root / "elsewhere-owner.lock"
+        elsewhere.write_text("")
+        path.symlink_to(elsewhere)
+        with self.assertRaises(retained_commit.RetainedTransactionError):
+            with retained_commit.owner_liveness(self.workspace, transaction):
+                pass
+
+    def test_a_non_regular_lock_path_is_refused(self) -> None:
+        self.workspace.mkdir(parents=True, exist_ok=True)
+        (self.workspace / retained_commit.COORDINATION_LOCK_FILENAME).mkdir()
+        with self.assertRaises(retained_commit.RetainedTransactionError):
+            with retained_commit.coordination_lock(self.workspace):
+                pass
+
+    def test_without_advisory_locking_nothing_proceeds(self) -> None:
+        """No locking means no coordination, and no coordination means no writing."""
+        reservation = retained_commit.Reservation(
+            transaction_id="a" * 32,
+            base_identity=None,
+            experiment_id="E1",
+            scope="base-reference-qualification",
+            candidate_sha256="b" * 64,
+            authority_sha256="c" * 64,
+        )
+        with mock.patch.object(retained_commit, "fcntl", None):
+            with self.assertRaises(retained_commit.RetainedTransactionError):
+                with retained_commit.coordination_lock(self.workspace):
+                    pass
+            with self.assertRaises(retained_commit.RetainedTransactionError):
+                with retained_commit.owner_liveness(self.workspace, "a" * 32):
+                    pass
+            with self.assertRaises(retained_commit.RetainedTransactionError):
+                retained_commit.owner_is_live(self.workspace, reservation)
+            with self.assertRaises(retained_commit.RetainedTransactionError):
+                retained_commit.wait_for_owner(self.workspace, reservation)
+
+
+class CompletedWorkspaceFixture(ConsumptionFixture):
+    def complete(self) -> None:
+        observed = self.prepare()
+        candidate = observed.preflight_candidate_sha256
+        assert candidate is not None
+        with mock.patch.object(
+            compiler,
+            "qualify_subjects",
+            side_effect=lambda *a, **k: _receipt(
+                k.get("task_id", "T1"), dict(k.get("bound") or {})
+            ),
+        ):
+            self.prepare(authority=self.authority(candidate))
+
+
+class LockIdentityTests(CompletedWorkspaceFixture):
+    """The persisted bytes and the identity they carry are two facts, not one."""
+
+    def test_the_commit_record_binds_both_and_confuses_neither(self) -> None:
+        self.complete()
+        record = json.loads(
+            (self.workspace / retained_commit.COMMIT_RECORD_FILENAME).read_text()
+        )
+        lock_bytes = (self.workspace / "experiment.lock").read_bytes()
+        carried = json.loads(lock_bytes)["lock_sha256"]
+
+        self.assertEqual(
+            record["lock_file_sha256"], hashlib.sha256(lock_bytes).hexdigest()
+        )
+        self.assertEqual(record["lock_identity"], carried)
+        self.assertNotEqual(
+            record["lock_file_sha256"],
+            record["lock_identity"],
+            "the two are recorded separately precisely because they differ",
+        )
+
+    def test_every_recorded_reference_names_the_same_lock(self) -> None:
+        self.complete()
+        carried = json.loads((self.workspace / "experiment.lock").read_text())[
+            "lock_sha256"
+        ]
+        state = json.loads((self.workspace / "experiment-state.json").read_text())
+        ledger = json.loads((self.workspace / "stages.json").read_text())["records"]
+
+        self.assertEqual(state["lock_sha256"], carried)
+        self.assertEqual(ledger["EXECUTION_FROZEN"]["outputs"]["lock_sha256"], carried)
+        self.assertEqual(
+            ledger["READY_FOR_OWNER_REVIEW"]["outputs"]["lock_sha256"], carried
+        )
+
+    def test_staging_refuses_output_whose_references_disagree(self) -> None:
+        """Agreement is checked before publication, not assumed from having written it."""
+        identity = "d" * 64
+        lock = json.dumps({"lock_sha256": identity}).encode()
+        ledger = json.dumps(
+            {
+                "records": {
+                    stage: {"outputs": {"lock_sha256": identity}}
+                    for stage in ("EXECUTION_FROZEN", "READY_FOR_OWNER_REVIEW")
+                }
+            }
+        ).encode()
+        state = json.dumps({"lock_sha256": "e" * 64}).encode()
+        with self.assertRaises(retained_commit.RetainedTransactionError) as raised:
+            retained_commit.stage(
+                self.workspace,
+                transaction_id=retained_commit.new_transaction_id(),
+                base_identity=None,
+                candidate_sha256=None,
+                authority_sha256=None,
+                ledger=ledger,
+                state=state,
+                lock=lock,
+                lock_identity=identity,
+            )
+        self.assertEqual(raised.exception.code, retained_commit.INCONSISTENT_STATE)
+
+    def test_a_staged_lock_without_its_identity_is_refused(self) -> None:
+        with self.assertRaises(retained_commit.RetainedTransactionError):
+            retained_commit.stage(
+                self.workspace,
+                transaction_id=retained_commit.new_transaction_id(),
+                base_identity=None,
+                candidate_sha256=None,
+                authority_sha256=None,
+                ledger=b"{}",
+                state=b"{}",
+                lock=b"{}",
+                lock_identity=None,
+            )
+
+
+class LocklessCommitTests(CompletedWorkspaceFixture):
+    """A commit that does not rebuild the lock must not tear the workspace."""
+
+    def test_a_commit_that_stages_no_lock_leaves_the_workspace_consistent(
+        self,
+    ) -> None:
+        """The record describes the workspace, not only the transaction's members.
+
+        Once a lock is published, any later invocation that blocks before rebuilding
+        one still commits its state and ledger. If the record then said this
+        transaction published no lock, it would contradict the lock sitting on disk
+        and every subsequent read would refuse a workspace nothing is wrong with.
+        """
+        self.complete()
+        published = json.loads(
+            (self.workspace / retained_commit.COMMIT_RECORD_FILENAME).read_text()
+        )
+        self.assertIsNotNone(published["lock_file_sha256"])
+
+        # Drift the question so the next prepare blocks well before the lock stage.
+        self.payload["experiment"]["question"] = "a materially different question"
+        blocked = self.prepare()
+        self.assertEqual(blocked.status, "BLOCKED")
+
+        self.assertTrue((self.workspace / "experiment.lock").is_file())
+        restored = retained_commit.read_committed(self.workspace)
+        self.assertIsNotNone(restored)
+        assert restored is not None
+        self.assertEqual(
+            restored.lock_file_sha256,
+            hashlib.sha256(
+                (self.workspace / "experiment.lock").read_bytes()
+            ).hexdigest(),
+            "the record must keep naming the lock that is still published",
+        )
+        self.assertEqual(
+            compiler.status(self.workspace)["status"],
+            blocked.status,
+            "a consistent workspace must report the state it just committed",
+        )
+
+
+class StagedRecoverySourceTests(CompletedWorkspaceFixture):
+    """Staged output is a recovery source only while it is provably complete."""
+
+    def _stage_one(self) -> str:
+        transaction = retained_commit.new_transaction_id()
+        retained_commit.stage(
+            self.workspace,
+            transaction_id=transaction,
+            base_identity=None,
+            candidate_sha256=None,
+            authority_sha256=None,
+            ledger=b'{"records": {}}\n',
+            state=b"{}\n",
+            lock=None,
+            lock_identity=None,
+        )
+        self.assertIsNotNone(retained_commit.read_staged(self.workspace, transaction))
+        return transaction
+
+    def test_a_missing_manifest_is_not_a_recovery_source(self) -> None:
+        transaction = self._stage_one()
+        (
+            retained_commit.staging_directory(self.workspace, transaction)
+            / retained_commit.MANIFEST_FILENAME
+        ).unlink()
+        self.assertIsNone(retained_commit.read_staged(self.workspace, transaction))
+
+    def test_a_corrupt_manifest_is_not_a_recovery_source(self) -> None:
+        transaction = self._stage_one()
+        (
+            retained_commit.staging_directory(self.workspace, transaction)
+            / retained_commit.MANIFEST_FILENAME
+        ).write_text("{ not valid json")
+        self.assertIsNone(retained_commit.read_staged(self.workspace, transaction))
+
+    def test_a_missing_member_is_not_a_recovery_source(self) -> None:
+        transaction = self._stage_one()
+        (
+            retained_commit.staging_directory(self.workspace, transaction)
+            / retained_commit.LEDGER_FILENAME
+        ).unlink()
+        self.assertIsNone(retained_commit.read_staged(self.workspace, transaction))
+
+    def test_a_modified_member_is_not_a_recovery_source(self) -> None:
+        transaction = self._stage_one()
+        (
+            retained_commit.staging_directory(self.workspace, transaction)
+            / retained_commit.STATE_FILENAME
+        ).write_text('{"tampered": true}\n')
+        self.assertIsNone(retained_commit.read_staged(self.workspace, transaction))
+
+    def test_an_interrupted_transaction_with_broken_staging_is_not_recovered(
+        self,
+    ) -> None:
+        """Unrecoverable is refused, never rewritten and never replayed."""
+        observed = self.prepare()
+        candidate = observed.preflight_candidate_sha256
+        assert candidate is not None
+        authority = self.authority(candidate)
+        effects: list[str] = []
+
+        def qualify(*args: object, **kwargs: object) -> Any:
+            del args
+            effects.append("effect")
+            task_id = kwargs.get("task_id", "T1")
+            bound = kwargs.get("bound") or {}
+            assert isinstance(task_id, str)
+            assert isinstance(bound, dict)
+            return _receipt(task_id, dict(bound))
+
+        real_write = retained_commit._write_atomic
+
+        def crash_before_recording(path: Path, payload: bytes) -> None:
+            if path.name == retained_commit.COMMIT_RECORD_FILENAME:
+                raise RuntimeError("crash between staging and recording")
+            return real_write(path, payload)
+
+        with mock.patch.object(compiler, "qualify_subjects", side_effect=qualify):
+            with mock.patch.object(
+                retained_commit, "_write_atomic", side_effect=crash_before_recording
+            ):
+                with self.assertRaises(RuntimeError):
+                    self.prepare(authority=authority)
+
+            reservation = retained_commit.read_reservation(self.workspace)
+            self.assertIsNotNone(reservation)
+            assert reservation is not None
+            manifest = (
+                retained_commit.staging_directory(
+                    self.workspace, reservation.transaction_id
+                )
+                / retained_commit.MANIFEST_FILENAME
+            )
+            manifest.write_text("{ not valid json")
+
+            blocked = self.prepare(authority=authority)
+
+        self.assertEqual(
+            effects, ["effect"], "an unrecoverable transaction must not be replayed"
+        )
+        self.assertNotEqual(blocked.status, "READY_FOR_OWNER_REVIEW")
+
+
+if __name__ == "__main__":
+    unittest.main()

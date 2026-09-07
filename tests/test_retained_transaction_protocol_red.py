@@ -1,12 +1,14 @@
 """RED protocol packet for the retained-transaction model at ccacddc5.
 
 The reservation model closed the five effect/liveness invariants of
-``test_preflight_transaction_red``, but four protocol properties it claims are not
+``test_preflight_transaction_red``, but five protocol properties it claims are not
 yet held. Each is stated as an observable workspace outcome so that any correct
 protocol satisfies it:
 
   * a reservation must be taken against the snapshot that is current when it is
     taken, not one that has since been superseded;
+  * a reservation that became live between a contender's observation and its
+    acquisition must not be replaced by that contender;
   * a transaction interrupted after its irreversible effect must be finishable
     forward from durable staged evidence, without repeating the effect;
   * a workspace that has committed transactionally must not read back as one that
@@ -21,7 +23,12 @@ ordered by events signalled from inside the waiter and asserts outcomes, never
 timings. All fixtures are synthetic and the qualification effect is patched and
 counted; no Phase-D material and no hidden oracle participates.
 
-At head ccacddc5de8feba1614d96713863129fbea062fc these are expected to be RED.
+An abandoned pre-claim reservation is also guarded here. It holds already, and is
+stated so that the recovery work cannot quietly turn a recoverable abandonment into
+a permanently consumed candidate.
+
+At head ccacddc5de8feba1614d96713863129fbea062fc the five properties above are
+expected to be RED and the abandonment guard green.
 """
 
 from __future__ import annotations

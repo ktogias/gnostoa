@@ -64,6 +64,10 @@ from tools.capsule.spec import ExperimentSpec, TaskSpec
 from tools.experiment.profile import validate_profile_data
 
 STATE_FILENAME = "experiment-state.json"
+
+#: Arbitration re-asks after each outcome it carries out. A workspace that
+#: keeps changing under it is refused rather than spun on indefinitely.
+_ARBITRATION_ROUNDS = 16
 _GIT_ENV = {
     "GIT_CONFIG_GLOBAL": "/dev/null",
     "GIT_CONFIG_SYSTEM": "/dev/null",
@@ -1196,6 +1200,15 @@ def prepare(
         ledger = stages.StageLedger(root=root)
         transaction_id = retained_commit.new_transaction_id()
         transaction_state: dict[str, object] = {"reserved": False}
+        # Declared here, not at the effect loop: refusal paths that return before the
+        # loop must still be able to tell whether this transaction crossed the
+        # boundary, because that is what decides whether its reservation is
+        # releasable.
+        effect_claimed = False
+
+        def _transaction_authority() -> str | None:
+            recorded = transaction_state.get("authority_sha256")
+            return recorded if isinstance(recorded, str) else None
 
         def refuse_without_persisting(code: str, detail: str) -> PrepareResult:
             """A retained-state refusal that writes nothing at all."""
@@ -1212,6 +1225,10 @@ def prepare(
         # equality check on that token passes and the stale write proceeds.
         try:
             with retained_commit.coordination_lock(root):
+                # An interrupted transaction is finished forward before the workspace
+                # it left behind is judged. Reading first would report the very
+                # inconsistency recovery exists to resolve, and refuse on it.
+                retained_commit.recover(root)
                 base_snapshot = retained_commit.read_committed(root)
                 ledger.load()
         except retained_commit.RetainedTransactionError as exc:
@@ -1229,21 +1246,30 @@ def prepare(
             result._receipts = ledger.receipts()
             result.reused_stages = list(ledger.reused)
 
-            staged: dict[str, bytes] = {
-                retained_commit.LEDGER_FILENAME: ledger.serialised().encode(),
-                retained_commit.STATE_FILENAME: _state_payload(result).encode(),
-            }
             staged_lock = transaction_state.get("staged_lock")
-            if isinstance(staged_lock, bytes):
-                staged[retained_commit.LOCK_FILENAME] = staged_lock
+            lock_bytes = staged_lock if isinstance(staged_lock, bytes) else None
 
-            # Publication happens as one transaction: the lock is published with the
-            # state that records it, so a commit that does not happen cannot leave an
-            # immutable lock behind for a transaction nobody committed.
+            # The whole output is made durable before any of it becomes canonical,
+            # and the lock is published with the state that records it: an immutable
+            # lock emitted outside the committing transaction survives a commit that
+            # never happened and then refuses every later attempt to reach the same
+            # readiness.
             try:
+                staged = retained_commit.stage(
+                    root,
+                    transaction_id=transaction_id,
+                    base_identity=_snapshot_identity(base_snapshot),
+                    candidate_sha256=result.preflight_candidate_sha256,
+                    authority_sha256=_transaction_authority(),
+                    ledger=ledger.serialised().encode(),
+                    state=_state_payload(result).encode(),
+                    lock=lock_bytes,
+                    lock_identity=result.lock_identity if lock_bytes else None,
+                )
                 with retained_commit.coordination_lock(root):
                     current = retained_commit.read_committed(root)
                     reservation = retained_commit.read_reservation(root)
+                    held = bool(transaction_state.get("reserved"))
                     if (
                         reservation is not None
                         and reservation.transaction_id != transaction_id
@@ -1254,31 +1280,39 @@ def prepare(
                         # writing over work that is still in flight.
                         return refuse_without_persisting(
                             retained_commit.TRANSACTION_RESERVED,
-                            "another transaction holds the reservation for this workspace; "
-                            "refusing to persist over an in-flight transaction",
+                            "another transaction holds the reservation for this "
+                            "workspace; refusing to persist over an in-flight "
+                            "transaction",
                         )
-                    held = bool(transaction_state.get("reserved"))
-                    if not held and _snapshot_identity(current) != _snapshot_identity(
+                    if _already_committed(current, staged):
+                        # This transaction reproduced what is already committed. It
+                        # has nothing to add, and publishing it would advance the
+                        # committed history for work another transaction performed.
+                        pass
+                    elif not held and _snapshot_identity(current) != _snapshot_identity(
                         base_snapshot
                     ):
                         return refuse_without_persisting(
                             retained_commit.CONCURRENT_STATE_CHANGED,
-                            "another invocation committed this workspace after the retained "
-                            "state was read; refusing to overwrite newer evidence with a "
-                            "stale snapshot",
+                            "another invocation committed this workspace after the "
+                            "retained state was read; refusing to overwrite newer "
+                            "evidence with a stale snapshot",
                         )
-                    retained_commit.publish(
-                        root,
-                        transaction_id=transaction_id,
-                        generation=(current.generation + 1 if current else 1),
-                        staged=staged,
-                    )
+                    else:
+                        retained_commit.publish(
+                            root,
+                            staged=staged,
+                            generation=(current.generation + 1 if current else 1),
+                        )
                     if held:
-                        retained_commit.clear_reservation(root)
+                        retained_commit.clear_reservation(
+                            root, expected_transaction_id=transaction_id
+                        )
                         transaction_state["reserved"] = False
             except retained_commit.RetainedTransactionError as exc:
                 return refuse_without_persisting(exc.code, exc.detail)
             transaction_stack.close()
+            retained_commit.discard_staging(root, transaction_id)
             return result
 
         def finish_without_persisting(stage: str) -> PrepareResult:
@@ -1289,6 +1323,19 @@ def prepare(
             result._identities = ledger.identities()
             result._receipts = ledger.receipts()
             result.reused_stages = list(ledger.reused)
+            if transaction_state.get("reserved") and not effect_claimed:
+                # Nothing irreversible happened under this reservation, so it is
+                # released rather than left for the next caller to reason about.
+                try:
+                    with retained_commit.coordination_lock(root):
+                        retained_commit.clear_reservation(
+                            root, expected_transaction_id=transaction_id
+                        )
+                    transaction_state["reserved"] = False
+                except retained_commit.RetainedTransactionError:
+                    # A reservation that cannot be released is left alone: liveness
+                    # is what tells the next caller it is abandoned.
+                    pass
             # A post-claim refusal is not rolled back. The reservation is deliberately
             # left where a later caller can find it; releasing liveness is what marks
             # it as interrupted rather than in flight.
@@ -1451,89 +1498,70 @@ def prepare(
             else None
         )
 
-        def rendezvous_with_owner() -> PrepareResult | None:
-            """Converge on, or yield to, a transaction already holding the workspace.
+        transaction_state["authority_sha256"] = authority_sha256
 
-            A reservation is the right to cross the next effect boundary, not the
-            right to own the workspace. A caller asking for exactly the same
-            authorised effect waits for the owner and then reconciles onto whatever
-            the owner committed, so the answer is one transaction rather than one
-            survivor. Anything else -- a different candidate, a different authority,
-            none at all -- has nothing irreversible in flight, so it is refused
-            without touching a workspace whose owner does.
+        def reload_retained() -> None:
+            """Adopt what is committed now, keeping this invocation's own progress."""
+            nonlocal base_snapshot
+            with retained_commit.coordination_lock(root):
+                base_snapshot = retained_commit.read_committed(root)
+                ledger.reused.clear()
+                ledger.load()
+
+        def arbitrate_transaction() -> PrepareResult | None:
+            """Settle this invocation's standing before anything irreversible.
+
+            Every decision -- wait for a live identical owner, refuse a different
+            one, reconcile onto a transaction that landed meanwhile, release an
+            abandonment that never crossed the boundary, finish forward one that did,
+            or take the reservation -- is made by `arbitrate` from a single coherent
+            read. This loop only carries out what it is told and asks again, because
+            each outcome changes the workspace it was decided from.
             """
             nonlocal base_snapshot
-            while True:
-                try:
-                    with retained_commit.coordination_lock(root):
-                        reservation = retained_commit.read_reservation(root)
-                        live = (
-                            reservation is not None
-                            and reservation.transaction_id != transaction_id
-                            and retained_commit.owner_is_live(root, reservation)
-                        )
-                    if reservation is None or not live:
-                        return None
-                    if not (
-                        reservation.experiment_id == spec.id
-                        and reservation.scope == BASE_REFERENCE_QUALIFICATION
-                        and reservation.candidate_sha256 == candidate_sha256
-                        and authority_sha256 is not None
-                        and reservation.authority_sha256 == authority_sha256
-                    ):
-                        return refuse_without_persisting(
-                            retained_commit.TRANSACTION_RESERVED,
-                            "another transaction holds the effect reservation for this "
-                            "workspace; refusing to act while it is in flight",
-                        )
-                    # The same authorised request. Wait for the owner, then adopt what
-                    # it committed rather than recomputing a competing view of it.
-                    retained_commit.wait_for_owner(root, reservation)
-                    with retained_commit.coordination_lock(root):
-                        base_snapshot = retained_commit.read_committed(root)
-                        ledger.records.clear()
-                        ledger.reused.clear()
-                        ledger.load()
-                except retained_commit.RetainedTransactionError as exc:
-                    return refuse_without_persisting(exc.code, exc.detail)
-
-        def reserve() -> PrepareResult | None:
-            """Take the right to cross the effect boundary, before crossing it.
-
-            Liveness is acquired before the durable record: a reservation another
-            caller could read while its owner is not yet observable would be read as
-            abandoned, which is the one reading that must never be possible.
-            """
-            if transaction_state.get("reserved"):
-                return None
-            if authority_sha256 is None:  # pragma: no cover - defensive
-                return None
-            try:
+            if authority_sha256 is not None:
+                # Liveness first and separately: it makes this transaction
+                # observable, and confers no right to write by itself.
                 transaction_stack.enter_context(
                     retained_commit.owner_liveness(root, transaction_id)
                 )
-                with retained_commit.coordination_lock(root):
-                    retained_commit.write_reservation(
+            for _ in range(_ARBITRATION_ROUNDS):
+                try:
+                    decision = retained_commit.arbitrate(
                         root,
-                        retained_commit.Reservation(
-                            transaction_id=transaction_id,
-                            base_identity=(
-                                base_snapshot.identity if base_snapshot else None
-                            ),
-                            experiment_id=spec.id,
-                            scope=BASE_REFERENCE_QUALIFICATION,
-                            candidate_sha256=candidate_sha256,
-                            authority_sha256=authority_sha256,
-                        ),
+                        transaction_id=transaction_id,
+                        base_identity=_snapshot_identity(base_snapshot),
+                        experiment_id=spec.id,
+                        scope=BASE_REFERENCE_QUALIFICATION,
+                        candidate_sha256=candidate_sha256,
+                        authority_sha256=authority_sha256,
                     )
-            except retained_commit.RetainedTransactionError as exc:
-                return refuse_without_persisting(exc.code, exc.detail)
-            transaction_state["reserved"] = True
-            return None
+                    if decision.action == retained_commit.TAKE:
+                        base_snapshot = decision.snapshot
+                        transaction_state["reserved"] = authority_sha256 is not None
+                        return None
+                    if decision.action == retained_commit.WAIT:
+                        assert decision.reservation is not None
+                        retained_commit.wait_for_owner(root, decision.reservation)
+                        reload_retained()
+                        continue
+                    if decision.action == retained_commit.RECONCILE:
+                        reload_retained()
+                        continue
+                    return refuse_without_persisting(
+                        retained_commit.TRANSACTION_RESERVED, decision.detail
+                    )
+                except retained_commit.RetainedTransactionError as exc:
+                    return refuse_without_persisting(exc.code, exc.detail)
+            return refuse_without_persisting(
+                retained_commit.INCONSISTENT_STATE,
+                "the retained workspace kept changing under arbitration; refusing to "
+                "act on a state that will not settle",
+            )
 
-        yielded = rendezvous_with_owner()
-        if yielded is not None:
-            return yielded
+        arbitrated = arbitrate_transaction()
+        if arbitrated is not None:
+            return arbitrated
 
         preserve_completed_candidate = False
         existing_qualification = ledger.records.get(stages.BASE_REFERENCE_QUALIFIED)
@@ -1746,7 +1774,6 @@ def prepare(
 
         if not qualification_reused:
             ledger.enter(stages.BASE_REFERENCE_QUALIFIED, qualification_stage_inputs)
-            effect_claimed = False
             for task in spec.tasks:
                 current = tasks[task.id]
                 guard = _deterministic_pre_effect_blocker(
@@ -1777,9 +1804,6 @@ def prepare(
                 # any earlier task or future pre-effect refusal accumulated a blocker,
                 # stop before consuming the candidate. Once the claim succeeds, the very
                 # next top-level operation is the first actual qualification effect.
-                reservation_refused = reserve()
-                if reservation_refused is not None:
-                    return reservation_refused
                 if blockers and not effect_claimed:
                     return finish(stages.STATIC_QUALIFIED)
                 if not effect_claimed:
@@ -1987,13 +2011,36 @@ def prepare(
         return finish(stages.READY_FOR_OWNER_REVIEW)
 
 
-def _snapshot_identity(snapshot: retained_commit.CommittedSnapshot | None) -> str:
-    """A comparable identity for a committed snapshot, or for never having committed."""
-    return snapshot.identity if snapshot is not None else "uncommitted"
+def _snapshot_identity(
+    snapshot: retained_commit.CommittedSnapshot | None,
+) -> str | None:
+    """A comparable identity for a committed snapshot, or None if none was made."""
+    return snapshot.identity if snapshot is not None else None
+
+
+def _already_committed(
+    current: retained_commit.CommittedSnapshot | None,
+    staged: retained_commit.StagedTransaction,
+) -> bool:
+    """Whether publishing this staged output would change nothing at all.
+
+    A transaction that stages no lock leaves the published one where it is, so it
+    cannot differ from what is committed on that account.
+    """
+    if current is None:
+        return False
+    return (
+        current.stages_sha256 == staged.stages_file_sha256
+        and current.state_sha256 == staged.state_file_sha256
+        and (
+            staged.lock_file_sha256 is None
+            or current.lock_file_sha256 == staged.lock_file_sha256
+        )
+    )
 
 
 def _state_payload(result: PrepareResult) -> str:
-    """The public state exactly as _write_state would write it, without writing it."""
+    """The public state as it is persisted, without persisting it."""
     payload = {
         "schema": "gnostoa-capsule-state/v1",
         "producer": PRODUCER,
@@ -2005,12 +2052,14 @@ def _state_payload(result: PrepareResult) -> str:
         "lock_sha256": result.lock_identity,
         "preflight_candidate_sha256": result.preflight_candidate_sha256,
         "tasks": {task_id: task.as_json() for task_id, task in result.tasks.items()},
+        # Self-declares that this state was written under a retained transaction, so
+        # a later reader can tell a workspace that never had a commit record from one
+        # whose record was removed.
+        retained_commit.TRANSACTION_MARKER_FIELD: (
+            retained_commit.TRANSACTION_MARKER_VALUE
+        ),
     }
     return json.dumps(payload, indent=2, sort_keys=True) + "\n"
-
-
-def _write_state(root: Path, result: PrepareResult) -> None:
-    (root / STATE_FILENAME).write_text(_state_payload(result))
 
 
 def status(workspace: str | Path) -> dict[str, Any]:

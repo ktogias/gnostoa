@@ -14,6 +14,8 @@ material, hidden oracle, runner or container effect participates.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import shutil
 import unittest
 from unittest import mock
@@ -67,6 +69,14 @@ def _patched_effect() -> mock._patch[mock.MagicMock]:
 class CommitRecordIntegrityTests(ConsumptionFixture):
     def _codes(self, result: compiler.PrepareResult) -> list[object]:
         return [blocker["code"] for blocker in result.blockers]
+
+    def _committed_generation(self) -> int | None:
+        path = self.workspace / retained_commit.COMMIT_RECORD_FILENAME
+        if not path.is_file():
+            return None
+        generation = json.loads(path.read_text())["generation"]
+        assert isinstance(generation, int)
+        return generation
 
     def test_an_unreadable_record_is_not_the_initial_state(self) -> None:
         """Missing, valid and inconsistent are three states, not two.
@@ -130,12 +140,25 @@ class CommitRecordIntegrityTests(ConsumptionFixture):
         self.assertEqual(raised.exception.code, retained_commit.INCONSISTENT_STATE)
 
         after = (self.workspace / "experiment-state.json").read_text()
-        result = self.prepare()
-        self.assertIn(retained_commit.INCONSISTENT_STATE, self._codes(result))
+
+        # A later invocation finishes the interrupted transaction forward from its own
+        # durable staging rather than refusing it -- see ForwardRecoveryTests -- but
+        # what it publishes must be that transaction's bytes and nothing else. An
+        # implementation free to invent content here would satisfy "recovered" while
+        # rewriting evidence it never produced.
+        self.prepare()
         self.assertEqual(
             (self.workspace / "experiment-state.json").read_text(),
             after,
-            "a later invocation must not overwrite state it cannot account for",
+            "recovery must publish the interrupted transaction's own output",
+        )
+        restored = retained_commit.read_committed(self.workspace)
+        self.assertIsNotNone(restored)
+        assert restored is not None
+        self.assertEqual(
+            restored.state_sha256,
+            hashlib.sha256(after.encode()).hexdigest(),
+            "the restored record must describe the recovered bytes",
         )
 
     def test_a_snapshot_taken_before_a_completion_cannot_overwrite_it(self) -> None:
@@ -155,6 +178,7 @@ class CommitRecordIntegrityTests(ConsumptionFixture):
             self.prepare(authority=self.authority(candidate))
         winner = compiler.status(self.workspace)
         self.assertEqual(winner["status"], "READY_FOR_OWNER_REVIEW")
+        winner_generation = self._committed_generation()
         completed_snapshot = self.root / "snapshot-after-completion"
         shutil.copytree(self.workspace, completed_snapshot)
 
@@ -181,10 +205,17 @@ class CommitRecordIntegrityTests(ConsumptionFixture):
             stale = self.prepare()
 
         self.assertEqual(torn, ["torn"])
-        # Non-vacuity: the stale caller must actually have reached the point of
-        # persisting and been refused there. A run that returned early for some
-        # unrelated reason would satisfy the outcome below without exercising it.
-        self.assertIn(retained_commit.CONCURRENT_STATE_CHANGED, self._codes(stale))
+        # Non-vacuity: the stale caller ran to completion on a workspace that had
+        # moved underneath it and published nothing. Asserting only that the winner
+        # survived would also pass if the caller had returned early for an unrelated
+        # reason, so the committed history is asserted not to have advanced.
+        self.assertNotEqual(stale.status, "READY_FOR_OWNER_REVIEW")
+        self.assertEqual(
+            self._committed_generation(),
+            winner_generation,
+            "a caller holding a superseded snapshot must not advance the committed "
+            "history",
+        )
         current = compiler.status(self.workspace)
         self.assertEqual(
             current["status"],
