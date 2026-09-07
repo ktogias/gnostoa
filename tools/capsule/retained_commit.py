@@ -1071,6 +1071,66 @@ class Decision:
     detail: str = ""
 
 
+def _resolve_publication(root: Path, intent: PublicationIntent) -> bool:
+    """Finish, or refuse to abandon, a publication that was already under way.
+
+    A durable intent is a record that a commit had started. Failing to prove that
+    commit can be completed is not the same as proving it is safe to throw away:
+    with the effect claim already consumed, discarding the staged output leaves an
+    effect that happened, no evidence of it, and no permission to run it again. So
+    this either finishes the publication, establishes that it already finished, or
+    keeps everything exactly where it is.
+    """
+    directory = _staging_directory(root, intent.transaction_id, create=False)
+    manifest_sha256 = (
+        _digest_file(directory / MANIFEST_FILENAME) if directory is not None else None
+    )
+    if manifest_sha256 != intent.manifest_sha256:
+        raise RetainedTransactionError(
+            INCONSISTENT_STATE,
+            "the staged output of an interrupted publication is not the output its "
+            "intent was recorded for; refusing to publish it, and keeping both as "
+            "evidence",
+        )
+    staged = read_staged(root, intent.transaction_id)
+    if staged is None:
+        raise RetainedTransactionError(
+            INCONSISTENT_STATE,
+            "an interrupted publication names staged output that is no longer "
+            "complete; refusing to publish it, and keeping both as evidence",
+        )
+    reservation = read_reservation(root)
+    if reservation is not None and not _matches_reservation(staged, reservation):
+        raise RetainedTransactionError(
+            INCONSISTENT_STATE,
+            "an interrupted publication is contradicted by the reservation covering "
+            "this workspace; refusing to publish it, and keeping both as evidence",
+        )
+
+    recorded = _recorded_snapshot(root)
+    recorded_identity = recorded.identity if recorded is not None else None
+    if staged.base_identity == recorded_identity:
+        publish(
+            root,
+            staged=staged,
+            generation=(recorded.generation + 1 if recorded is not None else 1),
+        )
+        discard_staging(root, intent.transaction_id)
+        return True
+    if recorded is not None and recorded.transaction_id == intent.transaction_id:
+        # The publication finished and only the clearing of its intent did not. The
+        # committed snapshot has to hold up before this is treated as complete.
+        read_committed(root)
+        clear_publication_intent(root)
+        discard_staging(root, intent.transaction_id)
+        return True
+    raise RetainedTransactionError(
+        INCONSISTENT_STATE,
+        "an interrupted publication can neither be finished nor shown to have "
+        "finished; keeping it and its staged output as evidence",
+    )
+
+
 def _matches_reservation(staged: StagedTransaction, reservation: Reservation) -> bool:
     """Whether staged output is the output of the transaction that reserved."""
     return (
@@ -1090,8 +1150,11 @@ def recover(root: Path) -> bool:
     written inside publication. A crash in that window leaves a complete commit
     that only the reservation points at.
 
-    With a publication intent, the intent decides: it names the exact bytes, and
-    staged output that is not those bytes is refused with everything left in place.
+    With a publication intent, the intent decides. It names the exact bytes, and a
+    publication that cannot be finished or shown to have finished is kept rather
+    than abandoned: an intent that has become durable is a record that a commit was
+    under way, and the staged output beneath it may be the only evidence of an
+    effect that is already consumed.
 
     Without one, a dead reservation is asked what it left behind:
 
@@ -1113,47 +1176,7 @@ def recover(root: Path) -> bool:
     changed = False
     intent = read_publication_intent(root)
     if intent is not None:
-        directory = _staging_directory(root, intent.transaction_id, create=False)
-        manifest_sha256 = (
-            _digest_file(directory / MANIFEST_FILENAME)
-            if directory is not None
-            else None
-        )
-        if manifest_sha256 != intent.manifest_sha256:
-            # The intent commits to exact bytes, and these are not them. Everything
-            # is left where it is: an unexplained substitution is evidence, and
-            # clearing it would destroy the only trace of what was interrupted.
-            raise RetainedTransactionError(
-                INCONSISTENT_STATE,
-                "the staged output of an interrupted publication is not the output "
-                "its intent was recorded for; refusing to publish it, and keeping "
-                "both as evidence",
-            )
-        staged = read_staged(root, intent.transaction_id)
-        recorded = _recorded_snapshot(root)
-        reservation = read_reservation(root)
-        publishable = staged is not None and staged.base_identity == (
-            recorded.identity if recorded is not None else None
-        )
-        if publishable and reservation is not None:
-            assert staged is not None  # implied by publishable
-            # The reservation is what authorised this transaction. Staged output that
-            # describes a different request is not that transaction's commit, however
-            # complete and self-consistent it is.
-            publishable = reservation.transaction_id == intent.transaction_id and (
-                _matches_reservation(staged, reservation)
-            )
-        if publishable:
-            assert staged is not None  # implied by publishable
-            publish(
-                root,
-                staged=staged,
-                generation=(recorded.generation + 1 if recorded is not None else 1),
-            )
-        else:
-            clear_publication_intent(root)
-        discard_staging(root, intent.transaction_id)
-        changed = True
+        changed = _resolve_publication(root, intent)
 
     existing = read_reservation(root)
     if existing is not None and not owner_is_live(root, existing):
