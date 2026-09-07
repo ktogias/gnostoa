@@ -193,6 +193,79 @@ class MandatoryRecordDigestTests(StatusFixture):
         )
         self.assertEqual((self.workspace / "experiment-state.json").read_text(), before)
 
+    def _sealed_pre_intent(self, effects: list[str]) -> Any:
+        observed = self.prepare()
+        candidate = observed.preflight_candidate_sha256
+        assert candidate is not None
+        authority = self.authority(candidate)
+        with self.patched_effect(effects):
+            with mock.patch.object(
+                retained_commit,
+                "_write_publication_intent",
+                side_effect=RuntimeError("died before the intent became durable"),
+            ):
+                with self.assertRaises(RuntimeError):
+                    self.prepare(authority=authority)
+        reservation = retained_commit.read_reservation(self.workspace)
+        self.assertIsNotNone(reservation)
+        assert reservation is not None
+        self.assertIsNotNone(reservation.staged_manifest_sha256)
+        return reservation, authority
+
+    def _assert_half_null_lock_is_refused(self, **overrides: Any) -> None:
+        """Tamper exactly one of the two lock fields and require a refusal."""
+        effects: list[str] = []
+        reservation, authority = self._sealed_pre_intent(effects)
+        before = (self.workspace / "experiment-state.json").read_text()
+
+        record_path = self.workspace / retained_commit.COMMIT_RECORD_FILENAME
+        record = json.loads(record_path.read_text())
+        self.assertIsNone(record["lock_file_sha256"])
+        self.assertIsNone(record["lock_identity"])
+        record.update(overrides)
+        record_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+
+        with self.patched_effect(effects):
+            refused = self.prepare(authority=authority)
+
+        self.assertEqual(effects, ["effect"], "nothing may be re-run here")
+        self.assertNotEqual(refused.status, "READY_FOR_OWNER_REVIEW")
+        self.assertIn(
+            retained_commit.INCONSISTENT_STATE,
+            [blocker["code"] for blocker in refused.blockers],
+        )
+        self.assertIsNotNone(
+            retained_commit.read_reservation(self.workspace),
+            "sealed evidence must not be discarded on a malformed record",
+        )
+        self.assertTrue(
+            (
+                retained_commit.staging_directory(
+                    self.workspace, reservation.transaction_id
+                )
+                / retained_commit.MANIFEST_FILENAME
+            ).is_file(),
+            "the staged output must survive as evidence",
+        )
+        self.assertEqual((self.workspace / "experiment-state.json").read_text(), before)
+
+    def test_a_record_naming_a_lock_identity_with_no_lock_digest_is_refused(
+        self,
+    ) -> None:
+        """The two lock fields are written together or not at all.
+
+        publish derives the digest from the persisted bytes and the identity from
+        what those bytes carry, so exactly one of them being present is a record no
+        producer writes. Reading it as a valid snapshot gives it an identity of its
+        own, and recovery decides supersession from precisely that.
+        """
+        self._assert_half_null_lock_is_refused(lock_identity="f" * 64)
+
+    def test_a_record_naming_a_lock_digest_with_no_lock_identity_is_refused(
+        self,
+    ) -> None:
+        self._assert_half_null_lock_is_refused(lock_file_sha256="e" * 64)
+
     def test_a_record_without_its_ledger_digest_is_refused(self) -> None:
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256

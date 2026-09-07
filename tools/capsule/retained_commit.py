@@ -614,6 +614,19 @@ def _parse_commit_record(payload: Mapping[str, Any]) -> CommittedSnapshot:
         raise RetainedTransactionError(
             INCONSISTENT_STATE, "the commit record generation is malformed"
         )
+    lock_file_sha256 = _optional_digest(payload, "lock_file_sha256", "commit record")
+    lock_identity = _optional_digest(payload, "lock_identity", "commit record")
+    if (lock_file_sha256 is None) != (lock_identity is None):
+        # publish derives the digest from the persisted bytes and the identity from
+        # what those bytes carry, so the two are written together or not at all.
+        # Exactly one of them is a record no producer writes, and reading it as a
+        # valid snapshot gives it an identity of its own -- which is what recovery
+        # decides supersession from.
+        raise RetainedTransactionError(
+            INCONSISTENT_STATE,
+            "the commit record lock digest and lock identity must be present "
+            "together or absent together",
+        )
     return CommittedSnapshot(
         generation=generation,
         transaction_id=_validated_transaction_id(
@@ -625,8 +638,8 @@ def _parse_commit_record(payload: Mapping[str, Any]) -> CommittedSnapshot:
         # recovery decides supersession from exactly that identity.
         stages_sha256=_required_digest(payload, "stages_sha256", "commit record"),
         state_sha256=_required_digest(payload, "state_sha256", "commit record"),
-        lock_file_sha256=_optional_digest(payload, "lock_file_sha256", "commit record"),
-        lock_identity=_optional_digest(payload, "lock_identity", "commit record"),
+        lock_file_sha256=lock_file_sha256,
+        lock_identity=lock_identity,
     )
 
 
