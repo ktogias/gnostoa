@@ -15,8 +15,14 @@ owner review while execution would refuse the lock it names.
 The fixture is synthetic and the qualification effect is patched and counted; no
 Phase-D material, hidden oracle, runner or container effect participates.
 
-At head 830a248d18bc9afbeb861b02df550a9b78562383 the first two are expected to be
-RED, and the third is a guard that must stay green.
+The same question is asked one boundary earlier, when a lock is staged. A validator
+that reads the declared field there lets a transaction commit a workspace its own
+next read refuses, with no external mutation in between -- an internal contradiction
+of the transaction contract rather than an attack.
+
+At head 830a248d18bc9afbeb861b02df550a9b78562383 the first two reading cases are
+expected to be RED; at 2e734b4d891596c58b7c1fb118f5231991aea365 the staging case is.
+The remaining cases are guards that must stay green.
 """
 
 from __future__ import annotations
@@ -157,6 +163,117 @@ class CanonicallyInvalidLockTests(ConsumptionFixture):
                 contents,
                 f"retained {name} must survive byte for byte",
             )
+
+
+class StagedLockValidityTests(ConsumptionFixture):
+    """What is staged must be capable of being read back after it is committed."""
+
+    IDENTITY = "d" * 64
+
+    def _invalid_lock(self) -> tuple[bytes, bytes, bytes]:
+        """A lock declaring an identity its payload does not hash to.
+
+        Every reference agrees on the declared value, so only recomputing the digest
+        over the payload distinguishes this from a valid lock.
+        """
+        lock = json.dumps(
+            {
+                "schema": lock_module.LOCK_SCHEMA,
+                "artifact_store": "/artifacts",
+                "lock_sha256": self.IDENTITY,
+            }
+        ).encode()
+        state = json.dumps({"lock_sha256": self.IDENTITY}).encode()
+        ledger = json.dumps(
+            {
+                "records": {
+                    stage: {"outputs": {"lock_sha256": self.IDENTITY}}
+                    for stage in ("EXECUTION_FROZEN", "READY_FOR_OWNER_REVIEW")
+                }
+            }
+        ).encode()
+        with self.assertRaises(lock_module.LockError):
+            lock_module.load_bytes(lock)
+        return ledger, state, lock
+
+    def test_staging_a_canonically_invalid_lock_is_refused(self) -> None:
+        """Refused where it is offered, not discovered after it is committed."""
+        ledger, state, lock = self._invalid_lock()
+        transaction = retained_commit.new_transaction_id()
+
+        with self.assertRaises(retained_commit.RetainedTransactionError) as raised:
+            retained_commit.stage(
+                self.workspace,
+                transaction_id=transaction,
+                base_identity=None,
+                candidate_sha256=None,
+                authority_sha256=None,
+                ledger=ledger,
+                state=state,
+                lock=lock,
+                lock_identity=self.IDENTITY,
+            )
+        self.assertEqual(raised.exception.code, retained_commit.INCONSISTENT_STATE)
+        self.assertIsNone(
+            retained_commit.read_staged(self.workspace, transaction),
+            "a refused staging must leave no recovery source behind",
+        )
+        self.assertFalse(
+            (self.workspace / retained_commit.COMMIT_RECORD_FILENAME).exists(),
+            "nothing canonical may be touched by a refused staging",
+        )
+
+    def test_what_a_transaction_commits_can_be_read_back(self) -> None:
+        """The postcondition the staging validator exists to keep.
+
+        Staging accepts, publication succeeds, and -- with nothing modified in
+        between -- the committed workspace reads back. A validator that checks the
+        identity a lock declares rather than the one it carries breaks this without
+        any external mutation at all.
+        """
+        built = lock_module.build(
+            experiment_id="E1",
+            question="does it?",
+            claim_boundary="a boundary",
+            launch={},
+            tasks=[],
+            capabilities=[],
+            stage_receipts={},
+            authority={},
+            run_plan={},
+            artifact_store=str(self.workspace / "artifacts"),
+        )
+        lock = built.serialised().encode()
+        state = json.dumps({"lock_sha256": built.identity}).encode()
+        ledger = json.dumps(
+            {
+                "records": {
+                    stage: {"outputs": {"lock_sha256": built.identity}}
+                    for stage in ("EXECUTION_FROZEN", "READY_FOR_OWNER_REVIEW")
+                }
+            }
+        ).encode()
+
+        staged = retained_commit.stage(
+            self.workspace,
+            transaction_id=retained_commit.new_transaction_id(),
+            base_identity=None,
+            candidate_sha256=None,
+            authority_sha256=None,
+            ledger=ledger,
+            state=state,
+            lock=lock,
+            lock_identity=built.identity,
+        )
+        with retained_commit.coordination_lock(self.workspace):
+            retained_commit.publish(self.workspace, staged=staged, generation=1)
+
+        snapshot = retained_commit.read_committed(self.workspace)
+        self.assertIsNotNone(
+            snapshot, "a transaction must be able to read back what it committed"
+        )
+        assert snapshot is not None
+        self.assertEqual(snapshot.lock_identity, built.identity)
 
 
 if __name__ == "__main__":

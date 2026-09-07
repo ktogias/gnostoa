@@ -939,13 +939,22 @@ def _binding_output(ledger_payload: bytes, stage: str) -> str | None:
 def _validate_lock_bindings(
     *, ledger: bytes, state: bytes, lock: bytes, lock_identity: str
 ) -> None:
-    """Every recorded reference to the lock must name the same canonical identity.
+    """Every recorded reference to the lock must name the identity the lock carries.
 
     The persisted bytes and the identity they carry are separate facts, so agreement
-    between them is checked rather than assumed from having written both.
+    between them is established rather than assumed from having written both -- and
+    the lock's own contribution is taken from the canonical contract rather than from
+    the field it declares. Reading the field would let a lock that names an identity
+    it does not carry be staged, published, and then refused by the very next read of
+    the workspace the commit just created.
     """
     try:
-        carried = json.loads(lock).get("lock_sha256")
+        carried = lock_module.load_bytes(lock).get("lock_sha256")
+    except lock_module.LockError as exc:
+        raise RetainedTransactionError(
+            INCONSISTENT_STATE, f"the staged experiment lock is invalid: {exc}"
+        ) from exc
+    try:
         declared = json.loads(state).get("lock_sha256")
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise RetainedTransactionError(
