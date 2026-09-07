@@ -1236,14 +1236,19 @@ def publish(
                 )
             members[member] = payload
     existing = read_publication_intent(root)
-    if existing is not None and existing.transaction_id != staged.transaction_id:
-        # Somebody else's publication is in flight or interrupted. Overwriting its
+    if existing is not None and (
+        existing.transaction_id != staged.transaction_id
+        or existing.manifest_sha256 != staged.manifest_sha256
+    ):
+        # An unresolved publication is in flight or interrupted. Overwriting its
         # intent would erase the only route back to whatever it staged, which may be
-        # the sole record of an effect that cannot be run again.
+        # the sole record of an effect that cannot be run again. A record naming the
+        # same transaction but different bytes is just as foreign: it is not this
+        # publication, whoever started it.
         raise RetainedTransactionError(
             INCONSISTENT_STATE,
-            "another transaction's publication is unresolved; refusing to publish "
-            "over the record of an interrupted commit",
+            "an unresolved publication names output other than this one; refusing "
+            "to publish over the record of an interrupted commit",
         )
     # Recorded before the first canonical byte moves, so an interrupted publication
     # names the staged output it was finishing -- and the exact bytes of it --
@@ -1317,6 +1322,16 @@ def _resolve_publication(root: Path, intent: PublicationIntent) -> bool:
             "an interrupted publication names staged output that is no longer "
             "complete; refusing to publish it, and keeping both as evidence",
         )
+    if staged.manifest_sha256 != intent.manifest_sha256:
+        # The digest above was satisfied by one observation and this is a later one.
+        # Comparing the intent against what was actually parsed closes the gap
+        # between them, which matters most for a publisher that never reserved: the
+        # intent is then the only record vouching for those bytes.
+        raise RetainedTransactionError(
+            INCONSISTENT_STATE,
+            "the staged output changed between the intent being checked and being "
+            "read; refusing to publish it, and keeping both as evidence",
+        )
     reservation = read_reservation(root)
     if reservation is not None and not _matches_reservation(staged, reservation):
         raise RetainedTransactionError(
@@ -1354,17 +1369,17 @@ def _matches_reservation(staged: StagedTransaction, reservation: Reservation) ->
 
     The request identities say which transaction it belongs to; the seal says which
     bytes. Without the seal, a complete replacement carrying the same identities is
-    indistinguishable from the output that was actually staged.
+    indistinguishable from the output that was actually staged, so a reservation
+    carrying none covers no output at all. A transaction that died before sealing is
+    recognised before this is reached.
     """
     return (
         staged.transaction_id == reservation.transaction_id
         and staged.base_identity == reservation.base_identity
         and staged.candidate_sha256 == reservation.candidate_sha256
         and staged.authority_sha256 == reservation.authority_sha256
-        and (
-            reservation.staged_manifest_sha256 is None
-            or reservation.staged_manifest_sha256 == staged.manifest_sha256
-        )
+        and reservation.staged_manifest_sha256 is not None
+        and reservation.staged_manifest_sha256 == staged.manifest_sha256
     )
 
 
