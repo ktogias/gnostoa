@@ -16,6 +16,16 @@ oracle participates.
 
 At head 4d4d2a6b these are expected to be RED. They are the evidence a repair must
 turn green, and they are deliberately written before any repair exists.
+
+Three of the original eight were written against the generation-counter API
+(``GENERATION_FILENAME``, ``read_generation``, ``_write_generation``,
+``commit_if_current``) that the approved reservation model removes, so they state a
+mechanism rather than the contract. Their exact historical text remains reachable at
+f00aae0112575f176f3555d5c3d09ac1ff3b2b29. The semantic contract they carried is
+retained in ``test_retained_commit_record_integrity`` -- unreadable is not initial, a
+torn commit is not an older valid version, a stale snapshot cannot overwrite a newer
+completion -- restated against the committed record. They are migrated rather than
+skipped: a permanent skip records neither the property nor its loss.
 """
 
 from __future__ import annotations
@@ -192,120 +202,6 @@ class RetainedLockBindingTests(ConsumptionFixture):
             "BLOCKED",
             "a lock that is not the retained completion's lock must not prove READY",
         )
-
-
-class RetainedGenerationIntegrityTests(ConsumptionFixture):
-    """Missing, valid and invalid retained version state are three states."""
-
-    def test_malformed_generation_marker_is_not_the_initial_generation(self) -> None:
-        self.prepare()
-        marker = self.workspace / retained_commit.GENERATION_FILENAME
-        if not marker.exists():  # a different mechanism may record this elsewhere
-            self.skipTest("no generation marker in this implementation")
-        marker.write_text("{ not valid json")
-        self.assertNotEqual(
-            retained_commit.read_generation(self.workspace),
-            0,
-            "an unreadable marker must be distinguishable from a fresh workspace",
-        )
-
-    def test_state_newer_than_the_marker_is_not_overwritable(self) -> None:
-        """A crash between persisting state and advancing the marker must fail closed.
-
-        Otherwise a stale invocation holding the pre-crash value legitimately passes
-        the check and overwrites state that is newer than the marker admits.
-        """
-        self.prepare()
-        stale = retained_commit.read_generation(self.workspace)
-        marker = self.workspace / retained_commit.GENERATION_FILENAME
-        if not marker.exists():
-            self.skipTest("no generation marker in this implementation")
-
-        wrote: list[str] = []
-        # State advances; the marker does not, as if the process died between them.
-        with mock.patch.object(
-            retained_commit, "_write_generation", side_effect=RuntimeError("crash")
-        ):
-            with self.assertRaises(RuntimeError):
-                retained_commit.commit_if_current(
-                    self.workspace,
-                    expected=stale,
-                    persist=lambda: wrote.append("newer state"),
-                )
-        self.assertEqual(wrote, ["newer state"])
-
-        self.assertFalse(
-            retained_commit.commit_if_current(
-                self.workspace, expected=stale, persist=lambda: wrote.append("stale")
-            ),
-            "a writer holding the pre-crash generation must not overwrite newer state",
-        )
-        self.assertEqual(wrote, ["newer state"])
-
-
-class CoherentSnapshotTests(ConsumptionFixture):
-    """The retained snapshot and its version token must be acquired together."""
-
-    def test_snapshot_paired_with_a_newer_token_cannot_commit(self) -> None:
-        """Reading the ledger and the token separately permits a torn pair.
-
-        An invocation can hold a snapshot from before a completion and a token from
-        after it. Any equality check on that token then passes, and the stale
-        snapshot is written over state it never saw. The workspace is rewound to the
-        pre-completion snapshot so the caller genuinely loads the older ledger.
-        """
-        import shutil
-
-        observed = self.prepare()
-        candidate = observed.preflight_candidate_sha256
-        assert candidate is not None
-        old_snapshot = self.root / "snapshot-before-completion"
-        shutil.copytree(self.workspace, old_snapshot)
-
-        with mock.patch.object(
-            compiler,
-            "qualify_subjects",
-            side_effect=lambda *a, **k: _receipt(
-                k.get("task_id", "T1"), dict(k.get("bound") or {})
-            ),
-        ):
-            self.prepare(authority=self.authority(candidate))
-        winner = compiler.status(self.workspace)
-        self.assertEqual(winner["status"], "READY_FOR_OWNER_REVIEW")
-        completed_snapshot = self.root / "snapshot-after-completion"
-        shutil.copytree(self.workspace, completed_snapshot)
-
-        # Rewind: the caller will load the pre-completion ledger.
-        shutil.rmtree(self.workspace)
-        shutil.copytree(old_snapshot, self.workspace)
-
-        torn: list[str] = []
-        real_read = retained_commit.read_generation
-
-        def read_after_the_winner_landed(root):  # type: ignore[no-untyped-def]
-            # The caller has loaded the old ledger; the winner's state and token
-            # become visible before the caller reads its token.
-            if not torn:
-                torn.append("torn")
-                shutil.rmtree(self.workspace)
-                shutil.copytree(completed_snapshot, self.workspace)
-            return real_read(root)
-
-        with mock.patch.object(
-            compiler.retained_commit,
-            "read_generation",
-            side_effect=read_after_the_winner_landed,
-        ):
-            self.prepare()
-
-        self.assertEqual(torn, ["torn"])
-        current = compiler.status(self.workspace)
-        self.assertEqual(
-            current["status"],
-            "READY_FOR_OWNER_REVIEW",
-            "a torn snapshot/token pair must not authorise overwriting newer state",
-        )
-        self.assertEqual(current["lock_sha256"], winner["lock_sha256"])
 
 
 class ConcurrentReconciliationTests(ConsumptionFixture):

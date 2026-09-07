@@ -1,16 +1,30 @@
-"""RED characterization for concurrent fresh prepares in one retained workspace.
+"""Concurrent prepares in one retained workspace: a loser must not overwrite a winner.
 
-The fixture is synthetic. ``qualify_subjects`` is patched to a retained receipt, so no
-Phase-D material, hidden oracle, runner or container effect is used.
+This file originally required the losing invocation to reach the create-only claim
+and receive ALREADY_CONSUMED. That was a characterization of the superseded
+arrival-order arbitration: under the approved reservation contract an *identical*
+authorised caller no longer collides with the claim at all, it waits for the owner
+and reconciles onto the committed transaction (see
+``test_preflight_transaction_red.ConcurrentReconciliationTests``). The claim
+collision is therefore no longer a property to assert.
+
+What survives is the timeless safety statement the file existed for: an invocation
+that did not perform the successful transaction must never replace its persisted
+evidence with a stale or incomplete local view. It is restated here against a caller
+the reservation contract genuinely refuses -- a differently authorised one -- and it
+asserts outcomes rather than which primitive refused it.
+
+The fixture is synthetic. ``qualify_subjects`` is patched to a retained receipt, so
+no Phase-D material, hidden oracle, runner or container effect is used.
 """
 
 from __future__ import annotations
 
-import threading
 import unittest
 from unittest import mock
 
-from tools.capsule import compiler, effect_claim, qualification, stages
+from tools.capsule import authority as authority_module
+from tools.capsule import compiler, qualification, stages
 
 try:
     from test_preflight_authority_consumption import ConsumptionFixture
@@ -18,114 +32,67 @@ except ImportError:  # invoked as tests.<module> from the repository root
     from tests.test_preflight_authority_consumption import ConsumptionFixture
 
 
-class SameWorkspaceConcurrencyRedTests(ConsumptionFixture):
-    def test_losing_concurrent_prepare_cannot_overwrite_winner_success(self) -> None:
+class SameWorkspaceConcurrencyTests(ConsumptionFixture):
+    def test_a_differently_authorised_caller_cannot_overwrite_winner_success(
+        self,
+    ) -> None:
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         self.assertIsNotNone(candidate)
         assert candidate is not None
-        authority = self.authority(candidate)
         retained = qualification.load_receipt(self.prior_receipt(observed))
-        spec = self._spec()
 
-        effect_started = threading.Event()
-        release_effect = threading.Event()
-        loser_saw_consumed = threading.Event()
-        release_loser = threading.Event()
+        # Same prepared candidate, a different approval of it. The reservation
+        # contract lets an identical authorised caller converge; this one is not
+        # identical, so it has no standing to touch a transaction in flight.
+        other = authority_module.PreflightAuthority(
+            id="auth-197-second-approval",
+            experiment_id="E1",
+            scope=(authority_module.BASE_REFERENCE_QUALIFICATION,),
+            preflight_candidate_sha256=candidate,
+        )
+
         effects: list[str] = []
         results: dict[str, compiler.PrepareResult] = {}
-        errors: dict[str, BaseException] = {}
 
-        original_claim = effect_claim.claim_fresh_candidate
-
-        def controlled_claim(*args, **kwargs):  # type: ignore[no-untyped-def]
-            try:
-                return original_claim(*args, **kwargs)
-            except effect_claim.EffectClaimError as exc:
-                if exc.code != effect_claim.ALREADY_CONSUMED:
-                    raise
-                loser_saw_consumed.set()
-                if not release_loser.wait(timeout=20):
-                    raise TimeoutError("losing prepare was not released") from exc
-                raise
-
-        def qualify_once(*args, **kwargs):  # type: ignore[no-untyped-def]
+        def qualify_then_let_the_other_caller_run(*args, **kwargs):  # type: ignore[no-untyped-def]
             del args, kwargs
-            effects.append(threading.current_thread().name)
-            effect_started.set()
-            if not release_effect.wait(timeout=20):
-                raise TimeoutError("winning qualification was not released")
+            effects.append("winner")
+            # Driven from inside the winner's effect: the other caller runs while
+            # the winning transaction is past its irreversible boundary and has not
+            # yet published.
+            results["other"] = self.prepare(authority=other)
             return retained
 
-        def run_prepare(name: str) -> None:
-            try:
-                results[name] = compiler.prepare(
-                    spec,
-                    self.workspace,
-                    offline=True,
-                    preflight_authority=authority,
-                    qualification_backend=qualification.LOCAL_PYTHON,
-                )
-            except BaseException as exc:  # retain thread failures for the test thread
-                errors[name] = exc
-
-        with (
-            mock.patch.object(
-                effect_claim, "claim_fresh_candidate", side_effect=controlled_claim
-            ),
-            mock.patch.object(compiler, "qualify_subjects", side_effect=qualify_once),
+        with mock.patch.object(
+            compiler,
+            "qualify_subjects",
+            side_effect=qualify_then_let_the_other_caller_run,
         ):
-            winner_thread = threading.Thread(
-                target=run_prepare, args=("winner",), name="winner"
-            )
-            winner_thread.start()
-            self.assertTrue(
-                effect_started.wait(timeout=20),
-                "winning prepare never crossed the claimed effect boundary",
-            )
+            winner = self.prepare(authority=self.authority(candidate))
 
-            loser_thread = threading.Thread(
-                target=run_prepare, args=("loser",), name="loser"
-            )
-            loser_thread.start()
-            self.assertTrue(
-                loser_saw_consumed.wait(timeout=20),
-                "losing prepare never observed the winner's create-only claim",
-            )
-
-            # The loser is now paused inside the claim primitive. Let the winner
-            # finish and persist successful retained evidence first.
-            release_effect.set()
-            winner_thread.join(timeout=20)
-            self.assertFalse(winner_thread.is_alive(), "winning prepare did not finish")
-            if "winner" in errors:
-                raise errors["winner"]
-
-            winner = results["winner"]
-            self.assertEqual(winner.status, stages.READY_FOR_OWNER_REVIEW)
-            self.assertEqual(winner.stage, stages.READY_FOR_OWNER_REVIEW)
-            winner_state = compiler.status(self.workspace)
-            winner_stages = (self.workspace / "stages.json").read_text()
-            winner_lock = (self.workspace / "experiment.lock").read_text()
-
-            # Only now let the stale losing invocation propagate ALREADY_CONSUMED.
-            release_loser.set()
-            loser_thread.join(timeout=20)
-            self.assertFalse(loser_thread.is_alive(), "losing prepare did not finish")
-            if "loser" in errors:
-                raise errors["loser"]
-
-        loser = results["loser"]
         self.assertEqual(
-            effects, ["winner"], "the loser must never open a second effect"
+            effects, ["winner"], "the losing caller must never open a second effect"
         )
-        self.assertIn(
-            effect_claim.ALREADY_CONSUMED,
-            [blocker["code"] for blocker in loser.blockers],
-        )
+        self.assertEqual(winner.status, stages.READY_FOR_OWNER_REVIEW)
+        self.assertEqual(winner.stage, stages.READY_FOR_OWNER_REVIEW)
+        self.assertEqual(results["other"].status, "BLOCKED")
+        # Non-vacuity: the refused caller reached the same prepared candidate, so it
+        # was turned away by the transaction it collided with rather than by some
+        # earlier static problem that would make this case prove nothing.
+        self.assertEqual(results["other"].preflight_candidate_sha256, candidate)
 
-        # A losing invocation must not replace the already-persisted successful
-        # transaction with its stale/incomplete local snapshot.
+        winner_state = compiler.status(self.workspace)
+        self.assertEqual(winner_state["status"], stages.READY_FOR_OWNER_REVIEW)
+        self.assertIsNotNone(winner_state["lock_sha256"])
+        winner_stages = (self.workspace / "stages.json").read_text()
+        winner_lock = (self.workspace / "experiment.lock").read_text()
+
+        # The refused caller runs again after the winner has published. It still has
+        # nothing that entitles it to replace successful retained evidence.
+        late = self.prepare(authority=other)
+        self.assertNotEqual(late.status, stages.READY_FOR_OWNER_REVIEW)
+
         final_state = compiler.status(self.workspace)
         self.assertEqual(final_state["status"], winner_state["status"])
         self.assertEqual(final_state["stage"], winner_state["stage"])
