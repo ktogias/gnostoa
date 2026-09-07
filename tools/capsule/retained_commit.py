@@ -40,6 +40,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import stat
 import uuid
 from collections.abc import Iterator, Mapping
@@ -58,10 +59,17 @@ COORDINATION_LOCK_FILENAME = ".retained-coordination.lock"
 RESERVATION_FILENAME = ".retained-reservation.json"
 STAGING_DIRECTORY = ".retained-transactions"
 MANIFEST_FILENAME = "manifest.json"
+PUBLICATION_FILENAME = ".retained-publication.json"
 
 COMMIT_RECORD_SCHEMA = "gnostoa-retained-commit-record/v1"
 RESERVATION_SCHEMA = "gnostoa-retained-reservation/v1"
 MANIFEST_SCHEMA = "gnostoa-retained-transaction-manifest/v1"
+PUBLICATION_SCHEMA = "gnostoa-retained-publication-intent/v1"
+
+#: A transaction identifier addresses a directory inside the workspace, and it is
+#: read back from records anyone may have written. It is accepted only in exactly
+#: the form new_transaction_id emits, so it can never be a path.
+_TRANSACTION_ID = re.compile(r"^[0-9a-f]{32}$")
 
 STATE_FILENAME = "experiment-state.json"
 LEDGER_FILENAME = "stages.json"
@@ -193,12 +201,64 @@ def coordination_lock(root: Path) -> Iterator[None]:
         os.close(descriptor)
 
 
-def owner_lock_path(root: Path, transaction_id: str) -> Path:
-    return staging_directory(root, transaction_id) / "owner.lock"
+def _validated_transaction_id(transaction_id: str) -> str:
+    """A transaction identifier, or a refusal. Never a path.
+
+    This value is used to address a directory and is read back from retained
+    records, so it is checked against the exact form it is generated in. Anything
+    else -- an absolute path, a traversal, a name with a separator -- would let a
+    record decide which directory the workspace writes to and deletes from.
+    """
+    if not isinstance(transaction_id, str) or not _TRANSACTION_ID.match(transaction_id):
+        raise RetainedTransactionError(
+            INCONSISTENT_STATE,
+            f"{transaction_id!r} is not a transaction identifier",
+        )
+    return transaction_id
+
+
+def _real_directory(path: Path, *, create: bool) -> Path | None:
+    """The directory at this path, refusing a symlink or anything else in its place.
+
+    O_NOFOLLOW protects the file a lock is taken on; it says nothing about the
+    directories above it. A staging directory replaced by a symlink would redirect
+    every write and every deletion made through it.
+    """
+    try:
+        observed = path.lstat()
+    except FileNotFoundError:
+        if not create:
+            return None
+        path.mkdir(mode=0o700)
+        observed = path.lstat()
+    except OSError as exc:
+        raise RetainedTransactionError(
+            INCONSISTENT_STATE, f"cannot inspect {path.name}: {exc}"
+        ) from exc
+    if stat.S_ISLNK(observed.st_mode) or not stat.S_ISDIR(observed.st_mode):
+        raise RetainedTransactionError(
+            INCONSISTENT_STATE,
+            f"{path.name} is not a directory this workspace owns",
+        )
+    return path
+
+
+def _staging_directory(root: Path, transaction_id: str, *, create: bool) -> Path | None:
+    transaction_id = _validated_transaction_id(transaction_id)
+    root.mkdir(parents=True, exist_ok=True)
+    staging_root = _real_directory(root / STAGING_DIRECTORY, create=create)
+    if staging_root is None:
+        return None
+    return _real_directory(staging_root / transaction_id, create=create)
 
 
 def staging_directory(root: Path, transaction_id: str) -> Path:
-    return root / STAGING_DIRECTORY / transaction_id
+    """Where a transaction stages its output. The identifier is validated first."""
+    return root / STAGING_DIRECTORY / _validated_transaction_id(transaction_id)
+
+
+def owner_lock_path(root: Path, transaction_id: str) -> Path:
+    return staging_directory(root, transaction_id) / "owner.lock"
 
 
 def new_transaction_id() -> str:
@@ -209,9 +269,9 @@ def new_transaction_id() -> str:
 def owner_liveness(root: Path, transaction_id: str) -> Iterator[None]:
     """Held for the life of a transaction. Confers no right to write."""
     _require_locking("transaction liveness")
-    path = owner_lock_path(root, transaction_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor = _open_lock_file(path)
+    directory = _staging_directory(root, transaction_id, create=True)
+    assert directory is not None  # create=True never returns None
+    descriptor = _open_lock_file(directory / "owner.lock")
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX)
         yield
@@ -230,10 +290,10 @@ def owner_is_live(root: Path, reservation: Reservation) -> bool:
     it, so the owner is gone. No lease, no heartbeat, no clock.
     """
     _require_locking("transaction liveness")
-    path = owner_lock_path(root, reservation.transaction_id)
-    if not path.is_file():
+    directory = _staging_directory(root, reservation.transaction_id, create=False)
+    if directory is None or not _present(directory / "owner.lock"):
         return False
-    descriptor = _open_lock_file(path)
+    descriptor = _open_lock_file(directory / "owner.lock")
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
@@ -248,10 +308,10 @@ def owner_is_live(root: Path, reservation: Reservation) -> bool:
 def wait_for_owner(root: Path, reservation: Reservation) -> None:
     """Block until the reserving transaction has finished, then return."""
     _require_locking("transaction liveness")
-    path = owner_lock_path(root, reservation.transaction_id)
-    if not path.is_file():
+    directory = _staging_directory(root, reservation.transaction_id, create=False)
+    if directory is None or not _present(directory / "owner.lock"):
         return
-    descriptor = _open_lock_file(path)
+    descriptor = _open_lock_file(directory / "owner.lock")
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX)
         fcntl.flock(descriptor, fcntl.LOCK_UN)
@@ -360,14 +420,21 @@ class CommittedSnapshot:
 
 
 def state_is_transactional(root: Path) -> bool:
-    """Whether the canonical public state says it was written under a transaction."""
+    """Whether the canonical public state says it was written under a transaction.
+
+    Only a genuinely absent state file answers False. A state that cannot be read is
+    not evidence of a workspace predating the transaction model, and reading it that
+    way would let a damaged workspace with no commit record pass as legacy.
+    """
     path = root / STATE_FILENAME
-    try:
-        if not path.is_file():
-            return False
-        payload = json.loads(path.read_text())
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+    if not _present(path):
         return False
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RetainedTransactionError(
+            INCONSISTENT_STATE, f"the retained public state is unreadable: {exc}"
+        ) from exc
     return (
         isinstance(payload, dict)
         and payload.get(TRANSACTION_MARKER_FIELD) == TRANSACTION_MARKER_VALUE
@@ -423,7 +490,49 @@ def read_committed(root: Path) -> CommittedSnapshot | None:
                 f"retained {name} does not match the committed record; the workspace "
                 "is mid-transaction or was modified outside it",
             )
+    _validate_committed_lock_identity(root, snapshot)
     return snapshot
+
+
+def _validate_committed_lock_identity(root: Path, snapshot: CommittedSnapshot) -> None:
+    """Every retained reference to the lock must name the identity the lock carries.
+
+    Digesting the lock file proves the bytes are the ones that were committed. It
+    says nothing about the identity recorded beside them, which can be rewritten on
+    its own: the record would then bind a lock the workspace does not contain, and
+    every downstream check that trusts the record would follow it. Agreement is
+    therefore re-established on every read, not inherited from the write.
+    """
+    carried = _published_lock_identity(root)
+    if carried != snapshot.lock_identity:
+        raise RetainedTransactionError(
+            INCONSISTENT_STATE,
+            f"the commit record names lock identity {snapshot.lock_identity!r}, "
+            f"which the published lock does not carry",
+        )
+    if snapshot.lock_identity is None:
+        return
+    references: dict[str, object] = {}
+    try:
+        state = json.loads((root / STATE_FILENAME).read_text())
+        if isinstance(state, dict) and state.get("lock_sha256") is not None:
+            references["the retained public state"] = state["lock_sha256"]
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        pass
+    ledger = root / LEDGER_FILENAME
+    if ledger.is_file():
+        payload = ledger.read_bytes()
+        for stage in _LOCK_BINDING_STAGES:
+            bound = _binding_output(payload, stage)
+            if bound is not None:
+                references[f"the retained {stage} receipt"] = bound
+    for label, referenced in references.items():
+        if referenced != snapshot.lock_identity:
+            raise RetainedTransactionError(
+                INCONSISTENT_STATE,
+                f"{label} names lock {referenced!r}, not the committed lock "
+                f"{snapshot.lock_identity!r}",
+            )
 
 
 def _recorded_snapshot(root: Path) -> CommittedSnapshot | None:
@@ -519,7 +628,9 @@ def read_reservation(root: Path) -> Reservation | None:
     if base_identity is not None:
         base_identity = _required_digest(payload, "base_identity", "reservation")
     return Reservation(
-        transaction_id=_required_str(payload, "transaction_id", "reservation"),
+        transaction_id=_validated_transaction_id(
+            _required_str(payload, "transaction_id", "reservation")
+        ),
         base_identity=base_identity,
         experiment_id=_required_str(payload, "experiment_id", "reservation"),
         scope=_required_str(payload, "scope", "reservation"),
@@ -665,8 +776,8 @@ def stage(
         _validate_lock_bindings(
             ledger=ledger, state=state, lock=lock, lock_identity=lock_identity
         )
-    directory = staging_directory(root, transaction_id)
-    directory.mkdir(parents=True, exist_ok=True)
+    directory = _staging_directory(root, transaction_id, create=True)
+    assert directory is not None  # create=True never returns None
     _write_atomic(directory / LEDGER_FILENAME, ledger)
     _write_atomic(directory / STATE_FILENAME, state)
     if lock is not None:
@@ -694,7 +805,9 @@ def read_staged(root: Path, transaction_id: str) -> StagedTransaction | None:
     None means "not a recovery source". It never means "safe to start again": that
     judgement belongs to whoever knows whether the effect boundary was crossed.
     """
-    directory = staging_directory(root, transaction_id)
+    directory = _staging_directory(root, transaction_id, create=False)
+    if directory is None:
+        return None
     manifest = directory / MANIFEST_FILENAME
     if not manifest.is_file():
         return None
@@ -703,7 +816,9 @@ def read_staged(root: Path, transaction_id: str) -> StagedTransaction | None:
             manifest, label="transaction manifest", schema=MANIFEST_SCHEMA
         )
         staged = StagedTransaction(
-            transaction_id=_required_str(payload, "transaction_id", "manifest"),
+            transaction_id=_validated_transaction_id(
+                _required_str(payload, "transaction_id", "manifest")
+            ),
             base_identity=(
                 None
                 if payload.get("base_identity") is None
@@ -753,16 +868,61 @@ def read_staged(root: Path, transaction_id: str) -> StagedTransaction | None:
 
 def discard_staging(root: Path, transaction_id: str) -> None:
     """Remove a staging directory whose transaction is finished with."""
-    directory = staging_directory(root, transaction_id)
-    if not directory.is_dir():
+    directory = _staging_directory(root, transaction_id, create=False)
+    if directory is None:
         return
     for entry in sorted(directory.iterdir()):
         if entry.is_file() and not entry.is_symlink():
             entry.unlink()
     try:
         directory.rmdir()
-    except OSError:  # pragma: no cover - a live liveness lock still holds it open
+    except OSError:  # pragma: no cover - a non-empty directory is left as evidence
         return
+
+
+def read_publication_intent(root: Path) -> str | None:
+    """Which staged transaction is being made canonical, if any.
+
+    An effect reservation says who may cross the effect boundary. It is not a record
+    of who is publishing: an invocation with no authority never reserves and still
+    writes canonical files. Discovering an interrupted commit through the
+    reservation would therefore strand every torn publication a non-reserving caller
+    left behind, with its complete staged output sitting next to it unreachable.
+    """
+    path = root / PUBLICATION_FILENAME
+    if not _present(path):
+        return None
+    payload = _load_json_document(
+        path, label="publication intent", schema=PUBLICATION_SCHEMA
+    )
+    return _validated_transaction_id(
+        _required_str(payload, "transaction_id", "publication intent")
+    )
+
+
+def _write_publication_intent(root: Path, transaction_id: str) -> None:
+    _write_atomic(
+        root / PUBLICATION_FILENAME,
+        (
+            json.dumps(
+                {
+                    "schema": PUBLICATION_SCHEMA,
+                    "transaction_id": _validated_transaction_id(transaction_id),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode(),
+    )
+
+
+def clear_publication_intent(root: Path) -> None:
+    try:
+        (root / PUBLICATION_FILENAME).unlink()
+    except FileNotFoundError:
+        return
+    _fsync_directory(root)
 
 
 def _published_lock_identity(root: Path) -> str | None:
@@ -800,7 +960,15 @@ def publish(
     an older version an outdated writer may overwrite -- with the staged output still
     on disk to finish forward from.
     """
-    directory = staging_directory(root, staged.transaction_id)
+    directory = _staging_directory(root, staged.transaction_id, create=False)
+    if directory is None:
+        raise RetainedTransactionError(
+            INCONSISTENT_STATE,
+            "the staged transaction being published is no longer on disk",
+        )
+    # Recorded before the first canonical byte moves, so an interrupted publication
+    # names the staged output it was finishing regardless of who started it.
+    _write_publication_intent(root, staged.transaction_id)
     for name, expected in staged.members().items():
         payload = (directory / name).read_bytes()
         if _digest_bytes(payload) != expected:
@@ -825,6 +993,7 @@ def publish(
         root / COMMIT_RECORD_FILENAME,
         (json.dumps(snapshot.as_json(), indent=2, sort_keys=True) + "\n").encode(),
     )
+    clear_publication_intent(root)
     return snapshot
 
 
@@ -839,47 +1008,66 @@ class Decision:
 
 
 def recover(root: Path) -> bool:
-    """Finish or release an abandoned transaction. Caller holds the coordination lock.
+    """Finish or release an interrupted transaction. Caller holds the coordination lock.
 
-    Recovery is forward-only and never re-runs anything. What the abandoned
-    transaction left behind decides what happens to it:
+    Recovery is forward-only and never re-runs anything. It is driven by the
+    publication intent, not by the effect reservation, because publishing and
+    reserving are different acts performed by different callers: an invocation with
+    no authority never reserves and still writes canonical files.
 
-      complete staged output, and nobody has committed since
-          finished forward from its own durable bytes. This is what makes a crash
-          between publishing files and recording them recoverable rather than merely
-          detectable, and it applies whether or not an effect ran: the staged bytes
-          are that transaction's own intended commit either way.
-      anything else
-          the reservation is released and the staging discarded
+      an interrupted publication whose staged output is complete, still describes
+      the transaction the record names, and -- where a reservation covers it --
+      matches that reservation's request
+          finished forward from its own durable bytes, running nothing again
+      any other interrupted publication
+          abandoned without publishing; the workspace keeps whatever it had
+      an abandoned reservation
+          released
 
     Releasing is not permission to run the effect again. That is the effect claim's
     job, and a released reservation leaves it exactly as it was: a candidate whose
     boundary was crossed stays consumed, and one whose boundary was never reached
     stays runnable. Absence of recoverable evidence is never turned into a retry.
 
-    Staged output is only finished forward while the commit record still names the
-    transaction it was based on. Once somebody else has committed, it describes a
-    workspace that no longer exists, and republishing it would overwrite newer
-    evidence with an obsolete view.
-
     Returns whether the workspace changed.
     """
-    existing = read_reservation(root)
-    if existing is None or owner_is_live(root, existing):
-        return False
-    staged = read_staged(root, existing.transaction_id)
-    recorded = _recorded_snapshot(root)
-    if staged is not None and staged.base_identity == (
-        recorded.identity if recorded is not None else None
-    ):
-        publish(
-            root,
-            staged=staged,
-            generation=(recorded.generation + 1 if recorded is not None else 1),
+    changed = False
+    publishing = read_publication_intent(root)
+    if publishing is not None:
+        staged = read_staged(root, publishing)
+        recorded = _recorded_snapshot(root)
+        reservation = read_reservation(root)
+        publishable = staged is not None and staged.base_identity == (
+            recorded.identity if recorded is not None else None
         )
-    clear_reservation(root, expected_transaction_id=existing.transaction_id)
-    discard_staging(root, existing.transaction_id)
-    return True
+        if publishable and reservation is not None:
+            assert staged is not None  # implied by publishable
+            # The reservation is what authorised this transaction. Staged output that
+            # describes a different request is not that transaction's commit, however
+            # complete and self-consistent it is.
+            publishable = reservation.transaction_id == publishing and (
+                staged.base_identity == reservation.base_identity
+                and staged.candidate_sha256 == reservation.candidate_sha256
+                and staged.authority_sha256 == reservation.authority_sha256
+            )
+        if publishable:
+            assert staged is not None  # implied by publishable
+            publish(
+                root,
+                staged=staged,
+                generation=(recorded.generation + 1 if recorded is not None else 1),
+            )
+        else:
+            clear_publication_intent(root)
+        discard_staging(root, publishing)
+        changed = True
+
+    existing = read_reservation(root)
+    if existing is not None and not owner_is_live(root, existing):
+        clear_reservation(root, expected_transaction_id=existing.transaction_id)
+        discard_staging(root, existing.transaction_id)
+        changed = True
+    return changed
 
 
 def arbitrate(

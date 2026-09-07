@@ -209,6 +209,96 @@ class LockPathTests(ConsumptionFixture):
                 retained_commit.wait_for_owner(self.workspace, reservation)
 
 
+class LivenessInspectionTests(ConsumptionFixture):
+    """Liveness is a claim about another process, so unknown must not read as gone."""
+
+    def _reservation(self, transaction: str) -> retained_commit.Reservation:
+        return retained_commit.Reservation(
+            transaction_id=transaction,
+            base_identity=None,
+            experiment_id="E1",
+            scope="base-reference-qualification",
+            candidate_sha256="b" * 64,
+            authority_sha256="c" * 64,
+        )
+
+    def _uninspectable(self) -> tuple[retained_commit.Reservation, Path, int]:
+        """A transaction directory that can be found but whose lock cannot be stat'd.
+
+        The directory itself stays inspectable on purpose, so the failure lands on
+        the liveness probe rather than on the containment check above it. ``is_file``
+        answers False for a path it cannot inspect, and reading that as "the owner is
+        gone" hands away a reservation that may still be held.
+        """
+        transaction = retained_commit.new_transaction_id()
+        directory = self.workspace / retained_commit.STAGING_DIRECTORY / transaction
+        directory.mkdir(parents=True)
+        (directory / "owner.lock").write_text("")
+        original = directory.stat().st_mode
+        directory.chmod(0o000)
+        return self._reservation(transaction), directory, original
+
+    def test_an_uninspectable_liveness_lock_is_not_reported_as_gone(self) -> None:
+        reservation, staging_root, original = self._uninspectable()
+        try:
+            with self.assertRaises(retained_commit.RetainedTransactionError):
+                retained_commit.owner_is_live(self.workspace, reservation)
+        finally:
+            staging_root.chmod(original)
+
+    def test_waiting_on_an_uninspectable_liveness_lock_fails_closed(self) -> None:
+        reservation, staging_root, original = self._uninspectable()
+        try:
+            with self.assertRaises(retained_commit.RetainedTransactionError):
+                retained_commit.wait_for_owner(self.workspace, reservation)
+        finally:
+            staging_root.chmod(original)
+
+    def test_an_absent_liveness_lock_means_the_owner_is_gone(self) -> None:
+        self.workspace.mkdir(parents=True, exist_ok=True)
+        self.assertFalse(
+            retained_commit.owner_is_live(
+                self.workspace, self._reservation(retained_commit.new_transaction_id())
+            )
+        )
+
+
+class TransactionMarkerTests(ConsumptionFixture):
+    """A state that cannot be read is not evidence of a pre-transaction workspace."""
+
+    def test_an_unreadable_state_is_not_reported_as_legacy(self) -> None:
+        self.workspace.mkdir(parents=True, exist_ok=True)
+        (self.workspace / "experiment-state.json").write_text("{ not valid json")
+        with self.assertRaises(retained_commit.RetainedTransactionError):
+            retained_commit.state_is_transactional(self.workspace)
+        with self.assertRaises(retained_commit.RetainedTransactionError):
+            retained_commit.read_committed(self.workspace)
+
+    def test_an_absent_state_is_not_transactional(self) -> None:
+        self.workspace.mkdir(parents=True, exist_ok=True)
+        self.assertFalse(retained_commit.state_is_transactional(self.workspace))
+        self.assertIsNone(retained_commit.read_committed(self.workspace))
+
+
+class PublicationIntentTests(ConsumptionFixture):
+    def test_a_tampered_intent_identifier_is_refused(self) -> None:
+        self.workspace.mkdir(parents=True, exist_ok=True)
+        (self.workspace / retained_commit.PUBLICATION_FILENAME).write_text(
+            json.dumps(
+                {
+                    "schema": retained_commit.PUBLICATION_SCHEMA,
+                    "transaction_id": "../../elsewhere",
+                }
+            )
+        )
+        with self.assertRaises(retained_commit.RetainedTransactionError):
+            retained_commit.read_publication_intent(self.workspace)
+
+    def test_no_intent_means_no_publication_was_in_progress(self) -> None:
+        self.workspace.mkdir(parents=True, exist_ok=True)
+        self.assertIsNone(retained_commit.read_publication_intent(self.workspace))
+
+
 class CompletedWorkspaceFixture(ConsumptionFixture):
     def complete(self) -> None:
         observed = self.prepare()
