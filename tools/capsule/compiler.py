@@ -68,6 +68,10 @@ STATE_FILENAME = "experiment-state.json"
 #: Arbitration re-asks after each outcome it carries out. A workspace that
 #: keeps changing under it is refused rather than spun on indefinitely.
 _ARBITRATION_ROUNDS = 16
+
+#: status re-reads when a commit lands between the state and the record it is
+#: checked against. A workspace that will not hold still is reported, not guessed.
+_STATUS_READ_ATTEMPTS = 8
 _GIT_ENV = {
     "GIT_CONFIG_GLOBAL": "/dev/null",
     "GIT_CONFIG_SYSTEM": "/dev/null",
@@ -2090,7 +2094,6 @@ def status(workspace: str | Path) -> dict[str, Any]:
             "tasks": {},
             "blockers": [],
         }
-    payload: dict[str, Any] = json.loads(path.read_text())
     # The state file asserts a readiness; the commit record says which files that
     # assertion was made about. A lock that is canonically valid but is not the one
     # the successful transaction recorded would otherwise be presented as current,
@@ -2098,12 +2101,44 @@ def status(workspace: str | Path) -> dict[str, Any]:
     # workspace that disagrees with its record is evidence, and reporting it BLOCKED
     # is a read, not a repair. A workspace with no record at all predates the
     # transaction model and is reported as it always was.
-    try:
-        retained_commit.read_committed(root)
-    except retained_commit.RetainedTransactionError as exc:
+    #
+    # The payload returned must be the one the validated record vouches for. Reading
+    # the state and then validating the record are two moments, and a perfectly
+    # legitimate concurrent commit in between would leave this reporting the
+    # readiness of a snapshot it did not check. The record binds the state digest,
+    # so agreement is established rather than assumed, and a commit that lands mid
+    # read is simply read again.
+    payload: dict[str, Any] = {}
+    refusal: retained_commit.RetainedTransactionError | None = None
+    for _ in range(_STATUS_READ_ATTEMPTS):
+        try:
+            raw = path.read_bytes()
+        except FileNotFoundError:  # pragma: no cover - removed mid-read
+            return {
+                "stage": stages.DISCOVERED,
+                "status": "BLOCKED",
+                "tasks": {},
+                "blockers": [],
+            }
+        payload = json.loads(raw)
+        try:
+            snapshot = retained_commit.read_committed(root)
+        except retained_commit.RetainedTransactionError as exc:
+            refusal = exc
+            break
+        refusal = None
+        if snapshot is None or snapshot.state_sha256 == hashlib.sha256(raw).hexdigest():
+            break
+    else:
+        refusal = retained_commit.RetainedTransactionError(
+            retained_commit.INCONSISTENT_STATE,
+            "the retained workspace kept changing while it was being read; refusing "
+            "to report a state no committed snapshot vouches for",
+        )
+    if refusal is not None:
         payload["status"] = "BLOCKED"
         payload["blockers"] = [
             *payload.get("blockers", []),
-            {"task": None, "code": exc.code, "detail": exc.detail},
+            {"task": None, "code": refusal.code, "detail": refusal.detail},
         ]
     return payload

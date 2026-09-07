@@ -619,8 +619,12 @@ def _parse_commit_record(payload: Mapping[str, Any]) -> CommittedSnapshot:
         transaction_id=_validated_transaction_id(
             _required_str(payload, "transaction_id", "commit record")
         ),
-        stages_sha256=_optional_digest(payload, "stages_sha256", "commit record"),
-        state_sha256=_optional_digest(payload, "state_sha256", "commit record"),
+        # Both members are staged by every transaction and digested by every
+        # publication, so a null here is not a commit this code can have written.
+        # Reading it as one produces a snapshot with a different identity, and
+        # recovery decides supersession from exactly that identity.
+        stages_sha256=_required_digest(payload, "stages_sha256", "commit record"),
+        state_sha256=_required_digest(payload, "state_sha256", "commit record"),
         lock_file_sha256=_optional_digest(payload, "lock_file_sha256", "commit record"),
         lock_identity=_optional_digest(payload, "lock_identity", "commit record"),
     )
