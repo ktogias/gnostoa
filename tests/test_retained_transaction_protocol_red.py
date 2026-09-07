@@ -35,7 +35,8 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from tools.capsule import compiler, qualification, retained_commit
+from tools.capsule import authority as authority_module
+from tools.capsule import compiler, effect_claim, qualification, retained_commit
 
 try:
     from test_preflight_authority_consumption import ConsumptionFixture
@@ -81,11 +82,31 @@ class ProtocolFixture(ConsumptionFixture):
         assert isinstance(generation, int)
         return generation
 
-    def authorised_candidate(self) -> Any:
+    def prepared_candidate(self) -> str:
         observed = self.prepare()
         candidate = observed.preflight_candidate_sha256
         assert candidate is not None
-        return self.authority(candidate)
+        return candidate
+
+    def authorised_candidate(self) -> Any:
+        return self.authority(self.prepared_candidate())
+
+    @staticmethod
+    def second_approval(candidate: str) -> authority_module.PreflightAuthority:
+        """A different owner approval of the same prepared candidate."""
+        return authority_module.PreflightAuthority(
+            id="auth-197-second-approval",
+            experiment_id="E1",
+            scope=(authority_module.BASE_REFERENCE_QUALIFICATION,),
+            preflight_candidate_sha256=candidate,
+        )
+
+    def retained_reservation(self) -> dict[str, Any] | None:
+        path = self.workspace / retained_commit.RESERVATION_FILENAME
+        if not path.is_file():
+            return None
+        payload: dict[str, Any] = json.loads(path.read_text())
+        return payload
 
 
 class ReservationAtomicityTests(ProtocolFixture):
@@ -308,32 +329,38 @@ class SingleCommittedTransactionTests(ProtocolFixture):
         authority = self.authorised_candidate()
 
         owner_in_effect = threading.Event()
-        waiter_reached_candidate = threading.Event()
+        waiter_observed_owner = threading.Event()
+        observed_by: list[str] = []
         effects: list[str] = []
         results: dict[str, Any] = {}
         roles: dict[int, str] = {}
         threads: dict[str, threading.Thread] = {}
 
-        real_identity = compiler.preflight_candidate_identity
+        real_read_reservation = retained_commit.read_reservation
 
         def role_of() -> str:
             return roles.get(threading.get_ident(), "unattributed")
 
-        def identity_seam(**kwargs: object) -> Any:
-            value = real_identity(**kwargs)
-            # Signalled by the waiter itself, from a point that proves it has
-            # computed the same candidate while the owner still holds the
-            # transaction.
-            if role_of() == "waiter":
-                waiter_reached_candidate.set()
-            return value
+        def observation_seam(root: Path) -> Any:
+            reservation = real_read_reservation(root)
+            # The owner is released only once the waiter has observed its live
+            # reservation. Signalling earlier -- at the candidate computation, say --
+            # lets the owner finish and clear the reservation before the waiter looks,
+            # after which the waiter holds a pre-completion snapshot and is refused.
+            # That is a real defect, but a different one, and the interleaving under
+            # test must be pinned rather than decided by the scheduler.
+            if role_of() == "waiter" and reservation is not None:
+                if not observed_by:
+                    observed_by.append("waiter")
+                waiter_observed_owner.set()
+            return reservation
 
         def qualify(*args: object, **kwargs: object) -> Any:
             del args
             effects.append(role_of())
             if role_of() == "owner":
                 owner_in_effect.set()
-                waiter_reached_candidate.wait(timeout=15)
+                waiter_observed_owner.wait(timeout=30)
             task_id = kwargs.get("task_id", "T1")
             bound = kwargs.get("bound") or {}
             assert isinstance(task_id, str)
@@ -359,7 +386,7 @@ class SingleCommittedTransactionTests(ProtocolFixture):
 
         with (
             mock.patch.object(
-                compiler, "preflight_candidate_identity", side_effect=identity_seam
+                retained_commit, "read_reservation", side_effect=observation_seam
             ),
             mock.patch.object(compiler, "qualify_subjects", side_effect=qualify),
         ):
@@ -370,15 +397,22 @@ class SingleCommittedTransactionTests(ProtocolFixture):
             )
             threads["waiter"] = threading.Thread(target=run, args=("waiter",))
             threads["waiter"].start()
-            reached = waiter_reached_candidate.wait(timeout=15)
-            overlapped = reached or threads["waiter"].is_alive()
-            waiter_reached_candidate.set()
+            waiter_observed_owner.wait(timeout=30)
+            # Fallback release so a protocol that never observes cannot hang the
+            # owner. It cannot fake the requirement below: only the waiter appends
+            # to observed_by.
+            waiter_observed_owner.set()
             for thread in threads.values():
                 thread.join(timeout=60)
 
         for name, thread in threads.items():
             self.assertFalse(thread.is_alive(), f"{name} did not finish")
-        self.assertTrue(overlapped, "the waiter never overlapped the owner")
+        self.assertEqual(
+            observed_by,
+            ["waiter"],
+            "the waiter never observed the owner's live transaction, so no overlap "
+            "was exercised",
+        )
         self.assertNotIn("owner_error", results)
         self.assertNotIn("waiter_error", results)
         self.assertEqual(effects, ["owner"], "exactly one effect may run")
@@ -397,6 +431,217 @@ class SingleCommittedTransactionTests(ProtocolFixture):
             "an identical authorised pair must advance the committed state exactly "
             "once; a waiter that republishes identical content under its own "
             "transaction has committed work it did not perform",
+        )
+
+
+class ReservationRaceGapTests(ProtocolFixture):
+    """Observing that nobody has reserved is not the same as still being first."""
+
+    def test_a_reservation_that_became_live_in_the_gap_is_not_replaced(self) -> None:
+        """The other half of atomic acquisition.
+
+        A observes no reservation, B establishes a live one before A can act on that
+        observation, and A then proceeds on a fact that has expired. Whether the
+        correct protocol waits, refuses or reloads depends on whether A and B are the
+        same authorised request; what may not happen is A replacing a live
+        reservation on the strength of an observation taken before it existed.
+
+        A is a differently authorised caller here, so a correct protocol refuses it
+        rather than parking it behind B, and the outcome can be observed while B is
+        still holding the transaction.
+        """
+        candidate = self.prepared_candidate()
+        winner_authority = self.authority(candidate)
+        contender_authority = self.second_approval(candidate)
+
+        contender_reaching_reserve = threading.Event()
+        winner_reserved = threading.Event()
+        winner_in_effect = threading.Event()
+        release_winner = threading.Event()
+        effects: list[str] = []
+        reserved_by: dict[str, str] = {}
+        results: dict[str, Any] = {}
+        roles: dict[int, str] = {}
+        threads: dict[str, threading.Thread] = {}
+
+        def role_of() -> str:
+            return roles.get(threading.get_ident(), "unattributed")
+
+        real_liveness = retained_commit.owner_liveness
+
+        @contextlib.contextmanager
+        def liveness_after_the_gap_has_opened(
+            root: Path, transaction_id: str
+        ) -> Iterator[None]:
+            # Entered at the start of acquisition, before any coordination lock is
+            # held, so parking here cannot deadlock the transaction it waits for.
+            if role_of() == "contender":
+                contender_reaching_reserve.set()
+                winner_reserved.wait(timeout=30)
+            with real_liveness(root, transaction_id):
+                yield
+
+        real_write = retained_commit.write_reservation
+
+        def record_reservation(
+            root: Path, reservation: retained_commit.Reservation
+        ) -> None:
+            reserved_by.setdefault(role_of(), reservation.transaction_id)
+            real_write(root, reservation)
+            if role_of() == "winner":
+                winner_reserved.set()
+
+        def qualify(*args: object, **kwargs: object) -> Any:
+            del args
+            effects.append(role_of())
+            if role_of() == "winner":
+                winner_in_effect.set()
+                release_winner.wait(timeout=30)
+            task_id = kwargs.get("task_id", "T1")
+            bound = kwargs.get("bound") or {}
+            assert isinstance(task_id, str)
+            assert isinstance(bound, dict)
+            return _receipt(task_id, dict(bound))
+
+        shared_spec = self._spec()
+
+        def run(role: str, authority: Any) -> None:
+            roles[threading.get_ident()] = role
+            try:
+                results[role] = compiler.prepare(
+                    shared_spec,
+                    self.workspace,
+                    offline=True,
+                    preflight_authority=authority,
+                )
+            except Exception as exc:  # recorded rather than raised across threads
+                results[f"{role}_error"] = exc
+
+        with (
+            mock.patch.object(
+                retained_commit, "owner_liveness", liveness_after_the_gap_has_opened
+            ),
+            mock.patch.object(
+                retained_commit, "write_reservation", side_effect=record_reservation
+            ),
+            mock.patch.object(compiler, "qualify_subjects", side_effect=qualify),
+        ):
+            threads["contender"] = threading.Thread(
+                target=run, args=("contender", contender_authority)
+            )
+            threads["contender"].start()
+            self.assertTrue(
+                contender_reaching_reserve.wait(timeout=30),
+                "the contender never reached the point of reserving",
+            )
+
+            # Only now does the winner reserve: strictly inside the window between
+            # the contender's observation and its own acquisition.
+            threads["winner"] = threading.Thread(
+                target=run, args=("winner", winner_authority)
+            )
+            threads["winner"].start()
+            self.assertTrue(
+                winner_in_effect.wait(timeout=30),
+                "the winner never established a live reservation and entered its "
+                "effect",
+            )
+            winner_reserved.set()
+
+            threads["contender"].join(timeout=60)
+            self.assertFalse(
+                threads["contender"].is_alive(),
+                "the contender must not be parked behind a transaction it is not "
+                "identical to",
+            )
+            # Observed while the winner is still holding its live transaction.
+            held = self.retained_reservation()
+
+            release_winner.set()
+            threads["winner"].join(timeout=60)
+
+        self.assertFalse(threads["winner"].is_alive(), "the winner did not finish")
+        self.assertNotIn("winner_error", results)
+        self.assertNotIn("contender_error", results)
+        self.assertIn("winner", reserved_by)
+        self.assertEqual(effects, ["winner"], "the stale contender must open no effect")
+        self.assertEqual(results["winner"].status, "READY_FOR_OWNER_REVIEW")
+        self.assertNotEqual(results["contender"].status, "READY_FOR_OWNER_REVIEW")
+
+        self.assertIsNotNone(held, "the winner's reservation was removed entirely")
+        assert held is not None
+        self.assertEqual(
+            held["transaction_id"],
+            reserved_by["winner"],
+            "a reservation that became live between a contender's observation and "
+            "its acquisition must not be replaced by that contender; deciding and "
+            "creating belong in one coordination critical section",
+        )
+
+
+class AbandonedReservationTests(ProtocolFixture):
+    """Green guard: a reservation with no claim behind it proves no effect."""
+
+    def test_an_abandoned_pre_claim_reservation_does_not_kill_the_candidate(
+        self,
+    ) -> None:
+        """Reserved-but-dead with no claim means nothing irreversible happened.
+
+        The candidate is therefore still legitimately runnable. This is expected to
+        be green already; it is here so the recovery work cannot quietly turn a
+        recoverable abandonment into a permanently consumed candidate.
+        """
+        authority = self.authorised_candidate()
+        effects: list[str] = []
+
+        def qualify(*args: object, **kwargs: object) -> Any:
+            del args
+            effects.append("effect")
+            task_id = kwargs.get("task_id", "T1")
+            bound = kwargs.get("bound") or {}
+            assert isinstance(task_id, str)
+            assert isinstance(bound, dict)
+            return _receipt(task_id, dict(bound))
+
+        class AbandonedTransaction(RuntimeError):
+            """Death after reserving and before claiming."""
+
+        with mock.patch.object(compiler, "qualify_subjects", side_effect=qualify):
+            with mock.patch.object(
+                effect_claim,
+                "claim_fresh_candidate",
+                side_effect=AbandonedTransaction("died before claiming"),
+            ):
+                with self.assertRaises(AbandonedTransaction):
+                    self.prepare(authority=authority)
+
+            self.assertEqual(
+                effects, [], "the abandoned transaction must not have run an effect"
+            )
+            self.assertIsNotNone(
+                self.retained_reservation(),
+                "the abandoned transaction must genuinely have left a reservation",
+            )
+
+            recovered = self.prepare(authority=authority)
+
+        self.assertEqual(
+            effects,
+            ["effect"],
+            "the recovered transaction must run exactly one fresh effect",
+        )
+        self.assertEqual(
+            recovered.status,
+            "READY_FOR_OWNER_REVIEW",
+            "an abandoned reservation with no claim behind it proves no irreversible "
+            "effect, so it must not permanently consume the candidate",
+        )
+        self.assertEqual(
+            compiler.status(self.workspace)["status"], "READY_FOR_OWNER_REVIEW"
+        )
+        self.assertIsNone(
+            self.retained_reservation(),
+            "a completed transaction must leave no reservation behind",
         )
 
 

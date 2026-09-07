@@ -229,37 +229,37 @@ class ConcurrentReconciliationTests(ConsumptionFixture):
         authority = self.authority(candidate)
 
         owner_in_effect = threading.Event()
-        waiter_reached_candidate = threading.Event()
+        waiter_observed_owner = threading.Event()
+        observed_by: list[str] = []
         effects: list[str] = []
         results: dict[str, object] = {}
         roles: dict[int, str] = {}
         threads: dict[str, threading.Thread] = {}
 
-        real_identity = compiler.preflight_candidate_identity
+        real_read_reservation = retained_commit.read_reservation
 
         def role_of() -> str:
             return roles.get(threading.get_ident(), "unattributed")
 
-        def identity_seam(**kwargs):  # type: ignore[no-untyped-def]
-            value = real_identity(**kwargs)
-            # Signalled by the waiter itself, from a point that proves it has
-            # computed the same candidate while the owner still holds the
-            # transaction. A flag set by the test thread would only prove the
-            # waiter was launched, which any sequential rerun also satisfies.
-            if role_of() == "waiter":
-                waiter_reached_candidate.set()
-            return value
+        def observation_seam(root):  # type: ignore[no-untyped-def]
+            reservation = real_read_reservation(root)
+            # Released only once the waiter has actually observed the owner's live
+            # reservation. Signalling any earlier -- at launch, or at the candidate
+            # computation -- lets the owner finish and clear the reservation before
+            # the waiter ever looks, so the interleaving under test would depend on
+            # scheduling rather than being pinned by it.
+            if role_of() == "waiter" and reservation is not None:
+                if not observed_by:
+                    observed_by.append("waiter")
+                waiter_observed_owner.set()
+            return reservation
 
         def qualify(*args, **kwargs):  # type: ignore[no-untyped-def]
             del args
-            # Attributed by role, and the patch stays installed until both threads
-            # have joined, so a second effect opened by the waiter at any point --
-            # including after the owner has finished -- is recorded rather than
-            # escaping to the real implementation and going uncounted.
             effects.append(role_of())
             if role_of() == "owner":
                 owner_in_effect.set()
-                waiter_reached_candidate.wait(timeout=15)
+                waiter_observed_owner.wait(timeout=30)
             return _receipt(
                 kwargs.get("task_id", "T1"), dict(kwargs.get("bound") or {})
             )
@@ -283,7 +283,7 @@ class ConcurrentReconciliationTests(ConsumptionFixture):
 
         with (
             mock.patch.object(
-                compiler, "preflight_candidate_identity", side_effect=identity_seam
+                retained_commit, "read_reservation", side_effect=observation_seam
             ),
             mock.patch.object(compiler, "qualify_subjects", side_effect=qualify),
         ):
@@ -294,19 +294,21 @@ class ConcurrentReconciliationTests(ConsumptionFixture):
             )
             threads["waiter"] = threading.Thread(target=run, args=("waiter",))
             threads["waiter"].start()
-            # Overlap is proven either by the waiter reaching the candidate while the
-            # owner is mid-effect, or by it still running then -- a design that blocks
-            # even earlier overlaps at least as much.
-            reached = waiter_reached_candidate.wait(timeout=15)
-            overlapped = reached or threads["waiter"].is_alive()
-            waiter_reached_candidate.set()
+            waiter_observed_owner.wait(timeout=30)
+            # Fallback release so a protocol that never observes cannot hang the
+            # owner. It cannot fake the requirement below: only the waiter itself
+            # appends to observed_by.
+            waiter_observed_owner.set()
             for thread in threads.values():
                 thread.join(timeout=60)
 
         for name, thread in threads.items():
             self.assertFalse(thread.is_alive(), f"{name} did not finish")
-        self.assertTrue(
-            overlapped, "the waiter never overlapped the owner's transaction"
+        self.assertEqual(
+            observed_by,
+            ["waiter"],
+            "the waiter never observed the owner's live transaction, so no overlap "
+            "was exercised",
         )
         self.assertNotIn("owner_error", results)
         self.assertNotIn("waiter_error", results)
