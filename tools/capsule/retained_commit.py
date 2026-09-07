@@ -1091,8 +1091,19 @@ def discard_staging(root: Path, transaction_id: str) -> None:
             if observed is not None and stat.S_ISREG(observed.st_mode):
                 os.unlink(name, dir_fd=transaction_fd)
         os.fsync(transaction_fd)
+        emptied = os.fstat(transaction_fd)
+        name = _validated_transaction_id(transaction_id)
+        current = _stat_at(staging_fd, name)
+        if (
+            current is None
+            or current.st_ino != emptied.st_ino
+            or current.st_dev != emptied.st_dev
+        ):
+            # The name no longer refers to the directory that was just emptied.
+            # Removing whatever it points at now would delete somebody else's.
+            return
         try:
-            os.rmdir(_validated_transaction_id(transaction_id), dir_fd=staging_fd)
+            os.rmdir(name, dir_fd=staging_fd)
         except OSError:  # pragma: no cover - non-empty, left as evidence
             return
         os.fsync(staging_fd)
@@ -1201,6 +1212,22 @@ def publish(
                 "the staged transaction being published is no longer on disk",
             )
         _, transaction_fd = opened
+        # The manifest and every member are read from this one open. A publication
+        # that reopened the directory by name in between could bind its intent to
+        # one directory and publish the bytes of another, and a name is not an
+        # object: it can be made to resolve somewhere else at any moment.
+        manifest_sha256 = _digest_at(transaction_fd, MANIFEST_FILENAME)
+        if manifest_sha256 is None:
+            raise RetainedTransactionError(
+                INCONSISTENT_STATE,
+                "the staged transaction has no manifest to publish from",
+            )
+        if manifest_sha256 != staged.manifest_sha256:
+            raise RetainedTransactionError(
+                INCONSISTENT_STATE,
+                "the staged transaction changed between being validated and being "
+                "published; refusing to publish output nothing vouched for",
+            )
         for member in staged.members():
             payload = _read_at(transaction_fd, member)
             if payload is None:
@@ -1217,11 +1244,6 @@ def publish(
             INCONSISTENT_STATE,
             "another transaction's publication is unresolved; refusing to publish "
             "over the record of an interrupted commit",
-        )
-    manifest_sha256 = _staged_manifest_digest(root, staged.transaction_id)
-    if manifest_sha256 is None:
-        raise RetainedTransactionError(
-            INCONSISTENT_STATE, "the staged transaction has no manifest to publish from"
         )
     # Recorded before the first canonical byte moves, so an interrupted publication
     # names the staged output it was finishing -- and the exact bytes of it --
@@ -1328,12 +1350,21 @@ def _resolve_publication(root: Path, intent: PublicationIntent) -> bool:
 
 
 def _matches_reservation(staged: StagedTransaction, reservation: Reservation) -> bool:
-    """Whether staged output is the output of the transaction that reserved."""
+    """Whether staged output is the output of the transaction that reserved.
+
+    The request identities say which transaction it belongs to; the seal says which
+    bytes. Without the seal, a complete replacement carrying the same identities is
+    indistinguishable from the output that was actually staged.
+    """
     return (
         staged.transaction_id == reservation.transaction_id
         and staged.base_identity == reservation.base_identity
         and staged.candidate_sha256 == reservation.candidate_sha256
         and staged.authority_sha256 == reservation.authority_sha256
+        and (
+            reservation.staged_manifest_sha256 is None
+            or reservation.staged_manifest_sha256 == staged.manifest_sha256
+        )
     )
 
 

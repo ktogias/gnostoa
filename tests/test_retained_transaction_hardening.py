@@ -12,8 +12,10 @@ material, hidden oracle, runner or container effect participates.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
+import os
 import unittest
 from pathlib import Path
 from typing import Any
@@ -362,6 +364,117 @@ class ConcurrentStagingCreationTests(ConsumptionFixture):
             self.assertIsNotNone(
                 retained_commit.read_staged(self.workspace, transaction)
             )
+
+
+class CoherentPublicationTests(ConsumptionFixture):
+    """Publishing observes one directory; what it publishes is what it validated."""
+
+    def _stage(self, state: bytes = b"{}\n") -> Any:
+        return retained_commit.stage(
+            self.workspace,
+            transaction_id=retained_commit.new_transaction_id(),
+            base_identity=None,
+            candidate_sha256="b" * 64,
+            authority_sha256="c" * 64,
+            ledger=b'{"records": {}}\n',
+            state=state,
+            lock=None,
+            lock_identity=None,
+        )
+
+    def test_publishing_output_whose_manifest_changed_is_refused(self) -> None:
+        staged = self._stage()
+        manifest_path = (
+            retained_commit.staging_directory(self.workspace, staged.transaction_id)
+            / retained_commit.MANIFEST_FILENAME
+        )
+        manifest = json.loads(manifest_path.read_text())
+        manifest["base_identity"] = "a" * 64
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+
+        with self.assertRaises(retained_commit.RetainedTransactionError) as raised:
+            retained_commit.publish(self.workspace, staged=staged, generation=1)
+        self.assertEqual(raised.exception.code, retained_commit.INCONSISTENT_STATE)
+        self.assertFalse(
+            (self.workspace / retained_commit.COMMIT_RECORD_FILENAME).is_file(),
+            "nothing may be committed from output that changed under the publisher",
+        )
+
+    def test_a_reservation_sealed_to_other_output_refuses_the_match(self) -> None:
+        """Same request identities, different bytes: the seal is what separates them."""
+        first = self._stage(b'{"first": true}\n')
+        second = self._stage(b'{"second": true}\n')
+        reservation = retained_commit.Reservation(
+            transaction_id=second.transaction_id,
+            base_identity=None,
+            experiment_id="E1",
+            scope="base-reference-qualification",
+            candidate_sha256="b" * 64,
+            authority_sha256="c" * 64,
+            staged_manifest_sha256=first.manifest_sha256,
+        )
+        self.assertFalse(
+            retained_commit._matches_reservation(second, reservation),
+            "output the reservation was never sealed to must not match it",
+        )
+        self.assertTrue(
+            retained_commit._matches_reservation(
+                second,
+                dataclasses.replace(
+                    reservation, staged_manifest_sha256=second.manifest_sha256
+                ),
+            )
+        )
+
+
+class StagingRemovalTests(ConsumptionFixture):
+    """A name that has moved is not the directory that was emptied."""
+
+    def test_a_swapped_name_is_not_removed_after_the_contents_were_cleared(
+        self,
+    ) -> None:
+        staged = retained_commit.stage(
+            self.workspace,
+            transaction_id=retained_commit.new_transaction_id(),
+            base_identity=None,
+            candidate_sha256=None,
+            authority_sha256=None,
+            ledger=b'{"records": {}}\n',
+            state=b"{}\n",
+            lock=None,
+            lock_identity=None,
+        )
+        directory = retained_commit.staging_directory(
+            self.workspace, staged.transaction_id
+        )
+        decoy = directory.with_name("decoy")
+        decoy.mkdir()
+        swapped: list[str] = []
+        real_fsync = os.fsync
+
+        def swap_then_fsync(descriptor: int) -> Any:
+            result = real_fsync(descriptor)
+            if not swapped:
+                try:
+                    same = os.fstat(descriptor).st_ino == directory.stat().st_ino
+                except OSError:  # pragma: no cover - the directory is gone
+                    same = False
+                if same:
+                    # The contents have just been cleared. The name now refers to a
+                    # different directory entirely.
+                    swapped.append("swapped")
+                    directory.rename(directory.with_name("displaced"))
+                    decoy.rename(directory)
+            return result
+
+        with mock.patch.object(os, "fsync", side_effect=swap_then_fsync):
+            retained_commit.discard_staging(self.workspace, staged.transaction_id)
+
+        self.assertEqual(swapped, ["swapped"], "the swap never happened")
+        self.assertTrue(
+            directory.is_dir(),
+            "the directory the name now refers to must not be removed",
+        )
 
 
 class LockIdentityTests(CompletedWorkspaceFixture):
