@@ -314,6 +314,56 @@ class CompletedWorkspaceFixture(ConsumptionFixture):
             self.prepare(authority=self.authority(candidate))
 
 
+class ConcurrentStagingCreationTests(ConsumptionFixture):
+    """Two transactions creating the staging root at once must both proceed."""
+
+    def test_simultaneous_first_creation_is_reconciled(self) -> None:
+        """mkdir loses to a race exactly once; the loser must reopen, not fail.
+
+        Nothing irreversible has happened at this point, so this is not a #197
+        blocker. It is here so the descriptor-chain creation keeps reconciling
+        EEXIST rather than surfacing it.
+        """
+        import threading
+
+        self.workspace.mkdir(parents=True, exist_ok=True)
+        transactions = [retained_commit.new_transaction_id() for _ in range(8)]
+        start = threading.Barrier(len(transactions))
+        failures: list[BaseException] = []
+
+        def stage_one(transaction: str) -> None:
+            try:
+                start.wait(timeout=30)
+                retained_commit.stage(
+                    self.workspace,
+                    transaction_id=transaction,
+                    base_identity=None,
+                    candidate_sha256=None,
+                    authority_sha256=None,
+                    ledger=b'{"records": {}}\n',
+                    state=b"{}\n",
+                    lock=None,
+                    lock_identity=None,
+                )
+            except BaseException as exc:  # recorded rather than raised across threads
+                failures.append(exc)
+
+        threads = [
+            threading.Thread(target=stage_one, args=(transaction,))
+            for transaction in transactions
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=60)
+
+        self.assertEqual(failures, [], "simultaneous creation must reconcile")
+        for transaction in transactions:
+            self.assertIsNotNone(
+                retained_commit.read_staged(self.workspace, transaction)
+            )
+
+
 class LockIdentityTests(CompletedWorkspaceFixture):
     """The persisted bytes and the identity they carry are two facts, not one."""
 

@@ -59,6 +59,7 @@ COORDINATION_LOCK_FILENAME = ".retained-coordination.lock"
 RESERVATION_FILENAME = ".retained-reservation.json"
 STAGING_DIRECTORY = ".retained-transactions"
 MANIFEST_FILENAME = "manifest.json"
+OWNER_LOCK_FILENAME = "owner.lock"
 PUBLICATION_FILENAME = ".retained-publication.json"
 
 COMMIT_RECORD_SCHEMA = "gnostoa-retained-commit-record/v1"
@@ -120,15 +121,14 @@ def _digest_bytes(payload: bytes) -> str:
 
 @contextmanager
 def _open_directory(path: Path) -> Iterator[int]:
-    """Open a directory by descriptor, refusing anything that is not one.
+    """Open the anchor directory this module was handed, refusing a non-directory.
 
-    Every read, write and unlink a transaction performs is then made relative to
-    this descriptor. Validating a path and using it afterwards are two different
-    moments, and between them the directory can be renamed away and a symlink left
-    in its place; a descriptor cannot be redirected once it is open.
+    Only the workspace root is opened this way: it is the one path the module is
+    given rather than derives. Everything beneath it is reached with
+    _open_child_directory, relative to a descriptor that is already trusted.
     """
     try:
-        descriptor = os.open(path, os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW)
+        descriptor = os.open(path, os.O_RDONLY | _O_DIRECTORY)
     except OSError as exc:
         raise RetainedTransactionError(
             INCONSISTENT_STATE, f"cannot open {path.name or path} as a directory: {exc}"
@@ -210,6 +210,87 @@ def _read_at(directory_fd: int, name: str) -> bytes | None:
         os.close(descriptor)
 
 
+def _digest_at(directory_fd: int, name: str) -> str | None:
+    payload = _read_at(directory_fd, name)
+    return None if payload is None else _digest_bytes(payload)
+
+
+def _stat_at(directory_fd: int, name: str) -> os.stat_result | None:
+    """lstat a name inside an open directory. Absent is None; unknown is refused."""
+    try:
+        return os.lstat(name, dir_fd=directory_fd)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise RetainedTransactionError(
+            INCONSISTENT_STATE, f"cannot inspect {name}: {exc}"
+        ) from exc
+
+
+def _open_child_directory(parent_fd: int, name: str, *, create: bool) -> int | None:
+    """Open a subdirectory relative to an already-trusted directory descriptor.
+
+    Resolving a whole pathname re-walks every component, and O_NOFOLLOW guards only
+    the last one: an intermediate directory can be renamed away and replaced by a
+    symlink, after which a final component that is a real directory in somebody
+    else's tree passes every check. Opening each component relative to the
+    descriptor above it walks the namespace once and never revisits it.
+    """
+    if create:
+        try:
+            os.mkdir(name, 0o700, dir_fd=parent_fd)
+        except FileExistsError:
+            pass
+        except OSError as exc:
+            raise RetainedTransactionError(
+                INCONSISTENT_STATE, f"cannot create {name}: {exc}"
+            ) from exc
+        else:
+            # The new entry must reach the disk before anything durable is written
+            # inside it, or "durable staging" is only true of its contents.
+            os.fsync(parent_fd)
+    try:
+        descriptor = os.open(
+            name, os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW, dir_fd=parent_fd
+        )
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise RetainedTransactionError(
+            INCONSISTENT_STATE, f"{name} is not a directory this workspace owns: {exc}"
+        ) from exc
+    if not stat.S_ISDIR(os.fstat(descriptor).st_mode):  # pragma: no cover - defensive
+        os.close(descriptor)
+        raise RetainedTransactionError(INCONSISTENT_STATE, f"{name} is not a directory")
+    return descriptor
+
+
+@contextmanager
+def _transaction_directory(
+    root: Path, transaction_id: str, *, create: bool
+) -> Iterator[tuple[int, int] | None]:
+    """Yield (staging descriptor, transaction descriptor), or None when absent."""
+    name = _validated_transaction_id(transaction_id)
+    if create:
+        root.mkdir(parents=True, exist_ok=True)
+    with _open_directory(root) as root_fd:
+        staging_fd = _open_child_directory(root_fd, STAGING_DIRECTORY, create=create)
+        if staging_fd is None:
+            yield None
+            return
+        try:
+            transaction_fd = _open_child_directory(staging_fd, name, create=create)
+            if transaction_fd is None:
+                yield None
+                return
+            try:
+                yield staging_fd, transaction_fd
+            finally:
+                os.close(transaction_fd)
+        finally:
+            os.close(staging_fd)
+
+
 def _read_file(path: Path) -> bytes | None:
     with _open_directory(path.parent) as directory_fd:
         return _read_at(directory_fd, path.name)
@@ -240,23 +321,25 @@ def _fsync_directory(path: Path) -> None:
         os.fsync(descriptor)
 
 
-def _open_lock_file(path: Path) -> int:
+def _open_lock_file_at(directory_fd: int, name: str) -> int:
     """Open a lock file refusing symlinks and anything that is not a regular file.
 
     A lock whose path can be redirected is not a lock: it would serialise callers
     against a file of somebody else's choosing, or against nothing at all.
     """
     try:
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        descriptor = os.open(
+            name, os.O_WRONLY | os.O_CREAT | _O_NOFOLLOW, 0o600, dir_fd=directory_fd
+        )
     except OSError as exc:
         raise RetainedTransactionError(
-            INCONSISTENT_STATE, f"cannot open {path.name} as a lock: {exc}"
+            INCONSISTENT_STATE, f"cannot open {name} as a lock: {exc}"
         ) from exc
     try:
         observed = os.fstat(descriptor)
         if not stat.S_ISREG(observed.st_mode):
             raise RetainedTransactionError(
-                INCONSISTENT_STATE, f"{path.name} is not a regular file"
+                INCONSISTENT_STATE, f"{name} is not a regular file"
             )
     except BaseException:
         os.close(descriptor)
@@ -278,16 +361,17 @@ def coordination_lock(root: Path) -> Iterator[None]:
     """Serialise short retained-metadata transitions. Never held across an effect."""
     _require_locking("retained transaction coordination")
     root.mkdir(parents=True, exist_ok=True)
-    descriptor = _open_lock_file(root / COORDINATION_LOCK_FILENAME)
-    try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX)
-        yield
-    finally:
+    with _open_directory(root) as root_fd:
+        descriptor = _open_lock_file_at(root_fd, COORDINATION_LOCK_FILENAME)
         try:
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
-        except OSError:  # pragma: no cover - defensive
-            pass
-        os.close(descriptor)
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            yield
+        finally:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            except OSError:  # pragma: no cover - defensive
+                pass
+            os.close(descriptor)
 
 
 def _validated_transaction_id(transaction_id: str) -> str:
@@ -306,51 +390,13 @@ def _validated_transaction_id(transaction_id: str) -> str:
     return transaction_id
 
 
-def _real_directory(path: Path, *, create: bool) -> Path | None:
-    """The directory at this path, refusing a symlink or anything else in its place.
-
-    O_NOFOLLOW protects the file a lock is taken on; it says nothing about the
-    directories above it. A staging directory replaced by a symlink would redirect
-    every write and every deletion made through it.
-    """
-    try:
-        observed = path.lstat()
-    except FileNotFoundError:
-        if not create:
-            return None
-        path.mkdir(mode=0o700)
-        # The new directory entry has to reach the disk before anything durable is
-        # written inside it, or "durable staging" is only true of its contents.
-        _fsync_directory(path.parent)
-        observed = path.lstat()
-    except OSError as exc:
-        raise RetainedTransactionError(
-            INCONSISTENT_STATE, f"cannot inspect {path.name}: {exc}"
-        ) from exc
-    if stat.S_ISLNK(observed.st_mode) or not stat.S_ISDIR(observed.st_mode):
-        raise RetainedTransactionError(
-            INCONSISTENT_STATE,
-            f"{path.name} is not a directory this workspace owns",
-        )
-    return path
-
-
-def _staging_directory(root: Path, transaction_id: str, *, create: bool) -> Path | None:
-    transaction_id = _validated_transaction_id(transaction_id)
-    root.mkdir(parents=True, exist_ok=True)
-    staging_root = _real_directory(root / STAGING_DIRECTORY, create=create)
-    if staging_root is None:
-        return None
-    return _real_directory(staging_root / transaction_id, create=create)
-
-
 def staging_directory(root: Path, transaction_id: str) -> Path:
     """Where a transaction stages its output. The identifier is validated first."""
     return root / STAGING_DIRECTORY / _validated_transaction_id(transaction_id)
 
 
 def owner_lock_path(root: Path, transaction_id: str) -> Path:
-    return staging_directory(root, transaction_id) / "owner.lock"
+    return staging_directory(root, transaction_id) / OWNER_LOCK_FILENAME
 
 
 def new_transaction_id() -> str:
@@ -361,18 +407,19 @@ def new_transaction_id() -> str:
 def owner_liveness(root: Path, transaction_id: str) -> Iterator[None]:
     """Held for the life of a transaction. Confers no right to write."""
     _require_locking("transaction liveness")
-    directory = _staging_directory(root, transaction_id, create=True)
-    assert directory is not None  # create=True never returns None
-    descriptor = _open_lock_file(directory / "owner.lock")
-    try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX)
-        yield
-    finally:
+    with _transaction_directory(root, transaction_id, create=True) as opened:
+        assert opened is not None  # create=True never yields None
+        _, transaction_fd = opened
+        descriptor = _open_lock_file_at(transaction_fd, OWNER_LOCK_FILENAME)
         try:
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
-        except OSError:  # pragma: no cover - defensive
-            pass
-        os.close(descriptor)
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            yield
+        finally:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            except OSError:  # pragma: no cover - defensive
+                pass
+            os.close(descriptor)
 
 
 def owner_is_live(root: Path, reservation: Reservation) -> bool:
@@ -382,33 +429,43 @@ def owner_is_live(root: Path, reservation: Reservation) -> bool:
     it, so the owner is gone. No lease, no heartbeat, no clock.
     """
     _require_locking("transaction liveness")
-    directory = _staging_directory(root, reservation.transaction_id, create=False)
-    if directory is None or not _present(directory / "owner.lock"):
-        return False
-    descriptor = _open_lock_file(directory / "owner.lock")
-    try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        return True
-    else:
-        fcntl.flock(descriptor, fcntl.LOCK_UN)
-        return False
-    finally:
-        os.close(descriptor)
+    with _transaction_directory(
+        root, reservation.transaction_id, create=False
+    ) as opened:
+        if opened is None:
+            return False
+        _, transaction_fd = opened
+        if _stat_at(transaction_fd, OWNER_LOCK_FILENAME) is None:
+            return False
+        descriptor = _open_lock_file_at(transaction_fd, OWNER_LOCK_FILENAME)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return True
+        else:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            return False
+        finally:
+            os.close(descriptor)
 
 
 def wait_for_owner(root: Path, reservation: Reservation) -> None:
     """Block until the reserving transaction has finished, then return."""
     _require_locking("transaction liveness")
-    directory = _staging_directory(root, reservation.transaction_id, create=False)
-    if directory is None or not _present(directory / "owner.lock"):
-        return
-    descriptor = _open_lock_file(directory / "owner.lock")
-    try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX)
-        fcntl.flock(descriptor, fcntl.LOCK_UN)
-    finally:
-        os.close(descriptor)
+    with _transaction_directory(
+        root, reservation.transaction_id, create=False
+    ) as opened:
+        if opened is None:
+            return
+        _, transaction_fd = opened
+        if _stat_at(transaction_fd, OWNER_LOCK_FILENAME) is None:
+            return
+        descriptor = _open_lock_file_at(transaction_fd, OWNER_LOCK_FILENAME)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
 
 
 def _required_str(payload: Mapping[str, Any], field: str, label: str) -> str:
@@ -539,6 +596,36 @@ def state_is_transactional(root: Path) -> bool:
     )
 
 
+def _parse_commit_record(payload: Mapping[str, Any]) -> CommittedSnapshot:
+    """The one structural reading of a commit record.
+
+    Recovery and the canonical read share it deliberately. A record that parses but
+    is not structurally a commit record must not become a different valid snapshot:
+    recovery compares staged output against the snapshot identity, so "different" is
+    what it treats as superseded, and one malformed field would quietly authorise
+    discarding evidence. Absent, valid and invalid stay three answers.
+    """
+    generation = payload.get("generation")
+    if (
+        not isinstance(generation, int)
+        or isinstance(generation, bool)
+        or generation < 1
+    ):
+        raise RetainedTransactionError(
+            INCONSISTENT_STATE, "the commit record generation is malformed"
+        )
+    return CommittedSnapshot(
+        generation=generation,
+        transaction_id=_validated_transaction_id(
+            _required_str(payload, "transaction_id", "commit record")
+        ),
+        stages_sha256=_optional_digest(payload, "stages_sha256", "commit record"),
+        state_sha256=_optional_digest(payload, "state_sha256", "commit record"),
+        lock_file_sha256=_optional_digest(payload, "lock_file_sha256", "commit record"),
+        lock_identity=_optional_digest(payload, "lock_identity", "commit record"),
+    )
+
+
 def read_committed(root: Path) -> CommittedSnapshot | None:
     """The committed snapshot, or None for a workspace that never committed.
 
@@ -556,26 +643,8 @@ def read_committed(root: Path) -> CommittedSnapshot | None:
                 "record is missing; the workspace cannot vouch for itself",
             )
         return None
-    payload = _load_json_document(
-        path, label="commit record", schema=COMMIT_RECORD_SCHEMA
-    )
-
-    generation = payload.get("generation")
-    if (
-        not isinstance(generation, int)
-        or isinstance(generation, bool)
-        or generation < 1
-    ):
-        raise RetainedTransactionError(
-            INCONSISTENT_STATE, "the commit record generation is malformed"
-        )
-    snapshot = CommittedSnapshot(
-        generation=generation,
-        transaction_id=_required_str(payload, "transaction_id", "commit record"),
-        stages_sha256=_optional_digest(payload, "stages_sha256", "commit record"),
-        state_sha256=_optional_digest(payload, "state_sha256", "commit record"),
-        lock_file_sha256=_optional_digest(payload, "lock_file_sha256", "commit record"),
-        lock_identity=_optional_digest(payload, "lock_identity", "commit record"),
+    snapshot = _parse_commit_record(
+        _load_json_document(path, label="commit record", schema=COMMIT_RECORD_SCHEMA)
     )
     for name, recorded in (
         (LEDGER_FILENAME, snapshot.stages_sha256),
@@ -659,14 +728,8 @@ def _recorded_snapshot(root: Path) -> CommittedSnapshot | None:
     Recovery acts on a workspace whose record is already known to disagree with its
     contents -- that disagreement is what it exists to resolve -- so it reads the
     record as a statement of which transaction last committed, not as a verified
-    description of the files.
-
-    Absent, valid and unreadable stay three answers. None means no transaction has
-    ever committed here. A record that cannot be read is refused instead, because
-    recovery compares staged output against this: answering "nothing is committed"
-    to a question that was never answered makes every staged transaction look
-    superseded, and the evidence of a consumed effect is discarded on the strength
-    of it.
+    description of the files. It is read with the same structural parser as the
+    canonical path: only the agreement with the files is relaxed, never the shape.
     """
     raw = _read_file(root / COMMIT_RECORD_FILENAME)
     if raw is None:
@@ -681,31 +744,7 @@ def _recorded_snapshot(root: Path) -> CommittedSnapshot | None:
         raise RetainedTransactionError(
             INCONSISTENT_STATE, "the commit record has an unsupported schema"
         )
-    generation = payload.get("generation")
-    transaction_id = payload.get("transaction_id")
-    if (
-        not isinstance(generation, int)
-        or isinstance(generation, bool)
-        or generation < 1
-        or not isinstance(transaction_id, str)
-        or not transaction_id
-    ):
-        raise RetainedTransactionError(
-            INCONSISTENT_STATE, "the commit record is malformed"
-        )
-
-    def digest(field: str) -> str | None:
-        value = payload.get(field)
-        return value if isinstance(value, str) else None
-
-    return CommittedSnapshot(
-        generation=generation,
-        transaction_id=transaction_id,
-        stages_sha256=digest("stages_sha256"),
-        state_sha256=digest("state_sha256"),
-        lock_file_sha256=digest("lock_file_sha256"),
-        lock_identity=digest("lock_identity"),
-    )
+    return _parse_commit_record(payload)
 
 
 @dataclass(frozen=True, slots=True)
@@ -939,12 +978,6 @@ def stage(
         _validate_lock_bindings(
             ledger=ledger, state=state, lock=lock, lock_identity=lock_identity
         )
-    directory = _staging_directory(root, transaction_id, create=True)
-    assert directory is not None  # create=True never returns None
-    _write_atomic(directory / LEDGER_FILENAME, ledger)
-    _write_atomic(directory / STATE_FILENAME, state)
-    if lock is not None:
-        _write_atomic(directory / LOCK_FILENAME, lock)
     staged = StagedTransaction(
         transaction_id=transaction_id,
         base_identity=base_identity,
@@ -956,7 +989,16 @@ def stage(
         lock_identity=lock_identity,
     )
     manifest = (json.dumps(staged.as_json(), indent=2, sort_keys=True) + "\n").encode()
-    _write_atomic(directory / MANIFEST_FILENAME, manifest)
+    with _transaction_directory(root, transaction_id, create=True) as opened:
+        assert opened is not None  # create=True never yields None
+        _, transaction_fd = opened
+        _write_at(transaction_fd, LEDGER_FILENAME, ledger)
+        _write_at(transaction_fd, STATE_FILENAME, state)
+        if lock is not None:
+            _write_at(transaction_fd, LOCK_FILENAME, lock)
+        # Written last: until it lands the staging directory is incomplete, and it
+        # is never a recovery source.
+        _write_at(transaction_fd, MANIFEST_FILENAME, manifest)
     return replace(staged, manifest_sha256=_digest_bytes(manifest))
 
 
@@ -969,13 +1011,15 @@ def read_staged(root: Path, transaction_id: str) -> StagedTransaction | None:
     could not be inspected. An unreadable manifest or member is refused rather than
     reported as incomplete, because recovery deletes what it decides is incomplete.
     """
-    directory = _staging_directory(root, transaction_id, create=False)
-    if directory is None:
-        return None
-    manifest = directory / MANIFEST_FILENAME
-    if not _present(manifest):
-        return None
-    raw = _read_file(manifest)
+    with _transaction_directory(root, transaction_id, create=False) as opened:
+        if opened is None:
+            return None
+        _, transaction_fd = opened
+        return _staged_from(transaction_fd, transaction_id)
+
+
+def _staged_from(transaction_fd: int, transaction_id: str) -> StagedTransaction | None:
+    raw = _read_at(transaction_fd, MANIFEST_FILENAME)
     if raw is None:
         return None
     try:
@@ -1029,31 +1073,38 @@ def read_staged(root: Path, transaction_id: str) -> StagedTransaction | None:
     if (staged.lock_file_sha256 is None) != (staged.lock_identity is None):
         return None
     for name, expected in staged.members().items():
-        # _digest_file refuses a member it cannot inspect and reports an absent one
-        # as None; only the latter makes this staging incomplete.
-        if _digest_file(directory / name) != expected:
+        # _digest_at refuses a member it cannot inspect and reports an absent one as
+        # None; only the latter makes this staging incomplete.
+        if _digest_at(transaction_fd, name) != expected:
             return None
     return staged
 
 
 def discard_staging(root: Path, transaction_id: str) -> None:
     """Remove a staging directory whose transaction is finished with."""
-    directory = _staging_directory(root, transaction_id, create=False)
-    if directory is None:
-        return
-    with _open_directory(directory) as directory_fd:
-        for name in sorted(os.listdir(directory_fd)):
-            try:
-                observed = os.lstat(name, dir_fd=directory_fd)
-            except FileNotFoundError:  # pragma: no cover - raced
-                continue
-            if stat.S_ISREG(observed.st_mode):
-                os.unlink(name, dir_fd=directory_fd)
-        os.fsync(directory_fd)
-    try:
-        directory.rmdir()
-    except OSError:  # pragma: no cover - a non-empty directory is left as evidence
-        return
+    with _transaction_directory(root, transaction_id, create=False) as opened:
+        if opened is None:
+            return
+        staging_fd, transaction_fd = opened
+        for name in sorted(os.listdir(transaction_fd)):
+            observed = _stat_at(transaction_fd, name)
+            if observed is not None and stat.S_ISREG(observed.st_mode):
+                os.unlink(name, dir_fd=transaction_fd)
+        os.fsync(transaction_fd)
+        try:
+            os.rmdir(_validated_transaction_id(transaction_id), dir_fd=staging_fd)
+        except OSError:  # pragma: no cover - non-empty, left as evidence
+            return
+        os.fsync(staging_fd)
+
+
+def _staged_manifest_digest(root: Path, transaction_id: str) -> str | None:
+    """Digest of a transaction's persisted manifest, or None when there is none."""
+    with _transaction_directory(root, transaction_id, create=False) as opened:
+        if opened is None:
+            return None
+        _, transaction_fd = opened
+        return _digest_at(transaction_fd, MANIFEST_FILENAME)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1142,12 +1193,21 @@ def publish(
     an older version an outdated writer may overwrite -- with the staged output still
     on disk to finish forward from.
     """
-    directory = _staging_directory(root, staged.transaction_id, create=False)
-    if directory is None:
-        raise RetainedTransactionError(
-            INCONSISTENT_STATE,
-            "the staged transaction being published is no longer on disk",
-        )
+    members: dict[str, bytes] = {}
+    with _transaction_directory(root, staged.transaction_id, create=False) as opened:
+        if opened is None:
+            raise RetainedTransactionError(
+                INCONSISTENT_STATE,
+                "the staged transaction being published is no longer on disk",
+            )
+        _, transaction_fd = opened
+        for member in staged.members():
+            payload = _read_at(transaction_fd, member)
+            if payload is None:
+                raise RetainedTransactionError(
+                    INCONSISTENT_STATE, f"staged {member} is no longer on disk"
+                )
+            members[member] = payload
     existing = read_publication_intent(root)
     if existing is not None and existing.transaction_id != staged.transaction_id:
         # Somebody else's publication is in flight or interrupted. Overwriting its
@@ -1158,7 +1218,7 @@ def publish(
             "another transaction's publication is unresolved; refusing to publish "
             "over the record of an interrupted commit",
         )
-    manifest_sha256 = _digest_file(directory / MANIFEST_FILENAME)
+    manifest_sha256 = _staged_manifest_digest(root, staged.transaction_id)
     if manifest_sha256 is None:
         raise RetainedTransactionError(
             INCONSISTENT_STATE, "the staged transaction has no manifest to publish from"
@@ -1173,8 +1233,8 @@ def publish(
         ),
     )
     for name, expected in staged.members().items():
-        payload = _read_file(directory / name)
-        if payload is None or _digest_bytes(payload) != expected:
+        payload = members[name]
+        if _digest_bytes(payload) != expected:
             raise RetainedTransactionError(
                 INCONSISTENT_STATE,
                 f"staged {name} does not match the manifest it is published under",
@@ -1220,10 +1280,7 @@ def _resolve_publication(root: Path, intent: PublicationIntent) -> bool:
     this either finishes the publication, establishes that it already finished, or
     keeps everything exactly where it is.
     """
-    directory = _staging_directory(root, intent.transaction_id, create=False)
-    manifest_sha256 = (
-        _digest_file(directory / MANIFEST_FILENAME) if directory is not None else None
-    )
+    manifest_sha256 = _staged_manifest_digest(root, intent.transaction_id)
     if manifest_sha256 != intent.manifest_sha256:
         raise RetainedTransactionError(
             INCONSISTENT_STATE,
@@ -1325,6 +1382,16 @@ def recover(root: Path) -> bool:
             # the only evidence of an effect that cannot be run again, so it is
             # finished forward rather than discarded with the reservation.
             staged = read_staged(root, existing.transaction_id)
+            if staged is None and existing.staged_manifest_sha256 is not None:
+                # The seal is durable proof that a complete transaction was staged
+                # here. Staging that can no longer reproduce it is a damaged commit,
+                # not an absent one, and the effect it recorded may already be
+                # consumed. Everything is left where it is.
+                raise RetainedTransactionError(
+                    INCONSISTENT_STATE,
+                    "the staged output this reservation was sealed to is no longer "
+                    "complete; refusing to discard it, and keeping both as evidence",
+                )
             if staged is not None and existing.staged_manifest_sha256 is None:
                 # The transaction died before it could commit to what it staged.
                 # Nothing outside that directory vouches for those bytes, so they are
