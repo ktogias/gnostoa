@@ -45,7 +45,7 @@ import stat
 import uuid
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -110,48 +110,134 @@ class RetainedTransactionError(RuntimeError):
         self.detail = detail
 
 
+_O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+
+
 def _digest_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _digest_file(path: Path) -> str | None:
-    """Digest of a regular file, or None when absent. A non-regular path is refused."""
+@contextmanager
+def _open_directory(path: Path) -> Iterator[int]:
+    """Open a directory by descriptor, refusing anything that is not one.
+
+    Every read, write and unlink a transaction performs is then made relative to
+    this descriptor. Validating a path and using it afterwards are two different
+    moments, and between them the directory can be renamed away and a symlink left
+    in its place; a descriptor cannot be redirected once it is open.
+    """
     try:
-        observed = path.lstat()
+        descriptor = os.open(path, os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW)
+    except OSError as exc:
+        raise RetainedTransactionError(
+            INCONSISTENT_STATE, f"cannot open {path.name or path} as a directory: {exc}"
+        ) from exc
+    try:
+        if not stat.S_ISDIR(os.fstat(descriptor).st_mode):  # pragma: no cover
+            raise RetainedTransactionError(
+                INCONSISTENT_STATE, f"{path.name} is not a directory"
+            )
+        yield descriptor
+    finally:
+        os.close(descriptor)
+
+
+def _write_at(directory_fd: int, name: str, payload: bytes) -> None:
+    """Write one file durably inside an open directory.
+
+    The temporary is created exclusively under a name nobody can predict, because a
+    deterministic one can be pre-created as a hardlink to any file on the same
+    filesystem and O_NOFOLLOW does not protect against that. The write loops until
+    the payload is exhausted: a short write is a successful call that wrote less
+    than it was given, and accepting it publishes a truncated file as a finished one.
+    """
+    temporary = f".{name}.{uuid.uuid4().hex}.partial"
+    descriptor = os.open(
+        temporary,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW,
+        0o600,
+        dir_fd=directory_fd,
+    )
+    try:
+        view = memoryview(payload)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:  # pragma: no cover - defensive
+                raise RetainedTransactionError(
+                    INCONSISTENT_STATE, f"writing {name} made no progress"
+                )
+            view = view[written:]
+        os.fsync(descriptor)
+    except BaseException:
+        os.close(descriptor)
+        os.unlink(temporary, dir_fd=directory_fd)
+        raise
+    os.close(descriptor)
+    os.rename(temporary, name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+    os.fsync(directory_fd)
+
+
+def _write_atomic(path: Path, payload: bytes) -> None:
+    """Write, fsync, rename, then fsync the directory entry, all descriptor-bound."""
+    with _open_directory(path.parent) as directory_fd:
+        _write_at(directory_fd, path.name, payload)
+
+
+def _read_at(directory_fd: int, name: str) -> bytes | None:
+    """Read a regular file inside an open directory, or None if it is not there."""
+    try:
+        descriptor = os.open(name, os.O_RDONLY | _O_NOFOLLOW, dir_fd=directory_fd)
     except FileNotFoundError:
         return None
     except OSError as exc:
         raise RetainedTransactionError(
-            INCONSISTENT_STATE, f"cannot inspect {path.name}: {exc}"
+            INCONSISTENT_STATE, f"cannot open {name}: {exc}"
         ) from exc
-    if not stat.S_ISREG(observed.st_mode):
-        raise RetainedTransactionError(
-            INCONSISTENT_STATE, f"{path.name} is not a regular file"
-        )
-    return _digest_bytes(path.read_bytes())
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise RetainedTransactionError(
+                INCONSISTENT_STATE, f"{name} is not a regular file"
+            )
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(descriptor, 1 << 20)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        return b"".join(chunks)
+    finally:
+        os.close(descriptor)
+
+
+def _read_file(path: Path) -> bytes | None:
+    with _open_directory(path.parent) as directory_fd:
+        return _read_at(directory_fd, path.name)
+
+
+def _digest_file(path: Path) -> str | None:
+    """Digest of a regular file, or None when absent. A non-regular path is refused."""
+    payload = _read_file(path)
+    return None if payload is None else _digest_bytes(payload)
+
+
+def _unlink_file(path: Path) -> bool:
+    with _open_directory(path.parent) as directory_fd:
+        try:
+            os.unlink(path.name, dir_fd=directory_fd)
+        except FileNotFoundError:
+            return False
+        except OSError as exc:
+            raise RetainedTransactionError(
+                INCONSISTENT_STATE, f"cannot remove {path.name}: {exc}"
+            ) from exc
+        os.fsync(directory_fd)
+        return True
 
 
 def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
+    with _open_directory(path) as descriptor:
         os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-
-
-def _write_atomic(path: Path, payload: bytes) -> None:
-    """Write, fsync, rename, then fsync the directory entry."""
-    temporary = path.with_name(f"{path.name}.partial")
-    descriptor = os.open(
-        temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600
-    )
-    try:
-        os.write(descriptor, payload)
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-    os.replace(temporary, path)
-    _fsync_directory(path.parent)
 
 
 def _open_lock_file(path: Path) -> int:
@@ -233,6 +319,9 @@ def _real_directory(path: Path, *, create: bool) -> Path | None:
         if not create:
             return None
         path.mkdir(mode=0o700)
+        # The new directory entry has to reach the disk before anything durable is
+        # written inside it, or "durable staging" is only true of its contents.
+        _fsync_directory(path.parent)
         observed = path.lstat()
     except OSError as exc:
         raise RetainedTransactionError(
@@ -377,9 +466,14 @@ def _load_json_document(path: Path, *, label: str, schema: str) -> dict[str, Any
         raise RetainedTransactionError(
             INCONSISTENT_STATE, f"the {label} is not a regular file"
         )
+    raw = _read_file(path)
+    if raw is None:  # pragma: no cover - raced with a removal
+        raise RetainedTransactionError(
+            INCONSISTENT_STATE, f"the {label} disappeared while it was being read"
+        )
     try:
-        payload = json.loads(path.read_text())
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        payload = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise RetainedTransactionError(
             INCONSISTENT_STATE, f"the {label} is unreadable: {exc}"
         ) from exc
@@ -430,11 +524,12 @@ def state_is_transactional(root: Path) -> bool:
     way would let a damaged workspace with no commit record pass as legacy.
     """
     path = root / STATE_FILENAME
-    if not _present(path):
+    raw = _read_file(path)
+    if raw is None:
         return False
     try:
-        payload = json.loads(path.read_text())
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        payload = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise RetainedTransactionError(
             INCONSISTENT_STATE, f"the retained public state is unreadable: {exc}"
         ) from exc
@@ -521,17 +616,18 @@ def _validate_committed_lock_identity(root: Path, snapshot: CommittedSnapshot) -
         )
 
     state: object = None
-    try:
-        state = json.loads((root / STATE_FILENAME).read_text())
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        state = None
+    raw_state = _read_file(root / STATE_FILENAME)
+    if raw_state is not None:
+        try:
+            state = json.loads(raw_state)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            state = None
     references: dict[str, str | None] = {
         "the retained public state": (
             state.get("lock_sha256") if isinstance(state, dict) else None
         )
     }
-    ledger = root / LEDGER_FILENAME
-    payload = ledger.read_bytes() if ledger.is_file() else b""
+    payload = _read_file(root / LEDGER_FILENAME) or b""
     for stage in _LOCK_BINDING_STAGES:
         references[f"the retained {stage} receipt"] = _binding_output(payload, stage)
 
@@ -564,13 +660,27 @@ def _recorded_snapshot(root: Path) -> CommittedSnapshot | None:
     contents -- that disagreement is what it exists to resolve -- so it reads the
     record as a statement of which transaction last committed, not as a verified
     description of the files.
+
+    Absent, valid and unreadable stay three answers. None means no transaction has
+    ever committed here. A record that cannot be read is refused instead, because
+    recovery compares staged output against this: answering "nothing is committed"
+    to a question that was never answered makes every staged transaction look
+    superseded, and the evidence of a consumed effect is discarded on the strength
+    of it.
     """
+    raw = _read_file(root / COMMIT_RECORD_FILENAME)
+    if raw is None:
+        return None
     try:
-        payload = json.loads((root / COMMIT_RECORD_FILENAME).read_text())
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return None
+        payload = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RetainedTransactionError(
+            INCONSISTENT_STATE, f"the commit record is unreadable: {exc}"
+        ) from exc
     if not isinstance(payload, dict) or payload.get("schema") != COMMIT_RECORD_SCHEMA:
-        return None
+        raise RetainedTransactionError(
+            INCONSISTENT_STATE, "the commit record has an unsupported schema"
+        )
     generation = payload.get("generation")
     transaction_id = payload.get("transaction_id")
     if (
@@ -580,7 +690,9 @@ def _recorded_snapshot(root: Path) -> CommittedSnapshot | None:
         or not isinstance(transaction_id, str)
         or not transaction_id
     ):
-        return None
+        raise RetainedTransactionError(
+            INCONSISTENT_STATE, "the commit record is malformed"
+        )
 
     def digest(field: str) -> str | None:
         value = payload.get(field)
@@ -606,6 +718,11 @@ class Reservation:
     scope: str
     candidate_sha256: str
     authority_sha256: str
+    #: Digest of the manifest of this transaction's staged output, recorded once
+    #: that output is complete. It is the only commitment to those bytes that lives
+    #: outside the staging directory, and until it exists nothing vouches for what
+    #: is staged there.
+    staged_manifest_sha256: str | None = None
 
     def as_json(self) -> dict[str, object]:
         return {
@@ -616,6 +733,7 @@ class Reservation:
             "scope": self.scope,
             "candidate_sha256": self.candidate_sha256,
             "authority_sha256": self.authority_sha256,
+            "staged_manifest_sha256": self.staged_manifest_sha256,
         }
 
     def is_same_request_as(
@@ -658,6 +776,11 @@ def read_reservation(root: Path) -> Reservation | None:
         scope=_required_str(payload, "scope", "reservation"),
         candidate_sha256=_required_digest(payload, "candidate_sha256", "reservation"),
         authority_sha256=_required_digest(payload, "authority_sha256", "reservation"),
+        staged_manifest_sha256=(
+            None
+            if payload.get("staged_manifest_sha256") is None
+            else _required_digest(payload, "staged_manifest_sha256", "reservation")
+        ),
     )
 
 
@@ -668,6 +791,26 @@ def write_reservation(root: Path, reservation: Reservation) -> None:
         root / RESERVATION_FILENAME,
         (json.dumps(reservation.as_json(), indent=2, sort_keys=True) + "\n").encode(),
     )
+
+
+def seal_reservation(
+    root: Path, *, expected_transaction_id: str, manifest_sha256: str
+) -> None:
+    """Commit the reservation to the staged output. Caller holds the coordination lock.
+
+    Until this lands, the staging directory vouches only for itself: a member can be
+    rewritten and the manifest updated to match, leaving the transaction, base,
+    candidate and authority untouched, and recovery would finish the substitution
+    forward. The seal is the commitment that lives outside the tree it describes.
+    """
+    existing = read_reservation(root)
+    if existing is None or existing.transaction_id != expected_transaction_id:
+        raise RetainedTransactionError(
+            INCONSISTENT_STATE,
+            "the installed reservation is not this transaction's; refusing to seal "
+            "staged output onto a reservation it does not own",
+        )
+    write_reservation(root, replace(existing, staged_manifest_sha256=manifest_sha256))
 
 
 def clear_reservation(root: Path, *, expected_transaction_id: str) -> None:
@@ -685,11 +828,7 @@ def clear_reservation(root: Path, *, expected_transaction_id: str) -> None:
             "the installed reservation belongs to another transaction; refusing to "
             "clear a reservation this transaction does not own",
         )
-    try:
-        (root / RESERVATION_FILENAME).unlink()
-    except FileNotFoundError:  # pragma: no cover - raced with an identical clear
-        return
-    _fsync_directory(root)
+    _unlink_file(root / RESERVATION_FILENAME)
 
 
 @dataclass(frozen=True, slots=True)
@@ -704,6 +843,8 @@ class StagedTransaction:
     state_file_sha256: str
     lock_file_sha256: str | None
     lock_identity: str | None
+    #: Digest of this manifest as persisted. Not part of the manifest itself.
+    manifest_sha256: str = ""
 
     def as_json(self) -> dict[str, object]:
         return {
@@ -814,11 +955,9 @@ def stage(
         lock_file_sha256=None if lock is None else _digest_bytes(lock),
         lock_identity=lock_identity,
     )
-    _write_atomic(
-        directory / MANIFEST_FILENAME,
-        (json.dumps(staged.as_json(), indent=2, sort_keys=True) + "\n").encode(),
-    )
-    return staged
+    manifest = (json.dumps(staged.as_json(), indent=2, sort_keys=True) + "\n").encode()
+    _write_atomic(directory / MANIFEST_FILENAME, manifest)
+    return replace(staged, manifest_sha256=_digest_bytes(manifest))
 
 
 def read_staged(root: Path, transaction_id: str) -> StagedTransaction | None:
@@ -836,14 +975,11 @@ def read_staged(root: Path, transaction_id: str) -> StagedTransaction | None:
     manifest = directory / MANIFEST_FILENAME
     if not _present(manifest):
         return None
+    raw = _read_file(manifest)
+    if raw is None:
+        return None
     try:
-        text = manifest.read_text()
-    except OSError as exc:
-        raise RetainedTransactionError(
-            INCONSISTENT_STATE, f"cannot read the transaction manifest: {exc}"
-        ) from exc
-    try:
-        payload = json.loads(text)
+        payload = json.loads(raw)
     except (UnicodeDecodeError, json.JSONDecodeError):
         return None
     if not isinstance(payload, dict) or payload.get("schema") != MANIFEST_SCHEMA:
@@ -887,6 +1023,7 @@ def read_staged(root: Path, transaction_id: str) -> StagedTransaction | None:
         )
     except RetainedTransactionError:
         return None
+    staged = replace(staged, manifest_sha256=_digest_bytes(raw))
     if staged.transaction_id != transaction_id:
         return None
     if (staged.lock_file_sha256 is None) != (staged.lock_identity is None):
@@ -904,9 +1041,15 @@ def discard_staging(root: Path, transaction_id: str) -> None:
     directory = _staging_directory(root, transaction_id, create=False)
     if directory is None:
         return
-    for entry in sorted(directory.iterdir()):
-        if entry.is_file() and not entry.is_symlink():
-            entry.unlink()
+    with _open_directory(directory) as directory_fd:
+        for name in sorted(os.listdir(directory_fd)):
+            try:
+                observed = os.lstat(name, dir_fd=directory_fd)
+            except FileNotFoundError:  # pragma: no cover - raced
+                continue
+            if stat.S_ISREG(observed.st_mode):
+                os.unlink(name, dir_fd=directory_fd)
+        os.fsync(directory_fd)
     try:
         directory.rmdir()
     except OSError:  # pragma: no cover - a non-empty directory is left as evidence
@@ -961,21 +1104,17 @@ def _write_publication_intent(root: Path, intent: PublicationIntent) -> None:
 
 
 def clear_publication_intent(root: Path) -> None:
-    try:
-        (root / PUBLICATION_FILENAME).unlink()
-    except FileNotFoundError:
-        return
-    _fsync_directory(root)
+    _unlink_file(root / PUBLICATION_FILENAME)
 
 
 def _published_lock_identity(root: Path) -> str | None:
     """The canonical identity carried by the published lock, if one is published."""
-    path = root / LOCK_FILENAME
-    if not _present(path):
+    raw = _read_file(root / LOCK_FILENAME)
+    if raw is None:
         return None
     try:
-        payload = json.loads(path.read_text())
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        payload = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise RetainedTransactionError(
             INCONSISTENT_STATE, f"the published experiment lock is unreadable: {exc}"
         ) from exc
@@ -1034,8 +1173,8 @@ def publish(
         ),
     )
     for name, expected in staged.members().items():
-        payload = (directory / name).read_bytes()
-        if _digest_bytes(payload) != expected:
+        payload = _read_file(directory / name)
+        if payload is None or _digest_bytes(payload) != expected:
             raise RetainedTransactionError(
                 INCONSISTENT_STATE,
                 f"staged {name} does not match the manifest it is published under",
@@ -1186,7 +1325,21 @@ def recover(root: Path) -> bool:
             # the only evidence of an effect that cannot be run again, so it is
             # finished forward rather than discarded with the reservation.
             staged = read_staged(root, existing.transaction_id)
+            if staged is not None and existing.staged_manifest_sha256 is None:
+                # The transaction died before it could commit to what it staged.
+                # Nothing outside that directory vouches for those bytes, so they are
+                # neither published nor deleted: the effect claim, if the boundary
+                # was crossed, remains the fence.
+                clear_reservation(root, expected_transaction_id=existing.transaction_id)
+                return True
             if staged is not None:
+                if existing.staged_manifest_sha256 != staged.manifest_sha256:
+                    raise RetainedTransactionError(
+                        INCONSISTENT_STATE,
+                        "the staged output under this reservation is not the output "
+                        "the reservation was sealed to; refusing to publish it, and "
+                        "keeping both as evidence",
+                    )
                 if not _matches_reservation(staged, existing):
                     raise RetainedTransactionError(
                         INCONSISTENT_STATE,

@@ -1267,6 +1267,14 @@ def prepare(
                     lock_identity=result.lock_identity if lock_bytes else None,
                 )
                 with retained_commit.coordination_lock(root):
+                    if transaction_state.get("reserved"):
+                        # Commit this reservation to the bytes just staged, before
+                        # any of them can become a recovery source.
+                        retained_commit.seal_reservation(
+                            root,
+                            expected_transaction_id=transaction_id,
+                            manifest_sha256=staged.manifest_sha256,
+                        )
                     # Resolve what is in flight before deciding anything. This
                     # invocation's standing was settled earlier, and an interrupted
                     # publication may have appeared since; persisting on the strength
@@ -1510,6 +1518,10 @@ def prepare(
             """Adopt what is committed now, keeping this invocation's own progress."""
             nonlocal base_snapshot
             with retained_commit.coordination_lock(root):
+                # The transaction this invocation waited for may have died part way
+                # through publishing. Reading first would meet that inconsistency and
+                # refuse, when finishing it forward is exactly what waiting was for.
+                retained_commit.recover(root)
                 base_snapshot = retained_commit.read_committed(root)
                 ledger.reused.clear()
                 ledger.load()
