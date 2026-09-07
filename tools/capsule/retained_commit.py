@@ -81,6 +81,9 @@ LOCK_FILENAME = "experiment.lock"
 TRANSACTION_MARKER_FIELD = "retained_transaction"
 TRANSACTION_MARKER_VALUE = "gnostoa-retained-transaction/v1"
 
+#: The public status that asserts a lock was emitted and bound.
+READY_STATUS = "READY_FOR_OWNER_REVIEW"
+
 #: Stage receipts whose recorded output binds the emitted experiment lock.
 _LOCK_BINDING_STAGES = ("EXECUTION_FROZEN", "READY_FOR_OWNER_REVIEW")
 
@@ -502,6 +505,12 @@ def _validate_committed_lock_identity(root: Path, snapshot: CommittedSnapshot) -
     its own: the record would then bind a lock the workspace does not contain, and
     every downstream check that trusts the record would follow it. Agreement is
     therefore re-established on every read, not inherited from the write.
+
+    For a state that claims readiness the chain is required rather than checked
+    where it happens to be present. Readiness is exactly the claim that a lock was
+    emitted and bound, so a missing link is not one fewer thing to verify -- it is
+    the claim failing. A blocked state carries no such claim, and a lock published by
+    an earlier transaction may legitimately still sit beside it.
     """
     carried = _published_lock_identity(root)
     if carried != snapshot.lock_identity:
@@ -510,23 +519,36 @@ def _validate_committed_lock_identity(root: Path, snapshot: CommittedSnapshot) -
             f"the commit record names lock identity {snapshot.lock_identity!r}, "
             f"which the published lock does not carry",
         )
-    if snapshot.lock_identity is None:
-        return
-    references: dict[str, object] = {}
+
+    state: object = None
     try:
         state = json.loads((root / STATE_FILENAME).read_text())
-        if isinstance(state, dict) and state.get("lock_sha256") is not None:
-            references["the retained public state"] = state["lock_sha256"]
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        pass
+        state = None
+    references: dict[str, str | None] = {
+        "the retained public state": (
+            state.get("lock_sha256") if isinstance(state, dict) else None
+        )
+    }
     ledger = root / LEDGER_FILENAME
-    if ledger.is_file():
-        payload = ledger.read_bytes()
-        for stage in _LOCK_BINDING_STAGES:
-            bound = _binding_output(payload, stage)
-            if bound is not None:
-                references[f"the retained {stage} receipt"] = bound
+    payload = ledger.read_bytes() if ledger.is_file() else b""
+    for stage in _LOCK_BINDING_STAGES:
+        references[f"the retained {stage} receipt"] = _binding_output(payload, stage)
+
+    claims_ready = isinstance(state, dict) and state.get("status") == READY_STATUS
+    if claims_ready and snapshot.lock_identity is None:
+        raise RetainedTransactionError(
+            INCONSISTENT_STATE,
+            "the retained state claims readiness but no experiment lock is committed",
+        )
     for label, referenced in references.items():
+        if referenced is None:
+            if claims_ready:
+                raise RetainedTransactionError(
+                    INCONSISTENT_STATE,
+                    f"the retained state claims readiness but {label} names no lock",
+                )
+            continue
         if referenced != snapshot.lock_identity:
             raise RetainedTransactionError(
                 INCONSISTENT_STATE,
@@ -880,7 +902,22 @@ def discard_staging(root: Path, transaction_id: str) -> None:
         return
 
 
-def read_publication_intent(root: Path) -> str | None:
+@dataclass(frozen=True, slots=True)
+class PublicationIntent:
+    """Which staged transaction is being made canonical, and from exactly which bytes."""
+
+    transaction_id: str
+    manifest_sha256: str
+
+    def as_json(self) -> dict[str, object]:
+        return {
+            "schema": PUBLICATION_SCHEMA,
+            "transaction_id": self.transaction_id,
+            "manifest_sha256": self.manifest_sha256,
+        }
+
+
+def read_publication_intent(root: Path) -> PublicationIntent | None:
     """Which staged transaction is being made canonical, if any.
 
     An effect reservation says who may cross the effect boundary. It is not a record
@@ -895,25 +932,20 @@ def read_publication_intent(root: Path) -> str | None:
     payload = _load_json_document(
         path, label="publication intent", schema=PUBLICATION_SCHEMA
     )
-    return _validated_transaction_id(
-        _required_str(payload, "transaction_id", "publication intent")
+    return PublicationIntent(
+        transaction_id=_validated_transaction_id(
+            _required_str(payload, "transaction_id", "publication intent")
+        ),
+        manifest_sha256=_required_digest(
+            payload, "manifest_sha256", "publication intent"
+        ),
     )
 
 
-def _write_publication_intent(root: Path, transaction_id: str) -> None:
+def _write_publication_intent(root: Path, intent: PublicationIntent) -> None:
     _write_atomic(
         root / PUBLICATION_FILENAME,
-        (
-            json.dumps(
-                {
-                    "schema": PUBLICATION_SCHEMA,
-                    "transaction_id": _validated_transaction_id(transaction_id),
-                },
-                indent=2,
-                sort_keys=True,
-            )
-            + "\n"
-        ).encode(),
+        (json.dumps(intent.as_json(), indent=2, sort_keys=True) + "\n").encode(),
     )
 
 
@@ -966,9 +998,30 @@ def publish(
             INCONSISTENT_STATE,
             "the staged transaction being published is no longer on disk",
         )
+    existing = read_publication_intent(root)
+    if existing is not None and existing.transaction_id != staged.transaction_id:
+        # Somebody else's publication is in flight or interrupted. Overwriting its
+        # intent would erase the only route back to whatever it staged, which may be
+        # the sole record of an effect that cannot be run again.
+        raise RetainedTransactionError(
+            INCONSISTENT_STATE,
+            "another transaction's publication is unresolved; refusing to publish "
+            "over the record of an interrupted commit",
+        )
+    manifest_sha256 = _digest_file(directory / MANIFEST_FILENAME)
+    if manifest_sha256 is None:
+        raise RetainedTransactionError(
+            INCONSISTENT_STATE, "the staged transaction has no manifest to publish from"
+        )
     # Recorded before the first canonical byte moves, so an interrupted publication
-    # names the staged output it was finishing regardless of who started it.
-    _write_publication_intent(root, staged.transaction_id)
+    # names the staged output it was finishing -- and the exact bytes of it --
+    # regardless of who started it.
+    _write_publication_intent(
+        root,
+        PublicationIntent(
+            transaction_id=staged.transaction_id, manifest_sha256=manifest_sha256
+        ),
+    )
     for name, expected in staged.members().items():
         payload = (directory / name).read_bytes()
         if _digest_bytes(payload) != expected:
@@ -1015,10 +1068,12 @@ def recover(root: Path) -> bool:
     reserving are different acts performed by different callers: an invocation with
     no authority never reserves and still writes canonical files.
 
-      an interrupted publication whose staged output is complete, still describes
-      the transaction the record names, and -- where a reservation covers it --
-      matches that reservation's request
+      an interrupted publication whose staged output is exactly the output the
+      intent was recorded for, still describes the transaction the record names,
+      and -- where a reservation covers it -- matches that reservation's request
           finished forward from its own durable bytes, running nothing again
+      an interrupted publication whose staged output is not those bytes
+          refused, with the intent and the staging both kept as evidence
       any other interrupted publication
           abandoned without publishing; the workspace keeps whatever it had
       an abandoned reservation
@@ -1032,9 +1087,25 @@ def recover(root: Path) -> bool:
     Returns whether the workspace changed.
     """
     changed = False
-    publishing = read_publication_intent(root)
-    if publishing is not None:
-        staged = read_staged(root, publishing)
+    intent = read_publication_intent(root)
+    if intent is not None:
+        directory = _staging_directory(root, intent.transaction_id, create=False)
+        manifest_sha256 = (
+            _digest_file(directory / MANIFEST_FILENAME)
+            if directory is not None
+            else None
+        )
+        if manifest_sha256 != intent.manifest_sha256:
+            # The intent commits to exact bytes, and these are not them. Everything
+            # is left where it is: an unexplained substitution is evidence, and
+            # clearing it would destroy the only trace of what was interrupted.
+            raise RetainedTransactionError(
+                INCONSISTENT_STATE,
+                "the staged output of an interrupted publication is not the output "
+                "its intent was recorded for; refusing to publish it, and keeping "
+                "both as evidence",
+            )
+        staged = read_staged(root, intent.transaction_id)
         recorded = _recorded_snapshot(root)
         reservation = read_reservation(root)
         publishable = staged is not None and staged.base_identity == (
@@ -1045,7 +1116,7 @@ def recover(root: Path) -> bool:
             # The reservation is what authorised this transaction. Staged output that
             # describes a different request is not that transaction's commit, however
             # complete and self-consistent it is.
-            publishable = reservation.transaction_id == publishing and (
+            publishable = reservation.transaction_id == intent.transaction_id and (
                 staged.base_identity == reservation.base_identity
                 and staged.candidate_sha256 == reservation.candidate_sha256
                 and staged.authority_sha256 == reservation.authority_sha256
@@ -1059,7 +1130,7 @@ def recover(root: Path) -> bool:
             )
         else:
             clear_publication_intent(root)
-        discard_staging(root, publishing)
+        discard_staging(root, intent.transaction_id)
         changed = True
 
     existing = read_reservation(root)

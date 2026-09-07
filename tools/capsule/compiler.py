@@ -1267,6 +1267,12 @@ def prepare(
                     lock_identity=result.lock_identity if lock_bytes else None,
                 )
                 with retained_commit.coordination_lock(root):
+                    # Resolve what is in flight before deciding anything. This
+                    # invocation's standing was settled earlier, and an interrupted
+                    # publication may have appeared since; persisting on the strength
+                    # of the older decision would overwrite the record of a commit
+                    # that is the only route back to an effect already performed.
+                    retained_commit.recover(root)
                     current = retained_commit.read_committed(root)
                     reservation = retained_commit.read_reservation(root)
                     held = bool(transaction_state.get("reserved"))
