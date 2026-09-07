@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import stat
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -27,6 +28,11 @@ ALREADY_CONSUMED = "preflight-candidate-already-consumed"
 INVALID_CLAIM = "preflight-effect-claim-invalid"
 WRITE_FAILED = "preflight-effect-claim-write-failed"
 
+#: A candidate identifier becomes the claim's filename, and a name that is not a name
+#: places the fence somewhere other than the workspace it is meant to fence. Accepted
+#: only in the exact form preflight_candidate_identity emits.
+_CANDIDATE_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+
 _MAX_CLAIM_BYTES = 64 * 1024
 _O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
 _O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
@@ -39,6 +45,25 @@ class EffectClaimError(RuntimeError):
         super().__init__(detail)
         self.code = code
         self.detail = detail
+
+
+def _validated_candidate_sha256(candidate_sha256: str) -> str:
+    """A candidate identifier, or a refusal. Never a path.
+
+    This value addresses the effect claim -- the single-use fence the whole
+    single-consumption contract rests on -- and a dir_fd does not confine a name:
+    ``..`` and ``/`` still traverse from it, and O_NOFOLLOW guards only the final
+    component. It is checked here, before anything touches the filesystem, so an
+    identifier that is not an identifier cannot decide where the fence is placed.
+    """
+    if not isinstance(candidate_sha256, str) or not _CANDIDATE_SHA256.match(
+        candidate_sha256
+    ):
+        raise EffectClaimError(
+            INVALID_CLAIM,
+            f"{candidate_sha256!r} is not a preflight candidate identifier",
+        )
+    return candidate_sha256
 
 
 def _same_object(left: os.stat_result, right: os.stat_result) -> bool:
@@ -419,6 +444,7 @@ def load_consumed_candidate(
     candidate_tasks: Sequence[Mapping[str, str]],
 ) -> dict[str, object]:
     """Read and validate the irreversible claim for one completed fresh candidate."""
+    candidate_sha256 = _validated_candidate_sha256(candidate_sha256)
     disposition = _disposition_summary(candidate_tasks)
     name = f"{candidate_sha256}.json"
 
@@ -488,6 +514,7 @@ def claim_fresh_candidate(
     candidate_tasks: Sequence[Mapping[str, str]],
 ) -> dict[str, object]:
     """Durably consume one fresh candidate before any qualification effect begins."""
+    candidate_sha256 = _validated_candidate_sha256(candidate_sha256)
     disposition = _disposition_summary(candidate_tasks)
     authority_payload = authority.as_json()
     payload: dict[str, object] = {
