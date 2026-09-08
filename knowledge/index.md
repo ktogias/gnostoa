@@ -140,6 +140,7 @@ inherited, copied or loaded by adopting projects.
 - [Prepare an experiment capsule](runbooks/prepare-an-experiment-capsule.md)
 - [Deliver a bounded self-hosted slice](runbooks/deliver-bounded-self-hosted-slice.md)
 - [Run a bounded owner-led experiment](runbooks/run-owner-led-experiment.md)
+- [Recover a retained experiment workspace](runbooks/recover-a-retained-experiment-workspace.md)
 - [Prepare the first public repository publication](runbooks/prepare-first-publication.md)
 - [Review the publication baseline](runbooks/review-publication-baseline.md)
 - [Publish a source-only release](runbooks/publish-source-only-release.md)

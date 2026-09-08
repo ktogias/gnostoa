@@ -356,3 +356,92 @@ create-only effect record keyed by the exact prospective candidate and recording
 canonical authority payload/identity. It must be durably established before effect and must
 not overload `StageLedger`, because stage invalidation/re-entry semantics are intentionally
 resumable while an effect-bearing authority consumption record is intentionally irreversible.
+
+## Addendum — durable retained-workspace transaction protocol (#197 implementation)
+
+The addendum above selected a create-only effect record and deliberately left the
+implementation mechanism open. Implementing it showed that the record alone is not
+enough, and the shape that replaced it is an architectural decision rather than a
+detail, so it is recorded here.
+
+`prepare()` reads a retained workspace once, works for a long time — including a
+hidden-oracle qualification that cannot be repeated — and only then persists.
+Arbitrating that by arrival order is wrong, because the contenders are not
+equivalent: an invocation that has crossed the irreversible boundary has strictly
+more standing than one that has done nothing. Resolving it by order permitted a
+zero-effect invocation to commit first and permanently fence out an invocation whose
+oracle had already run, which is the failure class #197 exists to prevent.
+
+### Five records, none standing in for another
+
+```text
+COMMITTED SNAPSHOT   the last complete truth of the workspace, content-bound
+EFFECT RESERVATION   which transaction may cross the next effect boundary
+EFFECT CLAIM         proof the irreversible boundary was crossed
+LIVE OWNER           whether the reserving process still exists
+PUBLICATION INTENT   which staged transaction is being made canonical, and from
+                     exactly which bytes
+```
+
+The publication intent is separate from the reservation because publishing and
+reserving are different acts performed by different callers: an invocation with no
+authority never reserves and still writes canonical files. Discovering an interrupted
+commit through the reservation stranded every torn publication such a caller left
+behind.
+
+### Properties the protocol commits to
+
+1. **One coherent decision.** Recovering an abandonment, reading the committed state,
+   reading the reservation, judging liveness and installing a reservation happen
+   inside one coordination critical section. Every split between observing the
+   workspace and acting on that observation is a window in which the observation
+   expires.
+2. **Two locks with different jobs.** The coordination lock is held only across short
+   metadata transitions, never across an effect. The owner-liveness lock is held for
+   the life of a transaction and confers no right to write; it answers liveness
+   without leases, heartbeats or clock comparison.
+3. **Durable staging, manifest last.** A transaction writes its whole output to
+   `.retained-transactions/<id>/` before any of it becomes canonical, so an
+   interrupted commit is finished forward from its own bytes rather than merely
+   detected.
+4. **Forward-only recovery.** A claimed transaction is never rolled back and never
+   freshly retried. Absence of recoverable evidence is never converted into permission
+   to run the effect again.
+5. **Ambiguity is preserved, not resolved.** Evidence that cannot be validated is kept
+   and reported, never overwritten. "Proved different" and "cannot be compared" are
+   distinct answers, and only the first justifies replacing a completed success.
+6. **One canonical contract per artefact.** A validator recomputes rather than reads a
+   declared value. The same lock validation governs staging, retained reads,
+   currentness and execution.
+7. **Identifiers are not paths.** Any value that addresses a file — transaction id,
+   candidate identity — is accepted only in the exact form it is generated in, before
+   it addresses anything.
+8. **Publication changes something or does not happen.** A transaction that reproduces
+   what is already committed does not advance the committed history for work another
+   transaction performed.
+
+### Accepted limitations
+
+These are chosen, not overlooked, and each is fail-closed.
+
+**A completed effect can be stranded before its reservation is sealed.** The seal is
+the first commitment made outside the staging directory to the exact staged bytes. It
+cannot precede the staging it commits to, and staging cannot precede the effect. A
+crash in that window leaves a consumed effect claim, complete durable staging, and no
+provenance for those bytes: the protocol keeps them, refuses to publish them, and the
+claim keeps the candidate consumed. Crash injection at every durable write of an
+authorised preparation measures the window at one boundary in eleven. Operator
+disposition is required; see the retained-workspace recovery runbook.
+
+**A live but wedged owner blocks waiters indefinitely.** There is no lease and no
+clock, by design, because a lease that expires can hand a second caller the right to
+an effect the first is still performing. Recovery from a wedged owner is an operator
+action, not an automatic expiry.
+
+**Durability is within one retained workspace.** No distributed exactly-once claim is
+made across independently copied or concurrently diverged workspaces, unchanged from
+the addendum above.
+
+**Spec-supplied identifiers are trusted input.** Values authored in the experiment
+specification, unlike values read back from retained records, are not treated as
+hostile. Treating them otherwise is a separate decision.
