@@ -47,7 +47,7 @@ inherited, copied or loaded by adopting projects.
 - [Confine local Markdown filesystem references to the explicit project root](decisions/0034-confine-local-markdown-filesystem-references-to-the-explicit-project-root.md)
 - [Accept bounded first-party source-security sufficiency for the first OCI candidate](decisions/0035-accept-bounded-first-party-source-security-sufficiency-for-the-first-oci-candidate.md)
 - [Canonicalize bounded self-hosted delivery practice](decisions/0036-canonicalize-bounded-self-hosted-delivery-practice.md)
-- [Provide a version-bound CPython third-party attribution bundle](decisions/0037-provide-version-bound-cpython-third-party-attribution-bundle.md)
+- [Provide a version-bound CPython third-party attribution bundle](decisions/0037-provide-a-version-bound-cpython-third-party-attribution-bundle.md)
 - [Establish v0.1.1 as a source-only patch release identity](decisions/0038-establish-v0-1-1-as-a-source-only-patch-release-identity.md)
 - [Publish v0.1.1 as the first public GHCR image](decisions/0039-publish-v0-1-1-as-the-first-public-ghcr-image.md)
 - [Reconcile the v0.1.1 source and OCI publication result](decisions/0040-reconcile-the-v0-1-1-source-and-oci-publication-result.md)
