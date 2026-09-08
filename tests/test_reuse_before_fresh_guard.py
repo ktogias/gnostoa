@@ -39,12 +39,12 @@ class ReuseBeforeFreshGuardTests(CapsuleFixture):
         )
         spec = self.base_spec(repo, base, ref, adapter="node-vitest")
         spec["tasks"][0]["reference"]["commit"] = ref
-        spec["tasks"][0]["reference"]["tree"] = git(
-            repo, "rev-parse", ref + "^{tree}"
-        )
+        spec["tasks"][0]["reference"]["tree"] = git(repo, "rev-parse", ref + "^{tree}")
         return spec
 
-    def _current_synthetic_oci_receipt(self, spec: dict) -> qualification.QualificationReceipt:
+    def _current_synthetic_oci_receipt(
+        self, spec: dict
+    ) -> qualification.QualificationReceipt:
         loaded = load_spec(self.write_spec(spec))
         observed = compiler.prepare(
             loaded,
@@ -83,7 +83,9 @@ class ReuseBeforeFreshGuardTests(CapsuleFixture):
             bound=bound,
         )
 
-    def test_exact_approved_node_vitest_oci_reuse_precedes_fresh_only_guard(self) -> None:
+    def test_exact_approved_node_vitest_oci_reuse_precedes_fresh_only_guard(
+        self,
+    ) -> None:
         spec = self._node_vitest_spec()
         receipt = self._current_synthetic_oci_receipt(spec)
         receipt_path = self.root / "prior-oci-receipt.json"
