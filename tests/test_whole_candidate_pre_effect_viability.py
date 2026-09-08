@@ -217,7 +217,9 @@ class WholeCandidatePreEffectViabilityTests(CapsuleFixture):
             bound=compiler._qualification_bound(seed_loaded.tasks[0], seed.task("T1")),
         )
         prior_path = self.root / "mixed-prior.json"
-        prior_path.write_text(json.dumps(prior.as_json(), indent=2, sort_keys=True) + "\n")
+        prior_path.write_text(
+            json.dumps(prior.as_json(), indent=2, sort_keys=True) + "\n"
+        )
 
         mixed_spec = json.loads(json.dumps(spec))
         mixed_spec["tasks"][0]["prior_qualification"] = {"receipt": str(prior_path)}
