@@ -372,13 +372,21 @@ more standing than one that has done nothing. Resolving it by order permitted a
 zero-effect invocation to commit first and permanently fence out an invocation whose
 oracle had already run, which is the failure class #197 exists to prevent.
 
-### Five records, none standing in for another
+### Distinct durable facts
+
+None of these stands in for another, and conflating any two of them reintroduces a
+failure this decision exists to prevent.
 
 ```text
 COMMITTED SNAPSHOT   the last complete truth of the workspace, content-bound
 EFFECT RESERVATION   which transaction may cross the next effect boundary
 EFFECT CLAIM         proof the irreversible boundary was crossed
 LIVE OWNER           whether the reserving process still exists
+STAGED TRANSACTION   a transaction's complete output, durable before any of it is
+                     canonical, sealed by its own manifest written last
+RESERVATION SEAL     the reservation's commitment to the exact staged bytes — the
+                     first statement about those bytes made outside the directory
+                     holding them
 PUBLICATION INTENT   which staged transaction is being made canonical, and from
                      exactly which bytes
 ```
@@ -387,38 +395,52 @@ The publication intent is separate from the reservation because publishing and
 reserving are different acts performed by different callers: an invocation with no
 authority never reserves and still writes canonical files. Discovering an interrupted
 commit through the reservation stranded every torn publication such a caller left
-behind.
+behind. The seal is separate from the staged manifest because a manifest seals only
+the tree that contains it.
 
-### Properties the protocol commits to
+### Invariants
 
-1. **One coherent decision.** Recovering an abandonment, reading the committed state,
-   reading the reservation, judging liveness and installing a reservation happen
-   inside one coordination critical section. Every split between observing the
-   workspace and acting on that observation is a window in which the observation
-   expires.
-2. **Two locks with different jobs.** The coordination lock is held only across short
+1. **The claim is just-in-time.** It is established after the single deterministic
+   pre-effect guard path and immediately before the first actual qualification effect,
+   with nothing between the successful claim and that effect.
+2. **The seal binds exact bytes.** Before staged output may be finished forward, the
+   reservation must carry the manifest digest of that output. Request identity —
+   transaction, base, candidate, authority — says which request the output belongs to;
+   only the seal says which bytes.
+3. **Publication is ordered and recorded.** Intent first, then canonical members, then
+   the commit record, then the intent is cleared. The record is written last, so a
+   crash mid-publication leaves a workspace detectably inconsistent rather than an
+   older version an outdated writer may overwrite.
+4. **Recovery reads the record differently depending on the intent.** With a durable
+   intent, canonical files may legitimately be mid-write, so the commit record is read
+   for its structure. Without one, no publication is in flight, so the record and the
+   files it describes must agree. A structurally valid but false record is never
+   supersession authority.
+5. **One coherent decision.** Recovering an abandonment, reading the committed state,
+   reading the reservation, judging liveness and installing a reservation happen inside
+   one coordination critical section. Every split between observing the workspace and
+   acting on that observation is a window in which the observation expires.
+6. **Two locks with different jobs.** The coordination lock is held only across short
    metadata transitions, never across an effect. The owner-liveness lock is held for
-   the life of a transaction and confers no right to write; it answers liveness
-   without leases, heartbeats or clock comparison.
-3. **Durable staging, manifest last.** A transaction writes its whole output to
-   `.retained-transactions/<id>/` before any of it becomes canonical, so an
-   interrupted commit is finished forward from its own bytes rather than merely
-   detected.
-4. **Forward-only recovery.** A claimed transaction is never rolled back and never
+   the life of a transaction and confers no right to write; it answers liveness without
+   leases, heartbeats or clock comparison.
+7. **Forward-only recovery.** A claimed transaction is never rolled back and never
    freshly retried. Absence of recoverable evidence is never converted into permission
    to run the effect again.
-5. **Ambiguity is preserved, not resolved.** Evidence that cannot be validated is kept
+8. **Ambiguity is preserved, not resolved.** Evidence that cannot be validated is kept
    and reported, never overwritten. "Proved different" and "cannot be compared" are
    distinct answers, and only the first justifies replacing a completed success.
-6. **One canonical contract per artefact.** A validator recomputes rather than reads a
-   declared value. The same lock validation governs staging, retained reads,
-   currentness and execution.
-7. **Identifiers are not paths.** Any value that addresses a file — transaction id,
-   candidate identity — is accepted only in the exact form it is generated in, before
-   it addresses anything.
-8. **Publication changes something or does not happen.** A transaction that reproduces
-   what is already committed does not advance the committed history for work another
-   transaction performed.
+9. **One canonical contract per artefact.** A validator recomputes rather than reads a
+   declared value. The same lock validation governs staging, retained reads, currentness
+   and execution.
+10. **Containment is anchored, not checked.** The supplied workspace root is the trust
+    anchor; every retained-transaction descendant is reached relative to a descriptor
+    already held, never by re-resolving a pathname. Any value that addresses a file —
+    transaction id, candidate identity — is accepted only in the exact form it is
+    generated in, before it addresses anything.
+11. **Publication changes something or does not happen.** A transaction that reproduces
+    what is already committed does not advance the committed history for work another
+    transaction performed.
 
 ### Accepted limitations
 
@@ -427,21 +449,27 @@ These are chosen, not overlooked, and each is fail-closed.
 **A completed effect can be stranded before its reservation is sealed.** The seal is
 the first commitment made outside the staging directory to the exact staged bytes. It
 cannot precede the staging it commits to, and staging cannot precede the effect. A
-crash in that window leaves a consumed effect claim, complete durable staging, and no
-provenance for those bytes: the protocol keeps them, refuses to publish them, and the
-claim keeps the candidate consumed. Crash injection at every durable write of an
-authorised preparation measures the window at one boundary in eleven. Operator
-disposition is required; see the retained-workspace recovery runbook.
+crash in that window leaves a consumed effect claim and complete, self-consistent
+staged output that nothing outside its own directory vouches for: the protocol keeps
+those bytes, refuses to publish them, and the claim keeps the candidate consumed.
+Operator disposition is required; see the retained-workspace recovery runbook.
+
+The window is a property of the ordering. Its width is not: at the PR #200 candidate
+`0d53ed43`, crash injection at every durable write of an authorised preparation
+measured one stranded boundary among eleven. That count is evidence about a revision,
+not an invariant, and changes if a durable write is added or removed.
 
 **A live but wedged owner blocks waiters indefinitely.** There is no lease and no
-clock, by design, because a lease that expires can hand a second caller the right to
-an effect the first is still performing. Recovery from a wedged owner is an operator
+clock, by design, because a lease that expires can hand a second caller the right to an
+effect the first is still performing. Recovery from a wedged owner is an operator
 action, not an automatic expiry.
 
 **Durability is within one retained workspace.** No distributed exactly-once claim is
 made across independently copied or concurrently diverged workspaces, unchanged from
 the addendum above.
 
-**Spec-supplied identifiers are trusted input.** Values authored in the experiment
-specification, unlike values read back from retained records, are not treated as
-hostile. Treating them otherwise is a separate decision.
+**Hardening of spec-authored identifiers is outside this scope.** Values read back from
+retained records are validated before they address anything. Values authored in the
+experiment specification are unchanged by this decision and are not covered by that
+treatment; whether they should be is a separate question this decision neither answers
+nor forecloses.

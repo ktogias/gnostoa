@@ -55,8 +55,8 @@ oracle.
 The effect claim under `preflight-effects/` records that an irreversible qualification
 began. It is deliberately not removable as part of recovery. If a candidate's claim
 exists, that candidate is spent — whatever else is missing, and however inconvenient
-that is. Reaching readiness again requires a new prospective experiment identity, a
-newly observed candidate and a new exact authority, exactly as
+that is. Reaching readiness again requires **a new prospective experiment identity, a newly
+observed candidate identity and a new exact authority** — all three, as
 [decision 0059](../decisions/0059-compile-declarative-experiment-capsules-over-the-owner-led-runner.md)
 requires.
 
@@ -70,21 +70,33 @@ requires.
   the evidence.
 - Do not delete `.retained-transactions/`. It holds the only copy of results that were
   completed but not published.
-- Do not re-run a preparation "to see if it clears". It will not, and a preparation
-  that did clear would be the thing to worry about.
+- Do not re-run a preparation repeatedly hoping for a different answer. A single
+  preparation **is** the supported recovery — it finishes an interrupted publication
+  forward where the provenance allows — so run it once, deliberately, and record what
+  it returns. Repeating it after a refusal changes nothing and obscures which attempt
+  produced which state.
 
 ## Procedure
 
 ### Quarantine first
 
-Before inspecting, take a copy that preserves the exact bytes and stop further
-preparations against the original:
+Stop further preparations against the workspace **before** copying it, and confirm no
+owner still holds it. A copy taken while a transaction is writing is not a coherent
+snapshot of anything:
 
 ```sh
+# No owner may hold the workspace while the copy is taken.
+fuser -v "$WORKSPACE/.retained-transactions/"*/owner.lock 2>/dev/null
+
+# Quiescent, or taken as an atomic filesystem snapshot if the storage provides one.
 cp -a "$WORKSPACE" "$WORKSPACE.quarantine.$(date -u +%Y%m%dT%H%M%SZ)"
 ```
 
-Inspect the copy. The original is the record.
+If an owner is still live, resolve that first — see the wedged-owner disposition
+below — rather than copying underneath it.
+
+Inspect the copy. **The quarantine is a forensic backup, never a rollback source.** It
+is not copied back over the original at any point in this runbook.
 
 ### Diagnose
 
@@ -106,24 +118,38 @@ Read, in this order, and record what each says:
 
 #### A completed result that cannot be published
 
-**Signs.** A reservation exists with no `staged_manifest_sha256`; its staging directory
-holds a complete `manifest.json`; the effect claim for that candidate exists; retries
-report `preflight-candidate-already-consumed`.
+**Signs.** The effect claim for the candidate exists, a staging directory holds a
+complete `manifest.json`, and preparation reports `preflight-candidate-already-consumed`.
+
+The reservation looks different depending on when you look:
+
+- *before any further preparation* — a reservation exists and carries no
+  `staged_manifest_sha256`;
+- *after a preparation has run* — no reservation, because recovery released it. An
+  unsealed reservation vouches for nothing, so it is cleared while the staged output
+  it failed to seal is deliberately kept.
+
+Both are the same situation. The absence of a reservation after a retry is not a
+second problem.
 
 **What happened.** The transaction ran the oracle, staged its output completely, and
 stopped before sealing the reservation to those exact bytes. The seal is the first
 commitment made outside the staging directory, so nothing vouches for that output.
 
 **Disposition.** This is a known accepted limitation of the protocol, not a fault in
-the workspace. The result is genuine and is preserved under
-`.retained-transactions/`; it is not published because nothing establishes that those
-bytes are the ones the transaction produced. The candidate is spent.
+the workspace. The staged output is complete and internally self-consistent, and it is
+preserved under `.retained-transactions/`. That is the strongest thing that can be
+said about it: **the protocol does not vouch for those bytes as this transaction's
+output**, because the commitment that would have done so was never written. They may
+be examined; they may not be called a proven or canonical result. The candidate is
+spent either way.
 
-The owner decides between reading the staged output as evidence in its own right —
-recording explicitly that it was recovered by hand and never carried the protocol's
-provenance — and re-running under a new candidate and authority. **Publishing the
-staged bytes into the workspace by hand is not one of the options**: it would create
-exactly the appearance of provenance the protocol refused to assert.
+The owner decides between examining the staged output as forensic material — recording
+explicitly that it was read by hand and never carried the protocol's provenance — and
+re-running under a new prospective experiment identity, a newly observed candidate and
+a new exact authority. **Publishing the staged bytes into the workspace by hand is not
+one of the options**: it would manufacture exactly the provenance the protocol declined
+to assert.
 
 #### An inconsistent workspace
 
@@ -174,14 +200,15 @@ do not proceed with diagnosis against a workspace that may be losing bytes.
 
 If a disposition was applied and the workspace still refuses, do not apply a second
 one. Two hand dispositions against the same workspace cannot both be reconstructed
-afterwards. Restore the quarantined copy, record what was attempted, and treat the
-workspace as evidence rather than as a workspace.
+afterwards. Record what was attempted and retire the workspace; the quarantine copy is
+the record of what it looked like, not a version to put back.
 
 If a record was edited before this runbook was consulted, the workspace can no longer
 be diagnosed: the disagreement that would have identified what happened is gone.
-Restore from quarantine if a copy exists, and otherwise retire the workspace and
-re-run under a new candidate and authority. An edited workspace must never be
-presented as a recovered one.
+Retire it and re-run under a new prospective experiment identity, a newly observed
+candidate and a new exact authority. Do not copy the quarantine back over it — a
+workspace reconstructed from a backup is not the workspace the evidence came from, and
+an edited workspace must never be presented as a recovered one.
 
 ## Verification
 
@@ -192,9 +219,10 @@ original workspace rather than the quarantined copy:
 - No record under the workspace root was edited by hand.
 - `status` reports either `READY_FOR_OWNER_REVIEW` reached without intervention, or a
   refusal whose blocker matches the diagnosis recorded above.
-- If a completed result was recovered by hand from `.retained-transactions/`, the
-  record of that says explicitly that it was recovered by hand and did not carry the
-  protocol's provenance.
+- If staged output was examined by hand from `.retained-transactions/`, the record of
+  that says explicitly that it was read by hand and did not carry the protocol's
+  provenance.
+- The quarantine copy was not written back over the workspace.
 - The disposition, its reasoning and the quarantine path are written down where the
   experiment's evidence lives, not only in a terminal.
 
