@@ -1157,11 +1157,11 @@ def _deterministic_pre_effect_blocker(
 ) -> dict[str, object] | None:
     """Return a deterministic refusal that proves this task cannot reach an effect.
 
-    The real fresh-qualification path is the single place these guards run. A task
-    whose authorised candidate binds exact prior-receipt reuse is consumed before
-    this helper is called. Fresh effect claims are created only after all pre-effect
-    work for the first actual fresh qualification has completed, immediately before
-    ``qualify_subjects()``.
+    The candidate-wide fresh-viability pass is the single place these guards run.
+    A task whose authorised candidate binds exact prior-receipt reuse is excluded
+    from that pass. The candidate-wide fresh-effect claim is created only after all
+    fresh tasks have passed deterministic pre-effect viability, immediately before
+    the first actual ``qualify_subjects()`` effect.
     """
     if qualification_backend == "oci" and task.adapter != "python-pytest":
         return {
@@ -1808,36 +1808,47 @@ def prepare(
 
         if not qualification_reused:
             ledger.enter(stages.BASE_REFERENCE_QUALIFIED, qualification_stage_inputs)
+
+            # Settle every deterministic refusal for the exact fresh subset before
+            # opening the one candidate-wide irreversible transaction. Exact approved
+            # prior reuse is zero-effect and deliberately excluded from fresh checks.
+            for task in spec.tasks:
+                if resolved_priors.get(task.id) is not None:
+                    continue
+                guard = _deterministic_pre_effect_blocker(
+                    task,
+                    tasks[task.id],
+                    qualification_backend=qualification_backend,
+                )
+                if guard is not None:
+                    blockers.append(guard)
+            if blockers:
+                return finish(stages.STATIC_QUALIFIED)
+
             for task in spec.tasks:
                 current = tasks[task.id]
 
                 # The disposition was settled before the candidate was emitted and the owner
                 # authorised that exact digest. Exact prior reuse is zero-effect, so consume it
-                # before checks which exist only to admit fresh qualification execution.
+                # before the fresh-effect execution path.
                 approved_prior = resolved_priors.get(task.id)
                 if approved_prior is not None:
                     current.qualification = approved_prior
                     current.qualification_reused = True
                     continue
 
-                guard = _deterministic_pre_effect_blocker(
-                    task, current, qualification_backend=qualification_backend
-                )
-                if guard is not None:
-                    blockers.append(guard)
-                    continue
                 harness = current.harness
                 bound = _qualification_bound(task, current)
-                # The helper above is the sole runtime check for subject availability;
-                # these casts preserve that proven invariant for static type checking
-                # without duplicating the guard conditions here.
+                # The candidate-wide viability pass above is the sole runtime check for
+                # subject availability; these casts preserve that proven invariant for
+                # static type checking without duplicating guard conditions here.
                 base_path = cast(Path, current.base_path)
                 reference_path = cast(Path, current.reference_path)
 
-                # No effect-bearing operation has started while the claim is absent. If
-                # any earlier task or future pre-effect refusal accumulated a blocker,
-                # stop before consuming the candidate. Once the claim succeeds, the very
-                # next top-level operation is the first actual qualification effect.
+                # Candidate-wide deterministic viability was already settled before
+                # this ordered effect loop. Keep the generic blocker gate immediately
+                # before the one-shot claim so any future in-loop pre-effect refusal
+                # inserted ahead of the first effect still cannot consume the candidate.
                 if blockers and not effect_claimed:
                     return finish(stages.STATIC_QUALIFIED)
                 if not effect_claimed:
