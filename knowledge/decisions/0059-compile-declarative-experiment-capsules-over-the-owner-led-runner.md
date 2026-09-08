@@ -316,3 +316,165 @@ host-local one for pure-Python subjects and an OCI one that reuses the runner; a
 structured blocker rather than a weaker claim. And the execution boundary is enforced over
 declared filesystem surfaces, which catches the containment failures this system can create; it
 is not a claim about what a hostile process could infer by other means.
+
+## Addendum — single-transaction fresh preflight authority (#197)
+
+A `gnostoa-preflight-authority/v2` record continues to bind exactly one experiment,
+scope and prepared candidate. Its public schema is unchanged. Exact candidate binding is
+necessary but not sufficient for an effect-bearing preflight: a fresh qualification also has
+a retained-workspace consumption boundary.
+
+1. A prepared candidate containing at least one ordered task with
+   `qualification_mode: fresh` is one effect-bearing BASE/REFERENCE qualification
+   transaction.
+2. After the compiler recomputes that candidate and exact experiment/scope/candidate
+   authority coverage succeeds, but **before the first `qualify_subjects()` call,
+   runner/container start or hidden-oracle effect**, the retained workspace must
+   durably and create-only claim that exact fresh candidate as consumed.
+3. The consumption claim is append-only evidence separate from resumable stage
+   completion. Once present, the same fresh candidate cannot be opened again whether
+   the first invocation succeeded, failed, raised, crashed or stopped after BASE
+   before REFERENCE.
+4. A different or newly issued authority does not reopen an already-consumed
+   candidate. A replacement attempt requires a new prospective experiment identity,
+   a newly observed candidate identity and a new exact authority.
+5. One uninterrupted invocation may still execute the preregistered ordered
+   BASE→REFERENCE sequence and any additional ordered fresh tasks as that single
+   transaction. The claim is not a per-subject token that permits later continuation.
+6. A candidate whose ordered task dispositions are all `qualification_mode: reuse`
+   is zero-effect for hidden-oracle qualification and does not consume a fresh-effect
+   transaction claim. Existing exact prior-receipt currentness and candidate binding
+   remain unchanged.
+7. Authority-less preparation remains replayable and effect-free; observing a
+   candidate cannot consume it.
+8. The guarantee is durability within one retained workspace across process restart.
+   It makes no distributed exactly-once claim across independently copied or
+   concurrently diverged workspaces.
+
+The selected implementation shape for a later admitted slice is a separate retained
+create-only effect record keyed by the exact prospective candidate and recording the exact
+canonical authority payload/identity. It must be durably established before effect and must
+not overload `StageLedger`, because stage invalidation/re-entry semantics are intentionally
+resumable while an effect-bearing authority consumption record is intentionally irreversible.
+
+## Addendum — durable retained-workspace transaction protocol (#197 implementation)
+
+The addendum above selected a create-only effect record and deliberately left the
+implementation mechanism open. Implementing it showed that the record alone is not
+enough, and the shape that replaced it is an architectural decision rather than a
+detail, so it is recorded here.
+
+`prepare()` reads a retained workspace once, works for a long time — including a
+hidden-oracle qualification that cannot be repeated — and only then persists.
+Arbitrating that by arrival order is wrong, because the contenders are not
+equivalent: an invocation that has crossed the irreversible boundary has strictly
+more standing than one that has done nothing. Resolving it by order permitted a
+zero-effect invocation to commit first and permanently fence out an invocation whose
+oracle had already run, which is the failure class #197 exists to prevent.
+
+### Distinct durable facts
+
+None of these stands in for another, and conflating any two of them reintroduces a
+failure this decision exists to prevent.
+
+```text
+COMMITTED SNAPSHOT   the last complete truth of the workspace, content-bound
+EFFECT RESERVATION   which transaction may cross the next effect boundary
+EFFECT CLAIM         proof the irreversible boundary was crossed
+LIVE OWNER           whether the reserving process still exists
+STAGED TRANSACTION   a transaction's complete output, durable before any of it is
+                     canonical, sealed by its own manifest written last
+RESERVATION SEAL     the reservation's commitment to the exact staged bytes — the
+                     first statement about those bytes made outside the directory
+                     holding them
+PUBLICATION INTENT   which staged transaction is being made canonical, and from
+                     exactly which bytes
+```
+
+The publication intent is separate from the reservation because publishing and
+reserving are different acts performed by different callers: an invocation with no
+authority never reserves and still writes canonical files. Discovering an interrupted
+commit through the reservation stranded every torn publication such a caller left
+behind. The seal is separate from the staged manifest because a manifest seals only
+the tree that contains it.
+
+### Invariants
+
+1. **The claim is just-in-time.** It is established after the single deterministic
+   pre-effect guard path and immediately before the first actual qualification effect,
+   with nothing between the successful claim and that effect.
+2. **Staged output is finished forward only against a commitment to its exact bytes,
+   and there are two such commitments.** Where an effect reservation covers the
+   transaction, that reservation must carry the staged manifest digest before its
+   output may be published: request identity — transaction, base, candidate, authority
+   — says which request the output belongs to, and only the seal says which bytes. A
+   publication by a caller that never reserved, which an authority-less invocation
+   never does, is vouched for instead by its durable publication intent, which binds
+   the exact staged manifest it had begun publishing. Neither commitment substitutes
+   for the other.
+3. **Publication is ordered and recorded.** Intent first, then canonical members, then
+   the commit record, then the intent is cleared. The record is written last, so a
+   crash mid-publication leaves a workspace detectably inconsistent rather than an
+   older version an outdated writer may overwrite.
+4. **Recovery reads the record differently depending on the intent.** With a durable
+   intent, canonical files may legitimately be mid-write, so the commit record is read
+   for its structure. Without one, no publication is in flight, so the record and the
+   files it describes must agree. A structurally valid but false record is never
+   supersession authority.
+5. **One coherent decision.** Recovering an abandonment, reading the committed state,
+   reading the reservation, judging liveness and installing a reservation happen inside
+   one coordination critical section. Every split between observing the workspace and
+   acting on that observation is a window in which the observation expires.
+6. **Two locks with different jobs.** The coordination lock is held only across short
+   metadata transitions, never across an effect. The owner-liveness lock is held for
+   the life of a transaction and confers no right to write; it answers liveness without
+   leases, heartbeats or clock comparison.
+7. **Forward-only recovery.** A claimed transaction is never rolled back and never
+   freshly retried. Absence of recoverable evidence is never converted into permission
+   to run the effect again.
+8. **Ambiguity is preserved, not resolved.** Evidence that cannot be validated is kept
+   and reported, never overwritten. "Proved different" and "cannot be compared" are
+   distinct answers, and only the first justifies replacing a completed success.
+9. **One canonical contract per artefact.** A validator recomputes rather than reads a
+   declared value. The same lock validation governs staging, retained reads, currentness
+   and execution.
+10. **Containment is anchored, not checked.** The supplied workspace root is the trust
+    anchor; every retained-transaction descendant is reached relative to a descriptor
+    already held, never by re-resolving a pathname. Any value that addresses a file —
+    transaction id, candidate identity — is accepted only in the exact form it is
+    generated in, before it addresses anything.
+11. **Publication changes something or does not happen.** A transaction that reproduces
+    what is already committed does not advance the committed history for work another
+    transaction performed.
+
+### Accepted limitations
+
+These are chosen, not overlooked, and each is fail-closed.
+
+**A completed effect can be stranded before its reservation is sealed.** The seal is
+the first commitment made outside the staging directory to the exact staged bytes. It
+cannot precede the staging it commits to, and staging cannot precede the effect. A
+crash in that window leaves a consumed effect claim and complete, self-consistent
+staged output that nothing outside its own directory vouches for: the protocol keeps
+those bytes, refuses to publish them, and the claim keeps the candidate consumed.
+Operator disposition is required; see the retained-workspace recovery runbook.
+
+The window is a property of the ordering. Its width is not: at the PR #200 candidate
+`0d53ed43`, crash injection at every durable write of an authorised preparation
+measured one stranded boundary among eleven. That count is evidence about a revision,
+not an invariant, and changes if a durable write is added or removed.
+
+**A live but wedged owner blocks waiters indefinitely.** There is no lease and no
+clock, by design, because a lease that expires can hand a second caller the right to an
+effect the first is still performing. Recovery from a wedged owner is an operator
+action, not an automatic expiry.
+
+**Durability is within one retained workspace.** No distributed exactly-once claim is
+made across independently copied or concurrently diverged workspaces, unchanged from
+the addendum above.
+
+**Hardening of spec-authored identifiers is outside this scope.** Values read back from
+retained records are validated before they address anything. Values authored in the
+experiment specification are unchanged by this decision and are not covered by that
+treatment; whether they should be is a separate question this decision neither answers
+nor forecloses.

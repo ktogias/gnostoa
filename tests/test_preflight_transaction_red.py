@@ -1,0 +1,385 @@
+"""RED transaction packet for the #200 retained-transaction model.
+
+These state invariants, not a mechanism. Each one is expressed in terms of what a
+workspace must contain after an interleaving, so that whichever protocol is chosen
+-- generation CAS, effect-aware reservation, or something else -- has to satisfy the
+same observable contract.
+
+The safety interleavings are deterministic: a second invocation is driven from
+inside a patched seam of the first, never by threads or timing. The reconciliation
+invariant needs controlled real concurrency, because a waiter's required behaviour
+is to still be waiting while the owner holds the transaction; it is ordered by
+explicit events signalled from inside the waiter, never by sleeps or scheduling
+luck, and it asserts outcomes rather than timings. All fixtures are synthetic and
+the qualification effect is patched and counted; no Phase-D material and no hidden
+oracle participates.
+
+At head 4d4d2a6b these are expected to be RED. They are the evidence a repair must
+turn green, and they are deliberately written before any repair exists.
+
+Three of the original eight were written against the generation-counter API
+(``GENERATION_FILENAME``, ``read_generation``, ``_write_generation``,
+``commit_if_current``) that the approved reservation model removes, so they state a
+mechanism rather than the contract. Their exact historical text remains reachable at
+f00aae0112575f176f3555d5c3d09ac1ff3b2b29. The semantic contract they carried is
+retained in ``test_retained_commit_record_integrity`` -- unreadable is not initial, a
+torn commit is not an older valid version, a stale snapshot cannot overwrite a newer
+completion -- restated against the committed record. They are migrated rather than
+skipped: a permanent skip records neither the property nor its loss.
+"""
+
+from __future__ import annotations
+
+import json
+import unittest
+from unittest import mock
+
+from tools.capsule import compiler, qualification, retained_commit
+from tools.capsule import lock as lock_module
+from tools.capsule.identity import digest_of
+
+try:
+    from test_preflight_authority_consumption import ConsumptionFixture
+except ImportError:  # invoked as tests.<module> from the repository root
+    from tests.test_preflight_authority_consumption import ConsumptionFixture
+
+
+def _receipt(task_id: str, bound: dict[str, str]) -> qualification.QualificationReceipt:
+    base = qualification.SubjectOutcome(
+        subject="base",
+        collected=True,
+        passed=(),
+        failed=("test_discriminates",),
+        error_types={},
+        classification=qualification.MATCH,
+        detail="synthetic",
+    )
+    reference = qualification.SubjectOutcome(
+        subject="reference",
+        collected=True,
+        passed=("test_discriminates",),
+        failed=(),
+        error_types={},
+        classification=qualification.MATCH,
+        detail="synthetic",
+    )
+    return qualification.QualificationReceipt(
+        task=task_id,
+        backend="local-python",
+        base=base,
+        reference=reference,
+        bound=bound,
+    )
+
+
+class EffectBearingTransactionTests(ConsumptionFixture):
+    """An invocation that crossed the irreversible boundary must be able to finish."""
+
+    def test_zero_effect_commit_cannot_fence_out_a_completed_qualification(
+        self,
+    ) -> None:
+        """The central invariant: an effect that happened must be recordable.
+
+        A prepare that has consumed the claim and run the oracle holds strictly more
+        standing than one that has done nothing irreversible. Resolving that by
+        arrival order loses the result of a non-repeatable effect, which is the
+        failure class this work exists to prevent.
+        """
+        observed = self.prepare()
+        candidate = observed.preflight_candidate_sha256
+        assert candidate is not None
+        authority = self.authority(candidate)
+        effects: list[str] = []
+
+        def qualify_then_let_a_zero_effect_prepare_commit(*args, **kwargs):  # type: ignore[no-untyped-def]
+            del args
+            effects.append("qualify_subjects")
+            # A zero-effect invocation commits while the winner is mid-effect.
+            self.prepare()
+            return _receipt(
+                kwargs.get("task_id", "T1"), dict(kwargs.get("bound") or {})
+            )
+
+        with mock.patch.object(
+            compiler,
+            "qualify_subjects",
+            side_effect=qualify_then_let_a_zero_effect_prepare_commit,
+        ):
+            winner = self.prepare(authority=authority)
+
+        self.assertEqual(effects, ["qualify_subjects"])
+        current = compiler.status(self.workspace)
+        self.assertEqual(
+            winner.status,
+            "READY_FOR_OWNER_REVIEW",
+            "an invocation whose irreversible effect succeeded must not be fenced out",
+        )
+        self.assertEqual(current["status"], "READY_FOR_OWNER_REVIEW")
+        self.assertIsNotNone(
+            current["lock_sha256"],
+            "the successful transaction must be able to record its lock",
+        )
+
+    def test_a_transaction_that_cannot_commit_leaves_no_orphan_lock(self) -> None:
+        """Lock publication belongs to the same recoverable transaction as the state.
+
+        An immutable lock written outside the committing transaction can survive a
+        commit that never happened, and a later recovery then meets a lock conflict
+        for a transaction the public state never recorded.
+        """
+        observed = self.prepare()
+        candidate = observed.preflight_candidate_sha256
+        assert candidate is not None
+        authority = self.authority(candidate)
+
+        def qualify_then_commit_elsewhere(*args, **kwargs):  # type: ignore[no-untyped-def]
+            del args
+            self.prepare()
+            return _receipt(
+                kwargs.get("task_id", "T1"), dict(kwargs.get("bound") or {})
+            )
+
+        with mock.patch.object(
+            compiler, "qualify_subjects", side_effect=qualify_then_commit_elsewhere
+        ):
+            self.prepare(authority=authority)
+
+        current = compiler.status(self.workspace)
+        lock_present = (self.workspace / "experiment.lock").is_file()
+        if current["lock_sha256"] is None:
+            self.assertFalse(
+                lock_present,
+                "an uncommitted transaction must not leave an immutable lock behind",
+            )
+
+
+class RetainedLockBindingTests(ConsumptionFixture):
+    """Canonical validity is not provenance."""
+
+    def _complete(self) -> str:
+        observed = self.prepare()
+        candidate = observed.preflight_candidate_sha256
+        assert candidate is not None
+        with mock.patch.object(
+            compiler,
+            "qualify_subjects",
+            side_effect=lambda *a, **k: _receipt(
+                k.get("task_id", "T1"), dict(k.get("bound") or {})
+            ),
+        ):
+            self.prepare(authority=self.authority(candidate))
+        return candidate
+
+    def test_substituted_lock_with_recomputed_digest_cannot_prove_currentness(
+        self,
+    ) -> None:
+        """A self-consistent lock is not necessarily *this* completion's lock.
+
+        Fields excluded from the currentness comparison can be rewritten and the
+        digest recomputed. Canonical loading still succeeds, so the retained lock
+        must additionally be bound to the identity the successful transaction
+        recorded.
+        """
+        self._complete()
+        retained_identity = compiler.status(self.workspace)["lock_sha256"]
+        path = self.workspace / "experiment.lock"
+        payload = {
+            key: value
+            for key, value in json.loads(path.read_text()).items()
+            if key != "lock_sha256"
+        }
+        payload["tasks"] = [{"id": "SUBSTITUTED", "capsule_identity": "0" * 64}]
+        payload["lock_sha256"] = digest_of(payload)
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True))
+
+        # The substitution is canonically valid but is a different lock.
+        lock_module.load(path)
+        self.assertNotEqual(payload["lock_sha256"], retained_identity)
+
+        self.prepare()
+        self.assertEqual(
+            compiler.status(self.workspace)["status"],
+            "BLOCKED",
+            "a lock that is not the retained completion's lock must not prove READY",
+        )
+
+
+class ConcurrentReconciliationTests(ConsumptionFixture):
+    """Liveness, not only safety: a legitimate waiter must converge, not fail.
+
+    The other six invariants can all be satisfied by a protocol that simply refuses
+    everyone except the transaction owner. That would be safe and operationally
+    wrong, so this states the semantics a reservation must not collapse into: an
+    exclusive right to perform the effect-bearing transaction, rather than an
+    exclusive right to touch the workspace at all.
+
+    Unlike the safety cases this one needs genuine concurrency, because the waiter's
+    required behaviour is to still be waiting while the owner is mid-transaction. It
+    asserts outcomes only -- never how long anything took, nor that any particular
+    primitive was used -- so waiting, optimistic retry or any other correct design
+    satisfies it.
+    """
+
+    def test_identical_authorised_waiter_reconciles_to_the_single_winner(self) -> None:
+        import threading
+
+        observed = self.prepare()
+        candidate = observed.preflight_candidate_sha256
+        assert candidate is not None
+        authority = self.authority(candidate)
+
+        owner_in_effect = threading.Event()
+        waiter_observed_owner = threading.Event()
+        observed_by: list[str] = []
+        effects: list[str] = []
+        results: dict[str, object] = {}
+        roles: dict[int, str] = {}
+        threads: dict[str, threading.Thread] = {}
+
+        real_read_reservation = retained_commit.read_reservation
+
+        def role_of() -> str:
+            return roles.get(threading.get_ident(), "unattributed")
+
+        def observation_seam(root):  # type: ignore[no-untyped-def]
+            reservation = real_read_reservation(root)
+            # Released only once the waiter has actually observed the owner's live
+            # reservation. Signalling any earlier -- at launch, or at the candidate
+            # computation -- lets the owner finish and clear the reservation before
+            # the waiter ever looks, so the interleaving under test would depend on
+            # scheduling rather than being pinned by it.
+            if role_of() == "waiter" and reservation is not None:
+                if not observed_by:
+                    observed_by.append("waiter")
+                waiter_observed_owner.set()
+            return reservation
+
+        def qualify(*args, **kwargs):  # type: ignore[no-untyped-def]
+            del args
+            effects.append(role_of())
+            if role_of() == "owner":
+                owner_in_effect.set()
+                waiter_observed_owner.wait(timeout=30)
+            return _receipt(
+                kwargs.get("task_id", "T1"), dict(kwargs.get("bound") or {})
+            )
+
+        # Built once, before either thread starts: the fixture writes the spec to a
+        # shared path, so letting both threads build it would race in the harness
+        # rather than in the code under test.
+        shared_spec = self._spec()
+
+        def run(role: str) -> None:
+            roles[threading.get_ident()] = role
+            try:
+                results[role] = compiler.prepare(
+                    shared_spec,
+                    self.workspace,
+                    offline=True,
+                    preflight_authority=authority,
+                )
+            except Exception as exc:  # recorded rather than raised across threads
+                results[f"{role}_error"] = exc
+
+        with (
+            mock.patch.object(
+                retained_commit, "read_reservation", side_effect=observation_seam
+            ),
+            mock.patch.object(compiler, "qualify_subjects", side_effect=qualify),
+        ):
+            threads["owner"] = threading.Thread(target=run, args=("owner",))
+            threads["owner"].start()
+            self.assertTrue(
+                owner_in_effect.wait(timeout=30), "the owner never entered its effect"
+            )
+            threads["waiter"] = threading.Thread(target=run, args=("waiter",))
+            threads["waiter"].start()
+            waiter_observed_owner.wait(timeout=30)
+            # Fallback release so a protocol that never observes cannot hang the
+            # owner. It cannot fake the requirement below: only the waiter itself
+            # appends to observed_by.
+            waiter_observed_owner.set()
+            for thread in threads.values():
+                thread.join(timeout=60)
+
+        for name, thread in threads.items():
+            self.assertFalse(thread.is_alive(), f"{name} did not finish")
+        self.assertEqual(
+            observed_by,
+            ["waiter"],
+            "the waiter never observed the owner's live transaction, so no overlap "
+            "was exercised",
+        )
+        self.assertNotIn("owner_error", results)
+        self.assertNotIn("waiter_error", results)
+        self.assertEqual(
+            effects,
+            ["owner"],
+            "exactly one effect may run, and it must be the owner's",
+        )
+
+        owner_result = results["owner"]
+        waiter_result = results["waiter"]
+        self.assertEqual(owner_result.status, "READY_FOR_OWNER_REVIEW")
+        self.assertEqual(
+            waiter_result.status,
+            "READY_FOR_OWNER_REVIEW",
+            "an identical authorised waiter must reconcile onto the winning "
+            "transaction, not receive a terminal concurrency refusal",
+        )
+        self.assertNotIn(
+            retained_commit.CONCURRENT_STATE_CHANGED,
+            [blocker["code"] for blocker in waiter_result.blockers],
+        )
+
+        current = compiler.status(self.workspace)
+        # Returning some READY is not enough: the waiter must have converged on the
+        # same committed transaction rather than produced one of its own.
+        self.assertEqual(waiter_result.lock_identity, owner_result.lock_identity)
+        self.assertEqual(current["lock_sha256"], owner_result.lock_identity)
+        self.assertEqual(
+            waiter_result.stage_receipts(),
+            owner_result.stage_receipts(),
+            "both callers must observe the same retained stage receipts",
+        )
+
+
+class ConcurrentAuthorityLessCallerTests(ConsumptionFixture):
+    """A caller with no authority may stay blocked, but must not fence the owner."""
+
+    def test_authority_less_caller_stays_blocked_without_disturbing_the_winner(
+        self,
+    ) -> None:
+        observed = self.prepare()
+        candidate = observed.preflight_candidate_sha256
+        assert candidate is not None
+        effects: list[str] = []
+
+        def qualify_then_let_an_authority_less_caller_run(*args, **kwargs):  # type: ignore[no-untyped-def]
+            del args
+            effects.append("qualify_subjects")
+            results["authority_less"] = self.prepare()
+            return _receipt(
+                kwargs.get("task_id", "T1"), dict(kwargs.get("bound") or {})
+            )
+
+        results: dict[str, object] = {}
+        with mock.patch.object(
+            compiler,
+            "qualify_subjects",
+            side_effect=qualify_then_let_an_authority_less_caller_run,
+        ):
+            owner = self.prepare(authority=self.authority(candidate))
+
+        self.assertEqual(effects, ["qualify_subjects"])
+        # The authority-less caller is entitled to remain blocked ...
+        self.assertEqual(results["authority_less"].status, "BLOCKED")
+        # ... but not to cost the owner its committed transaction.
+        self.assertEqual(owner.status, "READY_FOR_OWNER_REVIEW")
+        current = compiler.status(self.workspace)
+        self.assertEqual(current["status"], "READY_FOR_OWNER_REVIEW")
+        self.assertIsNotNone(current["lock_sha256"])
+
+
+if __name__ == "__main__":
+    unittest.main()

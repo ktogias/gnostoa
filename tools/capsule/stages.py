@@ -102,15 +102,23 @@ class StageLedger:
                 receipt_sha256=payload.get("receipt_sha256"),
             )
 
-    def save(self) -> None:
-        self.root.mkdir(parents=True, exist_ok=True)
+    def serialised(self) -> str:
+        """The ledger exactly as save() would write it.
+
+        Separated so a transaction can stage the ledger and publish it later as part
+        of one commit, rather than writing it before knowing the commit will happen.
+        """
         payload = {
             "schema": "gnostoa-capsule-stage-ledger/v1",
             "records": {
                 stage: record.as_json() for stage, record in self.records.items()
             },
         }
-        self.path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        return json.dumps(payload, indent=2, sort_keys=True) + "\n"
+
+    def save(self) -> None:
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(self.serialised())
 
     def enter(
         self, stage: str, inputs: Mapping[str, object]
