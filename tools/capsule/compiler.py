@@ -639,7 +639,7 @@ def _prepare_task(
                 {
                     "task": task.id,
                     "code": "identification-key-missing",
-                    "detail": f"{task.identification_key_path} is not present locally",
+                    "detail": f"{task.identification_key_path} is not present",
                 }
             )
         else:
