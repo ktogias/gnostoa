@@ -260,7 +260,7 @@ After the irreversible boundary:
 
 - sufficient provenance -> finish forward;
 - insufficient or damaged provenance -> preserve and fail closed;
-- no path -> infer “nothing happened” and rerun the effect.
+- absence of recoverable provenance is never converted into proof that nothing happened or permission to rerun the effect.
 
 This is the central safety decision of the PR.
 
