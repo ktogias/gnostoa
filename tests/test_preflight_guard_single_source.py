@@ -22,13 +22,13 @@ def _contains_call(node: ast.AST, name: str) -> bool:
 
 
 class DeterministicPreEffectGuardTests(unittest.TestCase):
-    def test_prepare_claims_just_in_time_after_single_guard_path(self) -> None:
+    def test_prepare_claims_just_in_time_after_candidate_wide_guard_pass(self) -> None:
         prepare_source = inspect.getsource(compiler.prepare)
         helper_source = inspect.getsource(compiler._deterministic_pre_effect_blocker)
 
-        # The real task loop is the only guard caller. There is no dry-run copy to
-        # keep synchronized with it, and the two current refusal codes live only in
-        # the helper.
+        # The candidate-wide fresh-viability pass is the only guard caller. There is
+        # no dry-run copy to keep synchronized, and the current refusal codes live
+        # only in the helper.
         self.assertEqual(prepare_source.count("_deterministic_pre_effect_blocker("), 1)
         self.assertNotIn('"oci-qualification-unsupported-for-adapter"', prepare_source)
         self.assertNotIn('"qualification-subject-unavailable"', prepare_source)
@@ -37,21 +37,65 @@ class DeterministicPreEffectGuardTests(unittest.TestCase):
         )
         self.assertEqual(helper_source.count('"qualification-subject-unavailable"'), 1)
 
-        # The irreversible claim belongs inside the same loop as the effect. An
-        # accumulated blocker must be checked immediately before the one-shot claim,
-        # and the next top-level statement after that claim block must be the first
-        # actual qualification effect. This makes any earlier future refusal precede
-        # consumption by construction rather than by a duplicated guard list.
+        # The one guard call must live in a separate for-loop before the effect loop.
+        # This pins the #206 property: all fresh deterministic viability is settled
+        # candidate-wide before the irreversible candidate claim can be opened.
         self.assertEqual(prepare_source.count("claim_fresh_candidate("), 1)
         self.assertEqual(prepare_source.count("qualify_subjects("), 1)
         tree = ast.parse(textwrap.dedent(prepare_source))
+        guard_loops = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.For)
+            and _contains_call(node, "_deterministic_pre_effect_blocker")
+        ]
         effect_loops = [
             node
             for node in ast.walk(tree)
             if isinstance(node, ast.For) and _contains_call(node, "qualify_subjects")
         ]
+        self.assertEqual(len(guard_loops), 1)
         self.assertEqual(len(effect_loops), 1)
+        guard_loop = guard_loops[0]
         loop = effect_loops[0]
+        self.assertFalse(_contains_call(guard_loop, "qualify_subjects"))
+        self.assertFalse(_contains_call(loop, "_deterministic_pre_effect_blocker"))
+        self.assertLess(
+            prepare_source.index("_deterministic_pre_effect_blocker("),
+            prepare_source.index("claim_fresh_candidate("),
+        )
+
+        # The decisive whole-candidate settlement must return immediately after the
+        # guard loop when any blocker was found. The later in-loop blocker gate is
+        # defence-in-depth only; it must not be what makes the pre-pass effective.
+        qualification_branches = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.If)
+            and ast.unparse(node.test) == "not qualification_reused"
+            and guard_loop in node.body
+        ]
+        self.assertEqual(len(qualification_branches), 1)
+        qualification_branch = qualification_branches[0]
+        guard_index = qualification_branch.body.index(guard_loop)
+        self.assertLess(guard_index + 1, len(qualification_branch.body))
+        post_guard = qualification_branch.body[guard_index + 1]
+        self.assertIsInstance(post_guard, ast.If)
+        assert isinstance(post_guard, ast.If)
+        self.assertEqual(ast.unparse(post_guard.test), "blockers")
+        self.assertEqual(len(post_guard.body), 1)
+        self.assertIsInstance(post_guard.body[0], ast.Return)
+        assert isinstance(post_guard.body[0], ast.Return)
+        self.assertEqual(
+            ast.unparse(post_guard.body[0].value),
+            "finish(stages.STATIC_QUALIFIED)",
+        )
+        self.assertEqual(qualification_branch.body[guard_index + 2], loop)
+
+        # The irreversible claim still belongs inside the ordered effect loop. An
+        # accumulated blocker is checked immediately before the one-shot claim, and
+        # the next top-level statement after that claim block is the first actual
+        # qualification effect.
         claim_index = next(
             index
             for index, statement in enumerate(loop.body)
