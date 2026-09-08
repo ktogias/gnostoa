@@ -65,6 +65,33 @@ class DeterministicPreEffectGuardTests(unittest.TestCase):
             prepare_source.index("claim_fresh_candidate("),
         )
 
+        # The decisive whole-candidate settlement must return immediately after the
+        # guard loop when any blocker was found. The later in-loop blocker gate is
+        # defence-in-depth only; it must not be what makes the pre-pass effective.
+        qualification_branches = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.If)
+            and ast.unparse(node.test) == "not qualification_reused"
+            and guard_loop in node.body
+        ]
+        self.assertEqual(len(qualification_branches), 1)
+        qualification_branch = qualification_branches[0]
+        guard_index = qualification_branch.body.index(guard_loop)
+        self.assertLess(guard_index + 1, len(qualification_branch.body))
+        post_guard = qualification_branch.body[guard_index + 1]
+        self.assertIsInstance(post_guard, ast.If)
+        assert isinstance(post_guard, ast.If)
+        self.assertEqual(ast.unparse(post_guard.test), "blockers")
+        self.assertEqual(len(post_guard.body), 1)
+        self.assertIsInstance(post_guard.body[0], ast.Return)
+        assert isinstance(post_guard.body[0], ast.Return)
+        self.assertEqual(
+            ast.unparse(post_guard.body[0].value),
+            "finish(stages.STATIC_QUALIFIED)",
+        )
+        self.assertEqual(qualification_branch.body[guard_index + 2], loop)
+
         # The irreversible claim still belongs inside the ordered effect loop. An
         # accumulated blocker is checked immediately before the one-shot claim, and
         # the next top-level statement after that claim block is the first actual
