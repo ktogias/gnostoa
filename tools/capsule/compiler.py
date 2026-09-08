@@ -639,7 +639,7 @@ def _prepare_task(
                 {
                     "task": task.id,
                     "code": "identification-key-missing",
-                    "detail": f"{task.identification_key_path} is not present",
+                    "detail": f"{task.identification_key_path} is not present locally",
                 }
             )
         else:
@@ -1157,10 +1157,11 @@ def _deterministic_pre_effect_blocker(
 ) -> dict[str, object] | None:
     """Return a deterministic refusal that proves this task cannot reach an effect.
 
-    The real qualification loop is the single place these guards run. Fresh effect
-    claims are created only after all pre-effect work for the first actual fresh
-    qualification has completed, immediately before ``qualify_subjects()``. Reuse
-    tasks deliberately keep this guard ordering; #194 owns that ordering separately.
+    The real fresh-qualification path is the single place these guards run. A task
+    whose authorised candidate binds exact prior-receipt reuse is consumed before
+    this helper is called. Fresh effect claims are created only after all pre-effect
+    work for the first actual fresh qualification has completed, immediately before
+    ``qualify_subjects()``.
     """
     if qualification_backend == "oci" and task.adapter != "python-pytest":
         return {
@@ -1809,6 +1810,16 @@ def prepare(
             ledger.enter(stages.BASE_REFERENCE_QUALIFIED, qualification_stage_inputs)
             for task in spec.tasks:
                 current = tasks[task.id]
+
+                # The disposition was settled before the candidate was emitted and the owner
+                # authorised that exact digest. Exact prior reuse is zero-effect, so consume it
+                # before checks which exist only to admit fresh qualification execution.
+                approved_prior = resolved_priors.get(task.id)
+                if approved_prior is not None:
+                    current.qualification = approved_prior
+                    current.qualification_reused = True
+                    continue
+
                 guard = _deterministic_pre_effect_blocker(
                     task, current, qualification_backend=qualification_backend
                 )
@@ -1822,16 +1833,6 @@ def prepare(
                 # without duplicating the guard conditions here.
                 base_path = cast(Path, current.base_path)
                 reference_path = cast(Path, current.reference_path)
-
-                # The disposition was settled before the candidate was emitted and the owner
-                # authorised that exact digest, so it is consumed here rather than decided
-                # again. This is what makes an already-valid qualification (the D0 case)
-                # reusable without the reuse being substitutable for a fresh run.
-                approved_prior = resolved_priors.get(task.id)
-                if approved_prior is not None:
-                    current.qualification = approved_prior
-                    current.qualification_reused = True
-                    continue
 
                 # No effect-bearing operation has started while the claim is absent. If
                 # any earlier task or future pre-effect refusal accumulated a blocker,
