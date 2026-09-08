@@ -80,8 +80,12 @@ class WholeCandidatePreEffectViabilityTests(CapsuleFixture):
         )
 
     def _run(self, *, blocker_first: bool):
-        loaded = load_spec(self.write_spec(self._two_fresh_tasks(blocker_first=blocker_first)))
-        workspace = self.workspace / ("blocker-first" if blocker_first else "blocker-later")
+        loaded = load_spec(
+            self.write_spec(self._two_fresh_tasks(blocker_first=blocker_first))
+        )
+        workspace = self.workspace / (
+            "blocker-first" if blocker_first else "blocker-later"
+        )
 
         observed = compiler.prepare(
             loaded,
