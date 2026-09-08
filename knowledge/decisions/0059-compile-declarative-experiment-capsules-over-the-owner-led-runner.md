@@ -403,10 +403,15 @@ the tree that contains it.
 1. **The claim is just-in-time.** It is established after the single deterministic
    pre-effect guard path and immediately before the first actual qualification effect,
    with nothing between the successful claim and that effect.
-2. **The seal binds exact bytes.** Before staged output may be finished forward, the
-   reservation must carry the manifest digest of that output. Request identity —
-   transaction, base, candidate, authority — says which request the output belongs to;
-   only the seal says which bytes.
+2. **Staged output is finished forward only against a commitment to its exact bytes,
+   and there are two such commitments.** Where an effect reservation covers the
+   transaction, that reservation must carry the staged manifest digest before its
+   output may be published: request identity — transaction, base, candidate, authority
+   — says which request the output belongs to, and only the seal says which bytes. A
+   publication by a caller that never reserved, which an authority-less invocation
+   never does, is vouched for instead by its durable publication intent, which binds
+   the exact staged manifest it had begun publishing. Neither commitment substitutes
+   for the other.
 3. **Publication is ordered and recorded.** Intent first, then canonical members, then
    the commit record, then the intent is cleared. The record is written last, so a
    crash mid-publication leaves a workspace detectably inconsistent rather than an
