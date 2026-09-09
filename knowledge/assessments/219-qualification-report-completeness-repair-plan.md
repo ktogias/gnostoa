@@ -447,3 +447,170 @@ authorization. After an authorized merge, read back integration and explicitly
 reconcile #219 before any closure. Select/admit #202 separately for the pinned
 real OCI fixture; neither these synthetic tests nor Claude's external pytest
 version claim completes that outcome.
+
+## Third review round: bounded verification and attribution reconciliation
+
+The owner supplied Gemini, Grok, Kimi and Claude reviews of
+`fc842c7bd579dbfb780db8a9ccc1dc08e41e972f` and selected necessary bounded
+verification corrections under existing Work Item #219 and Decision 0059 §G.
+This initial checkpoint was recorded on `2026-09-09T12:48:27Z`. The selected
+surface is the existing focused test file and this draft assessment, with
+truthful PR/Work Item evidence reconciliation. Production code, dependencies,
+fixture images, CI/policy, routing, receipt/authority semantics and Phase-D
+effects are not selected. Any production defect discovered requires separate
+scope reconciliation before a production mutation.
+
+The labels below preserve attribution in the supplied conversation. They do
+not establish authorship, model identity or independent execution. Source and
+provider read-back can refute an inaccurate claim without implying that other
+claims by that reviewer are false. External executions remain external claims
+unless their subject, inputs, commands, environment and outputs can be bound.
+
+### Third-round claim ledger
+
+| Source / selector | Supplied claim | Reconciliation and evidence boundary |
+|---|---|---|
+| R3-GEMINI-1 | Production unchanged; five tests/+96 lines and assessment +146 lines; 35 focused/632 total tests, 16 specified mutants and applicable gates PASS; updated `219_pr222_deep_code_review.md`; GO. | Exact Git numstat confirms tests +96 and assessment +145/−1 (146 changed lines); prior checkpoint owns the bounded executions. The external artifact remains unsupplied, so its contents and provenance are not acceptance evidence. GO is a supplied disposition, not human approval. |
+| R3-GEMINI-2 | Human review, then owner authorization, then integration read-back. | Consistent with the retained effect boundary. A new test/document candidate needs its own exact-candidate verification. |
+| R3-GROK-1 | Correct tests/document scope, previous counts and mutant inventory, exact CI and final comment; M9 is not universally redundant and is described as defense in depth; GO with numerical ratings including 10/10. | The scope and M9 correction agree with source and the recorded counterexample. Calling it defense in depth does not erase its demonstrated protection against contradictory reports. Scores are opinions, not measurements or exhaustive coverage. |
+| R3-KIMI-1 | fc842c7 is documentation-only (+147); actual tests may exist only in 5a1fb4e/34a6a0d; cannot confirm M11's passed-case variant and requests an explicit case. | CONTRADICTED by exact `git diff 5a1fb4e..fc842c7`: test file +96 and assessment +145/−1. `test_failure_summary_must_refer_once_to_an_observed_failed_case` explicitly includes absent, passed and duplicate-summary variants. Neither the test delta nor that variant is missing. |
+| R3-KIMI-2 | Hashes are correct; mutation ledger, including diagnostic-only Q02, is appropriately bounded; `/tmp` replay artifacts are ephemeral. | Hash assertions without supplied raw execution are attributed claims. Source identities can be checked separately. The durability limit is valid: a recorded inventory is not a self-contained replay artifact. Q02 retains its diagnostic-only qualification. |
+| R3-KIMI-3 | Human test review, exact-head CI rerun, post-merge reconciliation and separate #202 work. | Human review and separate effect authority remain required. Provider read-back already confirms completed required fc842c7 PR checks, so “CI still missing” would be false; a subsequent changed head requires new checks. #202 remains separately owned and unadmitted. |
+| R3-CLAUDE-1 | Confirms +96 test lines, +146/−1 assessment and identical production blob; explicitly retracts universal M9 redundancy after the new counterexample; five reviewed mutants killed with failure counts 1/3/2/2/3; 35/632 tests, policy, Ruff 117 gate files and 332 whole-tree files PASS. | Source confirms the two-file delta and retained production identity, with a line-count correction: +145/−1 assessment, not +146/−1. The previous admitted evidence supports its named scope; external whole-tree and repeated execution claims are not extra acceptance gates. M9 retraction resolves that interpretive conflict without altering historical text. |
+| R3-CLAUDE-2 | Five real pytest 9.1.1 scenarios and a color run with 11 ANSI sequences pass; now discloses an ad hoc cloud Python 3.12 environment and correctly disclaims OCI evidence. | Environment disclosure improves attribution but no raw outputs, complete commands or fixture identities were supplied. These remain compatibility observations as reported, not version-bound repository or mandatory OCI acceptance. No dependency acquisition is authorized by their mention. |
+| R3-CLAUDE-3 | Reports 20 mutations, including 15 newly examined guards: seven killed and eight survived. N13 unknown summary label, N5 collection truth check, N8 missing failed-case cause and N1 ANSI removal allegedly admit synthetic false MATCH when removed. | Treat each selector as a diagnostic hypothesis requiring an executable, valid isolated mutation and semantic counterexample. Existing guards are present; surviving a mutation indicates a possible coverage gap, not that the current code is broken. N1's actual pytest false-MATCH reachability remains unproved. |
+| R3-CLAUDE-4 | N9 non-mapping cases produces AttributeError and N15 malformed summary TypeError after guard removal; N12 duplicate labels and N7 passed-with-error show no observed behavioral change. An initial timeout mutant used an undefined name and was invalid; corrected mutant was killed. | Preserve fail-loud errors separately from false qualification. The invalid timeout mutation supplies no valid mutation evidence. No-observed-change is neither proof of redundancy nor a current defect. These lower-risk hypotheses receive bounded characterization without broadening production scope. |
+| R3-CLAUDE-5 | GO unchanged, no current code blocker; additional gaps nonblocking. Recommends either a systematic mutation CI gate or explicit acceptance of sampled mutation coverage. | The owner selected bounded verification correction here. The existing and new inventories remain sampled. A new systematic CI gate is a separate capability/policy outcome requiring a focused owner decision, classification and admission; it is not implemented by this review. |
+
+### Independent starting-subject read-back
+
+`git diff --stat 5a1fb4e..fc842c7` reports two files, 241 insertions and one
+deletion: the focused test module has 96 added lines; this assessment has 145
+added and one removed line (146 changed lines). The earlier +146/−1 wording
+in our checkpoint and supplied reviews overstated additions by one; `--stat`
+counts changed lines, whereas `--numstat` distinguishes additions/deletions. Source inspection confirms the explicit M11
+passed-case variant. Production remains the previously retained subject with
+SHA-256 `cd73df999efcce6dcd15f047801e60b04b4b78a9864dee7cf739c24ca1884e75`.
+
+Provider snapshot `/tmp/gnostoa-222-round3-provider.json` binds OPEN/non-draft
+PR #222 to fc842c7. Its [PR workflow](https://github.com/ktogias/gnostoa/actions/runs/34350769826)
+has completed successful policy, fast, Python 3.11, Python 3.12,
+[regression](https://github.com/ktogias/gnostoa/actions/runs/34350769826/job/102463847640)
+and [smoke](https://github.com/ktogias/gnostoa/actions/runs/34350769826/job/102464483431)
+checks. CodeQL also succeeded. Extended is SKIPPED by its event conditions;
+push regression/smoke are SKIPPED while the required PR counterparts ran.
+Those distinctions preserve the completed exact-head observation without
+turning skipped jobs into PASS or predicting the next candidate's results.
+Matching production bytes establishes source identity only; runtime claims
+also require the execution environment and relevant inputs to be bound.
+
+### Initial third-round behavior map
+
+All new replay/correction rows initially have verification **NOT RUN**,
+alignment **UNKNOWN**, executor **PENDING** and reviewer **PENDING**. The
+existing source is expected to pass: this is characterization and regression
+discrimination. An isolated compiling/importable mutant passing the original
+35-test file is pre-change evidence of a coverage gap; a new test must assert
+an observable classification or preserved valid behavior, pass on unchanged
+production and fail on the corresponding mutant. Supplied mutation scenarios
+are diagnostic hypotheses, not independent definitions of correctness.
+
+| ID / source selector | Expected observable behavior and ambiguity | Existing implementation / prospective evidence |
+|---|---|---|
+| R3-N13 / Claude unknown label | A terminal summary containing an unknown outcome such as `1 failed, 3 rerun` cannot support qualification merely because recognized counts fit. | `_parse_pytest_summary` unsupported-label guard; synthetic summary counterexample and isolated unknown-label guard mutation. |
+| R3-N5 / Claude collection truth | A report whose `collected` value is not boolean True cannot be treated as a completed collection, even with otherwise matching case/count data. | `_classify` exact boolean predicate; malformed/false collection variants and isolated predicate mutation. |
+| R3-N8 / Claude empty cause | A failed case without an observed nonempty cause is infrastructure; expected count/name agreement cannot invent cause evidence. | `_classify` failed-case cause guard; missing/empty cause inputs and isolated guard mutation, retaining ordinary assertion controls. |
+| R3-N1 / Claude ANSI removal | ANSI decoration must not hide infrastructure evidence or change the preserved per-case cause; ordinary decorated valid output retains eligibility. Synthetic false MATCH does not establish real pytest reachability. | `_parse_pytest_report` ANSI normalization; independently selected decorated positive/negative strings and normalization mutation. No real-pytest/OCI capability claim. |
+| R3-N9-N15 / Claude fail-loud survivors | Non-mapping case data and malformed summary text return structured infrastructure outcomes rather than escaping as AttributeError/TypeError. | Existing report/summary shape guards; bounded invalid-input characterization. A mutant exception is a robustness discriminator, not false-MATCH evidence. |
+| R3-N12-N7 / Claude no-observed-change survivors | The supplied no-change observations establish neither semantic equivalence nor a current production defect. | Existing duplicate-label and passed-with-error guards remain present. These reported survivors are retained as observations outside this round's six selected mutations. |
+| R3-R1 / Kimi scope and M11 | The review record identifies the actual test diff and explicit passed-case variant. | Exact Git diff and existing test source inspection already contradict the missing-test hypothesis; no duplicate test is needed for that allegation. |
+| R3-X1 / all review/evidence boundaries | Existing valid BASE/REFERENCE controls and the 16 specified prior mutations remain supported; additional coverage does not become an exhaustive claim or expand #219 authority. | Focused baseline, named mutation replays and applicable development-container/provider suites; unchanged-production identity binding and final independent review. |
+
+This round's stopping criterion is the finite set N1/N5/N8/N9/N13/N15:
+characterize those six removals, protect the selected behaviors, preserve
+existing controls and complete applicable checks. Repeated hand-selected
+mutants measure neither a coverage-convergence rate nor the necessity of a
+systematic CI gate. N12/N7 remain reported observations, not selected new work.
+
+### Replay durability and next effect boundary
+
+The durable record retains identities, bounded selectors and result summaries.
+Scripts and detailed outputs under `/tmp` are session-local and may disappear;
+their path names do not provide a durable raw replay package. Consequently the
+historical ledger cannot alone support a fresh independent reproduction of
+every mutant. That limitation is explicit, and new results must retain exact
+mutation definitions and observations proportionately within the authorized
+test/evidence surface or state what is unavailable. No new artifact format,
+mutation framework, CI gate or dependency is selected here.
+
+The source and prospective new tests are executor-authored implementation and
+regression evidence. They must be reconciled with #219's authoritative cause
+and completeness obligations before final disposition. The final candidate,
+new mutation results, applicable suites and independent reviewer checkpoint
+remain **PENDING**. Merge/issue closure remain unadmitted. Version-bound real
+OCI evidence stays with #202, and any systematic mutation-gate proposal needs
+separate selection/admission rather than being inferred from this correction.
+
+### Third-round scope reconciliation before production mutation: W1
+
+Independent source review and an executed development-container probe on the
+unchanged fc842c7 production identified a current report-validity defect beyond
+the six supplied guard-removal hypotheses. A normalized report with
+`collected: true`, no report error, one expected failed case and `error_type`
+containing only whitespace returns MATCH. A whitespace-only field supplies no
+observed cause; agreement on counts/name cannot satisfy #219's cause obligation.
+The probe returned MATCH with the raw whitespace preserved in `error_types`.
+This is synthetic malformed-report evidence, not a claim about an actual pytest
+or historical qualification receipt.
+
+The owner's latest request selects necessary corrections under the already
+admitted critical #219/Decision 0059 scope. Before production mutation, extend
+the selected surface to the existing `_classify` missing-cause predicate only:
+reject a failed case when its cause string is blank after whitespace removal.
+Preserve all nonblank observed cause bytes and existing classifications. Receipt
+schema, retained receipts, adapters, dependencies, CI, routing, compiler/claims
+and effect authority remain outside this correction. No new Decision semantics
+or guardrail coverage is introduced; the existing invariant is implemented.
+
+| ID | Expected behavior / authority | Evidence state before repair | Executor / reviewer |
+|---|---|---|---|
+| R3-W1 / independent review of N8 boundary | A failed normalized case with only whitespace as cause is INFRASTRUCTURE; ordinary nonblank cause controls retain their meaning. Authority: #219 and Decision 0059 §G cause requirement, not an invented discriminator type. | Container probe on fc842c7 returned MATCH / CONTRADICTS. Add a focused regression and establish RED before editing production. | repair selected / independent reconciliation pending |
+
+The prior tests-only scope describes the starting plan; this explicit amendment
+selects the bounded production repair prospectively. The finite completion set
+is six reported guard mutations plus W1, named regressions, independent review,
+and applicable container/runtime/provider checks. No exhaustive mutation gate
+is inferred from this discovery.
+
+### W1 pre-production RED checkpoint
+
+Development container `gnostoa:development-round3`, image
+`sha256:43060627f698bbec7483733669590d1819a1ad6647bc1b0c33defa1cc4a8a280`,
+ran the expanded focused file against unchanged fc842c7 production. Result:
+**43 tests executed, three assertion failures in the one W1 method, zero
+errors/skips**. Space-only, tab/CR/newline and Unicode em-space cause strings
+all returned MATCH where INFRASTRUCTURE was required. The other 42 methods
+passed. This is real RED on the production defect, separate from mutation
+coverage characterization. No production edit preceded this result.
+
+Command inside the readonly development-container workspace:
+`python -m unittest discover -s tests -p test_qualification_report_validity.py -v`.
+Production SHA-256:
+`cd73df999efcce6dcd15f047801e60b04b4b78a9864dee7cf739c24ca1884e75`;
+43-test SHA-256:
+`e8d6d2357b4fd56976c558877fa66751cf10a1768bdf03fa0b1cb436313188b9`;
+RED log SHA-256: `ce699c289644dbcbfeb5bb6041f2c2e8016ed80c02876ed21c0b9ba551debdbb`.
+Raw log: `/tmp/gnostoa-222-round3-red.log` (session-local).
+
+The six valid isolated N1/N5/N8/N9/N13/N15 mutations each compiled/imported
+and survived the original 35 tests with no failures, errors or skips; their
+original-vs-mutant probes distinguished false MATCH, false rejection and
+escaped runtime errors separately. Those pre-change results remain under
+`/tmp/gnostoa-222-round3/baseline-35-results.json`.
+
+The separate proposal for repeatable mutation verification is captured in
+[#224](https://github.com/ktogias/gnostoa/issues/224), linked to #15 and #219.
+Its desired outcome, finite acceptance criteria, exclusions and explicit later
+admission condition are recorded; it is OPEN backlog without `roadmap:now`.
+No tool, mandatory gate or implementation was admitted. #202 remains the
+unadmitted owner of pinned real-pytest/OCI evidence.

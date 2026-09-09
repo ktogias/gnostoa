@@ -154,6 +154,70 @@ E RuntimeError: setup failed
         )
         self.assert_infrastructure(outcome, "no recognizable failure cause")
 
+    def test_unknown_summary_outcomes_cannot_be_silently_ignored(self) -> None:
+        for label in ("rerun", "unrecognized-outcome"):
+            with self.subTest(label=label):
+                output = _FAILED_OUTPUT.replace(
+                    "1 failed in", f"1 failed, 3 {label} in"
+                )
+                outcome = self.classify(
+                    output,
+                    1,
+                    failed=1,
+                    passed=0,
+                    expected_failing=("test_discriminates",),
+                )
+                self.assertEqual(outcome.classification, qualification.INFRASTRUCTURE)
+
+    def test_malformed_summary_items_return_infrastructure_without_crashing(
+        self,
+    ) -> None:
+        for item in ("broken", "three failed", "3 rerun!"):
+            with self.subTest(item=item):
+                output = _FAILED_OUTPUT.replace("1 failed in", f"1 failed, {item} in")
+                outcome = self.classify(
+                    output,
+                    1,
+                    failed=1,
+                    passed=0,
+                    expected_failing=("test_discriminates",),
+                )
+                self.assertEqual(outcome.classification, qualification.INFRASTRUCTURE)
+
+    def test_ansi_decoration_preserves_valid_outcomes_and_causes(self) -> None:
+        for output, failed, passed in ((_FAILED_OUTPUT, 1, 0), (_PASSED_OUTPUT, 0, 1)):
+            with self.subTest(failed=failed):
+                decorated = "\n".join(
+                    f"\x1b[31m{line}\x1b[0m" for line in output.splitlines()
+                )
+                outcome = self.classify(
+                    decorated,
+                    int(bool(failed)),
+                    failed=failed,
+                    passed=passed,
+                    expected_failing=("test_discriminates",) if failed else (),
+                )
+                self.assertEqual(outcome.classification, qualification.MATCH)
+                self.assertEqual(
+                    outcome.error_types,
+                    {"test_discriminates": "AssertionError"} if failed else {},
+                )
+
+    def test_ansi_cannot_hide_a_conflicting_infrastructure_traceback(self) -> None:
+        # Synthetic contradictory report: no claim that real pytest emits it.
+        output = _FAILED_OUTPUT.replace(
+            "FAILED [100%]\n",
+            "FAILED [100%]\n\x1b[31mE   OSError: unavailable\x1b[0m\n",
+        )
+        outcome = self.classify(
+            output,
+            1,
+            failed=1,
+            passed=0,
+            expected_failing=("test_discriminates",),
+        )
+        self.assertEqual(outcome.classification, qualification.INFRASTRUCTURE)
+
     def test_pytest_resource_failures_cannot_match_behavioral_failure(self) -> None:
         for cause in (
             "MemoryError",
@@ -385,6 +449,52 @@ class NormalizedReportValidityTests(TestCase):
         outcome = self.classify({"collected": True, "cases": [], "error": None})
         self.assertEqual(outcome.classification, qualification.INFRASTRUCTURE)
 
+    def test_nonempty_non_mapping_cases_return_structured_infrastructure(self) -> None:
+        for cases in ([{"outcome": "passed"}], "test_discriminates", 1):
+            with self.subTest(cases=cases):
+                outcome = self.classify(
+                    {"collected": True, "cases": cases, "error": None}
+                )
+                self.assertEqual(outcome.classification, qualification.INFRASTRUCTURE)
+
+    def test_collection_requires_boolean_true_even_when_cases_match(self) -> None:
+        for collection in (
+            {},
+            {"collected": False},
+            {"collected": None},
+            {"collected": 1},
+            {"collected": "true"},
+        ):
+            with self.subTest(collection=collection):
+                report = {
+                    **collection,
+                    "cases": {"test_discriminates": {"outcome": "passed"}},
+                    "error": None,
+                }
+                outcome = qualification._classify(
+                    "reference",
+                    report,
+                    {"failed": 0, "passed": 1},
+                    expected_failing=(),
+                )
+                self.assertEqual(outcome.classification, qualification.INFRASTRUCTURE)
+
+    def test_failed_case_requires_a_cause_even_when_counts_and_name_match(self) -> None:
+        for cause in ({}, {"error_type": None}, {"error_type": ""}):
+            with self.subTest(cause=cause):
+                report = {
+                    "collected": True,
+                    "cases": {"test_discriminates": {"outcome": "failed", **cause}},
+                    "error": None,
+                }
+                outcome = qualification._classify(
+                    "base",
+                    report,
+                    {"failed": 1, "passed": 0},
+                    expected_failing=("test_discriminates",),
+                )
+                self.assertEqual(outcome.classification, qualification.INFRASTRUCTURE)
+
     def test_unknown_case_outcome_cannot_match_zero_counts(self) -> None:
         outcome = self.classify(
             {
@@ -468,6 +578,28 @@ class LocalHarnessCompletionTests(TestCase):
     def test_zero_local_completion_with_valid_report_can_match(self) -> None:
         outcome = self.classify_local(0, "passed")
         self.assertEqual(outcome.classification, qualification.MATCH)
+
+    def test_local_failed_report_with_whitespace_only_cause_cannot_match(self) -> None:
+        for cause in (" ", "\t\r\n", "\u2003"):
+            with self.subTest(cause=cause):
+                payload = json.loads(self.report_json("failed"))
+                payload["cases"]["test_discriminates"]["error_type"] = cause
+                completed = subprocess.CompletedProcess(
+                    ["python"], 0, json.dumps(payload) + "\n", ""
+                )
+                with mock.patch.object(
+                    qualification.subprocess, "run", return_value=completed
+                ):
+                    report = qualification._run_local_python(
+                        pathlib.Path("/subject"), pathlib.Path("/oracle.py"), ()
+                    )
+                outcome = qualification._classify(
+                    "base",
+                    report,
+                    {"failed": 1, "passed": 0},
+                    expected_failing=("test_discriminates",),
+                )
+                self.assertEqual(outcome.classification, qualification.INFRASTRUCTURE)
 
     def run_oracle(self, source: str) -> qualification.SubjectOutcome:
         with tempfile.TemporaryDirectory() as temporary:
