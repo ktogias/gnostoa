@@ -601,6 +601,63 @@ class LocalHarnessCompletionTests(TestCase):
                 )
                 self.assertEqual(outcome.classification, qualification.INFRASTRUCTURE)
 
+    def classify_json_cause(
+        self, case_outcome: str, cause: object
+    ) -> qualification.SubjectOutcome:
+        payload = json.loads(self.report_json(case_outcome))
+        payload["cases"]["test_discriminates"]["error_type"] = cause
+        completed = subprocess.CompletedProcess(
+            ["python"], 0, json.dumps(payload) + "\n", ""
+        )
+        with mock.patch.object(qualification.subprocess, "run", return_value=completed):
+            report = qualification._run_local_python(
+                pathlib.Path("/subject"), pathlib.Path("/oracle.py"), ()
+            )
+        failed = case_outcome == "failed"
+        return qualification._classify(
+            "subject",
+            report,
+            {"failed": int(failed), "passed": int(not failed)},
+            expected_failing=("test_discriminates",) if failed else (),
+        )
+
+    def test_local_padded_infrastructure_causes_cannot_match(self) -> None:
+        for cause in ("OSError", "builtins.OSError", "MemoryError"):
+            for left, right in ((" ", ""), ("", " \n"), ("\u2003", "\t")):
+                with self.subTest(cause=cause, left=left, right=right):
+                    outcome = self.classify_json_cause("failed", left + cause + right)
+                    self.assertEqual(
+                        outcome.classification, qualification.INFRASTRUCTURE
+                    )
+                    self.assertEqual(outcome.error_types, {"test_discriminates": cause})
+
+    def test_local_padded_behavioral_causes_retain_canonical_names(self) -> None:
+        for cause in ("AssertionError", "ValueError", "builtins.AssertionError"):
+            with self.subTest(cause=cause):
+                outcome = self.classify_json_cause("failed", " \t" + cause + "\n\u2003")
+                self.assertEqual(outcome.classification, qualification.MATCH)
+                self.assertEqual(outcome.error_types, {"test_discriminates": cause})
+
+    def test_local_passed_report_accepts_empty_normalized_cause(self) -> None:
+        for cause in (None, "", " \t\r\n", "\u2003"):
+            with self.subTest(cause=cause):
+                outcome = self.classify_json_cause("passed", cause)
+                self.assertEqual(outcome.classification, qualification.MATCH)
+                self.assertEqual(outcome.error_types, {})
+
+    def test_cause_normalization_preserves_invalid_report_rejection(self) -> None:
+        for case_outcome in ("passed", "failed"):
+            for cause in (False, 0, 1, [], {}, ["OSError"], {"type": "OSError"}):
+                with self.subTest(case_outcome=case_outcome, cause=cause):
+                    outcome = self.classify_json_cause(case_outcome, cause)
+                    self.assertEqual(
+                        outcome.classification, qualification.INFRASTRUCTURE
+                    )
+        for cause in ("AssertionError", " \tAssertionError\n", " OSError "):
+            with self.subTest(passed_cause=cause):
+                outcome = self.classify_json_cause("passed", cause)
+                self.assertEqual(outcome.classification, qualification.INFRASTRUCTURE)
+
     def run_oracle(self, source: str) -> qualification.SubjectOutcome:
         with tempfile.TemporaryDirectory() as temporary:
             subject = pathlib.Path(temporary)

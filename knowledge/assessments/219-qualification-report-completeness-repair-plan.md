@@ -679,3 +679,99 @@ The admitted finite correction is complete at source/targeted-evidence level.
 Whole-candidate container/runtime/provider results and exact Git identities must
 be read from the final PR checkpoint; they are not inferred from the focused
 suite or the prior fc842c7 green checks.
+
+## Fourth review round: normalize the observed cause at ingestion
+
+The owner supplied Grok, Kimi, Gemini and Claude reviews of
+`2933f4cd5f70a05f349d28ccf88eac10a1531f49` and an explicit proposed two-line patch, continuing the selected review-and-
+correct task under #219. This initial record was written
+at `2026-09-09T13:23:45Z`, before this round's production mutation. The proposed
+surface is `_classify`'s cause assignment and subsequent missing-cause predicate,
+the same focused test module and this assessment. Decision 0059 §G supplies the
+cause obligation; stripping outer whitespace is the implementation selected
+for this correction, not a prescribed named-function or string operation in
+the Decision. Independent reproduction and RED remain required before repair.
+
+### Attributed claims and reconciliation
+
+These labels identify owner-supplied reviews, not verified authorship or
+execution. Prior results remain historical; the new candidate's checks cannot
+be inferred from agreement among reviewers.
+
+| Source / selector | Supplied claim | Reconciliation |
+|---|---|---|
+| R4-GROK | GO; W1 corrected; eight new methods, 43 focused/640 total tests and 23 specified mutants, with distinct assertion/runtime-error results. | The prior checkpoint supports the bounded counts and distinctions. This is review of 2933f4c, not acceptance of the newly reported padded-cause behavior or future head. |
+| R4-KIMI-1 | Accepts repair but asks whether `.strip()` is safe for None and suggests explanatory comment; proposes `assertRaises` for N9/N15. | Existing type validation and `raw_error_type or ""` make the current guard's value a string. The selected new assignment must retain None handling and reject other invalid types. Reject the `assertRaises` suggestion: the contract requires structured INFRASTRUCTURE; an escaped exception must fail the normal test. |
+| R4-KIMI-2 | Says all new mutations survived the original 35 tests; requests missing exact-head CI rerun. | Only N1/N5/N8/N9/N13/N15 survived that baseline. W1 was an actual production defect: expanded 43-test RED had three failing whitespace subcases. Required 2933f4c PR checks already completed; a changed head requires new checks. |
+| R4-GEMINI | Task-170 extended quality summary/MkDocs PASS and task-166 host-only diagnosis; all-green/GO claims. | Task labels and external summaries lack supplied raw logs/environment binding and remain claims. They do not establish a host defect or another required repair. “100% green” cannot turn the two existing OCI skips into executed PASS. |
+| R4-CLAUDE-1 | Padded `" OSError "`, `"OSError\n"` and `" builtins.OSError "` still MATCH; current emitters do not produce padding, but malformed normalized reports expose the same boundary as W1. Proposes assignment-level strip and plain empty guard; allows a passed blank cause to mean no error. | This is a material new hypothesis within the existing report-validity scope, selected for independent RED→GREEN within the resumed review-and-correct task. Synthetic reachability does not prove current emitter or historical receipt impact. |
+| R4-CLAUDE-2 | Supplied patch passes 640 tests, external pytest 9.1.1/color probes and nine mutants; N1 and crash gaps closed. | Prior admitted evidence supports the scoped earlier closures. New patch/mutation and external pytest executions are supplied claims until their exact inputs, environment and raw results are independently bound; no dependency acquisition or OCI claim follows. |
+| R4-CLAUDE-3 / separate boundaries | Receipt loading may trust retained classification; systematic mutation gates remain a future question. | Receipt-load/retained-evidence admissibility belongs to #216; the mutation-capability proposal is tracked by #224. Neither is implementation-admitted here. #202 still owns unadmitted pinned real-pytest/OCI evidence. |
+
+Provider read-back binds OPEN/non-draft #222 to 2933f4c. The completed
+[PR workflow](https://github.com/ktogias/gnostoa/actions/runs/34354475252) ran
+successful policy, fast, Python 3.11/3.12, regression and smoke, including
+[exact candidate binding](https://github.com/ktogias/gnostoa/actions/runs/34354475252/job/102476921053).
+Source suites counted 640 tests: 638 passed and two existing OCI skips.
+Provider extended was SKIPPED by event routing; earlier local extended results
+are separate evidence. These observations correct a missing-CI claim without
+predicting this round's result.
+
+### Initial behavior map and intentional normalization boundary
+
+The proposed assignment strips outer whitespace only after validating the raw
+type, using an empty string for None. The missing-cause check then tests that
+normalized value directly. This **supersedes** the prior W1 requirement to
+preserve every nonblank cause byte: stored and compared cause strings will now
+omit outer whitespace. No case folding, internal-whitespace repair, arbitrary
+exception-name reinterpretation or receipt migration is selected.
+
+All new evidence states initially are **NOT RUN**, alignment **UNKNOWN**,
+executor **PENDING**, reviewer **PENDING**. The supplied counterexamples are
+diagnostic hypotheses; #219's cause/completeness obligation supplies their
+semantic authority, not agreement between new tests and the proposed patch.
+
+| ID / selector | Required observable result and contradiction | Prospective evidence |
+|---|---|---|
+| R4-W2 / Claude padded infrastructure | Outer whitespace cannot hide a recognized infrastructure cause, including a qualified name; normalized cause identity is retained. Current 2933f4c behavior is under independent reproduction. | Synthetic normalized-report and local-JSON padded-cause RED, followed by the unchanged classifier infrastructure comparison after assignment normalization. |
+| R4-P1 / owner-selected normalization | Padded ordinary behavioral causes retain their behavioral classification and normalized identity; unpadded causes retain existing meaning. | Assertion/explicit-failure controls, qualified cause controls and cause-value assertions. |
+| R4-T1 / Kimi None and invalid types | Failed cases with None, absent, empty or whitespace-only cause are INFRASTRUCTURE without an escaped exception; other non-string types remain rejected. | Focused None/type/W1 controls through existing validation and selected assignment. |
+| R4-P2 / selected passed-blank semantics | A passed case with absent/None/blank cause has no error; a passed case with a normalized nonempty cause remains contradictory and is rejected. | Passed-report positive and contradictory negative controls; no blanket weakening of report validity. |
+| R4-X1 / existing guard obligations | N9/N15 remain structured rejections; previous positive/negative controls survive; no retained-receipt, CI, dependency or authority change. | Bounded regression/mutation replay, source diff, applicable container/runtime suites and new exact-head provider read-back. |
+
+The finite completion boundary is independently reproduced padded-cause RED,
+the selected normalization and controls, applicable verification, and exact
+candidate review. New mutation counts remain sampled; invalid mutants, crash
+discriminators and cause assertions must remain distinct. Session-local raw
+replays do not become durable artifacts merely by listing their `/tmp` paths.
+Final candidate, actual results and independent reviewer disposition remain
+**PENDING**. Merge, issue closure, #216/#224 implementation and Phase-D effects
+remain unadmitted.
+
+### Fourth-round RED before production mutation
+
+The expanded 47-test file ran in development image
+`sha256:2ea98a155a9b704d2ad59f7a5c18c0d4657891a647bde99a514e128f205a0f6d`
+against unchanged 2933f4c production. **14 assertion failures, zero errors/skips**:
+nine padded-infrastructure subcases, three padded-behavioral cause-identity
+subcases and two passed-blank subcases. Eight of the infrastructure subcases
+returned false MATCH; the leading-only qualified-name subcase already rejected
+infrastructure but retained the padded name. That distinction matters: not all
+14 failures are false qualification. The invalid-type controls and original
+43 methods remain passing. None handling is therefore directly exercised as
+well as justified by source inspection; no comment-only assertion is needed.
+
+Command in the readonly development-container workspace:
+`python -m unittest discover -s tests -p test_qualification_report_validity.py -v`.
+The raw local JSON is synthetic transport evidence, not a claim that current
+pytest or harness emitters produce padded names. The selected correction now
+normalizes stored/comparable type names while leaving exception-name case and
+internal spelling unchanged. Existing guardrail coverage and Decision cause
+semantics remain; no normative policy or public schema change is selected.
+
+Production SHA-256 before repair:
+`a5136810a1aa5c8b44c5e381a316bf04383c5ae1e899ea15869f6a00acbfd31d`;
+47-test SHA-256:
+`23c86957a1923dcee633071ef63f48fc13f04c1ab35b824198e67986877bb087`.
+RED log `/tmp/gnostoa-222-round4-red.log` SHA-256:
+`a456b9451616586b9ff0de73472587efe5a3821804db29ec404b216a64d4fb1f` (session-local).
