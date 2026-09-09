@@ -705,18 +705,66 @@ class LocalHarnessCompletionTests(TestCase):
                 outcome = self.classify_json_cause("passed", cause)
                 self.assertEqual(outcome.classification, qualification.INFRASTRUCTURE)
 
-    def run_oracle(self, source: str) -> qualification.SubjectOutcome:
+    def run_oracle(
+        self, source: str, *, passed: bool = False
+    ) -> qualification.SubjectOutcome:
         with tempfile.TemporaryDirectory() as temporary:
             subject = pathlib.Path(temporary)
             oracle = subject / "oracle.py"
             oracle.write_text(source)
             report = qualification._run_local_python(subject, oracle, ())
         return qualification._classify(
-            "base",
+            "reference" if passed else "base",
             report,
-            {"failed": 1, "passed": 0},
-            expected_failing=("test_discriminates",),
+            {"failed": int(not passed), "passed": int(passed)},
+            expected_failing=() if passed else ("test_discriminates",),
         )
+
+    def test_undecodable_local_streams_return_structured_infrastructure(self) -> None:
+        for descriptor in (1, 2):
+            with self.subTest(descriptor=descriptor):
+                outcome = self.run_oracle(
+                    "import os\n"
+                    f"os.write({descriptor}, b'\\xff\\xfe\\x00garbage\\n')\n"
+                    "def test_discriminates():\n    assert False\n"
+                )
+                self.assertEqual(outcome.classification, qualification.INFRASTRUCTURE)
+                self.assertFalse(outcome.collected)
+                self.assertIn("UnicodeDecodeError", outcome.detail)
+
+    def test_invalid_terminal_json_bytes_cannot_become_a_behavioral_cause(self) -> None:
+        payload = json.loads(self.report_json("failed"))
+        payload["cases"]["test_discriminates"]["error_type"] = "OSError"
+        report = json.dumps(payload).encode("utf-8").replace(b"OSError", b"OSError\xff")
+        # An explicit flush makes the deliberately corrupted JSON the final line.
+        outcome = self.run_oracle(
+            "import atexit, os, sys\n"
+            "def emit_corrupted_report():\n"
+            "    sys.stdout.flush()\n"
+            f"    os.write(1, {report!r} + b'\\n')\n"
+            "atexit.register(emit_corrupted_report)\n"
+            "def test_discriminates():\n    assert False\n"
+        )
+        self.assertEqual(outcome.classification, qualification.INFRASTRUCTURE)
+        self.assertFalse(outcome.collected)
+        self.assertIn("UnicodeDecodeError", outcome.detail)
+
+    def test_valid_unicode_local_output_preserves_qualified_controls(self) -> None:
+        for passed in (False, True):
+            with self.subTest(passed=passed):
+                body = "pass" if passed else "assert False, 'συμπεριφορά'"
+                outcome = self.run_oracle(
+                    "import os\n"
+                    "os.write(1, 'καλημέρα\\n'.encode('utf-8'))\n"
+                    "os.write(2, 'δοκιμή\\n'.encode('utf-8'))\n"
+                    f"def test_discriminates():\n    {body}\n",
+                    passed=passed,
+                )
+                self.assertEqual(outcome.classification, qualification.MATCH)
+                self.assertEqual(
+                    outcome.error_types,
+                    {} if passed else {"test_discriminates": "AssertionError"},
+                )
 
     def test_real_local_process_and_resource_exceptions_cannot_match(self) -> None:
         for expression in (

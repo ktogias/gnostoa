@@ -1041,3 +1041,129 @@ operator inventory SHA-256:
 `1abc4854e99ea6cd75e65cd8b290849c706390e9fc17a25a6efe54f5cca34661`.
 Raw artifacts remain session-local. The durable source, regression, operator
 transformation and result categories above make the bounded claim inspectable.
+
+## Sixth review round: local output decoding before a report exists
+
+Starting candidate `7740ce37107fa68b6b63221109f8e8225323cc65`, tree
+`5f15a9e164267b490254fa76b2dd82d622eec15d`, production blob
+`66a95035917c0da18ddc0ecb479f92037f49ad8e`. Fresh provider read-back confirms
+OPEN/non-draft/unmerged and CLEAN. Both earlier threads were resolved under
+the owner's separate explicit authorization; that authorization did not admit
+merge or #225 implementation. Prior exact-head CI remains successful, with
+provider extended SKIPPED and actual local extended evidence separate. These
+are baseline facts, not results for a future source change.
+
+## Attributed claim ledger
+
+| ID | Supplied claim | Reconciliation |
+|---|---|---|
+| R6-CLAUDE-1 | Existing four-line OSError repair is correct; RED 4832d20 has eight escaped errors and head has 48 PASS. | Matches the retained source/assessment and provider evidence. Eight errors are structured-result escape failures, not eight false MATCHs. Source snapshot confirms the stated head/tree/blob. |
+| R6-CLAUDE-2 | Raw invalid bytes cause UnicodeDecodeError in local text decoding; errors="replace" prevents it. | Concrete same-boundary proposed defect and repair, to be independently reproduced by the implementation task. Source confirms text=True without errors= and an OSError/TimeoutExpired-only catch; UnicodeDecodeError is not an OSError. The existing OCI reader uses errors="replace". A proposed one-line patch and claimed successful test run do not substitute for the new RED/behavior contract. Replacement of undecodable diagnostics and integrity of the final report must be distinguished when selecting behavior. |
+| R6-CLAUDE-3 | Escape occurs after the fresh effect claim, before normal completion. | Compiler source confirms claim_fresh_candidate precedes qualify_subjects and the direct call has no surrounding catch at that point. This supports the ordering concern. No retained recovery, unrecoverability, historical impact or new retry authority was demonstrated; #207 recovery was explicitly not tested. |
+| R6-CLAUDE-4 | 17 mutants, 16 killed; broadening TimeoutExpired to SubprocessError is an equivalent survivor. | Preserve as external, finite supplied results. For the shown ordinary invocation with check=False and no preexec_fn, the explanation is plausible; survival alone does not prove universal semantic equivalence over platforms, implementations or altered call parameters. No additional mutation test is demanded merely to kill this reported survivor. Claude's L2 is not a new repository operator. |
+| R6-CLAUDE-5 | Normalization axis exhausted; local runner is the only possible external exception point; adding this line closes the second axis. | These universal/convergence claims exceed the finite inputs and source scope inspected. No exhaustive proof was supplied. Keep the bounded no-regression observations and specific new defect; do not claim every exception/report-adversary axis is closed. |
+| R6-CLAUDE-6 | Real pytest 9.1.1, ANSI, S1 and formatting/policy runs pass. | Attributed external execution claims. Prior disclosure was an ad-hoc Python 3.12 cloud environment, not the project's pinned OCI fixture; new raw outputs/environment identities were not supplied here. They neither satisfy #202 nor count as an additional mandatory provider run. |
+| R6-GROK-1 | Correct minimal OSError normalization; boundary belongs to admitted #219; broader permitted causes deferred to #225; 48/645 and 27 operators. | Supported by the retained bounded record and current source. Scores and GO recommendation remain opinions. “No known blocker” reflects the information reviewed and does not dispose of Claude's newly supplied decoding counterexample. |
+| R6-KIMI-1 | Test covers eight exception/subject combinations, preserves the other subject and structured receipt; asserts aid narrowing. | Accurate bounded description of the prior regression. Four exception classes across two subjects are not all subprocess/environment edge cases. Catching the OSError hierarchy does not cover every possible environment-related failure; the new decoding observation demonstrates another exception family. |
+| R6-KIMI-2 | 27 operators with a table listing N15 and R4.P2 among assertion-only kills and R5.L2 control. | Correct totals are 23 assertion-only, including diagnostic-only Q02; three runtime-only N9/N15/R5.L1; one mixed R4.P2. Q02 is a subset, not a 28th category. R3.W1 is historical NOT APPLICABLE and not counted. R5-L2 in the independent review is a probe label, not an added mutation operator; no repository R5.L2 control belongs in the 27-operator inventory. Do not combine Claude's separate labels/count with repository inventory. |
+| R6-KIMI-3 | Final disposition says 644 total tests and unresolved threads block merge. | Correct total at 7740ce3 is 645, with 643 passes and two OCI skips. Threads have since been resolved under explicit owner authorization and current provider state is CLEAN. The assessment's older unresolved snapshot remains historical, not a current blocker. |
+| R6-GEMINI-1 | 48 focused, 645 total/643 passes/two skips, 27 active operators, task-220 extended and review artifact updated; GO-ready. | Counts agree with retained project evidence. Unprovided task-220 logs and `219_pr222_deep_code_review.md` remain attributed claims, not newly bound session artifacts. Provider extended was skipped; separate container success is a distinct evidence source. No “100%” or GO label eliminates two skipped OCI checks or the newly supplied decoding defect. |
+
+The prior repair remains a bounded improvement. The latest actionable finding should receive a narrow RED/GREEN disposition inside #219 before any revised exact-head technical verdict. Human semantic review and separate owner squash-merge authorization remain pending; integration read-back precedes any eventual #219 closure.
+
+### Independent diagnostic comparison and selected correction
+
+The governing local completion/report contract remains the existing #219
+admission under Decision 0059 §G: a failure to decode captured output must
+produce a structured refusal rather than escape; a malformed report must not
+be rewritten into accepted evidence. Python's [subprocess documentation](https://docs.python.org/3.12/library/subprocess.html)
+explains text-mode decoding and errors handling; [exception documentation](https://docs.python.org/3.12/library/exceptions.html#UnicodeDecodeError)
+places UnicodeDecodeError under UnicodeError/ValueError, outside OSError.
+Those language facts explain the path but do not select qualification policy.
+
+An independent agent ran 15 actual child-process probes in the existing,
+confirmed development image with readonly source and network disabled. Five
+synthetic scenarios ran on each of unmodified production, the supplied
+errors="replace" variant and a narrow strict-decoding catch variant:
+
+| Scenario | 7740ce3 | Supplied replacement | Strict decoding + structured catch |
+| --- | --- | --- | --- |
+| Invalid bytes before terminal JSON on stdout | UnicodeDecodeError escapes | MATCH | INFRASTRUCTURE / collected=False |
+| Invalid bytes on stderr | UnicodeDecodeError escapes | MATCH | INFRASTRUCTURE / collected=False |
+| Invalid byte inside terminal JSON cause OSError | UnicodeDecodeError escapes | MATCH, stored cause `OSError�` | INFRASTRUCTURE / collected=False |
+| Valid Unicode diagnostic output with BASE assertion | MATCH | MATCH | MATCH |
+| Valid REFERENCE report | MATCH | MATCH | MATCH |
+
+The malformed terminal-report case is a deliberate synthetic transport
+counterexample: an atexit callback flushes normal stdout then emits corrupted
+JSON. It does not claim that ordinary json.dumps emits invalid UTF-8, that a
+historical receipt was affected, or that this parser authenticates arbitrary
+malicious output. The first diagnostic attempt lacked the explicit flush and
+therefore exercised noise/buffer ordering instead of proving the terminal-cause
+claim; its output remains separate from the corrected, final 15-probe matrix.
+
+**Select a narrow UnicodeDecodeError catch returning _invalid_report and preserve
+strict decoding.** The supplied replacement patch is rejected because it can
+construct an accepted non-infrastructure cause from undecodable report bytes.
+Undecodable stdout or stderr, even if it looks like diagnostic noise before a
+valid report, remains an invalid transport under this conservative boundary.
+Tolerating arbitrary binary diagnostic streams is not selected. Valid Unicode
+output remains supported. The existing OCI replacement reader is a precedent
+for different behavior, not authority to weaken the local report-validity
+boundary or to modify OCI here. No broader UnicodeError/ValueError catch,
+compiler exception wrapper, retry, recovery or locale/encoding change is selected.
+
+Source confirms the claim occurs before qualify_subjects, but these probes
+execute no compiler claim, private oracle, retained transaction or recovery.
+They reproduce a raw-output decoding scenario and its structured refusal; they
+do not establish unrecoverability or prove that every subprocess exception axis
+is closed. Tests and probe variants are authored diagnostic evidence; #219's
+report-validity obligation, rather than their mutual agreement, supplies the
+semantic authority for refusing undecodable evidence.
+
+### Sixth-round prospective behavior map before production mutation
+
+Classification remains critical. Baseline production SHA-256 is
+`7ef013df0a99d0411922d6e21ea75e3cd173bb6906b2093347bb847f97236c60`.
+Selected source paths remain qualification.py, the existing focused test file
+and this assessment. Initial regression/verification states below are NOT RUN;
+independent diagnostic results above do not impersonate a committed RED suite.
+
+| ID / authority selector | Required observable behavior | Proposed implementation / evidence | Initial alignment; executor / reviewer |
+| --- | --- | --- | --- |
+| R6-U1 / Claude decoding escape and admitted local report contract | Undecodable stdout and stderr return structured INFRASTRUCTURE, collected=False, with decoding cause; no escaped exception. | Narrow UnicodeDecodeError catch; two actual-process byte-output regressions, NOT RUN. | UNKNOWN; PENDING / PENDING |
+| R6-U2 / #219 malformed-report and preserved-cause obligation | A terminal JSON cause containing an invalid byte cannot be replaced into an accepted behavioral cause. | Keep strict decoding; real-process atexit corrupted terminal report and replacement counter-mutation, NOT RUN. | UNKNOWN; PENDING / PENDING |
+| R6-P1 / existing valid qualification | Valid Unicode diagnostics retain BASE AssertionError identity/MATCH and REFERENCE success/MATCH. | Real local process positive controls, plus previous 48 methods, NOT RUN. | UNKNOWN; PENDING / PENDING |
+| R6-X1 / existing admission and effect boundary | No claim/reset/retry/recovery, compiler, receipt/schema, dependency, OCI or authority change; no exhaustion claim. | Exact diff and existing bounded regression/mutation/container/runtime/provider checks, NOT RUN for candidate. | UNKNOWN; PENDING / PENDING |
+
+RED must precede production mutation and be retained in Git and the active
+Work Item before the catch is applied. #202/#216/#224/#225 remain unadmitted;
+no new issue duplicates this already-owned local completion outcome. Thread
+resolution authority already exercised for the two older findings does not
+supply a new merge, closure or launch authorization.
+
+### Sixth-round RED before production mutation
+
+The expanded focused suite ran in the readonly development container against
+unchanged 7740ce3 production: **51 tests, three runtime errors, zero assertion
+failures/skips**. The errors are UnicodeDecodeError from invalid stdout bytes,
+invalid stderr bytes and the corrupted terminal JSON cause. Previous 48 methods
+and both new valid-Unicode BASE/REFERENCE controls pass. This is an escaped-
+exception RED, not three existing false MATCHs; false acceptance was observed
+only in the independently evaluated replacement proposal.
+
+Command: `python -m unittest discover -s tests -p test_qualification_report_validity.py -v`.
+Development image:
+`sha256:10880e493693f23e362099767c5352e65df5e83b446d5c11d73c9f611ef36c01`.
+Production SHA-256 remains
+`7ef013df0a99d0411922d6e21ea75e3cd173bb6906b2093347bb847f97236c60`;
+expanded-test SHA-256:
+`fbc3452e9dd4730944bdb8639013178f16f433bb9d03de23638be5d9eee70d32`.
+Session-local RED log `/tmp/gnostoa-222-round6-red.log`, SHA-256
+`d84f4676cb8d4112f2d92ab6636eb2ffcb170e3037627c7424cdd3915dd24521`.
+Ruff format --no-cache --check tools ci tests: 117 files already formatted.
+
+R6-U1/U2 currently CONTRADICTS / executor RED; R6-P1 SUPPORTS for the positive
+controls. The production catch is not yet applied. No new actual pytest/OCI,
+compiler claim or retained recovery was executed. The RED tests use synthetic
+local oracle modules and the real local subprocess/harness/report boundary.
