@@ -184,7 +184,7 @@ repository's August 16 historical date is not contradicted by this UTC event.
 
 This is a separate stale-label retention pattern, with a longer lifetime than
 the September issue-creation omissions. Open-issue-only queries would miss this
-closed PR. The earlier [drift retrospective, D12](current-state-drift-retrospective.md#d12--stale-provider-lifecycle-label)
+closed PR. The earlier [drift retrospective, D12](current-state-drift-retrospective.md#d12-stale-provider-lifecycle-label)
 recorded the analogous shape on closed Issue #1 carrying `roadmap:now`.
 Recurrence of the missed reconciliation boundary is supported; identical actor
 psychology or an identical unobserved causal chain is not.
