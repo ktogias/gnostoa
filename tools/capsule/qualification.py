@@ -578,7 +578,7 @@ def _classify(
                 f"qualification report case {raw_name!r} has invalid error type",
                 collected=True,
             )
-        error_type = raw_error_type or ""
+        error_type = (raw_error_type or "").strip()
         raw_message = raw_case.get("message")
         if raw_message is not None and not isinstance(raw_message, str):
             return _infrastructure_outcome(
@@ -592,7 +592,7 @@ def _classify(
                 f"qualification report passed case {raw_name!r} carries an error",
                 collected=True,
             )
-        if outcome == "failed" and not error_type.strip():
+        if outcome == "failed" and not error_type:
             return _infrastructure_outcome(
                 subject,
                 f"qualification report failed case {raw_name!r} has no cause",

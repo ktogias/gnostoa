@@ -775,3 +775,96 @@ Production SHA-256 before repair:
 `23c86957a1923dcee633071ef63f48fc13f04c1ab35b824198e67986877bb087`.
 RED log `/tmp/gnostoa-222-round4-red.log` SHA-256:
 `a456b9451616586b9ff0de73472587efe5a3821804db29ec404b216a64d4fb1f` (session-local).
+
+### Fourth-round correction and retained boundary
+
+RED is retained at commit `ae94afc` and in the
+[pre-production Work Item checkpoint](https://github.com/ktogias/gnostoa/issues/219#issuecomment-5602636635),
+which was read back verbatim before the two-line production mutation. The
+observed cause is now normalized at assignment after raw-type validation,
+using `None` as absence, and all later checks use that same value. Unknown
+non-string types still return structured INFRASTRUCTURE; no `None.strip()`
+path exists. An added explanatory comment is unnecessary beside these explicit
+adjacent operations and the passing missing/None/type regressions.
+
+The four new methods exercise local JSON transport for padded infrastructure
+causes, canonical behavioral names, passed-empty causes and invalid-type/passed-
+nonblank rejection. Previous W1 tests continue to reject whitespace-only causes
+on failed cases. Ordinary unpadded names keep their classification and spelling;
+case folding and internal-name rewriting are deliberately outside this repair.
+
+The completed focused run is **47 PASS**, zero failures/errors/skips, on
+production SHA-256
+`3b505ce11c04beea34416532a8b90cee169c9605cca7ca0cb5171c201532b305`
+and tests SHA-256
+`23c86957a1923dcee633071ef63f48fc13f04c1ab35b824198e67986877bb087`.
+The separate reviewer baseline used 38 synthetic JSON transport cases and
+found 12 differences from the selected normalization behavior at 2933f4c:
+four false MATCHs, five canonical-name discrepancies and three passed-blank
+rejections. Its inputs differ from the regression matrix; these counts must
+not be merged with the 14-failure RED or presented as independent actual-pytest
+observations.
+
+Provider/source read-back confirms that #216 already owns receipt structural,
+type and outcome validity beyond declared MATCH/hash equality, including prior
+import, retained COMPLETE, READY and old-lock use. This review observation is
+retained here with that existing ownership; no receipt-path implementation or
+receipt execution was performed. Automatic approval review rejected an optional
+cross-post to #216 because it did not find explicit authorization for that
+payload/destination. That post was not made or retried through another route.
+The permitted local/#219 record is sufficient for this task; implementation
+admission for #216, #202 and #224 remains absent.
+
+### Fourth-round final reconciliation and finite mutation evidence
+
+Independent review of the actual two-line repair and four added test methods
+reports bounded **CODE REVIEW PASS** on the source/test hashes above. All 38
+independent synthetic JSON transport probes now SUPPORT their declared
+normalization expectations, with zero contradictions or escaped exceptions.
+This complements the 47-test GREEN but supplies no actual pytest/OCI or human
+approval claim.
+
+| Behavior row | Final evidence / alignment | Executor / independent agent reviewer |
+|---|---|---|
+| R4-W2 | Padded known infrastructure causes return INFRASTRUCTURE with canonical names; focused and independent probes PASS / SUPPORTS. | repaired / PASS |
+| R4-P1 | Ordinary padded causes remain MATCH with canonical case-sensitive identities; clean controls remain valid / SUPPORTS. | normalized / PASS |
+| R4-T1 | Missing/None/blank failed causes and invalid non-string types remain structured INFRASTRUCTURE / SUPPORTS. | preserved / PASS |
+| R4-P2 | Passed blank causes mean no error; passed nonblank causes remain contradictory / SUPPORTS. | normalized / PASS |
+| R4-X1 | All 22 still-applicable prior operators are killed; N9/N15 remain no-crash contracts, not assertRaises contracts / SUPPORTS. | reconciled / PASS |
+
+The four selected new operators and their actual outcomes are:
+
+| Mutation ID (separate from behavior IDs) | Exact selected transformation | Final result on 47 tests |
+|---|---|---|
+| R4.P1 | Replace `(raw_error_type or "").strip()` with `raw_error_type or ""` at assignment. | KILLED: 17 assertion failures, zero runtime errors. This also removes W1's protection, which now lives at assignment. |
+| R4.P2 | Replace the raw non-string/non-None type-rejection predicate with False. | KILLED: 4 assertion failures and 6 runtime errors. Falsey invalid values can otherwise become absent causes; truthy invalid values cannot be stripped. |
+| R4.P3 | Replace the passed-with-nonblank-cause rejection predicate with False. | KILLED: 2 assertion failures. Passed AssertionError reports demonstrate that this guard is load-bearing despite downstream protection on some infrastructure examples. |
+| R4.P4 | Add `.casefold()` after assignment-level `.strip()`. | KILLED: 26 assertion failures, zero runtime errors. This counter-mutation protects case-sensitive cause identity; it is not a guard deletion. |
+
+The active inventory is **26 specified valid operators**: 22 retained plus four
+new. Outcomes are 23 assertion-only kills (including diagnostic-only Q02), two
+runtime-error-only kills (N9/N15), and one mixed kill (R4.P2). All operators
+compile/import and execute all 47 tests with zero skips. These categories are
+not interchangeable false-MATCH proofs or an exhaustive score.
+
+The old R3.W1 operator specifically removed `.strip()` from the failed-case
+predicate. That target no longer exists after normalization moves upstream:
+record it as **NOT APPLICABLE**, not a new kill or a surviving defect. Its
+historical RED/kill remains valid at 2933f4c. Replaying only applicable operators
+prevents a source change from manufacturing a stronger mutation count.
+
+Full operator definitions and raw outputs remain session-local under
+`/tmp/gnostoa-222-round4`; the tables, source bindings and dispositions are the
+durable bounded record. Inventory SHA-256: `1505c8d0d46e9e6599ee681348e168718cb38c6cc2e6c89877ee4010e7ccb789`;
+final mutation JSON SHA-256: `e391b46325ec19d98d7f62f6cf2aa7269474bfc02a1426a422f05abfeba1b594`; final probe JSON SHA-256:
+`659737fc07a21d84aeed8ddb0189ac45a0d9200200cd69528c318cc3c5929961`. A broader durable replay/CI capability remains #224's unadmitted
+outcome; mutation checks cannot prove completeness of the chosen semantic
+inputs or automatically discover every untested family.
+
+Local focused, policy, fast, regression and smoke checks have passed on the
+bound executable source; the full source suite executes 644 tests, 642 passed
+and the same two existing OCI skips. The final PR checkpoint owns completed
+extended/runtime/provider results and exact candidate identities. No older CI
+result or source identity is substituted for this changed candidate. Next is
+human exact-head review, separate owner merge authority, then integration
+read-back before any #219 closure.
