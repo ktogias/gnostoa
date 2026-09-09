@@ -215,6 +215,102 @@ E RuntimeError: setup failed
             {"test_assertion": "AssertionError", "test_discriminates": "ValueError"},
         )
 
+    def test_failure_summary_must_refer_once_to_an_observed_failed_case(self) -> None:
+        failure_line = "FAILED oracle.py::test_discriminates - assert False\n"
+        variants = (
+            (
+                "absent case",
+                _PASSED_OUTPUT.replace(
+                    "PASSED [100%]\n",
+                    "PASSED [100%]\nFAILED oracle.py::test_absent - assert False\n",
+                ),
+                0,
+                1,
+            ),
+            (
+                "passed case",
+                _PASSED_OUTPUT.replace(
+                    "PASSED [100%]\n", "PASSED [100%]\n" + failure_line
+                ),
+                0,
+                1,
+            ),
+            (
+                "duplicate failure summary",
+                _FAILED_OUTPUT.replace(failure_line, failure_line * 2),
+                1,
+                0,
+            ),
+        )
+        for scenario, output, failed, passed in variants:
+            with self.subTest(scenario=scenario):
+                outcome = self.classify(
+                    output,
+                    int(bool(failed)),
+                    failed=failed,
+                    passed=passed,
+                    expected_failing=("test_discriminates",) if failed else (),
+                )
+                self.assertEqual(outcome.classification, qualification.INFRASTRUCTURE)
+
+    def test_qualified_infrastructure_cause_without_traceback_cannot_match(
+        self,
+    ) -> None:
+        for cause in ("builtins.OSError", "builtins.MemoryError"):
+            with self.subTest(cause=cause):
+                output = _FAILED_OUTPUT.replace("assert False", f"{cause}: unavailable")
+                outcome = self.classify(
+                    output,
+                    1,
+                    failed=1,
+                    passed=0,
+                    expected_failing=("test_discriminates",),
+                )
+                self.assertEqual(outcome.classification, qualification.INFRASTRUCTURE)
+
+    def test_duplicate_case_outcomes_cannot_collapse_into_matching_counts(self) -> None:
+        for output, failed, passed in ((_PASSED_OUTPUT, 0, 1), (_FAILED_OUTPUT, 1, 0)):
+            with self.subTest(failed=failed):
+                case_line = output.splitlines()[0] + "\n"
+                output = output.replace(case_line, case_line * 2)
+                outcome = self.classify(
+                    output,
+                    int(bool(failed)),
+                    failed=failed,
+                    passed=passed,
+                    expected_failing=("test_discriminates",) if failed else (),
+                )
+                self.assertEqual(outcome.classification, qualification.INFRASTRUCTURE)
+
+    def test_one_traceback_cannot_supply_causes_for_multiple_failed_cases(self) -> None:
+        for traceback in (
+            "E   assert 0",
+            "E   AssertionError: failed",
+            "E   ValueError: invalid",
+        ):
+            with self.subTest(traceback=traceback):
+                output = (
+                    "oracle.py::test_a FAILED [50%]\n"
+                    "oracle.py::test_b FAILED [100%]\n"
+                    f"{traceback}\n"
+                    "=================== 2 failed in 0.01s ===================\n"
+                )
+                outcome = self.classify(
+                    output, 1, failed=2, passed=0, expected_failing=("test_a", "test_b")
+                )
+                self.assertEqual(outcome.classification, qualification.INFRASTRUCTURE)
+
+    def test_infrastructure_traceback_cannot_be_erased_by_assertion_summary(
+        self,
+    ) -> None:
+        output = _FAILED_OUTPUT.replace(
+            "FAILED [100%]\n", "FAILED [100%]\nE   OSError: unavailable\n"
+        )
+        outcome = self.classify(
+            output, 1, failed=1, passed=0, expected_failing=("test_discriminates",)
+        )
+        self.assertEqual(outcome.classification, qualification.INFRASTRUCTURE)
+
     def test_terminal_summary_must_match_observed_cases(self) -> None:
         output = _FAILED_OUTPUT.replace("1 failed", "2 failed")
         outcome = self.classify(

@@ -255,7 +255,7 @@ ERROR guard alone cannot establish resource-cause safety. These sources explain
 the distinction; the admitted pytest-path execution evidence is synthetic
 stdout parsing, not a new real OCI qualification.
 
-## Bound source verification and review
+## Bound source verification and review at 5a1fb4e
 
 The final production source SHA-256 is
 `cd73df999efcce6dcd15f047801e60b04b4b78a9864dee7cf739c24ca1884e75`;
@@ -303,3 +303,147 @@ bounds. This repair does not establish complete reporter authentication,
 arbitrary custom-exception ancestry in text output, historical receipt validity
 or semantic correctness of the oracle. Merge and issue closure remain
 unadmitted.
+
+## Second review round: selected verification-only correction
+
+The owner supplied new Grok, Gemini and Claude reviews of
+`5a1fb4e8104874459a69dee74d6ba5ffce7567f4` and asked to analyze, record,
+make necessary corrections and propose the next step. Provider read-back still
+identifies that OPEN/unmerged PR head and protected base
+`6d8c4356866b3844f3439c7dc7ea374c39cfff2b`. Production blob
+`35bd1e8aedb5c0828d8fba9a80cb6408151a3d07` matches Claude's selector.
+This resumes the existing #219 critical candidate under Decision 0059 §G.
+The selected delta is additional regression evidence in the same focused test
+module and this assessment, with truthful PR/Work Item reconciliation.
+No production, dependency, fixture-image, CI, policy or routing change is
+selected. Existing Work Item #202 retains version-bound real OCI qualification
+and remains explicitly not implementation-admitted.
+
+### Initial behavior map for this round
+
+Before editing the focused tests, the expected behaviors and independent
+mutation plan are recorded below. All new verification states initially are
+NOT RUN, alignment UNKNOWN, executor/reviewer PENDING. The original source is
+expected to remain green: this round establishes missing regression
+discrimination, not a new production defect. An isolated valid mutant passing
+the original 30 tests is the pre-change coverage-gap evidence; the new test must
+pass on the unchanged source and fail on that mutant for an observable reason.
+
+| ID / supplied selector | Required observable result and ambiguity | Existing implementation / prospective evidence |
+|---|---|---|
+| R2-M11 / Claude short-summary consistency | A short-summary failure for an absent/passed case or a duplicated failed-case cause invalidates the report, even when outcome counts fit. | `_parse_pytest_report` summary/case consistency; one negative test with those variants; bypass consistency only in an isolated mutant. |
+| R2-M12 / Claude dotted-name cause | A qualified built-in infrastructure cause remains infrastructure after normalization; an `E` traceback must not mask the classifier discriminator. | `_classify` terminal type-name comparison; short-summary-only dotted OSError/MemoryError cases and exact-name-only mutant. |
+| R2-M13 / Claude duplicate case | Repeated case outcome lines cannot collapse silently into one valid case. | Parser duplicate-case guard; repeated PASSED/FAILED case lines with otherwise matching summary and duplicate-guard mutant. |
+| R2-M14 / Claude traceback fallback | Two failed cases cannot borrow one unbound traceback cause in the absence of per-case summaries. | Single-failed-case fallback predicate; two failed cases with one `E` assertion/cause and predicate-removal mutant. |
+| R2-M9 / Claude defense-in-depth interpretation | Infrastructure traceback evidence cannot be erased by a conflicting assertion short summary. For consistent reports the downstream classifier can make the early guard redundant; that does not establish universal redundancy. | Global infrastructure-cause guard; contradictory synthetic report and guard-removal mutant. No claim that a particular pytest version emits this constructed contradiction. |
+
+### Attributed review ledger and initial reconciliation
+
+These are owner-supplied texts. Model identity, authorship and independent
+execution are not established by the labels. The previous review round and its
+results remain historical evidence rather than being overwritten.
+
+| Source | Supplied conclusions and evidence | Reconciliation |
+|---|---|---|
+| R2-GROK-1 | GO-ready/no known blocker; repeats four-file scope, terminal status/ERROR/summary/contradiction/resource checks, per-case causes, explicit Failed and local completion controls. Again says the fix is strictly before `_classify` as required by Decision 0059; uses the previous PR title. | The bounded code observations agree with the inspected source. The placement/Decision assertion remains incorrect: validation also lives inside `_classify`; §G specifies cause semantics. Provider title is now “Preserve qualification completion and per-case failure causes.” |
+| R2-GROK-2 | 30 focused/627 total with two skips, RED before production, corrected GREEN claims, recorded deviation, exact-head CI/binding and 11 killed mutants; scores correctness/scope/cause/process/governance 10/10 and tests/mutations 9.5/10. | Prior exact-candidate checkpoint supports the scoped executions, not exhaustive coverage. Q02 was diagnostic-only, so a blanket inference that every killed guard is load-bearing is unsupported. Scores remain opinions rather than measured correctness. |
+| R2-GROK-3 | Refs #219, issue open, no merge/closure/Phase-D/release authority; human exact-head review followed by owner squash authorization and integration read-back. | The recorded authority boundary remains valid. A new test/document candidate needs new exact-head checks before that disposition. |
+| R2-GEMINI-1 | Updated artifact `219_pr222_deep_code_review.md`; per-case causes, single-failure fallback, Failed preservation, expanded infrastructure handling, report-level harness error and indexed assessment are correct. | Source supports the technical observations. The named external artifact was not supplied and is absent from this checkout; its content/provenance is not independently verified. |
+| R2-GEMINI-2 | Container extended, native policy/guardrails, both bundles, 627 tests/two skips and 11 mutants PASS; fully verified GO-ready. Reports a background task-113 host Python 3.14 `test_behavioral_traceability.py` issue, while container verification passes. | The previous admitted container/provider evidence is available. Gemini's native executions and background-task diagnosis remain supplied claims without bound logs; they do not justify a host-specific repair or a general Python 3.14 conclusion. “Fully verified” exceeds the declared bounded evidence. |
+| R2-CLAUDE-1 | Technical GO; B1/S1/M7/M8/R1–R3 closed. Cites exact head/tree/base/blob, 117 gate files/332 whole-tree files formatted, Ruff lint PASS, repeated five-exception local proof with assertion control, indexed 36,241-byte assessment with no dangling/duplicate IDs, 30/627 counts. | Git confirms the head/blob identity and previous admitted evidence confirms gate-scope formatting, local behavior and counts. Whole-tree formatting and the external repeated executions remain attributed claims unless independently repeated; they are not additional required gates. |
+| R2-CLAUDE-2 | Real pytest 9.1.1 stdout gives MATCH for BASE assertion+pass, successful REFERENCE and pytest.fail; INFRASTRUCTURE for INTERNALERROR and body OSError. No false results observed in those five scenarios. | Useful external compatibility evidence as reported, but raw outputs, fixture identity and exact command/environment were not supplied. It is not this repository's version-bound or mandatory OCI evidence, and five successful scenarios do not establish absence of all false results. No pytest acquisition is admitted here. |
+| R2-CLAUDE-3 | Extends mutation set to 14; M11–M14 survive with reachable false MATCH, M9 is redundant on inspected input. Four current guards are correct, so no current production blocker or mandatory pre-merge fix is asserted; adding four tests here or via #219 is optional. | The owner selected necessary review corrections. This round independently checks the four concrete coverage gaps and qualifies M9's claimed redundancy using contradictory evidence. Existing production behavior can be correct while its regression protection is incomplete. |
+| R2-CLAUDE-4 | Praises evidence reconciliation, epistemic qualification and exclusion of unadmitted probes; generated model provenance is distinct from product identity. Notes textual pytest coupling and no pinned/declared version, with #209 E1 still open. | Provenance and evidence boundaries remain explicit. No operational supported pytest version is pinned in runtime/development locks or the adapter; the literal claim that no version appears anywhere is too broad (the knowledge references exit-code docs and excluded probes). #202 already owns the missing pinned fixture/mandatory integration outcome. |
+| R2-CLAUDE-5 | Merge remains the owner's authorization; no known blocker at 5a1fb4e. | Retained as a technical review of that exact production subject, not human approval or authorization for this later candidate's merge. |
+
+### Pytest version ownership and the next bounded work item
+
+Read-back of [#202](https://github.com/ktogias/gnostoa/issues/202) confirms that it
+already owns a dedicated fixture with an exact base digest and pinned pytest /
+minimal test dependencies, built explicitly in CI, with required executions
+that fail on capability skips. The published runtime remains minimal and
+Capsule preparation remains offline and non-acquiring. The existing
+[coverage/correctness reconciliation](https://github.com/ktogias/gnostoa/issues/202#issuecomment-5594198635)
+already requires #219's independently repaired positive and negative cases and
+distinguishes controlled build inputs from proven byte-identical rebuilds.
+
+The current two OCI tests have different semantics. The oracle-staging test
+finds any locally available pytest-capable image and checks collection and
+non-infrastructure outcomes. The other test intentionally expects
+INFRASTRUCTURE when its local Python image lacks pytest. Neither arrangement
+declares a supported pytest version or makes successful qualification
+mandatory. #202 must preserve the missing-runtime negative and provide explicit
+BASE-failure / REFERENCE-success MATCH controls plus relevant report negatives;
+simply eliminating skip counts would not prove those behaviors.
+
+Admission remains a separate next step: after binding the accepted #219 source
+and current provider state, the owner must select #202 and record its concrete
+fixture/lock/test/workflow surfaces, classification, governing Decision,
+pre-implementation evidence and permitted acquisition/build/CI effects. This
+review capture does not admit #202 or select pytest 9.1.1 as the supported
+version. No new issue, fixture, dependency pin, hidden oracle or workflow
+mutation is required to preserve this already-owned finding.
+
+### Second-round evidence and disposition
+
+Pre-change characterization independently executes the original 30 tests on
+the exact 5a1fb4e production/test bytes: the unmodified source passes, and each
+of M9/M11/M12/M13/M14 compiles, imports and survives all 30 tests. Separate
+synthetic inputs establish INFRASTRUCTURE on the original source versus MATCH
+on each respective mutant. This confirms five reachable regression-coverage
+gaps without alleging that the correct guards are absent in production.
+
+The M9 counterexample has one failed case, an OSError traceback line and an
+assertion short summary. The global infrastructure guard rejects it; removing
+the guard lets the short summary hide the incompatible traceback cause.
+Claude's redundant consistent-cause example is valid, but its conclusion does
+not generalize to this contradictory report. The fifth test retains that
+existing conservative rejection without claiming real pytest emits this input.
+
+Five test methods now cover these behaviors, including absent/passed/duplicate
+short summaries, dotted causes without traceback, repeated case outcomes and
+multiple failures sharing one unbound assertion or exception traceback. Every
+new assertion checks the resulting INFRASTRUCTURE classification; none relies
+solely on a diagnostic-detail string. Final source/test identities, mutation
+replay and exact-candidate suite results are bound in the continuation below
+and the PR checkpoint before review-ready disposition.
+
+The corrected focused suite executes **35 tests, PASS**, in the development
+container. Production SHA-256 remains
+`cd73df999efcce6dcd15f047801e60b04b4b78a9864dee7cf739c24ca1884e75`;
+the updated focused-test SHA-256 is
+`5a252385f1006c79aaab94bb71a0568d1a539df51fa546307643f68cbbecd1e3`.
+The same five valid mutants now fail as follows:
+
+| Review selector | Old 30-test suite | New 35-test suite | Alignment | Executor / agent reviewer |
+|---|---|---|---|---|
+| M11: short-summary/case consistency | SURVIVED | KILLED, 3 classification failures | SUPPORTS | corrected / PASS |
+| M12: qualified infrastructure cause | SURVIVED | KILLED, 2 classification failures | SUPPORTS | corrected / PASS |
+| M13: duplicate case outcomes | SURVIVED | KILLED, 2 classification failures | SUPPORTS | corrected / PASS |
+| M14: single-case traceback fallback | SURVIVED | KILLED, 3 classification failures | SUPPORTS | corrected / PASS |
+| M9: infrastructure traceback precedence | SURVIVED | KILLED, 1 classification failure | SUPPORTS | corrected / PASS |
+
+Each mutant compiles/imports and executes all 35 tests, with zero runtime
+errors or skips. The earlier Q01–Q11 inventory was independently rerun against
+the 35-test file: all 11 remain killed. The cumulative inventory is therefore
+**16 specified mutants**, not an exhaustive statement. Q11 (copy first
+short-summary cause) is distinct from this review's M11 (summary consistency).
+Q02 retains its previously declared diagnostic-only interpretation.
+The independent reviewer inspected the new tests and found no test/cause
+alignment blocker; this remains agent evidence rather than human approval.
+
+Session-native replay artifacts are
+`/tmp/gnostoa-222-round2-mutations.py` and
+`/tmp/gnostoa-222-round2/{baseline-30-results.json,corrected-35-results.json,prior-11-corrected-35-results.md}`.
+The known production subject and its prior code review are unchanged; only
+the focused test module and this assessment differ from 5a1fb4e. The final PR
+checkpoint records the new commit and completed provider/container suites.
+No source regression is alleged and no production mutation was needed to
+close the five demonstrated verification gaps.
+
+Recommended next disposition: review this bounded test/evidence delta with
+the new exact-head checks, then obtain the owner's separate squash-merge
+authorization. After an authorized merge, read back integration and explicitly
+reconcile #219 before any closure. Select/admit #202 separately for the pinned
+real OCI fixture; neither these synthetic tests nor Claude's external pytest
+version claim completes that outcome.
