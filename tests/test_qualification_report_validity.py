@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import pathlib
 import subprocess
+import tempfile
 from unittest import TestCase, main, mock
 
 from tools.capsule import qualification
@@ -119,8 +120,100 @@ E RuntimeError: setup failed
         self.assert_infrastructure(outcome, "exit 5")
 
     def test_unknown_terminal_status_fails_closed(self) -> None:
-        outcome = self.classify(_PASSED_OUTPUT, 17, failed=0, passed=1)
-        self.assert_infrastructure(outcome, "exit 17")
+        for exit_code in (2, 3, 4, 5, 6, 17, -2, -9, 137):
+            with self.subTest(exit_code=exit_code):
+                outcome = self.classify(_PASSED_OUTPUT, exit_code, failed=0, passed=1)
+                self.assert_infrastructure(outcome, f"exit {exit_code}")
+
+    def test_unsupported_summary_outcomes_cannot_hide_behind_failed_case(self) -> None:
+        for label in ("error", "skipped", "xfailed", "xpassed", "deselected"):
+            with self.subTest(label=label):
+                output = _FAILED_OUTPUT.replace(
+                    "1 failed in", f"1 failed, 1 {label} in"
+                )
+                outcome = self.classify(
+                    output,
+                    1,
+                    failed=1,
+                    passed=0,
+                    expected_failing=("test_discriminates",),
+                )
+                self.assert_infrastructure(outcome, "unsupported outcomes")
+
+    def test_failed_case_without_traceback_cannot_invent_assertion_cause(self) -> None:
+        output = (
+            "oracle.py::test_discriminates FAILED [100%]\n"
+            "=================== 1 failed in 0.01s ===================\n"
+        )
+        outcome = self.classify(
+            output,
+            1,
+            failed=1,
+            passed=0,
+            expected_failing=("test_discriminates",),
+        )
+        self.assert_infrastructure(outcome, "no recognizable failure cause")
+
+    def test_pytest_resource_failures_cannot_match_behavioral_failure(self) -> None:
+        for cause in (
+            "MemoryError",
+            "RecursionError",
+            "OSError",
+            "PermissionError",
+            "TimeoutError",
+            "ConnectionError",
+        ):
+            with self.subTest(cause=cause):
+                output = _FAILED_OUTPUT.replace("assert False", f"{cause}: unavailable")
+                outcome = self.classify(
+                    output,
+                    1,
+                    failed=1,
+                    passed=0,
+                    expected_failing=("test_discriminates",),
+                )
+                self.assertEqual(outcome.classification, qualification.INFRASTRUCTURE)
+
+    def test_each_failed_case_requires_its_own_recognizable_cause(self) -> None:
+        for second_cause in ("SystemExit: 0", "Fatal: stopped", None):
+            with self.subTest(second_cause=second_cause):
+                output = (
+                    "oracle.py::test_assertion FAILED [50%]\n"
+                    "oracle.py::test_discriminates FAILED [100%]\n"
+                    "FAILED oracle.py::test_assertion - assert False\n"
+                )
+                if second_cause is not None:
+                    output += f"FAILED oracle.py::test_discriminates - {second_cause}\n"
+                output += "=================== 2 failed in 0.01s ===================\n"
+                outcome = self.classify(
+                    output,
+                    1,
+                    failed=2,
+                    passed=0,
+                    expected_failing=("test_assertion", "test_discriminates"),
+                )
+                self.assertEqual(outcome.classification, qualification.INFRASTRUCTURE)
+
+    def test_distinct_observed_causes_are_not_copied_between_cases(self) -> None:
+        output = (
+            "oracle.py::test_assertion FAILED [50%]\n"
+            "oracle.py::test_discriminates FAILED [100%]\n"
+            "FAILED oracle.py::test_assertion - assert False\n"
+            "FAILED oracle.py::test_discriminates - ValueError: invalid value\n"
+            "=================== 2 failed in 0.01s ===================\n"
+        )
+        outcome = self.classify(
+            output,
+            1,
+            failed=2,
+            passed=0,
+            expected_failing=("test_assertion", "test_discriminates"),
+        )
+        self.assertEqual(outcome.classification, qualification.MATCH)
+        self.assertEqual(
+            outcome.error_types,
+            {"test_assertion": "AssertionError", "test_discriminates": "ValueError"},
+        )
 
     def test_terminal_summary_must_match_observed_cases(self) -> None:
         output = _FAILED_OUTPUT.replace("1 failed", "2 failed")
@@ -142,6 +235,14 @@ E RuntimeError: setup failed
             expected_failing=("test_discriminates",),
         )
         self.assertEqual(outcome.classification, qualification.MATCH)
+
+    def test_explicit_pytest_fail_is_observed_behavioral_evidence(self) -> None:
+        output = _FAILED_OUTPUT.replace("assert False", "Failed: behavior was wrong")
+        outcome = self.classify(
+            output, 1, failed=1, passed=0, expected_failing=("test_discriminates",)
+        )
+        self.assertEqual(outcome.classification, qualification.MATCH)
+        self.assertEqual(outcome.error_types["test_discriminates"], "Failed")
 
     def test_expected_reference_success_with_exit_zero_can_match(self) -> None:
         outcome = self.classify(_PASSED_OUTPUT, 0, failed=0, passed=1)
@@ -271,6 +372,70 @@ class LocalHarnessCompletionTests(TestCase):
     def test_zero_local_completion_with_valid_report_can_match(self) -> None:
         outcome = self.classify_local(0, "passed")
         self.assertEqual(outcome.classification, qualification.MATCH)
+
+    def run_oracle(self, source: str) -> qualification.SubjectOutcome:
+        with tempfile.TemporaryDirectory() as temporary:
+            subject = pathlib.Path(temporary)
+            oracle = subject / "oracle.py"
+            oracle.write_text(source)
+            report = qualification._run_local_python(subject, oracle, ())
+        return qualification._classify(
+            "base",
+            report,
+            {"failed": 1, "passed": 0},
+            expected_failing=("test_discriminates",),
+        )
+
+    def test_real_local_process_and_resource_exceptions_cannot_match(self) -> None:
+        for expression in (
+            "KeyboardInterrupt()",
+            "SystemExit(0)",
+            "SystemExit(1)",
+            "GeneratorExit()",
+            "MemoryError()",
+            "RecursionError()",
+            "OSError(28, 'No space left on device')",
+            "PermissionError()",
+            "TimeoutError()",
+            "ConnectionError()",
+        ):
+            with self.subTest(expression=expression):
+                outcome = self.run_oracle(
+                    f"def test_discriminates():\n    raise {expression}\n"
+                )
+                self.assertEqual(outcome.classification, qualification.INFRASTRUCTURE)
+
+    def test_real_local_resource_exception_subclass_cannot_erase_cause(self) -> None:
+        outcome = self.run_oracle(
+            "class ResourceUnavailable(OSError):\n    pass\n"
+            "def test_discriminates():\n    raise ResourceUnavailable('unavailable')\n"
+        )
+        self.assertEqual(outcome.classification, qualification.INFRASTRUCTURE)
+
+    def test_real_local_assertion_failure_remains_valid(self) -> None:
+        outcome = self.run_oracle("def test_discriminates():\n    assert False\n")
+        self.assertEqual(outcome.classification, qualification.MATCH)
+        self.assertEqual(outcome.error_types["test_discriminates"], "AssertionError")
+
+    def test_real_local_collection_failure_remains_infrastructure(self) -> None:
+        outcome = self.run_oracle("raise ImportError('missing dependency')\n")
+        self.assertEqual(outcome.classification, qualification.INFRASTRUCTURE)
+        self.assertIn("ImportError", outcome.detail)
+
+    def test_malformed_local_json_is_infrastructure(self) -> None:
+        for stdout in ("", "{", "[]", "null", '"report"'):
+            with self.subTest(stdout=stdout):
+                completed = subprocess.CompletedProcess(["python"], 0, stdout, "")
+                with mock.patch.object(
+                    qualification.subprocess, "run", return_value=completed
+                ):
+                    report = qualification._run_local_python(
+                        pathlib.Path("/subject"), pathlib.Path("/oracle.py"), ()
+                    )
+                outcome = qualification._classify(
+                    "subject", report, {"failed": 0, "passed": 0}, expected_failing=()
+                )
+                self.assertEqual(outcome.classification, qualification.INFRASTRUCTURE)
 
 
 if __name__ == "__main__":
