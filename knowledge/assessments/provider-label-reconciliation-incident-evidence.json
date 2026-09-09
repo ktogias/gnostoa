@@ -41,7 +41,7 @@
     "preceding_provider_event": {
       "pr": 222,
       "merged_at": "2026-09-09T17:20:38Z",
-      "merge_commit_sha": "a1dfd461cfb90c403e5847e886a760f9943fcc54"
+      "merge_commit_sha": "a1dfd461cfb90c403e5847e886a760f9943fcc54", "_merge_commit_sha_annotation": "# pragma: allowlist secret -- public Git commit identity"
     }
   },
   "issues": [
@@ -809,7 +809,7 @@
     ],
     "pr222_created_at": "2026-09-09T10:20:59Z",
     "pr222_merged_at": "2026-09-09T17:20:38Z",
-    "pr222_merge_commit_sha": "a1dfd461cfb90c403e5847e886a760f9943fcc54",
+    "pr222_merge_commit_sha": "a1dfd461cfb90c403e5847e886a760f9943fcc54", "_pr222_merge_commit_sha_annotation": "# pragma: allowlist secret -- public Git commit identity",
     "retained_mid_repair_snapshots": [
       {
         "file": "gnostoa-219-round5-verified-issue.json",
@@ -829,7 +829,7 @@
     "url": "https://github.com/ktogias/gnostoa/pull/23",
     "created_at": "2026-08-15T08:05:04Z",
     "merged_at": "2026-08-15T21:42:36Z",
-    "merge_commit_sha": "cda51dad6a719da43d8465a3f0f270021c357d96",
+    "merge_commit_sha": "cda51dad6a719da43d8465a3f0f270021c357d96", "_merge_commit_sha_annotation": "# pragma: allowlist secret -- public Git commit identity",
     "closed_at": "2026-08-15T21:42:36Z",
     "events": [
       {
@@ -885,211 +885,211 @@
     {
       "file": "gnostoa-open-records-full.json",
       "bytes": 499852,
-      "sha256": "e074fd26f0e6fb87d3b2cb36d44e03db4cceb2e849778b1523fcb7b67c3012eb",
+      "sha256": "e074fd26f0e6fb87d3b2cb36d44e03db4cceb2e849778b1523fcb7b67c3012eb", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "session-local raw provider response or retained observation; hash does not make availability permanent"
     },
     {
       "file": "gnostoa-open-issues-label-audit.json",
       "bytes": 7766,
-      "sha256": "6fcbbce4e4984e0cbfefff2490b1b602b06fe604d9296fe77e8bc054bbecf0ff",
+      "sha256": "6fcbbce4e4984e0cbfefff2490b1b602b06fe604d9296fe77e8bc054bbecf0ff", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "session-local raw provider response or retained observation; hash does not make availability permanent"
     },
     {
       "file": "gnostoa-open-records-label-readback.json",
       "bytes": 500838,
-      "sha256": "488b8e054558513b2274efde0212f6cf014f5c66a356f9d729a26075a7e4f46e",
+      "sha256": "488b8e054558513b2274efde0212f6cf014f5c66a356f9d729a26075a7e4f46e", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "session-local raw provider response or retained observation; hash does not make availability permanent"
     },
     {
       "file": "gnostoa-label-reconcile-map.json",
       "bytes": 1018,
-      "sha256": "ab23372bf091770cd0b49fce0357ef3f31413e29a786f05af27b852ce21b771b",
+      "sha256": "ab23372bf091770cd0b49fce0357ef3f31413e29a786f05af27b852ce21b771b", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "session-local raw provider response or retained observation; hash does not make availability permanent"
     },
     {
       "file": "gnostoa-label-rca-183-events.json",
       "bytes": 25576,
-      "sha256": "40ff2b8a6372dff5fd922ae1bc2bff4e3a9d6f86e2abffcf1a01fc730542a105",
+      "sha256": "40ff2b8a6372dff5fd922ae1bc2bff4e3a9d6f86e2abffcf1a01fc730542a105", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "session-local raw provider response or retained observation; hash does not make availability permanent"
     },
     {
       "file": "gnostoa-label-rca-201-events.json",
       "bytes": 2522,
-      "sha256": "b81a4b92231967c9285394c43cd016259aad0cacfa72e5bc130637fe925ede8a",
+      "sha256": "b81a4b92231967c9285394c43cd016259aad0cacfa72e5bc130637fe925ede8a", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "session-local raw provider response or retained observation; hash does not make availability permanent"
     },
     {
       "file": "gnostoa-label-rca-202-events.json",
       "bytes": 2510,
-      "sha256": "ad72a31815c54129b80790b81466343a945010b74e5073c40ff7763aa12fb209",
+      "sha256": "ad72a31815c54129b80790b81466343a945010b74e5073c40ff7763aa12fb209", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "session-local raw provider response or retained observation; hash does not make availability permanent"
     },
     {
       "file": "gnostoa-label-rca-203-events.json",
       "bytes": 6919,
-      "sha256": "817a47c74d738899396d597a132ee1490cc363cb75e8c811b43ab664e0c1bf5d",
+      "sha256": "817a47c74d738899396d597a132ee1490cc363cb75e8c811b43ab664e0c1bf5d", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "session-local raw provider response or retained observation; hash does not make availability permanent"
     },
     {
       "file": "gnostoa-label-rca-209-events.json",
       "bytes": 3971,
-      "sha256": "57459fa86ff7b05bdffdfb1138add50407cdf15e3b11dd88dd59171d8ccaf866",
+      "sha256": "57459fa86ff7b05bdffdfb1138add50407cdf15e3b11dd88dd59171d8ccaf866", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "session-local raw provider response or retained observation; hash does not make availability permanent"
     },
     {
       "file": "gnostoa-label-rca-210-events.json",
       "bytes": 3777,
-      "sha256": "7b2ed46abb45ecc3e5b730c764c87e9c274712337a100223d2771f4763a64e08",
+      "sha256": "7b2ed46abb45ecc3e5b730c764c87e9c274712337a100223d2771f4763a64e08", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "session-local raw provider response or retained observation; hash does not make availability permanent"
     },
     {
       "file": "gnostoa-label-rca-211-events.json",
       "bytes": 2518,
-      "sha256": "93d81bfe548d08976dd4bf94d0f46ae17605b17a3ce7a5ca7445500a24bf0cf2",
+      "sha256": "93d81bfe548d08976dd4bf94d0f46ae17605b17a3ce7a5ca7445500a24bf0cf2", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "session-local raw provider response or retained observation; hash does not make availability permanent"
     },
     {
       "file": "gnostoa-label-rca-212-events.json",
       "bytes": 2518,
-      "sha256": "834d9b232a8d21ee821717b1ac20d20c28451383872c7670d2758e98a481fdd1",
+      "sha256": "834d9b232a8d21ee821717b1ac20d20c28451383872c7670d2758e98a481fdd1", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "session-local raw provider response or retained observation; hash does not make availability permanent"
     },
     {
       "file": "gnostoa-label-rca-213-events.json",
       "bytes": 2518,
-      "sha256": "a2708f3b7b84c98fb2c4ecc40d236f1e52be3a1f2d52404496d064d67db34d19",
+      "sha256": "a2708f3b7b84c98fb2c4ecc40d236f1e52be3a1f2d52404496d064d67db34d19", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "session-local raw provider response or retained observation; hash does not make availability permanent"
     },
     {
       "file": "gnostoa-label-rca-214-events.json",
       "bytes": 2518,
-      "sha256": "de1c901b9471f00a1395872b68da713c1c039c32ddc1c2e9b47173da13e9779e",
+      "sha256": "de1c901b9471f00a1395872b68da713c1c039c32ddc1c2e9b47173da13e9779e", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "session-local raw provider response or retained observation; hash does not make availability permanent"
     },
     {
       "file": "gnostoa-label-rca-215-events.json",
       "bytes": 2518,
-      "sha256": "6af4529f595cbdb78126a236110056efb9580e829588df90a456d9499398c768",
+      "sha256": "6af4529f595cbdb78126a236110056efb9580e829588df90a456d9499398c768", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "session-local raw provider response or retained observation; hash does not make availability permanent"
     },
     {
       "file": "gnostoa-label-rca-216-events.json",
       "bytes": 3877,
-      "sha256": "0c58a097d309da1c8d01a624696eab3e6de7f96c40a255d5c47f9dea1b0821ed",
+      "sha256": "0c58a097d309da1c8d01a624696eab3e6de7f96c40a255d5c47f9dea1b0821ed", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "session-local raw provider response or retained observation; hash does not make availability permanent"
     },
     {
       "file": "gnostoa-label-rca-217-events.json",
       "bytes": 2518,
-      "sha256": "704335b3b1c3a5aedf42f4d41d4fa305c47a60b4e0e23cb4cab7e8ea0a398d3d",
+      "sha256": "704335b3b1c3a5aedf42f4d41d4fa305c47a60b4e0e23cb4cab7e8ea0a398d3d", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "session-local raw provider response or retained observation; hash does not make availability permanent"
     },
     {
       "file": "gnostoa-label-rca-218-events.json",
       "bytes": 3777,
-      "sha256": "62860be8825eab04a9636ddaa8cf2c0b0888621903eb03e1af8577b03ed4bf10",
+      "sha256": "62860be8825eab04a9636ddaa8cf2c0b0888621903eb03e1af8577b03ed4bf10", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "session-local raw provider response or retained observation; hash does not make availability permanent"
     },
     {
       "file": "gnostoa-label-rca-219-events.json",
       "bytes": 17200,
-      "sha256": "bfa02276d8f85d19285f2fbbf31b7977944204f8d8d42cb85816224e1854441d",
+      "sha256": "bfa02276d8f85d19285f2fbbf31b7977944204f8d8d42cb85816224e1854441d", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "session-local raw provider response or retained observation; hash does not make availability permanent"
     },
     {
       "file": "gnostoa-label-rca-221-events.json",
       "bytes": 1252,
-      "sha256": "41cc1b54319fd810bdf7bda3b92c984a2f9deadc2d1ac452352d6f6d6c24afc2",
+      "sha256": "41cc1b54319fd810bdf7bda3b92c984a2f9deadc2d1ac452352d6f6d6c24afc2", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "session-local raw provider response or retained observation; hash does not make availability permanent"
     },
     {
       "file": "gnostoa-label-rca-224-events.json",
       "bytes": 2522,
-      "sha256": "1d1d34f5d00030e6437680d610c5649ddb3d7fbe1fbcf1c9b54ce04f760e9ce0",
+      "sha256": "1d1d34f5d00030e6437680d610c5649ddb3d7fbe1fbcf1c9b54ce04f760e9ce0", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "session-local raw provider response or retained observation; hash does not make availability permanent"
     },
     {
       "file": "gnostoa-label-rca-225-events.json",
       "bytes": 1252,
-      "sha256": "447f93e34f3be496b38a591d5fea8a4f704ee338b65198d444167aeab16a35c6",
+      "sha256": "447f93e34f3be496b38a591d5fea8a4f704ee338b65198d444167aeab16a35c6", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "session-local raw provider response or retained observation; hash does not make availability permanent"
     },
     {
       "file": "gnostoa-label-rca-23-events.json",
       "bytes": 10047,
-      "sha256": "d89d13a3b84b25aedea94939bb8166f9de13f682eea8a8b92289325061982937",
+      "sha256": "d89d13a3b84b25aedea94939bb8166f9de13f682eea8a8b92289325061982937", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "session-local raw provider response or retained observation; hash does not make availability permanent"
     },
     {
       "file": "gnostoa-label-rca-219-admission.json",
       "bytes": 6650,
-      "sha256": "fd3911ae7f36eeb2ba0ccd76a5f309ca561479ab083d3985905f22212694b628",
+      "sha256": "fd3911ae7f36eeb2ba0ccd76a5f309ca561479ab083d3985905f22212694b628", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "session-local raw provider response or retained observation; hash does not make availability permanent"
     },
     {
       "file": "gnostoa-label-rca-219-completion-admission.json",
       "bytes": 6817,
-      "sha256": "39a012ed5fbf916eeaa8c108c8b0d40ca34823e2e532280a30c19eb8b0d8bc94",
+      "sha256": "39a012ed5fbf916eeaa8c108c8b0d40ca34823e2e532280a30c19eb8b0d8bc94", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "session-local raw provider response or retained observation; hash does not make availability permanent"
     },
     {
       "file": "gnostoa-label-rca-pr23.json",
       "bytes": 26571,
-      "sha256": "8ffc94b948762f499096f152c2a052b459636cd1606d2f3642df321e83244fef",
+      "sha256": "8ffc94b948762f499096f152c2a052b459636cd1606d2f3642df321e83244fef", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "session-local raw provider response or retained observation; hash does not make availability permanent"
     },
     {
       "file": "gnostoa-label-rca-pr222.json",
       "bytes": 24257,
-      "sha256": "a2fd075678798acf5e8f2264d6c979428111ec4bb6c570cb103c7deba480a648",
+      "sha256": "a2fd075678798acf5e8f2264d6c979428111ec4bb6c570cb103c7deba480a648", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "session-local raw provider response or retained observation; hash does not make availability permanent"
     },
     {
       "file": "gnostoa-label-rca-219-current.json",
       "bytes": 12715,
-      "sha256": "080c62af570b02421805785cdc3b90e6eb59cb5ce7999cb6cc3c4f06e009a31e",
+      "sha256": "080c62af570b02421805785cdc3b90e6eb59cb5ce7999cb6cc3c4f06e009a31e", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "session-local raw provider response or retained observation; hash does not make availability permanent"
     },
     {
       "file": "gnostoa-219-round5-verified-issue.json",
       "bytes": 11967,
-      "sha256": "5f5c3f1a98ab3d2556ed6ac53af746dd304cfda35ddebda377ef329a0c54fae1",
+      "sha256": "5f5c3f1a98ab3d2556ed6ac53af746dd304cfda35ddebda377ef329a0c54fae1", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "session-local raw provider response or retained observation; hash does not make availability permanent"
     },
     {
       "file": "gnostoa-219-round6-initial-issue.json",
       "bytes": 12160,
-      "sha256": "887e9a8633e8625bb83df53a9609f95b7fbc3a28c0922a09b0b40f892665beec",
+      "sha256": "887e9a8633e8625bb83df53a9609f95b7fbc3a28c0922a09b0b40f892665beec", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "session-local raw provider response or retained observation; hash does not make availability permanent"
     },
     {
       "file": "gnostoa-219-integration-before.json",
       "bytes": 11854,
-      "sha256": "74acc6db21e4a9d3072676dd2048a83228f71c2f14709bc325dff4c39f538917",
+      "sha256": "74acc6db21e4a9d3072676dd2048a83228f71c2f14709bc325dff4c39f538917", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "retained task-local input or executor-authored artifact; raw bytes remain session-local"
     },
     {
       "file": "gnostoa-219-integration-final.json",
       "bytes": 12510,
-      "sha256": "dc11328a8c1c56709ae431e796c8ecffcf77e309ee8fbfcbb38ed072583e9853",
+      "sha256": "dc11328a8c1c56709ae431e796c8ecffcf77e309ee8fbfcbb38ed072583e9853", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "retained task-local input or executor-authored artifact; raw bytes remain session-local"
     },
     {
       "file": "gnostoa-219-integration-body.json",
       "bytes": 8521,
-      "sha256": "808dd1ee7f72b94a599d483765118f3dcf9b53c3b78d6d940a7d0bc516b34c48",
+      "sha256": "808dd1ee7f72b94a599d483765118f3dcf9b53c3b78d6d940a7d0bc516b34c48", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "retained task-local input or executor-authored artifact; raw bytes remain session-local"
     },
     {
       "file": "gnostoa-222-prepare-integration-bodies.py",
       "bytes": 6226,
-      "sha256": "b8278c9cfbac6211eca4d2838e705396def51d6ad77e7c78c2d7119d561f5dd2",
+      "sha256": "b8278c9cfbac6211eca4d2838e705396def51d6ad77e7c78c2d7119d561f5dd2", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "retained task-local input or executor-authored artifact; raw bytes remain session-local"
     },
     {
       "file": "gnostoa-222-integration-checkpoint.md",
       "bytes": 7560,
-      "sha256": "03412f4e073da9deacb6246fba510398220751bf9758e9cda056a0835e62c26d",
+      "sha256": "03412f4e073da9deacb6246fba510398220751bf9758e9cda056a0835e62c26d", "_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "role": "retained task-local input or executor-authored artifact; raw bytes remain session-local"
     }
   ],
@@ -1105,7 +1105,7 @@
       "provider_updated_at": "2026-09-09T17:15:38Z",
       "state": "open",
       "labels": [],
-      "body_sha256": "c7142e9aa9c7d8f9a818b52ca9927f73bbe17c37f4ac36109478a2d14f07c223"
+      "body_sha256": "c7142e9aa9c7d8f9a818b52ca9927f73bbe17c37f4ac36109478a2d14f07c223", "_body_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest"
     },
     "after_completed_readback": {
       "source_file": "gnostoa-219-integration-final.json",
@@ -1113,14 +1113,14 @@
       "provider_updated_at": "2026-09-09T17:31:04Z",
       "state": "open",
       "labels": [],
-      "body_sha256": "1904de1808b31239608a0d44393e4ef2bc32f4576da9afca0a108ec9e6918286"
+      "body_sha256": "1904de1808b31239608a0d44393e4ef2bc32f4576da9afca0a108ec9e6918286", "_body_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest"
     },
     "outgoing_issue_update": {
       "source_file": "gnostoa-219-integration-body.json",
       "top_level_keys": [
         "body"
       ],
-      "body_sha256": "1904de1808b31239608a0d44393e4ef2bc32f4576da9afca0a108ec9e6918286",
+      "body_sha256": "1904de1808b31239608a0d44393e4ef2bc32f4576da9afca0a108ec9e6918286", "_body_sha256_annotation": "# pragma: allowlist secret -- verified evidence content digest",
       "interpretation": "This operation updated only the issue body; it supplied no label mutation."
     },
     "preparation_script": {

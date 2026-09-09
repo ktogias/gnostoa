@@ -91,6 +91,9 @@ added the task-local reconciliation evidence and authored this interpretation.
 Independent agent inspection provides a second reading of those same sources,
 not independent human approval or independent causal measurement.
 
+The JSON's line-scoped scanner annotations identify verified content digests and
+public Git commit identities; they do not exclude the file from secret scanning.
+
 | Evidence | What it establishes | What it cannot establish |
 | --- | --- | --- |
 | Before/after provider snapshots | Labels, issue state and the bounded inventory at observation | Who chose an omission or why |
