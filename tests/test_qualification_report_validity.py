@@ -187,9 +187,7 @@ class NormalizedReportValidityTests(unittest.TestCase):
         self.assertIn("incomplete report", outcome.detail)
 
     def test_non_mapping_cases_are_rejected_without_crashing(self) -> None:
-        outcome = self.classify(
-            {"collected": True, "cases": [], "error": None}
-        )
+        outcome = self.classify({"collected": True, "cases": [], "error": None})
         self.assertEqual(outcome.classification, qualification.INFRASTRUCTURE)
 
     def test_unknown_case_outcome_cannot_match_zero_counts(self) -> None:
@@ -229,7 +227,9 @@ class LocalHarnessCompletionTests(unittest.TestCase):
             }
         )
 
-    def classify_local(self, returncode: int, outcome: str) -> qualification.SubjectOutcome:
+    def classify_local(
+        self, returncode: int, outcome: str
+    ) -> qualification.SubjectOutcome:
         completed = subprocess.CompletedProcess(
             args=["python"],
             returncode=returncode,
@@ -247,15 +247,28 @@ class LocalHarnessCompletionTests(unittest.TestCase):
                 "failed": 1 if outcome == "failed" else 0,
                 "passed": 1 if outcome == "passed" else 0,
             },
-            expected_failing=(
-                ("test_discriminates",) if outcome == "failed" else ()
-            ),
+            expected_failing=(("test_discriminates",) if outcome == "failed" else ()),
         )
 
     def test_nonzero_local_completion_cannot_yield_match(self) -> None:
         outcome = self.classify_local(3, "failed")
         self.assertEqual(outcome.classification, qualification.INFRASTRUCTURE)
         self.assertIn("exit 3", outcome.detail)
+
+    def test_local_timeout_is_reported_as_infrastructure(self) -> None:
+        timeout = subprocess.TimeoutExpired(["python"], 120)
+        with mock.patch.object(qualification.subprocess, "run", side_effect=timeout):
+            report = qualification._run_local_python(
+                Path("/subject"), Path("/oracle.py"), ()
+            )
+        outcome = qualification._classify(
+            "subject",
+            report,
+            {"failed": 0, "passed": 1},
+            expected_failing=(),
+        )
+        self.assertEqual(outcome.classification, qualification.INFRASTRUCTURE)
+        self.assertIn("timed out", outcome.detail)
 
     def test_zero_local_completion_with_valid_report_can_match(self) -> None:
         outcome = self.classify_local(0, "passed")
