@@ -6,7 +6,6 @@ import json
 import pathlib
 import subprocess
 from unittest import TestCase, main, mock
-
 from tools.capsule import qualification
 
 
