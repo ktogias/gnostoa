@@ -31,11 +31,16 @@ x-project-knowledge:
       target: /decisions/0059-compile-declarative-experiment-capsules-over-the-owner-led-runner.md
 ---
 
-<!-- Preservation-only capture. The original report starts at the following H1
-and continues unchanged to EOF: 34314 UTF-8 bytes, 255 LF, SHA-256
+<!-- Preservation-only capture. The preserved original begins with the following H1
+line (included) and continues unchanged through EOF: 34314 UTF-8 bytes, 255 LF,
+SHA-256
  d1fbb8cf96c7d0ffc4ae5ccbc165a2bad59ab6573678ebd699b1794682816272.
 Its no-test/no-branch statements describe the historical review, not this later
-capture PR. Findings and roadmap are a dated assessment, not an effective Decision.
+capture PR. Its pending-#208/#189 statements were also true only at the review
+snapshot: #208 was later squash-merged as
+bece8b984879973cd5cdb084d40d89fa3a835c68 on 2026-09-09, and #189 was
+subsequently closed completed, both before the current rebased #220 candidate.
+Findings and roadmap are a dated assessment, not an effective Decision.
 -->
 
 # Gnostoa OCI architecture and roadmap review
