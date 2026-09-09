@@ -5,8 +5,7 @@ from __future__ import annotations
 import json
 import pathlib
 import subprocess
-import unittest
-import unittest.mock
+from unittest import TestCase, main, mock
 
 from tools.capsule import qualification
 
@@ -24,7 +23,7 @@ oracle.py::test_discriminates PASSED [100%]
 """
 
 
-class PytestProcessValidityTests(unittest.TestCase):
+class PytestProcessValidityTests(TestCase):
     """Terminal process state must remain part of qualification evidence."""
 
     def classify(
@@ -150,7 +149,7 @@ E RuntimeError: setup failed
         self.assertEqual(outcome.classification, qualification.MATCH)
 
 
-class NormalizedReportValidityTests(unittest.TestCase):
+class NormalizedReportValidityTests(TestCase):
     """Malformed or self-contradictory reports must not satisfy zero counts."""
 
     def classify(self, report: object) -> qualification.SubjectOutcome:
@@ -207,7 +206,7 @@ class NormalizedReportValidityTests(unittest.TestCase):
         self.assertEqual(outcome.classification, qualification.INFRASTRUCTURE)
 
 
-class LocalHarnessCompletionTests(unittest.TestCase):
+class LocalHarnessCompletionTests(TestCase):
     """A parseable JSON line cannot erase local subprocess failure."""
 
     def report_json(self, outcome: str) -> str:
@@ -236,9 +235,7 @@ class LocalHarnessCompletionTests(unittest.TestCase):
             stdout=self.report_json(outcome) + "\n",
             stderr="local harness failed" if returncode else "",
         )
-        with unittest.mock.patch.object(
-            qualification.subprocess, "run", return_value=completed
-        ):
+        with mock.patch.object(qualification.subprocess, "run", return_value=completed):
             report = qualification._run_local_python(
                 pathlib.Path("/subject"), pathlib.Path("/oracle.py"), ()
             )
@@ -259,9 +256,7 @@ class LocalHarnessCompletionTests(unittest.TestCase):
 
     def test_local_timeout_is_reported_as_infrastructure(self) -> None:
         timeout = subprocess.TimeoutExpired(["python"], 120)
-        with unittest.mock.patch.object(
-            qualification.subprocess, "run", side_effect=timeout
-        ):
+        with mock.patch.object(qualification.subprocess, "run", side_effect=timeout):
             report = qualification._run_local_python(
                 pathlib.Path("/subject"), pathlib.Path("/oracle.py"), ()
             )
@@ -280,4 +275,4 @@ class LocalHarnessCompletionTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    main()
