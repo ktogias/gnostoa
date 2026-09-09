@@ -6,8 +6,8 @@ import json
 import pathlib
 import subprocess
 from unittest import TestCase, main, mock
-from tools.capsule import qualification
 
+from tools.capsule import qualification
 
 _FAILED_OUTPUT = """\
 oracle.py::test_discriminates FAILED [100%]
