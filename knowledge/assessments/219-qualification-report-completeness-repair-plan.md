@@ -974,3 +974,70 @@ setup failure as formatting evidence.
 R5-L1 is currently CONTRADICTS / executor RED, reviewer PENDING. The chosen
 production catch is not yet applied. #225 was read back verbatim as OPEN with
 no active-work label and explicit implementation admission condition.
+
+### Fifth-round bounded repair
+
+RED commit `4832d20` was pushed, and the
+[prospective map and RED checkpoint](https://github.com/ktogias/gnostoa/issues/219#issuecomment-5603202183)
+were read back verbatim before production mutation. The selected four-line
+`except OSError` branch now returns `_invalid_report` with the original concrete
+exception type and message. The detail says "process failed": subprocess.run can
+raise OSError while creating or interacting with a child, so the catch does not
+assert that every occurrence proves no process started. The existing timeout
+branch remains unchanged.
+
+Production SHA-256 is now
+`7ef013df0a99d0411922d6e21ea75e3cd173bb6906b2093347bb847f97236c60`;
+48-test SHA-256 remains
+`fd6a2b26bd5d9cd07778063f9d617cd54ce6ed0e116e5dad4457c9a61679a7e0`.
+Independent development-container execution reports **48 PASS**, zero
+failures/errors/skips. Each injected BASE/REFERENCE launch failure yields an
+unqualified receipt with structured INFRASTRUCTURE, collected=False and concrete
+cause detail, while the other subject remains MATCH. The existing 47 methods
+also pass. R5-L1/L2 now SUPPORTS; executor corrected, independent agent code
+review PASS on these hashes. This is not a claim-reset, retry or historical
+receipt repair.
+
+R5-X1 source review confirms only the local catch, integrated regression and
+assessment changed in this round. Compiler, expectation structure, receipt
+schema, claim ordering and authority remain unchanged. R5-D1 is retained under
+unadmitted #225 and [replied to in its originating thread](https://github.com/ktogias/gnostoa/pull/222#discussion_r3969378834).
+The existing report validity repair must not be described as complete comparison
+against every prospective permitted cause. Forwarded model reviews and bot
+conversation disposition do not supply human semantic approval.
+
+The final PR checkpoint will bind this candidate to completed local named suites,
+mutation replay, runtime self-check, exact-head provider checks and both review
+thread dispositions. Until those results are recorded, their state is PENDING;
+no old-head PASS or earlier clean mergeability substitutes for them. #202, #216,
+#224 and #225 remain separate and unadmitted. Merge, closure and Phase-D effects
+remain outside the task's authorization.
+
+### Fifth-round mutation and independent review read-back
+
+The independent replay retains the prior 26 operator definitions unchanged and
+adds exactly R5.L1: remove the new four-line OSError catch. Every operator
+compiles/imports and executes all 48 tests without skips. **27 applicable
+operators are detected**: 23 assertion-only (including diagnostic-only Q02),
+three runtime-error-only (N9, N15 and R5.L1), and one mixed (raw cause-type guard).
+R3.W1 remains NOT APPLICABLE. These are finite operators, not 27 false-MATCH
+proofs or exhaustive coverage. The N5 mutation now also violates collected=False
+assertions in the new matrix; operator identity and its interpretation remain.
+
+R5.L1 restores the exact b278923 production SHA-256 and produces eight escaped
+runtime errors, zero assertion failures. This independently links the new
+regression to the intended missing structured-result contract, rather than
+mistaking a syntax/import failure for a useful mutation. The unmodified candidate
+has 48 PASS. Independent agent review is bounded CODE REVIEW PASS; R5-L1/L2/X1
+SUPPORTS, with the separate #225 implementation stop preserved. Final provider
+conversation disposition and all applicable checks remain owned by the final
+exact-candidate checkpoint, not by the agent review verdict alone.
+
+The retained session-local report is `/tmp/gnostoa-222-round5-review.md`, SHA-256
+`b7ec45ac8ce615049baa217018684a24addc28148ab8feeef356984d368bd8fb`.
+Mutation results SHA-256:
+`22b0cfdd19450971cdc67d7b6a749550aac60725ba8cda13204eb51959ec4ce8`;
+operator inventory SHA-256:
+`1abc4854e99ea6cd75e65cd8b290849c706390e9fc17a25a6efe54f5cca34661`.
+Raw artifacts remain session-local. The durable source, regression, operator
+transformation and result categories above make the bounded claim inspectable.
