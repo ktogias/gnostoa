@@ -1167,3 +1167,58 @@ R6-U1/U2 currently CONTRADICTS / executor RED; R6-P1 SUPPORTS for the positive
 controls. The production catch is not yet applied. No new actual pytest/OCI,
 compiler claim or retained recovery was executed. The RED tests use synthetic
 local oracle modules and the real local subprocess/harness/report boundary.
+
+### Sixth-round correction and bounded independent review
+
+RED commit `8d8103704781a7ddf562b905bf3830e210e656b4` was pushed and the
+[Work Item map/RED checkpoint](https://github.com/ktogias/gnostoa/issues/219#issuecomment-5604334760)
+was read back verbatim before the five-line production catch was applied.
+UnicodeDecodeError from subprocess text decoding now returns _invalid_report
+with the concrete exception type and codec failure detail. No lossy decoder,
+encoding override or broad exception catch was introduced. Subject exceptions
+serialized by the harness still pass through the existing case classifier;
+this catch handles the parent's output decoding failure, not every Unicode-
+related behavioral failure in a child test.
+
+Production SHA-256:
+`36e794b045f337b1b8ea6481d03ec2370996abe4f15f5e842aa3ac6f912ff72e`.
+Focused-test SHA-256:
+`fbc3452e9dd4730944bdb8639013178f16f433bb9d03de23638be5d9eee70d32`.
+Independent canonical focused execution: **51 PASS**, zero failures/errors/skips.
+R6-U1/U2/P1 now SUPPORTS; executor corrected, independent agent reviewer PASS.
+R6-X1 source review confirms only the local catch, three regression methods,
+small shared test-helper extension and assessment changes. There is no claim,
+retry, schema, compiler, OCI, dependency or authority change. Broader exact-
+candidate checks are recorded separately by the final PR checkpoint.
+
+| New mutation operator | Exact transformation | Observed result on 51 tests |
+| --- | --- | --- |
+| R6.U1 | Remove exactly the new UnicodeDecodeError catch. | Restores the exact RED production SHA-256 and produces three escaped UnicodeDecodeError runtime errors, zero assertion failures. |
+| R6.U2 | Add `errors="replace"` beside `text=True`, retaining all catches. | Three assertion failures: invalid stdout, stderr and terminal report are incorrectly accepted under the selected strict-transport contract. The terminal case preserves the separate malformed-cause counterexample; these failures do not establish that every noisy stream is a real infrastructure incident. |
+
+All **29 applicable specified operators** compile/import and execute all 51
+methods without skips: 24 assertion-only (including diagnostic-only Q02), four
+runtime-error-only (N9, N15, R5.L1, R6.U1) and one mixed (R4.P2). The prior
+27 definitions remain, with the two new operators above. Historical R3.W1
+remains NOT APPLICABLE. These are neither 29 false-MATCH proofs nor exhaustive
+exception/encoding coverage. Claude's separate L2 survivor is not added to this
+inventory merely to change the count.
+
+Independent report `/tmp/gnostoa-222-round6-review.md` SHA-256:
+`e25e8655a260c47e868410ca67290ebd2e30d5caca0d2dedac7130794d2801c4`.
+Final mutation results SHA-256:
+`2e47bf65851018bb71e5a21e49969118ebcdbec52dc1d302fd25a03d445f2a95`;
+operator inventory SHA-256:
+`42d0cff4a291c350c9daccd6b7bb9394eddedb8755cde99955d2b2c04147dd92`.
+Raw artifacts remain session-local. An initial reviewer artifact-directory
+permission failure happened before tests; running with the matching host UID
+resolved that setup issue. Only the completed execution supplies verification.
+
+The source suite has executed **648 tests, 646 passed and two existing OCI
+skips** in the development container. The final PR checkpoint owns completed
+policy/fast/regression/smoke/extended, exact runtime and new-head provider
+results, and the current review-thread state. No earlier head's CI or model GO
+label substitutes for those checks. Existing thread-resolution authority does
+not authorize merging this changed candidate; human exact-head semantic review
+and separate owner merge authority remain required. Integration read-back must
+precede any #219 closure.

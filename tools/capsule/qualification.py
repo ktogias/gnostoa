@@ -472,6 +472,11 @@ def _run_local_python(
         return _invalid_report(
             f"local qualification harness process failed: {type(exc).__name__}: {exc}"
         )
+    except UnicodeDecodeError as exc:
+        return _invalid_report(
+            "local qualification harness output decoding failed: "
+            f"{type(exc).__name__}: {exc}"
+        )
 
     if completed.returncode != 0:
         detail = f"local qualification harness exited with exit {completed.returncode}"
