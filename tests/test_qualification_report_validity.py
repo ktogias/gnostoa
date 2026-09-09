@@ -417,6 +417,17 @@ class LocalHarnessCompletionTests(TestCase):
         self.assertEqual(outcome.classification, qualification.MATCH)
         self.assertEqual(outcome.error_types["test_discriminates"], "AssertionError")
 
+    def test_real_local_explicit_failure_signal_retains_observed_type(self) -> None:
+        # Test frameworks can signal failure outside Exception (pytest Failed
+        # does so). This stdlib fixture characterizes the existing harness
+        # contract without adding a pytest dependency or claiming OCI support.
+        outcome = self.run_oracle(
+            "class Failed(BaseException):\n    pass\n"
+            "def test_discriminates():\n    raise Failed('behavior was wrong')\n"
+        )
+        self.assertEqual(outcome.classification, qualification.MATCH)
+        self.assertEqual(outcome.error_types["test_discriminates"], "Failed")
+
     def test_real_local_collection_failure_remains_infrastructure(self) -> None:
         outcome = self.run_oracle("raise ImportError('missing dependency')\n")
         self.assertEqual(outcome.classification, qualification.INFRASTRUCTURE)

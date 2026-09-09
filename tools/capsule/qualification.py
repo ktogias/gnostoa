@@ -40,6 +40,26 @@ _INFRASTRUCTURE_ERRORS = frozenset(
         "NameError",
         "FileNotFoundError",
         "TypeError",
+        "KeyboardInterrupt",
+        "SystemExit",
+        "GeneratorExit",
+        "MemoryError",
+        "RecursionError",
+        "OSError",
+        "BlockingIOError",
+        "ChildProcessError",
+        "ConnectionError",
+        "BrokenPipeError",
+        "ConnectionAbortedError",
+        "ConnectionRefusedError",
+        "ConnectionResetError",
+        "FileExistsError",
+        "InterruptedError",
+        "IsADirectoryError",
+        "NotADirectoryError",
+        "PermissionError",
+        "ProcessLookupError",
+        "TimeoutError",
     }
 )
 
@@ -68,6 +88,14 @@ for name in sorted(n for n in dir(module) if n.startswith("test")):
         report["cases"][name] = {"outcome": "failed", "error_type": "AssertionError",
                                  "message": str(exc)[:200]}
     except BaseException as exc:
+        # Preserve exception ancestry before reducing the cause to a type name.
+        # A caught exit or resource failure is not a completed behavioural test.
+        if isinstance(
+            exc, (KeyboardInterrupt, SystemExit, GeneratorExit,
+                  MemoryError, RecursionError, OSError)
+        ):
+            report["error"] = type(exc).__name__ + ": " + str(exc)[:200]
+            break
         report["cases"][name] = {"outcome": "failed", "error_type": type(exc).__name__,
                                  "message": str(exc)[:200]}
     else:
@@ -80,25 +108,22 @@ _ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _PYTEST_CASE = re.compile(
     r"^(?P<file>\S+)::(?P<case>[\w\[\]-]+)\s+(?P<outcome>PASSED|FAILED|ERROR)"
 )
-_PYTEST_ERROR = re.compile(
-    r"^E\s+(?P<error>[A-Za-z_][\w.]*(?:Error|Exception|Warning))\b", re.M
+_PYTEST_CAUSE_NAME = (
+    r"[A-Za-z_][\w.]*(?:Error|Exception|Warning)"
+    r"|Failed|SystemExit|KeyboardInterrupt|GeneratorExit"
 )
-_PYTEST_SHORT_ERROR = re.compile(
-    r"^FAILED\s+\S+\s+-\s+"
-    r"(?P<error>[A-Za-z_][\w.]*(?:Error|Exception|Warning))\b",
+_PYTEST_ERROR = re.compile(rf"^E\s+(?P<error>{_PYTEST_CAUSE_NAME})\b", re.M)
+_PYTEST_SHORT_FAILURE = re.compile(
+    r"^FAILED\s+\S+::(?P<case>[\w\[\]-]+)\s+-\s+(?P<detail>.+)$",
     re.M,
 )
-_PYTEST_ASSERTION = re.compile(
-    r"^(?:E\s+assert\b|FAILED\s+\S+\s+-\s+assert\b)",
-    re.M,
-)
+_PYTEST_CAUSE = re.compile(rf"^(?P<error>{_PYTEST_CAUSE_NAME})\b")
+_PYTEST_ASSERTION = re.compile(r"^E\s+assert\b", re.M)
 _PYTEST_TERMINAL_SUMMARY = re.compile(
     r"^=+\s+(?P<body>.+?)\s+in\s+\d+(?:\.\d+)?s"
     r"(?:\s+\([^)]*\))?\s+=+$"
 )
-_PYTEST_SUMMARY_ITEM = re.compile(
-    r"^(?P<count>\d+)\s+(?P<label>[A-Za-z][A-Za-z-]*)$"
-)
+_PYTEST_SUMMARY_ITEM = re.compile(r"^(?P<count>\d+)\s+(?P<label>[A-Za-z][A-Za-z-]*)$")
 _PYTEST_SUMMARY_LABELS = {
     "passed": "passed",
     "failed": "failed",
@@ -227,27 +252,48 @@ def _parse_pytest_report(stdout: str, exit_code: int) -> dict[str, object]:
     if exit_code == 1 and not failed_count:
         return _invalid_report("pytest exit 1 has no reported failed case")
 
+    # Traceback evidence has no case identity. It can conservatively reject a
+    # run, but may identify a failure only when exactly one case failed.
     errors = set(_PYTEST_ERROR.findall(normalized))
-    errors.update(_PYTEST_SHORT_ERROR.findall(normalized))
-    non_assertion = {error for error in errors if error != "AssertionError"}
-    if len(non_assertion) > 1:
+    if any(error.rsplit(".", 1)[-1] in _INFRASTRUCTURE_ERRORS for error in errors):
         return _invalid_report(
-            f"pytest reported ambiguous failure causes {sorted(non_assertion)}"
+            f"pytest reported infrastructure failure causes {sorted(errors)}"
         )
-    assertion_evidence = (
-        "AssertionError" in errors or _PYTEST_ASSERTION.search(normalized) is not None
-    )
-    for case in cases.values():
-        if case["outcome"] != "failed":
-            continue
-        if non_assertion:
-            case["error_type"] = next(iter(non_assertion))
-        elif assertion_evidence:
-            case["error_type"] = "AssertionError"
+
+    causes: dict[str, str] = {}
+    for failure in _PYTEST_SHORT_FAILURE.finditer(normalized):
+        name = failure["case"]
+        if name not in cases or cases[name]["outcome"] != "failed" or name in causes:
+            return _invalid_report("pytest failure summary does not match parsed cases")
+        detail = failure["detail"]
+        cause = _PYTEST_CAUSE.match(detail)
+        if cause is not None:
+            causes[name] = cause["error"]
+        elif re.match(r"assert\b", detail):
+            causes[name] = "AssertionError"
         else:
             return _invalid_report(
-                "pytest failed case output has no recognizable failure cause"
+                f"pytest failed case {name!r} has no recognizable failure cause"
             )
+
+    for name, case in cases.items():
+        if case["outcome"] != "failed":
+            continue
+        cause_name = causes.get(name)
+        if cause_name is None and failed_count == 1:
+            if len(errors) > 1:
+                return _invalid_report(
+                    f"pytest reported ambiguous failure causes {sorted(errors)}"
+                )
+            if errors:
+                cause_name = next(iter(errors))
+            elif _PYTEST_ASSERTION.search(normalized) is not None:
+                cause_name = "AssertionError"
+        if cause_name is None:
+            return _invalid_report(
+                f"pytest failed case {name!r} has no recognizable failure cause"
+            )
+        case["error_type"] = cause_name
     return {"collected": True, "cases": cases, "error": None}
 
 
@@ -563,7 +609,9 @@ def _classify(
     error_types = {n: c["error_type"] for n, c in cases.items() if c["error_type"]}
 
     infrastructure = {
-        n: t for n, t in error_types.items() if t in _INFRASTRUCTURE_ERRORS
+        n: t
+        for n, t in error_types.items()
+        if t.rsplit(".", 1)[-1] in _INFRASTRUCTURE_ERRORS
     }
     if infrastructure:
         return _infrastructure_outcome(
