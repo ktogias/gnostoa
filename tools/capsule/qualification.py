@@ -76,11 +76,43 @@ print(json.dumps(report))
 """
 
 
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _PYTEST_CASE = re.compile(
     r"^(?P<file>\S+)::(?P<case>[\w\[\]-]+)\s+(?P<outcome>PASSED|FAILED|ERROR)"
 )
 _PYTEST_ERROR = re.compile(
     r"^E\s+(?P<error>[A-Za-z_][\w.]*(?:Error|Exception|Warning))\b", re.M
+)
+_PYTEST_SHORT_ERROR = re.compile(
+    r"^FAILED\s+\S+\s+-\s+"
+    r"(?P<error>[A-Za-z_][\w.]*(?:Error|Exception|Warning))\b",
+    re.M,
+)
+_PYTEST_ASSERTION = re.compile(
+    r"^(?:E\s+assert\b|FAILED\s+\S+\s+-\s+assert\b)",
+    re.M,
+)
+_PYTEST_TERMINAL_SUMMARY = re.compile(
+    r"^=+\s+(?P<body>.+?)\s+in\s+\d+(?:\.\d+)?s"
+    r"(?:\s+\([^)]*\))?\s+=+$"
+)
+_PYTEST_SUMMARY_ITEM = re.compile(
+    r"^(?P<count>\d+)\s+(?P<label>[A-Za-z][A-Za-z-]*)$"
+)
+_PYTEST_SUMMARY_LABELS = {
+    "passed": "passed",
+    "failed": "failed",
+    "error": "errors",
+    "errors": "errors",
+    "warning": "warnings",
+    "warnings": "warnings",
+    "skipped": "skipped",
+    "xfailed": "xfailed",
+    "xpassed": "xpassed",
+    "deselected": "deselected",
+}
+_UNSUPPORTED_PYTEST_OUTCOMES = frozenset(
+    {"errors", "skipped", "xfailed", "xpassed", "deselected"}
 )
 _COLLECTION_FAILURE = re.compile(
     r"unrecognized arguments|ModuleNotFoundError|ImportError|INTERNALERROR|"
@@ -89,35 +121,132 @@ _COLLECTION_FAILURE = re.compile(
 )
 
 
+def _invalid_report(detail: str) -> dict[str, object]:
+    return {"collected": False, "cases": {}, "error": detail}
+
+
+def _parse_pytest_summary(stdout: str) -> tuple[dict[str, int] | None, str | None]:
+    """Return the final pytest outcome summary, rejecting ambiguous vocabulary."""
+    match = next(
+        (
+            candidate
+            for line in reversed(stdout.splitlines())
+            if (candidate := _PYTEST_TERMINAL_SUMMARY.fullmatch(line.strip()))
+            is not None
+        ),
+        None,
+    )
+    if match is None:
+        return None, "pytest terminal summary is missing"
+
+    counts: dict[str, int] = {}
+    for part in match["body"].split(","):
+        item = _PYTEST_SUMMARY_ITEM.fullmatch(part.strip())
+        if item is None:
+            return None, f"pytest terminal summary is malformed: {match['body']!r}"
+        count = int(item["count"])
+        label = _PYTEST_SUMMARY_LABELS.get(item["label"].lower())
+        if label is None:
+            return None, (
+                "pytest terminal summary contains unsupported outcome "
+                f"{item['label']!r}"
+            )
+        if label in counts:
+            return None, f"pytest terminal summary duplicates outcome {label!r}"
+        counts[label] = count
+    return counts, None
+
+
 def _parse_pytest_report(stdout: str, exit_code: int) -> dict[str, object]:
-    """Turn retained runner stdout into the same report shape as the local backend."""
+    """Normalize a complete pytest process result into the local report shape."""
+    normalized = _ANSI_ESCAPE.sub("", stdout)
     cases: dict[str, dict[str, str]] = {}
-    for line in stdout.splitlines():
+    pytest_errors: list[str] = []
+    for line in normalized.splitlines():
         match = _PYTEST_CASE.match(line.strip())
         if match is None:
             continue
-        outcome = "passed" if match["outcome"] == "PASSED" else "failed"
-        cases[match["case"]] = {"outcome": outcome, "error_type": "", "message": ""}
+        name = match["case"]
+        if name in cases:
+            return _invalid_report(
+                f"pytest reported duplicate outcome for case {name!r}"
+            )
+        raw_outcome = match["outcome"]
+        if raw_outcome == "ERROR":
+            pytest_errors.append(name)
+            continue
+        outcome = "passed" if raw_outcome == "PASSED" else "failed"
+        cases[name] = {"outcome": outcome, "error_type": "", "message": ""}
+
+    if pytest_errors:
+        return _invalid_report(
+            "pytest reported case-level ERROR for "
+            f"{sorted(pytest_errors)} (exit {exit_code})"
+        )
 
     if not cases:
-        return {
-            "collected": False,
-            "cases": {},
-            "error": (
-                failure.group(0)
-                if (failure := _COLLECTION_FAILURE.search(stdout)) is not None
-                else f"no case outcome was collected (exit {exit_code})"
-            ),
-        }
+        return _invalid_report(
+            failure.group(0)
+            if (failure := _COLLECTION_FAILURE.search(normalized)) is not None
+            else f"no case outcome was collected (exit {exit_code})"
+        )
 
-    # Attribute a non-assertion error class to the whole run when pytest reports one,
-    # so an import or attribute failure is never read as a behavioural failure.
-    errors = set(_PYTEST_ERROR.findall(stdout))
+    if exit_code not in {0, 1}:
+        return _invalid_report(
+            f"pytest process ended with unsupported exit {exit_code}"
+        )
+
+    summary, summary_error = _parse_pytest_summary(normalized)
+    if summary is None:
+        return _invalid_report(summary_error or "pytest terminal summary is invalid")
+
+    unsupported = {
+        label: count
+        for label, count in summary.items()
+        if label in _UNSUPPORTED_PYTEST_OUTCOMES and count
+    }
+    if unsupported:
+        return _invalid_report(
+            f"pytest terminal summary contains unsupported outcomes {unsupported}"
+        )
+
+    passed_count = sum(case["outcome"] == "passed" for case in cases.values())
+    failed_count = sum(case["outcome"] == "failed" for case in cases.values())
+    summary_passed = summary.get("passed", 0)
+    summary_failed = summary.get("failed", 0)
+    if summary_passed != passed_count or summary_failed != failed_count:
+        return _invalid_report(
+            "pytest terminal summary does not match parsed cases: "
+            f"summary={summary_failed} failed/{summary_passed} passed, "
+            f"cases={failed_count} failed/{passed_count} passed"
+        )
+    if exit_code == 0 and failed_count:
+        return _invalid_report(
+            f"pytest exit 0 contradicts {failed_count} reported failed case(s)"
+        )
+    if exit_code == 1 and not failed_count:
+        return _invalid_report("pytest exit 1 has no reported failed case")
+
+    errors = set(_PYTEST_ERROR.findall(normalized))
+    errors.update(_PYTEST_SHORT_ERROR.findall(normalized))
     non_assertion = {error for error in errors if error != "AssertionError"}
+    if len(non_assertion) > 1:
+        return _invalid_report(
+            f"pytest reported ambiguous failure causes {sorted(non_assertion)}"
+        )
+    assertion_evidence = (
+        "AssertionError" in errors or _PYTEST_ASSERTION.search(normalized) is not None
+    )
     for case in cases.values():
-        if case["outcome"] == "failed":
-            case["error_type"] = (
-                sorted(non_assertion)[0] if non_assertion else "AssertionError"
+        if case["outcome"] != "failed":
+            continue
+        if non_assertion:
+            case["error_type"] = next(iter(non_assertion))
+        elif assertion_evidence:
+            case["error_type"] = "AssertionError"
+        else:
+            return _invalid_report(
+                "pytest failed case output has no recognizable failure cause"
             )
     return {"collected": True, "cases": cases, "error": None}
 
@@ -275,31 +404,63 @@ def _run_local_python(
     subject: Path, oracle: Path, import_roots: Sequence[str]
 ) -> dict[str, object]:
     paths = [str(subject / root) for root in import_roots] + [str(subject)]
-    completed = subprocess.run(
-        [sys.executable, "-c", _HARNESS, str(oracle)],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        cwd=str(subject),
-        env={
-            "PYTHONPATH": ":".join(paths),
-            "PATH": "/usr/bin:/bin",
-            "HOME": "/tmp",
-            "PYTHONDONTWRITEBYTECODE": "1",
-        },
-    )
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-c", _HARNESS, str(oracle)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            cwd=str(subject),
+            env={
+                "PYTHONPATH": ":".join(paths),
+                "PATH": "/usr/bin:/bin",
+                "HOME": "/tmp",
+                "PYTHONDONTWRITEBYTECODE": "1",
+            },
+        )
+    except subprocess.TimeoutExpired:
+        return _invalid_report(
+            "local qualification harness timed out after 120 seconds"
+        )
+
+    if completed.returncode != 0:
+        detail = f"local qualification harness exited with exit {completed.returncode}"
+        stderr = completed.stderr.strip()[:400]
+        return _invalid_report(f"{detail}: {stderr}" if stderr else detail)
+
     stdout = completed.stdout.strip().splitlines()
     if not stdout:
-        return {
-            "collected": False,
-            "cases": {},
-            "error": completed.stderr.strip()[:400],
-        }
+        return _invalid_report(
+            completed.stderr.strip()[:400]
+            or "local qualification harness produced no report"
+        )
     try:
-        parsed: dict[str, object] = json.loads(stdout[-1])
+        parsed: object = json.loads(stdout[-1])
     except json.JSONDecodeError:
-        return {"collected": False, "cases": {}, "error": "unparsable harness output"}
-    return parsed
+        return _invalid_report("unparsable harness output")
+    if not isinstance(parsed, dict):
+        return _invalid_report("local qualification harness report is not an object")
+    return cast(dict[str, object], parsed)
+
+
+def _infrastructure_outcome(
+    subject: str,
+    detail: str,
+    *,
+    collected: bool = False,
+    passed: Sequence[str] = (),
+    failed: Sequence[str] = (),
+    error_types: Mapping[str, str] | None = None,
+) -> SubjectOutcome:
+    return SubjectOutcome(
+        subject=subject,
+        collected=collected,
+        passed=tuple(passed),
+        failed=tuple(failed),
+        error_types=dict(error_types or {}),
+        classification=INFRASTRUCTURE,
+        detail=detail,
+    )
 
 
 def _classify(
@@ -309,19 +470,94 @@ def _classify(
     *,
     expected_failing: Sequence[str],
 ) -> SubjectOutcome:
-    if not report.get("collected"):
-        return SubjectOutcome(
-            subject=subject,
-            collected=False,
-            passed=(),
-            failed=(),
-            error_types={},
-            classification=INFRASTRUCTURE,
-            detail=str(report.get("error") or "the oracle was never collected"),
+    collected = report.get("collected")
+    if collected is not True:
+        error = report.get("error")
+        detail = (
+            error
+            if isinstance(error, str) and error
+            else "the oracle was never collected"
+        )
+        return _infrastructure_outcome(subject, detail)
+
+    report_error = report.get("error")
+    if report_error is not None and report_error != "":
+        detail = (
+            report_error
+            if isinstance(report_error, str)
+            else "qualification report carries a non-string error"
+        )
+        return _infrastructure_outcome(subject, detail, collected=True)
+
+    raw_cases = report.get("cases")
+    if not isinstance(raw_cases, Mapping):
+        return _infrastructure_outcome(
+            subject,
+            "qualification report cases are not a mapping",
+            collected=True,
+        )
+    if not raw_cases:
+        return _infrastructure_outcome(
+            subject,
+            "qualification report collected no cases",
+            collected=True,
         )
 
-    raw_cases = report.get("cases") or {}
-    cases: dict[str, dict[str, str]] = cast(dict[str, dict[str, str]], raw_cases)
+    cases: dict[str, dict[str, str]] = {}
+    for raw_name, raw_case in raw_cases.items():
+        if not isinstance(raw_name, str) or not raw_name:
+            return _infrastructure_outcome(
+                subject,
+                "qualification report has an invalid case name",
+                collected=True,
+            )
+        if not isinstance(raw_case, Mapping):
+            return _infrastructure_outcome(
+                subject,
+                f"qualification report case {raw_name!r} is not an object",
+                collected=True,
+            )
+        outcome = raw_case.get("outcome")
+        if not isinstance(outcome, str) or outcome not in {"passed", "failed"}:
+            return _infrastructure_outcome(
+                subject,
+                f"qualification report case {raw_name!r} has invalid outcome "
+                f"{outcome!r}",
+                collected=True,
+            )
+        raw_error_type = raw_case.get("error_type")
+        if raw_error_type is not None and not isinstance(raw_error_type, str):
+            return _infrastructure_outcome(
+                subject,
+                f"qualification report case {raw_name!r} has invalid error type",
+                collected=True,
+            )
+        error_type = raw_error_type or ""
+        raw_message = raw_case.get("message")
+        if raw_message is not None and not isinstance(raw_message, str):
+            return _infrastructure_outcome(
+                subject,
+                f"qualification report case {raw_name!r} has invalid message",
+                collected=True,
+            )
+        if outcome == "passed" and error_type:
+            return _infrastructure_outcome(
+                subject,
+                f"qualification report passed case {raw_name!r} carries an error",
+                collected=True,
+            )
+        if outcome == "failed" and not error_type:
+            return _infrastructure_outcome(
+                subject,
+                f"qualification report failed case {raw_name!r} has no cause",
+                collected=True,
+            )
+        cases[raw_name] = {
+            "outcome": outcome,
+            "error_type": error_type,
+            "message": raw_message or "",
+        }
+
     passed = tuple(sorted(n for n, c in cases.items() if c["outcome"] == "passed"))
     failed = tuple(sorted(n for n, c in cases.items() if c["outcome"] == "failed"))
     error_types = {n: c["error_type"] for n, c in cases.items() if c["error_type"]}
@@ -330,17 +566,17 @@ def _classify(
         n: t for n, t in error_types.items() if t in _INFRASTRUCTURE_ERRORS
     }
     if infrastructure:
-        return SubjectOutcome(
-            subject=subject,
+        return _infrastructure_outcome(
+            subject,
+            (
+                f"{sorted(infrastructure)} failed with "
+                f"{sorted(set(infrastructure.values()))}, which never exercised "
+                "the declared behaviour"
+            ),
             collected=True,
             passed=passed,
             failed=failed,
             error_types=error_types,
-            classification=INFRASTRUCTURE,
-            detail=(
-                f"{sorted(infrastructure)} failed with {sorted(set(infrastructure.values()))}, "
-                "which never exercised the declared behaviour"
-            ),
         )
 
     want_failed = int(expectation.get("failed", 0))
@@ -369,8 +605,8 @@ def _classify(
             error_types=error_types,
             classification=WRONG_CAUSE,
             detail=(
-                f"counts match but the failing set {sorted(failed)} is not the declared "
-                f"discriminating set {sorted(expected_set)}"
+                f"counts match but the failing set {sorted(failed)} is not the "
+                f"declared discriminating set {sorted(expected_set)}"
             ),
         )
 
@@ -415,7 +651,10 @@ def qualify_subjects(
                 {
                     "task": task_id,
                     "code": "qualification-profiles-missing",
-                    "detail": "the oci backend needs a compiled profile and invocation per subject",
+                    "detail": (
+                        "the oci backend needs a compiled profile and invocation "
+                        "per subject"
+                    ),
                 }
             ]
         base_report = _run_oci(subject_profiles["base"], argv)
