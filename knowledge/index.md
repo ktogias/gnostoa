@@ -113,6 +113,7 @@ inherited, copied or loaded by adopting projects.
 - [B3 independent-adoption experiment design](assessments/b3-independent-adoption-experiment-design.md)
 - [Work Item 187 Experiment Capsule system v1 execution plan](assessments/187-experiment-capsule-execution-plan.md)
 - [Work Item 190 Capsule qualification and network-envelope integration repair plan](assessments/190-capsule-integration-repair-plan.md)
+- [Work Item 219 qualification report correction and review reconciliation](assessments/219-qualification-report-completeness-repair-plan.md)
 - [Work Item 192 preflight candidate authority binding plan](assessments/192-preflight-candidate-binding-plan.md)
 - [Work Item 197 preflight authority consumption plan](assessments/197-preflight-authority-consumption-plan.md)
 - [PR 200 retained-effect transaction retrospective](assessments/pr-200-retained-effect-transaction-retrospective.md)
