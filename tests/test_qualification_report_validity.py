@@ -575,6 +575,53 @@ class LocalHarnessCompletionTests(TestCase):
         self.assertEqual(outcome.classification, qualification.INFRASTRUCTURE)
         self.assertIn("timed out", outcome.detail)
 
+    def test_local_launch_errors_return_an_unqualified_receipt(self) -> None:
+        errors = (
+            FileNotFoundError(2, "unavailable subject directory"),
+            PermissionError(13, "process launch denied"),
+            BlockingIOError(11, "process resources unavailable"),
+            OSError(5, "process launch input/output failure"),
+        )
+        for subject in ("base", "reference"):
+            for error in errors:
+                with self.subTest(subject=subject, error=type(error).__name__):
+                    completions: list[object] = [
+                        subprocess.CompletedProcess(
+                            ["python"], 0, self.report_json("failed"), ""
+                        ),
+                        subprocess.CompletedProcess(
+                            ["python"], 0, self.report_json("passed"), ""
+                        ),
+                    ]
+                    completions[0 if subject == "base" else 1] = error
+                    with mock.patch.object(
+                        qualification.subprocess, "run", side_effect=completions
+                    ):
+                        receipt = qualification.qualify_subjects(
+                            task_id="synthetic-launch-error",
+                            backend=qualification.LOCAL_PYTHON,
+                            base_tree=pathlib.Path("/base"),
+                            reference_tree=pathlib.Path("/reference"),
+                            oracle=pathlib.Path("/oracle.py"),
+                            import_roots=(),
+                            expectations={
+                                "base": {"failed": 1, "passed": 0},
+                                "reference": {"failed": 0, "passed": 1},
+                            },
+                            discriminator_cases=("test_discriminates",),
+                        )
+                    self.assertIsInstance(receipt, qualification.QualificationReceipt)
+                    assert isinstance(receipt, qualification.QualificationReceipt)
+                    self.assertFalse(receipt.qualified)
+                    outcome = getattr(receipt, subject)
+                    self.assertEqual(
+                        outcome.classification, qualification.INFRASTRUCTURE
+                    )
+                    self.assertFalse(outcome.collected)
+                    self.assertIn(type(error).__name__, outcome.detail)
+                    control = receipt.reference if subject == "base" else receipt.base
+                    self.assertEqual(control.classification, qualification.MATCH)
+
     def test_zero_local_completion_with_valid_report_can_match(self) -> None:
         outcome = self.classify_local(0, "passed")
         self.assertEqual(outcome.classification, qualification.MATCH)

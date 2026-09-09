@@ -868,3 +868,109 @@ extended/runtime/provider results and exact candidate identities. No older CI
 result or source identity is substituted for this changed candidate. Next is
 human exact-head review, separate owner merge authority, then integration
 read-back before any #219 closure.
+
+## Fifth review round: normalization consensus and new provider findings
+
+The owner supplied Grok, Kimi, Claude and Gemini reviews of unchanged
+`b278923693bebab3bc2dede34d9c5c2cd28e1a01`. The initial read-back confirmed
+tree `96d24aa1d5d51bb8cbd540ea68bab44932569a09` and the fourth-round
+production/test hashes. Prior successful executions remain bound to that
+candidate; no new execution is inferred from reviewer agreement.
+
+### Review ledger
+
+| Supplied review | Disposition and evidence limit |
+| --- | --- |
+| Grok | Its bounded GO conclusion, assignment normalization, four additional tests and active 26-operator inventory agree with the source and retained evidence. Scores are reviewer opinions. The `assertRaises` proposal was deliberately rejected because callers require a structured INFRASTRUCTURE outcome. The earlier #216 posting rejection remains a recorded tool decision; agreement about it supplies no new posting or implementation authorization. |
+| Kimi | Source confirms the adjacent raw-type guard, canonical stored names, qualified infrastructure suffix comparison and all four actual methods. Two factual corrections: `[]` is falsey, and the raw guard rejects **all** non-None nonstrings, including falsey values, before the fallback/strip. The fourteen RED failures contain **eight**, not nine, false MATCHs; see the breakdown below. “All edge cases” exceeds the finite sample. This is a behavior-changing correctness repair, including normalization of stored padded causes, rather than a purely behavior-preserving refactor. |
+| Claude | Exact patch/blob identity and the normalization conclusions agree with our bound source/evidence. Its fourteen selected mutants and statement that no new finding emerged are attributed reviewer results, not an additional fourteen entries in the repository's 26-operator inventory. The reviewer’s current “W1” label denotes assignment normalization and must not be confused with retired repository operator R3.W1. Neighboring-name, terminal-summary and real-pytest/color probes remain supplied execution claims without complete bound inputs/raw logs. “Family closed” and “the curve flattened” describe that inspected sample, not a proof of completeness or convergence. |
+| Gemini | Its stated 47 focused / 644 total / 26 active results agree with separately retained acceptance evidence. The referenced `219_pr222_deep_code_review.md` and task-194 raw output were not supplied here, so those particular artifact/execution claims remain attributed. The full source result is 642 passed plus two existing skips; “100% green” does not convert those skips into executed tests. |
+
+### Independent source read-back
+
+The current production blob remains `33eb7e5d2ecbdcf6a8b70082fcf4c18ad8d3f02b`. At [qualification.py lines 574–605](https://github.com/ktogias/gnostoa/blob/b278923693bebab3bc2dede34d9c5c2cd28e1a01/tools/capsule/qualification.py#L574), validation precedes `(raw_error_type or "").strip()`; the same normalized value then controls passed/failed consistency and stored cause identity. None becomes absence: a failed case with None is rejected, while a passed case with None can satisfy its otherwise valid expectation. There is no `None.strip()` path. Infrastructure comparison at line 614 uses the terminal component of the normalized qualified name. The four methods at [test lines 624–659](https://github.com/ktogias/gnostoa/blob/b278923693bebab3bc2dede34d9c5c2cd28e1a01/tests/test_qualification_report_validity.py#L624) assert both classifications and relevant canonical identities through mocked local JSON transport. They do not claim that current emitters produce padded names.
+
+The retained RED at `ae94afc` has fourteen assertion failures: eight infrastructure false MATCHs, one already-rejected infrastructure case with a noncanonical name, three behavioral-name discrepancies, and two passed-blank false rejections. These categories were already explicit in the assessment and original checkpoint. The correction retains case-sensitive exception identities and existing blank-failed/type-rejection behavior.
+
+Claude's two new terminal-summary examples need a narrower interpretation. Source selects the last syntactically matching summary and cross-checks its supported outcomes/counts against parsed cases and process exit. A later summary with different counts is rejected. Count equality alone does not authenticate a summary's origin or establish rejection of every forged, count-consistent summary. The supplied examples have no complete inputs here and do not establish that broader claim. This is a limit on the review's inference, not a newly reproduced #219 defect or an admission to implement report authentication.
+
+These four supplied reviews do not identify an additional defect in the normalization repair. The newer provider findings below require their own disposition. The sampled mutation record remains 26 applicable operators: 23 assertion-only kills (including diagnostic-only Q02), two runtime-error-only kills, and one mixed kill; historical R3.W1 remains NOT APPLICABLE at this source. No exhaustive coverage claim is made.
+
+### Newly observed provider review and scope disposition
+
+Fresh provider state adds [Devin review 5155274684](https://github.com/ktogias/gnostoa/pull/222#pullrequestreview-5155274684)
+at b278923. Its two current unresolved threads change mergeability from clean
+to BLOCKED: protected main requires conversation resolution. Existing exact-head
+CI and candidate binding still PASS. No human review or merge authority follows.
+
+| Finding | Independent observation | Disposition |
+| --- | --- | --- |
+| R5-D1 / prospective permitted causes, [thread 3969225122](https://github.com/ktogias/gnostoa/pull/222#discussion_r3969225122) | Current expectations have counts and discriminator names, not prospective per-case permitted causes. A synthetic report for the correct failing case produces MATCH for AssertionError and ValueError, INFRASTRUCTURE for OSError. This demonstrates the existing distinction, not that every ValueError is wrong or that a real experiment was affected. Decision 0059 §G is broader than this implemented comparison. | Capture-only [Work Item #225](https://github.com/ktogias/gnostoa/issues/225), following provider search for an existing owner. The suggested expectation/compiler/receipt-identity expansion crosses #219's explicit stop boundary. Separate owner admission must select the contract and compatibility treatment. Do not invent AssertionError-only behavior in this repair. |
+| R5-D2 / local launch OSError, [thread 3969225275](https://github.com/ktogias/gnostoa/pull/222#discussion_r3969225275) | subprocess.run OSError escapes the TimeoutExpired-only catch, qualify_subjects and compiler's normal structured result path. Read-only container probes independently observed escaped FileNotFoundError, PermissionError and BlockingIOError. The one-shot claim precedes qualification. | Resume #219's already admitted local subprocess completion/report boundary, adding only structured OSError normalization. This is an escaped-exception defect, not a false MATCH. Catching it does not restore consumed claims or retry authority; no ordering, rollback, routing or receipt-schema change is selected. |
+
+The existing [owner admission](https://github.com/ktogias/gnostoa/issues/219#issuecomment-5600207947)
+explicitly includes local-python subprocess completion/report consistency. The
+[continuing admission](https://github.com/ktogias/gnostoa/issues/219#issuecomment-5600791269)
+selects the smallest deterministic result-completion contract preserving process
+validity. Together with the continuing owner review-and-correct instruction,
+these authorize the bounded R5-D2 correction without repeating permission.
+A reviewer initially recommended renewed selection if the outcome were outside
+that boundary; checking the actual admission text resolves that question for
+D2 only. D1 remains unadmitted under #225.
+
+No hidden oracle, actual failing subprocess, claim, retained receipt or experiment
+was executed for the diagnostics. Source was mounted readonly in the existing
+development image, with subprocess.run mocked to raise and synthetic reports
+passed directly to the real classifier. The observed built-in OSError constructor
+with errno 11 produces BlockingIOError; this is an OSError subclass, not an
+additional independent generic-OSError probe. These are scenario reproductions,
+not evidence of an incident or a consumed real claim.
+
+### Fifth-round prospective map before production mutation
+
+Baseline production is b278923, SHA-256
+`3b505ce11c04beea34416532a8b90cee169c9605cca7ca0cb5171c201532b305`.
+Classification remains critical under Decision 0059 §G and existing #219 authority.
+Only qualification.py, its focused test file and this assessment are selected.
+
+| ID / authority selector | Expected behavior and proposed path | Evidence / initial state | Alignment; executor / reviewer |
+| --- | --- | --- | --- |
+| R5-L1 / D2 and admitted local completion contract | OSError and subclasses during local subprocess launch yield structured INFRASTRUCTURE with cause detail and collected=False; no escaped exception and no qualified receipt. Add OSError catch returning _invalid_report. | Synthetic base/reference launch-error matrix through real qualify_subjects; regression RED NOT RUN at map creation. Source and separate diagnostic probes establish the current escape. | UNKNOWN; PENDING / PENDING |
+| R5-L2 / existing valid qualification and timeout contract | The other completed subject keeps its normal MATCH; timeout remains structured INFRASTRUCTURE, valid BASE exit-1 and REFERENCE successes remain valid. | Existing focused controls plus good-subject assertions in the launch-error matrix; new regression NOT RUN. | UNKNOWN; PENDING / PENDING |
+| R5-X1 / admission effect boundary | No reset/retry or claim-order change, expectation extension, schema change or new execution authority. | Exact diff review and existing applicable regression/container/runtime checks; NOT RUN for candidate. | UNKNOWN; PENDING / PENDING |
+| R5-D1 / separate contract gap | Preserve observation and explicit implementation stop under #225; do not claim complete prospective cause enforcement from #219. | Provider read-back of focused backlog capture; implementation NOT ADMITTED. | Scope retained; captured / PENDING |
+
+The regression must precede production mutation. The final assessment/checkpoint
+will record actual RED, candidate hashes, selected mutation and exact-head checks.
+No prior candidate's GREEN is substituted after the catch changes. Both provider
+conversations need a recorded disposition; no agent review supplies human semantic
+approval or owner merge authority.
+
+### Fifth-round RED checkpoint
+
+The added integrated regression ran through `qualify_subjects` in the readonly
+development container against unchanged b278923 production: **48 tests, eight
+runtime errors, zero assertion failures/skips**. Each of four exceptions
+(FileNotFoundError, PermissionError, BlockingIOError and generic OSError) escapes
+when injected into either BASE or REFERENCE subprocess launch. The other 47
+methods pass. These are missing structured-result errors, not eight false MATCHs.
+The matching other-subject control is part of the prospective regression; it
+cannot yet be reached after an escaped exception.
+
+Command: `python -m unittest discover -s tests -p test_qualification_report_validity.py -v`
+in development image
+`sha256:2ea98a155a9b704d2ad59f7a5c18c0d4657891a647bde99a514e128f205a0f6d`.
+Production SHA-256 remains
+`3b505ce11c04beea34416532a8b90cee169c9605cca7ca0cb5171c201532b305`;
+48-test SHA-256 is
+`fd6a2b26bd5d9cd07778063f9d617cd54ce6ed0e116e5dad4457c9a61679a7e0`.
+Session-local RED log SHA-256:
+`84c6c1e3253d817b72577f49acb100ef9a375906f0fc0e268d78afc78748a8f9`.
+Ruff format with `--no-cache --check tools ci tests` passes (117 files).
+The first formatter invocation could not create its cache on the readonly
+mount; the no-cache retry executed successfully, rather than counting that
+setup failure as formatting evidence.
+
+R5-L1 is currently CONTRADICTS / executor RED, reviewer PENDING. The chosen
+production catch is not yet applied. #225 was read back verbatim as OPEN with
+no active-work label and explicit implementation admission condition.
