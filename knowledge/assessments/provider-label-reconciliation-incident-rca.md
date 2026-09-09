@@ -91,6 +91,14 @@ added the task-local reconciliation evidence and authored this interpretation.
 Independent agent inspection provides a second reading of those same sources,
 not independent human approval or independent causal measurement.
 
+The 35 raw inputs named in the manifest were retained as session-local files,
+and their byte counts and SHA-256 digests matched during the September 9, 2026
+review. They are not included in the committed bundle; the hashes bind those
+bytes but cannot reconstruct them or guarantee continued availability. Public
+provider histories, while available, support fresh bounded checks of recorded
+events, but do not reproduce the original snapshot bytes or task-local execution
+artifacts.
+
 The JSON's line-scoped scanner annotations identify verified content digests and
 public Git commit identities; they do not exclude the file from secret scanning.
 
