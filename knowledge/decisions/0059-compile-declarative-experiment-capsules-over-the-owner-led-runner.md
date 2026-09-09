@@ -296,6 +296,16 @@ build-system coverage, does not claim that a compiled experiment is scientifical
 does not claim completion of #15. It reuses #15-style identity and resume primitives where
 they already exist and are suitable.
 
+Fresh OCI BASE/REFERENCE qualification in v1 is supported only for the `python-pytest`
+adapter. A fresh `node-vitest + OCI` task, or any other adapter/backend combination without
+an implemented OCI result parser, is refused fail-closed with
+`oci-qualification-unsupported-for-adapter`. This is a declared Experiment Capsule v1
+capability bound, not a failure of the #164 runner or OCI infrastructure.
+
+Exact prior-receipt reuse is a separate zero-effect path. When an already-qualified receipt
+is current and covers the exact candidate, it may be consumed without re-running the backend;
+that reuse does not add fresh OCI support for the receipt's adapter.
+
 ## Consequences
 
 Experiment preparation becomes declarative and reviewable: the reviewable unit is a spec plus

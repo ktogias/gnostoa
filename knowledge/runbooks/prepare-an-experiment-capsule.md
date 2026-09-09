@@ -115,7 +115,7 @@ one you intend. Read blockers as follows.
 | `materialised-subject-identity-mismatch` | retained subject bytes do not reconstruct to the declared tree | the workspace is stale or tampered; remove it and rerun |
 | `capability-certificate-identity-mismatch` | the certificate file digest is not the declared one | bind the certificate you actually reviewed |
 | `oracle-control-corroboration-symbol-required` | a citation names a file but no symbol | name the exact function whose behaviour is the evidence |
-| `qualification-backend-unavailable` | the declared backend cannot qualify in v1 | only `local-python` is implemented; a containerised subject needs a runner-backed backend |
+| `oci-qualification-unsupported-for-adapter` | fresh OCI qualification has no v1 result parser for this adapter | use `python-pytest` for a fresh OCI qualification; exact current prior-receipt reuse remains a separate zero-effect path |
 | `base-reference-qualification-failed` | observed outcome or cause differs from the frozen expectation | read the classification: `INFRASTRUCTURE`, `WRONG_CAUSE` or `COUNT_MISMATCH` |
 | `preflight-authority-out-of-scope` | the authority does not name this experiment and scope | obtain an authority bound to this experiment |
 | `preflight-authority-candidate-mismatch` | the authority approves a different prepared candidate | the inputs or backend changed since it was issued; re-observe the digest and obtain a new authority |
