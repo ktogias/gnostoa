@@ -6,6 +6,7 @@ import json
 import pathlib
 import subprocess
 import unittest
+import unittest.mock
 
 from tools.capsule import qualification
 
