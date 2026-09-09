@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import json
+import pathlib
+import subprocess
 import unittest
-from pathlib import Path
-from subprocess import CompletedProcess, TimeoutExpired
-from unittest import mock
 
 from tools.capsule import qualification
 
@@ -230,15 +229,17 @@ class LocalHarnessCompletionTests(unittest.TestCase):
     def classify_local(
         self, returncode: int, outcome: str
     ) -> qualification.SubjectOutcome:
-        completed = CompletedProcess(
+        completed = subprocess.CompletedProcess(
             args=["python"],
             returncode=returncode,
             stdout=self.report_json(outcome) + "\n",
             stderr="local harness failed" if returncode else "",
         )
-        with mock.patch.object(qualification.subprocess, "run", return_value=completed):
+        with unittest.mock.patch.object(
+            qualification.subprocess, "run", return_value=completed
+        ):
             report = qualification._run_local_python(
-                Path("/subject"), Path("/oracle.py"), ()
+                pathlib.Path("/subject"), pathlib.Path("/oracle.py"), ()
             )
         return qualification._classify(
             "subject",
@@ -256,10 +257,12 @@ class LocalHarnessCompletionTests(unittest.TestCase):
         self.assertIn("exit 3", outcome.detail)
 
     def test_local_timeout_is_reported_as_infrastructure(self) -> None:
-        timeout = TimeoutExpired(["python"], 120)
-        with mock.patch.object(qualification.subprocess, "run", side_effect=timeout):
+        timeout = subprocess.TimeoutExpired(["python"], 120)
+        with unittest.mock.patch.object(
+            qualification.subprocess, "run", side_effect=timeout
+        ):
             report = qualification._run_local_python(
-                Path("/subject"), Path("/oracle.py"), ()
+                pathlib.Path("/subject"), pathlib.Path("/oracle.py"), ()
             )
         outcome = qualification._classify(
             "subject",
