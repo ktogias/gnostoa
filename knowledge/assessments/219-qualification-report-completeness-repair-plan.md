@@ -614,3 +614,68 @@ Its desired outcome, finite acceptance criteria, exclusions and explicit later
 admission condition are recorded; it is OPEN backlog without `roadmap:now`.
 No tool, mandatory gate or implementation was admitted. #202 remains the
 unadmitted owner of pinned real-pytest/OCI evidence.
+
+### Third-round repair and independent semantic reconciliation
+
+The RED checkpoint is retained in Git commit `25d9c19` and in
+[the pre-production Work Item record](https://github.com/ktogias/gnostoa/issues/219#issuecomment-5602189795),
+read back verbatim before production mutation. The repair adds `.strip()` only
+to the failed-case missing-cause predicate. It does not rewrite the stored cause
+or change classification of any nonblank cause. Existing validation establishes
+that this value is a string before the predicate; the added operation therefore
+does not introduce a new type assumption.
+
+The final eight new methods cover N13 unknown outcomes, N15 malformed summary
+items, N1 decorated positive controls and contradictory infrastructure evidence,
+N9 nonempty non-mapping cases, N5 missing/nonboolean collection status, N8
+missing/empty causes and W1 whitespace-only cause through local JSON ingestion.
+All new methods assert observable classifications, with cause preservation on
+the decorated valid controls. N9/N15 additionally fail if a runtime exception
+escapes; they do not reclassify a crash as false MATCH.
+
+Independent agent review formed a task-to-code view and confirmed W1 violates
+the existing completeness/cause obligation, then reviewed the actual one-line
+repair and eight methods. Bounded **CODE REVIEW PASS** applies to production
+SHA-256 `a5136810a1aa5c8b44c5e381a316bf04383c5ae1e899ea15869f6a00acbfd31d`
+and tests SHA-256
+`e8d6d2357b4fd56976c558877fa66751cf10a1768bdf03fa0b1cb436313188b9`.
+This supersedes production-unchanged claims for the third-round repair; they
+remain true of the earlier 5a1fb4e→fc842c7 delta. The review found no further
+blocker in the declared set, supplies no human approval and does not establish
+arbitrary cause-string correctness or exhaustive report validation.
+
+### Final third-round behavior and mutation results
+
+Development-container unmodified repaired baseline: **43 tests PASS, zero
+failures/errors/skips**. Each transformation below targets exactly one occurrence
+in the bound production source and compiles/imports successfully. N1 replaces
+ANSI normalization with raw stdout; N5/N8/N9/N13/N15 replace the selected `if`
+predicate with `False`; W1 replaces only the new `.strip()` predicate with the
+prior empty-string predicate. The actual source condition and tests in Git make
+the finite operators inspectable without presenting `/tmp` as permanent storage.
+
+| Row | Exact selected source condition / operation | Before correction | Final 43 tests | Alignment / executor / agent reviewer |
+|---|---|---|---|---|
+| R3-N1 | `_ANSI_ESCAPE.sub("", stdout)` → `stdout` | SURVIVED 35; valid colored controls lose MATCH, contradictory colored infrastructure can gain MATCH. | KILLED: 3 assertion failures, zero errors. | SUPPORTS / complete / PASS |
+| R3-N5 | `collected is not True` → `False` | SURVIVED 35; otherwise valid uncollected/nonboolean reports gain MATCH. | KILLED: 5 assertion failures, zero errors. | SUPPORTS / complete / PASS |
+| R3-N8 | `outcome == "failed" and not error_type.strip()` → `False` (baseline targeted prior predicate) | Prior guard removal SURVIVED 35; absent cause gains MATCH. | KILLED: 6 assertion failures, zero errors. | SUPPORTS / complete / PASS |
+| R3-N9 | `not isinstance(raw_cases, Mapping)` → `False` | SURVIVED 35; a nonempty non-mapping value escapes as AttributeError. | KILLED: 3 runtime errors, zero assertion failures. | SUPPORTS structured rejection / complete / PASS |
+| R3-N13 | `label is None` → `False` | SURVIVED 35; unknown summary label can disappear behind matching known counts. | KILLED: 2 assertion failures, zero errors. | SUPPORTS / complete / PASS |
+| R3-N15 | `item is None` → `False` | SURVIVED 35; malformed summary item escapes as TypeError. | KILLED: 3 runtime errors, zero assertion failures. | SUPPORTS structured rejection / complete / PASS |
+| R3-W1 | `not error_type.strip()` → `not error_type` in the failed-case guard | Current-production RED: 3 whitespace subcases returned MATCH. | Exact repair revert KILLED: 3 assertion failures, zero errors. | SUPPORTS / repaired / PASS |
+| R3-R1 | Actual fc842c7 diff and M11 passed-case branch | Missing-test hypothesis contradicted by source. | Corrected ledger, no duplicate M11 test. | SUPPORTS / reconciled / PASS |
+| R3-X1 | Existing positive controls and Q01–Q11 plus M9/M11–M14 | Prior inventory retained. | All 16 specified mutations killed against 43 tests. | SUPPORTS bounded regression claim / complete / PASS |
+
+The combined inventory is **23 specified valid mutants killed**: 20 have
+behavioral/cause assertion discriminators, Q02 remains diagnostic-only, and
+N9/N15 are killed by escaped runtime errors. All seven new and sixteen retained
+mutants execute all 43 tests with zero skips. This is neither 23 false-MATCH
+proofs nor an exhaustive score; no invalid mutation is counted. ANSI strings
+and the unknown `rerun` label are synthetic report inputs, not a new claim about
+actual plugin/version behavior. N12/N7 remain supplied observations outside the
+selected finite inventory, with their existing production guards retained.
+
+The admitted finite correction is complete at source/targeted-evidence level.
+Whole-candidate container/runtime/provider results and exact Git identities must
+be read from the final PR checkpoint; they are not inferred from the focused
+suite or the prior fc842c7 green checks.
