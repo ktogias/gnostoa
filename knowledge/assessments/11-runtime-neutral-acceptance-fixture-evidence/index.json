@@ -1,0 +1,26 @@
+{
+  "description": "All members are retained native files; hashes establish byte identity, not semantic proof.",
+  "archive": {"file": "raw-evidence.tar.gz", "sha256": "cd7b97819c870e6f622106678eb2371e9f56df04b8bbb99e54acfab3a2e912ff", "annotation": "# pragma: allowlist secret -- public retained archive digest"},
+  "members": [
+    {"member": "baseline-F02-consumer.json", "bytes": 1041, "sha256": "7b0f91a071acd06188cdba31eac8a4346d3200d13de7362ec1afb1b3b2096c80", "annotation": "# pragma: allowlist secret -- public retained artifact digest"},
+    {"member": "baseline-F02-consumer.log", "bytes": 706, "sha256": "50ef1496ab091184440fb29b029d62d0180e2a686e6628e9aa32e4f747d2f6f9", "annotation": "# pragma: allowlist secret -- public retained artifact digest"},
+    {"member": "baseline-red.json", "bytes": 1007, "sha256": "ba60bdde2cafb9bc33303d8e18ac45dea2f3e4592f57d717362324575ae83bc1", "annotation": "# pragma: allowlist secret -- public retained artifact digest"},
+    {"member": "baseline-red.log", "bytes": 27112, "sha256": "f52d401b3c2df462dcd1db4bc5cef5e47611bcbcbaff1a72bb98a9d1c83c236f", "annotation": "# pragma: allowlist secret -- public retained artifact digest"},
+    {"member": "candidate-green.json", "bytes": 1011, "sha256": "801b129802be9e8dfd83143fe11354abc8072b5a6d0ea2f350c89bd8461e4ea3", "annotation": "# pragma: allowlist secret -- public retained artifact digest"},
+    {"member": "candidate-green.log", "bytes": 268, "sha256": "b40b0caa4c9a88ae62ff648518e0ca54ee18f240ea2263779413899a98372ae6", "annotation": "# pragma: allowlist secret -- public retained artifact digest"},
+    {"member": "candidate-results.json", "bytes": 1185, "sha256": "3fe8187a63b3cd351ddd9ad3303772bda35b121d1c4340462a51e297f6bf251d", "annotation": "# pragma: allowlist secret -- public retained artifact digest"},
+    {"member": "candidate-results.log", "bytes": 17186, "sha256": "92ba6fccfbf7c561ed7214faeeb3311183ae4a5680faf56531c76b018606b474", "annotation": "# pragma: allowlist secret -- public retained artifact digest"},
+    {"member": "final-baseline-red.json", "bytes": 1013, "sha256": "788a1e91d153a2dfa78cabebd4b4083de4a6cb53377f86506f9882e95312affa", "annotation": "# pragma: allowlist secret -- public retained artifact digest"},
+    {"member": "final-baseline-red.log", "bytes": 27112, "sha256": "bb3d3a5b847fcc992ce0e0e520b2e8037cd7fac179efa75dbad0e06554969605", "annotation": "# pragma: allowlist secret -- public retained artifact digest"},
+    {"member": "final-candidate-green.json", "bytes": 1017, "sha256": "fbd351e9e9fe739a5b7ffaa2374b66574f1d25194c4fa3c7a04d496cb402e619", "annotation": "# pragma: allowlist secret -- public retained artifact digest"},
+    {"member": "final-candidate-green.log", "bytes": 268, "sha256": "464208b2c9c02d2e4298319b927566a0d6229a7b4f0f8f6271a2745b85f942e8", "annotation": "# pragma: allowlist secret -- public retained artifact digest"},
+    {"member": "final-mutant-F1-M1.json", "bytes": 945, "sha256": "45ea82c0a4c3504f0edb9c957c9a2357ca5c4b4f6306a9fa41b26f87b834d5b0", "annotation": "# pragma: allowlist secret -- public retained artifact digest"},
+    {"member": "final-mutant-F1-M1.log", "bytes": 3550, "sha256": "392e6bda2ee23c12c2e286037a2c377eb0b342c4f0901f54efd62b82b6468b89", "annotation": "# pragma: allowlist secret -- public retained artifact digest"},
+    {"member": "final-result.json", "bytes": 2022, "sha256": "3afa37726b1b5fa35f2d87886979661944f685aa29e260eb7259aff3dbab25c9", "annotation": "# pragma: allowlist secret -- public retained artifact digest"},
+    {"member": "mutant-F1-M1.json", "bytes": 939, "sha256": "9f5bcf9226a2dd04f6144312f5f8622d25501aa6b5f49537ce6f984e5a5776ea", "annotation": "# pragma: allowlist secret -- public retained artifact digest"},
+    {"member": "mutant-F1-M1.log", "bytes": 3550, "sha256": "7ee8e0c2ddf1c1749af8a614a3dee33a478e68adfb43460ece215f2e8ca95fbd", "annotation": "# pragma: allowlist secret -- public retained artifact digest"},
+    {"member": "oracle-freeze.json", "bytes": 1069, "sha256": "2b718547d4330ab41cdd0e528d441fb2351f3385a9dba57ca24c739ca8995416", "annotation": "# pragma: allowlist secret -- public retained artifact digest"},
+    {"member": "pre-style-frozen-source.tar", "bytes": 30720, "sha256": "4adfb8c79a2697a5a7028f745ecc2f989ddbfd09ce05b3b16512238aba444bb4", "annotation": "# pragma: allowlist secret -- public retained artifact digest"},
+    {"member": "result.json", "bytes": 2524, "sha256": "35b5c1f88ab2882f7a4da6fc1b71ab49f8148f61f66b93c6b7bc528c3b9d8faa", "annotation": "# pragma: allowlist secret -- public retained artifact digest"}
+  ]
+}
