@@ -70,6 +70,7 @@ inherited, copied or loaded by adopting projects.
 - [Enforce owner-led experiment boundaries with coordinator-owned sandboxes](decisions/0057-enforce-owner-led-experiment-boundaries-with-coordinator-owned-sandboxes.md)
 - [Harden behavioral diagnosis evidence authority and hypothesis reconciliation](decisions/0058-harden-behavioral-diagnosis-evidence-authority.md)
 - [Compile declarative Experiment Capsules over the owner-led runner](decisions/0059-compile-declarative-experiment-capsules-over-the-owner-led-runner.md)
+- [Retain individual agent review findings and dispositions](decisions/0061-retain-individual-agent-review-dispositions.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Require explicit admission for retrospective findings](requirements/retrospective-findings-require-explicit-admission.md)
