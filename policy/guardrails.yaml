@@ -1,5 +1,17 @@
-version: "0.12.0"
+version: "0.13.0"
 guardrails:
+  - id: prior-art-before-self-change
+    title: Gnostoa self-changes reuse applicable alternatives and license research before custom work
+    applies_to: [kit]
+    enforcement: review
+    owner: team:gnostoa-maintainers
+    guidance: knowledge/runbooks/deliver-bounded-self-hosted-slice.md#prior-art-and-reuse-checkpoint
+    implementation:
+      - AGENTS.md
+      - knowledge/runbooks/deliver-bounded-self-hosted-slice.md
+      - knowledge/lifecycles/evidence-gated-capability-evolution.md
+      - knowledge/decisions/0062-require-proportionate-prior-art-and-reuse-review.md
+
   - id: monotonic-profile-inheritance
     title: Child profiles do not weaken parent policy
     applies_to: [kit, adopting-projects]
