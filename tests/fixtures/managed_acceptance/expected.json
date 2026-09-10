@@ -47,6 +47,14 @@
     "F10": {
       "result": {"disposition": "PENDING", "reconciliation": "PENDING", "worker_check": "NOT_REQUIRED"},
       "observations": {"worker_started": true, "dispatch_count": 0, "worker_request_observed": false}
+    },
+    "F11": {
+      "result": {"disposition": "PENDING", "reconciliation": "PENDING", "worker_check": "NOT_REQUIRED"},
+      "observations": {"worker_started": true, "worker_terminal": "failed", "dispatch_count": 1, "worker_request_observed": false, "checks": []}
+    },
+    "F12": {
+      "result": {"disposition": "PENDING", "reconciliation": "PENDING", "worker_check": "OMITTED"},
+      "observations": {"worker_started": true, "worker_terminal": "completed", "dispatch_count": 1, "worker_request_observed": false, "assigned_checker": "worker", "invocation_observation_complete": true, "checks": []}
     }
   }
 }

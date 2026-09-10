@@ -13,6 +13,9 @@ sources:
   - id: fixture-admission
     resource: https://github.com/ktogias/gnostoa/issues/11#issuecomment-5618072832
     title: D11-F1 bounded fixture Decision and admission
+  - id: fixture-extension-admission
+    resource: https://github.com/ktogias/gnostoa/issues/11#issuecomment-5618953079
+    title: Owner-approved F11/F12 test and evidence extension
 x-project-knowledge:
   id: kit.decision.0060.run-a-bounded-runtime-neutral-acceptance-fixture
   owners:
@@ -61,6 +64,8 @@ properties of the current daily workflow.
    scripted adapters with different native event representations and the same
    candidate control and persisted-result reader. The workers are cooperative
    test doubles; no hostile-code or operating-system isolation claim follows.
+   The separately admitted review extension below adds F11/F12 while preserving
+   these original inputs and expectations.
 4. Before implementing the corrected control, execute an intentionally defective
    completion-only baseline. Retain actual false acceptance and oracle failure.
    Missing imports/executables do not count as behavioral RED. This constructed
@@ -76,6 +81,30 @@ properties of the current daily workflow.
 7. Preserve source, cases, oracle, counterexample and native outputs together.
    Hashes bind retained representations; they do not establish semantic truth.
    Report negative results without expanding the fixture to rescue a claim.
+
+## Admitted review extension: F11/F12
+
+At `ad88768fc83163850db46eda198bf18f8965cab3`, independent review probes
+demonstrated two coverage gaps: removing the unsuccessful-worker guard or
+ignoring supervisor-substitution permission survived the F01-F10 oracle. The
+unchanged core already handled both additional conditions correctly. The owner
+then explicitly approved their bounded test/evidence extension, recorded in the
+linked extension admission before source mutation.
+
+Add F11 (failed worker, otherwise valid no-op) and F12 (worker assigned,
+supervisor substitution forbidden). Require pending acceptance and reconciliation,
+with zero checks in both cases. Preserve F12's observed worker omission. Extend
+the explicit oracle inventory to twelve cases and retain reproducible M4/M7
+operators for these two guards alongside the original F1.M1 operator. Keep the
+control core, original F01-F10 cases/expectations and original evidence archive
+unchanged. Retain the review diagnostics and revised-oracle results separately;
+do not relabel them as the original pre-implementation experiment.
+
+This extension remains normal and self-only. It admits test/evidence changes and
+this scope amendment in the existing PR, without live effects or merge authority.
+The evidence must report actual failures: failed-terminal F11 may already pass
+the completion-only baseline, and F12 also reaches F1.M1's no-evidence branch.
+Do not adjust expectations merely to retain the original failure counts.
 
 ## Consequences
 

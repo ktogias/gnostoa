@@ -1,5 +1,6 @@
-"""Replay the completion-without-evidence mutant against the frozen oracle."""
+"""Replay a declared acceptance mutant against the frozen fixture oracle."""
 
+import argparse
 import hashlib
 import json
 import os
@@ -15,20 +16,40 @@ MUTANT = (
     'return _result("ACCEPTED", "ACCEPTED", worker_check, '
     '"mutant-completion-without-evidence")'
 )
+OPERATORS = {
+    "F1.M1": (ORIGINAL, MUTANT),
+    "M4": (
+        '    if services.worker_terminal != "completed":\n'
+        '        return _result("PENDING", "PENDING", worker_check, '
+        '"worker-not-completed")\n',
+        "",
+    ),
+    "M7": (
+        '    if check_plan in {"planned", "finalization"} and (\n'
+        '        case["assigned_checker"] == "supervisor"\n'
+        '        or case["allow_supervisor_substitution"]\n'
+        "    ):\n",
+        '    if check_plan in {"planned", "finalization"}:\n',
+    ),
+}
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--operator", choices=OPERATORS, default="F1.M1")
+    args = parser.parse_args()
+    original_text, replacement_text = OPERATORS[args.operator]
     source = (FIXTURE / "candidate.py").read_bytes()
-    original = ORIGINAL.encode("utf-8")
+    original = original_text.encode("utf-8")
     if source.count(original) != 1:
         raise RuntimeError("Mutation anchor must occur exactly once")
-    changed = source.replace(original, MUTANT.encode("utf-8"))
+    changed = source.replace(original, replacement_text.encode("utf-8"))
     print(
         json.dumps(
             {
-                "operator": "F1.M1",
-                "original": ORIGINAL,
-                "replacement": MUTANT,
+                "operator": args.operator,
+                "original": original_text,
+                "replacement": replacement_text,
                 "source_sha256": hashlib.sha256(source).hexdigest(),
                 "mutant_sha256": hashlib.sha256(changed).hexdigest(),
             },

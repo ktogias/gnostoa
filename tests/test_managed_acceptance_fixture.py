@@ -36,7 +36,7 @@ class ManagedAcceptanceFixtureTests(unittest.TestCase):
     def test_frozen_behavior_at_persisted_result_consumer(self) -> None:
         oracle = json.loads((FIXTURE / "expected.json").read_text(encoding="utf-8"))
         self.assertEqual(
-            list(oracle["cases"]), [f"F{number:02d}" for number in range(1, 11)]
+            list(oracle["cases"]), [f"F{number:02d}" for number in range(1, 13)]
         )
         with TemporaryDirectory(prefix="gnostoa-f1-oracle-") as directory:
             for case_id, expected in oracle["cases"].items():
