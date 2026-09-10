@@ -24,6 +24,8 @@ x-project-knowledge:
     - kind: governed-by
       target: /decisions/0058-harden-behavioral-diagnosis-evidence-authority.md
     - kind: governed-by
+      target: /decisions/0061-retain-individual-agent-review-dispositions.md
+    - kind: governed-by
       target: /decisions/0062-require-proportionate-prior-art-and-reuse-review.md
     - kind: depends-on
       target: /lifecycles/evidence-gated-capability-evolution.md
@@ -174,7 +176,9 @@ The existing emergency route retains its declared timing and follow-up.
    may reduce correlated blind spots but does not establish evidence independence.
    Reviewer inference remains inference; unresolved task identification remains
    unresolved rather than becoming acceptance. A passing test that preserves
-   task-prohibited behavior remains a blocker.
+   task-prohibited behavior remains a blocker. Apply
+   [supplied-agent review capture](#supplied-agent-reviews) when reviews are
+   received, including outside this exact-candidate checkpoint.
 10. **Verify the exact PR head.** Provider checks must bind to that head; inspect
     required jobs individually. A successful run does not turn `SKIPPED` into
     `PASS`.
@@ -202,6 +206,45 @@ The existing emergency route retains its declared timing and follow-up.
 16. **Close the Work Item last.** Close only after integrated/provider read-back,
     subject re-binding, reconciliation and the micro-retrospective succeed; then
     record the next owner decision without starting it automatically.
+
+## Supplied agent reviews
+
+When agent reviews are supplied for Gnostoa work, whether the owner forwards
+them or we commission them, record each reviewer before reporting the reviews
+as handled. Use the owning PR or Work Item review record and keep the existing
+capture, language and authorized-effect limits of this runbook. If publication
+is unavailable or not authorized, retain the pending record in the active
+change record rather than an ephemeral session note, state that limit
+explicitly and publish it once the effect is authorized. Link an existing
+sufficient record instead of duplicating it. A compact table normally suffices,
+but a combined verdict must not replace individual dispositions.
+
+For each supplied review, retain:
+
+- Source or supplied attribution, reviewed subject/head and the reviewer's
+  reported verification environment and date. Mark missing or unverified
+  attribution, subject binding or environment explicitly; a supplied model name
+  is not authenticated reviewer identity.
+- Reported findings, including explicit no-findings reports, limitations and
+  conditional recommendations. Do not infer "no findings" from silence.
+- The reviewer's own overall recommendation, or that none was supplied.
+- Our disposition of each finding and the review overall, with rationale,
+  evidence links, resolution subject/head and remaining uncertainty. Distinguish
+  addressed, accepted for follow-up, deferred, not adopted and unresolved items;
+  agreement alone does not mean implementation is complete.
+
+Shared findings may use one evidence link while retaining each reviewer's
+attribution. Keep original recommendations separate from our conclusions.
+Record corrections or superseding reviews explicitly rather than silently
+rewriting history or treating an older-head review as review of a new head.
+Distinguish reviewer-reported execution from our reproduction and from evidence
+we have not inspected.
+
+Agent recommendations do not supply human semantic acceptance, merge authority
+or implementation admission. Apply the
+[explicit-admission requirement](../requirements/retrospective-findings-require-explicit-admission.md)
+to new work. Record capture and source validation are review practices; neither
+establishes mandatory software enforcement or prevents future omissions.
 
 ## Verification
 

@@ -1,4 +1,4 @@
-version: "0.13.0"
+version: "0.14.0"
 guardrails:
   - id: prior-art-before-self-change
     title: Gnostoa self-changes reuse applicable alternatives and license research before custom work
@@ -449,6 +449,21 @@ guardrails:
       - tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_requirement_defines_bounded_blocking_and_oracle_limits
       - tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_router_and_runbook_make_the_two_checkpoints_discoverable
       - tests/test_behavioral_traceability.py::BehavioralTraceabilityTests.test_guardrail_binds_the_self_only_contract
+
+  - id: supplied-agent-review-dispositions
+    title: Supplied agent reviews retain individual findings and dispositions
+    applies_to: [kit]
+    enforcement: review
+    owner: team:gnostoa-maintainers
+    guidance: knowledge/runbooks/deliver-bounded-self-hosted-slice.md#supplied-agent-reviews
+    implementation:
+      - AGENTS.md
+      - knowledge/decisions/0061-retain-individual-agent-review-dispositions.md
+      - knowledge/index.md
+      - knowledge/runbooks/deliver-bounded-self-hosted-slice.md
+    tests:
+      - tests/test_supplied_agent_review_capture.py::SuppliedAgentReviewCaptureTests.test_guardrail_declares_the_kit_only_review_contract
+      - tests/test_supplied_agent_review_capture.py::SuppliedAgentReviewCaptureTests.test_router_runbook_and_decision_bind_the_capture_anchor
 
   - id: authoritative-centralized-ci
     title: Centralized CI authoritatively verifies the latest integration candidate

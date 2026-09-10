@@ -18,6 +18,9 @@ Start with `README.md`. Load only the route required by the task.
   also read
   `knowledge/requirements/bounded-behavioral-traceability.md` before semantic
   production mutation and exact-candidate review.
+- When agent reviews are supplied for Gnostoa-self work, whether the owner
+  forwards them or we commission them, follow
+  [supplied-agent review capture](knowledge/runbooks/deliver-bounded-self-hosted-slice.md#supplied-agent-reviews).
 - Gnostoa version-bound source-and-OCI release series: after the ordinary
   self-hosted route, read
   `knowledge/runbooks/publish-version-bound-source-and-oci-release.md`.
