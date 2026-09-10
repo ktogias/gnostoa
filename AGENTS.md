@@ -18,11 +18,20 @@ Start with `README.md`. Load only the route required by the task.
   also read
   `knowledge/requirements/bounded-behavioral-traceability.md` before semantic
   production mutation and exact-candidate review.
+- When agent reviews are supplied for Gnostoa-self work, whether the owner
+  forwards them or we commission them, follow
+  [supplied-agent review capture](knowledge/runbooks/deliver-bounded-self-hosted-slice.md#supplied-agent-reviews).
 - Gnostoa version-bound source-and-OCI release series: after the ordinary
   self-hosted route, read
   `knowledge/runbooks/publish-version-bound-source-and-oci-release.md`.
 - Anonymous examples: use only generic vocabulary and never treat examples as
   approved project facts.
+
+Before creating or materially revising a Gnostoa-self Issue, Decision or PR, and
+before new code or implementation, apply **Prior-art and reuse checkpoint** in
+`knowledge/runbooks/deliver-bounded-self-hosted-slice.md`. Reuse applicable
+research; record alternatives, intended-use license compatibility and the
+remaining need before choosing custom work.
 
 Before changing normative behavior, read
 `guidance/guardrails/non-negotiable.md` and update

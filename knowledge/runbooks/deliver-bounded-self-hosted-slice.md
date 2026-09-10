@@ -23,6 +23,10 @@ x-project-knowledge:
       target: /decisions/0053-require-lightweight-work-item-micro-retrospection.md
     - kind: governed-by
       target: /decisions/0058-harden-behavioral-diagnosis-evidence-authority.md
+    - kind: governed-by
+      target: /decisions/0061-retain-individual-agent-review-dispositions.md
+    - kind: governed-by
+      target: /decisions/0062-require-proportionate-prior-art-and-reuse-review.md
     - kind: depends-on
       target: /lifecycles/evidence-gated-capability-evolution.md
     - kind: references
@@ -61,6 +65,51 @@ result needed for the next owner decision. There is no fixed length limit.
   admission state can be identified separately from the evidence that discovered
   it.
 
+## Prior-art and reuse checkpoint
+
+Before creating or materially revising an Issue, Decision or PR, and before new
+code or implementation, check existing project work and suitable external
+projects for the same bounded need. Apply this checkpoint before the procedure's
+create/admission steps, including finding capture. Prefer using, adapting or
+composing an existing suitable mechanism; justify the remaining custom work.
+
+First inspect the current Work Item, related PRs, Decisions and relevant project
+knowledge, then consult primary project documentation and license sources for
+plausible external alternatives. Preserve one compact assessment in the owning
+Work Item, Decision or PR, linked from subsequent steps. Research may be prepared
+locally before that first record is created. A separate report, fixed source
+count or new issue solely for the search is not required. Retain:
+
+- the question, scope, research date and the sources/search boundary inspected;
+- plausible candidates, the versions or revisions inspected, intended use and
+  relevant capabilities, limitations and operational/maintenance cost;
+- license and provenance evidence for that use, including applicable dependency,
+  distribution, attribution and NOTICE obligations; consult
+  [the licensing contract](https://github.com/ktogias/gnostoa/blob/main/LICENSING.md) rather than treating an inventory
+  or an "open source" label as compatibility clearance;
+- the disposition: use, adapt, compose or implement the residual need, with
+  reasons for rejecting material alternatives and remaining uncertainty.
+
+Running an external service, adding a dependency and copying or distributing
+material are different uses. Resolve material license uncertainty before the
+affected acquisition, copying, dependency or distribution effect; record an
+unavailable search as incomplete rather than inventing a negative result.
+Research itself supplies no implementation admission or effect authority.
+
+If no suitable complete project is found within the recorded search, inspect
+relevant established practices, patterns and antipatterns before custom design.
+State what transfers to this task and what still needs verification. An existing
+checker, orchestration tool or template does not establish that its inputs are
+authoritative, its invocation is unavoidable or its result has a real consumer.
+
+At each later transition, reuse the assessment when its question, scope and
+material inputs still apply. Revalidate affected conclusions when requirements,
+candidate/version, license, environment or security/support facts change; avoid
+both a stale blanket approval and a full repeated search for an unchanged need.
+The reviewer checks applicability and rationale alongside the actual candidate.
+This is review enforcement, not a software gate or proof of search completeness.
+The existing emergency route retains its declared timing and follow-up.
+
 ## Procedure
 
 1. **Orient and read back the current subject.** Start through `AGENTS.md`; bind
@@ -85,8 +134,10 @@ result needed for the next owner decision. There is no fixed length limit.
    knowledge-only. Stop before implementation until a separate observable owner
    admission selects the work under the current classification, Decision,
    pre-implementation evidence and effect boundary.
-4. **Acquire bounded evidence or research.** Load only what distinguishes the
-   proposed result and preserve negative findings.
+4. **Acquire bounded evidence or research.** Reuse or update the
+   [prior-art assessment](#prior-art-and-reuse-checkpoint), load only what
+   distinguishes the proposed result and preserve negative findings. Confirm
+   its applicability again before a Decision, PR or implementation transition.
 5. **Obtain an owner semantic choice when required.** Oracle or unresolved
    semantic limits remain human decisions.
 6. **Name the proposed surface and class.** Use the generic
@@ -125,7 +176,9 @@ result needed for the next owner decision. There is no fixed length limit.
    may reduce correlated blind spots but does not establish evidence independence.
    Reviewer inference remains inference; unresolved task identification remains
    unresolved rather than becoming acceptance. A passing test that preserves
-   task-prohibited behavior remains a blocker.
+   task-prohibited behavior remains a blocker. Apply
+   [supplied-agent review capture](#supplied-agent-reviews) when reviews are
+   received, including outside this exact-candidate checkpoint.
 10. **Verify the exact PR head.** Provider checks must bind to that head; inspect
     required jobs individually. A successful run does not turn `SKIPPED` into
     `PASS`.
@@ -153,6 +206,45 @@ result needed for the next owner decision. There is no fixed length limit.
 16. **Close the Work Item last.** Close only after integrated/provider read-back,
     subject re-binding, reconciliation and the micro-retrospective succeed; then
     record the next owner decision without starting it automatically.
+
+## Supplied agent reviews
+
+When agent reviews are supplied for Gnostoa work, whether the owner forwards
+them or we commission them, record each reviewer before reporting the reviews
+as handled. Use the owning PR or Work Item review record and keep the existing
+capture, language and authorized-effect limits of this runbook. If publication
+is unavailable or not authorized, retain the pending record in the active
+change record rather than an ephemeral session note, state that limit
+explicitly and publish it once the effect is authorized. Link an existing
+sufficient record instead of duplicating it. A compact table normally suffices,
+but a combined verdict must not replace individual dispositions.
+
+For each supplied review, retain:
+
+- Source or supplied attribution, reviewed subject/head and the reviewer's
+  reported verification environment and date. Mark missing or unverified
+  attribution, subject binding or environment explicitly; a supplied model name
+  is not authenticated reviewer identity.
+- Reported findings, including explicit no-findings reports, limitations and
+  conditional recommendations. Do not infer "no findings" from silence.
+- The reviewer's own overall recommendation, or that none was supplied.
+- Our disposition of each finding and the review overall, with rationale,
+  evidence links, resolution subject/head and remaining uncertainty. Distinguish
+  addressed, accepted for follow-up, deferred, not adopted and unresolved items;
+  agreement alone does not mean implementation is complete.
+
+Shared findings may use one evidence link while retaining each reviewer's
+attribution. Keep original recommendations separate from our conclusions.
+Record corrections or superseding reviews explicitly rather than silently
+rewriting history or treating an older-head review as review of a new head.
+Distinguish reviewer-reported execution from our reproduction and from evidence
+we have not inspected.
+
+Agent recommendations do not supply human semantic acceptance, merge authority
+or implementation admission. Apply the
+[explicit-admission requirement](../requirements/retrospective-findings-require-explicit-admission.md)
+to new work. Record capture and source validation are review practices; neither
+establishes mandatory software enforcement or prevents future omissions.
 
 ## Verification
 

@@ -1,0 +1,60 @@
+{
+  "description": "Frozen D11-F1 output oracle, specified independently of either implementation. Expected objects are observable subsets, not implementation-derived output.",
+  "cases": {
+    "F01": {
+      "result": {"disposition": "PENDING", "reconciliation": "PENDING", "worker_check": "NOT_STARTED"},
+      "observations": {"worker_started": false, "dispatch_count": 0, "worker_request_observed": false, "checks": []}
+    },
+    "F02": {
+      "result": {"disposition": "PENDING", "reconciliation": "PENDING", "worker_check": "OMITTED"},
+      "observations": {"worker_started": true, "dispatch_count": 1, "worker_request_observed": false, "checks": []}
+    },
+    "F03": {
+      "result": {"disposition": "ACCEPTED", "reconciliation": "ACCEPTED", "worker_check": "NOT_REQUIRED"},
+      "observations": {"worker_started": true, "dispatch_count": 1, "worker_request_observed": false,
+        "checks": [{"producer": "fixture-checker", "requester": "supervisor", "trigger": "planned", "evidence_id": "F03:snapshot-1", "target_id": "fixture:219", "observation_cut": "synthetic-cut-1", "labels_match": true, "target_state": "open", "labels": ["bug"]}]}
+    },
+    "F04": {
+      "result": {"disposition": "ACCEPTED", "reconciliation": "ACCEPTED", "worker_check": "OMITTED"},
+      "observations": {"worker_started": true, "dispatch_count": 1, "worker_request_observed": false, "assigned_checker": "worker", "invocation_observation_complete": true,
+        "checks": [{"producer": "fixture-checker", "requester": "supervisor", "trigger": "finalization", "evidence_id": "F04:snapshot-1", "target_id": "fixture:219", "observation_cut": "synthetic-cut-1", "labels_match": true, "target_state": "open", "labels": ["bug"]}]}
+    },
+    "F05": {
+      "result": {"disposition": "ACCEPTED", "reconciliation": "ACCEPTED", "worker_check": "NOT_REQUIRED"},
+      "observations": {"worker_started": true, "dispatch_count": 1, "worker_request_observed": false, "assigned_checker": "supervisor",
+        "checks": [{"producer": "fixture-checker", "requester": "supervisor", "trigger": "planned", "evidence_id": "F05:snapshot-1", "target_id": "fixture:219", "observation_cut": "synthetic-cut-1", "labels_match": true, "target_state": "open", "labels": ["bug"]}]}
+    },
+    "F06": {
+      "result": {"disposition": "ACCEPTED", "reconciliation": "ACCEPTED", "worker_check": "REQUESTED"},
+      "observations": {"worker_started": true, "dispatch_count": 1, "worker_request_observed": true, "assigned_checker": "worker",
+        "checks": [{"producer": "fixture-checker", "requester": "worker", "trigger": "worker-request", "evidence_id": "F06:snapshot-1", "target_id": "fixture:219", "observation_cut": "synthetic-cut-1", "labels_match": true, "target_state": "open", "labels": ["bug"]}]}
+    },
+    "F07": {
+      "result": {"disposition": "ACCEPTED", "reconciliation": "ACCEPTED", "worker_check": "UNKNOWN"},
+      "observations": {"worker_started": true, "dispatch_count": 1, "worker_request_observed": false, "assigned_checker": "worker", "invocation_observation_complete": false,
+        "checks": [{"producer": "fixture-checker", "requester": "supervisor", "trigger": "finalization", "evidence_id": "F07:snapshot-1", "target_id": "fixture:219", "observation_cut": "synthetic-cut-1", "labels_match": true, "target_state": "open", "labels": ["bug"]}]}
+    },
+    "F08": {
+      "result": {"disposition": "PENDING", "reconciliation": "ACCEPTED", "worker_check": "OMITTED"},
+      "observations": {"worker_started": true, "dispatch_count": 1, "worker_request_observed": false, "assigned_checker": "worker", "separate_worker_request_required": true,
+        "checks": [{"producer": "fixture-checker", "requester": "supervisor", "trigger": "finalization", "evidence_id": "F08:snapshot-1", "target_id": "fixture:219", "observation_cut": "synthetic-cut-1", "labels_match": true, "target_state": "open", "labels": ["bug"]}]}
+    },
+    "F09": {
+      "result": {"disposition": "REFUSED", "reconciliation": "REFUSED", "worker_check": "NOT_REQUIRED"},
+      "observations": {"worker_started": true, "dispatch_count": 1, "worker_request_observed": false,
+        "checks": [{"producer": "fixture-checker", "requester": "supervisor", "trigger": "planned", "evidence_id": "F09:snapshot-1", "target_id": "fixture:219", "observation_cut": "synthetic-cut-1", "labels_match": false, "target_state": "open", "labels": ["bug", "roadmap:now"]}]}
+    },
+    "F10": {
+      "result": {"disposition": "PENDING", "reconciliation": "PENDING", "worker_check": "NOT_REQUIRED"},
+      "observations": {"worker_started": true, "dispatch_count": 0, "worker_request_observed": false}
+    },
+    "F11": {
+      "result": {"disposition": "PENDING", "reconciliation": "PENDING", "worker_check": "NOT_REQUIRED"},
+      "observations": {"worker_started": true, "worker_terminal": "failed", "dispatch_count": 1, "worker_request_observed": false, "checks": []}
+    },
+    "F12": {
+      "result": {"disposition": "PENDING", "reconciliation": "PENDING", "worker_check": "OMITTED"},
+      "observations": {"worker_started": true, "worker_terminal": "completed", "dispatch_count": 1, "worker_request_observed": false, "assigned_checker": "worker", "invocation_observation_complete": true, "checks": []}
+    }
+  }
+}

@@ -1,0 +1,125 @@
+{
+  "description": "D11-F1 synthetic inputs; no live provider observations or effect authority.",
+  "common": {
+    "subject": {"slice": "synthetic-label-reconciliation", "generation": 1, "source": "synthetic-fixture-v1"},
+    "required_capabilities": ["lifecycle", "controlled_dispatch"],
+    "capability_evidence": {"lifecycle": "supported", "controlled_dispatch": "supported"},
+    "assigned_checker": "supervisor",
+    "invocation_observation_complete": true,
+    "allow_supervisor_substitution": true,
+    "separate_worker_request_required": false,
+    "check_plan": "planned",
+    "target": {"id": "fixture:219", "state": "open", "labels": ["bug"]},
+    "required_present": ["bug"],
+    "required_absent": ["roadmap:now"],
+    "observation_cut": "synthetic-cut-1",
+    "native_streams": {
+      "tagged": [
+        {"type": "instruction", "operation": "dispatch"},
+        {"type": "terminal", "status": "done"}
+      ],
+      "batched": {
+        "messages": [
+          ["work", {"queued": ["followup"]}],
+          ["done", {"exit_code": 0}]
+        ]
+      }
+    }
+  },
+  "cases": {
+    "F01": {
+      "description": "Unestablished mandatory capability denies worker start.",
+      "capability_evidence": {"lifecycle": "unknown", "controlled_dispatch": "supported"},
+      "assigned_checker": "worker",
+      "check_plan": "none"
+    },
+    "F02": {
+      "description": "Worker completion with both checks absent and no successor.",
+      "assigned_checker": "worker",
+      "check_plan": "none"
+    },
+    "F03": {
+      "description": "Fresh complete no-op; the synthetic parent remains open and bug-only."
+    },
+    "F04": {
+      "description": "Confirmed worker omission, permitted supervisor reconciliation.",
+      "assigned_checker": "worker",
+      "check_plan": "finalization"
+    },
+    "F05": {
+      "description": "Planned supervisor checking is not worker omission."
+    },
+    "F06": {
+      "description": "Worker requests the trusted checker; producer and requester differ.",
+      "assigned_checker": "worker",
+      "check_plan": "worker-request",
+      "native_streams": {
+        "tagged": [
+          {"type": "instruction", "operation": "check"},
+          {"type": "instruction", "operation": "dispatch"},
+          {"type": "terminal", "status": "done"}
+        ],
+        "batched": {
+          "messages": [
+            ["work", {"queued": ["request-check", "followup"]}],
+            ["done", {"exit_code": 0}]
+          ]
+        }
+      }
+    },
+    "F07": {
+      "description": "Incomplete invocation observation; independent reconciliation is permitted.",
+      "assigned_checker": "worker",
+      "invocation_observation_complete": false,
+      "check_plan": "finalization"
+    },
+    "F08": {
+      "description": "Supervisor reconciliation cannot discharge a separately required worker request.",
+      "assigned_checker": "worker",
+      "separate_worker_request_required": true,
+      "check_plan": "finalization"
+    },
+    "F09": {
+      "description": "Observed target labels contradict the independently specified disposition.",
+      "target": {"id": "fixture:219", "state": "open", "labels": ["bug", "roadmap:now"]}
+    },
+    "F10": {
+      "description": "A required dispatch guarantee is lost before the worker requests more work.",
+      "native_streams": {
+        "tagged": [
+          {"type": "capability", "name": "controlled_dispatch", "available": false},
+          {"type": "instruction", "operation": "dispatch"},
+          {"type": "terminal", "status": "done"}
+        ],
+        "batched": {
+          "messages": [
+            ["health", {"lost": ["controlled_dispatch"]}],
+            ["work", {"queued": ["followup"]}],
+            ["done", {"exit_code": 0}]
+          ]
+        }
+      }
+    },
+    "F11": {
+      "description": "A failed worker cannot earn acceptance from an otherwise valid no-op.",
+      "native_streams": {
+        "tagged": [
+          {"type": "instruction", "operation": "dispatch"},
+          {"type": "terminal", "status": "error"}
+        ],
+        "batched": {
+          "messages": [
+            ["work", {"queued": ["followup"]}],
+            ["done", {"exit_code": 1}]
+          ]
+        }
+      }
+    },
+    "F12": {
+      "description": "Forbidden supervisor substitution executes no check and leaves reconciliation pending.",
+      "assigned_checker": "worker",
+      "check_plan": "finalization",
+      "allow_supervisor_substitution": false
+    }
+  }
+}
