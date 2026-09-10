@@ -4,7 +4,7 @@ title: Retain individual agent review findings and dispositions
 description: Record each supplied reviewer separately in Gnostoa-self delivery while preserving subject binding, evidence provenance and human authority.
 status: draft
 generated:
-  by: agent:codex
+  by: codex/gpt-6-astra
   at: "2026-09-10T13:23:53Z"
 sources:
   - id: work-item
@@ -52,6 +52,9 @@ for Gnostoa's own work. Capture each reviewer's source attribution, reviewed
 subject, reported findings and recommendation, then preserve the executor's
 reasoned disposition and evidence separately. Capture is triggered by receipt,
 before reporting the reviews handled; it is not deferred to an eventual merge.
+Receipt covers reviews the owner forwards and reviews we commission ourselves.
+When publication is unavailable or unauthorized, the pending record stays in the
+active change record and states that limit.
 
 Keep the procedure in the existing self-hosted runbook, route to it from
 `AGENTS.md`, and declare a kit-only, review-enforced guardrail. Classify the

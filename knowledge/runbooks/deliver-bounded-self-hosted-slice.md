@@ -160,12 +160,15 @@ result needed for the next owner decision. There is no fixed length limit.
 
 ## Supplied agent reviews
 
-When the owner supplies agent reviews for Gnostoa work, record each reviewer
-before reporting the reviews as handled. Use the owning PR or Work Item review
-record under the existing publication rules; if publication is unavailable or
-not authorized, retain a local pending record and state that limit. Link an
-existing sufficient record instead of duplicating it. A compact table normally
-suffices, but a combined verdict must not replace individual dispositions.
+When agent reviews are supplied for Gnostoa work, whether the owner forwards
+them or we commission them, record each reviewer before reporting the reviews
+as handled. Use the owning PR or Work Item review record and keep the existing
+capture, language and authorized-effect limits of this runbook. If publication
+is unavailable or not authorized, retain the pending record in the active
+change record rather than an ephemeral session note, state that limit
+explicitly and publish it once the effect is authorized. Link an existing
+sufficient record instead of duplicating it. A compact table normally suffices,
+but a combined verdict must not replace individual dispositions.
 
 For each supplied review, retain:
 
@@ -188,8 +191,9 @@ Distinguish reviewer-reported execution from our reproduction and from evidence
 we have not inspected.
 
 Agent recommendations do not supply human semantic acceptance, merge authority
-or implementation admission. Apply the existing finding-admission route to
-new work. Record capture and source validation are review practices; neither
+or implementation admission. Apply the
+[explicit-admission requirement](../requirements/retrospective-findings-require-explicit-admission.md)
+to new work. Record capture and source validation are review practices; neither
 establishes mandatory software enforcement or prevents future omissions.
 
 ## Verification
