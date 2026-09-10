@@ -1,0 +1,10 @@
+{
+  "record_type": "retained-provider-label-incident-raw-inputs",
+  "archive": {"file": "inputs.tar.gz", "bytes": 271893, "sha256": "e62cffe48f1c76249f88f3839ceac1993a9a5dedf707a3ea4f0999046f152f85", "annotation": "# pragma: allowlist secret -- verified retained archive digest"},
+  "manifest": {"file": "../provider-label-reconciliation-incident-evidence.json", "key": "raw_sha256_manifest", "sha256": "2f6fde0f04123fa54a7cde5ce34aa5af1d7bf57d18bded99ebf9856c2b4200f2", "annotation": "# pragma: allowlist secret -- verified original evidence digest"},
+  "member_count": 35,
+  "uncompressed_bytes": 1257592,
+  "packaging": "Sorted basename-only regular USTAR members, mode 0644, zero owner IDs and timestamps; gzip mtime zero. Archive metadata is normalized, not an observation timestamp.",
+  "provenance": "Exact original provider responses and task-local artifacts named in the unchanged historical manifest. No member bytes were rewritten or redacted. Historical session-local role descriptions remain in that manifest; this archive supplies their later retention.",
+  "limits": "Byte identity is not semantic validation or proof of an exhaustive provider history. The retained preparation script is historical evidence, not a supported command and must not be executed as part of verification."
+}

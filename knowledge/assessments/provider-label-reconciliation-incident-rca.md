@@ -93,11 +93,63 @@ not independent human approval or independent causal measurement.
 
 The 35 raw inputs named in the manifest were retained as session-local files,
 and their byte counts and SHA-256 digests matched during the September 9, 2026
-review. They are not included in the committed bundle; the hashes bind those
-bytes but cannot reconstruct them or guarantee continued availability. Public
+review. They were absent from the bundle through candidate `29b5be7`; the hashes
+bound those bytes but could not reconstruct them or ensure retention. Public
 provider histories, while available, support fresh bounded checks of recorded
 events, but do not reproduce the original snapshot bytes or task-local execution
 artifacts.
+
+### Raw-input retention added September 10, 2026
+
+The owner subsequently selected retention of the originals. The
+[raw-input archive](provider-label-reconciliation-incident-raw/inputs.tar.gz)
+now carries all 35 original files, totalling 1,257,592 uncompressed bytes. Its
+[index](provider-label-reconciliation-incident-raw/index.json) binds the archive
+and the unchanged native JSON manifest. Every member retains its original bytes;
+no redaction or reserialization was applied. The manifest's session-local role
+descriptions remain historical, rather than being rewritten as earlier durable
+retention. The archive's normalized timestamps are packaging metadata.
+
+The inputs contain provider responses and task-local payloads, a preparation
+script and a checkpoint. Preserving them permits exact raw-input verification
+from a checkout without access to the original session. It does not establish
+complete provider-history coverage, validate every causal interpretation or
+authenticate the model or person behind an account. The preparation script is
+historical evidence; verification must not execute it.
+
+From the repository root, Python's standard library can verify the archive and
+all original bindings without extracting files or contacting the provider:
+
+```bash
+python3 - <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import tarfile
+
+root = Path("knowledge/assessments/provider-label-reconciliation-incident-raw")
+index = json.loads((root / "index.json").read_text())
+manifest = (root / index["manifest"]["file"]).read_bytes()
+assert hashlib.sha256(manifest).hexdigest() == index["manifest"]["sha256"]
+entries = json.loads(manifest)[index["manifest"]["key"]]
+expected = {entry["file"]: entry for entry in entries}
+assert len(expected) == len(entries) == index["member_count"] == 35
+archive = root / index["archive"]["file"]
+assert archive.stat().st_size == index["archive"]["bytes"]
+assert hashlib.sha256(archive.read_bytes()).hexdigest() == index["archive"]["sha256"]
+with tarfile.open(archive, "r:gz") as retained:
+    members = retained.getmembers()
+    assert len(members) == len(expected)
+    assert {member.name for member in members} == set(expected)
+    for member in members:
+        assert member.isfile() and Path(member.name).name == member.name
+        data = retained.extractfile(member).read()
+        assert len(data) == expected[member.name]["bytes"]
+        assert hashlib.sha256(data).hexdigest() == expected[member.name]["sha256"]
+assert sum(entry["bytes"] for entry in entries) == index["uncompressed_bytes"]
+print("35/35 original raw inputs verified")
+PY
+```
 
 The JSON's line-scoped scanner annotations identify verified content digests and
 public Git commit identities; they do not exclude the file from secret scanning.
