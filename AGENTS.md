@@ -24,6 +24,12 @@ Start with `README.md`. Load only the route required by the task.
 - Anonymous examples: use only generic vocabulary and never treat examples as
   approved project facts.
 
+Before creating or materially revising a Gnostoa-self Issue, Decision or PR, and
+before new code or implementation, apply **Prior-art and reuse checkpoint** in
+`knowledge/runbooks/deliver-bounded-self-hosted-slice.md`. Reuse applicable
+research; record alternatives, intended-use license compatibility and the
+remaining need before choosing custom work.
+
 Before changing normative behavior, read
 `guidance/guardrails/non-negotiable.md` and update
 `policy/guardrails.yaml` when coverage changes. Generated content starts as
