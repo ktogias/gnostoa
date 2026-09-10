@@ -49,8 +49,8 @@ software test failure or proof that prose can enforce future compliance.
 
 Adopt the [supplied-agent-review procedure](../runbooks/deliver-bounded-self-hosted-slice.md#supplied-agent-reviews)
 for Gnostoa's own work. Capture each reviewer's source attribution, reviewed
-subject, reported findings and recommendation, then preserve the executor's
-reasoned disposition and evidence separately. Capture is triggered by receipt,
+subject, reported verification environment, findings and recommendation, then
+preserve the executor's reasoned disposition and evidence separately. Capture is triggered by receipt,
 before reporting the reviews handled; it is not deferred to an eventual merge.
 Receipt covers reviews the owner forwards and reviews we commission ourselves.
 When publication is unavailable or unauthorized, the pending record stays in the
@@ -73,7 +73,10 @@ provenance or unverified execution remains explicit uncertainty.
 For this non-executable practice, use the recorded unmet criterion, independent
 semantic review, existing bundle/guardrail/path validation and the applicable
 container suites. Do not add prose-matching tests or describe structural checks
-as enforcing actual capture. Human semantic review remains necessary.
+as enforcing actual capture. A structural test binds the guardrail declaration,
+the router link, the section anchor and the Decision/runbook relations; because
+it cannot observe whether a received review was actually captured, enforcement
+of the practice stays `review`. Human semantic review remains necessary.
 
 ## Consequences
 

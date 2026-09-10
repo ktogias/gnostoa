@@ -172,8 +172,9 @@ but a combined verdict must not replace individual dispositions.
 
 For each supplied review, retain:
 
-- Source or supplied attribution and reviewed subject/head. Mark missing or
-  unverified attribution and subject binding explicitly; a supplied model name
+- Source or supplied attribution, reviewed subject/head and the reviewer's
+  reported verification environment and date. Mark missing or unverified
+  attribution, subject binding or environment explicitly; a supplied model name
   is not authenticated reviewer identity.
 - Reported findings, including explicit no-findings reports, limitations and
   conditional recommendations. Do not infer "no findings" from silence.
