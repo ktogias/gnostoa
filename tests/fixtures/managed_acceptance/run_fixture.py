@@ -1,9 +1,9 @@
 """Run one frozen case, persist its result, then consume the persisted state."""
 
 import argparse
-from copy import deepcopy
 import importlib
 import json
+from copy import deepcopy
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -11,7 +11,6 @@ from typing import Any
 from adapters import ADAPTERS
 from read_result import read_result
 from services import FixtureServices
-
 
 ROOT = Path(__file__).resolve().parent
 

@@ -1,6 +1,0 @@
-test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) ... ok
-
-----------------------------------------------------------------------
-Ran 1 test in 7.041s
-
-OK

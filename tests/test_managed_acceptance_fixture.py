@@ -2,13 +2,12 @@
 
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
-from tempfile import TemporaryDirectory
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
-
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "managed_acceptance"
 IMPLEMENTATION = os.environ.get("GNOSTOA_FIXTURE_IMPLEMENTATION", "candidate")
@@ -27,7 +26,9 @@ class ManagedAcceptanceFixtureTests(unittest.TestCase):
         elif isinstance(expected, list):
             self.assertIsInstance(actual, list, location)
             self.assertEqual(len(expected), len(actual), location)
-            for index, (wanted, observed) in enumerate(zip(expected, actual)):
+            for index, (wanted, observed) in enumerate(
+                zip(expected, actual, strict=False)
+            ):
                 self.assert_observable_subset(wanted, observed, f"{location}[{index}]")
         else:
             self.assertEqual(expected, actual, location)

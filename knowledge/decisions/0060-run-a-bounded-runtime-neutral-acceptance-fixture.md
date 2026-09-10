@@ -30,7 +30,7 @@ x-project-knowledge:
 
 # Run a bounded runtime-neutral acceptance fixture
 
-## Context and authority
+## Context
 
 The owner selected construction of the previously described small fixture after
 review of the runtime-neutral managed-delivery proposal. The linked D11-F1
@@ -77,7 +77,7 @@ properties of the current daily workflow.
    Hashes bind retained representations; they do not establish semantic truth.
    Report negative results without expanding the fixture to rescue a claim.
 
-## Consequences and limits
+## Consequences
 
 The fixture can test the stated consumer behavior and expose coupling between
 its two adapter mappings. It cannot establish production enforcement, real agent

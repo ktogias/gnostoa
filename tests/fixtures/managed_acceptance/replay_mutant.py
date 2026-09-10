@@ -3,12 +3,11 @@
 import hashlib
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 from tempfile import TemporaryDirectory
-
 
 FIXTURE = Path(__file__).resolve().parent
 ORIGINAL = 'return _result("PENDING", "PENDING", worker_check, "verification-missing")'

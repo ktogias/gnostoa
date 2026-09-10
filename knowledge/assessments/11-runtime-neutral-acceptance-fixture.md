@@ -1,5 +1,5 @@
 ---
-type: Assessment
+type: Source
 title: Runtime-neutral acceptance fixture
 description: Bounded D11-F1 behavior map, verification chronology and evidence limits for two scripted adapters and a common result consumer.
 status: draft
@@ -78,7 +78,15 @@ The corrected core was written afterward. The unchanged oracle passed all
 The targeted F1.M1 mutant changes only the no-evidence branch after observed
 completion from `PENDING` to `ACCEPTED`. It failed F02 under both adapters at
 11:54:20Z: **two assertion failures, zero runtime errors**. No other case failed.
-Both the original oracle and all eight frozen file identities remain unchanged.
+At this checkpoint all eight frozen file identities were unchanged. Required
+static checks subsequently requested import ordering in the runner/test and an
+explicit `zip(strict=False)` (the previous default, after an existing equal-length
+assertion). The original eight files remain verbatim in
+`pre-style-frozen-source.tar`. Literal `cases.json` and `expected.json`, the
+baseline, adapters, services, reader and corrected core are unchanged. The final
+harness replay retained the same 20-failure RED, 20-pair GREEN and two-failure
+mutant outcome, with zero runtime errors; see `final-result.json` and `final-*`
+logs. These mechanical edits were not adjustments to expected behavior.
 
 A separate agent reviewed the corrected core and found no material issue within
 F01-F10. That reviewer authored the oracle; this is independence from corrected
@@ -89,12 +97,16 @@ The initial bound interpreter was development image
 embedded source label was older (`ee7585b`). Each fixture invocation mounted the
 new source read-only, disabled network, and used writable temporary storage.
 The embedded old source is not represented as candidate evidence. Applicable
-whole-candidate verification with a freshly built development image is recorded
+whole-candidate verification uses the built candidate development image; its
+standard extended dependency/audit tooling has network access. These integrated
+suite runs are separate from the isolated behavioral experiment. Results are recorded
 in the review-candidate delivery evidence.
 
 ## Retained evidence and replay
 
-The adjacent `11-runtime-neutral-acceptance-fixture-evidence/` directory retains:
+The adjacent `11-runtime-neutral-acceptance-fixture-evidence/` directory retains
+`raw-evidence.tar.gz` and a JSON member index. The following names are archive
+members, preserved byte-for-byte in their native formats:
 
 - `oracle-freeze.json`: initial file identities and candidate absence.
 - `baseline-red.log` and `baseline-F02-consumer.log`: raw assertion RED and
@@ -102,9 +114,14 @@ The adjacent `11-runtime-neutral-acceptance-fixture-evidence/` directory retains
 - `candidate-green.log` and `candidate-results.log`: passing oracle and all 20
   native JSON result records, with execution metadata.
 - `mutant-F1-M1.log`: exact operator, source identities and raw failure output.
-- `result.json`: source/log bindings, observed counts and bounded review scope.
+- `result.json`: initial GREEN source/log bindings and bounded review scope.
+- `pre-style-frozen-source.tar`, `final-result.json` and `final-*` files: original
+  source and replay after mechanical style normalization.
 
-These files are retained, not merely named by hashes. Digests establish byte
+All original native JSON/log bytes are in the archive, including the initial
+eight-file source snapshot. The index annotates public digests for the secret
+scanner without altering the archived data. These files are retained, not merely
+named by hashes. Digests establish byte
 identity; they do not certify intent, completeness or real runtime capabilities.
 From a development container with the candidate mounted read-only, replay:
 
