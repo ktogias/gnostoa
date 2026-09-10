@@ -1,0 +1,14 @@
+{
+  "frozen_at": "2026-09-10T11:51:19.632269+00:00",
+  "candidate_absent": true,
+  "files": {
+    "tests/fixtures/managed_acceptance/adapters.py": "8369ba087a50db85d349495e20289cca2b6bebce868158923156c5b7b0417863",
+    "tests/fixtures/managed_acceptance/baseline.py": "7de5437797a453c45b47d50376dac4aee0fd6f3ddd5c400075a9c2c00ca7e1c8",
+    "tests/fixtures/managed_acceptance/cases.json": "90b188b5906f41ac74d3380ffe2636c7350309459b4a1fe20ffb7c47073b2de5",
+    "tests/fixtures/managed_acceptance/expected.json": "9d537cb6d37a779ec3be603c7b1ac35799c63a87e5a9c2f634e6b1745c839d98",
+    "tests/fixtures/managed_acceptance/read_result.py": "f49328ecbcf9128e35d07c6ed12914fee25bf5e10b5afada9f0fb25dc2f6a1d7",
+    "tests/fixtures/managed_acceptance/run_fixture.py": "9d606901ab751c168eebb0d5336dca2bd05fc55213bc6b1fe52a6070aad086c2",
+    "tests/fixtures/managed_acceptance/services.py": "0f0691662d995f372b6a97e51740094a1f28e582a7a4025008f33af64a82badf",
+    "tests/test_managed_acceptance_fixture.py": "e6331b9920599787ace5979bd93e7000f132266ed250f19bc5e7478a224863d8"
+  }
+}

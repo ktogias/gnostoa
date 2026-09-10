@@ -1,0 +1,348 @@
+test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) ... 
+  test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F01', adapter='tagged') ... FAIL
+  test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F01', adapter='batched') ... FAIL
+  test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F02', adapter='tagged') ... FAIL
+  test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F02', adapter='batched') ... FAIL
+  test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F03', adapter='tagged') ... FAIL
+  test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F03', adapter='batched') ... FAIL
+  test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F04', adapter='tagged') ... FAIL
+  test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F04', adapter='batched') ... FAIL
+  test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F05', adapter='tagged') ... FAIL
+  test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F05', adapter='batched') ... FAIL
+  test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F06', adapter='tagged') ... FAIL
+  test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F06', adapter='batched') ... FAIL
+  test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F07', adapter='tagged') ... FAIL
+  test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F07', adapter='batched') ... FAIL
+  test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F08', adapter='tagged') ... FAIL
+  test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F08', adapter='batched') ... FAIL
+  test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F09', adapter='tagged') ... FAIL
+  test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F09', adapter='batched') ... FAIL
+  test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F10', adapter='tagged') ... FAIL
+  test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F10', adapter='batched') ... FAIL
+
+======================================================================
+FAIL: test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F01', adapter='tagged')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 82, in test_frozen_behavior_at_persisted_result_consumer
+    self.assert_observable_subset(expected, actual)
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 33, in assert_observable_subset
+    self.assertEqual(expected, actual, location)
+AssertionError: 'PENDING' != 'ACCEPTED'
+- PENDING
++ ACCEPTED
+ : result.result.disposition
+
+======================================================================
+FAIL: test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F01', adapter='batched')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 82, in test_frozen_behavior_at_persisted_result_consumer
+    self.assert_observable_subset(expected, actual)
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 33, in assert_observable_subset
+    self.assertEqual(expected, actual, location)
+AssertionError: 'PENDING' != 'ACCEPTED'
+- PENDING
++ ACCEPTED
+ : result.result.disposition
+
+======================================================================
+FAIL: test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F02', adapter='tagged')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 82, in test_frozen_behavior_at_persisted_result_consumer
+    self.assert_observable_subset(expected, actual)
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 33, in assert_observable_subset
+    self.assertEqual(expected, actual, location)
+AssertionError: 'PENDING' != 'ACCEPTED'
+- PENDING
++ ACCEPTED
+ : result.result.disposition
+
+======================================================================
+FAIL: test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F02', adapter='batched')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 82, in test_frozen_behavior_at_persisted_result_consumer
+    self.assert_observable_subset(expected, actual)
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 33, in assert_observable_subset
+    self.assertEqual(expected, actual, location)
+AssertionError: 'PENDING' != 'ACCEPTED'
+- PENDING
++ ACCEPTED
+ : result.result.disposition
+
+======================================================================
+FAIL: test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F03', adapter='tagged')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 82, in test_frozen_behavior_at_persisted_result_consumer
+    self.assert_observable_subset(expected, actual)
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 29, in assert_observable_subset
+    self.assertEqual(len(expected), len(actual), location)
+AssertionError: 1 != 0 : result.observations.checks
+
+======================================================================
+FAIL: test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F03', adapter='batched')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 82, in test_frozen_behavior_at_persisted_result_consumer
+    self.assert_observable_subset(expected, actual)
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 29, in assert_observable_subset
+    self.assertEqual(len(expected), len(actual), location)
+AssertionError: 1 != 0 : result.observations.checks
+
+======================================================================
+FAIL: test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F04', adapter='tagged')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 82, in test_frozen_behavior_at_persisted_result_consumer
+    self.assert_observable_subset(expected, actual)
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 33, in assert_observable_subset
+    self.assertEqual(expected, actual, location)
+AssertionError: 'OMITTED' != 'NOT_REQUIRED'
+- OMITTED
++ NOT_REQUIRED
+ : result.result.worker_check
+
+======================================================================
+FAIL: test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F04', adapter='batched')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 82, in test_frozen_behavior_at_persisted_result_consumer
+    self.assert_observable_subset(expected, actual)
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 33, in assert_observable_subset
+    self.assertEqual(expected, actual, location)
+AssertionError: 'OMITTED' != 'NOT_REQUIRED'
+- OMITTED
++ NOT_REQUIRED
+ : result.result.worker_check
+
+======================================================================
+FAIL: test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F05', adapter='tagged')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 82, in test_frozen_behavior_at_persisted_result_consumer
+    self.assert_observable_subset(expected, actual)
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 29, in assert_observable_subset
+    self.assertEqual(len(expected), len(actual), location)
+AssertionError: 1 != 0 : result.observations.checks
+
+======================================================================
+FAIL: test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F05', adapter='batched')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 82, in test_frozen_behavior_at_persisted_result_consumer
+    self.assert_observable_subset(expected, actual)
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 29, in assert_observable_subset
+    self.assertEqual(len(expected), len(actual), location)
+AssertionError: 1 != 0 : result.observations.checks
+
+======================================================================
+FAIL: test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F06', adapter='tagged')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 82, in test_frozen_behavior_at_persisted_result_consumer
+    self.assert_observable_subset(expected, actual)
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 29, in assert_observable_subset
+    self.assertEqual(len(expected), len(actual), location)
+AssertionError: 1 != 0 : result.observations.checks
+
+======================================================================
+FAIL: test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F06', adapter='batched')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 82, in test_frozen_behavior_at_persisted_result_consumer
+    self.assert_observable_subset(expected, actual)
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 29, in assert_observable_subset
+    self.assertEqual(len(expected), len(actual), location)
+AssertionError: 1 != 0 : result.observations.checks
+
+======================================================================
+FAIL: test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F07', adapter='tagged')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 82, in test_frozen_behavior_at_persisted_result_consumer
+    self.assert_observable_subset(expected, actual)
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 33, in assert_observable_subset
+    self.assertEqual(expected, actual, location)
+AssertionError: 'UNKNOWN' != 'NOT_REQUIRED'
+- UNKNOWN
++ NOT_REQUIRED
+ : result.result.worker_check
+
+======================================================================
+FAIL: test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F07', adapter='batched')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 82, in test_frozen_behavior_at_persisted_result_consumer
+    self.assert_observable_subset(expected, actual)
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 33, in assert_observable_subset
+    self.assertEqual(expected, actual, location)
+AssertionError: 'UNKNOWN' != 'NOT_REQUIRED'
+- UNKNOWN
++ NOT_REQUIRED
+ : result.result.worker_check
+
+======================================================================
+FAIL: test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F08', adapter='tagged')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 82, in test_frozen_behavior_at_persisted_result_consumer
+    self.assert_observable_subset(expected, actual)
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 33, in assert_observable_subset
+    self.assertEqual(expected, actual, location)
+AssertionError: 'PENDING' != 'ACCEPTED'
+- PENDING
++ ACCEPTED
+ : result.result.disposition
+
+======================================================================
+FAIL: test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F08', adapter='batched')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 82, in test_frozen_behavior_at_persisted_result_consumer
+    self.assert_observable_subset(expected, actual)
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 33, in assert_observable_subset
+    self.assertEqual(expected, actual, location)
+AssertionError: 'PENDING' != 'ACCEPTED'
+- PENDING
++ ACCEPTED
+ : result.result.disposition
+
+======================================================================
+FAIL: test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F09', adapter='tagged')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 82, in test_frozen_behavior_at_persisted_result_consumer
+    self.assert_observable_subset(expected, actual)
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 33, in assert_observable_subset
+    self.assertEqual(expected, actual, location)
+AssertionError: 'REFUSED' != 'ACCEPTED'
+- REFUSED
++ ACCEPTED
+ : result.result.disposition
+
+======================================================================
+FAIL: test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F09', adapter='batched')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 82, in test_frozen_behavior_at_persisted_result_consumer
+    self.assert_observable_subset(expected, actual)
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 33, in assert_observable_subset
+    self.assertEqual(expected, actual, location)
+AssertionError: 'REFUSED' != 'ACCEPTED'
+- REFUSED
++ ACCEPTED
+ : result.result.disposition
+
+======================================================================
+FAIL: test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F10', adapter='tagged')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 82, in test_frozen_behavior_at_persisted_result_consumer
+    self.assert_observable_subset(expected, actual)
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 33, in assert_observable_subset
+    self.assertEqual(expected, actual, location)
+AssertionError: 'PENDING' != 'ACCEPTED'
+- PENDING
++ ACCEPTED
+ : result.result.disposition
+
+======================================================================
+FAIL: test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F10', adapter='batched')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 82, in test_frozen_behavior_at_persisted_result_consumer
+    self.assert_observable_subset(expected, actual)
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/workspace/tests/test_managed_acceptance_fixture.py", line 33, in assert_observable_subset
+    self.assertEqual(expected, actual, location)
+AssertionError: 'PENDING' != 'ACCEPTED'
+- PENDING
++ ACCEPTED
+ : result.result.disposition
+
+----------------------------------------------------------------------
+Ran 1 test in 7.022s
+
+FAILED (failures=20)

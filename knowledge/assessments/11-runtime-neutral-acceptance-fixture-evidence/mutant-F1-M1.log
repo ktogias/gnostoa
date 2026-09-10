@@ -1,0 +1,43 @@
+{"mutant_sha256": "25d5ee12bac11f731bcf12cb09105662a211897fa36a1c1e48edc50b852c7db4", "operator": "F1.M1", "original": "return _result(\"PENDING\", \"PENDING\", worker_check, \"verification-missing\")", "replacement": "return _result(\"ACCEPTED\", \"ACCEPTED\", worker_check, \"mutant-completion-without-evidence\")", "source_sha256": "6200c6b07bc7b95fa28866a08ac264ebce51ee7563c09e2eaca1dcd261b981b7"}
+test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) ... 
+  test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F02', adapter='tagged') ... FAIL
+  test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F02', adapter='batched') ... FAIL
+
+======================================================================
+FAIL: test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F02', adapter='tagged')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/gnostoa-f1-mutant-l2sr4_z_/tests/test_managed_acceptance_fixture.py", line 82, in test_frozen_behavior_at_persisted_result_consumer
+    self.assert_observable_subset(expected, actual)
+  File "/tmp/gnostoa-f1-mutant-l2sr4_z_/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/tmp/gnostoa-f1-mutant-l2sr4_z_/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/tmp/gnostoa-f1-mutant-l2sr4_z_/tests/test_managed_acceptance_fixture.py", line 33, in assert_observable_subset
+    self.assertEqual(expected, actual, location)
+AssertionError: 'PENDING' != 'ACCEPTED'
+- PENDING
++ ACCEPTED
+ : result.result.disposition
+
+======================================================================
+FAIL: test_frozen_behavior_at_persisted_result_consumer (test_managed_acceptance_fixture.ManagedAcceptanceFixtureTests.test_frozen_behavior_at_persisted_result_consumer) (case='F02', adapter='batched')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/gnostoa-f1-mutant-l2sr4_z_/tests/test_managed_acceptance_fixture.py", line 82, in test_frozen_behavior_at_persisted_result_consumer
+    self.assert_observable_subset(expected, actual)
+  File "/tmp/gnostoa-f1-mutant-l2sr4_z_/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/tmp/gnostoa-f1-mutant-l2sr4_z_/tests/test_managed_acceptance_fixture.py", line 26, in assert_observable_subset
+    self.assert_observable_subset(value, actual[key], f"{location}.{key}")
+  File "/tmp/gnostoa-f1-mutant-l2sr4_z_/tests/test_managed_acceptance_fixture.py", line 33, in assert_observable_subset
+    self.assertEqual(expected, actual, location)
+AssertionError: 'PENDING' != 'ACCEPTED'
+- PENDING
++ ACCEPTED
+ : result.result.disposition
+
+----------------------------------------------------------------------
+Ran 1 test in 7.247s
+
+FAILED (failures=2)
