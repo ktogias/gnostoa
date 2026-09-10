@@ -83,7 +83,7 @@ count or new issue solely for the search is not required. Retain:
   relevant capabilities, limitations and operational/maintenance cost;
 - license and provenance evidence for that use, including applicable dependency,
   distribution, attribution and NOTICE obligations; consult
-  [the licensing contract](../../LICENSING.md) rather than treating an inventory
+  [the licensing contract](https://github.com/ktogias/gnostoa/blob/main/LICENSING.md) rather than treating an inventory
   or an "open source" label as compatibility clearance;
 - the disposition: use, adapt, compose or implement the residual need, with
   reasons for rejecting material alternatives and remaining uncertainty.
