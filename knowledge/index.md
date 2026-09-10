@@ -94,6 +94,7 @@ inherited, copied or loaded by adopting projects.
 - [First OCI runtime security-boundary evidence](assessments/first-oci-runtime-security-boundary-evidence.md)
 - [util-linux security remediation result](assessments/util-linux-security-remediation-result.md)
 - [Current-state drift retrospective](assessments/current-state-drift-retrospective.md)
+- [Provider-label reconciliation incident RCA and retrospective](assessments/provider-label-reconciliation-incident-rca.md)
 - [pip security provenance and update-channel evidence](assessments/pip-security-provenance-and-update-channel-evidence.md)
 - [OCI layer-history and component-presence evidence](assessments/oci-layer-history-and-component-presence-evidence.md)
 - [pip runtime-removal remediation result](assessments/pip-runtime-removal-remediation-result.md)
