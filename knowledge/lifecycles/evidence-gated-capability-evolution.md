@@ -160,6 +160,14 @@ rejected them, and counting them as coverable would have been false coverage.
 
 If **no**, only then investigate whether a smaller mechanism is justified.
 
+Apply the delivery runbook's
+[Prior-art and reuse checkpoint](../runbooks/deliver-bounded-self-hosted-slice.md#prior-art-and-reuse-checkpoint)
+before creating or materially revising an Issue, Decision or PR and before new
+code or implementation. Inspect suitable external projects and intended-use
+license obligations as well as existing local mechanisms. Reuse a current scoped
+assessment across those transitions; when no suitable complete project is found,
+consider established practices, patterns and antipatterns before custom design.
+
 If **yes**, **prefer reuse over a new primitive** — but do **not** assume that
 having a checker means its required observations are authoritatively obtainable.
 Do not create a second mechanism because the existing one was not routed
