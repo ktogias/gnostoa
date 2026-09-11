@@ -50,7 +50,7 @@ inherited, copied or loaded by adopting projects.
 - [Provide a version-bound CPython third-party attribution bundle](decisions/0037-provide-a-version-bound-cpython-third-party-attribution-bundle.md)
 - [Establish v0.1.1 as a source-only patch release identity](decisions/0038-establish-v0-1-1-as-a-source-only-patch-release-identity.md)
 - [Publish v0.1.1 as the first public GHCR image](decisions/0039-publish-v0-1-1-as-the-first-public-ghcr-image.md)
-- [Reconcile the v0.1.1 source and OCI publication result](decisions/0040-reconcile-v0-1-1-source-and-oci-publication-result.md)
+- [Reconcile the v0.1.1 source and OCI publication result](decisions/0040-reconcile-the-v0-1-1-source-and-oci-publication-result.md)
 - [Pilot supplemental GitHub security observation](decisions/0041-pilot-supplemental-github-security-observation.md)
 - [Accept the weather-note cold-start onboarding result](decisions/0042-accept-the-weather-note-cold-start-onboarding-result.md)
 - [Prepare a bounded v0.1.2 B3-readiness candidate](decisions/0043-prepare-a-bounded-v0-1-2-b3-readiness-candidate.md)
