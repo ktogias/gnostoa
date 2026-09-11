@@ -51,7 +51,7 @@ It does not admit a live provider collector, reviewer orchestration, #10 registr
 5. Preserve the RED expectations unchanged through production implementation unless a later review explicitly changes Decision 0067 and records the reason.
 6. Reach GREEN, then run mutation/permutation controls, complete suites, exact-candidate reviews and advisory dogfood.
 
-The first R2A implementation is bootstrap. A current-advisory invocation whose judge relation is `candidate_under_test` is valid but assurance-incomplete and cannot PASS. Historical-replay fixtures may exercise normal policy/quorum/blocker/conflict semantics using exact pinned fixture authority/judge identities while the executing candidate remains `candidate_under_test` evidence.
+The first R2A implementation is bootstrap. A current-advisory invocation whose judge relation is `candidate_under_test` is valid but assurance-incomplete and cannot PASS. Synthetic fixture-only historical replay may exercise normal policy/quorum/blocker/conflict and historical pinning semantics. Real retained pre-R2A review evidence is characterized separately as `candidate_under_test`; it is never assigned a fabricated historical trusted R2A judge.
 
 ## Pre-registered RED harness
 
@@ -112,8 +112,8 @@ production_paths_absent:
 | R06 | Older-head review remains visible but cannot satisfy current exact-head policy. |
 | R07 | Partial or unestablished subject binding remains visible but cannot satisfy exact-subject policy. |
 | R08 | Any used observation/collection/qualification cut later than `EvaluationContext.as_of` is configuration error. |
-| R09 | A finite policy freshness limit that is exceeded produces `INCOMPLETE`, never PASS. |
-| R10 | Historical replay uses its exact pinned historical authority and judge; current replacements are not silently substituted. |
+| R09 | With RFC3339 cuts interpreted as UTC instants, finite freshness is `0 <= utc(as_of)-utc(cut) <= max_age`; exceeding the finite limit produces `INCOMPLETE`, never PASS. |
+| R10 | A synthetic fixture-only `historical_replay` pins exact fixture authority and judge identities and refuses silent current substitution, without claiming those fixture identities were real historical production authority. |
 
 ### Collection completeness
 
@@ -166,7 +166,7 @@ production_paths_absent:
 | R35 | `current_advisory` with `judge_relation:candidate_under_test` is `INCOMPLETE` and cannot masquerade as `prior_integrated` or PASS. |
 | R36 | Valid structured but unavailable, partial, mismatched, revoked, deprecated or unknown authority/judge material yields semantic `INCOMPLETE` and exit 3. |
 | R37 | Candidate-changed runtime lock cannot select the authority-owned expected trusted judge. |
-| R38 | Historical replay pins its exact historical authority and judge identities. |
+| R38 | Synthetic historical replay pins its exact fixture-only historical authority and judge identities; retained pre-R2A evidence is not reclassified as having a historical trusted R2A judge. |
 | R39 | Native execution is not labelled v1 `prior_integrated` solely from current source-root/runtime-lock binding. |
 | R40 | A later candidate that modifies review evaluator/schema cannot replace the separately selected prior-integrated judge. |
 
@@ -181,9 +181,9 @@ production_paths_absent:
 
 ## Focused fixtures
 
-Use retained PR #239 review history plus the two #11 CodeRabbit collection incidents as real examples, but store only bounded fields required by the test contract. Preserve raw/provider evidence by reference/digest where retained; do not manufacture provider messages from summaries.
+Use retained PR #239 review history plus the two #11 CodeRabbit collection incidents as real pre-R2A examples, but store only bounded fields required by the test contract. Preserve raw/provider evidence by reference/digest where retained; do not manufacture provider messages from summaries and do not assign those real records a historical trusted R2A judge that did not exist.
 
-Add synthetic minimal cases only where real retained evidence does not exercise a predicate, especially explicit policy exemption, a single-policy reachable `CONFLICTING` case, forged self-qualification, authority/judge mismatch and ordering invariance.
+Add synthetic minimal cases where real retained evidence does not exercise a predicate, including explicit policy exemption, single-policy reachable `CONFLICTING`, forged self-qualification, authority/judge mismatch, ordering invariance, and **historical authority/judge pinning**. Synthetic fixture authority/judge IDs are explicitly marked fixture-only and are never cited as historical production facts.
 
 `cases.json` names every case by its R-ID and contains only supplied input/fixture references. `expected.json` maps each R-ID to the required semantic outcome/reason or error-envelope class plus exit code. The test runner must fail if a required R-ID is absent from either file.
 
@@ -197,14 +197,15 @@ After unchanged RED -> GREEN, run focused tests plus applicable repository `poli
 
 ## Advisory dogfood
 
-Run two bounded modes:
+Bootstrap dogfood has three distinct claims and must not collapse them:
 
-1. **historical replay** over retained PR #239/#11 evidence with exact historical `as_of`, authority and judge fixture identities while the executing first implementation remains `candidate_under_test`;
-2. **current-advisory bootstrap characterization** showing that the first implementation cannot PASS without a prior-integrated R2A judge.
+1. **synthetic historical-replay contract exercise:** use explicitly fixture-only authority/judge identities to demonstrate deterministic historical pinning, freshness, quorum, blocker and conflict semantics; this is a test fixture, not evidence that R2A existed historically;
+2. **real retained pre-R2A characterization:** evaluate retained PR #239 / Issue #11 evidence with `judge_relation:candidate_under_test` to measure normalization, collection-completeness and result usefulness without fabricating historical trusted authority/judge facts;
+3. **current-advisory bootstrap characterization:** demonstrate that the first implementation returns `INCOMPLETE` rather than PASS while no prior-integrated R2A judge exists.
 
-After a later prior-integrated R2A judge exists, current-advisory PASS behavior becomes an eligible post-bootstrap evaluation target rather than a first-release acceptance claim.
+After a real R2A authority/judge record has been integrated, factual historical replay of real R2A results and current-advisory PASS behavior become eligible post-bootstrap evaluation targets.
 
-Measure false pass/block against owner semantic disposition, subject/currentness classification error, collection handling, qualification/quorum error, normalization discrepancy, rate-limit/unavailability behavior, historical replay reproducibility, evidence/context burden and owner corrections.
+Measure false pass/block against owner semantic disposition where a comparable semantic judgment exists, subject/currentness classification error, collection handling, qualification/quorum error, normalization discrepancy, rate-limit/unavailability behavior, synthetic replay determinism, evidence/context burden and owner corrections.
 
 ## Completion boundary
 
