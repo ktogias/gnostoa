@@ -54,7 +54,12 @@ def dispatch(workspace: Path, job_id: str, spec_path: Path) -> dict:
         raise ValueError("Explicit bounded worker argv required")
     if not 0 < spec.get("timeout_seconds", 30) <= 2700:
         raise ValueError("Worker deadline exceeds live trial limit")
-    if spec.get("normalizer") not in {"plain", "codex-jsonl", "claude-jsonl"}:
+    if spec.get("normalizer") not in {
+        "plain",
+        "codex-jsonl",
+        "claude-jsonl",
+        "claude-structured",
+    }:
         raise ValueError("Unqualified normalizer")
     active = read(workspace / "active.json")
     assignment = (workspace / "assignments" / f"{job_id}.json").read_bytes()

@@ -69,6 +69,18 @@ def normalize(data: bytes, adapter: str) -> dict[str, Any]:
         if len(results) != 1 or results[0].get("is_error") is not False:
             raise ValueError("No unique successful Claude result")
         value = json.loads(results[0]["result"])
+    elif adapter == "claude-structured":
+        events = native_events(data)
+        results = [event for event in events if event.get("type") == "result"]
+        if (
+            len(results) != 1
+            or results[0].get("subtype") != "success"
+            or results[0].get("is_error") is not False
+        ):
+            raise ValueError("No unique successful Claude structured result")
+        # Native schema output is distinct from the explanatory result prose.
+        # Missing output must not be repaired by extracting a plausible block.
+        value = results[0].get("structured_output")
     else:
         raise ValueError("Unqualified normalizer")
     if not isinstance(value, dict) or not isinstance(value.get("findings"), list):

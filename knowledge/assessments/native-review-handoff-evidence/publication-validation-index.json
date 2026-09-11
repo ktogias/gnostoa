@@ -1,0 +1,100 @@
+{
+  "archive": "publication-validation.tar.gz",
+  "bytes": 17410,
+  "sha256": "261542b890456536fa80606d1be26e14892c4af35b13e180d72440e0881020ee", "_sha256_note": "# pragma: allowlist secret -- public retained evidence digest",
+  "scope": {
+    "scanned_inputs": 11,
+    "selected_input_bytes": 55766,
+    "generated_selection_scan_pack_records": 8,
+    "scanner_candidates": 22,
+    "unresolved_candidates": 0,
+    "original_hygiene_disposition": "ACCEPT exact selected validation records; finite scanner/provenance limits",
+    "note": "Earlier failures and later successes retained separately. Generated reports are not recursively claimed scanned. Original reviewed index reconstructed only after its hash matched earlier independent review."
+  },
+  "primary_evidence_preservation": {
+    "/tmp/gnostoa-review-exchange/knowledge/assessments/native-review-handoff-evidence/evidence.tar.gz": "b06910f49864386663f135e578982ecda6fcd801b26c06c230a8f9f1ce9b3b79", "/tmp/gnostoa-review-exchange/knowledge/assessments/native-review-handoff-evidence/evidence.tar.gz_note": "# pragma: allowlist secret -- public retained evidence digest",
+    "/tmp/gnostoa-review-exchange/knowledge/assessments/native-review-handoff-evidence/members.json.gz": "4bf5aba8322edf3ab172baa3e23879c1bfeafe29ed2abb32255f254d911835b3", "/tmp/gnostoa-review-exchange/knowledge/assessments/native-review-handoff-evidence/members.json.gz_note": "# pragma: allowlist secret -- public retained evidence digest",
+    "/tmp/gnostoa-review-exchange/knowledge/assessments/native-review-handoff-evidence/index.json": "c90458e0003d9b8d822739fef0d7ea548fe9bee7fb851e2eaad163f301d72a71", "/tmp/gnostoa-review-exchange/knowledge/assessments/native-review-handoff-evidence/index.json_note": "# pragma: allowlist secret -- public retained evidence digest",
+    "/tmp/gnostoa-review-exchange/knowledge/assessments/native-review-handoff-evidence/verify_evidence.py": "0782977ed270edf8d3aa270a9a80df67b7cdac043670055ae05394aff3d14f09", "/tmp/gnostoa-review-exchange/knowledge/assessments/native-review-handoff-evidence/verify_evidence.py_note": "# pragma: allowlist secret -- public retained evidence digest",
+    "/tmp/gnostoa-review-exchange/knowledge/assessments/native-structured-review-handoff.md": "afe15f4675ef1cd1135acdf836454605ba230b9a457ffcd4d200389019f8baf4", "/tmp/gnostoa-review-exchange/knowledge/assessments/native-structured-review-handoff.md_note": "# pragma: allowlist secret -- public retained evidence digest"
+  },
+  "members": {
+    "annotation-change.json": {
+      "bytes": 2052,
+      "sha256": "2cc9d6a42efc7a619c260fbac9c1ab205cdbf28138eaeb40f683dc5076541c48", "_sha256_note": "# pragma: allowlist secret -- public retained evidence digest"
+    },
+    "evidence-selection.json": {
+      "bytes": 1518,
+      "sha256": "722dcbb0c4d80c89b0d77fbc5e2b6db76708414d035ef59e6baccf79d08600ed", "_sha256_note": "# pragma: allowlist secret -- public retained evidence digest"
+    },
+    "final-docs-canonical.log": {
+      "bytes": 974,
+      "sha256": "18d318184f932a49f203dcb90a5d133f5a76bcfd55cbf1675b94287a21a244c0", "_sha256_note": "# pragma: allowlist secret -- public retained evidence digest"
+    },
+    "final-docs.log": {
+      "bytes": 26888,
+      "sha256": "73263d12625ee4ba3097ace55563071a62a19c3fb81d0eca07d1f0f31006e091", "_sha256_note": "# pragma: allowlist secret -- public retained evidence digest"
+    },
+    "final-policy.log": {
+      "bytes": 366,
+      "sha256": "e5fa3a125ea6a2ac97d7eb5af0e98d6d10f946954dba3369bd9244a9c727116b", "_sha256_note": "# pragma: allowlist secret -- public retained evidence digest"
+    },
+    "final-publication-inspected-files.json": {
+      "bytes": 1589,
+      "sha256": "d7729eeba462e88e91c0d7d94c20178efed732710f01d5c6158f222fd40a9690", "_sha256_note": "# pragma: allowlist secret -- public retained evidence digest"
+    },
+    "final-publication-review.md": {
+      "bytes": 8909,
+      "sha256": "a7c385684a0067034ae2b548dbe49c2e27a4a793640f8fd2c7e77c09917fd441", "_sha256_note": "# pragma: allowlist secret -- public retained evidence digest"
+    },
+    "final-tracked-scan-corrected.json": {
+      "bytes": 2311,
+      "sha256": "d6dda21b6dd6afca4c70e147e686d19d64f88cae5a768ee83ef7d5b5739d9125", "_sha256_note": "# pragma: allowlist secret -- public retained evidence digest"
+    },
+    "final-tracked-scan.json": {
+      "bytes": 3205,
+      "sha256": "faa8fadde570c246c5ae933d12d06371154a707456ba3efd3cb004bde971a5e2", "_sha256_note": "# pragma: allowlist secret -- public retained evidence digest"
+    },
+    "pack-publication-validation.py": {
+      "bytes": 5279,
+      "sha256": "a9009d3cfd3164d7720cfc14251cc651cba9ff01b391a858e5a2aea28856a799", "_sha256_note": "# pragma: allowlist secret -- public retained evidence digest"
+    },
+    "primary-index-corrected.json": {
+      "bytes": 3395,
+      "sha256": "c90458e0003d9b8d822739fef0d7ea548fe9bee7fb851e2eaad163f301d72a71", "_sha256_note": "# pragma: allowlist secret -- public retained evidence digest"
+    },
+    "primary-index-original.json": {
+      "bytes": 3389,
+      "sha256": "e920eb00dd1e33c9ba04a65242f7d6fd71f7b2a989e9d31c7822375746e633dd", "_sha256_note": "# pragma: allowlist secret -- public retained evidence digest"
+    },
+    "scan/publication-scan-run.json": {
+      "bytes": 469,
+      "sha256": "d675f81f25997222e7918e092bcc8c4de3dcbbe3234b8040b9765b28927e660b", "_sha256_note": "# pragma: allowlist secret -- public retained evidence digest"
+    },
+    "scan/publication-secret-scan.json": {
+      "bytes": 7625,
+      "sha256": "f7c9ece842e77f4116fb0fb5ea9781a1719aaeeef9186fe4695eeed6eaa6561b", "_sha256_note": "# pragma: allowlist secret -- public retained evidence digest"
+    },
+    "scan/publication-triage.json": {
+      "bytes": 11557,
+      "sha256": "81c8b3928ca294e7715c45f26dd27e5ba40d6187b3ebaa282b7ef39b4e6636f1", "_sha256_note": "# pragma: allowlist secret -- public retained evidence digest"
+    },
+    "scan/publication-verified-inputs.json": {
+      "bytes": 1650,
+      "sha256": "c537c69b1077e42b8ed5f6cc174fa5c6b4817c1392c2f29dfb48dd2238197e1e", "_sha256_note": "# pragma: allowlist secret -- public retained evidence digest"
+    },
+    "scan/retention-review.md": {
+      "bytes": 2203,
+      "sha256": "d1eb1a0bb89b6728003e3186304c05816d89104d6f72ddd602982dbf98edd1da", "_sha256_note": "# pragma: allowlist secret -- public retained evidence digest"
+    },
+    "scan/scan-command.json": {
+      "bytes": 894,
+      "sha256": "3e6a1abdd0ff4cf7783c0c5ec0751c5e7e40c041193b4d2e66f94826eebbc4b6", "_sha256_note": "# pragma: allowlist secret -- public retained evidence digest"
+    },
+    "validation-context.md": {
+      "bytes": 2688,
+      "sha256": "a64ebe99c5d43c58e366b1743c65bcaf3adb06e1f4ab1237efcf30c873482230", "_sha256_note": "# pragma: allowlist secret -- public retained evidence digest"
+    }
+  },
+  "verification_recipe": "python3 - <<'PY'\nimport hashlib, json, tarfile\nfrom pathlib import Path\nroot = Path('knowledge/assessments/native-review-handoff-evidence')\nindex = json.loads((root / 'publication-validation-index.json').read_bytes())\npath = root / index['archive']\ndata = path.read_bytes()\nassert len(data) == index['bytes']\nassert hashlib.sha256(data).hexdigest() == index['sha256']\nwith tarfile.open(path) as archive:\n    members = archive.getmembers()\n    assert len(members) == len(index['members'])\n    assert {m.name for m in members} == set(index['members'])\n    for member in members:\n        assert member.isfile()\n        data = archive.extractfile(member).read()\n        expected = index['members'][member.name]\n        assert len(data) == expected['bytes']\n        assert hashlib.sha256(data).hexdigest() == expected['sha256']\nprint('Verified supplement and', len(members), 'regular members; no extraction or provider calls')\nPY\n"
+}
