@@ -10,7 +10,13 @@ Start with `README.md`. Load only the route required by the task.
   `guidance/workflows/configure-continuous-integration.md`.
 - Toolkit architecture or rationale: route through `knowledge/index.md`.
 - Gnostoa self-hosted delivery, workflow, governance, evidence or control
-  capability evolution: read
+  capability evolution: after this README, read the compact, source-bound
+  [`tasks/issue-14-orientation.md`](tasks/issue-14-orientation.md) for the current
+  item and next action. Treat a `STALE`, `INCOMPLETE`, `CONFLICTING` or
+  `OVER_BUDGET` status as a stop before relying on its current-state claims.
+  For a status or “what now?” request, stop there when the view is current unless
+  one of its source links is needed to answer a named question. Before proposing
+  or implementing a change, continue with
   `knowledge/lifecycles/evidence-gated-capability-evolution.md`,
   `knowledge/runbooks/deliver-bounded-self-hosted-slice.md`, Decision 0016,
   the current roadmap and the active Work Item before proposing implementation.
