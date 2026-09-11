@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -18,6 +19,25 @@ orientation = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(orientation)
 
 NOW = "2026-09-11T13:00:00Z"
+
+
+def _git(root: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(root), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
+def _initialize_git(root: Path) -> tuple[str, str]:
+    _git(root, "init", "-q")
+    _git(root, "config", "user.email", "gnostoa-tests@example.test")
+    _git(root, "config", "user.name", "Gnostoa Tests")
+    _git(root, "add", "source.md")
+    _git(root, "commit", "-q", "-m", "fixture")
+    return _git(root, "rev-parse", "HEAD"), _git(root, "rev-parse", "HEAD^{tree}")
 
 
 def _fact(identity: str, text: str, source: str = "provider") -> dict[str, object]:
@@ -221,6 +241,28 @@ class OrientationTests(unittest.TestCase):
         self.assertEqual("INCOMPLETE", oversized["evaluation"]["status"])
         self.assertEqual("not-available", oversized_source["identity_assurance"])
 
+    def test_local_source_path_traversal_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            with self.assertRaisesRegex(
+                orientation.OrientationError, "local source escapes repository root"
+            ):
+                orientation._within_root(root, "../outside.txt")
+
+    def test_local_source_symlink_escape_is_rejected(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            tempfile.TemporaryDirectory() as outside_directory,
+        ):
+            root = Path(directory).resolve()
+            outside = Path(outside_directory).resolve() / "outside.txt"
+            outside.write_text("outside\n", encoding="utf-8")
+            (root / "escape-link").symlink_to(outside)
+            with self.assertRaisesRegex(
+                orientation.OrientationError, "local source escapes repository root"
+            ):
+                orientation._within_root(root, "escape-link")
+
     def test_required_groups_and_fact_source_references_are_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -286,7 +328,11 @@ class OrientationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             path = root / "snapshot.json"
-            path.write_text(json.dumps(_snapshot(root)), encoding="utf-8")
+            snapshot = _snapshot(root)
+            commit, tree = _initialize_git(root)
+            snapshot["subject"]["source_commit"] = commit
+            snapshot["subject"]["source_tree"] = tree
+            path.write_text(json.dumps(snapshot), encoding="utf-8")
             stdout, stderr = StringIO(), StringIO()
             with redirect_stdout(stdout), redirect_stderr(stderr):
                 result = orientation.main(
@@ -306,6 +352,8 @@ class OrientationTests(unittest.TestCase):
                 "CURRENT", json.loads(stdout.getvalue())["evaluation"]["status"]
             )
             snapshot = _snapshot(root)
+            snapshot["subject"]["source_commit"] = commit
+            snapshot["subject"]["source_tree"] = tree
             snapshot["sources"][1]["status"] = "partial"
             path.write_text(json.dumps(snapshot), encoding="utf-8")
             with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
@@ -324,6 +372,55 @@ class OrientationTests(unittest.TestCase):
                         ]
                     ),
                 )
+
+    def test_live_cli_rejects_retained_projection_after_git_subject_drift(self) -> None:
+        stdout, stderr = StringIO(), StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            result = orientation.main(
+                [
+                    "--snapshot",
+                    str(ROOT / "tasks/issue-14-orientation.json"),
+                    "--repository-root",
+                    str(ROOT),
+                    "--evaluated-at",
+                    NOW,
+                    "--format",
+                    "json",
+                ]
+            )
+        self.assertEqual("", stderr.getvalue())
+        self.assertEqual(1, result)
+        manifest = json.loads(stdout.getvalue())
+        self.assertEqual("STALE", manifest["evaluation"]["status"])
+        self.assertIn(
+            "repository-subject-mismatch:source_commit",
+            manifest["evaluation"]["diagnostics"],
+        )
+        self.assertIn(
+            "repository-subject-mismatch:source_tree",
+            manifest["evaluation"]["diagnostics"],
+        )
+
+    def test_live_cli_fails_closed_without_repository_subject(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot = _snapshot(root)
+            path = root / "snapshot.json"
+            path.write_text(json.dumps(snapshot), encoding="utf-8")
+            with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+                result = orientation.main(
+                    [
+                        "--snapshot",
+                        str(path),
+                        "--repository-root",
+                        str(root),
+                        "--evaluated-at",
+                        NOW,
+                        "--format",
+                        "json",
+                    ]
+                )
+        self.assertNotEqual(0, result)
 
     def test_real_projection_is_routed_and_public_surface_excludes_changed_code(
         self,
