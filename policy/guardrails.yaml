@@ -1,4 +1,4 @@
-version: "0.14.0"
+version: "0.15.0"
 guardrails:
   - id: prior-art-before-self-change
     title: Gnostoa self-changes reuse applicable alternatives and license research before custom work
@@ -573,3 +573,19 @@ guardrails:
       - Dockerfile
     tests:
       - tests/test_tools.py::LicensePolicyTests.test_initial_owner_and_contributor_retention_are_consistent
+
+  - id: self-orientation-repository-subject-currentness
+    title: Self-orientation cannot remain current after local repository-subject drift
+    applies_to: [kit]
+    enforcement: automated
+    owner: team:gnostoa-maintainers
+    guidance: knowledge/decisions/0066-invalidate-self-orientation-on-local-git-subject-drift.md#decision
+    implementation:
+      - tasks/gnostoa_orientation.py#build_manifest
+      - tasks/gnostoa_orientation.py#observe_repository_subject
+    tests:
+      - tests/test_gnostoa_orientation.py::OrientationTests.test_live_cli_rejects_retained_projection_after_git_subject_drift
+      - tests/test_gnostoa_orientation_git_guard.py::OrientationGitGuardTests.test_bound_repository_subject_is_evidence_and_each_mismatch_is_stale
+      - tests/test_gnostoa_orientation_git_guard.py::OrientationGitGuardTests.test_observer_derives_tree_from_the_observed_commit
+      - tests/test_gnostoa_orientation_git_guard.py::OrientationGitGuardTests.test_observer_rejects_repository_subdirectory_as_explicit_root
+      - tests/test_gnostoa_orientation_git_guard.py::OrientationGitGuardTests.test_git_invocation_uses_exact_local_trust_without_shell_or_wildcard

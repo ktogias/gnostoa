@@ -8,7 +8,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class OrientationQodoRegressionTests(unittest.TestCase):
     def test_real_retained_snapshot_regression_is_checkout_root_bound(self) -> None:
-        source = (ROOT / "tests/test_gnostoa_orientation.py").read_text(encoding="utf-8")
+        source = (ROOT / "tests/test_gnostoa_orientation.py").read_text(
+            encoding="utf-8"
+        )
         method = source.split(
             "    def test_live_cli_rejects_retained_projection_after_git_subject_drift",
             maxsplit=1,

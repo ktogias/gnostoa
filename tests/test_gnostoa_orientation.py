@@ -374,7 +374,7 @@ class OrientationTests(unittest.TestCase):
                 )
 
     def test_live_cli_rejects_retained_projection_after_git_subject_drift(self) -> None:
-        live_root = Path.cwd().resolve()
+        live_root = ROOT
         snapshot_path = live_root / "tasks/issue-14-orientation.json"
         if not snapshot_path.is_file():
             if (ROOT / ".gnostoa-source-files").is_file():

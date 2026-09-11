@@ -16,12 +16,30 @@ sources:
   - id: d14-o1-decision
     resource: ./0065-run-a-bounded-gnostoa-self-orientation-snapshot.md
     title: Decision 0065
+  - id: prior-art-policy
+    resource: ./0062-require-proportionate-prior-art-and-reuse-review.md
+    title: Decision 0062
   - id: post-merge-characterization
     resource: https://github.com/ktogias/gnostoa/issues/14#issuecomment-5635362923
     title: D14-O1 post-merge drift observation
   - id: claude-review
     resource: https://github.com/ktogias/gnostoa/issues/14#issuecomment-5637095406
     title: Supplied Claude review and root disposition
+  - id: git-cli-license
+    resource: https://github.com/git/git/blob/47ce80527c56f462cb97db4ca8125342204d3783/COPYING
+    title: Git COPYING at inspected commit 47ce80527c56f462cb97db4ca8125342204d3783
+  - id: gitpython-readme
+    resource: https://github.com/gitpython-developers/GitPython/blob/dcb6b14a9f6af9ece60d014b84c154f83f6906c8/README.md
+    title: GitPython README at inspected commit dcb6b14a9f6af9ece60d014b84c154f83f6906c8
+  - id: gitpython-license
+    resource: https://github.com/gitpython-developers/GitPython/blob/dcb6b14a9f6af9ece60d014b84c154f83f6906c8/LICENSE
+    title: GitPython license at inspected commit dcb6b14a9f6af9ece60d014b84c154f83f6906c8
+  - id: dulwich-project
+    resource: https://github.com/jelmer/dulwich/blob/e27b0cc310ab4ebf1deee0f09ca027ad153ccc07/pyproject.toml
+    title: Dulwich project metadata at inspected commit e27b0cc310ab4ebf1deee0f09ca027ad153ccc07
+  - id: dulwich-license
+    resource: https://github.com/jelmer/dulwich/blob/e27b0cc310ab4ebf1deee0f09ca027ad153ccc07/COPYING
+    title: Dulwich license at inspected commit e27b0cc310ab4ebf1deee0f09ca027ad153ccc07
 x-project-knowledge:
   id: kit.decision.0066.invalidate-self-orientation-on-local-git-subject-drift
   owners:
@@ -33,6 +51,8 @@ x-project-knowledge:
       target: /decisions/0005-container-first-runtime.md
     - kind: governed-by
       target: /decisions/0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md
+    - kind: governed-by
+      target: /decisions/0062-require-proportionate-prior-art-and-reuse-review.md
     - kind: references
       target: /decisions/0024-separate-stable-navigation-from-volatile-state.md
     - kind: references
@@ -69,7 +89,8 @@ surface effect. O2-A0 must not make that architectural choice implicitly.
    schema, provider adapter or reusable adopter surface.
 2. Preserve `build_manifest` as deterministic evaluation over already supplied
    inputs. The live CLI boundary additionally observes the repository's exact
-   Git `HEAD` commit and `HEAD^{tree}` using the Git client supplied by the
+   Git `HEAD` commit once, validates that identity, and derives the tree from
+   that immutable observed commit using the Git client supplied by the
    container-first runtime.
 3. Bind the observed commit and tree into the emitted machine manifest's
    evaluation evidence. If either differs from the snapshot's declared subject,
@@ -79,7 +100,9 @@ surface effect. O2-A0 must not make that architectural choice implicitly.
    Lack of a required live Git subject may not be converted into `CURRENT` or a
    guessed next action.
 5. Git observation is read-only, shell-free, bounded by a short timeout and
-   rooted at the explicit `--repository-root`. The observed repository top level
+   rooted at the explicit `--repository-root`. Strip inherited `GIT_*`
+   repository-selection/control variables, then set only the bounded Git and
+   locale controls required by this observer. The observed repository top level
    must equal that explicit root after resolution; a containing repository is
    not silently accepted.
 6. Add direct regression coverage for local path confinement, including `..`
@@ -97,6 +120,49 @@ surface effect. O2-A0 must not make that architectural choice implicitly.
    cannot be the sole acceptance basis.
 
 ## Alternatives considered
+
+### Proportionate prior-art and license fit for Git observation
+
+Decision 0062 requires reusable alternatives, intended-use licensing and the
+remaining need for custom work to be explicit before a Gnostoa-self mechanism is
+accepted. That checkpoint was missing when O2-A0 was first implemented and was
+identified by Qodo's independent review of exact head
+`1337c82e28256f265b4c28b1fe41980e2cf7e832`. The following bounded assessment
+repairs the record without rewriting that chronology as if it had happened
+before implementation.
+
+- **Git CLI — selected existing component.** Upstream Git was inspected at
+  `47ce80527c56f462cb97db4ca8125342204d3783`. Its `COPYING` identifies the
+  project as **GPL-2.0-only**. O2-A0 does not copy, import or link Git source into
+  Gnostoa; it invokes the already-pinned Git executable as a separate runtime
+  process. Git's own license text distinguishes running the program and mere
+  aggregation from covered derivative work. On this intended boundary the
+  separately licensed executable can coexist with Gnostoa's Apache-2.0 source;
+  runtime-image third-party notice and redistribution obligations remain
+  separately governed by `LICENSING.md`. This is a bounded intended-use
+  assessment, not blanket legal clearance.
+- **GitPython — compatible license, rejected dependency surface.** GitPython was
+  inspected at `dcb6b14a9f6af9ece60d014b84c154f83f6906c8`; its license is
+  **BSD-3-Clause**. Its README describes a Python Git-repository abstraction
+  often backed by the `git` command-line program and says most operations still
+  require the Git executable. The permissive license fits Gnostoa's Apache-2.0
+  distribution, but adopting it would add GitPython plus its package dependency
+  surface without removing the existing Git runtime dependency for this three-
+  query read-only observer.
+- **Dulwich — compatible selectable license, rejected breadth.** Dulwich was
+  inspected at `e27b0cc310ab4ebf1deee0f09ca027ad153ccc07`; its project metadata
+  describes it as a Python Git library and declares
+  **Apache-2.0 OR GPL-2.0-or-later**. The Apache-2.0 option is compatible with
+  Gnostoa's distribution, but using Dulwich would add a new Python Git-library
+  dependency and a materially broader Git-semantics surface than O2-A0 needs.
+
+**No new Python dependency** is selected. The residual custom work is the small
+self-only adapter around the existing Git CLI: exact-root argv construction,
+invocation-local `safe.directory`, bounded timeout/output, Git-environment
+sanitization, coherent commit-to-tree binding, validation and fail-closed
+error mapping. Neither GitPython nor Dulwich removes that Gnostoa-specific
+policy/evidence boundary; both enlarge the dependency surface for no observed
+O2-A0 benefit.
 
 ### Manually refresh or mark the committed D14-O1 snapshot stale
 
@@ -135,7 +201,8 @@ Git commands use argument-vector execution rather than a shell, an explicit
 resolved repository root, captured bounded text output and a short timeout. No
 credential, network or provider capability is needed. Local source path
 confinement remains resolve-based and gains direct traversal/symlink regression
-coverage.
+coverage. Inherited `GIT_*` variables are removed before invocation;
+`GIT_OPTIONAL_LOCKS=0`, `LC_ALL=C` and `LANG=C` are then set explicitly.
 
 The first candidate OCI fast run exposed the expected bind-mount ownership
 boundary: Git rejected `/workspace` as a dubious repository because the
@@ -153,11 +220,10 @@ but the live projector can no longer truthfully call it current when the local
 repository subject has moved. O2-A0 does not regenerate a correct next action;
 it only prevents an obsolete one from being presented as current.
 
-The slice adds a local Git runtime dependency to this self-only live projector,
-which is acceptable because Git is already pinned in the primary OCI runtime.
-It does not establish the generic Issue #14 projection contract, provider
-freshness, automatic roadmap maintenance, semantic completeness or adopter
-utility.
+The slice depends on the existing local Git runtime component already pinned in
+the primary OCI runtime. It adds no Python Git-library dependency. It does not
+establish the generic Issue #14 projection contract, provider freshness,
+automatic roadmap maintenance, semantic completeness or adopter utility.
 
 ## Revisit conditions
 
