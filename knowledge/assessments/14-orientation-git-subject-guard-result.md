@@ -60,13 +60,16 @@ verified before this result record was
 The live repository observation is intentionally narrow:
 
 - Git is invoked with an argv list, never a shell.
-- `GIT_OPTIONAL_LOCKS=0`, `LC_ALL=C` and `LANG=C` keep the read-only observation
-  bounded and locale-stable.
+- inherited `GIT_*` process variables are removed before invocation; the bounded
+  subprocess environment then explicitly sets `GIT_OPTIONAL_LOCKS=0`, `LC_ALL=C`
+  and `LANG=C` while retaining non-Git process environment such as `PATH`.
 - each Git call has a five-second timeout and converts command/timeout failures
   into a bounded `OrientationError` rather than guessing;
 - `git rev-parse --show-toplevel` must resolve to the exact explicit repository
   root, so a nested subdirectory cannot silently redefine the subject;
-- only `HEAD` and `HEAD^{tree}` are observed;
+- `HEAD^{commit}` is resolved once and validated under the current internal
+  40-hex contract, then the tree is derived from that exact observed commit via
+  `<commit>^{tree}` rather than re-reading mutable `HEAD`;
 - the existing D14-O1 internal identity contract still requires 40 lowercase
   hexadecimal Git IDs;
 - container UID differences are handled only with invocation-local
@@ -129,6 +132,39 @@ These failures support the separation between deterministic evaluator inputs,
 live repository observation, installed tool bytes and retained self-governance
 state. None justified a provider adapter or broader runtime subsystem.
 
+## Independent-review repair
+
+Two independent external reviewers examined review head
+`d693d357773f10f96f71d5f3576e8f6ef163bd20` before owner disposition.
+Greptile reported four findings: an unsupported `GIT_OPTIONAL_LOCKS=0` evidence
+claim, inherited Git environment variables that could affect the intended
+root/trust boundary, a commit/tree coherence race caused by resolving mutable
+`HEAD` twice, and an unnecessarily brittle real-fixture assertion that required
+both subject fields to differ. CodeRabbit independently confirmed the evidence
+mismatch and recommended changes before acceptance.
+
+The executor disposition adopted all four findings. The ambient Git-environment
+and commit/tree-coherence findings were treated as merge-blocking for the O2-A0
+claim; the evidence mismatch and fixture brittleness were retained as smaller but
+real corrections in the same already-admitted slice. No O2-B/C/D, provider or
+public-surface work was admitted by that disposition.
+
+Verification-first evidence was established again before the repair. Test-only
+review-repair head `4b186283837b205d54028963dd870185d65f2ea5` triggered Gnostoa
+verification run `34635451811`; both Python 3.11 and 3.12 source-compatibility
+lanes failed on the new review-derived discriminators. The failures showed that
+the pre-repair subprocess environment lacked `GIT_OPTIONAL_LOCKS`, that the tree
+lookup still used `HEAD^{tree}` rather than the already-observed commit, and that
+a malformed observed commit was not rejected before a tree lookup. `policy`
+passed and `extended` remained explicitly skipped.
+
+The bounded repair therefore removes inherited `GIT_*` variables, explicitly sets
+`GIT_OPTIONAL_LOCKS=0` and stable locale values, validates the one observed commit
+before using it as a selector, derives the tree from that commit, and makes the
+retained-snapshot regression require and diagnose whichever subject components
+actually differ rather than requiring both. Final acceptance still requires
+exact-head provider verification after these repository bytes stop changing.
+
 ## Exact implementation-candidate verification
 
 On implementation head `507f55b6246b390420327ad3bc1e67aaf38fd882`, Gnostoa
@@ -158,6 +194,11 @@ CodeQL run `34624966419` passed for the same implementation head with no new
 alerts. Its generated Python coverage note is informational and is not treated as
 a failure or as broader proof of semantic correctness.
 
+The verification above is historical implementation-candidate evidence. The
+independent-review repair changes later candidate bytes; its final provider and
+CodeQL evidence must therefore be read from PR #239 after the repair head is
+stable rather than inferred from these earlier successful runs.
+
 ## Public-surface and scope reconciliation
 
 The changed paths at the verified implementation head were limited to:
@@ -175,6 +216,10 @@ the same public-surface digest for source, candidate runtime and vendored source
 The public SB2 membership remains 14 and the corresponding source/runtime/vendored
 file hashes agree.
 
+The review repair changes only the same self-only implementation/test/evidence
+paths; it does not add a public command, schema, package, adapter or provider
+capability. Exact-head verification must reconfirm the public-surface invariant.
+
 This result therefore supports only the self-only A0 claim. It does not establish
 provider authenticity, provider collection, automatic generation/refresh,
 semantic next-action selection, cross-project projection contracts, adopter
@@ -182,15 +227,14 @@ utility, token savings, or completion of D14-O2 / Issue #14.
 
 ## Disposition boundary
 
-The mechanically verified implementation is ready for owner semantic review of
-O2-A0 within Decision 0066's boundaries. Decision 0066 remains draft and PR #239
-remains a draft until owner disposition. This record does not authorize merge.
-A negative owner disposition is valid and must not be rescued by widening the
-slice.
+The independent reviews required bounded corrections before owner semantic
+acceptance. The review-repair implementation is not accepted merely because the
+changes are present: it must first receive exact-head Gnostoa verification and
+CodeQL, after which the provider evidence and review closure can be assessed.
+Decision 0066 remains draft, Issue #14 remains open, and this record does not
+authorize merge.
 
-This result record and its index route are evidence-only changes after the exact
-implementation-candidate verification above. Because they change the PR head, the
-final review candidate must receive one additional exact-head provider
-verification and CodeQL run. That provider evidence should be read from PR #239;
-it should not be back-written into this record in a loop that would create yet
-another unverified head.
+This result record deliberately does not back-write the final post-repair run IDs.
+Once the repository bytes are stable, exact-head provider evidence should be read
+from PR #239 and retained in provider/governance comments rather than editing this
+record again and creating another unverified head.
