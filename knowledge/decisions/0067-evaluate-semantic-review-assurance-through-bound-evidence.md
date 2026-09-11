@@ -41,14 +41,14 @@ sources:
     resource: https://www.gerritcodereview.com/3.14.html
     title: Gerrit Code Review 3.14.2
   - id: gerrit-license
-    resource: https://github.com/GerritCodeReview/gerrit
-    title: Gerrit Apache-2.0 license declaration
+    resource: https://github.com/GerritCodeReview/gerrit/blob/699633ef0642d21162d11bb958a3e3a1fc93817d/lib/LICENSE-Apache2.0
+    title: Gerrit v3.14.2 exact-commit Apache-2.0 license text
   - id: opa-1170
     resource: https://github.com/open-policy-agent/opa/releases/tag/v1.17.0
     title: Open Policy Agent v1.17.0
   - id: opa-license
-    resource: https://github.com/open-policy-agent/opa
-    title: Open Policy Agent Apache-2.0 license declaration
+    resource: https://github.com/open-policy-agent/opa/blob/64a3625d33bc6ad8e7c40df03b76ce2fb3ab4d21/LICENSE
+    title: Open Policy Agent v1.17.0 exact-commit Apache-2.0 license text
   - id: sarif-210
     resource: https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/sarif-v2.1.0-errata01-os-complete.html
     title: SARIF 2.1.0 Plus Errata 01
@@ -59,8 +59,8 @@ sources:
     resource: https://github.com/reviewdog/reviewdog/releases/tag/v0.21.0
     title: reviewdog v0.21.0
   - id: reviewdog-license
-    resource: https://github.com/reviewdog/reviewdog
-    title: reviewdog MIT license declaration
+    resource: https://github.com/reviewdog/reviewdog/blob/df70ed74df59de7ebfd9276afabd62ea2de4d7dd/LICENSE
+    title: reviewdog v0.21.0 exact-commit MIT license text
 x-project-knowledge:
   id: kit.decision.0067.evaluate-semantic-review-assurance-through-bound-evidence
   owners:
@@ -93,13 +93,13 @@ The owner approved R8 before this recorded Decision revision. This Decision mate
 - **Decision 0050 — selected pattern.** Reuse exact subject -> observation/assigned assurance -> explicit policy -> deterministic result -> separate owner disposition.
 - **Decision 0058 — selected authority rule.** Evidence cannot create the authority needed to validate itself.
 - **Decision 0005 — selected runtime mechanism.** Reuse the digest-pinned OCI runtime/source/public-surface binding for the post-bootstrap trusted judge; do not create an R2A service.
-- **Gerrit 3.14.2 — Apache-2.0, pattern only.** Submit Requirements demonstrate project-owned review/submittability predicates, but Gerrit is a provider platform and lacks R2A's collection and #10 qualification contract.
-- **OPA v1.17.0 — Apache-2.0, dependency rejected.** R2A v1 needs a small closed predicate set; Rego/runtime packaging would add unproven policy-engine complexity.
-- **SARIF 2.1.0 Plus Errata 01 — OASIS Standard, pattern only.** Reuse result/finding identity and raw/normalized evidence ideas, not its static-analysis-centric contract. The OASIS standard and IPR notices are reference provenance, not imported implementation material.
-- **reviewdog v0.21.0 — MIT, pattern only.** Reuse heterogeneous-output normalization precedent; it supplies no semantic-review authority or quorum.
+- **Gerrit 3.14.2 — Apache-2.0, pattern only.** The inspected release tag dereferences to exact commit `699633ef0642d21162d11bb958a3e3a1fc93817d`, whose retained Apache-2.0 license text is linked above. Submit Requirements demonstrate project-owned review/submittability predicates, but Gerrit is a provider platform and lacks R2A's collection and #10 qualification contract.
+- **OPA v1.17.0 — Apache-2.0, dependency rejected.** The inspected tag is exact commit `64a3625d33bc6ad8e7c40df03b76ce2fb3ab4d21`, whose Apache-2.0 license text is linked above. R2A v1 needs a small closed predicate set; Rego/runtime packaging would add unproven policy-engine complexity.
+- **SARIF 2.1.0 Plus Errata 01 — OASIS Standard, pattern only.** Reuse result/finding identity and raw/normalized evidence ideas, not its static-analysis-centric contract. The versioned OASIS standard and IPR notices are reference provenance, not imported implementation material.
+- **reviewdog v0.21.0 — MIT, pattern only.** The inspected release tag dereferences to exact commit `df70ed74df59de7ebfd9276afabd62ea2de4d7dd`, whose MIT license text is linked above. Reuse heterogeneous-output normalization precedent; it supplies no semantic-review authority or quorum.
 - **Decisions 0063/0064/native review fixture — internal precedent only.** Preserve native evidence and attribution; do not mutate the historical fixture schema into the new public contract.
 
-R2A imports no Gerrit, OPA, SARIF or reviewdog code, schema text, runtime or dependency. These references therefore create no third-party redistribution obligation in this slice. No third-party runtime or library is selected.
+R2A imports no Gerrit, OPA, SARIF or reviewdog code, schema text, runtime or dependency. Their licenses are therefore compatible with this use as inspected reference material and create no third-party redistribution obligation in this slice. No third-party runtime or library is selected.
 
 ## Decision
 
@@ -115,11 +115,24 @@ Create `review-check-input`, `review-policy` and `review-gate-result`. Keep subj
 
 V1 binds canonical repository and change-request identity, exact head, and exactly one comparison identity: an exact Git merge-base commit. Same head with a different merge-base is a different reviewed subject. Base ref/tip is informational; integration freshness stays separate CI evidence. File mode treats merge-base as asserted input, not live Git proof.
 
-### D. Make time an explicit input
+### D. Make time an explicit input and keep bootstrap non-circular
 
-`EvaluationContext` carries `mode: current_advisory|historical_replay`, `as_of`, and `judge_relation: prior_integrated|candidate_under_test`. The evaluator reads no wall clock. Every evidence, collection, qualification and subject cut used by evaluation must be at or before `as_of`; a future cut is invalid input. Historical replay pins exact historical authority and judge identities.
+`EvaluationContext` carries `mode: current_advisory|historical_replay`, `as_of`, and `judge_relation: prior_integrated|candidate_under_test`. `as_of` and every subject/collection/observation/qualification cut are RFC3339 timestamps interpreted as UTC instants. The evaluator reads no wall clock.
 
-`current_advisory` requires an accepted `prior_integrated` judge. During the first R2A implementation no such R2A judge exists, so a structured current-advisory invocation with `candidate_under_test` is valid but assurance-incomplete and returns `INCOMPLETE`; it cannot PASS. The first implementation exercises the normal policy/quorum/blocker/conflict paths through deterministic `historical_replay` fixtures while its judge provenance remains `candidate_under_test`. After one R2A implementation is integrated, later current-advisory evaluations may use that separately selected prior-integrated judge. This bootstrap rule prevents circular self-certification without making the semantic evaluator untestable.
+For a policy category with finite `max_age`, freshness is exactly:
+
+```text
+age_seconds = utc(as_of) - utc(applicable_cut)
+current iff 0 <= age_seconds <= max_age
+```
+
+Subject freshness uses the subject observation cut; collection freshness applies independently to each required source's observation cut; qualification freshness uses the qualification snapshot cut. Exact-subject review observations still carry observation cuts and must be `<= as_of`, even when policy marks their age as `not_age_sensitive`. Any used cut after `as_of` is invalid input/configuration error.
+
+`current_advisory` requires an accepted `prior_integrated` judge. During the first R2A implementation no such R2A judge exists, so a structured current-advisory invocation with `candidate_under_test` is valid but assurance-incomplete and returns `INCOMPLETE`; it cannot PASS.
+
+`historical_replay` is a deterministic fixture/reproduction mode and always pins the exact authority and judge identities declared by that replay fixture. During bootstrap, a **synthetic, explicitly fixture-only historical replay** exercises historical authority/judge pinning and normal policy/quorum/blocker/conflict semantics without claiming those identities ever existed in production. Real retained PR #239 / Issue #11 evidence predates R2A and may be evaluated retrospectively only as `candidate_under_test` characterization; it must not be given a fabricated historical trusted R2A judge. Factual historical replay of real R2A results becomes available only after a real integrated R2A authority/judge record exists.
+
+After one R2A implementation is integrated, later current-advisory evaluations may use that separately selected prior-integrated judge. This bootstrap rule prevents circular self-certification without making the semantic evaluator untestable.
 
 ### E. Preserve native review meaning without self-granted authority
 
@@ -175,7 +188,7 @@ Use flat `tools/review_model.py`, `review_policy.py`, `review_evaluate.py`, `rev
 
 ## Consequences and limits
 
-R2A proves deterministic advisory semantics over bound inputs. It does not establish malicious-host honesty, live-provider completeness, trusted native execution or merge authority. The first implementation can exercise semantic outcomes in historical replay but cannot make a current-advisory PASS until a prior-integrated R2A judge exists. A future enforcing consumer requires a separate protected acquisition/consumer Decision.
+R2A proves deterministic advisory semantics over bound inputs. It does not establish malicious-host honesty, live-provider completeness, trusted native execution or merge authority. During bootstrap it can exercise deterministic semantics through explicitly synthetic fixture-only historical replay and real pre-R2A retained evidence through retrospective `candidate_under_test` characterization, but it cannot make a current-advisory PASS until a prior-integrated R2A judge exists. A future enforcing consumer requires a separate protected acquisition/consumer Decision.
 
 ## Revisit conditions
 
