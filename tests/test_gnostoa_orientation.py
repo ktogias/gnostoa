@@ -376,7 +376,12 @@ class OrientationTests(unittest.TestCase):
     def test_live_cli_rejects_retained_projection_after_git_subject_drift(self) -> None:
         live_root = Path.cwd().resolve()
         snapshot_path = live_root / "tasks/issue-14-orientation.json"
-        self.assertTrue(snapshot_path.is_file())
+        if not snapshot_path.is_file():
+            if (ROOT / ".gnostoa-source-files").is_file():
+                self.skipTest(
+                    "retained self-orientation snapshot is unavailable in packaged runtime"
+                )
+            self.fail(f"retained self-orientation snapshot missing: {snapshot_path}")
         snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
         observed = orientation.observe_repository_subject(live_root)
         self.assertNotEqual(
