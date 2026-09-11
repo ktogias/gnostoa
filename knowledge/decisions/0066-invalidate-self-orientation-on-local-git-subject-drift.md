@@ -137,6 +137,15 @@ credential, network or provider capability is needed. Local source path
 confinement remains resolve-based and gains direct traversal/symlink regression
 coverage.
 
+The first candidate OCI fast run exposed the expected bind-mount ownership
+boundary: Git rejected `/workspace` as a dubious repository because the
+container user differs from the host checkout owner. O2-A0 handles only that
+container boundary with invocation-local
+`git -c safe.directory=<exact-resolved-repository-root> ...`. It does not write
+Git configuration, does not use `safe.directory=*`, and still verifies that the
+observed Git top level exactly equals the explicit root before accepting commit
+or tree identity.
+
 ## Consequences
 
 A stale retained orientation file can continue to exist as historical evidence,
