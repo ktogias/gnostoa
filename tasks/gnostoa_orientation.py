@@ -6,7 +6,9 @@ import argparse
 import copy
 import hashlib
 import json
+import os
 import re
+import subprocess
 import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -15,6 +17,8 @@ from typing import Any
 
 CONTRACT = "gnostoa-self-orientation/0.1"
 MAX_SOURCE_BYTES = 262_144
+GIT_TIMEOUT_SECONDS = 5
+MAX_GIT_DIAGNOSTIC_CHARS = 500
 FACT_GROUPS = (
     "purpose",
     "implemented",
@@ -193,6 +197,82 @@ def _within_root(root: Path, locator: str) -> Path:
     return target
 
 
+def _git_environment() -> dict[str, str]:
+    environment = {
+        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+    }
+    environment.update(
+        {"GIT_OPTIONAL_LOCKS": "0", "LC_ALL": "C", "LANG": "C"}
+    )
+    return environment
+
+
+def _git_output(root: Path, *args: str) -> str:
+    root = root.resolve()
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "-c",
+                f"safe.directory={root}",
+                "-C",
+                str(root),
+                *args,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=GIT_TIMEOUT_SECONDS,
+            env=_git_environment(),
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise OrientationError("cannot observe repository Git subject") from exc
+    if result.returncode != 0:
+        detail = (
+            (result.stderr or result.stdout)
+            .strip()
+            .replace("\r", " ")
+            .replace("\n", " ")
+        )
+        if len(detail) > MAX_GIT_DIAGNOSTIC_CHARS:
+            detail = detail[:MAX_GIT_DIAGNOSTIC_CHARS] + "…"
+        suffix = f": {detail}" if detail else f": exit {result.returncode}"
+        raise OrientationError(f"cannot observe repository Git subject{suffix}")
+    value = result.stdout.strip()
+    if not value or "\n" in value or "\r" in value:
+        raise OrientationError("cannot observe repository Git subject: invalid Git output")
+    return value
+
+
+def _repository_subject(value: Any, label: str) -> dict[str, str]:
+    subject = _closed_keys(value, {"source_commit", "source_tree"}, label)
+    for name in ("source_commit", "source_tree"):
+        if not isinstance(subject[name], str) or not GIT_ID.fullmatch(subject[name]):
+            raise OrientationError(
+                f"{label}.{name} must be a 40-character Git object ID"
+            )
+    return {"source_commit": subject["source_commit"], "source_tree": subject["source_tree"]}
+
+
+def observe_repository_subject(repository_root: Path) -> dict[str, str]:
+    root = repository_root.resolve()
+    top_level = Path(_git_output(root, "rev-parse", "--show-toplevel")).resolve()
+    if top_level != root:
+        raise OrientationError("repository root does not match Git top level")
+    source_commit = _git_output(root, "rev-parse", "--verify", "HEAD^{commit}")
+    if not GIT_ID.fullmatch(source_commit):
+        raise OrientationError(
+            "observed_repository_subject.source_commit must be a 40-character Git object ID"
+        )
+    source_tree = _git_output(
+        root, "rev-parse", "--verify", f"{source_commit}^{{tree}}"
+    )
+    return _repository_subject(
+        {"source_commit": source_commit, "source_tree": source_tree},
+        "observed_repository_subject",
+    )
+
+
 def canonical_json(value: dict[str, Any]) -> str:
     return (
         json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -212,6 +292,7 @@ def build_manifest(
     repository_root: Path,
     evaluated_at: str,
     observed_sources: dict[str, str] | None = None,
+    observed_repository_subject: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     validated = validate_snapshot(copy.deepcopy(snapshot))
     root = repository_root.resolve()
@@ -219,6 +300,13 @@ def build_manifest(
     if evaluated is None:
         raise OrientationError("evaluated_at must be an RFC 3339 UTC timestamp")
     observed_sources = observed_sources or {}
+    repository_subject = (
+        _repository_subject(
+            copy.deepcopy(observed_repository_subject), "observed_repository_subject"
+        )
+        if observed_repository_subject is not None
+        else None
+    )
     diagnostics: list[str] = []
     states: set[str] = set()
     valid_observation_times: list[datetime] = []
@@ -274,6 +362,12 @@ def build_manifest(
                 states.add("STALE")
                 diagnostics.append(f"identity-mismatch:{source['id']}")
 
+    if repository_subject is not None:
+        for name in ("source_commit", "source_tree"):
+            if repository_subject[name] != validated["subject"][name]:
+                states.add("STALE")
+                diagnostics.append(f"repository-subject-mismatch:{name}")
+
     if len(validated["facts"]["current"]) > 1:
         states.add("CONFLICTING")
         diagnostics.append("multiple-current-items")
@@ -295,12 +389,15 @@ def build_manifest(
         if valid_observation_times
         else None
     )
-    validated["evaluation"] = {
+    evaluation: dict[str, Any] = {
         "evaluated_at": evaluated_at,
         "fresh_until": fresh_until,
         "status": status,
         "diagnostics": sorted(set(diagnostics)),
     }
+    if repository_subject is not None:
+        evaluation["repository_subject"] = repository_subject
+    validated["evaluation"] = evaluation
     validated["manifest_digest"] = _digest(validated)
     full = _render_full_markdown(validated)
     allowed = validated["projection"]["review_characters"]
@@ -456,11 +553,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--format", choices=("json", "markdown"), default="markdown")
     try:
         args = parser.parse_args(argv)
+        repository_root = args.repository_root.resolve()
         manifest = build_manifest(
             load_snapshot(args.snapshot),
-            args.repository_root,
+            repository_root,
             args.evaluated_at,
             _observations(args.observed_source),
+            observe_repository_subject(repository_root),
         )
     except OrientationError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
