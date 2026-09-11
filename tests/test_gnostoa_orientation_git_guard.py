@@ -151,20 +151,30 @@ class OrientationGitGuardTests(unittest.TestCase):
             ):
                 orientation.observe_repository_subject(Path("."))
 
-    def test_git_invocation_is_argument_vector_without_shell(self) -> None:
+    def test_git_invocation_uses_exact_local_trust_without_shell_or_wildcard(self) -> None:
         completed = subprocess.CompletedProcess(
             args=["git"], returncode=0, stdout="a" * 40 + "\n", stderr=""
         )
+        root = Path("/tmp/a path;not-shell").resolve()
         with patch.object(orientation.subprocess, "run", return_value=completed) as run:
-            value = orientation._git_output(
-                Path("/tmp/a path;not-shell"), "rev-parse", "HEAD"
-            )
+            value = orientation._git_output(root, "rev-parse", "HEAD")
         self.assertEqual("a" * 40, value)
         command = run.call_args.args[0]
         kwargs = run.call_args.kwargs
         self.assertIsInstance(command, list)
-        self.assertEqual("git", command[0])
-        self.assertEqual("/tmp/a path;not-shell", command[2])
+        self.assertEqual(
+            [
+                "git",
+                "-c",
+                f"safe.directory={root}",
+                "-C",
+                str(root),
+                "rev-parse",
+                "HEAD",
+            ],
+            command,
+        )
+        self.assertNotIn("safe.directory=*", command)
         self.assertFalse(kwargs.get("shell", False))
         self.assertEqual(orientation.GIT_TIMEOUT_SECONDS, kwargs["timeout"])
 
