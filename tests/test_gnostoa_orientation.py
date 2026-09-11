@@ -8,9 +8,20 @@ from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 
-from tasks import gnostoa_orientation as orientation
-
 ROOT = Path(__file__).resolve().parents[1]
+SELF_SOURCE = "tasks/gnostoa_orientation.py"
+if not (ROOT / SELF_SOURCE).is_file():
+    installed_manifest = ROOT / ".gnostoa-source-files"
+    if installed_manifest.is_file() and SELF_SOURCE.encode() not in (
+        installed_manifest.read_bytes().split(b"\0")
+    ):
+        raise unittest.SkipTest(
+            "Gnostoa-self orientation is excluded from the installed runtime manifest"
+        )
+    raise ImportError("Gnostoa-self orientation source is missing from this candidate")
+
+from tasks import gnostoa_orientation as orientation  # noqa: E402
+
 NOW = "2026-09-11T13:00:00Z"
 
 

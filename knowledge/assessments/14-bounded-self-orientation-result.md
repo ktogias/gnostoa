@@ -185,3 +185,14 @@ not collapsed. The canonical main-branch link becomes available on integration;
 the candidate checkout and PR expose the view before integration.
 
 The [final local verification package](14-orientation-evidence/final-verification-index.json) retains the quality reports, failed strict docs stage and successful affected checks separately.
+
+
+The installed-runtime PR regression subsequently exposed a separate boundary:
+`tasks/` is intentionally absent from the filtered runtime, while self-check
+loads `tests/`. The self-only test now skips explicitly only when the installed
+source manifest exists and excludes its source. A missing source in a checkout,
+or a manifest claiming that source should exist, still fails. No runtime source
+export or public contract was expanded. Source tests remain 17; the runtime
+reports one module-level self-only skip in addition to its existing OCI skips.
+This later test-loader correction is root-authored and not attributed to the
+previous Luna review.
