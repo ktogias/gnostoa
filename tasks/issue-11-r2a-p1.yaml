@@ -25,9 +25,9 @@ state:
     - Owner approved canonical D11-R2A architecture R8 after convergence with no material review findings.
     - Deep architecture-phase retrospection and root-cause analysis were recorded on Work Item 11.
     - Decision 0067, this task envelope and the RED contract were materialized on draft PR 240 for specification convergence review.
-    - First specification review findings were reconciled into the Decision and RED contract; re-review remains required.
-  next_action: Converge the specification set, then create only the pre-registered RED tests and fixtures, run the exact RED command, and fill the retained RED receipt before any production implementation handoff.
-  blocker: Production implementation handoff is blocked while any RED receipt field remains PENDING.
+    - S1 and S2 specification findings were reconciled; exact-head convergence re-review remains required.
+  next_action: Converge the specification set, then create only the pre-registered RED tests and fixtures, run the exact RED command, and fill the retained RED receipt before any production implementation handoff; PENDING receipt fields prohibit that handoff.
+  blocker: null
 identities:
   base:
     kind: git-commit
@@ -76,5 +76,5 @@ review:
   owner_minutes: 30
   on_exceed: block
 checkpoint:
-  sequence: 2
+  sequence: 1
   previous: null
