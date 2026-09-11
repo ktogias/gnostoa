@@ -20,5 +20,22 @@
       "entries": 1586,
       "format": "gzip-compressed JSON mapping of paths to byte lengths and SHA-256 digests"
     }
+  },
+  "live_continuation": {
+    "archive": "live-continuation-evidence.tar.gz",
+    "bytes": 219315,
+    "sha256": "fbb7e0d741c7d0cdad4b249bfeeaccef6cc3c9882c6cf3ec671cc4794d798fb0", "_sha256_note": "# pragma: allowlist secret -- public retained evidence digest",
+    "member_index": {
+      "file": "live-continuation-members.json.gz",
+      "sha256": "cddea46a8f9b2fdff949ecc642afe114438c105e2d2c236567bdf68a7a9f6fd1", "_sha256_note": "# pragma: allowlist secret -- public retained evidence digest",
+      "uncompressed_sha256": "a3c6aeb765f4e72b1a1bfc67e789c6f627cd270a8ccd9a27a0a9797c76d55942", "_uncompressed_sha256_note": "# pragma: allowlist secret -- public retained evidence digest",
+      "entries": 102,
+      "format": "gzip-compressed JSON mapping of paths to byte lengths and SHA-256 digests"
+    },
+    "hygiene_scope": {
+      "reviewed_inputs": 84,
+      "generated_audit_and_scan_records": 18,
+      "note": "Native opaque provider thinking.signature metadata retained without decoded-content claims. Generated audit/scan records are separately identified; no recursively complete scanner claim."
+    }
   }
 }
