@@ -5,7 +5,7 @@ description: Verification-first contract for the bounded provider-neutral adviso
 status: draft
 generated:
   by: agent:gpt-5.6-sol
-  at: "2026-09-11T23:24:00Z"
+  at: "2026-09-11T23:42:51Z"
 sources:
   - id: work-item
     resource: https://github.com/ktogias/gnostoa/issues/11
@@ -44,12 +44,54 @@ It does not admit a live provider collector, reviewer orchestration, #10 registr
 
 ## Literal verification-first order
 
-1. Retain this Decision/task/RED specification on the candidate branch and converge it semantically before production implementation.
-2. Add focused tests and fixtures while the production review-assurance schemas, policies and executable modules are still absent. Preserve the exact RED commit, commands and bounded failing output.
-3. Add production files only after the RED record exists. The retained RED expectations remain unchanged unless a later review explicitly changes the governing Decision and records why.
-4. Reach GREEN, then run mutation/permutation controls, complete project suites, exact-candidate reviews and advisory dogfood.
+1. Converge the Decision, task envelope and this RED contract before production implementation.
+2. Add the exact focused RED harness below while the production review-assurance schemas, policies and executable modules are still absent.
+3. Run the exact RED command and retain its commit SHA, nonzero exit, bounded output SHA-256 and proof that the production paths remain absent.
+4. Only after the RED receipt is complete may the task hand off to a production implementation agent.
+5. Preserve the RED expectations unchanged through production implementation unless a later review explicitly changes Decision 0067 and records the reason.
+6. Reach GREEN, then run mutation/permutation controls, complete suites, exact-candidate reviews and advisory dogfood.
 
-The first R2A implementation is bootstrap: any self-run `review-check` is `candidate_under_test` evidence only.
+The first R2A implementation is bootstrap. A current-advisory invocation whose judge relation is `candidate_under_test` is valid but assurance-incomplete and cannot PASS. Historical-replay fixtures may exercise normal policy/quorum/blocker/conflict semantics using exact pinned fixture authority/judge identities while the executing candidate remains `candidate_under_test` evidence.
+
+## Pre-registered RED harness
+
+Create only these focused pre-production test artifacts in the RED commit:
+
+```text
+tests/test_review_assurance.py
+tests/fixtures/review_check/cases.json
+tests/fixtures/review_check/expected.json
+```
+
+The test file uses the standard-library `unittest` runner and invokes the future public route as an external command where CLI behavior is under test; pure-contract cases may import the future modules only after they exist. The RED command is exactly:
+
+```text
+python tests/test_review_assurance.py
+```
+
+Before production review-assurance paths exist, the command must exit nonzero and must not SKIP/XFAIL the missing contract. The retained bounded output must identify failing R2A case IDs rather than treating absence as success.
+
+### RED receipt — must be completed before production handoff
+
+```text
+red_commit: PENDING
+command: python tests/test_review_assurance.py
+exit_code: PENDING   # must be nonzero
+bounded_output_sha256: PENDING
+production_paths_absent:
+  - schemas/review-check-input.schema.json
+  - schemas/review-policy.schema.json
+  - schemas/review-gate-result.schema.json
+  - core/review-policy.yaml
+  - policy/review-policy.yaml
+  - tools/review_model.py
+  - tools/review_policy.py
+  - tools/review_evaluate.py
+  - tools/review_adapter_file.py
+  - tools/review_check.py
+```
+
+`PENDING` in any RED receipt field blocks production implementation handoff. The observed RED commit and output are evidence, not values to predict in this specification.
 
 ## Required RED matrix
 
@@ -90,8 +132,8 @@ The first R2A implementation is bootstrap: any self-run `review-check` is `candi
 | R16 | Capability/domain claims inside `ReviewObservation` do not qualify the observation. |
 | R17 | Wrong or unaccepted authority/qualification digest cannot satisfy quorum. |
 | R18 | `unestablished`, `revoked` or freshness-expired qualification cannot count. |
-| R19 | Multiple observations from one established domain contribute one distinct domain. |
-| R20 | Two separately established domains can satisfy a two-domain quorum. |
+| R19 | Multiple observations from one established opaque domain ID contribute one distinct domain. |
+| R20 | Two separately established opaque domain IDs can satisfy a two-domain quorum. |
 | R21 | Owner-authored review does not count when effective policy says false. |
 | R22 | Evaluator emits no human owner acceptance or merge authorization. |
 
@@ -104,7 +146,7 @@ The first R2A implementation is bootstrap: any self-run `review-check` is `candi
 | R25 | A known blocker is not masked by another missing required source. |
 | R26 | Anonymous, unrecognized or non-current evidence gets neither automatic veto nor quorum authority. |
 | R27 | Unresolved thread blocks only according to policy; unknown thread state can remain incomplete. |
-| R28 | A focused alternate valid policy can produce `CONFLICTING`, distinct from `INCOMPLETE`. |
+| R28 | Within one invocation and one selected valid policy whose `conflicts` section declares the applicable recommendation pair, two eligible conflicting review dispositions produce `CONFLICTING`, distinct from `INCOMPLETE`; policies themselves are never compared. |
 
 ### Replay, determinism and result fidelity
 
@@ -121,26 +163,29 @@ The first R2A implementation is bootstrap: any self-run `review-check` is `candi
 
 | ID | Required behavior |
 | --- | --- |
-| R35 | First-implementation `candidate_under_test` cannot masquerade as `prior_integrated`. |
-| R36 | Missing, partial, mismatched, revoked, deprecated, unknown or unsupported-schema judge binding fails closed. |
+| R35 | `current_advisory` with `judge_relation:candidate_under_test` is `INCOMPLETE` and cannot masquerade as `prior_integrated` or PASS. |
+| R36 | Valid structured but unavailable, partial, mismatched, revoked, deprecated or unknown authority/judge material yields semantic `INCOMPLETE` and exit 3. |
 | R37 | Candidate-changed runtime lock cannot select the authority-owned expected trusted judge. |
-| R38 | Historical replay pins its exact historical judge identity. |
+| R38 | Historical replay pins its exact historical authority and judge identities. |
 | R39 | Native execution is not labelled v1 `prior_integrated` solely from current source-root/runtime-lock binding. |
 | R40 | A later candidate that modifies review evaluator/schema cannot replace the separately selected prior-integrated judge. |
 
-### CLI and effect boundary
+### CLI, configuration errors and effect boundary
 
 | ID | Required behavior |
 | --- | --- |
 | R41 | Exit mapping is exactly PASS=0, BLOCKED=1, configuration/tool error=2, INCOMPLETE=3, CONFLICTING=4. |
-| R42 | JSON is canonical; human text cannot erase outcome, reason, subject, authority or `binding:false`. |
+| R42 | Semantic-result JSON is canonical; human text cannot erase outcome, reason, subject, authority or `binding:false`. |
 | R43 | File-mode command performs no network/provider mutation, approval, merge or release effect. |
+| R44 | Malformed invocation, malformed authority/judge record or unsupported input schema exits 2 and emits the canonical `error` envelope, never a semantic review-gate result. |
 
 ## Focused fixtures
 
-Use retained PR #239 review history plus the two #11 CodeRabbit collection incidents as real examples, but store only the bounded fields required by the test contract. Preserve raw/provider evidence by reference/digest where retained; do not manufacture provider messages from summaries.
+Use retained PR #239 review history plus the two #11 CodeRabbit collection incidents as real examples, but store only bounded fields required by the test contract. Preserve raw/provider evidence by reference/digest where retained; do not manufacture provider messages from summaries.
 
-Add synthetic minimal cases only where a real retained case does not exercise the required predicate, especially explicit policy exemption, a reachable `CONFLICTING` policy, forged self-qualification, authority/judge mismatch and ordering invariance.
+Add synthetic minimal cases only where real retained evidence does not exercise a predicate, especially explicit policy exemption, a single-policy reachable `CONFLICTING` case, forged self-qualification, authority/judge mismatch and ordering invariance.
+
+`cases.json` names every case by its R-ID and contains only supplied input/fixture references. `expected.json` maps each R-ID to the required semantic outcome/reason or error-envelope class plus exit code. The test runner must fail if a required R-ID is absent from either file.
 
 ## Mutation and discriminating controls after GREEN
 
@@ -154,11 +199,13 @@ After unchanged RED -> GREEN, run focused tests plus applicable repository `poli
 
 Run two bounded modes:
 
-1. **historical replay** over retained PR #239/#11 evidence with an exact historical `as_of`, authority and judge fixture identity;
-2. **first-implementation self dogfood** over the candidate review evidence with `judge_relation:candidate_under_test`.
+1. **historical replay** over retained PR #239/#11 evidence with exact historical `as_of`, authority and judge fixture identities while the executing first implementation remains `candidate_under_test`;
+2. **current-advisory bootstrap characterization** showing that the first implementation cannot PASS without a prior-integrated R2A judge.
+
+After a later prior-integrated R2A judge exists, current-advisory PASS behavior becomes an eligible post-bootstrap evaluation target rather than a first-release acceptance claim.
 
 Measure false pass/block against owner semantic disposition, subject/currentness classification error, collection handling, qualification/quorum error, normalization discrepancy, rate-limit/unavailability behavior, historical replay reproducibility, evidence/context burden and owner corrections.
 
 ## Completion boundary
 
-The bounded slice is complete only when the Decision/task/implementation agree, all retained RED cases are GREEN without semantic weakening, mutation controls discriminate, complete applicable suites pass on the exact candidate, every material external finding is dispositioned, dogfood is retained honestly, and public output remains advisory with no provider or merge enforcement activated. Owner semantic acceptance and merge authorization remain separate.
+The specification is implementation-handoff-ready only after its reviews converge and the RED receipt above is fully observed. The bounded slice is complete only when the Decision/task/implementation agree, all retained RED cases are GREEN without semantic weakening, mutation controls discriminate, complete applicable suites pass on the exact candidate, every material external finding is dispositioned, dogfood is retained honestly, and public output remains advisory with no provider or merge enforcement activated. Owner semantic acceptance and merge authorization remain separate.
