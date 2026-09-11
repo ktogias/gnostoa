@@ -374,14 +374,24 @@ class OrientationTests(unittest.TestCase):
                 )
 
     def test_live_cli_rejects_retained_projection_after_git_subject_drift(self) -> None:
+        live_root = Path.cwd().resolve()
+        snapshot_path = live_root / "tasks/issue-14-orientation.json"
+        self.assertTrue(snapshot_path.is_file())
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        observed = orientation.observe_repository_subject(live_root)
+        self.assertNotEqual(
+            snapshot["subject"]["source_commit"], observed["source_commit"]
+        )
+        self.assertNotEqual(snapshot["subject"]["source_tree"], observed["source_tree"])
+
         stdout, stderr = StringIO(), StringIO()
         with redirect_stdout(stdout), redirect_stderr(stderr):
             result = orientation.main(
                 [
                     "--snapshot",
-                    str(ROOT / "tasks/issue-14-orientation.json"),
+                    str(snapshot_path),
                     "--repository-root",
-                    str(ROOT),
+                    str(live_root),
                     "--evaluated-at",
                     NOW,
                     "--format",
