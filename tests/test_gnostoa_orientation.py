@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import tempfile
 import unittest
@@ -9,18 +10,12 @@ from io import StringIO
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SELF_SOURCE = "tasks/gnostoa_orientation.py"
-if not (ROOT / SELF_SOURCE).is_file():
-    installed_manifest = ROOT / ".gnostoa-source-files"
-    if installed_manifest.is_file() and SELF_SOURCE.encode() not in (
-        installed_manifest.read_bytes().split(b"\0")
-    ):
-        raise unittest.SkipTest(
-            "Gnostoa-self orientation is excluded from the installed runtime manifest"
-        )
-    raise ImportError("Gnostoa-self orientation source is missing from this candidate")
-
-from tasks import gnostoa_orientation as orientation  # noqa: E402
+SPEC = importlib.util.spec_from_file_location(
+    "gnostoa_self_orientation", ROOT / "tasks/gnostoa_orientation.py"
+)
+assert SPEC is not None and SPEC.loader is not None
+orientation = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(orientation)
 
 NOW = "2026-09-11T13:00:00Z"
 

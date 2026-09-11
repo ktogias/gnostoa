@@ -187,12 +187,14 @@ the candidate checkout and PR expose the view before integration.
 The [final local verification package](14-orientation-evidence/final-verification-index.json) retains the quality reports, failed strict docs stage and successful affected checks separately.
 
 
-The installed-runtime PR regression subsequently exposed a separate boundary:
-`tasks/` is intentionally absent from the filtered runtime, while self-check
-loads `tests/`. The self-only test now skips explicitly only when the installed
-source manifest exists and excludes its source. A missing source in a checkout,
-or a manifest claiming that source should exist, still fails. No runtime source
-export or public contract was expanded. Source tests remain 17; the runtime
-reports one module-level self-only skip in addition to its existing OCI skips.
-This later test-loader correction is root-authored and not attributed to the
-previous Luna review.
+The installed-runtime PR regression failed to import the test's `tasks` package.
+Root initially misdiagnosed this as an absent source file and added an installed-
+manifest skip. The next run disproved that diagnosis: the source existed and the
+import still failed. That skip is removed. The actual difference is import context:
+`tasks` is a self-only script directory, not an installed Python package. The test
+loads the explicit local source file with `importlib.util`, retaining a hard failure
+if it is absent. All 17 tests are intended to run in both contexts; no new skip or
+public packaging change is introduced. The corrected reproduction runs outside
+the checkout with isolated Python, without PYTHONPATH. This root-authored correction
+and the mistaken intermediate diagnosis are not covered by earlier Luna review
+hashes and are retained distinctly from the earlier successful source tests.
