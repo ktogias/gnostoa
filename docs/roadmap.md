@@ -4,6 +4,11 @@ This MkDocs page is a derived navigation projection. Canonical lifecycle
 principles remain in [Toolkit evolution](../knowledge/lifecycles/toolkit-evolution.md),
 while this page presents the current delivery order for Gnostoa itself.
 
+For the compact “what now?” view, read the source-bound
+[Gnostoa current orientation](https://github.com/ktogias/gnostoa/blob/main/tasks/issue-14-orientation.md) first. Check its
+status, observation time and diagnostics before relying on current/next claims;
+this page preserves the fuller roadmap and historical results below.
+
 The categories are priorities, not acceptance or effectiveness states. Open
 Work Items remain open until their own lifecycle completes. Closed historical
 records are labelled explicitly, and none is a first-publication blocker unless

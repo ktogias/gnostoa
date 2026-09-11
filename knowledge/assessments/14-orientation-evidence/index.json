@@ -1,0 +1,10 @@
+{
+  "purpose": "D14-O1 retained review and verification evidence",
+  "archive": "raw-evidence.tar",
+  "sha256": "sha256:eab0c25b56360232751d2817f624a2a79271e562b212b3e49924592b69abdef3",
+  "bytes": 1105920,
+  "handoff_sha256": "sha256:5757941171569288e94a0597a878c896829e19782b36a19d8af05980795152f5",
+  "producer": "Existing tools.experiment.handoff and tools.experiment.packaging, development container, network disabled",
+  "scope": "Historical stages through final preparation, not final PR CI or protected provider truth",
+  "reviews": "Individual reports and root-review-dispositions.json are archived; future-dated review evaluation inputs are synthetic replays, not capture timestamps."
+}

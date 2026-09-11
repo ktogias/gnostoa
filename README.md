@@ -15,6 +15,11 @@ bounded orientation packs without requiring a hosted knowledge service.
 The earlier pre-publication projection, “No package, image or site has been released yet,”
 is superseded by the digest-bound image result above.
 
+Maintaining Gnostoa itself? Start with the compact, derived
+[current orientation](tasks/issue-14-orientation.md), then follow its source links
+and the detailed [roadmap](docs/roadmap.md). Its timestamp and status bound every
+current-state claim; the linked source and provider records remain authoritative.
+
 ## Why Gnostoa
 
 Project knowledge is often split across prose, configuration, issue history and
