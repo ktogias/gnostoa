@@ -1,0 +1,10 @@
+{
+  "purpose": "D14-O1 retained review and verification evidence",
+  "archive": "final-verification.tar",
+  "sha256": "sha256:3dc2513f8a6f006b67f6810843c49feed5e7a28a5726586d2a13fdb069bbf5f3",
+  "bytes": 7843840,
+  "handoff_sha256": "sha256:7671dd6f702bd7111f0485601020a7cdb7b8d67a15f874788bf6cf8eba0fbe4f",
+  "producer": "Existing tools.experiment.handoff and tools.experiment.packaging, development container, network disabled",
+  "scope": "Final local quality results and affected checks after docs-link correction; final PR CI is separately linked on PR238",
+  "reviews": "Individual reports and root-review-dispositions.json are archived; future-dated review evaluation inputs are synthetic replays, not capture timestamps."
+}

@@ -5,7 +5,7 @@ principles remain in [Toolkit evolution](../knowledge/lifecycles/toolkit-evoluti
 while this page presents the current delivery order for Gnostoa itself.
 
 For the compact “what now?” view, read the source-bound
-[Gnostoa current orientation](../tasks/issue-14-orientation.md) first. Check its
+[Gnostoa current orientation](https://github.com/ktogias/gnostoa/blob/main/tasks/issue-14-orientation.md) first. Check its
 status, observation time and diagnostics before relying on current/next claims;
 this page preserves the fuller roadmap and historical results below.
 

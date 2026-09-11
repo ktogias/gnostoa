@@ -5,7 +5,7 @@
   },
   "projection": {
     "id": "D14-O1",
-    "observed_at": "2026-09-11T12:03:52Z",
+    "observed_at": "2026-09-11T12:16:47Z",
     "freshness_seconds": 86400,
     "review_characters": 5000
   },
@@ -15,7 +15,7 @@
       "kind": "local-file",
       "locator": "README.md",
       "identity": "sha256:819dc798620b7e4372574c1417c12569d07f6334f01e7d0a9d412622af86dc91",
-      "observed_at": "2026-09-11T12:03:52Z",
+      "observed_at": "2026-09-11T12:16:47Z",
       "required": true,
       "status": "complete"
     },
@@ -23,8 +23,8 @@
       "id": "roadmap",
       "kind": "local-file",
       "locator": "docs/roadmap.md",
-      "identity": "sha256:16a8047b1f218cb4991914ec2eb57cb8d6ff8fbc563bbf59fb22b7fb1c68e441",
-      "observed_at": "2026-09-11T12:03:52Z",
+      "identity": "sha256:4977c4276e5883fc95bcdad075faaba47a964ba61eb034fcd72c580e8daaf716",
+      "observed_at": "2026-09-11T12:16:47Z",
       "required": true,
       "status": "complete"
     },
@@ -33,7 +33,7 @@
       "kind": "local-file",
       "locator": "knowledge/decisions/0065-run-a-bounded-gnostoa-self-orientation-snapshot.md",
       "identity": "sha256:6d4b064d2b4341b5257ff7aa36cc7f5e750d7b128b254ea2eb1c1f01a92a5594",
-      "observed_at": "2026-09-11T12:03:52Z",
+      "observed_at": "2026-09-11T12:16:47Z",
       "required": true,
       "status": "complete"
     },

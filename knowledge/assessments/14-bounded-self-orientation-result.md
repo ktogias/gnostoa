@@ -166,3 +166,22 @@ No new subscription, credential, automatic paid fallback or additional worker
 was configured. Billed model identity remains unobserved.
 Future comparisons must include supervisor, worker, retry and handoff usage;
 cheaper worker tokens alone are not evidence of cheaper total delivery.
+
+## Final verification disposition
+
+The corrected implementation passed 687 tests (685 passing, two declared skips),
+coverage, formatting, lint, typing, dependency/license/SBOM and secret checks in
+the development container. Policy, regression and smoke passed. The final
+`extended` invocation reached strict docs build and failed because the static
+site does not include `tasks/`. The roadmap route now uses the canonical repository
+URL, as the site cannot resolve that checkout-relative link. Source hashes and
+the derived view were refreshed. Docs build, focused tests, policy and a targeted
+scan are rerun for this link-only follow-up; earlier execution evidence is reused
+for unchanged executable bytes, not rewritten as an earlier full-suite PASS.
+
+Exact-head provider checks and final component results are recorded on PR #238.
+The initial evidence archive remains unchanged; failed and corrected stages are
+not collapsed. The canonical main-branch link becomes available on integration;
+the candidate checkout and PR expose the view before integration.
+
+The [final local verification package](14-orientation-evidence/final-verification-index.json) retains the quality reports, failed strict docs stage and successful affected checks separately.
