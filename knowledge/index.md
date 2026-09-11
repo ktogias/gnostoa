@@ -131,6 +131,7 @@ inherited, copied or loaded by adopting projects.
 - [Full OCI architecture and roadmap review (2026-09-09)](assessments/209-oci-architecture-and-roadmap-review.md)
 - [Bounded Gnostoa-self orientation snapshot result](assessments/14-bounded-self-orientation-result.md)
 - [D14-O2 O2-A0 local Git subject guard execution plan](assessments/14-orientation-git-subject-guard-plan.md)
+- [D14-O2 O2-A0 local Git subject guard result](assessments/14-orientation-git-subject-guard-result.md)
 - [Nextcloud Mail v0.2.0 owner-led adoption trial baseline](assessments/nextcloud-mail-v0-2-0-owner-led-adoption-trial-baseline.md)
 - [Nextcloud Mail Phase-A owner-led adaptation retrospective](assessments/nextcloud-mail-phase-a-owner-led-adaptation-retrospective.md)
 - [Nextcloud Mail Phase-B owner-led task result](assessments/nextcloud-mail-phase-b-owner-led-task-result.md)
