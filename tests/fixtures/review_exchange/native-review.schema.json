@@ -1,0 +1,93 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "material": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "text",
+          "material"
+        ]
+      }
+    },
+    "recommendation": {
+      "type": "string"
+    },
+    "subject_commit": {
+      "type": "string"
+    },
+    "inspected_paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "execution": {
+      "type": "string"
+    },
+    "limitations": {
+      "type": "string"
+    },
+    "handoff": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "eligible_job_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "collected_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "current_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "pending_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "eligible_job_ids",
+        "collected_ids",
+        "current_ids",
+        "pending_ids"
+      ]
+    }
+  },
+  "required": [
+    "findings",
+    "recommendation",
+    "subject_commit",
+    "inspected_paths",
+    "execution",
+    "limitations",
+    "handoff"
+  ]
+}
