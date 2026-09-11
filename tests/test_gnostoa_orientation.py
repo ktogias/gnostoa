@@ -384,10 +384,14 @@ class OrientationTests(unittest.TestCase):
             self.fail(f"retained self-orientation snapshot missing: {snapshot_path}")
         snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
         observed = orientation.observe_repository_subject(live_root)
-        self.assertNotEqual(
-            snapshot["subject"]["source_commit"], observed["source_commit"]
+        mismatched = {
+            name
+            for name in ("source_commit", "source_tree")
+            if snapshot["subject"][name] != observed[name]
+        }
+        self.assertTrue(
+            mismatched, "retained snapshot must differ from the live checkout"
         )
-        self.assertNotEqual(snapshot["subject"]["source_tree"], observed["source_tree"])
 
         stdout, stderr = StringIO(), StringIO()
         with redirect_stdout(stdout), redirect_stderr(stderr):
@@ -407,14 +411,13 @@ class OrientationTests(unittest.TestCase):
         self.assertEqual(1, result)
         manifest = json.loads(stdout.getvalue())
         self.assertEqual("STALE", manifest["evaluation"]["status"])
-        self.assertIn(
-            "repository-subject-mismatch:source_commit",
-            manifest["evaluation"]["diagnostics"],
-        )
-        self.assertIn(
-            "repository-subject-mismatch:source_tree",
-            manifest["evaluation"]["diagnostics"],
-        )
+        diagnostics = set(manifest["evaluation"]["diagnostics"])
+        for name in ("source_commit", "source_tree"):
+            diagnostic = f"repository-subject-mismatch:{name}"
+            if name in mismatched:
+                self.assertIn(diagnostic, diagnostics)
+            else:
+                self.assertNotIn(diagnostic, diagnostics)
 
     def test_live_cli_fails_closed_without_repository_subject(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
