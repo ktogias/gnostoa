@@ -158,8 +158,19 @@ class OrientationGitGuardTests(unittest.TestCase):
             args=["git"], returncode=0, stdout="a" * 40 + "\n", stderr=""
         )
         root = Path("/tmp/a path;not-shell").resolve()
-        with patch.object(orientation.subprocess, "run", return_value=completed) as run:
-            value = orientation._git_output(root, "rev-parse", "HEAD")
+        with patch.dict(
+            orientation.os.environ,
+            {
+                "GIT_DIR": "/tmp/ambient.git",
+                "GIT_WORK_TREE": "/tmp/ambient-work-tree",
+                "GIT_CONFIG_COUNT": "1",
+            },
+            clear=False,
+        ):
+            with patch.object(
+                orientation.subprocess, "run", return_value=completed
+            ) as run:
+                value = orientation._git_output(root, "rev-parse", "HEAD")
         self.assertEqual("a" * 40, value)
         command = run.call_args.args[0]
         kwargs = run.call_args.kwargs
@@ -179,6 +190,57 @@ class OrientationGitGuardTests(unittest.TestCase):
         self.assertNotIn("safe.directory=*", command)
         self.assertFalse(kwargs.get("shell", False))
         self.assertEqual(orientation.GIT_TIMEOUT_SECONDS, kwargs["timeout"])
+        environment = kwargs["env"]
+        self.assertEqual("0", environment["GIT_OPTIONAL_LOCKS"])
+        self.assertEqual("C", environment["LC_ALL"])
+        self.assertEqual("C", environment["LANG"])
+        self.assertNotIn("GIT_DIR", environment)
+        self.assertNotIn("GIT_WORK_TREE", environment)
+        self.assertNotIn("GIT_CONFIG_COUNT", environment)
+        self.assertTrue(
+            all(
+                not key.startswith("GIT_") or key == "GIT_OPTIONAL_LOCKS"
+                for key in environment
+            )
+        )
+
+    def test_observer_derives_tree_from_the_observed_commit(self) -> None:
+        root = Path("/tmp/coherent-repository-subject").resolve()
+        commit = "a" * 40
+        tree = "b" * 40
+        with patch.object(
+            orientation,
+            "_git_output",
+            side_effect=[str(root), commit, tree],
+        ) as git_output:
+            observed = orientation.observe_repository_subject(root)
+        self.assertEqual(
+            {"source_commit": commit, "source_tree": tree},
+            observed,
+        )
+        calls = [call.args[1:] for call in git_output.call_args_list]
+        self.assertEqual(
+            [
+                ("rev-parse", "--show-toplevel"),
+                ("rev-parse", "--verify", "HEAD^{commit}"),
+                ("rev-parse", "--verify", f"{commit}^{{tree}}"),
+            ],
+            calls,
+        )
+
+    def test_observer_rejects_malformed_commit_before_tree_lookup(self) -> None:
+        root = Path("/tmp/malformed-repository-subject").resolve()
+        with patch.object(
+            orientation,
+            "_git_output",
+            side_effect=[str(root), "not-a-git-id"],
+        ) as git_output:
+            with self.assertRaisesRegex(
+                orientation.OrientationError,
+                "observed_repository_subject.source_commit",
+            ):
+                orientation.observe_repository_subject(root)
+        self.assertEqual(2, len(git_output.call_args_list))
 
 
 if __name__ == "__main__":
