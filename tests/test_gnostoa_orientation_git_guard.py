@@ -156,7 +156,9 @@ class OrientationGitGuardTests(unittest.TestCase):
             args=["git"], returncode=0, stdout="a" * 40 + "\n", stderr=""
         )
         with patch.object(orientation.subprocess, "run", return_value=completed) as run:
-            value = orientation._git_output(Path("/tmp/a path;not-shell"), "rev-parse", "HEAD")
+            value = orientation._git_output(
+                Path("/tmp/a path;not-shell"), "rev-parse", "HEAD"
+            )
         self.assertEqual("a" * 40, value)
         command = run.call_args.args[0]
         kwargs = run.call_args.kwargs
