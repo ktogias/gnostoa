@@ -198,9 +198,17 @@ def _within_root(root: Path, locator: str) -> Path:
 
 
 def _git_output(root: Path, *args: str) -> str:
+    root = root.resolve()
     try:
         result = subprocess.run(
-            ["git", "-C", str(root), *args],
+            [
+                "git",
+                "-c",
+                f"safe.directory={root}",
+                "-C",
+                str(root),
+                *args,
+            ],
             check=False,
             capture_output=True,
             text=True,
@@ -210,7 +218,12 @@ def _git_output(root: Path, *args: str) -> str:
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise OrientationError("cannot observe repository Git subject") from exc
     if result.returncode != 0:
-        detail = (result.stderr or result.stdout).strip().replace("\r", " ").replace("\n", " ")
+        detail = (
+            (result.stderr or result.stdout)
+            .strip()
+            .replace("\r", " ")
+            .replace("\n", " ")
+        )
         if len(detail) > MAX_GIT_DIAGNOSTIC_CHARS:
             detail = detail[:MAX_GIT_DIAGNOSTIC_CHARS] + "…"
         suffix = f": {detail}" if detail else f": exit {result.returncode}"
