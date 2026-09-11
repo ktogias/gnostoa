@@ -20,13 +20,14 @@ scope:
     - required merge checks, provider settings and generic policy expression engines
     - a trusted native review-assurance judge identity in v1
 state:
-  status: ready
+  status: active
   completed:
     - Owner approved canonical D11-R2A architecture R8 after convergence with no material review findings.
     - Deep architecture-phase retrospection and root-cause analysis were recorded on Work Item 11.
-    - Decision 0067 and the bounded specification branch were admitted for preparation.
-  next_action: Establish and retain focused RED evidence before production review-assurance schemas or tool code.
-  blocker: null
+    - Decision 0067, this task envelope and the RED contract were materialized on draft PR 240 for specification convergence review.
+    - First specification review findings were reconciled into the Decision and RED contract; re-review remains required.
+  next_action: Converge the specification set, then create only the pre-registered RED tests and fixtures, run the exact RED command, and fill the retained RED receipt before any production implementation handoff.
+  blocker: Production implementation handoff is blocked while any RED receipt field remains PENDING.
 identities:
   base:
     kind: git-commit
@@ -55,21 +56,25 @@ references:
       resource: https://github.com/ktogias/gnostoa/issues/11#issuecomment-5641780494
     - id: red-contract
       resource: knowledge/assessments/11-review-assurance-red-contract.md
+    - id: specification-pr
+      resource: https://github.com/ktogias/gnostoa/pull/240
 handoff:
-  actor: executing implementation agent after the retained RED state is established
+  actor: RED-authoring executor only; production implementation agent after the retained RED receipt is complete
   read:
     - Decision 0067, this envelope and the RED contract assessment
-    - Work Item 11 architecture convergence and owner approval records
+    - Work Item 11 architecture convergence, owner approval and deep retrospection records
+    - exact current draft PR 240 review/reconciliation record
   verify:
-    - the exact branch candidate remains bound to this base and declared scope
-    - RED evidence predates production review-assurance schemas and executable code
+    - the exact branch candidate remains bound to the declared base and scope
+    - tests/test_review_assurance.py and tests/fixtures/review_check/cases.json plus expected.json predate every production review-assurance schema and executable module
+    - the RED receipt records an exact commit, command, nonzero exit and bounded output digest before production handoff
 recording:
   actor: agent:gpt-5.6-sol
-  at: "2026-09-11T23:24:00Z"
+  at: "2026-09-11T23:42:51Z"
 review:
   projection_characters: 6000
   owner_minutes: 30
   on_exceed: block
 checkpoint:
-  sequence: 1
+  sequence: 2
   previous: null
