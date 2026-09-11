@@ -151,7 +151,9 @@ class OrientationGitGuardTests(unittest.TestCase):
             ):
                 orientation.observe_repository_subject(Path("."))
 
-    def test_git_invocation_uses_exact_local_trust_without_shell_or_wildcard(self) -> None:
+    def test_git_invocation_uses_exact_local_trust_without_shell_or_wildcard(
+        self,
+    ) -> None:
         completed = subprocess.CompletedProcess(
             args=["git"], returncode=0, stdout="a" * 40 + "\n", stderr=""
         )
