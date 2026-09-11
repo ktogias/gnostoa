@@ -71,6 +71,15 @@ def _snapshot(root: Path) -> dict[str, object]:
 
 
 class OrientationTests(unittest.TestCase):
+    def test_public_identity_annotation_does_not_relax_git_id_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            value = _snapshot(Path(directory))
+            value["subject"]["_public_identity_note"] = "Public Git identities"
+            orientation.validate_snapshot(value)
+            value["subject"]["source_commit"] = "invalid"
+            with self.assertRaises(orientation.OrientationError):
+                orientation.validate_snapshot(value)
+
     def test_machine_and_markdown_carry_every_fact_and_source(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

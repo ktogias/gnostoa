@@ -5,7 +5,7 @@ description: Construct and consume one source-bound self-only current orientatio
 status: draft
 generated:
   by: agent:codex
-  at: "2026-09-11T12:00:00Z"
+  at: "2026-09-11T11:10:11Z"
 sources:
   - id: work-item
     resource: https://github.com/ktogias/gnostoa/issues/14

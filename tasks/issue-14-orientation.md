@@ -6,9 +6,9 @@
 - Projection: `D14-O1`
 - Status: `CURRENT`
 - Subject: `1acf9bb448e7342bbf1b8a4cf16f3b2a86225f89` / tree `784e6875e2399f854637908358b4dceb7872cfa3`
-- Observed/evaluated: `2026-09-11T10:54:56Z` / `2026-09-11T10:55:00Z`
+- Observed/evaluated: `2026-09-11T12:03:52Z` / `2026-09-11T12:03:52Z`
 - Freshness: `86400` seconds; earliest expiry `2026-09-12T10:32:08Z`
-- Manifest: `sha256:2025492224fbd77d71438f697d38ad0954ae28d1b16cf0ade39e56e67f6ae215`
+- Manifest: `sha256:f9e94442ff58f6c5136ffcefa1c60fecd510f56846adcf5f33a044030f6ff9a9`
 - Coverage: `6` declared sources; diagnostics `0`
 
 ## Purpose
@@ -51,9 +51,9 @@
 
 ## Sources and freshness
 
-- `readme`: local-file, `complete`, observed `2026-09-11T10:54:56Z`, identity `sha256:819dc798620b7e4372574c1417c12569d07f6334f01e7d0a9d412622af86dc91`, assurance `locally-recomputed` — README.md
-- `roadmap`: local-file, `complete`, observed `2026-09-11T10:54:56Z`, identity `sha256:16a8047b1f218cb4991914ec2eb57cb8d6ff8fbc563bbf59fb22b7fb1c68e441`, assurance `locally-recomputed` — docs/roadmap.md
-- `decision-0065`: local-file, `complete`, observed `2026-09-11T10:54:56Z`, identity `sha256:09d24bd46744e24118c5ccb849cdff34eb310f710d4bb611caec95060e106bc4`, assurance `locally-recomputed` — knowledge/decisions/0065-run-a-bounded-gnostoa-self-orientation-snapshot.md
+- `readme`: local-file, `complete`, observed `2026-09-11T12:03:52Z`, identity `sha256:819dc798620b7e4372574c1417c12569d07f6334f01e7d0a9d412622af86dc91`, assurance `locally-recomputed` — README.md
+- `roadmap`: local-file, `complete`, observed `2026-09-11T12:03:52Z`, identity `sha256:16a8047b1f218cb4991914ec2eb57cb8d6ff8fbc563bbf59fb22b7fb1c68e441`, assurance `locally-recomputed` — docs/roadmap.md
+- `decision-0065`: local-file, `complete`, observed `2026-09-11T12:03:52Z`, identity `sha256:6d4b064d2b4341b5257ff7aa36cc7f5e750d7b128b254ea2eb1c1f01a92a5594`, assurance `locally-recomputed` — knowledge/decisions/0065-run-a-bounded-gnostoa-self-orientation-snapshot.md
 - `main-entrance`: recorded-observation, `complete`, observed `2026-09-11T10:42:06Z`, identity `git:1acf9bb448e7342bbf1b8a4cf16f3b2a86225f89`, assurance `recorded-not-authenticated` — https://github.com/ktogias/gnostoa/commit/1acf9bb448e7342bbf1b8a4cf16f3b2a86225f89
-- `issue-14-admission`: recorded-observation, `complete`, observed `2026-09-11T10:47:24Z`, identity `github-comment:5633306062`, assurance `recorded-not-authenticated` — https://github.com/ktogias/gnostoa/issues/14#issuecomment-5633306062
+- `issue-14-admission`: recorded-observation, `complete`, observed `2026-09-11T11:10:07Z`, identity `github-comment:5633306062`, assurance `recorded-not-authenticated` — https://github.com/ktogias/gnostoa/issues/14#issuecomment-5633306062
 - `reviewed-proposal`: recorded-observation, `complete`, observed `2026-09-11T10:32:08Z`, identity `sha256:64f85a9ec1a58b2e8fa22c69dd7a3051851c3ec91a6d91d8d4e7cebe0d8fe013`, assurance `recorded-not-authenticated` — https://github.com/ktogias/gnostoa/issues/14#issuecomment-5633105771

@@ -1,12 +1,11 @@
 {
   "contract": "gnostoa-self-orientation/0.1",
   "subject": {
-    "source_commit": "1acf9bb448e7342bbf1b8a4cf16f3b2a86225f89",
-    "source_tree": "784e6875e2399f854637908358b4dceb7872cfa3"
+"source_commit": "1acf9bb448e7342bbf1b8a4cf16f3b2a86225f89", "source_tree": "784e6875e2399f854637908358b4dceb7872cfa3", "_public_identity_note": "# pragma: allowlist secret -- public Git commit and tree identities"
   },
   "projection": {
     "id": "D14-O1",
-    "observed_at": "2026-09-11T10:54:56Z",
+    "observed_at": "2026-09-11T12:03:52Z",
     "freshness_seconds": 86400,
     "review_characters": 5000
   },
@@ -16,7 +15,7 @@
       "kind": "local-file",
       "locator": "README.md",
       "identity": "sha256:819dc798620b7e4372574c1417c12569d07f6334f01e7d0a9d412622af86dc91",
-      "observed_at": "2026-09-11T10:54:56Z",
+      "observed_at": "2026-09-11T12:03:52Z",
       "required": true,
       "status": "complete"
     },
@@ -25,7 +24,7 @@
       "kind": "local-file",
       "locator": "docs/roadmap.md",
       "identity": "sha256:16a8047b1f218cb4991914ec2eb57cb8d6ff8fbc563bbf59fb22b7fb1c68e441",
-      "observed_at": "2026-09-11T10:54:56Z",
+      "observed_at": "2026-09-11T12:03:52Z",
       "required": true,
       "status": "complete"
     },
@@ -33,8 +32,8 @@
       "id": "decision-0065",
       "kind": "local-file",
       "locator": "knowledge/decisions/0065-run-a-bounded-gnostoa-self-orientation-snapshot.md",
-      "identity": "sha256:09d24bd46744e24118c5ccb849cdff34eb310f710d4bb611caec95060e106bc4",
-      "observed_at": "2026-09-11T10:54:56Z",
+      "identity": "sha256:6d4b064d2b4341b5257ff7aa36cc7f5e750d7b128b254ea2eb1c1f01a92a5594",
+      "observed_at": "2026-09-11T12:03:52Z",
       "required": true,
       "status": "complete"
     },
@@ -52,7 +51,7 @@
       "kind": "recorded-observation",
       "locator": "https://github.com/ktogias/gnostoa/issues/14#issuecomment-5633306062",
       "identity": "github-comment:5633306062",
-      "observed_at": "2026-09-11T10:47:24Z",
+      "observed_at": "2026-09-11T11:10:07Z",
       "required": true,
       "status": "complete"
     },
@@ -70,63 +69,93 @@
     "purpose": {
       "id": "purpose",
       "text": "Make project knowledge usable by people and interchangeable agents while preserving explicit authority and verifiable results.",
-      "source_ids": ["readme", "reviewed-proposal"]
+      "source_ids": [
+        "readme",
+        "reviewed-proposal"
+      ]
     },
     "implemented": [
       {
         "id": "implemented",
         "text": "Source and OCI toolkit, task-envelope projector, context-pack, experiment Capsule, scoped acceptance fixture and review-exchange fixtures exist with bounded evidence.",
-        "source_ids": ["readme", "roadmap"]
+        "source_ids": [
+          "readme",
+          "roadmap"
+        ]
       }
     ],
     "proposed": [
       {
         "id": "proposed",
         "text": "Generic portfolio projection, broad controlled provider lifecycle, thin host dispatcher, protected acceptance and full Phase D remain proposals or unperformed work.",
-        "source_ids": ["roadmap", "reviewed-proposal"]
+        "source_ids": [
+          "roadmap",
+          "reviewed-proposal"
+        ]
       }
     ],
     "current": [
       {
         "id": "current",
         "text": "Issue #14 / D14-O1 is the owner-selected bounded Gnostoa-self orientation construction.",
-        "source_ids": ["issue-14-admission", "decision-0065"]
+        "source_ids": [
+          "issue-14-admission",
+          "decision-0065"
+        ]
       }
     ],
     "next_action": {
       "id": "next-action",
       "text": "Verify the exact D14-O1 candidate and prepare it for owner review.",
-      "source_ids": ["issue-14-admission", "decision-0065"]
+      "source_ids": [
+        "issue-14-admission",
+        "decision-0065"
+      ]
     },
     "proposed_successor": {
       "id": "proposed-successor",
       "text": "Evaluate #237's component-reuse recommendation after this slice is dispositioned.",
-      "source_ids": ["issue-14-admission", "reviewed-proposal"],
+      "source_ids": [
+        "issue-14-admission",
+        "reviewed-proposal"
+      ],
       "admission_state": "PROPOSED; not admitted by D14-O1"
     },
     "blockers": [
       {
         "id": "adoption-boundary",
         "text": "Full Phase D has not run and L10 protected-consumer refusal remains open. Neither is a prerequisite for D14-O1 or every adoption task; the selected future task determines which qualification defects block it.",
-        "source_ids": ["roadmap", "reviewed-proposal"]
+        "source_ids": [
+          "roadmap",
+          "reviewed-proposal"
+        ]
       }
     ],
     "constraints": [
       {
         "id": "authority-boundary",
         "text": "This read-only view grants no semantic approval, provider mutation, merge, public-contract promotion or readiness claim.",
-        "source_ids": ["issue-14-admission", "decision-0065"]
+        "source_ids": [
+          "issue-14-admission",
+          "decision-0065"
+        ]
       },
       {
         "id": "model-boundary",
         "text": "Use suitable economical models for admitted evaluation; do not silently substitute Astra or a paid fallback, and retain actual requested/served identity when known.",
-        "source_ids": ["issue-14-admission", "decision-0065"]
+        "source_ids": [
+          "issue-14-admission",
+          "decision-0065"
+        ]
       }
     ],
     "return_to_adoption": {
       "id": "return-to-adoption",
       "text": "After D14-O1 disposition, select the future adoption task and apply only its actual oracle, qualification and launch gates; this view is not a prerequisite for every adoption task.",
-      "source_ids": ["reviewed-proposal", "decision-0065"]
+      "source_ids": [
+        "reviewed-proposal",
+        "decision-0065"
+      ]
     }
   }
 }

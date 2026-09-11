@@ -1,11 +1,11 @@
 ---
-type: Assessment
+type: Source
 title: Bounded Gnostoa-self orientation snapshot result
 description: Initial D14-O1 construction and consumer result, retaining its false-current baseline, review corrections and current verification boundary.
 status: draft
 generated:
   by: agent:codex
-  at: "2026-09-11T11:05:00Z"
+  at: "2026-09-11T11:10:11Z"
 sources:
   - id: work-item
     resource: https://github.com/ktogias/gnostoa/issues/14
@@ -37,7 +37,7 @@ x-project-knowledge:
 ## Result
 
 D14-O1 now has one self-only JSON source, deterministic machine manifest and
-4,423-code-point Markdown view. `README.md`, `docs/roadmap.md` and `AGENTS.md`
+bounded Markdown view. `README.md`, `docs/roadmap.md` and `AGENTS.md`
 route to it. The agent route stops at the compact view for a current status or
 “what now?” request unless a named source is needed, while implementation still
 continues through the full governance route.
@@ -64,7 +64,7 @@ It returned `CURRENT` and erased Issue #237; the explicit expectation for
 `CONFLICTING` failed. This is a constructed counterexample, not an observed
 historical production defect.
 
-After implementation, 16 focused tests pass. They cover equivalent fact/source
+After implementation and the public-identity annotation fix, 17 focused tests pass. They cover equivalent fact/source
 content in JSON and Markdown, deterministic reordered input, zero/two current
 items, missing/partial/conflicting sources, stale/future/invalid times, local
 digest and caller-observation mismatch, declared-provider assurance, bounded
@@ -130,6 +130,39 @@ execution, self-only placement and consumed entry routing. The executor-authored
 tests establish those mechanics, not semantic truth of entered facts. The owner
 must still review the exact snapshot content and candidate before merge.
 
-The public-surface comparison and final exact-candidate review remain required.
+The public surface digest is unchanged at `sha256:ef84573c5be406f0ec69d29b0581556bada46a6eaaaace47f89f07e4a1b37ed8`. Final exact-candidate verification remains required.
 A negative owner disposition is valid; do not rescue it by adding a public schema,
 provider adapter, runtime or generic workflow engine.
+
+## Final preparation corrections and cost boundary
+
+The first pushed head `dacb45a` failed provider CI because this record used the
+unsupported `Assessment` concept type. It now uses the existing `Source` type.
+Earlier local suite results preceded this final metadata and must not be read as
+exact-head success. The first extended attempt also failed on an unwritable
+container cache; the second identified two public Git identities as secret
+candidates. A narrowly named optional subject annotation records that these are
+public identities, using the repository's inline scanner-annotation convention.
+Git ID validation remains required and has a regression check.
+
+Local observation times and Decision creation metadata were refreshed after the
+first timestamp correction proved incomplete. Admission was read back again at
+`2026-09-11T11:10:07Z`, with an exact matching published body. The reader follow-up
+initially read the wrong checkout's router, then corrected the absolute path;
+it is a resumed wording check, not a blind trial.
+
+Luna's code and delta reviews recommended owner review at their recorded file
+hashes. The final metadata/scanner annotation is a later root-reviewed change,
+not silently covered by those earlier reviews. Individual reports and root
+dispositions are retained in [the evidence index](14-orientation-evidence/index.json).
+The existing experiment handoff and packager preserve the raw observations;
+this does not create Phase-D launch authority or prove provider authenticity.
+
+Total token
+and credit saving is **not established**: repeated review, large supervisor
+context and coordination added overhead. Root stopped further model experiments
+and reviews and completed only necessary repairs, verification and delivery.
+No new subscription, credential, automatic paid fallback or additional worker
+was configured. Billed model identity remains unobserved.
+Future comparisons must include supervisor, worker, retry and handoff usage;
+cheaper worker tokens alone are not evidence of cheaper total delivery.

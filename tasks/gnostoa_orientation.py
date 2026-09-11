@@ -99,7 +99,12 @@ def validate_snapshot(snapshot: Any) -> dict[str, Any]:
     )
     if root["contract"] != CONTRACT:
         raise OrientationError(f"contract must be {CONTRACT!r}")
-    subject = _closed_keys(root["subject"], {"source_commit", "source_tree"}, "subject")
+    subject_keys = {"source_commit", "source_tree"}
+    if isinstance(root["subject"], dict) and "_public_identity_note" in root["subject"]:
+        subject_keys.add("_public_identity_note")
+    subject = _closed_keys(root["subject"], subject_keys, "subject")
+    if "_public_identity_note" in subject:
+        _line(subject["_public_identity_note"], "subject._public_identity_note")
     for name in ("source_commit", "source_tree"):
         if not isinstance(subject[name], str) or not GIT_ID.fullmatch(subject[name]):
             raise OrientationError(
