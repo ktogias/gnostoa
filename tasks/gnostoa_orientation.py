@@ -197,6 +197,16 @@ def _within_root(root: Path, locator: str) -> Path:
     return target
 
 
+def _git_environment() -> dict[str, str]:
+    environment = {
+        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+    }
+    environment.update(
+        {"GIT_OPTIONAL_LOCKS": "0", "LC_ALL": "C", "LANG": "C"}
+    )
+    return environment
+
+
 def _git_output(root: Path, *args: str) -> str:
     root = root.resolve()
     try:
@@ -213,7 +223,7 @@ def _git_output(root: Path, *args: str) -> str:
             capture_output=True,
             text=True,
             timeout=GIT_TIMEOUT_SECONDS,
-            env={**os.environ, "LC_ALL": "C", "LANG": "C"},
+            env=_git_environment(),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise OrientationError("cannot observe repository Git subject") from exc
@@ -249,11 +259,16 @@ def observe_repository_subject(repository_root: Path) -> dict[str, str]:
     top_level = Path(_git_output(root, "rev-parse", "--show-toplevel")).resolve()
     if top_level != root:
         raise OrientationError("repository root does not match Git top level")
+    source_commit = _git_output(root, "rev-parse", "--verify", "HEAD^{commit}")
+    if not GIT_ID.fullmatch(source_commit):
+        raise OrientationError(
+            "observed_repository_subject.source_commit must be a 40-character Git object ID"
+        )
+    source_tree = _git_output(
+        root, "rev-parse", "--verify", f"{source_commit}^{{tree}}"
+    )
     return _repository_subject(
-        {
-            "source_commit": _git_output(root, "rev-parse", "--verify", "HEAD^{commit}"),
-            "source_tree": _git_output(root, "rev-parse", "--verify", "HEAD^{tree}"),
-        },
+        {"source_commit": source_commit, "source_tree": source_tree},
         "observed_repository_subject",
     )
 
