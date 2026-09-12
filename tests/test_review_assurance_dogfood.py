@@ -120,7 +120,9 @@ def _dogfood_documents() -> tuple[dict[str, object], dict[str, object]]:
 
 
 class ReviewAssuranceDogfoodTests(unittest.TestCase):
-    def test_real_pr239_native_reviews_normalize_without_invented_authority(self) -> None:
+    def test_real_pr239_native_reviews_normalize_without_invented_authority(
+        self,
+    ) -> None:
         dogfood = _json(FIX / "dogfood-pr239.json")
         reviews = dogfood["reviews"]
         self.assertIsInstance(reviews, list)
@@ -128,7 +130,9 @@ class ReviewAssuranceDogfoodTests(unittest.TestCase):
             "5182705577": ("qodo-code-review[bot]", "COMMENTED", "COMMENT_ONLY"),
             "5182778419": ("sourcery-ai[bot]", "APPROVED", "APPROVE"),
         }
-        self.assertEqual(set(expected), {str(item["github_review_id"]) for item in reviews})
+        self.assertEqual(
+            set(expected), {str(item["github_review_id"]) for item in reviews}
+        )
         for record in reviews:
             self.assertIsInstance(record, dict)
             assessment, mismatches = normalize_observation(_dogfood_observation(record))
@@ -138,9 +142,13 @@ class ReviewAssuranceDogfoodTests(unittest.TestCase):
                 self.assertEqual(reviewer, assessment["reviewer_id"])
                 self.assertEqual(raw, assessment["raw_recommendation"])
                 self.assertEqual(normalized, assessment["normalized_recommendation"])
-                self.assertEqual(record["source_url"], assessment["native"]["source_url"])
+                self.assertEqual(
+                    record["source_url"], assessment["native"]["source_url"]
+                )
 
-    def test_pr239_older_head_reviews_stay_visible_but_do_not_count_for_final_head(self) -> None:
+    def test_pr239_older_head_reviews_stay_visible_but_do_not_count_for_final_head(
+        self,
+    ) -> None:
         input_document, policy_document = _dogfood_documents()
         code, payload = evaluate_documents(input_document, policy_document)
         self.assertEqual(3, code)
