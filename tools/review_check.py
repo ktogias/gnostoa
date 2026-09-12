@@ -10,7 +10,12 @@ from jsonschema import Draft202012Validator
 
 from .knowledge_common import KnowledgeFormatError, load_yaml, toolkit_root
 from .review_evaluate import ReviewInputError, evaluate
-from .review_model import ERROR_EXIT_CODE, SEMANTIC_EXIT_CODES, canonical_json, error_payload
+from .review_model import (
+    ERROR_EXIT_CODE,
+    SEMANTIC_EXIT_CODES,
+    canonical_json,
+    error_payload,
+)
 from .review_policy import default_project_policy_path, resolve_project_policy
 
 
@@ -29,7 +34,9 @@ def _schema(name: str) -> dict[str, Any]:
 
 def _schema_errors(document: object, schema_name: str) -> list[str]:
     validator = Draft202012Validator(_schema(schema_name))
-    errors = sorted(validator.iter_errors(document), key=lambda item: list(item.absolute_path))
+    errors = sorted(
+        validator.iter_errors(document), key=lambda item: list(item.absolute_path)
+    )
     rendered: list[str] = []
     for error in errors:
         location = ".".join(str(part) for part in error.absolute_path) or "<root>"
@@ -37,15 +44,23 @@ def _schema_errors(document: object, schema_name: str) -> list[str]:
     return rendered
 
 
-def evaluate_documents(input_document: object, policy_document: object) -> tuple[int, dict[str, Any]]:
+def evaluate_documents(
+    input_document: object, policy_document: object
+) -> tuple[int, dict[str, Any]]:
     if not isinstance(input_document, dict):
-        payload = error_payload("MALFORMED_INVOCATION", "review-check input must be an object")
+        payload = error_payload(
+            "MALFORMED_INVOCATION", "review-check input must be an object"
+        )
         return ERROR_EXIT_CODE, payload
     if not isinstance(policy_document, dict):
-        payload = error_payload("CONFIGURATION_ERROR", "review policy must be an object")
+        payload = error_payload(
+            "CONFIGURATION_ERROR", "review policy must be an object"
+        )
         return ERROR_EXIT_CODE, payload
     if input_document.get("schema_version") != "1.0":
-        payload = error_payload("UNSUPPORTED_INPUT", "unsupported review-check input schema_version")
+        payload = error_payload(
+            "UNSUPPORTED_INPUT", "unsupported review-check input schema_version"
+        )
         return ERROR_EXIT_CODE, payload
     try:
         input_errors = _schema_errors(input_document, "review-check-input.schema.json")
@@ -87,7 +102,9 @@ def _parser() -> argparse.ArgumentParser:
         prog="knowledge review-check",
         description="Evaluate deterministic advisory semantic-review assurance over retained file evidence.",
     )
-    parser.add_argument("--input", type=Path, required=True, help="review-check input JSON")
+    parser.add_argument(
+        "--input", type=Path, required=True, help="review-check input JSON"
+    )
     parser.add_argument(
         "--policy",
         type=Path,

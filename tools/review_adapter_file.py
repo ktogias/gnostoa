@@ -17,7 +17,9 @@ _NATIVE_RECOMMENDATIONS = {
 }
 
 
-def normalize_observation(observation: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+def normalize_observation(
+    observation: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
     native = observation.get("native")
     native_mapping = native if isinstance(native, dict) else {}
     raw_state = native_mapping.get("recommendation_state")
@@ -42,13 +44,19 @@ def normalize_observation(observation: dict[str, Any]) -> tuple[dict[str, Any], 
         if claimed_normalized is not None and claimed_normalized != normalized:
             mismatches.append("normalized_recommendation")
         claimed_admitted = claims.get("admitted")
-        if claimed_admitted is not None and claimed_admitted is not authoritative_admitted:
+        if (
+            claimed_admitted is not None
+            and claimed_admitted is not authoritative_admitted
+        ):
             mismatches.append("admitted")
         claimed_adapter_id = claims.get("adapter_id")
         if claimed_adapter_id is not None and claimed_adapter_id != ADAPTER_ID:
             mismatches.append("adapter_id")
         claimed_adapter_version = claims.get("adapter_version")
-        if claimed_adapter_version is not None and claimed_adapter_version != ADAPTER_VERSION:
+        if (
+            claimed_adapter_version is not None
+            and claimed_adapter_version != ADAPTER_VERSION
+        ):
             mismatches.append("adapter_version")
         claimed_rule_id = claims.get("rule_id")
         if claimed_rule_id is not None and claimed_rule_id != provenance["rule_id"]:
@@ -61,7 +69,10 @@ def normalize_observation(observation: dict[str, Any]) -> tuple[dict[str, Any], 
                 "rule_id",
                 "raw_state_digest",
             ):
-                if field in claimed_provenance and claimed_provenance[field] != provenance[field]:
+                if (
+                    field in claimed_provenance
+                    and claimed_provenance[field] != provenance[field]
+                ):
                     mismatches.append(f"normalization_provenance.{field}")
 
     assessment = {
