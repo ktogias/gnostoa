@@ -55,13 +55,16 @@ The first R2A implementation is bootstrap. `current_advisory + candidate_under_t
 
 ## Pre-registered RED harness
 
-Create only these focused pre-production test artifacts in the RED commit:
+Create exactly these four focused pre-production artifacts in the RED commit:
 
 ```text
 tests/test_review_assurance.py
 tests/fixtures/review_check/cases.json
 tests/fixtures/review_check/expected.json
+tests/fixtures/review_check/red-observed-output.json
 ```
+
+The first three are authored before the RED run. `red-observed-output.json` is populated only with the exact canonical stdout bytes observed from that RED run and retained in the same RED commit; it is evidence, not an expected-output template.
 
 The test file uses the standard-library `unittest` runner and invokes the future public route as an external command where CLI behavior is under test; pure-contract cases may import future modules only after they exist. The RED command is exactly:
 
@@ -82,7 +85,7 @@ The RED harness has one receipt-bearing output channel:
 - **stderr must be exactly zero bytes**. Any stderr output invalidates the RED receipt and blocks handoff;
 - stdout has a hard maximum of **65,536 bytes**. **No truncation is permitted**: exceeding the limit invalidates the receipt rather than hashing a truncated stream;
 - `bounded_output_sha256` is SHA-256 of the exact stdout bytes described above, including the final LF and excluding stderr;
-- the exact stdout bytes are retained byte-for-byte at `tests/fixtures/review_check/red-observed-output.json` in the RED commit. Its file SHA-256 must equal `bounded_output_sha256`;
+- exact stdout bytes are retained byte-for-byte at `tests/fixtures/review_check/red-observed-output.json` in the RED commit. Its file SHA-256 must equal `bounded_output_sha256`;
 - `red_output_artifact` in the receipt is exactly `tests/fixtures/review_check/red-observed-output.json`.
 
 The report `schema` is `gnostoa-review-assurance-red/v1`, `phase` is `RED`, and `required_case_ids` contains every required R-ID in this contract. The RED receipt is invalid if the retained file differs from captured stdout, if stderr is nonempty, if a required R-ID is absent, or if the report exceeds the byte limit. There is no executor-defined alternate capture/truncation convention.
