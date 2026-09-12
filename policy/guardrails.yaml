@@ -612,4 +612,4 @@ guardrails:
       - tests/test_gnostoa_orientation_git_guard.py::OrientationGitGuardTests.test_bound_repository_subject_is_evidence_and_each_mismatch_is_stale
       - tests/test_gnostoa_orientation_git_guard.py::OrientationGitGuardTests.test_observer_derives_tree_from_the_observed_commit
       - tests/test_gnostoa_orientation_git_guard.py::OrientationGitGuardTests.test_observer_rejects_repository_subdirectory_as_explicit_root
-      - tests/test_gnostoa_orientation_git_guard.py::OrientationGitGuardTests.test_git_invocation_uses_exact_local_trust_without_shell_or-wildcard
+      - tests/test_gnostoa_orientation_git_guard.py::OrientationGitGuardTests.test_git_invocation_uses_exact_local_trust_without_shell_or_wildcard
