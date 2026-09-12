@@ -95,17 +95,17 @@ The stdout report `schema` is `gnostoa-review-assurance-red/v1`, `phase` is `RED
 ### RED receipt — must be completed before production handoff
 
 ```text
-red_commit: PENDING
+red_commit: 97244d233e8c798c23a408ffe40f5eb96f252b40
 command: python tests/test_review_assurance.py
-exit_code: PENDING   # must be nonzero
-stdout_bytes: PENDING
-bounded_output_sha256: PENDING
+exit_code: 1   # must be nonzero
+stdout_bytes: 698
+bounded_output_sha256: sha256:6584f3cde2f6916f90e39e825b768fbdbecb51958f734e5358bf9c6896207e9b
 red_output_artifact: tests/fixtures/review_check/red-observed-output.json
-stderr_bytes: PENDING   # must be 0
-red_harness_blob: PENDING
-red_cases_blob: PENDING
-red_expected_blob: PENDING
-red_output_blob: PENDING
+stderr_bytes: 0   # must be 0
+red_harness_blob: 02ba5e5fba45d60c5b9435f7d080f40fbe62940c
+red_cases_blob: ea2b21fb6aec057ad19eb200df1c492464e0dfd9
+red_expected_blob: 1e971fc7bce48d0f0b7067fa0cf3884d78f13cb3
+red_output_blob: 1fe79157a85098c1f04b27dc1848752a306af63a
 production_paths_absent:
   - schemas/review-check-input.schema.json
   - schemas/review-policy.schema.json
