@@ -20,7 +20,7 @@ scope:
     - required merge checks, provider settings and generic policy expression engines
     - a trusted native review-assurance judge identity in v1
 state:
-  status: ready
+  status: active
   completed:
     - Owner approved canonical D11-R2A architecture R8 after convergence with no material review findings.
     - Decision 0067 and the bounded RED-first execution contract were admitted before production implementation.
@@ -31,7 +31,8 @@ state:
     - Real PR 239 dogfood at evidence head 42df107ebbd609fc3816d3e00d606511fdcd396c preserved older-head Qodo/Sourcery reviews without counting them for final-head quorum.
     - Dogfood run 34692998501 passed 710 tests, the unchanged R01-R45 GREEN oracle and all required repository verification jobs.
     - Implementation result and deep implementation retrospective are recorded and routed in Gnostoa knowledge.
-  next_action: Accountable-owner semantic review of the exact final PR 240 candidate; implementation convergence is evidence only and does not authorize merge.
+    - Finalization review 5645932855 found no record-content defect; it required only that owner-ready state follow exact-head finalization CI and review convergence rather than precede them.
+  next_action: Complete exact-head CI and finalization review of the current PR head; after convergence emit one state-only checkpoint to ready for accountable-owner semantic review.
   blocker: null
 identities:
   base:
@@ -69,23 +70,26 @@ references:
       resource: knowledge/assessments/11-review-assurance-implementation-retrospective.md
     - id: implementation-review
       resource: https://github.com/ktogias/gnostoa/pull/240#issuecomment-5645773763
+    - id: finalization-review
+      resource: https://github.com/ktogias/gnostoa/pull/240#issuecomment-5645932855
 handoff:
-  actor: accountable owner semantic reviewer; merge authorization remains separate
+  actor: finalization verifier/coordinator; accountable-owner semantic review follows only after the ready checkpoint
   read:
     - Decision 0067, implementation result and implementation retrospective
-    - exact current PR 240 diff plus converged CodeRabbit review and CI evidence
+    - exact current PR 240 diff plus converged implementation and finalization review evidence
     - immutable RED contract and real-provider dogfood evidence only as needed for uncertainty
   verify:
-    - exact current PR head and CI remain unchanged and green after evidence-only finalization
-    - production code remains unchanged from converged f08b3e00e52c73333cdf356fb45374fb4e2ebbbe unless a later reviewed correction says otherwise
+    - exact current PR head passes all required CI after the finalization records and this task-state correction
+    - production code remains unchanged from converged f08b3e00e52c73333cdf356fb45374fb4e2ebbbe
+    - finalization review has no remaining BLOCKING or MATERIAL finding before the state-only ready transition
     - review evidence does not claim independent domains absent Issue 10 qualification
 recording:
   actor: agent:gpt-5.6-sol
-  at: "2026-09-12T12:26:00Z"
+  at: "2026-09-12T12:39:00Z"
 review:
   projection_characters: 6000
   owner_minutes: 30
   on_exceed: block
 checkpoint:
-  sequence: 2
-  previous: sha256:9650244a2d8f8a720a11c88676dc3fe1619296b4045c9310ace442a232431f71
+  sequence: 3
+  previous: sha256:c9e8cb2dc15c4138793e97f45e591abeb571053c5a4d76804827aa8e835b1eaf
