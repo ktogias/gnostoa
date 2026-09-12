@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, NoReturn
 
 from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError
 
 from .knowledge_common import KnowledgeFormatError, load_yaml, toolkit_root
 from .review_evaluate import ReviewInputError, evaluate
@@ -29,6 +30,7 @@ def _schema(name: str) -> dict[str, Any]:
     loaded = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(loaded, dict):
         raise KnowledgeFormatError(f"Schema must be an object in {path}")
+    Draft202012Validator.check_schema(loaded)
     return loaded
 
 
@@ -87,6 +89,12 @@ def evaluate_documents(
             )
     except ReviewInputError as exc:
         return ERROR_EXIT_CODE, error_payload(exc.code, str(exc), details=exc.details)
+    except SchemaError as exc:
+        return ERROR_EXIT_CODE, error_payload(
+            "CONFIGURATION_ERROR",
+            "installed review-assurance schema is invalid",
+            details={"schema_error": str(exc)},
+        )
     except (KnowledgeFormatError, OSError, ValueError, TypeError) as exc:
         return ERROR_EXIT_CODE, error_payload("CONFIGURATION_ERROR", str(exc))
     outcome = result.get("outcome")
@@ -121,7 +129,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--policy",
         type=Path,
-        help="effective policy YAML/JSON or project review-policy source",
+        help="historical/file-replay effective policy YAML/JSON or project review-policy source",
     )
     parser.add_argument(
         "--change-class",
@@ -145,6 +153,29 @@ def _load_policy(path: Path | None, change_class: str | None) -> dict[str, Any]:
     return loaded
 
 
+def _current_advisory_bootstrap_issue(
+    input_document: object,
+    policy_path: Path | None,
+) -> str | None:
+    if not isinstance(input_document, dict):
+        return None
+    context = input_document.get("evaluation_context")
+    if not isinstance(context, dict) or context.get("mode") != "current_advisory":
+        return None
+    if policy_path is not None:
+        return (
+            "current_advisory forbids caller-selected --policy; the bootstrap route "
+            "uses only the packaged Gnostoa-self policy"
+        )
+    if context.get("judge_relation") == "prior_integrated":
+        return (
+            "current_advisory prior-integrated authority acquisition is not available "
+            "in the bootstrap P1 file CLI; use candidate_under_test until a separately "
+            "integrated protected authority/judge record exists"
+        )
+    return None
+
+
 def _malformed(message: str) -> tuple[int, dict[str, Any]]:
     return ERROR_EXIT_CODE, error_payload("MALFORMED_INVOCATION", message)
 
@@ -160,12 +191,19 @@ def main(argv: list[str] | None = None) -> int:
     except (ValueError, OSError, json.JSONDecodeError) as exc:
         code, payload = _malformed(str(exc))
     else:
-        try:
-            policy_document = _load_policy(args.policy, args.change_class)
-        except (KnowledgeFormatError, OSError, ValueError, TypeError) as exc:
-            code, payload = _configuration(str(exc))
+        bootstrap_issue = _current_advisory_bootstrap_issue(
+            input_document,
+            args.policy,
+        )
+        if bootstrap_issue is not None:
+            code, payload = _configuration(bootstrap_issue)
         else:
-            code, payload = evaluate_documents(input_document, policy_document)
+            try:
+                policy_document = _load_policy(args.policy, args.change_class)
+            except (KnowledgeFormatError, OSError, ValueError, TypeError) as exc:
+                code, payload = _configuration(str(exc))
+            else:
+                code, payload = evaluate_documents(input_document, policy_document)
     sys.stdout.write(canonical_json(payload) + "\n")
     return code
 
