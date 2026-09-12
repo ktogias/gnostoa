@@ -9,11 +9,14 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from tools import review_check
+from tools import cli, review_check
 from tools.review_model import canonical_digest, canonical_json
 
 ROOT = Path(__file__).resolve().parents[1]
 CASES = ROOT / "tests" / "fixtures" / "review_check" / "cases.json"
+RED_CONTRACT = (
+    ROOT / "knowledge" / "assessments" / "11-review-assurance-red-contract.md"
+)
 
 
 def _documents() -> tuple[dict[str, object], dict[str, object]]:
@@ -29,6 +32,69 @@ def _documents() -> tuple[dict[str, object], dict[str, object]]:
     if isinstance(context, dict) and context.get("mode") == "historical_replay":
         context.setdefault("fixture_only", True)
     return input_document, policy_document
+
+
+def _production_replay_documents() -> tuple[dict[str, object], dict[str, object]]:
+    input_document, policy_document = _documents()
+    context = input_document["evaluation_context"]
+    self_context = context
+    if not isinstance(self_context, dict):
+        raise AssertionError("evaluation_context must be an object")
+    self_context["fixture_only"] = False
+
+    target = input_document["subject"]
+    if not isinstance(target, dict):
+        raise AssertionError("subject must be an object")
+    evidence_set = input_document["evidence_set"]
+    if not isinstance(evidence_set, dict):
+        raise AssertionError("evidence_set must be an object")
+    observations = evidence_set["observations"]
+    if not isinstance(observations, list):
+        raise AssertionError("observations must be an array")
+    for observation in observations:
+        if not isinstance(observation, dict):
+            raise AssertionError("observation must be an object")
+        binding = observation["subject_binding"]
+        if not isinstance(binding, dict):
+            raise AssertionError("subject_binding must be an object")
+        binding["repository"] = target["repository"]
+        binding["change_request"] = copy.deepcopy(target["change_request"])
+
+    qualification = input_document["qualification_snapshot"]
+    if not isinstance(qualification, dict):
+        raise AssertionError("qualification_snapshot must be an object")
+    qualification["qualifying_authority"] = "integrated-qualification-authority"
+    entries = qualification["entries"]
+    if not isinstance(entries, list):
+        raise AssertionError("qualification entries must be an array")
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise AssertionError("qualification entry must be an object")
+        entry["provenance"] = {"basis": "integrated"}
+
+    authority = input_document["authority"]
+    if not isinstance(authority, dict):
+        raise AssertionError("authority must be an object")
+    authority["qualification_snapshot_digest"] = canonical_digest(qualification)
+    return input_document, policy_document
+
+
+def _red_receipt_fields() -> dict[str, str]:
+    text = RED_CONTRACT.read_text(encoding="utf-8")
+    heading = "### RED receipt — must be completed before production handoff"
+    if heading not in text:
+        return {}
+    tail = text.split(heading, 1)[1]
+    start = tail.find("```text")
+    end = tail.find("```", start + 7)
+    if start < 0 or end < 0:
+        return {}
+    fields: dict[str, str] = {}
+    for line in tail[start + 7 : end].splitlines():
+        if line and not line[0].isspace() and ":" in line:
+            key, value = line.split(":", 1)
+            fields[key.strip()] = value.split("#", 1)[0].strip()
+    return fields
 
 
 def _error_code(payload: dict[str, object]) -> object:
@@ -259,8 +325,14 @@ class ReviewAssurancePropertyRegressionTests(unittest.TestCase):
                 ),
                 redirect_stdout(output),
             ):
-                code = review_check.main(
-                    ["--input", str(input_path), "--policy", str(policy_path)]
+                code = cli.main(
+                    [
+                        "review-check",
+                        "--input",
+                        str(input_path),
+                        "--policy",
+                        str(policy_path),
+                    ]
                 )
 
         self.assertEqual(0, code)
@@ -376,6 +448,44 @@ class ReviewAssurancePropertyRegressionTests(unittest.TestCase):
 
         self.assertEqual(2, code)
         self.assertEqual("CONFIGURATION_ERROR", _error_code(payload))
+
+    def test_non_fixture_review_binding_cannot_cross_change_request_or_repository(
+        self,
+    ) -> None:
+        input_document, policy_document = _production_replay_documents()
+        code, payload = review_check.evaluate_documents(
+            copy.deepcopy(input_document), copy.deepcopy(policy_document)
+        )
+        self.assertEqual(0, code)
+        self.assertEqual("PASS", payload["outcome"])
+
+        for dimension in ("change_request", "repository"):
+            candidate = copy.deepcopy(input_document)
+            target = candidate["subject"]
+            self.assertIsInstance(target, dict)
+            if dimension == "change_request":
+                change_request = target["change_request"]
+                self.assertIsInstance(change_request, dict)
+                change_request["id"] = "other-request"
+            else:
+                target["repository"] = "ktogias/other-repository"
+
+            code, payload = review_check.evaluate_documents(
+                candidate, copy.deepcopy(policy_document)
+            )
+
+            with self.subTest(dimension=dimension):
+                self.assertEqual(3, code)
+                self.assertEqual("INCOMPLETE", payload["outcome"])
+                self.assertEqual("QUORUM_UNMET", payload["reason"])
+                self.assertTrue(payload["assessments"])
+                for assessment in payload["assessments"]:
+                    self.assertIn("subject_not_exact", assessment["exclusion_reasons"])
+
+    def test_red_receipt_declares_a_nonzero_red_exit(self) -> None:
+        fields = _red_receipt_fields()
+        self.assertIn("exit_code", fields)
+        self.assertNotEqual(0, int(fields["exit_code"]))
 
 
 if __name__ == "__main__":

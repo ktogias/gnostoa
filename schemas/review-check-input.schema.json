@@ -37,6 +37,15 @@
       },
       "additionalProperties": false
     },
+    "changeRequest": {
+      "type": "object",
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": {"$ref": "#/$defs/nonEmptyString"},
+        "id": {"$ref": "#/$defs/nonEmptyString"}
+      },
+      "additionalProperties": false
+    },
     "reviewSubject": {
       "type": "object",
       "required": [
@@ -48,15 +57,7 @@
       ],
       "properties": {
         "repository": {"$ref": "#/$defs/nonEmptyString"},
-        "change_request": {
-          "type": "object",
-          "required": ["kind", "id"],
-          "properties": {
-            "kind": {"$ref": "#/$defs/nonEmptyString"},
-            "id": {"$ref": "#/$defs/nonEmptyString"}
-          },
-          "additionalProperties": false
-        },
+        "change_request": {"$ref": "#/$defs/changeRequest"},
         "head_commit": {"$ref": "#/$defs/gitCommit"},
         "comparison": {"$ref": "#/$defs/comparison"},
         "observed_at": {"$ref": "#/$defs/timestamp"}
@@ -125,6 +126,8 @@
       "required": ["status", "head_commit", "comparison"],
       "properties": {
         "status": {"enum": ["exact", "partial", "unestablished"]},
+        "repository": {"$ref": "#/$defs/nonEmptyString"},
+        "change_request": {"$ref": "#/$defs/changeRequest"},
         "head_commit": {"$ref": "#/$defs/gitCommit"},
         "comparison": {"$ref": "#/$defs/comparison"}
       },

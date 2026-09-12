@@ -103,7 +103,7 @@ def _semantic(
     )
 
 
-def _exact_subject_binding(binding: object, target: dict[str, Any]) -> bool:
+def _subject_commit_pair_matches(binding: object, target: dict[str, Any]) -> bool:
     if not isinstance(binding, dict) or binding.get("status") != "exact":
         return False
     if binding.get("head_commit") != target.get("head_commit"):
@@ -114,6 +114,17 @@ def _exact_subject_binding(binding: object, target: dict[str, Any]) -> bool:
         isinstance(expected, dict)
         and isinstance(observed, dict)
         and observed == expected
+    )
+
+
+def _exact_subject_binding(binding: object, target: dict[str, Any]) -> bool:
+    if not isinstance(binding, dict):
+        return False
+    if not _subject_commit_pair_matches(binding, target):
+        return False
+    return (
+        binding.get("repository") == target.get("repository")
+        and binding.get("change_request") == target.get("change_request")
     )
 
 
@@ -258,7 +269,15 @@ def _prepare_assessments(
 
     for observation, assessment in semantic_rows:
         reasons: list[str] = []
-        if not _exact_subject_binding(observation.get("subject_binding"), target):
+        binding = observation.get("subject_binding")
+        legacy_fixture_binding = (
+            allow_synthetic_revision_lineage
+            and isinstance(binding, dict)
+            and "repository" not in binding
+            and "change_request" not in binding
+            and _subject_commit_pair_matches(binding, target)
+        )
+        if not legacy_fixture_binding and not _exact_subject_binding(binding, target):
             reasons.append("subject_not_exact")
         source = observation.get("source_id")
         if not isinstance(source, str) or not source or source not in recognized:
