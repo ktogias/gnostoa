@@ -20,21 +20,23 @@ scope:
     - required merge checks, provider settings and generic policy expression engines
     - a trusted native review-assurance judge identity in v1
 state:
-  status: ready
+  status: active
   completed:
     - Owner approved canonical D11-R2A architecture R8 after convergence with no material review findings.
     - Decision 0067 and the bounded RED-first execution contract were admitted before production implementation.
     - Immutable RED receipt at commit 97244d233e8c798c23a408ffe40f5eb96f252b40 proved R01-R45 failed before production review-assurance paths existed.
-    - Production implementation converged at exact code head f08b3e00e52c73333cdf356fb45374fb4e2ebbbe after self-authorization and result/error-boundary repairs.
+    - Production implementation initially converged at exact code head f08b3e00e52c73333cdf356fb45374fb4e2ebbbe after self-authorization and result/error-boundary repairs.
     - Exact-head run 34692238908 passed policy, fast, Python 3.11/3.12, Ruff, strict mypy, regression, smoke and SB2=19 exact-candidate binding.
-    - CodeRabbit exact-head review 5645773763 reported no BLOCKING or MATERIAL implementation finding and IMPLEMENTATION_CONVERGED.
-    - Real PR 239 dogfood at evidence head 42df107ebbd609fc3816d3e00d606511fdcd396c preserved older-head Qodo/Sourcery reviews without counting them for final-head quorum.
-    - Dogfood run 34692998501 passed 710 tests, the unchanged R01-R45 GREEN oracle and all required repository verification jobs.
-    - Implementation result and deep implementation retrospective are recorded and routed in Gnostoa knowledge.
-    - Finalization review 5645932855 found no record-content defect; it required only that owner-ready state follow exact-head finalization CI and review convergence rather than precede them.
-    - Finalization parent c9b5dc06b34c4d18a0e5a26166d17606b80334d8 passed exact-head workflow run 34694338506 across policy, fast, Python 3.11/3.12, Ruff, strict mypy, regression, smoke and exact-candidate binding.
-    - CodeRabbit finalization review 5645995443 verified that sequencing repair on c9b5dc06b34c4d18a0e5a26166d17606b80334d8 and reported FINALIZATION_CONVERGED with no BLOCKING or MATERIAL finding.
-  next_action: Accountable-owner semantic review of the exact final PR 240 candidate. This ready checkpoint is a state-only transition from the already CI-clean and review-converged finalization parent; merge authorization remains separate.
+    - CodeRabbit exact-head review 5645773763 reported no BLOCKING or MATERIAL implementation finding and IMPLEMENTATION_CONVERGED on that earlier evidence cut.
+    - Real PR 239 provider records were retained for bounded normalization and older-head characterization.
+    - Finalization parent c9b5dc06b34c4d18a0e5a26166d17606b80334d8 passed exact-head workflow run 34694338506 and CodeRabbit finalization review 5645995443.
+    - Ready checkpoint 45befab9d65da2cb68fec916101071818ebac4ec passed required workflow run 34694896906; extended was skipped and was not represented as PASS.
+    - Accountable-owner approval 5647591088 was recorded for that exact source head before merge.
+    - Merge was blocked by unresolved-review protection; new material Sourcery and Qodo findings then arrived on the same source head after the approval.
+    - Post-approval RCA 5648009539 established that candidate identity and review-evidence cut are separate freshness subjects and that the prior approval became stale before merge.
+    - PR 240 was returned to Draft and corrective convergence was explicitly selected; no merge occurred and protected main remained unchanged.
+  next_action: >-
+    Complete corrective implementation and discriminating property tests for the post-approval findings, reconcile dogfood and knowledge claims, reach exact-head CI plus declared review-collection convergence on a frozen Ready candidate, and only then request a new owner approval bound to that candidate and review-evidence cut.
   blocker: null
 identities:
   base:
@@ -60,7 +62,7 @@ references:
       resource: https://github.com/ktogias/gnostoa/issues/11#issuecomment-5641706425
     - id: architecture-convergence
       resource: https://github.com/ktogias/gnostoa/issues/11#issuecomment-5641717198
-    - id: owner-approval
+    - id: architecture-owner-approval
       resource: https://github.com/ktogias/gnostoa/issues/11#issuecomment-5641780494
     - id: red-contract
       resource: knowledge/assessments/11-review-assurance-red-contract.md
@@ -70,30 +72,33 @@ references:
       resource: knowledge/assessments/11-review-assurance-implementation-result.md
     - id: implementation-retrospective
       resource: knowledge/assessments/11-review-assurance-implementation-retrospective.md
-    - id: implementation-review
+    - id: earlier-implementation-review
       resource: https://github.com/ktogias/gnostoa/pull/240#issuecomment-5645773763
-    - id: finalization-sequencing-review
-      resource: https://github.com/ktogias/gnostoa/pull/240#issuecomment-5645932855
-    - id: finalization-convergence-review
-      resource: https://github.com/ktogias/gnostoa/pull/240#issuecomment-5645995443
+    - id: earlier-owner-approval
+      resource: https://github.com/ktogias/gnostoa/pull/240#issuecomment-5647591088
+    - id: post-approval-merge-hold
+      resource: https://github.com/ktogias/gnostoa/pull/240#issuecomment-5647619400
+    - id: post-approval-process-rca
+      resource: https://github.com/ktogias/gnostoa/issues/11#issuecomment-5648009539
 handoff:
-  actor: accountable owner semantic reviewer; merge authorization remains separate
+  actor: corrective implementation and review coordinator; accountable-owner review follows only after a fresh review-evidence cut
   read:
-    - Decision 0067, implementation result and implementation retrospective
-    - exact current PR 240 diff and the already verified/review-converged finalization parent c9b5dc06b34c4d18a0e5a26166d17606b80334d8
-    - immutable RED contract and real-provider dogfood evidence only as needed for uncertainty
+    - Decision 0067 and immutable RED contract
+    - post-approval RCA 5648009539 and all unresolved current-head PR 240 review threads
+    - corrected implementation result and retrospective before final owner handoff
   verify:
-    - this checkpoint changes task state only and adds no implementation, policy, schema, test-oracle, dogfood or knowledge-result semantics
-    - production code remains unchanged from converged f08b3e00e52c73333cdf356fb45374fb4e2ebbbe
-    - the finalization parent c9b5dc06b34c4d18a0e5a26166d17606b80334d8 already passed run 34694338506 and review 5645995443 before this ready transition
-    - review evidence does not claim independent domains absent Issue 10 qualification
+    - immutable RED receipt and pre-production fixture blobs remain unchanged
+    - post-RED tests discriminate duplicate identity order, unproven revision lineage, policy-exemption precedence and mechanical list replacement
+    - real pre-R2A provider records are not assigned synthetic historical production authority
+    - current_advisory bootstrap reason is invariant to caller-authored judge or policy claims after basic input/context validation
+    - exact frozen Ready candidate has completed required CI and a declared review-evidence cut with every material finding disposition reconciled before owner approval
 recording:
   actor: agent:gpt-5.6-sol
-  at: "2026-09-12T12:52:00Z"
+  at: "2026-09-12T19:06:35Z"
 review:
   projection_characters: 6000
   owner_minutes: 30
   on_exceed: block
 checkpoint:
-  sequence: 4
-  previous: sha256:40312490e09789ba7014043badb4c15a66fc33dd14a19c26df6c49177b0ba2f3
+  sequence: 5
+  previous: sha256:424c9a5f553b2008af16a18ae70db5448fc5872ae06f5d30dc4bae27ee0bf7f5
