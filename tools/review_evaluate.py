@@ -5,8 +5,17 @@ from datetime import datetime
 from typing import Any
 
 from .review_adapter_file import normalize_observation
-from .review_model import canonical_digest, parse_rfc3339, semantic_result
-from .review_policy import effective_policy_issues
+from .review_model import (
+    canonical_digest,
+    canonical_json,
+    parse_rfc3339,
+    semantic_result,
+)
+from .review_policy import (
+    CHANGE_CLASSES,
+    REVIEW_REQUIREMENTS,
+    effective_policy_issues,
+)
 
 RECOGNIZED_RECOMMENDATIONS = {
     "APPROVE",
@@ -58,6 +67,19 @@ def _fresh(cut: datetime, as_of: datetime, rule: object) -> bool:
         return False
     age = (as_of - cut).total_seconds()
     return 0 <= age <= seconds
+
+
+def _policy_result_provenance_issues(policy: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+    for field in ("id", "version"):
+        value = policy.get(field)
+        if not isinstance(value, str) or not value:
+            issues.append(f"policy {field} must be a non-empty string")
+    if policy.get("change_class") not in CHANGE_CLASSES:
+        issues.append("policy change_class is unresolved")
+    if policy.get("review_requirement") not in REVIEW_REQUIREMENTS:
+        issues.append("policy review_requirement is unresolved")
+    return sorted(set(issues))
 
 
 def _judge_binding_matches(expected: dict[str, Any], acquired: dict[str, Any]) -> bool:
@@ -169,7 +191,7 @@ def _prepare_assessments(
         if isinstance(observation_id, str):
             previous = seen_ids.get(observation_id)
             if previous is not None:
-                if previous != observation:
+                if canonical_json(previous) != canonical_json(observation):
                     raise ReviewInputError(
                         "CONFIGURATION_ERROR",
                         "duplicate observation_id has conflicting retained records",
@@ -189,13 +211,21 @@ def _prepare_assessments(
             )
         normalized_rows.append((observation, assessment))
 
-    grouped: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = defaultdict(list)
+    grouped: dict[
+        tuple[str, str], list[tuple[dict[str, Any], dict[str, Any]]]
+    ] = defaultdict(list)
     ungrouped: list[tuple[dict[str, Any], dict[str, Any]]] = []
     for row in normalized_rows:
         native = row[0].get("native")
         object_id = native.get("object_id") if isinstance(native, dict) else None
-        if isinstance(object_id, str) and object_id:
-            grouped[object_id].append(row)
+        source_id = row[0].get("source_id")
+        if (
+            isinstance(source_id, str)
+            and source_id
+            and isinstance(object_id, str)
+            and object_id
+        ):
+            grouped[(source_id, object_id)].append(row)
         else:
             ungrouped.append(row)
 
@@ -358,6 +388,13 @@ def evaluate(
     if policy_document.get("schema_version") != "1.0":
         raise ReviewInputError(
             "CONFIGURATION_ERROR", "unsupported review policy schema_version"
+        )
+    provenance_issues = _policy_result_provenance_issues(policy_document)
+    if provenance_issues:
+        raise ReviewInputError(
+            "CONFIGURATION_ERROR",
+            "review policy cannot produce valid result provenance",
+            details={"issues": provenance_issues},
         )
 
     context = _mapping(input_document.get("evaluation_context"), "evaluation_context")
@@ -541,7 +578,7 @@ def evaluate(
         if isinstance(source_id, str) and source_id:
             previous = sources_by_id.get(source_id)
             if previous is not None:
-                if previous != source:
+                if canonical_json(previous) != canonical_json(source):
                     raise ReviewInputError(
                         "CONFIGURATION_ERROR",
                         "duplicate source_id has conflicting collection records",
@@ -559,9 +596,7 @@ def evaluate(
 
     canonical_sources = [sources_by_id[key] for key in sorted(sources_by_id)]
 
-    collection_complete = target_current
-    if not target_current:
-        source_diagnostics.append("subject freshness requirement is unmet")
+    collection_complete = True
     for source_id in required_sources:
         required_source = sources_by_id.get(source_id)
         if required_source is None:
@@ -613,6 +648,25 @@ def evaluate(
         allow_synthetic_revision_lineage=fixture_only,
     )
 
+    collection_result = {
+        "complete": collection_complete,
+        "required_sources": required_sources,
+        "sources": canonical_sources,
+        "diagnostics": sorted(set(source_diagnostics)),
+    }
+
+    if not target_current:
+        return _semantic(
+            "INCOMPLETE",
+            "SUBJECT_NOT_CURRENT",
+            input_document=input_document,
+            policy_document=policy_document,
+            assessments=assessments,
+            collection=collection_result,
+            exclusions=exclusions,
+            diagnostics=["subject freshness requirement is unmet"],
+        )
+
     blockers: list[dict[str, Any]] = []
     blocker_recommendations = set(
         policy_document.get("blockers", {}).get("recommendations", [])
@@ -646,13 +700,6 @@ def evaluate(
             "unresolved",
         }:
             unknown_thread = True
-
-    collection_result = {
-        "complete": collection_complete,
-        "required_sources": required_sources,
-        "sources": canonical_sources,
-        "diagnostics": sorted(set(source_diagnostics)),
-    }
 
     if blockers:
         return _semantic(

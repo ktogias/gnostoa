@@ -15,6 +15,10 @@ def effective_policy_issues(policy: object) -> list[str]:
     issues: list[str] = []
     if policy.get("schema_version") != "1.0":
         issues.append("unsupported policy schema_version")
+    for field in ("id", "version"):
+        value = policy.get(field)
+        if not isinstance(value, str) or not value:
+            issues.append(f"policy {field} is unresolved")
     if policy.get("abstract") is True:
         issues.append("policy is abstract")
     requirement = policy.get("review_requirement")

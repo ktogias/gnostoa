@@ -98,7 +98,7 @@
           "uniqueItems": true,
           "items": {"$ref": "#/$defs/nonEmptyString"}
         },
-        "status": {"enum": ["accepted", "revoked", "deprecated", "unknown", "unavailable", "partial"]}
+        "status": {"enum": ["accepted", "revoked", "deprecated", "unknown"]}
       },
       "additionalProperties": false
     },
