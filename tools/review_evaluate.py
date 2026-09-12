@@ -117,27 +117,56 @@ def _exact_subject_binding(binding: object, target: dict[str, Any]) -> bool:
     )
 
 
+def _exclude_row(
+    row: tuple[dict[str, Any], dict[str, Any]],
+    reason: str,
+    assessments: list[dict[str, Any]],
+    exclusions: list[dict[str, Any]],
+) -> None:
+    assessment = row[1]
+    reasons = set(assessment.get("exclusion_reasons", []))
+    reasons.add(reason)
+    assessment["eligible"] = False
+    assessment["exclusion_reasons"] = sorted(reasons)
+    assessments.append(assessment)
+    exclusions.append(
+        {
+            "observation_id": assessment.get("observation_id"),
+            "reasons": sorted(reasons),
+        }
+    )
+
+
 def _prepare_assessments(
     observations: list[Any],
     target: dict[str, Any],
     policy: dict[str, Any],
     as_of: datetime,
+    *,
+    allow_synthetic_revision_lineage: bool = False,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     recognized = set(policy.get("collection", {}).get("recognized_sources", []))
     observation_rule = policy.get("subject", {}).get("observation_freshness", {})
     assessments: list[dict[str, Any]] = []
     active: list[dict[str, Any]] = []
     exclusions: list[dict[str, Any]] = []
-    seen_ids: set[str] = set()
+    seen_ids: dict[str, dict[str, Any]] = {}
 
     normalized_rows: list[tuple[dict[str, Any], dict[str, Any]]] = []
     for raw in observations:
         observation = _mapping(raw, "review observation")
         observation_id = observation.get("observation_id")
-        if isinstance(observation_id, str) and observation_id in seen_ids:
-            continue
         if isinstance(observation_id, str):
-            seen_ids.add(observation_id)
+            previous = seen_ids.get(observation_id)
+            if previous is not None:
+                if previous != observation:
+                    raise ReviewInputError(
+                        "CONFIGURATION_ERROR",
+                        "duplicate observation_id has conflicting retained records",
+                        details={"observation_id": observation_id},
+                    )
+                continue
+            seen_ids[observation_id] = observation
         assessment, claim_mismatches = normalize_observation(observation)
         if claim_mismatches:
             raise ReviewInputError(
@@ -162,33 +191,70 @@ def _prepare_assessments(
 
     semantic_rows: list[tuple[dict[str, Any], dict[str, Any]]] = list(ungrouped)
     for rows in grouped.values():
+        if len(rows) == 1:
+            semantic_rows.extend(rows)
+            continue
+
         revisions = [
             row[0].get("native", {}).get("revision")
             if isinstance(row[0].get("native"), dict)
             else None
             for row in rows
         ]
-        typed_revisions: list[int] = []
-        for item in revisions:
-            if not isinstance(item, int) or isinstance(item, bool):
-                break
-            typed_revisions.append(item)
-        if len(rows) > 1 and len(typed_revisions) == len(revisions):
-            highest = max(typed_revisions)
-            for row, revision in zip(rows, typed_revisions, strict=True):
+        typed = [
+            item
+            for item in revisions
+            if isinstance(item, int) and not isinstance(item, bool)
+        ]
+
+        if allow_synthetic_revision_lineage and len(typed) == len(revisions):
+            if len(set(typed)) != len(typed):
+                for row in rows:
+                    _exclude_row(
+                        row,
+                        "revision_lineage_unproven",
+                        assessments,
+                        exclusions,
+                    )
+                continue
+            highest = max(typed)
+            for row, revision in zip(rows, typed, strict=True):
                 if revision == highest:
                     semantic_rows.append(row)
                 else:
-                    row[1]["exclusion_reasons"].append("superseded_revision")
-                    exclusions.append(
-                        {
-                            "observation_id": row[1].get("observation_id"),
-                            "reason": "superseded_revision",
-                        }
+                    _exclude_row(
+                        row,
+                        "superseded_revision",
+                        assessments,
+                        exclusions,
                     )
-                    assessments.append(row[1])
-        else:
-            semantic_rows.extend(rows)
+            continue
+
+        if allow_synthetic_revision_lineage:
+            valid_rows = [
+                row
+                for row, revision in zip(rows, revisions, strict=True)
+                if isinstance(revision, int) and not isinstance(revision, bool)
+            ]
+            invalid_rows = [row for row in rows if row not in valid_rows]
+            if len(valid_rows) == 1:
+                semantic_rows.extend(valid_rows)
+                for row in invalid_rows:
+                    _exclude_row(
+                        row,
+                        "revision_lineage_unproven",
+                        assessments,
+                        exclusions,
+                    )
+                continue
+
+        for row in rows:
+            _exclude_row(
+                row,
+                "revision_lineage_unproven",
+                assessments,
+                exclusions,
+            )
 
     for observation, assessment in semantic_rows:
         reasons: list[str] = []
@@ -226,6 +292,13 @@ def _prepare_assessments(
 
     assessments.sort(key=lambda item: str(item.get("observation_id")))
     active.sort(key=lambda item: str(item.get("observation_id")))
+    exclusions.sort(
+        key=lambda item: (
+            str(item.get("observation_id")),
+            str(item.get("reason")),
+            str(item.get("reasons")),
+        )
+    )
     return assessments, active, exclusions
 
 
@@ -283,6 +356,17 @@ def evaluate(
     qualification_snapshot = _mapping(
         input_document.get("qualification_snapshot"), "qualification_snapshot"
     )
+
+    if mode == "current_advisory":
+        return _semantic(
+            "INCOMPLETE",
+            "BOOTSTRAP_PROTECTED_AUTHORITY_UNAVAILABLE",
+            input_document=input_document,
+            policy_document=policy_document,
+            diagnostics=[
+                "bootstrap P1 has no protected prior-integrated current-advisory authority acquisition"
+            ],
+        )
 
     if authority.get("policy_digest") != canonical_digest(policy_document):
         return _semantic(
@@ -357,16 +441,7 @@ def evaluate(
             "UNSUPPORTED_INPUT",
             "selected judge does not support the input schema version",
         )
-    if mode == "current_advisory":
-        return _semantic(
-            "INCOMPLETE",
-            "BOOTSTRAP_PROTECTED_AUTHORITY_UNAVAILABLE",
-            input_document=input_document,
-            policy_document=policy_document,
-            diagnostics=[
-                "bootstrap P1 has no protected prior-integrated current-advisory authority acquisition"
-            ],
-        )
+
     if mode == "historical_replay" and not fixture_only:
         qualifier = qualification_snapshot.get("qualifying_authority")
         fixture_entries = qualification_snapshot.get("entries", [])
@@ -395,6 +470,14 @@ def evaluate(
                 ],
             )
 
+    if policy_document.get("review_requirement") == "none":
+        return _semantic(
+            "PASS",
+            "POLICY_EXEMPT",
+            input_document=input_document,
+            policy_document=policy_document,
+        )
+
     subject_rule = policy_document.get("subject", {}).get("freshness", {})
     target_current = _fresh(target_cut, as_of, subject_rule)
 
@@ -411,6 +494,15 @@ def evaluate(
         source = _mapping(raw_source, "collection source")
         source_id = source.get("source_id")
         if isinstance(source_id, str) and source_id:
+            previous = sources_by_id.get(source_id)
+            if previous is not None:
+                if previous != source:
+                    raise ReviewInputError(
+                        "CONFIGURATION_ERROR",
+                        "duplicate source_id has conflicting collection records",
+                        details={"source_id": source_id},
+                    )
+                continue
             sources_by_id[source_id] = source
         cut = _time(source.get("observed_at"), "collection source observed_at")
         if cut > as_of:
@@ -419,6 +511,8 @@ def evaluate(
                 "collection cut is later than EvaluationContext.as_of",
                 details={"source_id": source_id},
             )
+
+    canonical_sources = [sources_by_id[key] for key in sorted(sources_by_id)]
 
     collection_complete = target_current
     if not target_current:
@@ -472,6 +566,7 @@ def evaluate(
         target,
         policy_document,
         as_of,
+        allow_synthetic_revision_lineage=fixture_only,
     )
 
     blockers: list[dict[str, Any]] = []
@@ -511,7 +606,7 @@ def evaluate(
     collection_result = {
         "complete": collection_complete,
         "required_sources": required_sources,
-        "sources": sources,
+        "sources": canonical_sources,
         "diagnostics": sorted(set(source_diagnostics)),
     }
 
@@ -553,17 +648,6 @@ def evaluate(
             conflicts=conflicts,
             exclusions=exclusions,
             diagnostics=source_diagnostics,
-        )
-
-    if policy_document.get("review_requirement") == "none":
-        return _semantic(
-            "PASS",
-            "POLICY_EXEMPT",
-            input_document=input_document,
-            policy_document=policy_document,
-            assessments=assessments,
-            collection=collection_result,
-            exclusions=exclusions,
         )
 
     if not collection_complete or unknown_thread:
