@@ -144,7 +144,7 @@ production_paths_absent:
 | R23 | Positive prose without an admitted native recommendation state normalizes to `UNKNOWN`, never inferred `APPROVE`. |
 | R24 | Eligible current `REQUEST_CHANGES` yields `BLOCKED`. |
 | R25 | A known blocker is not masked by another missing required source. |
-| R26 | Anonymous, unrecognized or non-current evidence gets neither automatic veto nor quorum authority. |
+| R26 | Evidence that is partially/unestablished subject-bound, anonymous, policy-unrecognized, non-current, or lacks admitted normalization provenance remains visible but has no blocker or conflict authority; it also cannot satisfy quorum merely by existing. |
 | R27 | Unresolved thread blocks only according to policy; unknown thread state can remain incomplete. |
 | R28 | Within one invocation and one selected valid policy whose `conflicts` section declares the applicable recommendation pair, two eligible conflicting review dispositions produce `CONFLICTING`, distinct from `INCOMPLETE`; policies themselves are never compared. |
 
