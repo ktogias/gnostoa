@@ -1,0 +1,35 @@
+{
+  "schema": "gnostoa-review-assurance-dogfood/v1",
+  "subject": {
+    "repository": "ktogias/gnostoa",
+    "change_request": {
+      "kind": "github-pull-request",
+      "id": "239"
+    },
+    "final_head_commit": "1fa8eb9ff1ae0604663f2611cd67fdedb97d88c9",
+    "merge_base_commit": "a0b7c8a170942fce61ff3c08b350bc3d7ab0a2a0"
+  },
+  "reviews": [
+    {
+      "provider": "qodo-code-review",
+      "reviewer_id": "qodo-code-review[bot]",
+      "github_review_id": "5182705577",
+      "source_url": "https://github.com/ktogias/gnostoa/pull/239#pullrequestreview-5182705577",
+      "submitted_at": "2026-09-11T19:32:03Z",
+      "reviewed_head_commit": "1337c82e28256f265b4c28b1fe41980e2cf7e832",
+      "reviewed_merge_base_commit": "a0b7c8a170942fce61ff3c08b350bc3d7ab0a2a0",
+      "native_recommendation_state": "COMMENTED"
+    },
+    {
+      "provider": "sourcery-ai",
+      "reviewer_id": "sourcery-ai[bot]",
+      "github_review_id": "5182778419",
+      "source_url": "https://github.com/ktogias/gnostoa/pull/239#pullrequestreview-5182778419",
+      "submitted_at": "2026-09-11T19:41:28Z",
+      "reviewed_head_commit": "204695d0647a0601f4fbae340e2fc86234dedfb3",
+      "reviewed_merge_base_commit": "a0b7c8a170942fce61ff3c08b350bc3d7ab0a2a0",
+      "native_recommendation_state": "APPROVED"
+    }
+  ],
+  "provenance_note": "The two records above are retained native GitHub review objects observed for PR #239. They are older-head pre-R2A evidence. This fixture does not assign independence domains, capabilities, historical R2A authority, or final-head review status."
+}

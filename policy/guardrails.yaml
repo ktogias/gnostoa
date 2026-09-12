@@ -1,4 +1,4 @@
-version: "0.15.0"
+version: "0.16.0"
 guardrails:
   - id: prior-art-before-self-change
     title: Gnostoa self-changes reuse applicable alternatives and license research before custom work
@@ -464,6 +464,31 @@ guardrails:
     tests:
       - tests/test_supplied_agent_review_capture.py::SuppliedAgentReviewCaptureTests.test_guardrail_declares_the_kit_only_review_contract
       - tests/test_supplied_agent_review_capture.py::SuppliedAgentReviewCaptureTests.test_router_runbook_and_decision_bind_the_capture_anchor
+
+  - id: semantic-review-assurance
+    title: Gnostoa self-review assurance is evaluated from bound retained evidence without merge authority
+    applies_to: [kit]
+    enforcement: hybrid
+    owner: team:gnostoa-maintainers
+    guidance: knowledge/decisions/0067-evaluate-semantic-review-assurance-through-bound-evidence.md#decision
+    implementation:
+      - core/review-policy.yaml
+      - policy/review-policy.yaml
+      - schemas/review-check-input.schema.json
+      - schemas/review-policy.schema.json
+      - schemas/review-gate-result.schema.json
+      - tools/review_adapter_file.py
+      - tools/review_model.py
+      - tools/review_policy.py
+      - tools/review_evaluate.py
+      - tools/review_check.py
+      - tools/cli.py
+    tests:
+      - tests/test_review_assurance.py
+      - tests/test_review_assurance_integration.py
+      - tests/test_review_assurance_property_regressions.py
+      - tests/test_review_assurance_dogfood.py
+      - tests/test_review_assurance_final_loop_regressions.py
 
   - id: authoritative-centralized-ci
     title: Centralized CI authoritatively verifies the latest integration candidate

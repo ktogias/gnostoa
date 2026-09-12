@@ -1,0 +1,227 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ktogias.github.io/gnostoa/schemas/v1/review-check-input.schema.json",
+  "title": "Gnostoa review-assurance check input v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "subject",
+    "evaluation_context",
+    "authority",
+    "acquired_judge",
+    "evidence_set",
+    "qualification_snapshot"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "subject": {"$ref": "#/$defs/reviewSubject"},
+    "evaluation_context": {"$ref": "#/$defs/evaluationContext"},
+    "authority": {"$ref": "#/$defs/authority"},
+    "acquired_judge": {"$ref": "#/$defs/judge"},
+    "evidence_set": {"$ref": "#/$defs/evidenceSet"},
+    "qualification_snapshot": {"$ref": "#/$defs/qualificationSnapshot"},
+    "candidate_claims": {"type": "object"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "nonEmptyString": {"type": "string", "minLength": 1},
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "gitCommit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "timestamp": {"type": "string", "format": "date-time"},
+    "comparison": {
+      "type": "object",
+      "required": ["kind", "commit_sha"],
+      "properties": {
+        "kind": {"const": "merge_base"},
+        "commit_sha": {"$ref": "#/$defs/gitCommit"}
+      },
+      "additionalProperties": false
+    },
+    "changeRequest": {
+      "type": "object",
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": {"$ref": "#/$defs/nonEmptyString"},
+        "id": {"$ref": "#/$defs/nonEmptyString"}
+      },
+      "additionalProperties": false
+    },
+    "reviewSubject": {
+      "type": "object",
+      "required": [
+        "repository",
+        "change_request",
+        "head_commit",
+        "comparison",
+        "observed_at"
+      ],
+      "properties": {
+        "repository": {"$ref": "#/$defs/nonEmptyString"},
+        "change_request": {"$ref": "#/$defs/changeRequest"},
+        "head_commit": {"$ref": "#/$defs/gitCommit"},
+        "comparison": {"$ref": "#/$defs/comparison"},
+        "observed_at": {"$ref": "#/$defs/timestamp"}
+      },
+      "additionalProperties": false
+    },
+    "evaluationContext": {
+      "type": "object",
+      "required": ["mode", "as_of", "judge_relation"],
+      "properties": {
+        "mode": {"enum": ["current_advisory", "historical_replay"]},
+        "as_of": {"$ref": "#/$defs/timestamp"},
+        "judge_relation": {"enum": ["prior_integrated", "candidate_under_test"]},
+        "fixture_only": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "judge": {
+      "type": "object",
+      "required": [
+        "acquisition",
+        "source_revision",
+        "public_surface_digest",
+        "runtime_image",
+        "runtime_revision",
+        "supported_input_schema_versions",
+        "status"
+      ],
+      "properties": {
+        "acquisition": {"enum": ["oci", "native", "unavailable", "partial"]},
+        "source_revision": {"$ref": "#/$defs/gitCommit"},
+        "public_surface_digest": {"$ref": "#/$defs/sha256"},
+        "runtime_image": {"$ref": "#/$defs/nonEmptyString"},
+        "runtime_revision": {"$ref": "#/$defs/gitCommit"},
+        "supported_input_schema_versions": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/nonEmptyString"}
+        },
+        "status": {"enum": ["accepted", "revoked", "deprecated", "unknown"]}
+      },
+      "additionalProperties": false
+    },
+    "authority": {
+      "type": "object",
+      "required": ["subject", "policy_digest", "qualification_snapshot_digest", "expected_judge"],
+      "properties": {
+        "subject": {
+          "type": "object",
+          "required": ["kind", "value"],
+          "properties": {
+            "kind": {"$ref": "#/$defs/nonEmptyString"},
+            "value": {"$ref": "#/$defs/nonEmptyString"}
+          },
+          "additionalProperties": false
+        },
+        "policy_digest": {"$ref": "#/$defs/sha256"},
+        "qualification_snapshot_digest": {"$ref": "#/$defs/sha256"},
+        "expected_judge": {"$ref": "#/$defs/judge"}
+      },
+      "additionalProperties": false
+    },
+    "subjectBinding": {
+      "type": "object",
+      "required": ["status", "head_commit", "comparison"],
+      "properties": {
+        "status": {"enum": ["exact", "partial", "unestablished"]},
+        "repository": {"$ref": "#/$defs/nonEmptyString"},
+        "change_request": {"$ref": "#/$defs/changeRequest"},
+        "head_commit": {"$ref": "#/$defs/gitCommit"},
+        "comparison": {"$ref": "#/$defs/comparison"}
+      },
+      "additionalProperties": false
+    },
+    "observation": {
+      "type": "object",
+      "required": [
+        "observation_id",
+        "reviewer_id",
+        "source_id",
+        "observed_at",
+        "subject_binding",
+        "native",
+        "findings",
+        "threads"
+      ],
+      "properties": {
+        "observation_id": {"$ref": "#/$defs/nonEmptyString"},
+        "reviewer_id": {"$ref": "#/$defs/nonEmptyString"},
+        "source_id": {"$ref": "#/$defs/nonEmptyString"},
+        "observed_at": {"$ref": "#/$defs/timestamp"},
+        "subject_binding": {"$ref": "#/$defs/subjectBinding"},
+        "native": {"type": "object"},
+        "findings": {"type": "array", "items": {}},
+        "threads": {"type": "object"},
+        "claims": {"type": "object"}
+      },
+      "additionalProperties": false
+    },
+    "collectionSource": {
+      "type": "object",
+      "required": ["source_id", "status", "observed_at"],
+      "properties": {
+        "source_id": {"$ref": "#/$defs/nonEmptyString"},
+        "status": {"enum": ["COMPLETE", "PARTIAL", "RATE_LIMITED", "UNAVAILABLE", "ERROR"]},
+        "observed_at": {"$ref": "#/$defs/timestamp"},
+        "cursor": {},
+        "snapshot": {},
+        "limits": {"type": "object"}
+      },
+      "additionalProperties": false
+    },
+    "evidenceSet": {
+      "type": "object",
+      "required": ["observed_at", "sources", "observations"],
+      "properties": {
+        "observed_at": {"$ref": "#/$defs/timestamp"},
+        "sources": {"type": "array", "items": {"$ref": "#/$defs/collectionSource"}},
+        "observations": {"type": "array", "items": {"$ref": "#/$defs/observation"}}
+      },
+      "additionalProperties": false
+    },
+    "qualificationEntry": {
+      "type": "object",
+      "required": [
+        "reviewer_id",
+        "source_id",
+        "independence_domain_id",
+        "capability_ids",
+        "status",
+        "observed_at",
+        "owner_relation",
+        "scope",
+        "provenance"
+      ],
+      "properties": {
+        "reviewer_id": {"$ref": "#/$defs/nonEmptyString"},
+        "source_id": {"$ref": "#/$defs/nonEmptyString"},
+        "independence_domain_id": {"$ref": "#/$defs/nonEmptyString"},
+        "capability_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/nonEmptyString"}
+        },
+        "status": {"enum": ["established", "unestablished", "revoked"]},
+        "observed_at": {"$ref": "#/$defs/timestamp"},
+        "owner_relation": {"enum": ["owner", "non_owner", "unknown"]},
+        "scope": {"type": "object"},
+        "provenance": {"type": "object"}
+      },
+      "additionalProperties": false
+    },
+    "qualificationSnapshot": {
+      "type": "object",
+      "required": ["snapshot_id", "revision", "qualifying_authority", "observed_at", "entries"],
+      "properties": {
+        "snapshot_id": {"$ref": "#/$defs/nonEmptyString"},
+        "revision": {"$ref": "#/$defs/nonEmptyString"},
+        "qualifying_authority": {"$ref": "#/$defs/nonEmptyString"},
+        "observed_at": {"$ref": "#/$defs/timestamp"},
+        "entries": {"type": "array", "items": {"$ref": "#/$defs/qualificationEntry"}}
+      },
+      "additionalProperties": false
+    }
+  }
+}
