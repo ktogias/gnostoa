@@ -78,11 +78,24 @@ def evaluate_documents(
                 details={"issues": policy_errors},
             )
         result = evaluate(input_document, policy_document)
+        result_errors = _schema_errors(result, "review-gate-result.schema.json")
+        if result_errors:
+            return ERROR_EXIT_CODE, error_payload(
+                "TOOL_ERROR",
+                "evaluator result does not satisfy the public result schema",
+                details={"issues": result_errors},
+            )
     except ReviewInputError as exc:
         return ERROR_EXIT_CODE, error_payload(exc.code, str(exc), details=exc.details)
     except (KnowledgeFormatError, OSError, ValueError, TypeError) as exc:
         return ERROR_EXIT_CODE, error_payload("CONFIGURATION_ERROR", str(exc))
     outcome = result.get("outcome")
+    if not isinstance(outcome, str):
+        return ERROR_EXIT_CODE, error_payload(
+            "TOOL_ERROR",
+            "evaluator returned a semantic result without a string outcome",
+            details={"outcome": outcome},
+        )
     exit_code = SEMANTIC_EXIT_CODES.get(outcome)
     if exit_code is None:
         return ERROR_EXIT_CODE, error_payload(
@@ -132,15 +145,27 @@ def _load_policy(path: Path | None, change_class: str | None) -> dict[str, Any]:
     return loaded
 
 
+def _malformed(message: str) -> tuple[int, dict[str, Any]]:
+    return ERROR_EXIT_CODE, error_payload("MALFORMED_INVOCATION", message)
+
+
+def _configuration(message: str) -> tuple[int, dict[str, Any]]:
+    return ERROR_EXIT_CODE, error_payload("CONFIGURATION_ERROR", message)
+
+
 def main(argv: list[str] | None = None) -> int:
     try:
         args = _parser().parse_args(sys.argv[1:] if argv is None else argv)
         input_document = _load_json(args.input.resolve())
-        policy_document = _load_policy(args.policy, args.change_class)
-        code, payload = evaluate_documents(input_document, policy_document)
-    except (ValueError, OSError, json.JSONDecodeError, KnowledgeFormatError) as exc:
-        code = ERROR_EXIT_CODE
-        payload = error_payload("MALFORMED_INVOCATION", str(exc))
+    except (ValueError, OSError, json.JSONDecodeError) as exc:
+        code, payload = _malformed(str(exc))
+    else:
+        try:
+            policy_document = _load_policy(args.policy, args.change_class)
+        except (KnowledgeFormatError, OSError, ValueError, TypeError) as exc:
+            code, payload = _configuration(str(exc))
+        else:
+            code, payload = evaluate_documents(input_document, policy_document)
     sys.stdout.write(canonical_json(payload) + "\n")
     return code
 

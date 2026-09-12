@@ -57,6 +57,12 @@ def effective_policy_issues(policy: object) -> list[str]:
     return sorted(set(issues))
 
 
+def _as_mapping(value: object, *, context: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise KnowledgeFormatError(f"{context} must resolve to a mapping")
+    return value
+
+
 def _load_source(path: Path, stack: tuple[Path, ...]) -> dict[str, Any]:
     resolved = path.resolve()
     if resolved in stack:
@@ -79,8 +85,14 @@ def _load_source(path: Path, stack: tuple[Path, ...]) -> dict[str, Any]:
             raise KnowledgeFormatError(
                 f"Parent review policy {reference!r} from {resolved} does not exist"
             )
-        merged = deep_merge(merged, _load_source(parent, (*stack, resolved)))
-    return deep_merge(merged, current)
+        merged = _as_mapping(
+            deep_merge(merged, _load_source(parent, (*stack, resolved))),
+            context=f"merged review policy {resolved}",
+        )
+    return _as_mapping(
+        deep_merge(merged, current),
+        context=f"review policy {resolved}",
+    )
 
 
 def resolve_project_policy(path: Path, change_class: str) -> dict[str, Any]:
@@ -98,7 +110,10 @@ def resolve_project_policy(path: Path, change_class: str) -> dict[str, Any]:
         raise KnowledgeFormatError(
             f"Review-policy source does not specialize {change_class!r}"
         )
-    selected = deep_merge(defaults, override)
+    selected = _as_mapping(
+        deep_merge(defaults, override),
+        context=f"effective review policy for {change_class}",
+    )
     selected.update(
         {
             "schema_version": "1.0",

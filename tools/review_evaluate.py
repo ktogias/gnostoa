@@ -168,11 +168,14 @@ def _prepare_assessments(
             else None
             for row in rows
         ]
-        if len(rows) > 1 and all(
-            isinstance(item, int) and not isinstance(item, bool) for item in revisions
-        ):
-            highest = max(int(item) for item in revisions)
-            for row, revision in zip(rows, revisions, strict=True):
+        typed_revisions: list[int] = []
+        for item in revisions:
+            if not isinstance(item, int) or isinstance(item, bool):
+                break
+            typed_revisions.append(item)
+        if len(rows) > 1 and len(typed_revisions) == len(revisions):
+            highest = max(typed_revisions)
+            for row, revision in zip(rows, typed_revisions, strict=True):
                 if revision == highest:
                     semantic_rows.append(row)
                 else:
@@ -419,17 +422,20 @@ def evaluate(
     if not target_current:
         source_diagnostics.append("subject freshness requirement is unmet")
     for source_id in required_sources:
-        source = sources_by_id.get(source_id)
-        if source is None:
+        required_source = sources_by_id.get(source_id)
+        if required_source is None:
             collection_complete = False
             source_diagnostics.append(f"required source {source_id!r} is missing")
             continue
-        if source.get("status") != "COMPLETE":
+        if required_source.get("status") != "COMPLETE":
             collection_complete = False
             source_diagnostics.append(
-                f"required source {source_id!r} is {source.get('status')!r}"
+                f"required source {source_id!r} is {required_source.get('status')!r}"
             )
-        cut = _time(source.get("observed_at"), "required collection source observed_at")
+        cut = _time(
+            required_source.get("observed_at"),
+            "required collection source observed_at",
+        )
         if not _fresh(cut, as_of, source_rule):
             collection_complete = False
             source_diagnostics.append(f"required source {source_id!r} is stale")

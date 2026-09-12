@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import json
 import unittest
 from pathlib import Path
+from unittest import mock
+
+from tools import review_check
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -35,6 +39,27 @@ class ReviewAssuranceIntegrationTests(unittest.TestCase):
         fast = verify.split("  fast)", 1)[1].split("    ;;", 1)[0]
         self.assertIn("python -m unittest discover -s tests -v", fast)
         self.assertIn("python tests/test_review_assurance.py", fast)
+
+    def test_malformed_evaluator_result_fails_closed(self) -> None:
+        fixture = json.loads(
+            (ROOT / "tests" / "fixtures" / "review_check" / "cases.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        input_document = fixture["base"]["input"]
+        policy_document = fixture["base"]["policy"]
+        with mock.patch.object(
+            review_check,
+            "evaluate",
+            return_value={"outcome": "PASS"},
+        ):
+            code, payload = review_check.evaluate_documents(
+                input_document,
+                policy_document,
+            )
+        self.assertEqual(2, code)
+        self.assertEqual("TOOL_ERROR", payload["error"]["code"])
+        self.assertIn("public result schema", payload["error"]["message"])
 
 
 if __name__ == "__main__":
