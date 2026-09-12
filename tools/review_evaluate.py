@@ -122,10 +122,9 @@ def _exact_subject_binding(binding: object, target: dict[str, Any]) -> bool:
         return False
     if not _subject_commit_pair_matches(binding, target):
         return False
-    return (
-        binding.get("repository") == target.get("repository")
-        and binding.get("change_request") == target.get("change_request")
-    )
+    return binding.get("repository") == target.get("repository") and binding.get(
+        "change_request"
+    ) == target.get("change_request")
 
 
 def _exclude_row(
