@@ -86,9 +86,7 @@ class ReviewAssurancePropertyRegressionTests(unittest.TestCase):
             "adapter_version": {"adapter_version": "9.9"},
             "rule_id": {"rule_id": "forged.rule"},
             "raw_state_digest": {
-                "normalization_provenance": {
-                    "raw_state_digest": "sha256:" + "0" * 64
-                }
+                "normalization_provenance": {"raw_state_digest": "sha256:" + "0" * 64}
             },
         }
 
@@ -117,7 +115,9 @@ class ReviewAssurancePropertyRegressionTests(unittest.TestCase):
                 self.assertIsInstance(mismatches, list)
                 self.assertTrue(mismatches)
 
-    def test_r43_file_mode_cli_uses_the_public_path_without_network_effects(self) -> None:
+    def test_r43_file_mode_cli_uses_the_public_path_without_network_effects(
+        self,
+    ) -> None:
         input_document, policy_document = _documents()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -162,9 +162,7 @@ class ReviewAssurancePropertyRegressionTests(unittest.TestCase):
             conflict["status"] = "revoked"
             other = copy.deepcopy(entries[1])
             entries[:] = (
-                [conflict, original, other]
-                if reverse
-                else [original, conflict, other]
+                [conflict, original, other] if reverse else [original, conflict, other]
             )
             authority = input_document["authority"]
             self.assertIsInstance(authority, dict)
@@ -189,9 +187,7 @@ class ReviewAssurancePropertyRegressionTests(unittest.TestCase):
         self.assertIsInstance(authority, dict)
         authority["qualification_snapshot_digest"] = canonical_digest(qualification)
 
-        code, payload = review_check.evaluate_documents(
-            input_document, policy_document
-        )
+        code, payload = review_check.evaluate_documents(input_document, policy_document)
 
         self.assertEqual(2, code)
         self.assertEqual("CONFIGURATION_ERROR", _error_code(payload))
