@@ -54,9 +54,9 @@ class ReviewAssurancePropertyRegressionTests(unittest.TestCase):
         second = copy.deepcopy(observations[1])
         variants = {
             "reversed": [second, first],
-            "duplicate-front": [first, first, second],
-            "duplicate-middle": [first, second, first],
-            "duplicate-tail": [first, second, first],
+            "duplicate-first-front": [first, first, second],
+            "duplicate-second-tail": [first, second, second],
+            "duplicate-first-tail": [first, second, first],
             "reversed-with-duplicate": [second, first, first],
         }
 
@@ -178,11 +178,8 @@ class ReviewAssurancePropertyRegressionTests(unittest.TestCase):
                 self.assertEqual(2, code)
                 self.assertEqual("CONFIGURATION_ERROR", _error_code(payload))
 
-    def test_exact_duplicate_qualification_identity_is_idempotent(self) -> None:
+    def test_exact_duplicate_qualification_identity_is_rejected(self) -> None:
         input_document, policy_document = _documents()
-        baseline_code, baseline = review_check.evaluate_documents(
-            copy.deepcopy(input_document), copy.deepcopy(policy_document)
-        )
         qualification = input_document["qualification_snapshot"]
         self.assertIsInstance(qualification, dict)
         entries = qualification["entries"]
@@ -192,12 +189,12 @@ class ReviewAssurancePropertyRegressionTests(unittest.TestCase):
         self.assertIsInstance(authority, dict)
         authority["qualification_snapshot_digest"] = canonical_digest(qualification)
 
-        duplicate_code, duplicate = review_check.evaluate_documents(
+        code, payload = review_check.evaluate_documents(
             input_document, policy_document
         )
 
-        self.assertEqual(baseline_code, duplicate_code)
-        self.assertEqual(canonical_json(baseline), canonical_json(duplicate))
+        self.assertEqual(2, code)
+        self.assertEqual("CONFIGURATION_ERROR", _error_code(payload))
 
 
 if __name__ == "__main__":
