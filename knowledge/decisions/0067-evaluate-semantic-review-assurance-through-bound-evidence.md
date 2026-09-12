@@ -1,11 +1,11 @@
 ---
 type: Decision
 title: Evaluate semantic review assurance through bound evidence and an advisory deterministic gate
-description: Keep review evidence, collection completeness, qualification, authority, judge identity, machine result and human authority separately bound.
+description: Keep review evidence, collection completeness, qualification, authority, judge identity, normalization provenance, machine result and human authority separately bound.
 status: draft
 generated:
   by: agent:gpt-5.6-sol
-  at: "2026-09-11T23:42:51Z"
+  at: "2026-09-12T06:07:19Z"
 sources:
   - id: work-item
     resource: https://github.com/ktogias/gnostoa/issues/11
@@ -84,22 +84,22 @@ x-project-knowledge:
 
 ## Context
 
-Decision 0061 requires each supplied reviewer to remain separately attributable but cannot prove complete collection or reviewer independence. Issue #10 owns capability and independence semantics and requires established independence domains rather than raw event or product counts. Architecture R8 therefore separates reviewed subject, collection completeness, reviewer qualification, effective policy, decision-time freshness and executable judge identity.
+Decision 0061 requires each supplied reviewer to remain separately attributable but cannot prove complete collection or reviewer independence. Issue #10 owns capability and independence semantics and requires established independence domains rather than raw review-event or provider counts. Architecture R8 therefore separates reviewed subject, collection completeness, reviewer qualification, effective policy, decision-time freshness, normalization provenance and executable judge identity.
 
-The owner approved R8 before this recorded Decision revision. This Decision materializes that converged architecture for one bounded advisory implementation.
+The accountable owner approved R8 before this recorded Decision revision. This Decision materializes the converged architecture for one bounded advisory implementation. It does not authorize merge enforcement or provider mutation.
 
 ## Prior-art and reuse disposition
 
 - **Decision 0050 — selected pattern.** Reuse exact subject -> observation/assigned assurance -> explicit policy -> deterministic result -> separate owner disposition.
 - **Decision 0058 — selected authority rule.** Evidence cannot create the authority needed to validate itself.
-- **Decision 0005 — selected runtime mechanism.** Reuse the digest-pinned OCI runtime/source/public-surface binding for the post-bootstrap trusted judge; do not create an R2A service.
-- **Gerrit 3.14.2 — Apache-2.0, pattern only.** The inspected release tag dereferences to exact commit `699633ef0642d21162d11bb958a3e3a1fc93817d`, whose retained Apache-2.0 license text is linked above. Submit Requirements demonstrate project-owned review/submittability predicates, but Gerrit is a provider platform and lacks R2A's collection and #10 qualification contract.
-- **OPA v1.17.0 — Apache-2.0, dependency rejected.** The inspected tag is exact commit `64a3625d33bc6ad8e7c40df03b76ce2fb3ab4d21`, whose Apache-2.0 license text is linked above. R2A v1 needs a small closed predicate set; Rego/runtime packaging would add unproven policy-engine complexity.
-- **SARIF 2.1.0 Plus Errata 01 — OASIS Standard, pattern only.** Reuse result/finding identity and raw/normalized evidence ideas, not its static-analysis-centric contract. The versioned OASIS standard and IPR notices are reference provenance, not imported implementation material.
-- **reviewdog v0.21.0 — MIT, pattern only.** The inspected release tag dereferences to exact commit `df70ed74df59de7ebfd9276afabd62ea2de4d7dd`, whose MIT license text is linked above. Reuse heterogeneous-output normalization precedent; it supplies no semantic-review authority or quorum.
+- **Decision 0005 — selected runtime mechanism.** Reuse the digest-pinned OCI runtime/source/public-surface binding for a post-bootstrap trusted judge; do not create an R2A service.
+- **Gerrit 3.14.2 — Apache-2.0, pattern only.** The inspected release tag dereferences to exact commit `699633ef0642d21162d11bb958a3e3a1fc93817d`; its Apache-2.0 license text is linked above. Submit Requirements demonstrate project-owned review/submittability predicates, but Gerrit is a provider platform and lacks R2A collection and #10 qualification semantics.
+- **OPA v1.17.0 — Apache-2.0, dependency rejected.** The inspected tag is exact commit `64a3625d33bc6ad8e7c40df03b76ce2fb3ab4d21`; its Apache-2.0 license text is linked above. R2A v1 needs a small closed predicate set; Rego/runtime packaging would add unproven policy-engine complexity.
+- **SARIF 2.1.0 Plus Errata 01 — OASIS Standard, pattern only.** Reuse result/finding identity and raw/normalized-evidence ideas, not its static-analysis-centric contract. The versioned standard and IPR notice are provenance references only.
+- **reviewdog v0.21.0 — MIT, pattern only.** The inspected release tag dereferences to exact commit `df70ed74df59de7ebfd9276afabd62ea2de4d7dd`; its MIT license text is linked above. Reuse heterogeneous-output normalization precedent; it supplies no semantic-review authority or quorum.
 - **Decisions 0063/0064/native review fixture — internal precedent only.** Preserve native evidence and attribution; do not mutate the historical fixture schema into the new public contract.
 
-R2A imports no Gerrit, OPA, SARIF or reviewdog code, schema text, runtime or dependency. Their licenses are therefore compatible with this use as inspected reference material and create no third-party redistribution obligation in this slice. No third-party runtime or library is selected.
+R2A imports no Gerrit, OPA, SARIF or reviewdog code, schema text, runtime or dependency. This reference-only use creates no third-party redistribution obligation in the bounded slice. No third-party runtime or library is selected.
 
 ## Decision
 
@@ -107,91 +107,130 @@ R2A imports no Gerrit, OPA, SARIF or reviewdog code, schema text, runtime or dep
 
 Add `knowledge review-check` over already-collected file/retained evidence. It performs no reviewer triggering/waiting, live provider collection, reviewer selection, provider mutation, auto-fix/resolve/approval, human acceptance, merge/release authority or required merge check. Every v1 semantic result contains `binding: false`.
 
-### B. Publish only three schemas
+### B. Publish only three public schemas
 
-Create `review-check-input`, `review-policy` and `review-gate-result`. Keep subject, observation, collection, qualification, evaluation-context, authority and judge concepts as `$defs` inside the input schema until a second real consumer requires independent versioning.
+Create `review-check-input`, `review-policy` and `review-gate-result`. Subject, native review state, normalized observation, collection, qualification, evaluation-context, authority, judge and normalization-provenance concepts remain `$defs` inside the input schema until an independent consumer/version cadence justifies extraction.
 
 ### C. Bind one exact semantic review subject
 
-V1 binds canonical repository and change-request identity, exact head, and exactly one comparison identity: an exact Git merge-base commit. Same head with a different merge-base is a different reviewed subject. Base ref/tip is informational; integration freshness stays separate CI evidence. File mode treats merge-base as asserted input, not live Git proof.
+V1 binds canonical repository and change-request identity, exact head commit, and exactly one comparison identity: an exact Git merge-base commit. Same head with a different merge-base is a different reviewed subject. Base ref/tip is informational; integration freshness stays separate CI evidence. File mode treats merge-base as asserted input, not live Git proof.
 
-### D. Make time an explicit input and keep bootstrap non-circular
+### D. Make time explicit and bootstrap non-circular
 
-`EvaluationContext` carries `mode: current_advisory|historical_replay`, `as_of`, and `judge_relation: prior_integrated|candidate_under_test`. `as_of` and every subject/collection/observation/qualification cut are RFC3339 timestamps interpreted as UTC instants. The evaluator reads no wall clock.
+`EvaluationContext` carries `mode: current_advisory|historical_replay`, RFC3339 `as_of`, and `judge_relation: prior_integrated|candidate_under_test`. The evaluator reads no wall clock.
 
-For a policy category with finite `max_age`, freshness is exactly:
+For finite freshness:
 
 ```text
 age_seconds = utc(as_of) - utc(applicable_cut)
 current iff 0 <= age_seconds <= max_age
 ```
 
-Subject freshness uses the subject observation cut; collection freshness applies independently to each required source's observation cut; qualification freshness uses the qualification snapshot cut. Exact-subject review observations still carry observation cuts and must be `<= as_of`, even when policy marks their age as `not_age_sensitive`. Any used cut after `as_of` is invalid input/configuration error.
+Subject freshness uses the subject observation cut; collection freshness applies independently to each required-source cut; qualification freshness uses the qualification snapshot cut. Every used cut must be `<= as_of`; a future cut is invalid input/configuration error. Exact-subject review observations still carry a cut even when their policy age is `not_age_sensitive`.
 
-`current_advisory` requires an accepted `prior_integrated` judge. During the first R2A implementation no such R2A judge exists, so a structured current-advisory invocation with `candidate_under_test` is valid but assurance-incomplete and returns `INCOMPLETE`; it cannot PASS.
+`current_advisory` requires an accepted `prior_integrated` judge. The first R2A implementation has no prior integrated R2A judge; therefore `current_advisory + candidate_under_test` is valid but returns `INCOMPLETE` and cannot PASS.
 
-`historical_replay` is a deterministic fixture/reproduction mode and always pins the exact authority and judge identities declared by that replay fixture. During bootstrap, a **synthetic, explicitly fixture-only historical replay** exercises historical authority/judge pinning and normal policy/quorum/blocker/conflict semantics without claiming those identities ever existed in production. Real retained PR #239 / Issue #11 evidence predates R2A and may be evaluated retrospectively only as `candidate_under_test` characterization; it must not be given a fabricated historical trusted R2A judge. Factual historical replay of real R2A results becomes available only after a real integrated R2A authority/judge record exists.
+`historical_replay` is deterministic fixture/reproduction mode. During bootstrap, an explicitly synthetic fixture-only replay may exercise authority/judge pinning and normal policy/quorum/blocker/conflict semantics, but it makes no claim that those fixture identities existed in production. Real retained PR #239 / Issue #11 evidence predates R2A and can only be characterized as `candidate_under_test`; it is never assigned a fabricated historical trusted R2A judge. Factual replay of real R2A results becomes available only after an integrated R2A authority/judge record exists.
 
-After one R2A implementation is integrated, later current-advisory evaluations may use that separately selected prior-integrated judge. This bootstrap rule prevents circular self-certification without making the semantic evaluator untestable.
+### E. Normalize native review state only through the active adapter
 
-### E. Preserve native review meaning without self-granted authority
+The closed normalized recommendation vocabulary is `APPROVE|REQUEST_CHANGES|COMMENT_ONLY|ABSTAIN|UNKNOWN`. Positive prose without an admitted native recommendation state becomes `UNKNOWN`. Raw/native provider state, findings and thread state remain separately retained and attributable. Observation capability/domain claims never grant authority. Only proven ordered revisions of the same native object may collapse; ambiguous lineage remains visible.
 
-Normalized recommendation is `APPROVE|REQUEST_CHANGES|COMMENT_ONLY|ABSTAIN|UNKNOWN`; positive prose without an admitted native recommendation state becomes `UNKNOWN`. Raw provider value remains separately retained. Findings and thread states remain separately attributable. Observation capability/domain claims never grant authority. Only proven ordered revisions of the same native object may collapse; ambiguous lineage remains visible.
+**Normalization admission is not caller-selectable.** In v1 the only authoritative normalization is recomputed by the active file adapter that is part of the selected judge implementation. The adapter consumes retained raw/native review state and emits an internal normalized observation plus deterministic `normalization_provenance` containing at least:
+
+- `adapter_id`;
+- `adapter_version`;
+- stable `rule_id`; and
+- digest/reference binding to the raw/native state used by that rule.
+
+Caller- or fixture-supplied normalized values, `adapter_id`, `rule_id`, provenance objects or an `admitted` flag are claims only. They do not establish admission. When such claims are present, the adapter recomputes the authoritative normalized value/provenance from retained native state; a conflict between the claim and recomputed value is a configuration error and cannot affect semantic blocker/conflict/quorum state.
+
+For `prior_integrated` use, the authority-owned judge binding pins the judge source revision/public-surface/OCI identity and therefore pins the accepted adapter implementation and closed normalization-rule implementation. ReviewPolicy does **not** contain provider mapping code, an `allowed_adapters` registry or a normalization DSL. Synthetic fixture-only replay uses the same selected adapter semantics and marks synthetic evidence as fixture-only; fixture labels do not create trust.
+
+If retained native state is absent, unsupported, ambiguous or cannot be deterministically mapped by the active adapter, the authoritative recommendation is `UNKNOWN` and the observation gets no blocker/conflict authority. It remains visible for attribution and diagnostics.
 
 ### F. Make collection completeness explicit
 
-Every source entry is `COMPLETE|PARTIAL|RATE_LIMITED|UNAVAILABLE|ERROR`. `No findings` is not a collection status. Every policy-required source must have an explicit entry. Missing or incomplete required collection cannot PASS and cannot be rewritten as absence.
+Every source entry is `COMPLETE|PARTIAL|RATE_LIMITED|UNAVAILABLE|ERROR`. `No findings` is not a collection status. Every policy-required source must have an explicit collection entry. Missing or incomplete required collection cannot PASS and cannot be rewritten as absence, resolution or quorum.
 
 ### G. Consume #10 qualification through a bounded snapshot
 
-Each qualification entry contains the qualified reviewer/source identity, opaque `independence_domain_id`, opaque `capability_ids[]`, `status: established|unestablished|revoked`, validity/observation cut, `owner_relation: owner|non_owner|unknown`, applicable scope and provenance/basis. The snapshot itself carries exact snapshot ID/revision/SHA-256 and qualifying-authority identity.
+Each qualification entry contains qualified reviewer/source identity, opaque `independence_domain_id`, opaque `capability_ids[]`, `status: established|unestablished|revoked`, validity/observation cut, `owner_relation: owner|non_owner|unknown`, applicable scope and provenance/basis. The snapshot itself carries exact snapshot ID/revision/SHA-256 and qualifying-authority identity.
 
 Only established, current facts satisfy quorum/capability. R2A compares opaque domain/capability identifiers only; it neither interprets their meaning nor discovers/assigns them. Those semantics remain owned by #10.
 
 ### H. Prevent candidate self-weakening of policy, qualification and judge
 
-Current-advisory authority comes from an independently selected prior-effective protected/integrated authority subject, never candidate paths. It binds exact review-policy and qualification snapshot identities plus the expected judge binding. Missing authority material is unresolved; there is no candidate fallback.
+Current-advisory authority comes from an independently selected prior-effective protected/integrated authority subject, never candidate paths. It binds exact review-policy and qualification snapshot identities plus expected judge binding. Missing authority material is unresolved; there is no candidate fallback.
 
-Judge binding records source revision, toolkit public-surface SHA-256, digest-pinned OCI runtime identity/revision, supported input schema versions and `accepted|revoked|deprecated|unknown` status. Only `accepted` is usable as `prior_integrated`. Expected judge identity is authority-owned, not candidate-lock-owned. Every required component must match exactly; missing/partial/mismatched/revoked/deprecated/unknown state is valid but unusable assurance material and yields `INCOMPLETE`, not PASS. Malformed authority/judge records or an unsupported input schema version are configuration errors. Warning-only or candidate/native fallback cannot preserve trusted status.
+Judge binding records source revision, toolkit public-surface SHA-256, digest-pinned OCI runtime identity/revision, supported input schema versions and `accepted|revoked|deprecated|unknown` status. Only `accepted` is usable as `prior_integrated`. Expected judge identity is authority-owned, not candidate-lock-owned. Every required component must match exactly.
 
-The trusted v1 judge route reuses Decision 0005's pinned OCI mechanism. Native execution remains development/recovery evidence but is not `prior_integrated` in v1. The first R2A implementation has no prior R2A judge and therefore cannot produce a current-advisory PASS from its own candidate judge.
+Valid structured but unavailable, partial, mismatched, revoked, deprecated or unknown authority/judge material is unusable assurance and yields semantic `INCOMPLETE` with exit 3. Malformed authority/judge records or unsupported input schema are configuration errors with exit 2. Warning-only or candidate/native fallback cannot preserve trusted status.
 
-### I. Use a closed ReviewPolicy family
+The trusted v1 judge route reuses Decision 0005's pinned OCI mechanism. Native execution remains development/recovery evidence but is not `prior_integrated` in v1.
 
-`core/review-policy.yaml` is abstract/non-evaluatable. A project resolves one explicit specialization per invocation. No-review is only explicit `review_requirement: none`. Required-review policy has closed `subject`, `collection`, `qualification`, `quorum`, `blockers` and `conflicts` sections. `conflicts` compares eligible review dispositions under that one selected policy; it never compares policies. R2A introduces no DSL or policy engine and consumes, rather than redefines, existing change-class/human/merge controls.
+### I. Use one closed ReviewPolicy per invocation
 
-Before any observation can affect `blockers` or `conflicts`, it must be bound exactly to the evaluated subject, come from a policy-recognized non-anonymous source, carry admitted normalization provenance and satisfy the applicable currentness rules. Anonymous, unrecognized, stale or partially bound evidence remains visible but gets no blocker or conflict authority merely by existing. Quorum/capability evaluation adds a stronger requirement: the reviewer/source must also join to externally established #10 qualification facts, including an established independence domain and every policy-required capability. A recognized current blocker may therefore block without contributing a domain, preserving the deliberate blocker-versus-quorum distinction without granting random evidence a veto.
+`core/review-policy.yaml` is abstract/non-evaluatable. A project resolves one explicit specialization per invocation. No-review is only explicit `review_requirement: none`. Required-review policy has closed `subject`, `collection`, `qualification`, `quorum`, `blockers` and `conflicts` sections. `conflicts` compares eligible review dispositions under that one selected policy; policies themselves are never compared. R2A introduces no DSL or policy engine and consumes, rather than redefines, existing change-class/human/merge controls.
 
-Gnostoa-self v1 selects explicit no-review for mechanical changes; required semantic review for normal/normative/critical with minimum two established domains; required review for emergency with minimum one domain while timing remains change-control-owned; opaque #10 capability `semantic-review`; owner-authored review excluded from automated quorum; and one bounded file/fixture collection source `retained-review-evidence`.
+Before an observation can affect `blockers` or `conflicts`, it must:
 
-The two-domain ordinary/normative/critical threshold is an initial Gnostoa-self hypothesis: a one-domain threshold would make independence-domain modeling non-discriminating and would preserve correlated single-domain false confidence, while owner semantic acceptance remains a separate human gate. Emergency uses one established domain to preserve recovery availability under the already separate emergency change-control path. These are project parameters, not generic defaults. Revisit them after dogfood using false-PASS, false-BLOCK, unavailable-review and owner-correction measurements.
+1. bind exactly to the evaluated subject;
+2. come from a policy-recognized, non-anonymous source;
+3. have normalization recomputed/admitted by the active authority-bound adapter as defined in section E; and
+4. satisfy applicable currentness rules.
 
-Initial freshness is also project policy, not evaluator behavior: current-advisory subject and required retained-collection cuts use finite `max_age: 900` seconds; exact-subject review observations use `not_age_sensitive`; qualification snapshot age uses finite `max_age: 86400` seconds plus explicit revocation state. The 15-minute collection/subject window is a deliberately conservative refresh hypothesis for asynchronous review state, while the one-day qualification window reflects slower-moving domain assignments. Revisit both after measured refresh failures, availability cost and owner corrections. Silence or omitted age semantics remains unresolved, never infinite permission.
+Anonymous, unrecognized, stale, partially bound or caller-normalized-only evidence remains visible but gets no blocker or conflict authority merely by existing. Quorum/capability adds a stronger requirement: join to externally established #10 qualification facts including an established domain and every required capability. A recognized current blocker can therefore block without contributing a domain, preserving the intentional blocker-versus-quorum distinction without granting random evidence a veto.
 
-### J. Emit one rich result and one separate error envelope
+Gnostoa-self v1 initially selects:
 
-Top-level semantic outcome is `PASS|BLOCKED|INCOMPLETE|CONFLICTING`. Every semantic result retains exact evaluation/subject/authority/judge provenance, collection and qualification assessment, quorum/capability coverage, blockers/conflicts/exclusions, diagnostics and per-reviewer assessments. PASS reason is at least `POLICY_EXEMPT|REQUIREMENTS_SATISFIED`.
+- mechanical: explicit `review_requirement: none`;
+- normal/normative/critical: required semantic review with minimum two established domains;
+- emergency: required review with minimum one established domain while timing remains change-control-owned;
+- opaque #10 capability `semantic-review`;
+- owner-authored review excluded from automated quorum; and
+- bounded file/fixture collection source `retained-review-evidence`.
 
-Precedence is: unresolved target/policy/authority/judge assurance -> INCOMPLETE; eligible known blocker -> BLOCKED even with other missing evidence; otherwise eligible disagreement -> CONFLICTING unless policy makes it a blocker; otherwise unmet collection/qualification/quorum/capability -> INCOMPLETE; only then PASS. Valid structured but unavailable, partial, mismatched, revoked or deprecated authority/judge material is `INCOMPLETE` with exit 3.
+The two-domain threshold is an initial Gnostoa-self hypothesis: one domain would make independence-domain modeling non-discriminating and preserve correlated single-domain false confidence, while owner semantic acceptance remains a separate human gate. Emergency uses one established domain to preserve recovery availability under the separate emergency path. These are project parameters, not generic defaults. Revisit them using dogfood false-PASS, false-BLOCK, unavailable-review and owner-correction measurements.
 
-Malformed invocation, malformed authority/judge records, unsupported input schema and tool execution failure are outside `review-gate-result`. They emit a canonical transport envelope:
+Initial freshness is also project policy: current-advisory subject and required retained-collection cuts use `max_age: 900` seconds; exact-subject review observations use `not_age_sensitive`; qualification uses `max_age: 86400` seconds plus revocation. The 15-minute subject/collection window is a conservative asynchronous-refresh hypothesis; the one-day qualification window reflects slower-moving domain assignments. Revisit both after measured refresh failures, availability cost and owner corrections. Omitted age semantics is unresolved, never infinite permission.
+
+### J. Emit one rich semantic result and one separate error envelope
+
+Semantic outcome is `PASS|BLOCKED|INCOMPLETE|CONFLICTING`. Every result retains exact evaluation/subject/authority/judge provenance, collection/qualification assessment, quorum/capability coverage, blockers/conflicts/exclusions, diagnostics and per-reviewer assessments. PASS reason is at least `POLICY_EXEMPT|REQUIREMENTS_SATISFIED`.
+
+Precedence is:
+
+1. unresolved target/policy/authority/judge assurance -> `INCOMPLETE`;
+2. eligible known blocker -> `BLOCKED` even if another required source is missing;
+3. otherwise eligible disagreement -> `CONFLICTING` unless policy classifies it as blocker;
+4. otherwise unmet collection/qualification/quorum/capability -> `INCOMPLETE`;
+5. only then `PASS`.
+
+Malformed invocation, malformed authority/judge records, unsupported input schema and tool execution failure are outside `review-gate-result`. They emit canonical transport JSON:
 
 ```json
 {"error":{"code":"MALFORMED_INVOCATION|UNSUPPORTED_INPUT|CONFIGURATION_ERROR|TOOL_ERROR","message":"...","details":{}}}
 ```
 
-`message` is a string and `details` an object, possibly empty. This envelope is not a fourth public schema.
+`message` is a string and `details` an object, possibly empty. This is not a fourth public schema.
 
-CLI exits are `PASS=0`, `BLOCKED=1`, configuration/tool error `=2`, `INCOMPLETE=3`, `CONFLICTING=4`. JSON is canonical; text is projection only.
+CLI exits are `PASS=0`, `BLOCKED=1`, configuration/tool error `=2`, `INCOMPLETE=3`, `CONFLICTING=4`. Semantic JSON is canonical; human text is projection only.
 
-### K. Keep implementation small
+### K. Keep implementation small and RED-first
 
-Use flat `tools/review_model.py`, `review_policy.py`, `review_evaluate.py`, `review_adapter_file.py`, `review_check.py` and the existing `tools/cli.py`. No review-assurance framework/package is introduced for one adapter.
+After the separately retained RED receipt is complete, use flat `tools/review_model.py`, `review_policy.py`, `review_evaluate.py`, `review_adapter_file.py`, `review_check.py` and existing `tools/cli.py`. No review-assurance framework/package is introduced for one adapter.
+
+Production implementation remains blocked while the RED receipt contains `PENDING`. The RED harness must predate production schemas/policies/tools and retain exact commit, command, nonzero exit and bounded failing-output digest.
 
 ## Consequences
 
-R2A proves deterministic advisory semantics over bound inputs. It does not establish malicious-host honesty, live-provider completeness, trusted native execution or merge authority. During bootstrap it can exercise deterministic semantics through explicitly synthetic fixture-only historical replay and real pre-R2A retained evidence through retrospective `candidate_under_test` characterization, but it cannot make a current-advisory PASS until a prior-integrated R2A judge exists. A future enforcing consumer requires a separate protected acquisition/consumer Decision.
+R2A proves deterministic advisory semantics over bound inputs. It does not establish malicious-host honesty, live-provider completeness, trusted native execution or merge authority. During bootstrap it can exercise deterministic semantics through synthetic fixture-only replay and real pre-R2A evidence through `candidate_under_test` characterization, but it cannot make a current-advisory PASS until a prior-integrated R2A judge exists.
+
+The normalization boundary does not create a provider mapping registry: normalization semantics are pinned with the selected judge/adapter implementation, and caller claims cannot grant blocker/conflict authority.
+
+A future enforcing consumer requires a separate protected acquisition/consumer Decision.
 
 ## Revisit conditions
 
-Revisit when dogfood shows unacceptable false-PASS/false-BLOCK/owner-correction or refresh cost; when a live provider adapter is admitted; when #10 supplies reusable qualification discovery; when policy needs expression power beyond closed sections; when a verifiable native judge identity is established; or when an enforcing consumer is selected.
+Revisit when dogfood shows unacceptable false-PASS/false-BLOCK/owner-correction or refresh cost; when a live provider adapter is admitted; when a second adapter requires independently versioned mapping contracts; when #10 supplies reusable qualification discovery; when policy needs expression power beyond closed sections; when a verifiable native judge identity is established; or when an enforcing consumer is selected.
