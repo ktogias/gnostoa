@@ -186,7 +186,7 @@ CLI exits are `PASS=0`, `BLOCKED=1`, configuration/tool error `=2`, `INCOMPLETE=
 
 Use flat `tools/review_model.py`, `review_policy.py`, `review_evaluate.py`, `review_adapter_file.py`, `review_check.py` and the existing `tools/cli.py`. No review-assurance framework/package is introduced for one adapter.
 
-## Consequences and limits
+## Consequences
 
 R2A proves deterministic advisory semantics over bound inputs. It does not establish malicious-host honesty, live-provider completeness, trusted native execution or merge authority. During bootstrap it can exercise deterministic semantics through explicitly synthetic fixture-only historical replay and real pre-R2A retained evidence through retrospective `candidate_under_test` characterization, but it cannot make a current-advisory PASS until a prior-integrated R2A judge exists. A future enforcing consumer requires a separate protected acquisition/consumer Decision.
 
