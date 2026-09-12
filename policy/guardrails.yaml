@@ -393,7 +393,7 @@ guardrails:
       - templates/verification-plan.md
       - templates/AGENTS.project.md
     tests:
-      - tests/test_tools.py::ChangeControlTests.test_generic_policy_requires_verification-first-evidence
+      - tests/test_tools.py::ChangeControlTests.test_generic_policy_requires_verification_first_evidence
       - tests/test_tools.py::ChangeControlTests.test_change_request_captures_proportionate_evidence
       - tests/test_tools.py::ChangeControlTests.test_verification_first_guidance_and_self_route_are_complete
 
@@ -409,7 +409,7 @@ guardrails:
       - templates/verification-plan.md
       - templates/knowledge-change-checklist.md
     tests:
-      - tests/test_tools.py::ChangeControlTests.test_generic_policy_requires_verification-first-evidence
+      - tests/test_tools.py::ChangeControlTests.test_generic_policy_requires_verification_first_evidence
 
   - id: bounded-behavioral-traceability
     title: Applicable Gnostoa-self work exposes behavior-to-implementation-to-evidence contradictions before review
@@ -612,4 +612,4 @@ guardrails:
       - tests/test_gnostoa_orientation_git_guard.py::OrientationGitGuardTests.test_bound_repository_subject_is_evidence_and_each_mismatch_is_stale
       - tests/test_gnostoa_orientation_git_guard.py::OrientationGitGuardTests.test_observer_derives_tree_from_the_observed_commit
       - tests/test_gnostoa_orientation_git_guard.py::OrientationGitGuardTests.test_observer_rejects_repository_subdirectory_as_explicit_root
-      - tests/test_gnostoa_orientation_git_guard.py::OrientationGitGuardTests.test_git_invocation_uses_exact_local_trust_without_shell_or_wildcard
+      - tests/test_gnostoa_orientation_git_guard.py::OrientationGitGuardTests.test_git_invocation_uses_exact_local_trust_without_shell_or-wildcard
