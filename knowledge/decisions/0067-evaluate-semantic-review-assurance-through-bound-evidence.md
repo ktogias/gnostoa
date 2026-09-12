@@ -116,7 +116,7 @@ V1 binds canonical repository and change-request identity, exact head commit, an
 
 ### D. Make time explicit and bootstrap non-circular
 
-`EvaluationContext` carries `mode: current_advisory|historical_replay`, RFC3339 `as_of`, `judge_relation: prior_integrated|candidate_under_test`, and required `fixture_only: boolean`. The evaluator reads no wall clock. `fixture_only` is provenance classification only and never grants assurance authority.
+`EvaluationContext` carries `mode: current_advisory|historical_replay`, RFC3339 `as_of`, `judge_relation: prior_integrated|candidate_under_test`, and optional `fixture_only: boolean`. Omission is treated as `false`, meaning no synthetic-fixture provenance is claimed. The evaluator reads no wall clock. `fixture_only` is provenance classification only and never grants assurance authority.
 
 For finite freshness:
 
@@ -127,9 +127,9 @@ current iff 0 <= age_seconds <= max_age
 
 Subject freshness uses the subject observation cut; collection freshness applies independently to each required-source cut; qualification freshness uses the qualification snapshot cut. Every used cut must be `<= as_of`; a future cut is invalid input/configuration error. Exact-subject review observations still carry a cut even when their policy age is `not_age_sensitive`.
 
-`current_advisory` requires an accepted `prior_integrated` judge. The first R2A implementation has no prior integrated R2A judge; therefore `current_advisory + candidate_under_test` is valid but returns `INCOMPLETE` and cannot PASS. `current_advisory` always uses `fixture_only:false`; `fixture_only:true` in current-advisory mode is invalid input.
+`current_advisory` requires an accepted `prior_integrated` judge. The first R2A implementation has no prior integrated R2A judge; therefore `current_advisory + candidate_under_test` is valid but returns `INCOMPLETE` and cannot PASS. `current_advisory` uses the omitted/default-false or explicit `fixture_only:false`; `fixture_only:true` in current-advisory mode is invalid input.
 
-`historical_replay` is deterministic fixture/reproduction mode. During bootstrap, an explicitly synthetic replay must carry `fixture_only:true`; missing or false fixture classification leaves bootstrap synthetic assurance unresolved and returns `INCOMPLETE`, never PASS. Such replay may exercise authority/judge pinning and normal policy/quorum/blocker/conflict semantics, but it makes no claim that those fixture identities existed in production. Real retained PR #239 / Issue #11 evidence predates R2A and can only be characterized as `candidate_under_test` with `fixture_only:false`; it is never assigned a fabricated historical trusted R2A judge. Factual replay of real R2A results uses `fixture_only:false` and becomes available only after an integrated R2A authority/judge record exists.
+`historical_replay` is deterministic fixture/reproduction mode. During bootstrap, an explicitly synthetic replay must carry `fixture_only:true`; missing or false fixture classification leaves bootstrap synthetic assurance unresolved and returns `INCOMPLETE`, never PASS. Such replay may exercise authority/judge pinning and normal policy/quorum/blocker/conflict semantics, but it makes no claim that those fixture identities existed in production. Real retained PR #239 / Issue #11 evidence predates R2A and can only be characterized as `candidate_under_test` with omitted/default-false or explicit `fixture_only:false`; it is never assigned a fabricated historical trusted R2A judge. Factual replay of real R2A results uses omitted/default-false or explicit `fixture_only:false` and becomes available only after an integrated R2A authority/judge record exists.
 
 ### E. Normalize native review state only through the active adapter
 
