@@ -5,7 +5,7 @@ description: Verification-first contract for the bounded provider-neutral adviso
 status: draft
 generated:
   by: agent:gpt-5.6-sol
-  at: "2026-09-11T23:42:51Z"
+  at: "2026-09-12T06:07:19Z"
 sources:
   - id: work-item
     resource: https://github.com/ktogias/gnostoa/issues/11
@@ -38,20 +38,20 @@ x-project-knowledge:
 
 ## Identity and scope
 
-The bounded task is `GNOSTOA/D11-R2A/P1` at exact base `9915357546e1665143b3a705533bb94812faee54`. It may add only the Decision/task/assessment records, three review-assurance schemas, abstract/core and Gnostoa-self policy, flat file/model/policy/evaluator/CLI modules, focused tests/fixtures and the minimum existing CLI/help routing needed for `knowledge review-check`.
+The bounded task is `GNOSTOA/D11-R2A/P1` at exact base `9915357546e1665143b3a705533bb94812faee54`. It may add only Decision/task/assessment records, three review-assurance schemas, abstract/core and Gnostoa-self policy, flat file/model/policy/evaluator/CLI modules, focused tests/fixtures and minimum existing CLI/help routing for `knowledge review-check`.
 
 It does not admit a live provider collector, reviewer orchestration, #10 registry, #15 workflow mechanics, provider mutation, merge enforcement, policy DSL, signing service or trusted native judge identity.
 
 ## Literal verification-first order
 
-1. Converge the Decision, task envelope and this RED contract before production implementation.
-2. Add the exact focused RED harness below while the production review-assurance schemas, policies and executable modules are still absent.
-3. Run the exact RED command and retain its commit SHA, nonzero exit, bounded output SHA-256 and proof that the production paths remain absent.
-4. Only after the RED receipt is complete may the task hand off to a production implementation agent.
-5. Preserve the RED expectations unchanged through production implementation unless a later review explicitly changes Decision 0067 and records the reason.
+1. Converge Decision 0067, task envelope and this RED contract before production implementation.
+2. Add the exact focused RED harness below while production review-assurance schemas, policies and executable modules are still absent.
+3. Run the exact RED command and retain its commit SHA, nonzero exit, bounded output SHA-256 and proof that production paths remain absent.
+4. Only after the RED receipt is complete may the task hand off to production implementation.
+5. Preserve RED expectations unchanged through production implementation unless a later review explicitly changes Decision 0067 and records why.
 6. Reach GREEN, then run mutation/permutation controls, complete suites, exact-candidate reviews and advisory dogfood.
 
-The first R2A implementation is bootstrap. A current-advisory invocation whose judge relation is `candidate_under_test` is valid but assurance-incomplete and cannot PASS. Synthetic fixture-only historical replay may exercise normal policy/quorum/blocker/conflict and historical pinning semantics. Real retained pre-R2A review evidence is characterized separately as `candidate_under_test`; it is never assigned a fabricated historical trusted R2A judge.
+The first R2A implementation is bootstrap. `current_advisory + candidate_under_test` is valid but assurance-incomplete and cannot PASS. Synthetic fixture-only historical replay may exercise normal policy/quorum/blocker/conflict and historical-pinning semantics. Real retained pre-R2A review evidence is characterized separately as `candidate_under_test`; it is never assigned a fabricated historical trusted R2A judge.
 
 ## Pre-registered RED harness
 
@@ -63,13 +63,13 @@ tests/fixtures/review_check/cases.json
 tests/fixtures/review_check/expected.json
 ```
 
-The test file uses the standard-library `unittest` runner and invokes the future public route as an external command where CLI behavior is under test; pure-contract cases may import the future modules only after they exist. The RED command is exactly:
+The test file uses the standard-library `unittest` runner and invokes the future public route as an external command where CLI behavior is under test; pure-contract cases may import future modules only after they exist. The RED command is exactly:
 
 ```text
 python tests/test_review_assurance.py
 ```
 
-Before production review-assurance paths exist, the command must exit nonzero and must not SKIP/XFAIL the missing contract. The retained bounded output must identify failing R2A case IDs rather than treating absence as success.
+Before production review-assurance paths exist, the command must exit nonzero and must not SKIP/XFAIL the missing contract. Retained bounded output must identify failing R2A case IDs rather than treating absence as success.
 
 ### RED receipt — must be completed before production handoff
 
@@ -91,7 +91,7 @@ production_paths_absent:
   - tools/review_check.py
 ```
 
-`PENDING` in any RED receipt field blocks production implementation handoff. The observed RED commit and output are evidence, not values to predict in this specification.
+`PENDING` in any RED receipt field blocks production implementation handoff. The observed RED commit/output are evidence, not values to predict in this specification.
 
 ## Required RED matrix
 
@@ -113,7 +113,7 @@ production_paths_absent:
 | R07 | Partial or unestablished subject binding remains visible but cannot satisfy exact-subject policy. |
 | R08 | Any used observation/collection/qualification cut later than `EvaluationContext.as_of` is configuration error. |
 | R09 | With RFC3339 cuts interpreted as UTC instants, finite freshness is `0 <= utc(as_of)-utc(cut) <= max_age`; exceeding the finite limit produces `INCOMPLETE`, never PASS. |
-| R10 | A synthetic fixture-only `historical_replay` pins exact fixture authority and judge identities and refuses silent current substitution, without claiming those fixture identities were real historical production authority. |
+| R10 | A synthetic fixture-only `historical_replay` pins exact fixture authority and judge identities and refuses silent current substitution, without claiming those identities were real historical production authority. |
 
 ### Collection completeness
 
@@ -129,7 +129,7 @@ production_paths_absent:
 
 | ID | Required behavior |
 | --- | --- |
-| R16 | Capability/domain claims inside `ReviewObservation` do not qualify the observation. |
+| R16 | Capability/domain claims inside input review evidence do not qualify the observation. |
 | R17 | Wrong or unaccepted authority/qualification digest cannot satisfy quorum. |
 | R18 | `unestablished`, `revoked` or freshness-expired qualification cannot count. |
 | R19 | Multiple observations from one established opaque domain ID contribute one distinct domain. |
@@ -142,11 +142,12 @@ production_paths_absent:
 | ID | Required behavior |
 | --- | --- |
 | R23 | Positive prose without an admitted native recommendation state normalizes to `UNKNOWN`, never inferred `APPROVE`. |
-| R24 | Eligible current `REQUEST_CHANGES` yields `BLOCKED`. |
-| R25 | A known blocker is not masked by another missing required source. |
-| R26 | Evidence that is partially/unestablished subject-bound, anonymous, policy-unrecognized, non-current, or lacks admitted normalization provenance remains visible but has no blocker or conflict authority; it also cannot satisfy quorum merely by existing. |
+| R24 | Eligible current adapter-derived `REQUEST_CHANGES` yields `BLOCKED`. |
+| R25 | A known eligible blocker is not masked by another missing required source. |
+| R26 | Evidence that is partially/unestablished subject-bound, anonymous, policy-unrecognized, non-current, or lacks active-adapter-derived normalization provenance remains visible but has no blocker or conflict authority; it also cannot satisfy quorum merely by existing. |
 | R27 | Unresolved thread blocks only according to policy; unknown thread state can remain incomplete. |
 | R28 | Within one invocation and one selected valid policy whose `conflicts` section declares the applicable recommendation pair, two eligible conflicting review dispositions produce `CONFLICTING`, distinct from `INCOMPLETE`; policies themselves are never compared. |
+| R45 | Caller/fixture claims a forged normalized recommendation, `adapter_id`, `adapter_version`, `rule_id`, raw-state digest or `admitted` flag that differs from active-adapter recomputation: the claim cannot create blocker/conflict authority and the mismatch fails closed as configuration error. |
 
 ### Replay, determinism and result fidelity
 
@@ -155,7 +156,7 @@ production_paths_absent:
 | R29 | Proven ordered revisions of one native object may supersede an older revision. |
 | R30 | Ambiguous reissue/revision lineage remains visible and is not silently collapsed. |
 | R31 | Observation ordering and duplicate placement do not alter the semantic result. |
-| R32 | Per-reviewer attribution, recommendation and finding references remain distinct in result assessments. |
+| R32 | Per-reviewer attribution, raw/native recommendation, normalized recommendation and finding references remain distinct in result assessments. |
 | R33 | PASS reason is `POLICY_EXEMPT` or `REQUIREMENTS_SATISFIED`, never an unqualified generic PASS. |
 | R34 | Every semantic R2A result carries `binding:false`. |
 
@@ -166,9 +167,9 @@ production_paths_absent:
 | R35 | `current_advisory` with `judge_relation:candidate_under_test` is `INCOMPLETE` and cannot masquerade as `prior_integrated` or PASS. |
 | R36 | Valid structured but unavailable, partial, mismatched, revoked, deprecated or unknown authority/judge material yields semantic `INCOMPLETE` and exit 3. |
 | R37 | Candidate-changed runtime lock cannot select the authority-owned expected trusted judge. |
-| R38 | Synthetic historical replay pins its exact fixture-only historical authority and judge identities; retained pre-R2A evidence is not reclassified as having a historical trusted R2A judge. |
+| R38 | Synthetic historical replay pins its exact fixture-only historical authority/judge identities; retained pre-R2A evidence is not reclassified as having a historical trusted R2A judge. |
 | R39 | Native execution is not labelled v1 `prior_integrated` solely from current source-root/runtime-lock binding. |
-| R40 | A later candidate that modifies review evaluator/schema cannot replace the separately selected prior-integrated judge. |
+| R40 | A later candidate that modifies review evaluator/schema/adapter cannot replace the separately selected prior-integrated judge. |
 
 ### CLI, configuration errors and effect boundary
 
@@ -181,15 +182,17 @@ production_paths_absent:
 
 ## Focused fixtures
 
-Use retained PR #239 review history plus the two #11 CodeRabbit collection incidents as real pre-R2A examples, but store only bounded fields required by the test contract. Preserve raw/provider evidence by reference/digest where retained; do not manufacture provider messages from summaries and do not assign those real records a historical trusted R2A judge that did not exist.
+Use retained PR #239 review history plus the two #11 CodeRabbit collection incidents as real pre-R2A examples, storing only bounded fields required by the test contract. Preserve raw/provider evidence by reference/digest where retained; do not manufacture provider messages from summaries and do not assign those real records a historical trusted R2A judge that did not exist.
 
-Add synthetic minimal cases where real retained evidence does not exercise a predicate, including explicit policy exemption, single-policy reachable `CONFLICTING`, forged self-qualification, authority/judge mismatch, ordering invariance, and **historical authority/judge pinning**. Synthetic fixture authority/judge IDs are explicitly marked fixture-only and are never cited as historical production facts.
+Add synthetic minimal cases where real retained evidence does not exercise a predicate, including explicit policy exemption, single-policy reachable `CONFLICTING`, forged self-qualification, authority/judge mismatch, ordering invariance, historical authority/judge pinning, and **forged normalization provenance**. Synthetic authority/judge IDs are explicitly fixture-only and never cited as historical production facts.
 
-`cases.json` names every case by its R-ID and contains only supplied input/fixture references. `expected.json` maps each R-ID to the required semantic outcome/reason or error-envelope class plus exit code. The test runner must fail if a required R-ID is absent from either file.
+For normalization cases, retained/native recommendation state is the input to the active file adapter. Any supplied normalized/provenance fields are adversarial claims. The expected authoritative normalization/provenance is recomputed by the selected adapter rule. `cases.json` must include at least one R45 mutant where the claimed normalized value/provenance conflicts with recomputation.
+
+`cases.json` names every required case by R-ID and contains supplied input/fixture references. `expected.json` maps each R-ID to required semantic outcome/reason or error-envelope class plus exit code. The runner fails if a required R-ID is absent from either file.
 
 ## Mutation and discriminating controls after GREEN
 
-Mutate one assurance fact at a time and require a discriminating result: remove one required source; change merge-base with same head; forge observation capability/domain; collapse two domains to one; alter policy or qualification digest; alter expected/acquired judge binding or judge status; move `as_of` across a freshness threshold; reorder observations; switch required review to explicit no-review. Controls must expose both false-PASS and false-BLOCK tendencies.
+Mutate one assurance fact at a time and require a discriminating result: remove one required source; change merge-base with same head; forge observation capability/domain; collapse two domains to one; alter policy or qualification digest; alter expected/acquired judge binding or judge status; move `as_of` across a freshness threshold; forge normalized recommendation/provenance; reorder observations; switch required review to explicit no-review. Controls must expose both false-PASS and false-BLOCK tendencies.
 
 ## Complete verification and review
 
@@ -199,14 +202,14 @@ After unchanged RED -> GREEN, run focused tests plus applicable repository `poli
 
 Bootstrap dogfood has three distinct claims and must not collapse them:
 
-1. **synthetic historical-replay contract exercise:** use explicitly fixture-only authority/judge identities to demonstrate deterministic historical pinning, freshness, quorum, blocker and conflict semantics; this is a test fixture, not evidence that R2A existed historically;
-2. **real retained pre-R2A characterization:** evaluate retained PR #239 / Issue #11 evidence with `judge_relation:candidate_under_test` to measure normalization, collection-completeness and result usefulness without fabricating historical trusted authority/judge facts;
-3. **current-advisory bootstrap characterization:** demonstrate that the first implementation returns `INCOMPLETE` rather than PASS while no prior-integrated R2A judge exists.
+1. **synthetic historical-replay contract exercise:** explicitly fixture-only authority/judge identities demonstrate deterministic historical pinning, freshness, quorum, blocker/conflict and normalization semantics; this is test evidence, not evidence that R2A existed historically;
+2. **real retained pre-R2A characterization:** retained PR #239 / Issue #11 native evidence is processed by the candidate file adapter with `judge_relation:candidate_under_test` to measure normalization, collection completeness and result usefulness without fabricating historical trusted authority/judge facts;
+3. **current-advisory bootstrap characterization:** the first implementation returns `INCOMPLETE`, not PASS, while no prior-integrated R2A judge exists.
 
-After a real R2A authority/judge record has been integrated, factual historical replay of real R2A results and current-advisory PASS behavior become eligible post-bootstrap evaluation targets.
+After a real R2A authority/judge record is integrated, factual historical replay of real R2A results and current-advisory PASS become eligible post-bootstrap evaluation targets.
 
-Measure false pass/block against owner semantic disposition where a comparable semantic judgment exists, subject/currentness classification error, collection handling, qualification/quorum error, normalization discrepancy, rate-limit/unavailability behavior, synthetic replay determinism, evidence/context burden and owner corrections.
+Measure false pass/block against owner semantic disposition where comparable, subject/currentness classification error, collection handling, qualification/quorum error, normalization discrepancy, rate-limit/unavailability behavior, synthetic replay determinism, evidence/context burden and owner corrections.
 
 ## Completion boundary
 
-The specification is implementation-handoff-ready only after its reviews converge and the RED receipt above is fully observed. The bounded slice is complete only when the Decision/task/implementation agree, all retained RED cases are GREEN without semantic weakening, mutation controls discriminate, complete applicable suites pass on the exact candidate, every material external finding is dispositioned, dogfood is retained honestly, and public output remains advisory with no provider or merge enforcement activated. Owner semantic acceptance and merge authorization remain separate.
+The specification is implementation-handoff-ready only after reviews converge and the RED receipt above is fully observed. The bounded slice is complete only when Decision/task/implementation agree, all retained RED cases are GREEN without semantic weakening, mutation controls discriminate, complete applicable suites pass on exact candidate, every material external finding is dispositioned, dogfood is retained honestly, and public output remains advisory with no provider or merge enforcement activated. Owner semantic acceptance and merge authorization remain separate.
