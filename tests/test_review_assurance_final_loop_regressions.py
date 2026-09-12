@@ -31,7 +31,9 @@ def _error_code(payload: dict[str, Any]) -> object:
 
 
 class ReviewAssuranceFinalLoopRegressions(unittest.TestCase):
-    def test_duplicate_observation_compares_json_values_not_python_equality(self) -> None:
+    def test_duplicate_observation_compares_json_values_not_python_equality(
+        self,
+    ) -> None:
         input_document, policy_document = _documents()
         observations = input_document["evidence_set"]["observations"]
         duplicate = copy.deepcopy(observations[0])

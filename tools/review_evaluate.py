@@ -211,9 +211,9 @@ def _prepare_assessments(
             )
         normalized_rows.append((observation, assessment))
 
-    grouped: dict[
-        tuple[str, str], list[tuple[dict[str, Any], dict[str, Any]]]
-    ] = defaultdict(list)
+    grouped: dict[tuple[str, str], list[tuple[dict[str, Any], dict[str, Any]]]] = (
+        defaultdict(list)
+    )
     ungrouped: list[tuple[dict[str, Any], dict[str, Any]]] = []
     for row in normalized_rows:
         native = row[0].get("native")
