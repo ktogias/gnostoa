@@ -125,6 +125,8 @@ inherited, copied or loaded by adopting projects.
 - [Work Item 219 qualification report correction and review reconciliation](assessments/219-qualification-report-completeness-repair-plan.md)
 - [Work Item 11 runtime-neutral acceptance fixture](assessments/11-runtime-neutral-acceptance-fixture.md)
 - [D11-R2A review-assurance RED-first execution contract](assessments/11-review-assurance-red-contract.md)
+- [D11-R2A advisory semantic review assurance implementation result](assessments/11-review-assurance-implementation-result.md)
+- [D11-R2A implementation convergence retrospective and root-cause analysis](assessments/11-review-assurance-implementation-retrospective.md)
 - [Portable review exchange evaluation](assessments/portable-review-exchange-evaluation.md)
 - [Native structured review handoff evaluation](assessments/native-structured-review-handoff.md)
 - [Work Item 192 preflight candidate authority binding plan](assessments/192-preflight-candidate-binding-plan.md)
