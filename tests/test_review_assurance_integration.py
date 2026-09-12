@@ -122,6 +122,30 @@ class ReviewAssuranceIntegrationTests(unittest.TestCase):
             review_check._current_advisory_bootstrap_issue(input_document, None)
         )
 
+    def test_shared_evaluator_cannot_self_authorize_current_advisory_pass(self) -> None:
+        fixture = _fixture()
+        base = fixture["base"]
+        self.assertIsInstance(base, dict)
+        input_document = copy.deepcopy(base["input"])
+        self.assertIsInstance(input_document, dict)
+        context = input_document["evaluation_context"]
+        self.assertIsInstance(context, dict)
+        context.update(
+            {
+                "mode": "current_advisory",
+                "fixture_only": False,
+                "judge_relation": "prior_integrated",
+            }
+        )
+        code, payload = review_check.evaluate_documents(
+            input_document,
+            base["policy"],
+        )
+        self.assertEqual(3, code)
+        self.assertEqual("INCOMPLETE", payload["outcome"])
+        self.assertEqual("BOOTSTRAP_PROTECTED_AUTHORITY_UNAVAILABLE", payload["reason"])
+        self.assertIs(payload["binding"], False)
+
 
 if __name__ == "__main__":
     unittest.main()

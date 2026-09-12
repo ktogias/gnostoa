@@ -357,13 +357,15 @@ def evaluate(
             "UNSUPPORTED_INPUT",
             "selected judge does not support the input schema version",
         )
-    if mode == "current_advisory" and relation != "prior_integrated":
+    if mode == "current_advisory":
         return _semantic(
             "INCOMPLETE",
-            "BOOTSTRAP_JUDGE_UNAVAILABLE",
+            "BOOTSTRAP_PROTECTED_AUTHORITY_UNAVAILABLE",
             input_document=input_document,
             policy_document=policy_document,
-            diagnostics=["current advisory evaluation has no prior-integrated judge"],
+            diagnostics=[
+                "bootstrap P1 has no protected prior-integrated current-advisory authority acquisition"
+            ],
         )
     if mode == "historical_replay" and not fixture_only:
         qualifier = qualification_snapshot.get("qualifying_authority")
