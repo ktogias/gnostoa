@@ -308,8 +308,7 @@ def verify_receipt() -> int:
     run = subprocess.run(
         ["python", "tests/test_review_assurance.py"],
         cwd=ROOT,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=False,
     )
     if run.returncode != expected_exit:
