@@ -47,9 +47,10 @@ It does not admit a live provider collector, reviewer orchestration, #10 registr
 1. Converge Decision 0067, task envelope and this RED contract before production implementation.
 2. Add the exact focused RED harness below while production review-assurance schemas, policies and executable modules are still absent.
 3. Run the exact RED command and retain its commit SHA, nonzero exit, canonical bounded output bytes/SHA-256 and proof that production paths remain absent.
-4. Only after the RED receipt is complete may the task hand off to production implementation.
-5. Preserve RED expectations unchanged through production implementation unless a later review explicitly changes Decision 0067 and records why.
-6. Reach GREEN, then run mutation/permutation controls, complete suites, exact-candidate reviews and advisory dogfood.
+4. Complete every RED receipt field and run `python tests/test_review_assurance.py --verify-receipt` against the exact pre-production candidate. The verifier must return exit 0 with canonical `ok:true`; it must fail while receipt metadata is `PENDING`, when retained output/blob identities drift, or when the declared RED command no longer reproduces the receipt.
+5. Only after the observed RED receipt and executable receipt verification converge may the task hand off to production implementation.
+6. Preserve RED expectations unchanged through production implementation unless a later review explicitly changes Decision 0067 and records why.
+7. Reach GREEN, then run mutation/permutation controls, complete suites, exact-candidate reviews and advisory dogfood.
 
 The first R2A implementation is bootstrap. `current_advisory + candidate_under_test` is valid but assurance-incomplete and cannot PASS. Synthetic fixture-only historical replay may exercise normal policy/quorum/blocker/conflict and historical-pinning semantics. Real retained pre-R2A review evidence is characterized separately as `candidate_under_test`; it is never assigned a fabricated historical trusted R2A judge.
 
@@ -66,7 +67,7 @@ tests/fixtures/review_check/red-observed-output.json
 
 The first three are authored before the RED run. `red-observed-output.json` is populated only with exact canonical stdout bytes observed from that RED run and retained in the same RED commit; it is evidence, not an expected-output template.
 
-The test file uses the standard-library `unittest` runner and invokes the future public route as an external command where CLI behavior is under test; pure-contract cases may import future modules only after they exist. The RED command is exactly:
+The RED command is exactly:
 
 ```text
 python tests/test_review_assurance.py
@@ -87,9 +88,9 @@ The RED harness has one receipt-bearing output channel:
 - `bounded_output_sha256` is SHA-256 of the exact stdout report bytes described above, including the final LF and excluding stderr;
 - exact stdout report bytes are retained byte-for-byte at `tests/fixtures/review_check/red-observed-output.json` in the RED commit. Its file SHA-256 must equal `bounded_output_sha256`.
 
-**The stdout report and the RED receipt are deliberately different objects.** `bounded_output_sha256`, `red_output_artifact`, `red_commit`, command, exit code and stderr byte count are receipt metadata recorded outside the stdout JSON in the receipt block below. They are not fields in `red-observed-output.json` and are not part of the bytes being hashed. This prevents self-referential hashing. The receipt points to and authenticates the retained stdout report; the stdout report does not contain its own digest or path.
+**The stdout report and the RED receipt are deliberately different objects.** `bounded_output_sha256`, `red_output_artifact`, `red_commit`, command, exit code, stderr byte count and exact Git blob identities are receipt metadata recorded outside the stdout JSON. They are not fields in `red-observed-output.json` and are not part of the bytes being hashed. This prevents self-referential hashing. The receipt points to and authenticates the retained stdout report; the stdout report does not contain its own digest or path.
 
-The stdout report `schema` is `gnostoa-review-assurance-red/v1`, `phase` is `RED`, and `required_case_ids` contains every required R-ID in this contract. The RED receipt is invalid if the retained report file differs from captured stdout, if stderr is nonempty, if a required R-ID is absent, or if the report exceeds the byte limit. There is no executor-defined alternate capture/truncation convention.
+The stdout report `schema` is `gnostoa-review-assurance-red/v1`, `phase` is `RED`, and `required_case_ids` contains every required R-ID in this contract. The RED receipt is invalid if the retained report file differs from captured stdout, if stderr is nonempty, if a required R-ID is absent, if any retained RED artifact has a different Git blob identity, or if the report exceeds the byte limit. There is no executor-defined alternate capture/truncation convention.
 
 ### RED receipt — must be completed before production handoff
 
@@ -97,9 +98,14 @@ The stdout report `schema` is `gnostoa-review-assurance-red/v1`, `phase` is `RED
 red_commit: PENDING
 command: python tests/test_review_assurance.py
 exit_code: PENDING   # must be nonzero
+stdout_bytes: PENDING
 bounded_output_sha256: PENDING
 red_output_artifact: tests/fixtures/review_check/red-observed-output.json
 stderr_bytes: PENDING   # must be 0
+red_harness_blob: PENDING
+red_cases_blob: PENDING
+red_expected_blob: PENDING
+red_output_blob: PENDING
 production_paths_absent:
   - schemas/review-check-input.schema.json
   - schemas/review-policy.schema.json
@@ -111,9 +117,18 @@ production_paths_absent:
   - tools/review_evaluate.py
   - tools/review_adapter_file.py
   - tools/review_check.py
+  - existing tools/cli.py has no review-check route/import/reference
 ```
 
-`PENDING` in any RED receipt field blocks production implementation handoff. The observed RED commit/output are evidence, not values to predict in this specification.
+`PENDING` in any scalar RED receipt field blocks production implementation handoff. After the receipt is populated, the exact verifier command is:
+
+```text
+python tests/test_review_assurance.py --verify-receipt
+```
+
+The verifier is pre-production handoff evidence. It re-runs the declared RED command, captures stdout/stderr as bytes, checks exit code and the 65,536-byte bound, compares stdout byte-for-byte with the retained output, verifies the stdout SHA-256, validates all four retained Git blob identities, and checks the canonical RED report still says `production_paths_absent:true` with every R-ID. The `red_commit` itself is additionally rebound through Git/provider exact-object readback and review; the local verifier validates that it is a canonical 40-hex identity but does not claim remote Git-object attestation.
+
+The observed RED commit/output are evidence, not values to predict in this specification.
 
 ## Required RED matrix
 
@@ -124,7 +139,7 @@ production_paths_absent:
 | R01 | Missing, unresolved or abstract policy plus zero observations cannot PASS. |
 | R02 | Explicit `review_requirement:none` may PASS only with reason `POLICY_EXEMPT`. |
 | R03 | Empty lists inside a required-review class do not silently become no-review. |
-| R04 | A weakened policy copy in candidate paths cannot replace the selected prior-effective authority policy. |
+| R04 | A candidate-weakened supplied policy with the prior authority policy digest held fixed is rejected as unresolved/`INCOMPLETE`; unauthoritative candidate claims cannot replace the selected prior-effective authority policy. |
 
 ### Subject and time cut
 
@@ -133,16 +148,16 @@ production_paths_absent:
 | R05 | Same head with a different merge-base is a different/non-counting reviewed subject. |
 | R06 | Older-head review remains visible but cannot satisfy current exact-head policy. |
 | R07 | Partial or unestablished subject binding remains visible but cannot satisfy exact-subject policy. |
-| R08 | Any used observation/collection/qualification cut later than `EvaluationContext.as_of` is configuration error. |
+| R08 | Any used observation, required-collection or qualification cut later than `EvaluationContext.as_of` is configuration error, with those cut classes exercised independently. |
 | R09 | With RFC3339 cuts interpreted as UTC instants, finite freshness is `0 <= utc(as_of)-utc(cut) <= max_age`; exceeding the finite limit produces `INCOMPLETE`, never PASS. |
-| R10 | A synthetic fixture-only `historical_replay` pins exact fixture authority and judge identities and refuses silent current substitution, without claiming those identities were real historical production authority. |
+| R10 | A synthetic fixture-only `historical_replay` pins exact fixture authority and judge identities and refuses silent current substitution or a missing fixture-only marker, without claiming those identities were real historical production authority. |
 
 ### Collection completeness
 
 | ID | Required behavior |
 | --- | --- |
 | R11 | Omitted policy-required source produces unmet/`INCOMPLETE` evidence. |
-| R12 | Required `PARTIAL`, `RATE_LIMITED`, `UNAVAILABLE` or `ERROR` source prevents PASS. |
+| R12 | Required `PARTIAL`, `RATE_LIMITED`, `UNAVAILABLE` or `ERROR` source prevents PASS, with each state exercised independently. |
 | R13 | Silence, truncation, rate limit or unavailable retrieval never normalizes to no-findings. |
 | R14 | Optional unavailable source remains visible but need not block when every actual requirement is independently satisfied. |
 | R15 | Incomplete collection cannot manufacture absence, blocker resolution or quorum. |
@@ -153,7 +168,7 @@ production_paths_absent:
 | --- | --- |
 | R16 | Capability/domain claims inside input review evidence do not qualify the observation. |
 | R17 | Wrong or unaccepted authority/qualification digest cannot satisfy quorum. |
-| R18 | `unestablished`, `revoked` or freshness-expired qualification cannot count. |
+| R18 | `unestablished`, `revoked` or freshness-expired qualification cannot count, with each condition exercised independently. |
 | R19 | Multiple observations from one established opaque domain ID contribute one distinct domain. |
 | R20 | Two separately established opaque domain IDs can satisfy a two-domain quorum. |
 | R21 | Owner-authored review does not count when effective policy says false. |
@@ -187,9 +202,9 @@ production_paths_absent:
 | ID | Required behavior |
 | --- | --- |
 | R35 | `current_advisory` with `judge_relation:candidate_under_test` is `INCOMPLETE` and cannot masquerade as `prior_integrated` or PASS. |
-| R36 | Valid structured but unavailable, partial, mismatched, revoked, deprecated or unknown authority/judge material yields semantic `INCOMPLETE` and exit 3. |
+| R36 | Valid structured but unavailable, partial, mismatched, revoked, deprecated or unknown authority/judge material yields semantic `INCOMPLETE` and exit 3; revoked/deprecated/unknown judge status are exercised independently. |
 | R37 | Candidate-changed runtime lock cannot select the authority-owned expected trusted judge. |
-| R38 | Synthetic historical replay pins its exact fixture-only historical authority/judge identities; retained pre-R2A evidence is not reclassified as having a historical trusted R2A judge. |
+| R38 | Synthetic historical replay pins its exact fixture-only authority/judge identity. Independent mismatches of runtime image digest, public-surface digest and supported input-schema versions are non-trusted/`INCOMPLETE`; retained pre-R2A evidence is not reclassified as having a historical trusted R2A judge. |
 | R39 | Native execution is not labelled v1 `prior_integrated` solely from current source-root/runtime-lock binding. |
 | R40 | A later candidate that modifies review evaluator/schema/adapter cannot replace the separately selected prior-integrated judge. |
 
@@ -210,11 +225,11 @@ Add synthetic minimal cases where real retained evidence does not exercise a pre
 
 For normalization cases, retained/native recommendation state is input to the active file adapter. Any supplied normalized/provenance fields are adversarial claims. Expected authoritative normalization/provenance is recomputed by the selected adapter rule. `cases.json` must include at least one R45 mutant where the claimed normalized value/provenance conflicts with recomputation.
 
-`cases.json` names every required case by R-ID and contains supplied input/fixture references. `expected.json` maps each R-ID to required semantic outcome/reason or error-envelope class plus exit code. The runner fails if a required R-ID is absent from either file.
+`cases.json` names every required case by R-ID and contains supplied input/fixture references. `expected.json` maps each R-ID to required semantic outcome/reason or error-envelope class plus exit code. A named R-ID may have bounded subvariants when one normative predicate enumerates multiple states; subvariants inherit the R-ID expectation unless `expected.json` explicitly supplies a stricter variant expectation. The runner fails if a required R-ID is absent from either file.
 
 ## Mutation and discriminating controls after GREEN
 
-Mutate one assurance fact at a time and require a discriminating result: remove one required source; change merge-base with same head; forge observation capability/domain; collapse two domains to one; alter policy or qualification digest; alter expected/acquired judge binding or judge status; move `as_of` across a freshness threshold; forge normalized recommendation/provenance; reorder observations; switch required review to explicit no-review. Controls must expose both false-PASS and false-BLOCK tendencies.
+Mutate one assurance fact at a time and require a discriminating result: remove one required source; change merge-base with same head; forge observation capability/domain; collapse two domains to one; alter policy or qualification digest; alter each expected/acquired judge binding component or judge status; move `as_of` across a freshness threshold; forge normalized recommendation/provenance; reorder observations; switch required review to explicit no-review. Controls must expose both false-PASS and false-BLOCK tendencies.
 
 ## Complete verification and review
 
@@ -234,4 +249,4 @@ Measure false pass/block against owner semantic disposition where comparable, su
 
 ## Completion boundary
 
-The specification is implementation-handoff-ready only after reviews converge and the RED receipt above is fully observed. The bounded slice is complete only when Decision/task/implementation agree, all retained RED cases are GREEN without semantic weakening, mutation controls discriminate, complete applicable suites pass on exact candidate, every material external finding is dispositioned, dogfood is retained honestly, and public output remains advisory with no provider or merge enforcement activated. Owner semantic acceptance and merge authorization remain separate.
+The specification is implementation-handoff-ready only after reviews converge, every RED receipt scalar is fully observed, the exact `--verify-receipt` command succeeds on the pre-production candidate, and Git/provider readback confirms the recorded RED commit/artifact identities. The bounded slice is complete only when Decision/task/implementation agree, all retained RED cases are GREEN without semantic weakening, mutation controls discriminate, complete applicable suites pass on exact candidate, every material external finding is dispositioned, dogfood is retained honestly, and public output remains advisory with no provider or merge enforcement activated. Owner semantic acceptance and merge authorization remain separate.
