@@ -113,7 +113,7 @@ jobs:
         run: |
           python -m ruff format --check tools ci tests
           python -m ruff check tools ci tests
-      - name: Type-check experiment trust domains
+      - name: Type-check experiment and review trust domains
         if: matrix.python-version == '3.12'
         run: |
           python -m mypy \
@@ -121,7 +121,12 @@ jobs:
             tools/experiment_handoff.py \
             tools/experiment_packager.py \
             tools/experiment \
-            tools/capsule
+            tools/capsule \
+            tools/review_adapter_file.py \
+            tools/review_check.py \
+            tools/review_evaluate.py \
+            tools/review_model.py \
+            tools/review_policy.py
       - name: Verify frozen-handoff package golden digest
         run: |
           python tests/test_experiment_packager.py \
@@ -242,12 +247,17 @@ jobs:
           tools/cli.py
           tools/knowledge_common.py
           tools/repository_scope.py
+          tools/review_adapter_file.py
+          tools/review_check.py
+          tools/review_evaluate.py
+          tools/review_model.py
+          tools/review_policy.py
           tools/self_check.py
           tools/task_envelope.py
           tools/validate_bundle.py
           EOF
-          test "$(wc -l < "${sb2_paths_file}")" -eq 14
-          test "$(LC_ALL=C sort -u "${sb2_paths_file}" | wc -l)" -eq 14
+          test "$(wc -l < "${sb2_paths_file}")" -eq 19
+          test "$(LC_ALL=C sort -u "${sb2_paths_file}" | wc -l)" -eq 19
 
           source_sb2_manifest="${sb2_root}/source.sha256"
           runtime_sb2_manifest="${sb2_root}/runtime.sha256"
@@ -299,7 +309,7 @@ jobs:
           printf 'public_surface.source=%s\n' "${source_digest}"
           printf 'public_surface.runtime=%s\n' "${runtime_digest}"
           printf 'public_surface.vendored=%s\n' "${vendored_digest}"
-          printf 'sb2.membership=14\n'
+          printf 'sb2.membership=19\n'
           printf 'sb2.source.begin\n'
           cat "${source_sb2_manifest}"
           printf 'sb2.source.end\n'

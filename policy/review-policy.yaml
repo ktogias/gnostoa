@@ -1,0 +1,32 @@
+id: gnostoa-review-assurance
+version: "1.0"
+owner: team:gnostoa-maintainers
+abstract: false
+extends:
+  - ../core/review-policy.yaml
+
+change_classes:
+  mechanical:
+    review_requirement: none
+    quorum:
+      minimum_distinct_domains: 0
+    qualification:
+      required_capabilities: []
+    collection:
+      required_sources: []
+  normal:
+    review_requirement: required
+    quorum:
+      minimum_distinct_domains: 2
+  normative:
+    review_requirement: required
+    quorum:
+      minimum_distinct_domains: 2
+  critical:
+    review_requirement: required
+    quorum:
+      minimum_distinct_domains: 2
+  emergency:
+    review_requirement: required
+    quorum:
+      minimum_distinct_domains: 1
