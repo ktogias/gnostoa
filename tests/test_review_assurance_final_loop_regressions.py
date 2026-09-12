@@ -10,6 +10,7 @@ from tools import review_check
 from tools.review_evaluate import ReviewInputError, evaluate
 from tools.review_model import canonical_digest
 from tools.review_policy import effective_policy_issues
+from tools.task_envelope import render_current_projection, validate_task_envelope
 
 ROOT = Path(__file__).resolve().parents[1]
 FIX = ROOT / "tests" / "fixtures" / "review_check"
@@ -109,6 +110,55 @@ class ReviewAssuranceFinalLoopRegressions(unittest.TestCase):
         self.assertIn(
             "subject_not_exact",
             assessments[foreign["observation_id"]]["exclusion_reasons"],
+        )
+
+    def test_fixture_equivalent_subject_bindings_share_revision_lineage(self) -> None:
+        input_document, policy_document = _documents()
+        observations = input_document["evidence_set"]["observations"]
+        older = observations[0]
+        older["native"]["object_id"] = "equivalent-subject-provider-object"
+        older["native"]["revision"] = 1
+        older["native"]["recommendation_state"] = "CHANGES_REQUESTED"
+        older["subject_binding"].pop("repository", None)
+        older["subject_binding"].pop("change_request", None)
+
+        newer = copy.deepcopy(older)
+        newer["observation_id"] = "equivalent-subject-higher-revision"
+        newer["native"]["revision"] = 2
+        newer["native"]["recommendation_state"] = "APPROVED"
+        newer["subject_binding"]["repository"] = input_document["subject"]["repository"]
+        newer["subject_binding"]["change_request"] = input_document["subject"][
+            "change_request"
+        ]
+        observations.append(newer)
+
+        code, payload = review_check.evaluate_documents(input_document, policy_document)
+
+        self.assertEqual(0, code)
+        self.assertEqual("PASS", payload["outcome"])
+        assessments = {
+            assessment["observation_id"]: assessment
+            for assessment in payload["assessments"]
+        }
+        self.assertIs(assessments[older["observation_id"]]["eligible"], False)
+        self.assertIn(
+            "superseded_revision",
+            assessments[older["observation_id"]]["exclusion_reasons"],
+        )
+        self.assertIs(assessments[newer["observation_id"]]["eligible"], True)
+
+    def test_d11_task_envelope_remains_schema_and_projection_bounded(self) -> None:
+        envelope_path = ROOT / "tasks" / "issue-11-r2a-p1.yaml"
+        envelope, issues = validate_task_envelope(envelope_path, ROOT)
+
+        self.assertEqual([], issues)
+        projection = render_current_projection(
+            envelope,
+            "git:" + ("0" * 40),
+        )
+        self.assertLessEqual(
+            len(projection),
+            envelope["review"]["projection_characters"],
         )
 
     def test_stale_subject_precedes_blocker_semantics(self) -> None:

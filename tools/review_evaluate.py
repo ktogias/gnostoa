@@ -149,6 +149,34 @@ def _exact_subject_binding(binding: object, target: dict[str, Any]) -> bool:
     ) == target.get("change_request")
 
 
+def _legacy_fixture_subject_binding(
+    binding: object,
+    target: dict[str, Any],
+    allow_synthetic_revision_lineage: bool,
+) -> bool:
+    return (
+        allow_synthetic_revision_lineage
+        and isinstance(binding, dict)
+        and "repository" not in binding
+        and "change_request" not in binding
+        and _subject_commit_pair_matches(binding, target)
+    )
+
+
+def _revision_subject_key(
+    binding: object,
+    target: dict[str, Any],
+    allow_synthetic_revision_lineage: bool,
+) -> str:
+    if _exact_subject_binding(binding, target) or _legacy_fixture_subject_binding(
+        binding,
+        target,
+        allow_synthetic_revision_lineage,
+    ):
+        return canonical_json(target)
+    return canonical_json(binding)
+
+
 def _exclude_row(
     row: tuple[dict[str, Any], dict[str, Any]],
     reason: str,
@@ -225,8 +253,12 @@ def _prepare_assessments(
             and isinstance(object_id, str)
             and object_id
         ):
-            subject_binding = canonical_json(row[0].get("subject_binding"))
-            grouped[(source_id, object_id, subject_binding)].append(row)
+            subject_key = _revision_subject_key(
+                row[0].get("subject_binding"),
+                target,
+                allow_synthetic_revision_lineage,
+            )
+            grouped[(source_id, object_id, subject_key)].append(row)
         else:
             ungrouped.append(row)
 
@@ -300,12 +332,10 @@ def _prepare_assessments(
     for observation, assessment in semantic_rows:
         reasons: list[str] = []
         binding = observation.get("subject_binding")
-        legacy_fixture_binding = (
-            allow_synthetic_revision_lineage
-            and isinstance(binding, dict)
-            and "repository" not in binding
-            and "change_request" not in binding
-            and _subject_commit_pair_matches(binding, target)
+        legacy_fixture_binding = _legacy_fixture_subject_binding(
+            binding,
+            target,
+            allow_synthetic_revision_lineage,
         )
         if not legacy_fixture_binding and not _exact_subject_binding(binding, target):
             reasons.append("subject_not_exact")
