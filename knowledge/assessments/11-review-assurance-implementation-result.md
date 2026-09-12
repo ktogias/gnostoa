@@ -1,11 +1,11 @@
 ---
 type: Source
 title: D11-R2A advisory semantic review assurance implementation result
-description: Exact-subject implementation, verification, review-convergence and real-provider dogfood result for the bounded D11-R2A P1 advisory review-assurance gate.
+description: Corrected exact-subject implementation, verification, review-evidence and post-approval convergence result for the bounded D11-R2A P1 advisory review-assurance gate.
 status: draft
 generated:
   by: openai/gpt-5.6-sol
-  at: "2026-09-12T12:26:00Z"
+  at: "2026-09-12T19:37:20Z"
 sources:
   - id: work-item
     resource: https://github.com/ktogias/gnostoa/issues/11
@@ -19,9 +19,12 @@ sources:
   - id: red-contract
     resource: 11-review-assurance-red-contract.md
     title: D11-R2A review-assurance RED-first execution contract
-  - id: converged-review
-    resource: https://github.com/ktogias/gnostoa/pull/240#issuecomment-5645773763
-    title: CodeRabbit exact-head implementation convergence confirmation
+  - id: post-approval-rca
+    resource: https://github.com/ktogias/gnostoa/issues/11#issuecomment-5648009539
+    title: D11-R2A post-approval review-cut and oracle-strength retrospective
+  - id: corrective-verification
+    resource: https://github.com/ktogias/gnostoa/actions/runs/34714268858
+    title: Corrective exact-head verification run
 x-project-knowledge:
   id: kit.assessment.11-review-assurance-implementation-result
   owners:
@@ -41,18 +44,51 @@ x-project-knowledge:
 
 # D11-R2A advisory semantic review assurance implementation result
 
-## Result
+## Current result
 
-The bounded `GNOSTOA/D11-R2A/P1` slice now implements the Decision 0067 advisory semantic-review assurance gate over retained file evidence. The production implementation converged at exact commit
-`f08b3e00e52c73333cdf356fb45374fb4e2ebbbe`, tree
-`ccc4b1be4acfffd9fdb0060fb8a67a8d523fcdc1`.
+`GNOSTOA/D11-R2A/P1` now has a corrected implementation/guardrail subject at exact commit
+`456267d93c59f5a2ca161a7fef04938348bc8683`, tree
+`eeb72672b1a4e1503519f5f3faa945d8b0b13659`.
 
-The later exact evidence/dogfood head
-`42df107ebbd609fc3816d3e00d606511fdcd396c` adds only retained PR #239 provider evidence and dogfood tests. It does not change the production evaluator, schemas or review policy after implementation convergence. These identities are intentionally kept separate from the immutable pre-production RED subject.
+GitHub Actions run
+[`34714268858`](https://github.com/ktogias/gnostoa/actions/runs/34714268858)
+completed successfully on that exact subject for:
 
-This result is mechanical and review evidence for accountable-owner semantic review. It is not owner acceptance, a merge authorization, a provider-required check, or evidence that Gnostoa already possesses a protected prior-integrated R2A authority acquisition path.
+- `policy`;
+- `fast`, including the unchanged historical R01-R45 GREEN harness and the new post-RED discriminating property regressions;
+- Python 3.11 source compatibility;
+- Python 3.12 source/install compatibility, canonical Ruff formatting and strict mypy over the review trust domain;
+- `regression`; and
+- `smoke`, including exact executable-candidate binding.
 
-## Immutable RED-to-GREEN chronology
+`extended` was **SKIPPED** and is not represented as PASS.
+
+This corrected technical subject is mechanical evidence only. It is not accountable-owner semantic acceptance, a completed final review-evidence cut, merge authorization, publication authority or a provider-required semantic-review check. Evidence/state finalization after this subject creates a later exact candidate that must itself pass required CI before final review collection begins.
+
+## Why the earlier convergence statement was superseded
+
+The earlier implementation result correctly recorded what had been observed at the time, but its conclusion that P1 was ready for accountable-owner review proved too strong.
+
+The historical sequence remains factual:
+
+- production code converged at `f08b3e00e52c73333cdf356fb45374fb4e2ebbbe`;
+- GitHub Actions run
+  [`34692238908`](https://github.com/ktogias/gnostoa/actions/runs/34692238908)
+  succeeded on that exact subject;
+- CodeRabbit comment `5645773763` reported no BLOCKING/MATERIAL finding in that review pass;
+- later dogfood/finalization/ready subjects also passed their then-applicable checks; and
+- accountable-owner approval `5647591088` was recorded for exact source head
+  `45befab9d65da2cb68fec916101071818ebac4ec`.
+
+However, the PR was still Draft when that approval was recorded. After it transitioned to Ready, new material Sourcery and Qodo review findings arrived on the **same unchanged source SHA**. The source subject was stable, but the available review-evidence set was not yet complete. Merge protection blocked integration before main changed.
+
+Issue #11 comment `5648009539` is the durable post-approval RCA. Its central correction is:
+
+> review readiness and owner-approval freshness bind both the immutable candidate subject and a reconciled review-evidence cut.
+
+A later material finding makes the approval stale even if the Git SHA does not change. The historical approval remains a real event; it is not current merge authorization for the corrected candidate.
+
+## Immutable RED chronology is preserved
 
 The authoritative pre-production RED receipt remains commit
 `97244d233e8c798c23a408ffe40f5eb96f252b40`. At that commit:
@@ -60,143 +96,193 @@ The authoritative pre-production RED receipt remains commit
 - `python tests/test_review_assurance.py` exited `1`;
 - stdout was exactly 698 bytes with SHA-256
   `6584f3cde2f6916f90e39e825b768fbdbecb51958f734e5358bf9c6896207e9b`;
-- stderr was zero bytes;
-- every pre-registered case R01-R45 failed because production review-assurance paths were absent; and
-- the retained RED harness/cases/expected/output blobs were sealed by the receipt recorded in the RED contract.
+- stderr was zero bytes; and
+- R01-R45 failed while production review-assurance paths were absent.
 
-Those four RED artifacts were not rewritten to obtain GREEN. The production implementation was added afterwards, and the same `python tests/test_review_assurance.py` oracle now reports:
-
-```json
-{"failing_case_ids":[],"phase":"GREEN","production_paths_absent":false,"required_case_ids":["R01","R02","R03","R04","R05","R06","R07","R08","R09","R10","R11","R12","R13","R14","R15","R16","R17","R18","R19","R20","R21","R22","R23","R24","R25","R26","R27","R28","R29","R30","R31","R32","R33","R34","R35","R36","R37","R38","R39","R40","R41","R42","R43","R44","R45"],"schema":"gnostoa-review-assurance-red/v1","unexpected_case_ids":[]}
-```
-
-The chronology therefore preserves the literal verification-first claim: the executable oracle and its expectations predate the production implementation that satisfies them.
-
-## Implemented surface
-
-P1 adds the deliberately small surface selected by Decision 0067:
+The four receipt-bearing RED artifacts were **not modified** during corrective convergence:
 
 ```text
-schemas/review-check-input.schema.json
-schemas/review-policy.schema.json
-schemas/review-gate-result.schema.json
-core/review-policy.yaml
-policy/review-policy.yaml
-tools/review_model.py
-tools/review_policy.py
-tools/review_evaluate.py
-tools/review_adapter_file.py
-tools/review_check.py
-knowledge review-check
+tests/test_review_assurance.py
+tests/fixtures/review_check/cases.json
+tests/fixtures/review_check/expected.json
+tests/fixtures/review_check/red-observed-output.json
 ```
 
-The three public schemas keep the external contract small while internal Python modules remain flat and separately testable. `core/review-policy.yaml` is abstract/non-evaluatable; the Gnostoa-self project policy explicitly specializes change classes. The evaluator consumes existing change class rather than becoming a second change classifier.
+The same historical harness remains GREEN after production implementation. The corrective work adds separate post-RED regression/property tests rather than rewriting the evidence that established verification-first chronology.
 
-The file adapter derives normalized recommendation and normalization provenance from retained native state. Caller-supplied normalized values, adapter identity, rule identity, raw-state digest or admission claims do not become authority. Qualification/domain/capability facts remain externally supplied bounded snapshots under Issue #10 semantics; R2A does not create a reviewer registry or infer independent domains from provider/model labels.
+This distinction matters because the post-approval RCA showed that a named R-ID can exist without sufficiently discriminating every wrong implementation allowed by that prose requirement. The immutable RED record proves chronology; the additional property suite strengthens current oracle quality.
 
-## Bootstrap trust boundary
+## Corrective defects and dispositions
 
-Implementation review found that a merely deterministic file evaluator was not enough to support the stronger current-advisory anti-self-weakening claim. The initial CLI accepted a caller-selected `--policy`; a caller could pair a weaker schema-valid policy with caller-authored matching authority/qualification/judge claims. A first repair constrained the CLI, but direct `evaluate_documents()` still bypassed that restriction.
+The post-approval review/read-back confirmed the following material implementation defects on the previously approved head and corrected them in the current technical subject.
 
-The final P1 boundary is therefore intentionally stricter and fail-closed:
+### Duplicate retained identities
 
-- every well-formed `current_advisory` evaluation in the first/bootstrap implementation returns semantic `INCOMPLETE`;
-- the reason is `BOOTSTRAP_PROTECTED_AUTHORITY_UNAVAILABLE`;
-- every semantic result remains `binding:false`;
-- neither caller-selected policy paths nor matching caller-authored authority/judge facts can manufacture current-advisory PASS; and
-- `historical_replay` remains the explicit file/fixture route for deterministic replay and synthetic prior-integrated semantics.
+Previously:
 
-This is a bounded P1 specialization, not a claim that current-advisory PASS is permanently impossible. A later separately admitted change may enable it only after a protected prior-integrated authority acquisition path exists and is itself verified.
+- duplicate `observation_id` silently used first-wins behavior; and
+- duplicate collection `source_id` silently used last-wins behavior.
 
-## Result and error fidelity
+The same evidence in a different order could therefore alter semantic evaluation.
 
-The implementation validates all three layers rather than trusting producer intent:
+Now:
 
-1. review-check input is validated against the input schema;
-2. the selected effective policy is validated against the policy schema and semantic policy constraints; and
-3. the evaluator's emitted semantic result is validated against `review-gate-result.schema.json` before its outcome is mapped to an exit code.
+- exact duplicate observations are idempotent;
+- conflicting duplicate observation identities are configuration errors;
+- exact duplicate collection-source records are idempotent;
+- conflicting duplicate collection-source identities are configuration errors; and
+- collection output is canonically ordered.
 
-Malformed installed JSON Schemas are checked with Draft 2020-12 schema validation. Invalid installed schemas, policy-loading/inheritance failures and other configuration faults use the canonical error envelope and exit `2`; a malformed evaluator result becomes `TOOL_ERROR`, not a semantic PASS. Semantic exits remain exactly PASS=0, BLOCKED=1, error=2, INCOMPLETE=3 and CONFLICTING=4.
+### Revision-lineage authority
 
-## Exact-head implementation verification
+Previously, caller-supplied `native.object_id` plus numeric revision could establish a replacement lineage strongly enough for a higher revision to supersede a lower one.
 
-The converged production-code subject `f08b3e00e52c73333cdf356fb45374fb4e2ebbbe` was verified by GitHub Actions run `34692238908` on that exact head. Required jobs all succeeded:
+P1 has no independently established real-provider lineage authority. The corrected boundary therefore refuses to derive such authority from caller fields:
 
-- `policy`;
-- `fast`, including the unchanged R01-R45 GREEN harness;
-- Python 3.11 source compatibility;
-- Python 3.12 including canonical Ruff formatting and strict mypy over the review trust domain;
-- `regression`; and
-- `smoke`, including exact executable-candidate binding.
+- multiple same-object real/non-fixture observations remain visible but carry `revision_lineage_unproven` and cannot count for blocker/conflict/quorum authority;
+- only explicitly synthetic `fixture_only` replay may exercise fixture-proven numeric supersession semantics; and
+- equal/ambiguous fixture revisions remain non-authoritative.
 
-The smoke lane ran 707 tests with three expected skips. It verified source/runtime/vendored public-surface equality at
-`sha256:5607a4acbece4286e9ba5a720f07d9a12f9dcc6df6f7fff70dc10a7c0a603b79` and the explicit SB2 candidate extension from the historical 14-member set to 19 members by adding exactly the five review-assurance modules.
+A future real provider-lineage acquisition contract requires separate admission and evidence.
 
-`extended` was skipped by workflow and is not counted as PASS.
+### Qualification identity
 
-## Exact-head implementation review reconciliation
+Qualification lookup is authority-bearing. Repeated `(reviewer_id, source_id)` entries are therefore rejected as ambiguous configuration rather than allowed to contribute multiple domains according to input order.
 
-CodeRabbit review evidence is retained as one reviewer family, never as proof of multiple independent review domains.
+### Explicit no-review precedence
 
-The important exact-head review sequence was:
+`review_requirement:none` is now applied before blocker/conflict/collection/quorum semantics. An exempt mechanical change cannot be converted into `BLOCKED` or `CONFLICTING` merely because retained review evidence exists.
 
-- comment `5645676190`: MATERIAL finding that caller-selected `--policy` plus caller-authored authority could self-authorize current-advisory PASS; MINOR finding that invalid installed JSON Schema could escape the canonical error envelope;
-- comment `5645705012`: after the CLI repair, MATERIAL finding that direct `evaluate_documents()` still preserved the same self-authorization path;
-- comment `5645724030`: after moving the restriction into the shared evaluator boundary, zero BLOCKING and zero MATERIAL findings; its `IMPLEMENTATION_REVISION_REQUIRED` disposition was only because required CI was still incomplete at inspection time; and
-- comment `5645773763`: on unchanged exact head `f08b3e00...`, after run `34692238908` completed successfully, zero BLOCKING/MATERIAL findings and explicit `IMPLEMENTATION_CONVERGED`.
+### Change-class override semantics
 
-These reviews improved the implementation but do not constitute human acceptance or an Issue #10-established independent review domain.
+Source-policy inheritance retains the repository's existing monotonic `deep_merge` behavior. A selected change-class specialization is different: an explicit list value replaces the inherited list. The mechanical class therefore truly resolves to:
 
-## Real-provider dogfood
+- `review_requirement:none`;
+- no required review source;
+- no required review capability; and
+- quorum zero.
 
-P1 also dogfoods the implemented semantics against attributable pre-R2A GitHub review records from merged PR #239 rather than only synthetic fixtures.
+### Bootstrap reason invariance
 
-The dogfood subject is real:
+After basic input/context/subject shape validation, every well-formed P1 `current_advisory` invocation reaches the shared fail-closed bootstrap result before caller-authored policy/judge material can select another semantic reason:
 
-- repository: `ktogias/gnostoa`;
-- pull request: `239`;
-- final head: `1fa8eb9ff1ae0604663f2611cd67fdedb97d88c9`;
-- merge-base: `a0b7c8a170942fce61ff3c08b350bc3d7ab0a2a0`.
+```text
+outcome = INCOMPLETE
+reason = BOOTSTRAP_PROTECTED_AUTHORITY_UNAVAILABLE
+binding = false
+```
 
-The retained native review objects are:
+P1 still has no protected prior-integrated current-advisory authority acquisition path and cannot manufacture one from candidate input.
 
-- Qodo GitHub review `5182705577`, state `COMMENTED`, bound to commit
-  `1337c82e28256f265b4c28b1fe41980e2cf7e832`; and
-- Sourcery GitHub review `5182778419`, state `APPROVED`, bound to commit
-  `204695d0647a0601f4fbae340e2fc86234dedfb3`.
+## Post-RED oracle-strengthening evidence
 
-Both reviews are genuine older-head evidence relative to PR #239's final head. That makes them useful adversarial dogfood: the adapter must preserve attribution and normalize native state, while the evaluator must not silently reinterpret them as final-head quorum.
+The corrective suite explicitly tests properties that the earlier named matrix did not discriminate strongly enough.
 
-Exact evidence head `42df107ebbd609fc3816d3e00d606511fdcd396c` passed workflow run `34692998501`. The fast suite ran 710 tests with two expected skips and explicitly passed all three dogfood discriminators:
+`tests/test_review_assurance_property_regressions.py` now exercises, among other cases:
 
-- real native reviews normalize without invented authority;
-- older-head reviews stay visible but do not count for the final-head subject; and
-- current-advisory dogfood remains bootstrap `INCOMPLETE`.
+- R01 abstract/unresolved policy and zero-observation variants;
+- R14 optional-source outage visibility without false blocking;
+- R26 unrecognized evidence with no quorum, blocker or conflict authority;
+- R31 actual observation permutations and duplicate placement with canonical-result equality;
+- R32 preservation of reviewer attribution, raw recommendation, normalized recommendation, findings and normalization provenance;
+- R42 exact subject/authority/judge/`binding:false` fidelity plus canonical JSON round-trip;
+- R43 through the public file-mode CLI path with network creation explicitly forbidden;
+- R44 a closed, typed canonical error envelope;
+- R45 independent forged `admitted`, normalized-recommendation, adapter-id, adapter-version, rule-id and raw-state-digest claims; and
+- duplicate qualification identity ambiguity.
 
-The unchanged R01-R45 oracle also remained fully GREEN on this evidence head. No synthetic independence domain or fabricated historical trusted R2A judge was assigned to these provider records.
+Focused integration regressions separately cover duplicate observation/source ordering, policy-exemption precedence, mechanical list replacement, bootstrap-reason precedence and unproven real revision lineage.
 
-## Mutation and permutation evidence
+This is not a claim of exhaustive mutation coverage. It is evidence that the specific contract-bearing failure classes exposed by the post-approval review now have discriminating controls rather than only named case IDs.
 
-P1 does not claim a generic mutation-testing percentage. The pre-registered R01-R45 matrix is instead deliberately discriminating: many cases change one authority, freshness, collection, subject, qualification, normalization or judge fact at a time, while R31 exercises ordering/duplicate-placement invariance. All pre-registered cases are GREEN without changing their expectations.
+## Real-provider dogfood correction
 
-This is evidence that the evaluator distinguishes the selected failure modes; it is not evidence that every possible semantic mutation has been exhaustively tested.
+The earlier dogfood narrative was too broad when it said no synthetic historical trusted judge was assigned to the real PR #239 provider records. The then-current helper actually evaluated those real records inside a fixture-only `historical_replay / prior_integrated` envelope. That was useful synthetic replay, but it could overstate the trust boundary of the real records.
 
-## Boundary retained
+The corrected dogfood separates the two concepts:
 
-The implemented P1 remains advisory and file-evidence-bound. It does **not** add:
+- real PR #239 records are normalized directly with their attributable provider/native fields;
+- older-head behavior is characterized against PR #239 final head without assigning those records historical production authority; and
+- current-advisory characterization uses `candidate_under_test`, remains `fixture_only:false`, and returns bootstrap `INCOMPLETE`.
 
-- a live provider collector;
+The retained real records remain:
+
+- Qodo review `5182705577`, native `COMMENTED`, older reviewed commit
+  `1337c82e28256f265b4c28b1fe41980e2cf7e832`;
+- Sourcery review `5182778419`, native `APPROVED`, older reviewed commit
+  `204695d0647a0601f4fbae340e2fc86234dedfb3`;
+- PR #239 final head `1fa8eb9ff1ae0604663f2611cd67fdedb97d88c9`;
+- merge-base `a0b7c8a170942fce61ff3c08b350bc3d7ab0a2a0`.
+
+They remain real evidence of native normalization and older-head attribution. They are not evidence that an R2A trusted historical judge existed before R2A itself.
+
+## Governance and discoverability correction
+
+The semantic-review assurance gate is now registered in `policy/guardrails.yaml` as `semantic-review-assurance`, linked to Decision 0067, the policies, three public schemas, evaluator/adapter/CLI implementation and the immutable plus post-RED test surfaces.
+
+The guardrail update was itself diff-audited. Two accidental changes to unrelated historical test references were detected and removed before the technical subject was frozen; the final guardrail delta is limited to its version increment and the new R2A guardrail entry.
+
+## Corrective exact-head verification
+
+Exact technical subject:
+
+```text
+commit: 456267d93c59f5a2ca161a7fef04938348bc8683
+tree:   eeb72672b1a4e1503519f5f3faa945d8b0b13659
+run:    https://github.com/ktogias/gnostoa/actions/runs/34714268858
+```
+
+Observed result on that exact subject:
+
+- `policy`: SUCCESS;
+- `fast`: SUCCESS;
+- Python 3.11 compatibility: SUCCESS;
+- Python 3.12 compatibility: SUCCESS;
+- Ruff: SUCCESS;
+- strict mypy over the review trust domain: SUCCESS;
+- clean installed-artifact smoke: SUCCESS;
+- `regression`: SUCCESS;
+- `smoke`: SUCCESS, including exact executable-candidate binding;
+- `extended`: SKIPPED, not PASS.
+
+GitHub Actions logs and run metadata are provider-managed evidence and may be subject to provider retention. The stable URL and exact subject/run identity are recorded here, while committed tests, policies and knowledge records preserve the bounded claims without pretending that provider logs are permanent archival storage.
+
+## Retained boundary
+
+The corrected P1 remains deliberately small and advisory. It does **not** add:
+
+- live provider collection;
 - reviewer trigger/wait/orchestration;
-- Issue #10 reviewer registry/discovery;
-- provider mutation or auto-resolution;
+- Issue #10 reviewer registry or independence discovery;
+- provider mutation or thread auto-resolution;
 - human semantic acceptance;
 - merge/release authority;
 - a required provider merge check;
-- a generic policy language; or
-- a trusted native current-advisory judge/acquisition path.
+- a generic policy language;
+- a trusted native current-advisory judge/acquisition path; or
+- the future review-handoff/merge-readiness preflight selected for later #15 evaluation.
 
-A later enforcing consumer requires its own admitted design for protected acquisition, outage/bypass/recovery semantics and provider projection. The present result does not pre-authorize that work.
+The latter is a roadmap consequence of this incident, not part of P1.
 
-## Disposition
+## Review-evidence and approval rule going forward
 
-D11-R2A P1 is mechanically and implementation-review converged and is ready for **accountable-owner semantic review of the exact final PR #240 candidate** after the evidence-only finalization commit itself passes CI/review. Merge authorization remains separate.
+Final owner review now requires two current subjects:
+
+1. the exact frozen candidate/base identity; and
+2. a declared, reconciled review-evidence cut for that candidate.
+
+The PR must become GitHub Ready **before** final review collection. All material findings in the declared collection are then fixed, rejected with evidence, deferred under explicit authority or accepted as residual risk. Only after that cut is recorded may accountable-owner semantic approval be requested.
+
+Any material review evidence arriving after the accepted cut makes approval stale before merge, even if the source SHA is unchanged. A final provider/source read-back immediately precedes any separately authorized merge.
+
+## Relationship to the earlier retrospective
+
+`11-review-assurance-implementation-retrospective.md` remains a useful historical pre-approval implementation-convergence retrospective, especially for the CLI/shared-evaluator trust-boundary and CI-wiring incidents it captured. Its conclusion that the work had already succeeded must now be read as superseded by the later post-approval evidence.
+
+For current process truth, use this corrected result together with Issue #11 post-approval RCA `5648009539` and the current task envelope. The later RCA is not retroactively inserted into the earlier historical narrative.
+
+## Current disposition
+
+The corrective implementation/guardrail subject is mechanically verified. Evidence/state finalization follows on a later exact head and must pass required CI again.
+
+After that finalization candidate is frozen, the PR may transition from Draft to Ready **only to begin final review collection**. No new accountable-owner approval has yet been requested, and there is no current merge authorization.
