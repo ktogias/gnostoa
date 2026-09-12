@@ -16,11 +16,19 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _fixture() -> dict[str, object]:
-    return json.loads(
+    fixture = json.loads(
         (ROOT / "tests" / "fixtures" / "review_check" / "cases.json").read_text(
             encoding="utf-8"
         )
     )
+    base = fixture.get("base")
+    if isinstance(base, dict):
+        input_document = base.get("input")
+        if isinstance(input_document, dict):
+            context = input_document.get("evaluation_context")
+            if isinstance(context, dict) and context.get("mode") == "historical_replay":
+                context.setdefault("fixture_only", True)
+    return fixture
 
 
 def _error_code(payload: dict[str, object]) -> object:
