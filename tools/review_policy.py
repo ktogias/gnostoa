@@ -95,6 +95,21 @@ def _load_source(path: Path, stack: tuple[Path, ...]) -> dict[str, Any]:
     )
 
 
+def _apply_change_class_override(parent: Any, child: Any) -> Any:
+    """Apply a specialization: mappings recurse, explicit values replace."""
+
+    if isinstance(parent, dict) and isinstance(child, dict):
+        merged = dict(parent)
+        for key, value in child.items():
+            merged[key] = (
+                _apply_change_class_override(merged[key], value)
+                if key in merged
+                else value
+            )
+        return merged
+    return child
+
+
 def resolve_project_policy(path: Path, change_class: str) -> dict[str, Any]:
     if change_class not in CHANGE_CLASSES:
         raise KnowledgeFormatError(f"Unknown review change class {change_class!r}")
@@ -111,7 +126,7 @@ def resolve_project_policy(path: Path, change_class: str) -> dict[str, Any]:
             f"Review-policy source does not specialize {change_class!r}"
         )
     selected = _as_mapping(
-        deep_merge(defaults, override),
+        _apply_change_class_override(defaults, override),
         context=f"effective review policy for {change_class}",
     )
     selected.update(
