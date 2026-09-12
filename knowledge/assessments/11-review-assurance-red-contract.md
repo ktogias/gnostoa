@@ -46,7 +46,7 @@ It does not admit a live provider collector, reviewer orchestration, #10 registr
 
 1. Converge Decision 0067, task envelope and this RED contract before production implementation.
 2. Add the exact focused RED harness below while production review-assurance schemas, policies and executable modules are still absent.
-3. Run the exact RED command and retain its commit SHA, nonzero exit, bounded output SHA-256 and proof that production paths remain absent.
+3. Run the exact RED command and retain its commit SHA, nonzero exit, canonical bounded output bytes/SHA-256 and proof that production paths remain absent.
 4. Only after the RED receipt is complete may the task hand off to production implementation.
 5. Preserve RED expectations unchanged through production implementation unless a later review explicitly changes Decision 0067 and records why.
 6. Reach GREEN, then run mutation/permutation controls, complete suites, exact-candidate reviews and advisory dogfood.
@@ -69,7 +69,23 @@ The test file uses the standard-library `unittest` runner and invokes the future
 python tests/test_review_assurance.py
 ```
 
-Before production review-assurance paths exist, the command must exit nonzero and must not SKIP/XFAIL the missing contract. Retained bounded output must identify failing R2A case IDs rather than treating absence as success.
+Before production review-assurance paths exist, the command must exit nonzero and must not SKIP/XFAIL the missing contract. The runner must turn expected missing-production failures into the canonical RED report defined below instead of leaking environment-specific traceback text.
+
+### Canonical RED report bytes
+
+The RED harness has one receipt-bearing output channel:
+
+- **stdout** contains exactly one UTF-8 JSON object followed by exactly one LF (`0x0a`); no BOM and no bytes precede or follow it;
+- serialization is Python `json.dumps(report, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n"`;
+- the object contains only stable fields: `schema`, `phase`, `required_case_ids`, `failing_case_ids`, `unexpected_case_ids`, and `production_paths_absent`;
+- all case-ID arrays are lexicographically sorted; paths, timestamps, hostnames, Python versions, tracebacks and timing are forbidden from the receipt-bearing object;
+- **stderr must be exactly zero bytes**. Any stderr output invalidates the RED receipt and blocks handoff;
+- stdout has a hard maximum of **65,536 bytes**. **No truncation is permitted**: exceeding the limit invalidates the receipt rather than hashing a truncated stream;
+- `bounded_output_sha256` is SHA-256 of the exact stdout bytes described above, including the final LF and excluding stderr;
+- the exact stdout bytes are retained byte-for-byte at `tests/fixtures/review_check/red-observed-output.json` in the RED commit. Its file SHA-256 must equal `bounded_output_sha256`;
+- `red_output_artifact` in the receipt is exactly `tests/fixtures/review_check/red-observed-output.json`.
+
+The report `schema` is `gnostoa-review-assurance-red/v1`, `phase` is `RED`, and `required_case_ids` contains every required R-ID in this contract. The RED receipt is invalid if the retained file differs from captured stdout, if stderr is nonempty, if a required R-ID is absent, or if the report exceeds the byte limit. There is no executor-defined alternate capture/truncation convention.
 
 ### RED receipt — must be completed before production handoff
 
@@ -78,6 +94,8 @@ red_commit: PENDING
 command: python tests/test_review_assurance.py
 exit_code: PENDING   # must be nonzero
 bounded_output_sha256: PENDING
+red_output_artifact: tests/fixtures/review_check/red-observed-output.json
+stderr_bytes: PENDING   # must be 0
 production_paths_absent:
   - schemas/review-check-input.schema.json
   - schemas/review-policy.schema.json
@@ -186,7 +204,7 @@ Use retained PR #239 review history plus the two #11 CodeRabbit collection incid
 
 Add synthetic minimal cases where real retained evidence does not exercise a predicate, including explicit policy exemption, single-policy reachable `CONFLICTING`, forged self-qualification, authority/judge mismatch, ordering invariance, historical authority/judge pinning, and **forged normalization provenance**. Synthetic authority/judge IDs are explicitly fixture-only and never cited as historical production facts.
 
-For normalization cases, retained/native recommendation state is the input to the active file adapter. Any supplied normalized/provenance fields are adversarial claims. The expected authoritative normalization/provenance is recomputed by the selected adapter rule. `cases.json` must include at least one R45 mutant where the claimed normalized value/provenance conflicts with recomputation.
+For normalization cases, retained/native recommendation state is input to the active file adapter. Any supplied normalized/provenance fields are adversarial claims. Expected authoritative normalization/provenance is recomputed by the selected adapter rule. `cases.json` must include at least one R45 mutant where the claimed normalized value/provenance conflicts with recomputation.
 
 `cases.json` names every required case by R-ID and contains supplied input/fixture references. `expected.json` maps each R-ID to required semantic outcome/reason or error-envelope class plus exit code. The runner fails if a required R-ID is absent from either file.
 
@@ -204,7 +222,7 @@ Bootstrap dogfood has three distinct claims and must not collapse them:
 
 1. **synthetic historical-replay contract exercise:** explicitly fixture-only authority/judge identities demonstrate deterministic historical pinning, freshness, quorum, blocker/conflict and normalization semantics; this is test evidence, not evidence that R2A existed historically;
 2. **real retained pre-R2A characterization:** retained PR #239 / Issue #11 native evidence is processed by the candidate file adapter with `judge_relation:candidate_under_test` to measure normalization, collection completeness and result usefulness without fabricating historical trusted authority/judge facts;
-3. **current-advisory bootstrap characterization:** the first implementation returns `INCOMPLETE`, not PASS, while no prior-integrated R2A judge exists.
+3. **current-advisory bootstrap characterization:** first implementation returns `INCOMPLETE`, not PASS, while no prior-integrated R2A judge exists.
 
 After a real R2A authority/judge record is integrated, factual historical replay of real R2A results and current-advisory PASS become eligible post-bootstrap evaluation targets.
 
