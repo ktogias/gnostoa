@@ -204,9 +204,7 @@ class ReviewAssuranceIntegrationTests(unittest.TestCase):
             native["recommendation_state"] = "CHANGES_REQUESTED"
             other = copy.deepcopy(observations[1])
             observations[:] = (
-                [conflict, original, other]
-                if reverse
-                else [original, conflict, other]
+                [conflict, original, other] if reverse else [original, conflict, other]
             )
 
             code, payload = review_check.evaluate_documents(
