@@ -721,30 +721,32 @@ def evaluate(
         source_id = assessment.get("source_id")
         if not isinstance(reviewer_id, str) or not isinstance(source_id, str):
             continue
-        entry = entries_by_key.get((reviewer_id, source_id))
-        if entry is None:
+        matched_entry = entries_by_key.get((reviewer_id, source_id))
+        if matched_entry is None:
             continue
-        if entry.get("status") != "established":
+        if matched_entry.get("status") != "established":
             continue
         if not snapshot_current:
             continue
-        entry_cut = _time(entry.get("observed_at"), "qualification entry observed_at")
+        entry_cut = _time(
+            matched_entry.get("observed_at"), "qualification entry observed_at"
+        )
         if not _fresh(entry_cut, as_of, qualification_rule):
             continue
-        if entry.get("owner_relation") == "owner" and not owner_reviews_count:
+        if matched_entry.get("owner_relation") == "owner" and not owner_reviews_count:
             continue
-        capabilities = entry.get("capability_ids")
+        capabilities = matched_entry.get("capability_ids")
         if not isinstance(capabilities, list) or not required_capabilities.issubset(
             set(capabilities)
         ):
             continue
-        scope = entry.get("scope")
+        scope = matched_entry.get("scope")
         if isinstance(scope, dict) and scope.get("repository") not in {
             None,
             target_repo,
         }:
             continue
-        domain = entry.get("independence_domain_id")
+        domain = matched_entry.get("independence_domain_id")
         if not isinstance(domain, str) or not domain:
             continue
         qualified_domains.add(domain)
