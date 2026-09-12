@@ -35,9 +35,7 @@ MAX_BYTES = 65536
 
 def canon(value: object) -> bytes:
     return (
-        json.dumps(
-            value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-        )
+        json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
         + "\n"
     ).encode()
 
@@ -257,9 +255,17 @@ def receipt_payload(ok: bool, errors: list[str]) -> bytes:
 def verify_receipt() -> int:
     fields = receipt_fields()
     required = (
-        "red_commit", "command", "exit_code", "stdout_bytes", "bounded_output_sha256",
-        "red_output_artifact", "stderr_bytes", "red_harness_blob", "red_cases_blob",
-        "red_expected_blob", "red_output_blob",
+        "red_commit",
+        "command",
+        "exit_code",
+        "stdout_bytes",
+        "bounded_output_sha256",
+        "red_output_artifact",
+        "stderr_bytes",
+        "red_harness_blob",
+        "red_cases_blob",
+        "red_expected_blob",
+        "red_output_blob",
     )
     errors = [
         f"receipt:{key}:pending"
@@ -353,8 +359,7 @@ def assert_result(case_id, expected, code, payload):
             problems.append(f"{case_id}:error-code")
         return problems
     if "outcome" in expected and (
-        not isinstance(payload, dict)
-        or payload.get("outcome") != expected["outcome"]
+        not isinstance(payload, dict) or payload.get("outcome") != expected["outcome"]
     ):
         problems.append(f"{case_id}:outcome")
     if "reason" in expected and (
