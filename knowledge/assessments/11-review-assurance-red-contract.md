@@ -64,7 +64,7 @@ tests/fixtures/review_check/expected.json
 tests/fixtures/review_check/red-observed-output.json
 ```
 
-The first three are authored before the RED run. `red-observed-output.json` is populated only with the exact canonical stdout bytes observed from that RED run and retained in the same RED commit; it is evidence, not an expected-output template.
+The first three are authored before the RED run. `red-observed-output.json` is populated only with exact canonical stdout bytes observed from that RED run and retained in the same RED commit; it is evidence, not an expected-output template.
 
 The test file uses the standard-library `unittest` runner and invokes the future public route as an external command where CLI behavior is under test; pure-contract cases may import future modules only after they exist. The RED command is exactly:
 
@@ -80,15 +80,16 @@ The RED harness has one receipt-bearing output channel:
 
 - **stdout** contains exactly one UTF-8 JSON object followed by exactly one LF (`0x0a`); no BOM and no bytes precede or follow it;
 - serialization is Python `json.dumps(report, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n"`;
-- the object contains only stable fields: `schema`, `phase`, `required_case_ids`, `failing_case_ids`, `unexpected_case_ids`, and `production_paths_absent`;
-- all case-ID arrays are lexicographically sorted; paths, timestamps, hostnames, Python versions, tracebacks and timing are forbidden from the receipt-bearing object;
+- the stdout report object contains **only** stable test-result fields: `schema`, `phase`, `required_case_ids`, `failing_case_ids`, `unexpected_case_ids`, and `production_paths_absent`;
+- all case-ID arrays are lexicographically sorted; paths, timestamps, hostnames, Python versions, tracebacks and timing are forbidden from the stdout report object;
 - **stderr must be exactly zero bytes**. Any stderr output invalidates the RED receipt and blocks handoff;
 - stdout has a hard maximum of **65,536 bytes**. **No truncation is permitted**: exceeding the limit invalidates the receipt rather than hashing a truncated stream;
-- `bounded_output_sha256` is SHA-256 of the exact stdout bytes described above, including the final LF and excluding stderr;
-- exact stdout bytes are retained byte-for-byte at `tests/fixtures/review_check/red-observed-output.json` in the RED commit. Its file SHA-256 must equal `bounded_output_sha256`;
-- `red_output_artifact` in the receipt is exactly `tests/fixtures/review_check/red-observed-output.json`.
+- `bounded_output_sha256` is SHA-256 of the exact stdout report bytes described above, including the final LF and excluding stderr;
+- exact stdout report bytes are retained byte-for-byte at `tests/fixtures/review_check/red-observed-output.json` in the RED commit. Its file SHA-256 must equal `bounded_output_sha256`.
 
-The report `schema` is `gnostoa-review-assurance-red/v1`, `phase` is `RED`, and `required_case_ids` contains every required R-ID in this contract. The RED receipt is invalid if the retained file differs from captured stdout, if stderr is nonempty, if a required R-ID is absent, or if the report exceeds the byte limit. There is no executor-defined alternate capture/truncation convention.
+**The stdout report and the RED receipt are deliberately different objects.** `bounded_output_sha256`, `red_output_artifact`, `red_commit`, command, exit code and stderr byte count are receipt metadata recorded outside the stdout JSON in the receipt block below. They are not fields in `red-observed-output.json` and are not part of the bytes being hashed. This prevents self-referential hashing. The receipt points to and authenticates the retained stdout report; the stdout report does not contain its own digest or path.
+
+The stdout report `schema` is `gnostoa-review-assurance-red/v1`, `phase` is `RED`, and `required_case_ids` contains every required R-ID in this contract. The RED receipt is invalid if the retained report file differs from captured stdout, if stderr is nonempty, if a required R-ID is absent, or if the report exceeds the byte limit. There is no executor-defined alternate capture/truncation convention.
 
 ### RED receipt — must be completed before production handoff
 
