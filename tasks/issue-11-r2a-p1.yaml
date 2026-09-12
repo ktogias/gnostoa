@@ -1,0 +1,80 @@
+schema_version: "0.1"
+task:
+  id: GNOSTOA/D11-R2A/P1
+  objective: >-
+    Deliver one provider-neutral deterministic advisory semantic-review assurance gate over bound file and retained review evidence without reviewer orchestration or merge authority.
+  owner: team:gnostoa-maintainers
+  change_class: normative
+scope:
+  included:
+    - Decision 0067 and one bounded RED-first implementation plan under Work Item 11
+    - three public review-assurance schemas and explicit Gnostoa-self review policy
+    - flat file adapter, model, policy, evaluator and knowledge review-check CLI modules
+    - retained PR 239 and Issue 11 review-evidence fixtures with focused RED-to-GREEN tests
+    - mutation, permutation, exact-candidate review and advisory dogfood evidence
+  excluded:
+    - Issue 10 capability or independence registry and discovery implementation
+    - Issue 15 reviewer trigger, wait or orchestration mechanics
+    - live network or provider review collectors and reviewer selection
+    - auto-fix, auto-resolve, approval, provider mutation or merge and release authority
+    - required merge checks, provider settings and generic policy expression engines
+    - a trusted native review-assurance judge identity in v1
+state:
+  status: active
+  completed:
+    - Owner approved canonical D11-R2A architecture R8 after convergence with no material review findings.
+    - Deep architecture-phase retrospection and root-cause analysis were recorded on Work Item 11.
+    - Decision 0067, this task envelope and the RED contract were materialized on draft PR 240 for specification convergence review.
+    - S1 and S2 specification findings were reconciled; exact-head convergence re-review remains required.
+  next_action: Converge the specification set, then create only the pre-registered RED tests and fixtures, run the exact RED command, and fill the retained RED receipt before any production implementation handoff; PENDING receipt fields prohibit that handoff.
+  blocker: null
+identities:
+  base:
+    kind: git-commit
+    value: git:9915357546e1665143b3a705533bb94812faee54
+  dependencies: []
+references:
+  decisions:
+    - id: decision-0067
+      resource: knowledge/decisions/0067-evaluate-semantic-review-assurance-through-bound-evidence.md
+    - id: decision-0005
+      resource: knowledge/decisions/0005-container-first-runtime.md
+    - id: decision-0050
+      resource: knowledge/decisions/0050-separate-adoption-observations-from-readiness-and-owner-disposition.md
+    - id: decision-0061
+      resource: knowledge/decisions/0061-retain-individual-agent-review-dispositions.md
+    - id: decision-0062
+      resource: knowledge/decisions/0062-require-proportionate-prior-art-and-reuse-review.md
+  evidence:
+    - id: work-item-11
+      resource: https://github.com/ktogias/gnostoa/issues/11
+    - id: architecture-r8
+      resource: https://github.com/ktogias/gnostoa/issues/11#issuecomment-5641706425
+    - id: architecture-convergence
+      resource: https://github.com/ktogias/gnostoa/issues/11#issuecomment-5641717198
+    - id: owner-approval
+      resource: https://github.com/ktogias/gnostoa/issues/11#issuecomment-5641780494
+    - id: red-contract
+      resource: knowledge/assessments/11-review-assurance-red-contract.md
+    - id: specification-pr
+      resource: https://github.com/ktogias/gnostoa/pull/240
+handoff:
+  actor: RED-authoring executor only; production implementation agent after the retained RED receipt is complete
+  read:
+    - Decision 0067, this envelope and the RED contract assessment
+    - Work Item 11 architecture convergence, owner approval and deep retrospection records
+    - exact current draft PR 240 review/reconciliation record
+  verify:
+    - the exact branch candidate remains bound to the declared base and scope
+    - tests/test_review_assurance.py and tests/fixtures/review_check/cases.json plus expected.json predate every production review-assurance schema and executable module
+    - the RED receipt records an exact commit, command, nonzero exit and bounded output digest before production handoff
+recording:
+  actor: agent:gpt-5.6-sol
+  at: "2026-09-11T23:42:51Z"
+review:
+  projection_characters: 6000
+  owner_minutes: 30
+  on_exceed: block
+checkpoint:
+  sequence: 1
+  previous: null
