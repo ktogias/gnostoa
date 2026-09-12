@@ -488,6 +488,7 @@ guardrails:
       - tests/test_review_assurance_integration.py
       - tests/test_review_assurance_property_regressions.py
       - tests/test_review_assurance_dogfood.py
+      - tests/test_review_assurance_final_loop_regressions.py
 
   - id: authoritative-centralized-ci
     title: Centralized CI authoritatively verifies the latest integration candidate

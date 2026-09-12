@@ -211,9 +211,9 @@ def _prepare_assessments(
             )
         normalized_rows.append((observation, assessment))
 
-    grouped: dict[tuple[str, str], list[tuple[dict[str, Any], dict[str, Any]]]] = (
-        defaultdict(list)
-    )
+    grouped: dict[
+        tuple[str, str, str], list[tuple[dict[str, Any], dict[str, Any]]]
+    ] = defaultdict(list)
     ungrouped: list[tuple[dict[str, Any], dict[str, Any]]] = []
     for row in normalized_rows:
         native = row[0].get("native")
@@ -225,7 +225,8 @@ def _prepare_assessments(
             and isinstance(object_id, str)
             and object_id
         ):
-            grouped[(source_id, object_id)].append(row)
+            subject_binding = canonical_json(row[0].get("subject_binding"))
+            grouped[(source_id, object_id, subject_binding)].append(row)
         else:
             ungrouped.append(row)
 

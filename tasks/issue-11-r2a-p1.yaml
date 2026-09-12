@@ -25,9 +25,9 @@ state:
     - Owner approved canonical D11-R2A architecture R8 after convergence with no material review findings.
     - Decision 0067 and the bounded RED-first execution contract were admitted before production implementation.
     - Immutable RED receipt at commit 97244d233e8c798c23a408ffe40f5eb96f252b40 proved R01-R45 failed before production review-assurance paths existed.
-    - Production implementation initially converged at exact code head f08b3e00e52c73333cdf356fb45374fb4e2ebbbe after self-authorization and result/error-boundary repairs.
-    - Exact-head run 34692238908 passed policy, fast, Python 3.11/3.12, Ruff, strict mypy, regression, smoke and SB2=19 exact-candidate binding on the earlier implementation subject.
-    - CodeRabbit exact-head review 5645773763 reported no BLOCKING or MATERIAL implementation finding and IMPLEMENTATION_CONVERGED on that earlier evidence cut.
+    - Production implementation initially converged at code head f08b3e00e52c73333cdf356fb45374fb4e2ebbbe after self-authorization and result/error-boundary repairs.
+    - PR-event workflow run 34692238908 passed the required verification suites on its GitHub PR integration subject; its smoke path separately established exact executable-candidate binding for the then-current raw candidate.
+    - CodeRabbit review 5645773763 reported no BLOCKING or MATERIAL implementation finding and IMPLEMENTATION_CONVERGED on that earlier evidence cut.
     - Ready checkpoint 45befab9d65da2cb68fec916101071818ebac4ec passed required workflow run 34694896906; extended was skipped and was not represented as PASS.
     - Accountable-owner approval 5647591088 was recorded for that exact source head before merge.
     - Merge was blocked by unresolved-review protection; new material Sourcery and Qodo findings then arrived on the same source head after the approval.
@@ -35,18 +35,21 @@ state:
     - PR 240 was returned to Draft and corrective convergence was explicitly selected; no merge occurred and protected main remained unchanged.
     - Corrective evaluator and policy repairs reject ambiguous duplicate identities, fail closed on unproven real revision lineage, apply POLICY_EXEMPT before review evidence, replace explicit change-class list overrides, and enforce the bootstrap reason at the shared semantic boundary.
     - Real PR 239 provider dogfood was separated from synthetic historical authority; real records now prove normalization and older-head characterization without a fabricated trusted historical R2A judge.
-    - Post-RED property regressions now discriminate R01/R14/R26/R31/R32/R42/R43/R44/R45 plus duplicate qualification identity while the immutable RED artifacts remain unchanged.
+    - Post-RED property regressions discriminate R01/R14/R26/R31/R32/R42/R43/R44/R45 plus duplicate qualification identity while the immutable RED artifacts remain unchanged.
     - The semantic-review assurance gate is registered in policy/guardrails.yaml; diff audit removed accidental unrelated reference drift before the technical subject was frozen.
-    - Corrective technical subject 456267d93c59f5a2ca161a7fef04938348bc8683, tree eeb72672b1a4e1503519f5f3faa945d8b0b13659, passed exact-head workflow run 34714268858 across policy, fast, Python 3.11/3.12, Ruff, strict mypy, regression, smoke and exact executable-candidate binding; extended was skipped and is not counted as PASS.
-    - Corrected implementation result now records the post-approval supersession, stronger oracle evidence, corrected dogfood boundary, provider-retention limitation and two-subject approval rule.
-    - Accountable-owner authorization moved exact head e59e4faaa669ed722390adfaccacc646991f3c3c to GitHub Ready only to begin final review collection; that transition did not grant semantic approval or merge authority.
+    - Corrective technical subject 456267d93c59f5a2ca161a7fef04938348bc8683, tree eeb72672b1a4e1503519f5f3faa945d8b0b13659, passed PR-event workflow run 34714268858; required primary jobs evaluated the provider PR integration subject and smoke separately bound the raw executable candidate; extended was skipped and is not counted as PASS.
+    - Corrected implementation result records the post-approval supersession, stronger oracle evidence, corrected dogfood boundary, provider-retention limitation and two-subject approval rule.
+    - Accountable-owner authorization moved head e59e4faaa669ed722390adfaccacc646991f3c3c to GitHub Ready only to begin final review collection; that transition did not grant semantic approval or merge authority.
     - The fresh Ready cohort found three additional material gaps on e59e4fa: Qodo identified incomplete repository/change-request subject binding, and Sourcery identified that R43 bypassed the public tools.cli dispatcher and that RED receipt verification did not independently require a non-zero RED exit.
     - PR 240 returned to Draft before corrective byte mutation. One consolidated semantic repair commit c3b3983ddd4a2d3a9029c9dc39dd370b417daf8e plus formatter-only child ab2758769f51067a88b66bac47d4a7379b00e376 closed those three gaps while preserving the immutable RED artifacts.
-    - Non-fixture observation eligibility now binds repository, change request, exact head and merge-base; legacy reduced subject binding is accepted only for explicit fixture-only synthetic replay.
-    - Post-RED R43 now traverses the actual tools.cli public dispatcher, and a separate post-RED receipt regression requires the retained RED exit to remain non-zero without rewriting the historical RED harness or fixtures.
-    - Exact-head workflow run 34718768591 completed SUCCESS on ab2758769f51067a88b66bac47d4a7379b00e376 for policy, fast, Python 3.11/3.12, Ruff, strict mypy, regression, smoke and exact executable-candidate binding; extended was SKIPPED and is not counted as PASS.
+    - Non-fixture observation eligibility binds repository, change request, exact head and merge-base; legacy reduced subject binding is accepted only for explicit fixture-only synthetic replay.
+    - Post-RED R43 traverses the actual tools.cli public dispatcher, and a separate post-RED receipt regression requires the retained RED exit to remain non-zero without rewriting the historical RED harness or fixtures.
+    - PR-event workflow run 34718768591 completed SUCCESS after the ab275876 repair; the primary jobs exercised the GitHub PR integration subject while smoke explicitly checked out and bound raw head ab2758769f51067a88b66bac47d4a7379b00e376; extended was SKIPPED and is not counted as PASS.
+    - Final-loop candidate 41b996479a5c33964043fff0214406bcd282f0d8 passed workflow run 34721333511: primary jobs exercised PR merge-result 726366a67c81713a515f41953c8df7db92b33d50 and smoke explicitly checked out raw head 41b996479a5c33964043fff0214406bcd282f0d8, matched source/runtime/vendored public-surface digests and completed exact executable-candidate binding; extended was SKIPPED.
+    - Fresh review of 41b9964 produced Sourcery APPROVED and CodeRabbit no-actionable-comment dispositions, while Qodo exposed a cross-subject fixture revision-lineage collision, missing final-loop guardrail test registration and inaccurate historical CI-subject wording.
+    - This candidate isolates synthetic revision lineages by source plus canonical subject binding, registers the final-loop regression suite in the semantic-review guardrail and replaces raw-head CI overclaims with the actual PR-integration versus raw-smoke subject distinction.
   next_action: >-
-    Verify this evidence/state-only finalization exact head with all required CI. If it succeeds, freeze that exact head and obtain accountable-owner authorization for Draft-to-Ready on that content solely to restart final review collection. Then collect and reconcile the declared exact-head reviewer cohort, including fresh confirmation of the repository/change-request binding, public-dispatcher R43 boundary and non-zero RED-exit invariant; record the bounded review-evidence cut; and only then request a new accountable-owner semantic approval. Any later material evidence makes that approval stale before merge.
+    Run all required PR verification on this candidate. If required primary jobs pass on the provider PR integration subject and smoke explicitly binds the raw source head, freeze that raw head. From the freeze onward, record CI receipts, Draft-to-Ready transition, reviewer receipts, dispositions, review-evidence cut, accountable-owner approval and merge-readiness observations only in external control/evidence-plane records so recording readiness cannot change the reviewed candidate. If material review requires a byte change, create a new candidate and repeat the bounded verification and review loop.
   blocker: null
 identities:
   base:
@@ -100,23 +103,27 @@ references:
       resource: https://github.com/ktogias/gnostoa/issues/11#issuecomment-5648582021
     - id: fresh-review-repair-verification
       resource: https://github.com/ktogias/gnostoa/actions/runs/34718768591
+    - id: non-self-invalidating-evidence-invariant
+      resource: https://github.com/ktogias/gnostoa/issues/15#issuecomment-5649048174
+    - id: final-loop-verification
+      resource: https://github.com/ktogias/gnostoa/actions/runs/34721333511
 handoff:
-  actor: final review-collection coordinator; accountable-owner review follows only after the fresh review-evidence cut is recorded
+  actor: final review-collection coordinator; accountable-owner review follows only after the external fresh review-evidence cut is recorded
   read:
     - Decision 0067 and immutable RED contract
     - post-approval RCA 5648009539, current-state reconciliation 5648554984 and all unresolved/current PR 240 review threads
-    - D11-R2A to #15 composition contract 5648522367
+    - D11-R2A to #15 composition contract 5648522367 and non-self-invalidating evidence invariant 5649048174
     - corrected implementation result; treat the earlier implementation retrospective as historical pre-approval analysis where superseded
   verify:
     - immutable RED receipt and pre-production fixture blobs remain unchanged
-    - post-RED tests discriminate policy resolution, optional-source visibility, unsupported-evidence authority, permutation/duplicate order, review-field fidelity, result/error fidelity, actual public-dispatcher CLI effect boundary, forged normalization fields, duplicate qualification identity, full repository/change-request subject binding and a non-zero retained RED exit
+    - post-RED tests discriminate policy resolution, optional-source visibility, unsupported-evidence authority, permutation/duplicate order, review-field fidelity, result/error fidelity, actual public-dispatcher CLI effect boundary, forged normalization fields, duplicate qualification identity, full repository/change-request subject binding, cross-subject revision-lineage isolation and a non-zero retained RED exit
     - real pre-R2A provider records are not assigned synthetic historical production authority
     - current_advisory bootstrap reason is invariant to caller-authored judge or policy claims after basic input/context validation
-    - exact frozen Ready candidate completes required CI before GitHub Ready transition
-    - declared exact-head review collection is complete and every material finding is reconciled before owner approval
+    - required PR-event integration checks pass and smoke separately binds the frozen raw candidate before GitHub Ready transition
+    - declared exact-raw-head review collection is complete and every material finding is reconciled before owner approval
 recording:
   actor: agent:gpt-5.6-sol
-  at: "2026-09-12T21:11:51Z"
+  at: "2026-09-12T22:25:00Z"
 review:
   projection_characters: 6000
   owner_minutes: 30

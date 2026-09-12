@@ -84,6 +84,33 @@ class ReviewAssuranceFinalLoopRegressions(unittest.TestCase):
         self.assertEqual("PASS", payload["outcome"])
         self.assertEqual(2, payload["quorum"]["distinct_domains"])
 
+    def test_fixture_revision_lineage_cannot_cross_subject_binding(self) -> None:
+        input_document, policy_document = _documents()
+        observations = input_document["evidence_set"]["observations"]
+        current = observations[0]
+        current["native"]["object_id"] = "cross-subject-provider-object"
+        current["native"]["revision"] = 1
+        foreign = copy.deepcopy(current)
+        foreign["observation_id"] = "foreign-subject-higher-revision"
+        foreign["native"]["revision"] = 2
+        foreign["subject_binding"]["head_commit"] = "f" * 40
+        observations.append(foreign)
+
+        code, payload = review_check.evaluate_documents(input_document, policy_document)
+
+        self.assertEqual(0, code)
+        self.assertEqual("PASS", payload["outcome"])
+        assessments = {
+            assessment["observation_id"]: assessment
+            for assessment in payload["assessments"]
+        }
+        self.assertIs(assessments[current["observation_id"]]["eligible"], True)
+        self.assertIs(assessments[foreign["observation_id"]]["eligible"], False)
+        self.assertIn(
+            "subject_not_exact",
+            assessments[foreign["observation_id"]]["exclusion_reasons"],
+        )
+
     def test_stale_subject_precedes_blocker_semantics(self) -> None:
         input_document, policy_document = _documents()
         input_document["subject"]["observed_at"] = "2026-09-11T23:40:00Z"
