@@ -302,6 +302,33 @@ def _prepare_assessments(
     return assessments, active, exclusions
 
 
+def _qualification_entries(entries: list[Any]) -> list[dict[str, Any]]:
+    by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    for raw_entry in entries:
+        entry = _mapping(raw_entry, "qualification entry")
+        reviewer_id = entry.get("reviewer_id")
+        source_id = entry.get("source_id")
+        if (
+            not isinstance(reviewer_id, str)
+            or not reviewer_id
+            or not isinstance(source_id, str)
+            or not source_id
+        ):
+            raise ReviewInputError(
+                "CONFIGURATION_ERROR",
+                "qualification entry must have non-empty reviewer_id and source_id",
+            )
+        key = (reviewer_id, source_id)
+        if key in by_key:
+            raise ReviewInputError(
+                "CONFIGURATION_ERROR",
+                "duplicate qualification identity is ambiguous",
+                details={"reviewer_id": reviewer_id, "source_id": source_id},
+            )
+        by_key[key] = entry
+    return [by_key[key] for key in sorted(by_key)]
+
+
 def evaluate(
     input_document: dict[str, Any],
     policy_document: dict[str, Any],
@@ -548,11 +575,10 @@ def evaluate(
         "snapshot_freshness", {}
     )
     snapshot_current = _fresh(snapshot_cut, as_of, qualification_rule)
-    entries = _list(
-        qualification_snapshot.get("entries"), "qualification_snapshot.entries"
+    entries = _qualification_entries(
+        _list(qualification_snapshot.get("entries"), "qualification_snapshot.entries")
     )
-    for raw_entry in entries:
-        entry = _mapping(raw_entry, "qualification entry")
+    for entry in entries:
         cut = _time(entry.get("observed_at"), "qualification entry observed_at")
         if cut > as_of:
             raise ReviewInputError(
@@ -680,13 +706,12 @@ def evaluate(
     qualified_domains: set[str] = set()
     qualifying_observations: list[str] = []
     qualification_diagnostics: list[str] = []
-    entries_by_key: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
-    for raw_entry in entries:
-        entry = _mapping(raw_entry, "qualification entry")
+    entries_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    for entry in entries:
         reviewer_id = entry.get("reviewer_id")
         source_id = entry.get("source_id")
         if isinstance(reviewer_id, str) and isinstance(source_id, str):
-            entries_by_key[(reviewer_id, source_id)].append(entry)
+            entries_by_key[(reviewer_id, source_id)] = entry
 
     for assessment in active:
         recommendation = assessment.get("normalized_recommendation")
@@ -696,37 +721,36 @@ def evaluate(
         source_id = assessment.get("source_id")
         if not isinstance(reviewer_id, str) or not isinstance(source_id, str):
             continue
-        for entry in entries_by_key.get((reviewer_id, source_id), []):
-            if entry.get("status") != "established":
-                continue
-            if not snapshot_current:
-                continue
-            entry_cut = _time(
-                entry.get("observed_at"), "qualification entry observed_at"
-            )
-            if not _fresh(entry_cut, as_of, qualification_rule):
-                continue
-            if entry.get("owner_relation") == "owner" and not owner_reviews_count:
-                continue
-            capabilities = entry.get("capability_ids")
-            if not isinstance(capabilities, list) or not required_capabilities.issubset(
-                set(capabilities)
-            ):
-                continue
-            scope = entry.get("scope")
-            if isinstance(scope, dict) and scope.get("repository") not in {
-                None,
-                target_repo,
-            }:
-                continue
-            domain = entry.get("independence_domain_id")
-            if not isinstance(domain, str) or not domain:
-                continue
-            qualified_domains.add(domain)
-            observation_id = assessment.get("observation_id")
-            if isinstance(observation_id, str):
-                qualifying_observations.append(observation_id)
-            break
+        entry = entries_by_key.get((reviewer_id, source_id))
+        if entry is None:
+            continue
+        if entry.get("status") != "established":
+            continue
+        if not snapshot_current:
+            continue
+        entry_cut = _time(entry.get("observed_at"), "qualification entry observed_at")
+        if not _fresh(entry_cut, as_of, qualification_rule):
+            continue
+        if entry.get("owner_relation") == "owner" and not owner_reviews_count:
+            continue
+        capabilities = entry.get("capability_ids")
+        if not isinstance(capabilities, list) or not required_capabilities.issubset(
+            set(capabilities)
+        ):
+            continue
+        scope = entry.get("scope")
+        if isinstance(scope, dict) and scope.get("repository") not in {
+            None,
+            target_repo,
+        }:
+            continue
+        domain = entry.get("independence_domain_id")
+        if not isinstance(domain, str) or not domain:
+            continue
+        qualified_domains.add(domain)
+        observation_id = assessment.get("observation_id")
+        if isinstance(observation_id, str):
+            qualifying_observations.append(observation_id)
 
     if not snapshot_current:
         qualification_diagnostics.append("qualification snapshot is stale")
