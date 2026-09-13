@@ -19,6 +19,12 @@ from .review_model import (
 )
 from .review_policy import default_project_policy_path, resolve_project_policy
 
+# File-mode review evidence gets more room than a task envelope while remaining
+# operationally bounded. The limit is four times the existing 512 KiB task
+# envelope source cap; semantic eligibility still comes from the public schemas.
+MAX_REVIEW_INPUT_BYTES = 2_097_152
+MAX_REVIEW_DOCUMENT_DEPTH = 64
+
 
 class _ArgumentParser(argparse.ArgumentParser):
     def error(self, message: str) -> NoReturn:
@@ -27,10 +33,20 @@ class _ArgumentParser(argparse.ArgumentParser):
 
 def _schema(name: str) -> dict[str, Any]:
     path = toolkit_root() / "schemas" / name
-    loaded = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except RecursionError as exc:
+        raise KnowledgeFormatError(
+            f"Installed review-assurance schema nesting exhausted the JSON parser: {path}"
+        ) from exc
     if not isinstance(loaded, dict):
         raise KnowledgeFormatError(f"Schema must be an object in {path}")
-    Draft202012Validator.check_schema(loaded)
+    try:
+        Draft202012Validator.check_schema(loaded)
+    except RecursionError as exc:
+        raise KnowledgeFormatError(
+            f"Installed review-assurance schema nesting exhausted the schema checker: {path}"
+        ) from exc
     return loaded
 
 
@@ -44,6 +60,21 @@ def _schema_errors(document: object, schema_name: str) -> list[str]:
         location = ".".join(str(part) for part in error.absolute_path) or "<root>"
         rendered.append(f"{location}: {error.message}")
     return rendered
+
+
+def _assert_document_depth(document: object, label: str) -> None:
+    pending: list[tuple[object, int]] = [(document, 1)]
+    while pending:
+        value, depth = pending.pop()
+        if depth > MAX_REVIEW_DOCUMENT_DEPTH:
+            raise ValueError(
+                f"{label} nests deeper than the "
+                f"{MAX_REVIEW_DOCUMENT_DEPTH}-level operational bound"
+            )
+        if isinstance(value, dict):
+            pending.extend((child, depth + 1) for child in value.values())
+        elif isinstance(value, list):
+            pending.extend((child, depth + 1) for child in value)
 
 
 def evaluate_documents(
@@ -64,23 +95,63 @@ def evaluate_documents(
             "UNSUPPORTED_INPUT", "unsupported review-check input schema_version"
         )
         return ERROR_EXIT_CODE, payload
+
     try:
-        input_errors = _schema_errors(input_document, "review-check-input.schema.json")
+        _assert_document_depth(input_document, "review-check input")
+    except (ValueError, RecursionError) as exc:
+        return ERROR_EXIT_CODE, error_payload("MALFORMED_INVOCATION", str(exc))
+    try:
+        _assert_document_depth(policy_document, "review policy")
+    except (ValueError, RecursionError) as exc:
+        return ERROR_EXIT_CODE, error_payload("CONFIGURATION_ERROR", str(exc))
+
+    try:
+        try:
+            input_errors = _schema_errors(
+                input_document, "review-check-input.schema.json"
+            )
+        except RecursionError as exc:
+            return ERROR_EXIT_CODE, error_payload(
+                "MALFORMED_INVOCATION",
+                "review-check input nesting exhausted schema validation",
+                details={"exception": type(exc).__name__},
+            )
         if input_errors:
             return ERROR_EXIT_CODE, error_payload(
                 "MALFORMED_INVOCATION",
                 "review-check input does not satisfy its public schema",
                 details={"issues": input_errors},
             )
-        policy_errors = _schema_errors(policy_document, "review-policy.schema.json")
+        try:
+            policy_errors = _schema_errors(policy_document, "review-policy.schema.json")
+        except RecursionError as exc:
+            return ERROR_EXIT_CODE, error_payload(
+                "CONFIGURATION_ERROR",
+                "review policy nesting exhausted schema validation",
+                details={"exception": type(exc).__name__},
+            )
         if policy_errors:
             return ERROR_EXIT_CODE, error_payload(
                 "CONFIGURATION_ERROR",
                 "review policy does not satisfy its public schema",
                 details={"issues": policy_errors},
             )
-        result = evaluate(input_document, policy_document)
-        result_errors = _schema_errors(result, "review-gate-result.schema.json")
+        try:
+            result = evaluate(input_document, policy_document)
+        except RecursionError as exc:
+            return ERROR_EXIT_CODE, error_payload(
+                "MALFORMED_INVOCATION",
+                "review-check input nesting exhausted semantic evaluation",
+                details={"exception": type(exc).__name__},
+            )
+        try:
+            result_errors = _schema_errors(result, "review-gate-result.schema.json")
+        except RecursionError as exc:
+            return ERROR_EXIT_CODE, error_payload(
+                "TOOL_ERROR",
+                "evaluator result nesting exhausted schema validation",
+                details={"exception": type(exc).__name__},
+            )
         if result_errors:
             return ERROR_EXIT_CODE, error_payload(
                 "TOOL_ERROR",
@@ -115,7 +186,23 @@ def evaluate_documents(
 
 
 def _load_json(path: Path) -> object:
-    return json.loads(path.read_text(encoding="utf-8"))
+    with path.open("rb") as handle:
+        raw = handle.read(MAX_REVIEW_INPUT_BYTES + 1)
+    if len(raw) > MAX_REVIEW_INPUT_BYTES:
+        raise ValueError(
+            "review-check input is larger than the "
+            f"{MAX_REVIEW_INPUT_BYTES}-byte operational bound"
+        )
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"review-check input is not valid UTF-8: {exc}") from exc
+    try:
+        value = json.loads(text)
+    except RecursionError as exc:
+        raise ValueError("review-check input nesting exhausted the JSON parser") from exc
+    _assert_document_depth(value, "review-check input")
+    return value
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -188,7 +275,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         args = _parser().parse_args(sys.argv[1:] if argv is None else argv)
         input_document = _load_json(args.input.resolve())
-    except (ValueError, OSError, json.JSONDecodeError) as exc:
+    except (ValueError, OSError, json.JSONDecodeError, RecursionError) as exc:
         code, payload = _malformed(str(exc))
     else:
         bootstrap_issue = _current_advisory_bootstrap_issue(
@@ -200,7 +287,13 @@ def main(argv: list[str] | None = None) -> int:
         else:
             try:
                 policy_document = _load_policy(args.policy, args.change_class)
-            except (KnowledgeFormatError, OSError, ValueError, TypeError) as exc:
+            except (
+                KnowledgeFormatError,
+                OSError,
+                ValueError,
+                TypeError,
+                RecursionError,
+            ) as exc:
                 code, payload = _configuration(str(exc))
             else:
                 code, payload = evaluate_documents(input_document, policy_document)

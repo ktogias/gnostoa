@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import copy
+import io
 import json
+import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
-from tools import review_check
+from tools import cli, review_check
+from tools.review_check import MAX_REVIEW_INPUT_BYTES
 from tools.review_evaluate import ReviewInputError, evaluate
 from tools.review_model import canonical_digest
 from tools.review_policy import effective_policy_issues
@@ -160,6 +165,74 @@ class ReviewAssuranceFinalLoopRegressions(unittest.TestCase):
             len(projection),
             envelope["review"]["projection_characters"],
         )
+
+    def test_parser_hostile_json_returns_canonical_public_cli_error(self) -> None:
+        _, policy_document = _documents()
+        hostile = '{"nested":' * 2_000 + "0" + "}" * 2_000
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_path = root / "hostile.json"
+            policy_path = root / "policy.json"
+            input_path.write_text(hostile, encoding="utf-8")
+            policy_path.write_text(json.dumps(policy_document), encoding="utf-8")
+            output = io.StringIO()
+
+            with redirect_stdout(output):
+                code = cli.main(
+                    [
+                        "review-check",
+                        "--input",
+                        str(input_path),
+                        "--policy",
+                        str(policy_path),
+                    ]
+                )
+
+        self.assertEqual(2, code)
+        payload = json.loads(output.getvalue())
+        self.assertEqual("MALFORMED_INVOCATION", _error_code(payload))
+        self.assertIn("nest", payload["error"]["message"].lower())
+
+    def test_oversized_file_mode_input_fails_before_unbounded_read(self) -> None:
+        _, policy_document = _documents()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_path = root / "oversized.json"
+            policy_path = root / "policy.json"
+            input_path.write_bytes(b" " * (MAX_REVIEW_INPUT_BYTES + 1))
+            policy_path.write_text(json.dumps(policy_document), encoding="utf-8")
+            output = io.StringIO()
+
+            with redirect_stdout(output):
+                code = cli.main(
+                    [
+                        "review-check",
+                        "--input",
+                        str(input_path),
+                        "--policy",
+                        str(policy_path),
+                    ]
+                )
+
+        self.assertEqual(2, code)
+        payload = json.loads(output.getvalue())
+        self.assertEqual("MALFORMED_INVOCATION", _error_code(payload))
+        self.assertIn("byte operational bound", payload["error"]["message"])
+
+    def test_input_schema_recursion_fails_closed_as_malformed(self) -> None:
+        input_document, policy_document = _documents()
+        with mock.patch(
+            "tools.review_check._schema_errors",
+            side_effect=RecursionError("synthetic schema traversal exhaustion"),
+        ):
+            code, payload = review_check.evaluate_documents(
+                input_document,
+                policy_document,
+            )
+
+        self.assertEqual(2, code)
+        self.assertEqual("MALFORMED_INVOCATION", _error_code(payload))
+        self.assertIn("schema validation", payload["error"]["message"])
 
     def test_stale_subject_precedes_blocker_semantics(self) -> None:
         input_document, policy_document = _documents()
