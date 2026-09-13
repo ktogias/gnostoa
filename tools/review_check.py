@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Any, NoReturn
 
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, FormatChecker
 from jsonschema.exceptions import SchemaError
 
 from .knowledge_common import KnowledgeFormatError, toolkit_root
@@ -29,6 +29,7 @@ from .review_policy import (
 # envelope source cap; semantic eligibility still comes from the public schemas.
 MAX_REVIEW_INPUT_BYTES = 2_097_152
 MAX_REVIEW_DOCUMENT_DEPTH = 64
+FORMAT_CHECKER = FormatChecker()
 
 
 class _ArgumentParser(argparse.ArgumentParser):
@@ -56,7 +57,10 @@ def _schema(name: str) -> dict[str, Any]:
 
 
 def _schema_errors(document: object, schema_name: str) -> list[str]:
-    validator = Draft202012Validator(_schema(schema_name))
+    validator = Draft202012Validator(
+        _schema(schema_name),
+        format_checker=FORMAT_CHECKER,
+    )
     errors = sorted(
         validator.iter_errors(document), key=lambda item: list(item.absolute_path)
     )

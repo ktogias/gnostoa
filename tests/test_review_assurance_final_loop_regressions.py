@@ -13,7 +13,7 @@ from unittest import mock
 from tools import cli, review_check
 from tools.review_check import MAX_REVIEW_INPUT_BYTES
 from tools.review_evaluate import ReviewInputError, evaluate
-from tools.review_model import canonical_digest, canonical_json
+from tools.review_model import canonical_digest, canonical_json, parse_rfc3339
 from tools.review_policy import effective_policy_issues
 from tools.task_envelope import render_current_projection, validate_task_envelope
 
@@ -323,6 +323,50 @@ class ReviewAssuranceFinalLoopRegressions(unittest.TestCase):
         review_check._assert_document_depth(shared, "review policy")
 
         self.assertLessEqual(CountingDict.visits, 10)
+
+    def test_programmatic_timestamp_rejects_space_separator(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_rfc3339("2026-09-12 00:00:00+00:00")
+
+    def test_public_schema_rejects_non_rfc3339_timestamp_format(self) -> None:
+        input_document, _ = _documents()
+        input_document["evaluation_context"]["as_of"] = "2026-09-12 00:10:00+00:00"
+
+        errors = review_check._schema_errors(
+            input_document,
+            "review-check-input.schema.json",
+        )
+
+        self.assertTrue(errors)
+        self.assertTrue(any("date-time" in error for error in errors))
+
+    def test_public_cli_rejects_non_rfc3339_timestamp(self) -> None:
+        input_document, policy_document = _documents()
+        input_document["subject"]["observed_at"] = "2026-09-12 00:00:00+00:00"
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_path = root / "input.json"
+            policy_path = root / "policy.json"
+            input_path.write_text(json.dumps(input_document), encoding="utf-8")
+            policy_path.write_text(json.dumps(policy_document), encoding="utf-8")
+            output = io.StringIO()
+
+            with redirect_stdout(output):
+                code = cli.main(
+                    [
+                        "review-check",
+                        "--input",
+                        str(input_path),
+                        "--policy",
+                        str(policy_path),
+                    ]
+                )
+
+        self.assertEqual(2, code)
+        payload = json.loads(output.getvalue())
+        self.assertEqual("MALFORMED_INVOCATION", _error_code(payload))
+        self.assertTrue(payload["error"]["details"]["issues"])
 
     def test_stale_subject_precedes_blocker_semantics(self) -> None:
         input_document, policy_document = _documents()

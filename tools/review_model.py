@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -12,6 +13,10 @@ SEMANTIC_EXIT_CODES: dict[str, int] = {
     "CONFLICTING": 4,
 }
 ERROR_EXIT_CODE = 2
+
+RFC3339_PATTERN = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$"
+)
 
 
 def canonical_json(value: object) -> str:
@@ -31,8 +36,15 @@ def canonical_digest(value: object) -> str:
 def parse_rfc3339(value: object) -> datetime:
     if not isinstance(value, str) or not value:
         raise ValueError("timestamp must be a non-empty RFC3339 string")
-    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
-    parsed = datetime.fromisoformat(normalized)
+    if RFC3339_PATTERN.fullmatch(value) is None:
+        raise ValueError("timestamp must use RFC3339 date-time syntax")
+    normalized = value
+    if value.endswith(("Z", "z")):
+        normalized = value[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise ValueError("timestamp must be a valid RFC3339 date-time") from exc
     if parsed.tzinfo is None:
         raise ValueError("timestamp must include an offset")
     return parsed.astimezone(UTC)
