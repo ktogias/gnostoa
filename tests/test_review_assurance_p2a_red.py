@@ -25,7 +25,9 @@ def _git(root: Path, *arguments: str) -> str:
     return result.stdout.strip()
 
 
-def _protected_repository(root: Path, *, include_bundle: bool = True) -> tuple[Path, str]:
+def _protected_repository(
+    root: Path, *, include_bundle: bool = True
+) -> tuple[Path, str]:
     repository = root / "origin"
     repository.mkdir()
     _git(repository, "init", "-q", "-b", "main")

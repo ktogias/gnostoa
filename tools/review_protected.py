@@ -51,7 +51,9 @@ def _run_git(
             timeout=_GIT_TIMEOUT_SECONDS,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise ProtectedAcquisitionUnavailable(f"protected Git read-back failed: {exc}") from exc
+        raise ProtectedAcquisitionUnavailable(
+            f"protected Git read-back failed: {exc}"
+        ) from exc
 
 
 def _git_output(
