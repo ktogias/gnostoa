@@ -25,9 +25,9 @@ Start with `README.md`. Load only the route required by the task.
   latest integrated slice's unresolved invariant before choosing a successor. A
   generic roadmap ordering must not demote a capability-specific mandatory
   successor when the selected objective depends on that capability.
-  For a status or “what now?” request, stop after that reconciliation when the
-  resulting view is current unless one of its source links is needed to answer a
-  named question. Before proposing or implementing a change, continue with
+  For a status or “what now?” request, stop there after that reconciliation when
+  the resulting view is current unless one of its source links is needed to answer
+  a named question. Before proposing or implementing a change, continue with
   `knowledge/lifecycles/evidence-gated-capability-evolution.md`,
   `knowledge/runbooks/deliver-bounded-self-hosted-slice.md`, Decision 0016,
   the current roadmap and the active Work Item before proposing implementation.
