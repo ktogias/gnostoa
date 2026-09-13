@@ -5,7 +5,6 @@ import json
 import re
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from decimal import Decimal
 from functools import total_ordering
 from typing import Any
@@ -23,6 +22,7 @@ RFC3339_PATTERN = re.compile(
     r"(?P<hour>\d{2}):(?P<minute>\d{2}):(?P<second>\d{2})"
     r"(?:\.(?P<fraction>\d+))?(?P<zone>[Zz]|[+-]\d{2}:\d{2})$"
 )
+_MONTH_LENGTHS = (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
 
 # Positive UTC leap-second boundaries published through 2016-12-31. Each tuple
 # names the first nominal UTC second after the inserted leap second. Future leap
@@ -58,17 +58,49 @@ _LEAP_SECOND_BOUNDARIES = (
 )
 
 
-def _nominal_utc_seconds(value: datetime) -> int:
-    return (
-        value.toordinal() * 86_400
-        + value.hour * 3_600
-        + value.minute * 60
-        + value.second
+def _is_gregorian_leap_year(year: int) -> bool:
+    return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+
+
+def _days_before_year(year: int) -> int:
+    if year < 0:
+        raise ValueError("year must be non-negative")
+    if year == 0:
+        return 0
+    # RFC 3339 includes year 0000 in its current-era range. Count leap years
+    # in [0000, year) directly rather than relying on datetime, whose range
+    # begins at year 0001.
+    leap_years = (
+        ((year - 1) // 4 + 1)
+        - ((year - 1) // 100 + 1)
+        + ((year - 1) // 400 + 1)
     )
+    return 365 * year + leap_years
+
+
+def _nominal_utc_seconds(
+    year: int,
+    month: int,
+    day: int,
+    hour: int = 0,
+    minute: int = 0,
+    second: int = 0,
+) -> int:
+    if not 0 <= year <= 9999:
+        raise ValueError("year is outside the RFC3339 current-era range")
+    if not 1 <= month <= 12:
+        raise ValueError("month is outside 01..12")
+    month_lengths = list(_MONTH_LENGTHS)
+    if _is_gregorian_leap_year(year):
+        month_lengths[1] = 29
+    if not 1 <= day <= month_lengths[month - 1]:
+        raise ValueError("day is outside the selected month")
+    day_index = _days_before_year(year) + sum(month_lengths[: month - 1]) + day - 1
+    return day_index * 86_400 + hour * 3_600 + minute * 60 + second
 
 
 _LEAP_BOUNDARY_SECONDS = tuple(
-    _nominal_utc_seconds(datetime(year, month, day, tzinfo=UTC))
+    _nominal_utc_seconds(year, month, day)
     for year, month, day in _LEAP_SECOND_BOUNDARIES
 )
 _LEAP_BOUNDARY_SET = set(_LEAP_BOUNDARY_SECONDS)
@@ -187,7 +219,7 @@ def parse_rfc3339(value: object) -> RFC3339Timestamp:
     fraction_digits = (match.group("fraction") or "").rstrip("0")
     represented_second = 59 if second == 60 else second
     try:
-        local = datetime(
+        local_nominal_seconds = _nominal_utc_seconds(
             year,
             month,
             day,
@@ -198,12 +230,10 @@ def parse_rfc3339(value: object) -> RFC3339Timestamp:
     except ValueError as exc:
         raise ValueError("timestamp must be a valid RFC3339 date-time") from exc
 
-    # Convert to the UTC chronology with integer arithmetic. Unlike
-    # datetime.astimezone(), this stays defined when a legal local timestamp plus
-    # its RFC3339 offset denotes an instant just outside Python's year 1..9999
-    # datetime range.
+    # Convert to the UTC chronology with integer arithmetic. This remains
+    # defined for RFC3339 year 0000 and for legal local timestamps whose
+    # numeric offset crosses Python datetime's native year boundaries.
     offset_seconds = offset_minutes * 60
-    local_nominal_seconds = _nominal_utc_seconds(local)
     if second == 60:
         boundary_seconds = local_nominal_seconds + 1 - offset_seconds
         if boundary_seconds not in _LEAP_BOUNDARY_SET:
