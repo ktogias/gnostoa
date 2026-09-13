@@ -20,6 +20,7 @@ def canonical_json(value: object) -> str:
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=True,
+        allow_nan=False,
     )
 
 

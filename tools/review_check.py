@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Any, NoReturn
@@ -64,6 +65,7 @@ def _schema_errors(document: object, schema_name: str) -> list[str]:
 
 def _assert_document_depth(document: object, label: str) -> None:
     pending: list[tuple[object, int]] = [(document, 1)]
+    processed_depth: dict[int, int] = {}
     while pending:
         value, depth = pending.pop()
         if depth > MAX_REVIEW_DOCUMENT_DEPTH:
@@ -71,10 +73,41 @@ def _assert_document_depth(document: object, label: str) -> None:
                 f"{label} nests deeper than the "
                 f"{MAX_REVIEW_DOCUMENT_DEPTH}-level operational bound"
             )
-        if isinstance(value, dict):
-            pending.extend((child, depth + 1) for child in value.values())
-        elif isinstance(value, list):
-            pending.extend((child, depth + 1) for child in value)
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError(f"{label} contains a non-finite number")
+        if not isinstance(value, (dict, list)):
+            continue
+
+        identity = id(value)
+        previous_depth = processed_depth.get(identity)
+        if previous_depth is not None and depth <= previous_depth:
+            continue
+        processed_depth[identity] = depth
+
+        children = value.values() if isinstance(value, dict) else value
+        pending.extend((child, depth + 1) for child in children)
+
+
+def _object_without_duplicate_fields(
+    pairs: list[tuple[str, Any]],
+) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"review-check input repeats JSON object field {key!r}")
+        result[key] = value
+    return result
+
+
+def _reject_non_finite_constant(value: str) -> NoReturn:
+    raise ValueError(f"review-check input contains non-finite JSON number {value!r}")
+
+
+def _parse_finite_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError(f"review-check input contains non-finite JSON number {value!r}")
+    return parsed
 
 
 def evaluate_documents(
@@ -198,7 +231,12 @@ def _load_json(path: Path) -> object:
     except UnicodeDecodeError as exc:
         raise ValueError(f"review-check input is not valid UTF-8: {exc}") from exc
     try:
-        value = json.loads(text)
+        value = json.loads(
+            text,
+            object_pairs_hook=_object_without_duplicate_fields,
+            parse_constant=_reject_non_finite_constant,
+            parse_float=_parse_finite_float,
+        )
     except RecursionError as exc:
         raise ValueError(
             "review-check input nesting exhausted the JSON parser"

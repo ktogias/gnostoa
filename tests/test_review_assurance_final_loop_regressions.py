@@ -13,7 +13,7 @@ from unittest import mock
 from tools import cli, review_check
 from tools.review_check import MAX_REVIEW_INPUT_BYTES
 from tools.review_evaluate import ReviewInputError, evaluate
-from tools.review_model import canonical_digest
+from tools.review_model import canonical_digest, canonical_json
 from tools.review_policy import effective_policy_issues
 from tools.task_envelope import render_current_projection, validate_task_envelope
 
@@ -233,6 +233,96 @@ class ReviewAssuranceFinalLoopRegressions(unittest.TestCase):
         self.assertEqual(2, code)
         self.assertEqual("MALFORMED_INVOCATION", _error_code(payload))
         self.assertIn("schema validation", payload["error"]["message"])
+
+    def test_duplicate_json_fields_fail_closed_before_schema_evaluation(
+        self,
+    ) -> None:
+        _, policy_document = _documents()
+        raw_input = '{"schema_version":"1.0","schema_version":"1.0"}'
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_path = root / "duplicate.json"
+            policy_path = root / "policy.json"
+            input_path.write_text(raw_input, encoding="utf-8")
+            policy_path.write_text(json.dumps(policy_document), encoding="utf-8")
+            output = io.StringIO()
+
+            with redirect_stdout(output):
+                code = cli.main(
+                    [
+                        "review-check",
+                        "--input",
+                        str(input_path),
+                        "--policy",
+                        str(policy_path),
+                    ]
+                )
+
+        self.assertEqual(2, code)
+        payload = json.loads(output.getvalue())
+        self.assertEqual("MALFORMED_INVOCATION", _error_code(payload))
+        self.assertIn("repeats JSON object field", payload["error"]["message"])
+
+    def test_overflowing_json_number_fails_closed_before_schema_evaluation(
+        self,
+    ) -> None:
+        _, policy_document = _documents()
+        raw_input = '{"schema_version":"1.0","native_value":1e9999}'
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_path = root / "nonfinite.json"
+            policy_path = root / "policy.json"
+            input_path.write_text(raw_input, encoding="utf-8")
+            policy_path.write_text(json.dumps(policy_document), encoding="utf-8")
+            output = io.StringIO()
+
+            with redirect_stdout(output):
+                code = cli.main(
+                    [
+                        "review-check",
+                        "--input",
+                        str(input_path),
+                        "--policy",
+                        str(policy_path),
+                    ]
+                )
+
+        self.assertEqual(2, code)
+        payload = json.loads(output.getvalue())
+        self.assertEqual("MALFORMED_INVOCATION", _error_code(payload))
+        self.assertIn("non-finite JSON number", payload["error"]["message"])
+
+    def test_programmatic_non_finite_input_fails_closed(self) -> None:
+        input_document, policy_document = _documents()
+        input_document["evidence_set"]["observations"][0]["native"][
+            "overflow"
+        ] = float("inf")
+
+        code, payload = review_check.evaluate_documents(input_document, policy_document)
+
+        self.assertEqual(2, code)
+        self.assertEqual("MALFORMED_INVOCATION", _error_code(payload))
+        self.assertIn("non-finite number", payload["error"]["message"])
+
+    def test_canonical_json_rejects_non_finite_numbers(self) -> None:
+        with self.assertRaises(ValueError):
+            canonical_json({"overflow": float("inf")})
+
+    def test_shared_alias_fanout_is_traversed_by_identity(self) -> None:
+        class CountingDict(dict[str, Any]):
+            visits = 0
+
+            def values(self) -> Any:
+                type(self).visits += 1
+                return super().values()
+
+        shared: dict[str, Any] = {"leaf": True}
+        for _ in range(10):
+            shared = CountingDict({"left": shared, "right": shared})
+
+        review_check._assert_document_depth(shared, "review policy")
+
+        self.assertLessEqual(CountingDict.visits, 10)
 
     def test_stale_subject_precedes_blocker_semantics(self) -> None:
         input_document, policy_document = _documents()
