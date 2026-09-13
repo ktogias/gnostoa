@@ -5,7 +5,7 @@ import json
 import re
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from functools import total_ordering
 from typing import Any
@@ -174,9 +174,8 @@ def parse_rfc3339(value: object) -> RFC3339Timestamp:
         raise ValueError("timestamp must use valid RFC3339 clock fields")
 
     zone = match.group("zone")
-    if zone in {"Z", "z"}:
-        offset = UTC
-    else:
+    offset_minutes = 0
+    if zone not in {"Z", "z"}:
         offset_hour = int(zone[1:3])
         offset_minute = int(zone[4:6])
         if offset_hour > 23 or offset_minute > 59:
@@ -184,12 +183,6 @@ def parse_rfc3339(value: object) -> RFC3339Timestamp:
         offset_minutes = offset_hour * 60 + offset_minute
         if zone[0] == "-":
             offset_minutes = -offset_minutes
-        try:
-            offset = timezone(timedelta(minutes=offset_minutes))
-        except ValueError as exc:
-            raise ValueError(
-                "timestamp must use a valid RFC3339 numeric offset"
-            ) from exc
 
     fraction_digits = (match.group("fraction") or "").rstrip("0")
     represented_second = 59 if second == 60 else second
@@ -201,15 +194,18 @@ def parse_rfc3339(value: object) -> RFC3339Timestamp:
             hour,
             minute,
             represented_second,
-            tzinfo=offset,
         )
     except ValueError as exc:
         raise ValueError("timestamp must be a valid RFC3339 date-time") from exc
 
-    utc = local.astimezone(UTC)
+    # Convert to the UTC chronology with integer arithmetic. Unlike
+    # datetime.astimezone(), this stays defined when a legal local timestamp plus
+    # its RFC3339 offset denotes an instant just outside Python's year 1..9999
+    # datetime range.
+    offset_seconds = offset_minutes * 60
+    local_nominal_seconds = _nominal_utc_seconds(local)
     if second == 60:
-        boundary = utc + timedelta(seconds=1)
-        boundary_seconds = _nominal_utc_seconds(boundary)
+        boundary_seconds = local_nominal_seconds + 1 - offset_seconds
         if boundary_seconds not in _LEAP_BOUNDARY_SET:
             raise ValueError("timestamp uses :60 outside a known UTC leap second")
         timeline_seconds = boundary_seconds + bisect_left(
@@ -217,7 +213,7 @@ def parse_rfc3339(value: object) -> RFC3339Timestamp:
             boundary_seconds,
         )
     else:
-        nominal_seconds = _nominal_utc_seconds(utc)
+        nominal_seconds = local_nominal_seconds - offset_seconds
         timeline_seconds = nominal_seconds + bisect_right(
             _LEAP_BOUNDARY_SECONDS,
             nominal_seconds,
