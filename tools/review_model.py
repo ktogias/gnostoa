@@ -4,7 +4,10 @@ import hashlib
 import json
 import re
 from bisect import bisect_left, bisect_right
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
+from decimal import Decimal
+from functools import total_ordering
 from typing import Any
 
 SEMANTIC_EXIT_CODES: dict[str, int] = {
@@ -21,10 +24,9 @@ RFC3339_PATTERN = re.compile(
     r"(?:\.(?P<fraction>\d+))?(?P<zone>[Zz]|[+-]\d{2}:\d{2})$"
 )
 
-# Positive UTC leap-second boundaries published through 2016-12-31.  Each
-# tuple names the first nominal UTC second after the inserted leap second.  A
-# future leap second therefore requires an explicit source update rather than
-# silently inventing chronology from an unverified :60 timestamp.
+# Positive UTC leap-second boundaries published through 2016-12-31. Each tuple
+# names the first nominal UTC second after the inserted leap second. Future leap
+# seconds require an explicit source update rather than guessed chronology.
 _LEAP_SECOND_BOUNDARIES = (
     (1972, 7, 1),
     (1973, 1, 1),
@@ -79,120 +81,66 @@ def _fraction_compare(left: str, right: str) -> int:
     return (left_key > right_key) - (left_key < right_key)
 
 
-class _ExactSeconds(float):
-    def __new__(
-        cls,
-        later: RFC3339DateTime,
-        earlier: RFC3339DateTime,
-    ) -> _ExactSeconds:
-        whole = later._timeline_seconds - earlier._timeline_seconds
-        fraction_order = _fraction_compare(
-            later._fraction_digits, earlier._fraction_digits
-        )
-        approximate = float(whole)
-        if whole == 0 and fraction_order:
-            approximate = 0.5 if fraction_order > 0 else -0.5
-        elif whole > 0 and fraction_order < 0:
-            approximate -= 0.5
-        elif whole < 0 and fraction_order > 0:
-            approximate += 0.5
-        result = float.__new__(cls, approximate)
-        result._later = later
-        result._earlier = earlier
-        return result
-
-    def _compare_integer(self, other: object) -> int | None:
-        if not isinstance(other, int) or isinstance(other, bool):
-            return None
-        target_whole = self._earlier._timeline_seconds + other
-        if self._later._timeline_seconds != target_whole:
-            return (self._later._timeline_seconds > target_whole) - (
-                self._later._timeline_seconds < target_whole
-            )
-        return _fraction_compare(
-            self._later._fraction_digits,
-            self._earlier._fraction_digits,
-        )
-
-    def __le__(self, other: object) -> bool:
-        compared = self._compare_integer(other)
-        return float.__le__(self, other) if compared is None else compared <= 0
-
-    def __lt__(self, other: object) -> bool:
-        compared = self._compare_integer(other)
-        return float.__lt__(self, other) if compared is None else compared < 0
-
-    def __ge__(self, other: object) -> bool:
-        compared = self._compare_integer(other)
-        return float.__ge__(self, other) if compared is None else compared >= 0
-
-    def __gt__(self, other: object) -> bool:
-        compared = self._compare_integer(other)
-        return float.__gt__(self, other) if compared is None else compared > 0
+def _fraction_decimal(digits: str) -> Decimal:
+    if not digits:
+        return Decimal(0)
+    return Decimal(int(digits)) / (Decimal(10) ** len(digits))
 
 
-class _ExactTimedelta(timedelta):
-    _later: RFC3339DateTime
-    _earlier: RFC3339DateTime
-
-    def __new__(
-        cls,
-        later: RFC3339DateTime,
-        earlier: RFC3339DateTime,
-    ) -> _ExactTimedelta:
-        result = timedelta.__new__(cls)
-        result._later = later
-        result._earlier = earlier
-        return result
+@dataclass(frozen=True)
+class RFC3339Duration:
+    later: RFC3339Timestamp
+    earlier: RFC3339Timestamp
 
     def total_seconds(self) -> float:
-        return _ExactSeconds(self._later, self._earlier)
+        whole = self.later.timeline_seconds - self.earlier.timeline_seconds
+        fractional = _fraction_decimal(self.later.fraction_digits) - _fraction_decimal(
+            self.earlier.fraction_digits
+        )
+        return float(Decimal(whole) + fractional)
 
 
-class RFC3339DateTime(datetime):
-    """UTC datetime carrying an exact RFC3339 chronology key."""
+@total_ordering
+@dataclass(frozen=True, eq=False)
+class RFC3339Timestamp:
+    """Exact RFC3339 chronology independent of Python microsecond precision."""
 
-    _timeline_seconds: int
-    _fraction_digits: str
-
-    def _compare_exact(self, other: RFC3339DateTime) -> int:
-        if self._timeline_seconds != other._timeline_seconds:
-            return (self._timeline_seconds > other._timeline_seconds) - (
-                self._timeline_seconds < other._timeline_seconds
-            )
-        return _fraction_compare(self._fraction_digits, other._fraction_digits)
+    timeline_seconds: int
+    fraction_digits: str
 
     def __eq__(self, other: object) -> bool:
-        if isinstance(other, RFC3339DateTime):
-            return self._compare_exact(other) == 0
-        return datetime.__eq__(self, other)
+        if not isinstance(other, RFC3339Timestamp):
+            return NotImplemented
+        return (
+            self.timeline_seconds == other.timeline_seconds
+            and _fraction_compare(self.fraction_digits, other.fraction_digits) == 0
+        )
 
     def __lt__(self, other: object) -> bool:
-        if isinstance(other, RFC3339DateTime):
-            return self._compare_exact(other) < 0
-        return datetime.__lt__(self, other)
+        if not isinstance(other, RFC3339Timestamp):
+            return NotImplemented
+        if self.timeline_seconds != other.timeline_seconds:
+            return self.timeline_seconds < other.timeline_seconds
+        return _fraction_compare(self.fraction_digits, other.fraction_digits) < 0
 
-    def __le__(self, other: object) -> bool:
-        if isinstance(other, RFC3339DateTime):
-            return self._compare_exact(other) <= 0
-        return datetime.__le__(self, other)
+    def __sub__(self, earlier: RFC3339Timestamp) -> RFC3339Duration:
+        return RFC3339Duration(self, earlier)
 
-    def __gt__(self, other: object) -> bool:
-        if isinstance(other, RFC3339DateTime):
-            return self._compare_exact(other) > 0
-        return datetime.__gt__(self, other)
+    def is_within_seconds_after(
+        self,
+        earlier: RFC3339Timestamp,
+        max_seconds: int,
+    ) -> bool:
+        """Return whether self is in [earlier, earlier + max_seconds] exactly."""
 
-    def __ge__(self, other: object) -> bool:
-        if isinstance(other, RFC3339DateTime):
-            return self._compare_exact(other) >= 0
-        return datetime.__ge__(self, other)
-
-    def __sub__(self, other: datetime) -> timedelta:
-        if isinstance(other, RFC3339DateTime):
-            return _ExactTimedelta(self, other)
-        return datetime.__sub__(self, other)
-
-    __hash__ = datetime.__hash__
+        if self < earlier:
+            return False
+        whole_seconds = self.timeline_seconds - earlier.timeline_seconds
+        if whole_seconds < max_seconds:
+            return True
+        if whole_seconds > max_seconds:
+            return False
+        return _fraction_compare(self.fraction_digits, earlier.fraction_digits) <= 0
 
 
 def canonical_json(value: object) -> str:
@@ -209,7 +157,7 @@ def canonical_digest(value: object) -> str:
     return "sha256:" + hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
 
 
-def parse_rfc3339(value: object) -> datetime:
+def parse_rfc3339(value: object) -> RFC3339Timestamp:
     if not isinstance(value, str) or not value:
         raise ValueError("timestamp must be a non-empty RFC3339 string")
     match = RFC3339_PATTERN.fullmatch(value)
@@ -233,11 +181,11 @@ def parse_rfc3339(value: object) -> datetime:
         offset_minute = int(zone[4:6])
         if offset_hour > 23 or offset_minute > 59:
             raise ValueError("timestamp must use a valid RFC3339 numeric offset")
-        minutes = offset_hour * 60 + offset_minute
+        offset_minutes = offset_hour * 60 + offset_minute
         if zone[0] == "-":
-            minutes = -minutes
+            offset_minutes = -offset_minutes
         try:
-            offset = timezone(timedelta(minutes=minutes))
+            offset = timezone(timedelta(minutes=offset_minutes))
         except ValueError as exc:
             raise ValueError(
                 "timestamp must use a valid RFC3339 numeric offset"
@@ -245,7 +193,6 @@ def parse_rfc3339(value: object) -> datetime:
 
     fraction_digits = (match.group("fraction") or "").rstrip("0")
     represented_second = 59 if second == 60 else second
-    microsecond = int((fraction_digits[:6]).ljust(6, "0")) if fraction_digits else 0
     try:
         local = datetime(
             year,
@@ -254,7 +201,6 @@ def parse_rfc3339(value: object) -> datetime:
             hour,
             minute,
             represented_second,
-            microsecond,
             tzinfo=offset,
         )
     except ValueError as exc:
@@ -262,7 +208,7 @@ def parse_rfc3339(value: object) -> datetime:
 
     utc = local.astimezone(UTC)
     if second == 60:
-        boundary = utc.replace(microsecond=0) + timedelta(seconds=1)
+        boundary = utc + timedelta(seconds=1)
         boundary_seconds = _nominal_utc_seconds(boundary)
         if boundary_seconds not in _LEAP_BOUNDARY_SET:
             raise ValueError("timestamp uses :60 outside a known UTC leap second")
@@ -270,28 +216,17 @@ def parse_rfc3339(value: object) -> datetime:
             _LEAP_BOUNDARY_SECONDS,
             boundary_seconds,
         )
-        visible = boundary
     else:
         nominal_seconds = _nominal_utc_seconds(utc)
         timeline_seconds = nominal_seconds + bisect_right(
             _LEAP_BOUNDARY_SECONDS,
             nominal_seconds,
         )
-        visible = utc
 
-    parsed = RFC3339DateTime(
-        visible.year,
-        visible.month,
-        visible.day,
-        visible.hour,
-        visible.minute,
-        visible.second,
-        microsecond,
-        tzinfo=UTC,
+    return RFC3339Timestamp(
+        timeline_seconds=timeline_seconds,
+        fraction_digits=fraction_digits,
     )
-    parsed._timeline_seconds = timeline_seconds
-    parsed._fraction_digits = fraction_digits
-    return parsed
 
 
 def error_payload(

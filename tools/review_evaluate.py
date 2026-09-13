@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime
 from typing import Any
 
 from .review_adapter_file import normalize_observation
 from .review_model import (
+    RFC3339Timestamp,
     canonical_digest,
     canonical_json,
     parse_rfc3339,
@@ -47,14 +47,14 @@ def _list(value: object, name: str) -> list[Any]:
     return value
 
 
-def _time(value: object, name: str) -> datetime:
+def _time(value: object, name: str) -> RFC3339Timestamp:
     try:
         return parse_rfc3339(value)
     except (TypeError, ValueError) as exc:
         raise ReviewInputError("CONFIGURATION_ERROR", f"invalid {name}: {exc}") from exc
 
 
-def _fresh(cut: datetime, as_of: datetime, rule: object) -> bool:
+def _fresh(cut: RFC3339Timestamp, as_of: RFC3339Timestamp, rule: object) -> bool:
     if not isinstance(rule, dict):
         return False
     mode = rule.get("mode")
@@ -65,8 +65,7 @@ def _fresh(cut: datetime, as_of: datetime, rule: object) -> bool:
     seconds = rule.get("seconds")
     if not isinstance(seconds, int) or isinstance(seconds, bool) or seconds < 0:
         return False
-    age = (as_of - cut).total_seconds()
-    return 0 <= age <= seconds
+    return as_of.is_within_seconds_after(cut, seconds)
 
 
 def _policy_result_provenance_issues(policy: dict[str, Any]) -> list[str]:
@@ -201,7 +200,7 @@ def _prepare_assessments(
     observations: list[Any],
     target: dict[str, Any],
     policy: dict[str, Any],
-    as_of: datetime,
+    as_of: RFC3339Timestamp,
     *,
     allow_synthetic_revision_lineage: bool = False,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
