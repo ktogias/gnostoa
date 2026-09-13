@@ -17,6 +17,7 @@ from .review_model import (
     SEMANTIC_EXIT_CODES,
     canonical_json,
     error_payload,
+    parse_rfc3339,
 )
 from .review_policy import (
     default_project_policy_path,
@@ -30,6 +31,17 @@ from .review_policy import (
 MAX_REVIEW_INPUT_BYTES = 2_097_152
 MAX_REVIEW_DOCUMENT_DEPTH = 64
 FORMAT_CHECKER = FormatChecker()
+
+
+@FORMAT_CHECKER.checks("date-time")
+def _is_strict_rfc3339(value: object) -> bool:
+    if not isinstance(value, str):
+        return True
+    try:
+        parse_rfc3339(value)
+    except ValueError:
+        return False
+    return True
 
 
 class _ArgumentParser(argparse.ArgumentParser):
