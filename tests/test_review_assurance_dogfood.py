@@ -7,8 +7,7 @@ from pathlib import Path
 
 from tools.review_adapter_file import normalize_observation
 from tools.review_check import evaluate_documents
-from tools.review_evaluate import _prepare_assessments
-from tools.review_model import canonical_digest, parse_rfc3339
+from tools.review_model import canonical_digest
 
 ROOT = Path(__file__).resolve().parents[1]
 FIX = ROOT / "tests" / "fixtures" / "review_check"
@@ -161,22 +160,43 @@ class ReviewAssuranceDogfoodTests(unittest.TestCase):
         cases = _json(FIX / "cases.json")
         base = cases["base"]
         self.assertIsInstance(base, dict)
+        input_document = copy.deepcopy(base["input"])
         policy_document = copy.deepcopy(base["policy"])
+        self.assertIsInstance(input_document, dict)
         self.assertIsInstance(policy_document, dict)
         target, observations = _dogfood_subject_observations()
-
-        assessments, active, exclusions = _prepare_assessments(
-            observations,
-            target,
-            policy_document,
-            parse_rfc3339("2026-09-12T00:10:00Z"),
-            allow_synthetic_revision_lineage=False,
+        input_document["subject"] = target
+        input_document["evidence_set"] = {
+            "observed_at": "2026-09-12T00:00:00Z",
+            "sources": [
+                {
+                    "source_id": "retained-review-evidence",
+                    "status": "COMPLETE",
+                    "observed_at": "2026-09-12T00:00:00Z",
+                }
+            ],
+            "observations": observations,
+        }
+        context = input_document["evaluation_context"]
+        self.assertIsInstance(context, dict)
+        context.update(
+            {
+                "mode": "historical_replay",
+                "judge_relation": "prior_integrated",
+                "fixture_only": True,
+                "as_of": "2026-09-12T00:10:00Z",
+            }
         )
+        authority = input_document["authority"]
+        self.assertIsInstance(authority, dict)
+        authority["policy_digest"] = canonical_digest(policy_document)
 
-        self.assertEqual([], active)
-        self.assertEqual(2, len(assessments))
-        self.assertEqual(2, len(exclusions))
-        for assessment in assessments:
+        code, payload = evaluate_documents(input_document, policy_document)
+
+        self.assertEqual(3, code)
+        self.assertEqual("INCOMPLETE", payload["outcome"])
+        self.assertEqual(2, len(payload["assessments"]))
+        for assessment in payload["assessments"]:
             with self.subTest(observation_id=assessment["observation_id"]):
                 self.assertIs(assessment["eligible"], False)
                 self.assertIn("subject_not_exact", assessment["exclusion_reasons"])
