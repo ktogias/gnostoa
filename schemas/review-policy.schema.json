@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ktogias.github.io/gnostoa/schemas/v1/review-policy.schema.json",
+  "title": "Gnostoa effective review-assurance policy v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "version",
+    "abstract",
+    "change_class",
+    "review_requirement",
+    "subject",
+    "collection",
+    "qualification",
+    "quorum",
+    "blockers",
+    "conflicts"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "id": {"$ref": "#/$defs/nonEmptyString"},
+    "version": {"$ref": "#/$defs/nonEmptyString"},
+    "abstract": {"type": "boolean"},
+    "change_class": {"enum": ["mechanical", "normal", "normative", "critical", "emergency"]},
+    "review_requirement": {"enum": ["none", "required"]},
+    "subject": {
+      "type": "object",
+      "required": ["comparison_kind", "freshness", "observation_freshness"],
+      "properties": {
+        "comparison_kind": {"const": "merge_base"},
+        "freshness": {"$ref": "#/$defs/ageRule"},
+        "observation_freshness": {"$ref": "#/$defs/ageRule"}
+      },
+      "additionalProperties": false
+    },
+    "collection": {
+      "type": "object",
+      "required": ["recognized_sources", "required_sources", "freshness"],
+      "properties": {
+        "recognized_sources": {"$ref": "#/$defs/stringSet"},
+        "required_sources": {"$ref": "#/$defs/stringSet"},
+        "freshness": {"$ref": "#/$defs/ageRule"}
+      },
+      "additionalProperties": false
+    },
+    "qualification": {
+      "type": "object",
+      "required": ["required_capabilities", "owner_reviews_count", "snapshot_freshness"],
+      "properties": {
+        "required_capabilities": {"$ref": "#/$defs/stringSet"},
+        "owner_reviews_count": {"type": "boolean"},
+        "snapshot_freshness": {"$ref": "#/$defs/ageRule"}
+      },
+      "additionalProperties": false
+    },
+    "quorum": {
+      "type": "object",
+      "required": ["minimum_distinct_domains", "acceptable_recommendations"],
+      "properties": {
+        "minimum_distinct_domains": {"type": "integer", "minimum": 0},
+        "acceptable_recommendations": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/recommendation"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "blockers": {
+      "type": "object",
+      "required": ["recommendations", "unresolved_threads"],
+      "properties": {
+        "recommendations": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/recommendation"}
+        },
+        "unresolved_threads": {"enum": ["ignore", "block", "incomplete"]}
+      },
+      "additionalProperties": false
+    },
+    "conflicts": {
+      "type": "object",
+      "required": ["pairs"],
+      "properties": {
+        "pairs": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "uniqueItems": true,
+            "items": {"$ref": "#/$defs/recommendation"}
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "nonEmptyString": {"type": "string", "minLength": 1},
+    "stringSet": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/nonEmptyString"}
+    },
+    "recommendation": {
+      "enum": ["APPROVE", "REQUEST_CHANGES", "COMMENT_ONLY", "ABSTAIN", "UNKNOWN"]
+    },
+    "ageRule": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["mode", "seconds"],
+          "properties": {
+            "mode": {"const": "max_age"},
+            "seconds": {"type": "integer", "minimum": 0}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["mode"],
+          "properties": {"mode": {"const": "not_age_sensitive"}},
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

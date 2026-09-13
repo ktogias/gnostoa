@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ktogias.github.io/gnostoa/schemas/v1/review-gate-result.schema.json",
+  "title": "Gnostoa review-assurance semantic gate result v1",
+  "type": "object",
+  "required": [
+    "outcome",
+    "reason",
+    "binding",
+    "evaluation_context",
+    "subject",
+    "authority",
+    "judge",
+    "policy",
+    "collection",
+    "qualification",
+    "quorum",
+    "blockers",
+    "conflicts",
+    "exclusions",
+    "diagnostics",
+    "assessments"
+  ],
+  "properties": {
+    "outcome": {"enum": ["PASS", "BLOCKED", "INCOMPLETE", "CONFLICTING"]},
+    "reason": {"type": "string", "minLength": 1},
+    "binding": {"const": false},
+    "evaluation_context": {"type": "object"},
+    "subject": {"type": "object"},
+    "authority": {"type": "object"},
+    "judge": {"type": "object"},
+    "policy": {
+      "type": "object",
+      "required": ["id", "version", "change_class", "review_requirement"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1},
+        "change_class": {"enum": ["mechanical", "normal", "normative", "critical", "emergency"]},
+        "review_requirement": {"enum": ["none", "required"]}
+      },
+      "additionalProperties": false
+    },
+    "collection": {"type": "object"},
+    "qualification": {"type": "object"},
+    "quorum": {"type": "object"},
+    "blockers": {"type": "array", "items": {"type": "object"}},
+    "conflicts": {"type": "array", "items": {"type": "object"}},
+    "exclusions": {"type": "array", "items": {"type": "object"}},
+    "diagnostics": {"type": "array", "items": {"type": "string"}},
+    "assessments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "observation_id",
+          "reviewer_id",
+          "source_id",
+          "raw_recommendation",
+          "normalized_recommendation",
+          "normalization_provenance",
+          "eligible",
+          "exclusion_reasons"
+        ],
+        "properties": {
+          "observation_id": {},
+          "reviewer_id": {},
+          "source_id": {},
+          "observed_at": {},
+          "subject_binding": {},
+          "raw_recommendation": {},
+          "normalized_recommendation": {},
+          "normalization_provenance": {"type": "object"},
+          "findings": {"type": "array"},
+          "threads": {"type": "object"},
+          "native": {"type": "object"},
+          "eligible": {"type": "boolean"},
+          "exclusion_reasons": {"type": "array", "items": {"type": "string"}}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

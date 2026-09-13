@@ -1,0 +1,42 @@
+id: review-assurance-core
+version: "1.0"
+owner: team:project-maintainers
+abstract: true
+extends: []
+
+defaults:
+  subject:
+    comparison_kind: merge_base
+    freshness:
+      mode: max_age
+      seconds: 900
+    observation_freshness:
+      mode: not_age_sensitive
+  collection:
+    recognized_sources:
+      - retained-review-evidence
+    required_sources:
+      - retained-review-evidence
+    freshness:
+      mode: max_age
+      seconds: 900
+  qualification:
+    required_capabilities:
+      - semantic-review
+    owner_reviews_count: false
+    snapshot_freshness:
+      mode: max_age
+      seconds: 86400
+  quorum:
+    minimum_distinct_domains: 1
+    acceptable_recommendations:
+      - APPROVE
+  blockers:
+    recommendations:
+      - REQUEST_CHANGES
+    unresolved_threads: ignore
+  conflicts:
+    pairs:
+      - [APPROVE, REQUEST_CHANGES]
+
+change_classes: {}
