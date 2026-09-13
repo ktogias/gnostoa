@@ -294,9 +294,9 @@ class ReviewAssuranceFinalLoopRegressions(unittest.TestCase):
 
     def test_programmatic_non_finite_input_fails_closed(self) -> None:
         input_document, policy_document = _documents()
-        input_document["evidence_set"]["observations"][0]["native"][
-            "overflow"
-        ] = float("inf")
+        input_document["evidence_set"]["observations"][0]["native"]["overflow"] = float(
+            "inf"
+        )
 
         code, payload = review_check.evaluate_documents(input_document, policy_document)
 

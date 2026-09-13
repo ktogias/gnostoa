@@ -106,7 +106,9 @@ def _reject_non_finite_constant(value: str) -> NoReturn:
 def _parse_finite_float(value: str) -> float:
     parsed = float(value)
     if not math.isfinite(parsed):
-        raise ValueError(f"review-check input contains non-finite JSON number {value!r}")
+        raise ValueError(
+            f"review-check input contains non-finite JSON number {value!r}"
+        )
     return parsed
 
 
