@@ -3,10 +3,12 @@ from __future__ import annotations
 import copy
 import inspect
 import json
+import os
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from tools import review_check, review_evaluate, review_protected
 from tools.review_protected import ProtectedAcquisitionUnavailable
@@ -26,39 +28,34 @@ def _git(root: Path, *arguments: str) -> str:
 
 
 def _protected_repository(
-    root: Path, *, include_bundle: bool = True
+    root: Path,
+    *,
+    kind: str = "protected-current-advisory-authority",
+    include_bundle: bool = True,
 ) -> tuple[Path, str]:
-    repository = root / "origin"
+    repository = root / kind
     repository.mkdir()
     _git(repository, "init", "-q", "-b", "main")
     _git(repository, "config", "user.email", "gnostoa-tests@example.test")
     _git(repository, "config", "user.name", "Gnostoa Tests")
-
-    (repository / "tools").mkdir()
-    (repository / "tools" / "marker.py").write_text("VALUE = 1\n", encoding="utf-8")
     if include_bundle:
         (repository / "tasks").mkdir()
         (repository / BUNDLE_PATH).write_text(
             json.dumps(
                 {
                     "schema_version": "1.0",
-                    "kind": "protected-current-advisory-authority",
+                    "kind": kind,
                 },
                 sort_keys=True,
             )
             + "\n",
             encoding="utf-8",
         )
+    else:
+        (repository / "README.md").write_text("protected\n", encoding="utf-8")
     _git(repository, "add", ".")
     _git(repository, "commit", "-q", "-m", "protected main")
     return repository, _git(repository, "rev-parse", "HEAD")
-
-
-def _runtime_root(root: Path, *, marker: str = "VALUE = 1\n") -> Path:
-    runtime = root / "runtime"
-    (runtime / "tools").mkdir(parents=True)
-    (runtime / "tools" / "marker.py").write_text(marker, encoding="utf-8")
-    return runtime
 
 
 def _current_advisory_fixture() -> tuple[dict[str, object], dict[str, object]]:
@@ -81,68 +78,48 @@ def _current_advisory_fixture() -> tuple[dict[str, object], dict[str, object]]:
 
 
 class ReviewAssuranceP2aTests(unittest.TestCase):
-    def test_exact_protected_main_can_supply_dormant_authority_document(self) -> None:
+    def test_fixed_readback_can_supply_dormant_authority_document(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            repository, revision = _protected_repository(root)
-            runtime = _runtime_root(root)
+            repository, revision = _protected_repository(Path(directory))
             acquired = review_protected._acquire_from_repository(
-                str(repository),
-                BUNDLE_PATH,
-                revision,
-                runtime,
+                str(repository), BUNDLE_PATH
             )
 
         self.assertEqual(revision, acquired.protected_main_revision)
-        self.assertEqual(revision, acquired.runtime_revision)
         self.assertEqual(
             "protected-current-advisory-authority", acquired.document["kind"]
         )
-        self.assertTrue(acquired.public_surface_digest.startswith("sha256:"))
 
-    def test_candidate_revision_cannot_claim_protected_main(self) -> None:
+    def test_git_configuration_injection_cannot_redirect_fixed_readback(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            repository, _ = _protected_repository(root)
-            runtime = _runtime_root(root)
-            with self.assertRaisesRegex(
-                ProtectedAcquisitionUnavailable,
-                "not the exact protected-main revision",
-            ):
-                review_protected._acquire_from_repository(
-                    str(repository),
-                    BUNDLE_PATH,
-                    "0" * 40,
-                    runtime,
+            protected, protected_revision = _protected_repository(root)
+            attacker, _ = _protected_repository(root, kind="attacker-authority")
+            process_environment = {
+                "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": f"url.file://{attacker}/.insteadOf",
+                "GIT_CONFIG_VALUE_0": f"file://{protected}/",
+                "GIT_DIR": str(attacker / ".git"),
+                "GIT_WORK_TREE": str(attacker),
+            }
+            with patch.dict(os.environ, process_environment, clear=False):
+                acquired = review_protected._acquire_from_repository(
+                    f"file://{protected}/", BUNDLE_PATH
                 )
 
-    def test_runtime_surface_mismatch_fails_closed(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            repository, revision = _protected_repository(root)
-            runtime = _runtime_root(root, marker="VALUE = 2\n")
-            with self.assertRaisesRegex(
-                ProtectedAcquisitionUnavailable,
-                "public surface does not match protected main",
-            ):
-                review_protected._acquire_from_repository(
-                    str(repository),
-                    BUNDLE_PATH,
-                    revision,
-                    runtime,
-                )
+        self.assertEqual(protected_revision, acquired.protected_main_revision)
+        self.assertEqual(
+            "protected-current-advisory-authority", acquired.document["kind"]
+        )
 
     def test_missing_protected_authority_document_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            repository, revision = _protected_repository(root, include_bundle=False)
-            runtime = _runtime_root(root)
+            repository, _ = _protected_repository(
+                Path(directory), include_bundle=False
+            )
             with self.assertRaises(ProtectedAcquisitionUnavailable):
                 review_protected._acquire_from_repository(
-                    str(repository),
-                    BUNDLE_PATH,
-                    revision,
-                    runtime,
+                    str(repository), BUNDLE_PATH
                 )
 
     def test_production_loader_has_no_caller_selectable_trust_inputs(self) -> None:
@@ -150,6 +127,12 @@ class ReviewAssuranceP2aTests(unittest.TestCase):
             review_protected.acquire_gnostoa_current_advisory_bundle
         )
         self.assertEqual([], list(signature.parameters))
+        source = inspect.getsource(
+            review_protected.acquire_gnostoa_current_advisory_bundle
+        )
+        self.assertIn("_GNOSTOA_SELF_REPOSITORY", source)
+        self.assertIn("_GNOSTOA_SELF_BUNDLE_PATH", source)
+        self.assertNotIn("KNOWLEDGE_KIT_", source)
 
     def test_p2a_exposes_no_candidate_callable_semantic_activation_route(self) -> None:
         input_document, policy_document = _current_advisory_fixture()

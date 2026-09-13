@@ -1,22 +1,14 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-
-from .check_runtime_lock import (
-    IGNORED_PARTS,
-    IGNORED_SUFFIXES,
-    PUBLIC_SURFACE_PATHS,
-    public_surface_digest,
-)
-from .knowledge_common import KnowledgeFormatError, toolkit_root
 
 _GNOSTOA_SELF_REPOSITORY = "https://github.com/ktogias/gnostoa.git"
 _GNOSTOA_SELF_BUNDLE_PATH = "tasks/issue-11-r2a-current-advisory.json"
@@ -26,15 +18,34 @@ _MAX_PROTECTED_DOCUMENT_BYTES = 2_097_152
 
 
 class ProtectedAcquisitionUnavailable(RuntimeError):
-    """Raised when protected-main authority cannot be established exactly."""
+    """Raised when protected-main authority cannot be acquired exactly."""
 
 
 @dataclass(frozen=True)
 class ProtectedMainDocument:
     protected_main_revision: str
-    runtime_revision: str
-    public_surface_digest: str
     document: dict[str, Any]
+
+
+def _git_executable() -> str:
+    executable = shutil.which("git", path=os.defpath)
+    if executable is None:
+        raise ProtectedAcquisitionUnavailable(
+            "Git is unavailable on the bounded protected-main acquisition path"
+        )
+    return executable
+
+
+def _git_environment() -> dict[str, str]:
+    # Do not inherit caller-controlled Git configuration, repository selectors,
+    # credential helpers or URL rewrite rules. The protected route is public,
+    # read-only GitHub HTTPS and therefore needs no caller credentials.
+    return {
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_TERMINAL_PROMPT": "0",
+        "LC_ALL": "C",
+    }
 
 
 def _run_git(
@@ -44,11 +55,12 @@ def _run_git(
 ) -> subprocess.CompletedProcess[bytes]:
     try:
         return subprocess.run(
-            ["git", *arguments],
+            [_git_executable(), *arguments],
             cwd=cwd,
             check=False,
             capture_output=True,
             timeout=_GIT_TIMEOUT_SECONDS,
+            env=_git_environment(),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise ProtectedAcquisitionUnavailable(
@@ -69,54 +81,6 @@ def _git_output(
     return result.stdout
 
 
-def _git_public_surface_digest(repository: Path, revision: str) -> str:
-    encoded_paths = _git_output(
-        [
-            "ls-tree",
-            "-rz",
-            "--name-only",
-            revision,
-            "--",
-            *PUBLIC_SURFACE_PATHS,
-        ],
-        cwd=repository,
-        description="cannot enumerate protected-main public surface",
-    )
-    paths = sorted(
-        {
-            Path(os.fsdecode(encoded))
-            for encoded in encoded_paths.split(b"\0")
-            if encoded
-        },
-        key=lambda item: item.as_posix(),
-    )
-
-    digest = hashlib.sha256()
-    included = 0
-    for relative in paths:
-        if any(part in IGNORED_PARTS for part in relative.parts):
-            continue
-        if relative.suffix.casefold() in IGNORED_SUFFIXES:
-            continue
-        content = _git_output(
-            ["show", f"{revision}:{relative.as_posix()}"],
-            cwd=repository,
-            description=f"cannot read protected-main source {relative.as_posix()}",
-        )
-        encoded_path = relative.as_posix().encode("utf-8")
-        digest.update(len(encoded_path).to_bytes(8, "big"))
-        digest.update(encoded_path)
-        digest.update(len(content).to_bytes(8, "big"))
-        digest.update(content)
-        included += 1
-
-    if included == 0:
-        raise ProtectedAcquisitionUnavailable(
-            "protected main exposes no Gnostoa public-surface files"
-        )
-    return f"sha256:{digest.hexdigest()}"
-
-
 def _object_without_duplicate_fields(
     pairs: list[tuple[str, Any]],
 ) -> dict[str, Any]:
@@ -133,13 +97,12 @@ def _object_without_duplicate_fields(
 def _acquire_from_repository(
     repository_url: str,
     bundle_path: str,
-    runtime_revision: str,
-    runtime_root: Path,
 ) -> ProtectedMainDocument:
-    if not _SHA40.fullmatch(runtime_revision):
-        raise ProtectedAcquisitionUnavailable(
-            "executing runtime revision is not an exact Git commit"
-        )
+    """Test seam for the fixed production read-back route.
+
+    Production does not expose these selectors; callers of the public acquisition
+    function cannot replace the Gnostoa repository, protected branch or bundle path.
+    """
 
     with tempfile.TemporaryDirectory(prefix="gnostoa-r2a-protected-") as directory:
         repository = Path(directory)
@@ -169,25 +132,9 @@ def _acquire_from_repository(
             .decode("ascii", errors="strict")
             .strip()
         )
-        if runtime_revision != protected_main_revision:
+        if not _SHA40.fullmatch(protected_main_revision):
             raise ProtectedAcquisitionUnavailable(
-                "executing runtime is not the exact protected-main revision: "
-                f"{runtime_revision} != {protected_main_revision}"
-            )
-
-        protected_surface = _git_public_surface_digest(
-            repository, protected_main_revision
-        )
-        try:
-            executing_surface = public_surface_digest(runtime_root)
-        except (KnowledgeFormatError, OSError) as exc:
-            raise ProtectedAcquisitionUnavailable(
-                f"cannot establish executing public-surface identity: {exc}"
-            ) from exc
-        if executing_surface != protected_surface:
-            raise ProtectedAcquisitionUnavailable(
-                "executing public surface does not match protected main: "
-                f"{executing_surface} != {protected_surface}"
+                "protected main did not resolve to an exact Git commit"
             )
 
         raw = _git_output(
@@ -215,25 +162,21 @@ def _acquire_from_repository(
 
     return ProtectedMainDocument(
         protected_main_revision=protected_main_revision,
-        runtime_revision=runtime_revision,
-        public_surface_digest=protected_surface,
         document=document,
     )
 
 
 def acquire_gnostoa_current_advisory_bundle() -> ProtectedMainDocument:
-    """Acquire the self-hosted authority document only from exact protected main.
+    """Read the Gnostoa-self authority document from protected main only.
 
-    The repository, branch and document path are intentionally not caller-selectable.
-    P2a does not consume the returned document to bypass the P1 evaluator guard; a
-    later separately integrated activation slice must validate its contents and the
-    pinned OCI execution identity before any current-advisory semantic evaluation.
+    P2a deliberately establishes provider acquisition, not execution identity and
+    not semantic activation. The repository, branch and document path are fixed,
+    and Git runs with a minimal configuration-free environment. P2b must
+    independently bind a digest-pinned prior-integrated OCI execution identity
+    before it may connect this provider record to current-advisory evaluation.
     """
 
-    runtime_revision = os.environ.get("KNOWLEDGE_KIT_REVISION", "")
     return _acquire_from_repository(
         _GNOSTOA_SELF_REPOSITORY,
         _GNOSTOA_SELF_BUNDLE_PATH,
-        runtime_revision,
-        toolkit_root(),
     )
