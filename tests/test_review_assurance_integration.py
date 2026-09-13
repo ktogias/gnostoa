@@ -368,6 +368,31 @@ class ReviewAssuranceIntegrationTests(unittest.TestCase):
         self.assertEqual("CONFIGURATION_ERROR", _error_code(payload))
         self.assertIn("inheritance exceeds", payload["error"]["message"])
 
+    def test_review_policy_rejects_yaml_merge_aliases_before_expansion(self) -> None:
+        fixture = _fixture()
+        base = fixture["base"]
+        self.assertIsInstance(base, dict)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_path = root / "input.json"
+            policy_path = root / "merge.yaml"
+            input_path.write_text(json.dumps(base["input"]), encoding="utf-8")
+            policy_path.write_text(
+                "base: &base\n  a: 1\ncopy:\n  <<: *base\n",
+                encoding="utf-8",
+            )
+            output = io.StringIO()
+
+            with redirect_stdout(output):
+                code = review_check.main(
+                    ["--input", str(input_path), "--policy", str(policy_path)]
+                )
+
+        self.assertEqual(2, code)
+        payload = json.loads(output.getvalue())
+        self.assertEqual("CONFIGURATION_ERROR", _error_code(payload))
+        self.assertIn("merge keys are not supported", payload["error"]["message"])
+
     def test_current_advisory_reason_precedes_caller_judge_mismatch(self) -> None:
         fixture = _fixture()
         base = fixture["base"]

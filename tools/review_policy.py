@@ -23,6 +23,23 @@ MAX_REVIEW_POLICY_INHERITANCE_DEPTH = 16
 MAX_REVIEW_POLICY_DOCUMENT_DEPTH = 64
 
 
+class ReviewPolicyLoader(KnowledgeLoader):
+    """Strict policy loader that rejects merge-key expansion before construction."""
+
+    def flatten_mapping(self, node: yaml.MappingNode) -> None:
+        if any(
+            key_node.tag == "tag:yaml.org,2002:merge"
+            for key_node, _ in node.value
+        ):
+            raise yaml.constructor.ConstructorError(
+                "while constructing review policy",
+                node.start_mark,
+                "YAML merge keys are not supported in review policies",
+                node.start_mark,
+            )
+        super().flatten_mapping(node)
+
+
 def effective_policy_issues(policy: object) -> list[str]:
     if not isinstance(policy, dict):
         return ["policy must be an object"]
@@ -123,7 +140,7 @@ def _load_policy_yaml(path: Path) -> dict[str, Any]:
         ) from exc
 
     try:
-        value = yaml.load(text, Loader=KnowledgeLoader)
+        value = yaml.load(text, Loader=ReviewPolicyLoader)
     except RecursionError as exc:
         raise KnowledgeFormatError(
             f"Review policy {path} exhausted the YAML parser nesting bound"
