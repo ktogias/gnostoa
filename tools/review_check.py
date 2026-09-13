@@ -10,7 +10,7 @@ from typing import Any, NoReturn
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 
-from .knowledge_common import KnowledgeFormatError, load_yaml, toolkit_root
+from .knowledge_common import KnowledgeFormatError, toolkit_root
 from .review_evaluate import ReviewInputError, evaluate
 from .review_model import (
     ERROR_EXIT_CODE,
@@ -18,7 +18,11 @@ from .review_model import (
     canonical_json,
     error_payload,
 )
-from .review_policy import default_project_policy_path, resolve_project_policy
+from .review_policy import (
+    default_project_policy_path,
+    load_review_policy_source,
+    resolve_loaded_project_policy,
+)
 
 # File-mode review evidence gets more room than a task envelope while remaining
 # operationally bounded. The limit is four times the existing 512 KiB task
@@ -270,13 +274,13 @@ def _parser() -> argparse.ArgumentParser:
 
 def _load_policy(path: Path | None, change_class: str | None) -> dict[str, Any]:
     selected = default_project_policy_path() if path is None else path
-    loaded = load_yaml(selected.resolve())
+    loaded = load_review_policy_source(selected)
     if "change_classes" in loaded or "defaults" in loaded:
         if change_class is None:
             raise KnowledgeFormatError(
                 "--change-class is required when evaluating a project review-policy source"
             )
-        return resolve_project_policy(selected, change_class)
+        return resolve_loaded_project_policy(loaded, change_class)
     if not isinstance(loaded, dict):
         raise KnowledgeFormatError(f"Review policy must be a mapping in {selected}")
     return loaded

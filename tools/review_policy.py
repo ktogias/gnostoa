@@ -3,10 +3,24 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .knowledge_common import KnowledgeFormatError, deep_merge, load_yaml, toolkit_root
+import yaml
+
+from .knowledge_common import (
+    KnowledgeFormatError,
+    KnowledgeLoader,
+    deep_merge,
+    toolkit_root,
+)
 
 REVIEW_REQUIREMENTS = {"none", "required"}
 CHANGE_CLASSES = {"mechanical", "normal", "normative", "critical", "emergency"}
+
+# Policy sources are intentionally smaller than retained review-evidence inputs.
+# The per-file cap and inheritance-depth cap bound total parse/merge work while
+# still leaving ample room for project review-policy specializations.
+MAX_REVIEW_POLICY_BYTES = 524_288
+MAX_REVIEW_POLICY_INHERITANCE_DEPTH = 16
+MAX_REVIEW_POLICY_DOCUMENT_DEPTH = 64
 
 
 def effective_policy_issues(policy: object) -> list[str]:
@@ -67,12 +81,74 @@ def _as_mapping(value: object, *, context: str) -> dict[str, Any]:
     return value
 
 
+def _assert_policy_document_depth(document: object, path: Path) -> None:
+    pending: list[tuple[object, int]] = [(document, 1)]
+    processed_depth: dict[int, int] = {}
+    while pending:
+        value, depth = pending.pop()
+        if depth > MAX_REVIEW_POLICY_DOCUMENT_DEPTH:
+            raise KnowledgeFormatError(
+                f"Review policy {path} nests deeper than the "
+                f"{MAX_REVIEW_POLICY_DOCUMENT_DEPTH}-level operational bound"
+            )
+        if not isinstance(value, (dict, list)):
+            continue
+        identity = id(value)
+        previous_depth = processed_depth.get(identity)
+        if previous_depth is not None and depth <= previous_depth:
+            continue
+        processed_depth[identity] = depth
+        children = value.values() if isinstance(value, dict) else value
+        pending.extend((child, depth + 1) for child in children)
+
+
+def _load_policy_yaml(path: Path) -> dict[str, Any]:
+    try:
+        with path.open("rb") as handle:
+            raw = handle.read(MAX_REVIEW_POLICY_BYTES + 1)
+    except OSError as exc:
+        raise KnowledgeFormatError(f"Cannot read review policy {path}: {exc}") from exc
+
+    if len(raw) > MAX_REVIEW_POLICY_BYTES:
+        raise KnowledgeFormatError(
+            f"Review policy {path} is larger than the "
+            f"{MAX_REVIEW_POLICY_BYTES}-byte operational bound"
+        )
+
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise KnowledgeFormatError(
+            f"Review policy {path} is not valid UTF-8: {exc}"
+        ) from exc
+
+    try:
+        value = yaml.load(text, Loader=KnowledgeLoader)
+    except RecursionError as exc:
+        raise KnowledgeFormatError(
+            f"Review policy {path} exhausted the YAML parser nesting bound"
+        ) from exc
+    except yaml.YAMLError as exc:
+        raise KnowledgeFormatError(f"Cannot load review policy {path}: {exc}") from exc
+
+    if not isinstance(value, dict):
+        raise KnowledgeFormatError(f"Expected a YAML mapping in {path}")
+    _assert_policy_document_depth(value, path)
+    return value
+
+
 def _load_source(path: Path, stack: tuple[Path, ...]) -> dict[str, Any]:
     resolved = path.resolve()
     if resolved in stack:
         chain = " -> ".join(str(item) for item in (*stack, resolved))
         raise KnowledgeFormatError(f"Review-policy inheritance cycle: {chain}")
-    current = load_yaml(resolved)
+    if len(stack) >= MAX_REVIEW_POLICY_INHERITANCE_DEPTH:
+        raise KnowledgeFormatError(
+            "Review-policy inheritance exceeds the "
+            f"{MAX_REVIEW_POLICY_INHERITANCE_DEPTH}-policy operational bound"
+        )
+
+    current = _load_policy_yaml(resolved)
     extends = current.get("extends", [])
     if not isinstance(extends, list) or len(extends) > 1:
         raise KnowledgeFormatError(
@@ -99,6 +175,12 @@ def _load_source(path: Path, stack: tuple[Path, ...]) -> dict[str, Any]:
     )
 
 
+def load_review_policy_source(path: Path) -> dict[str, Any]:
+    """Load one review-policy source with bounded inheritance."""
+
+    return _load_source(path, ())
+
+
 def _apply_change_class_override(parent: Any, child: Any) -> Any:
     """Apply a specialization: mappings recurse, explicit values replace."""
 
@@ -114,10 +196,9 @@ def _apply_change_class_override(parent: Any, child: Any) -> Any:
     return child
 
 
-def resolve_project_policy(path: Path, change_class: str) -> dict[str, Any]:
-    if change_class not in CHANGE_CLASSES:
-        raise KnowledgeFormatError(f"Unknown review change class {change_class!r}")
-    source = _load_source(path, ())
+def _specialize_project_policy(
+    source: dict[str, Any], change_class: str
+) -> dict[str, Any]:
     defaults = source.get("defaults", {})
     classes = source.get("change_classes", {})
     if not isinstance(defaults, dict) or not isinstance(classes, dict):
@@ -148,6 +229,20 @@ def resolve_project_policy(path: Path, change_class: str) -> dict[str, Any]:
             "Invalid effective review policy: " + "; ".join(issues)
         )
     return selected
+
+
+def resolve_project_policy(path: Path, change_class: str) -> dict[str, Any]:
+    if change_class not in CHANGE_CLASSES:
+        raise KnowledgeFormatError(f"Unknown review change class {change_class!r}")
+    return _specialize_project_policy(load_review_policy_source(path), change_class)
+
+
+def resolve_loaded_project_policy(
+    source: dict[str, Any], change_class: str
+) -> dict[str, Any]:
+    if change_class not in CHANGE_CLASSES:
+        raise KnowledgeFormatError(f"Unknown review change class {change_class!r}")
+    return _specialize_project_policy(source, change_class)
 
 
 def default_project_policy_path() -> Path:

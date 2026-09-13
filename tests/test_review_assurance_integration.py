@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import copy
+import io
 import json
+import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -10,7 +13,12 @@ from jsonschema.exceptions import SchemaError
 
 from tools import review_check
 from tools.review_model import canonical_digest
-from tools.review_policy import default_project_policy_path, resolve_project_policy
+from tools.review_policy import (
+    MAX_REVIEW_POLICY_BYTES,
+    MAX_REVIEW_POLICY_INHERITANCE_DEPTH,
+    default_project_policy_path,
+    resolve_project_policy,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -283,6 +291,82 @@ class ReviewAssuranceIntegrationTests(unittest.TestCase):
         self.assertEqual([], collection["required_sources"])
         self.assertEqual([], qualification["required_capabilities"])
         self.assertEqual(0, quorum["minimum_distinct_domains"])
+
+    def test_oversized_selected_policy_fails_closed_before_yaml_parse(self) -> None:
+        fixture = _fixture()
+        base = fixture["base"]
+        self.assertIsInstance(base, dict)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_path = root / "input.json"
+            policy_path = root / "oversized.yaml"
+            input_path.write_text(json.dumps(base["input"]), encoding="utf-8")
+            policy_path.write_bytes(b" " * (MAX_REVIEW_POLICY_BYTES + 1))
+            output = io.StringIO()
+
+            with redirect_stdout(output):
+                code = review_check.main(
+                    ["--input", str(input_path), "--policy", str(policy_path)]
+                )
+
+        self.assertEqual(2, code)
+        payload = json.loads(output.getvalue())
+        self.assertEqual("CONFIGURATION_ERROR", _error_code(payload))
+        self.assertIn("byte operational bound", payload["error"]["message"])
+
+    def test_oversized_inherited_policy_fails_closed_before_yaml_parse(self) -> None:
+        fixture = _fixture()
+        base = fixture["base"]
+        self.assertIsInstance(base, dict)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_path = root / "input.json"
+            policy_path = root / "policy.yaml"
+            parent_path = root / "parent.yaml"
+            input_path.write_text(json.dumps(base["input"]), encoding="utf-8")
+            policy_path.write_text("extends:\n  - parent.yaml\n", encoding="utf-8")
+            parent_path.write_bytes(b" " * (MAX_REVIEW_POLICY_BYTES + 1))
+            output = io.StringIO()
+
+            with redirect_stdout(output):
+                code = review_check.main(
+                    ["--input", str(input_path), "--policy", str(policy_path)]
+                )
+
+        self.assertEqual(2, code)
+        payload = json.loads(output.getvalue())
+        self.assertEqual("CONFIGURATION_ERROR", _error_code(payload))
+        self.assertIn("byte operational bound", payload["error"]["message"])
+
+    def test_policy_inheritance_depth_is_operationally_bounded(self) -> None:
+        fixture = _fixture()
+        base = fixture["base"]
+        self.assertIsInstance(base, dict)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_path = root / "input.json"
+            input_path.write_text(json.dumps(base["input"]), encoding="utf-8")
+            policy_paths = [
+                root / f"policy-{index}.yaml"
+                for index in range(MAX_REVIEW_POLICY_INHERITANCE_DEPTH + 1)
+            ]
+            for index, path in enumerate(policy_paths[:-1]):
+                path.write_text(
+                    f"extends:\n  - {policy_paths[index + 1].name}\n",
+                    encoding="utf-8",
+                )
+            policy_paths[-1].write_text("{}\n", encoding="utf-8")
+            output = io.StringIO()
+
+            with redirect_stdout(output):
+                code = review_check.main(
+                    ["--input", str(input_path), "--policy", str(policy_paths[0])]
+                )
+
+        self.assertEqual(2, code)
+        payload = json.loads(output.getvalue())
+        self.assertEqual("CONFIGURATION_ERROR", _error_code(payload))
+        self.assertIn("inheritance exceeds", payload["error"]["message"])
 
     def test_current_advisory_reason_precedes_caller_judge_mismatch(self) -> None:
         fixture = _fixture()
