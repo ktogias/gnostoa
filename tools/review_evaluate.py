@@ -407,9 +407,11 @@ def _qualification_entries(entries: list[Any]) -> list[dict[str, Any]]:
     return [by_key[key] for key in sorted(by_key)]
 
 
-def evaluate(
+def _evaluate(
     input_document: dict[str, Any],
     policy_document: dict[str, Any],
+    *,
+    protected_current_advisory: bool,
 ) -> dict[str, Any]:
     if input_document.get("schema_version") != "1.0":
         raise ReviewInputError(
@@ -444,6 +446,13 @@ def evaluate(
         raise ReviewInputError(
             "CONFIGURATION_ERROR", "current_advisory cannot be fixture-only"
         )
+    if protected_current_advisory and (
+        mode != "current_advisory" or relation != "prior_integrated" or fixture_only
+    ):
+        raise ReviewInputError(
+            "CONFIGURATION_ERROR",
+            "protected current_advisory requires prior_integrated non-fixture context",
+        )
 
     target = _mapping(input_document.get("subject"), "subject")
     target_cut = _time(target.get("observed_at"), "subject observed_at")
@@ -469,7 +478,7 @@ def evaluate(
         input_document.get("qualification_snapshot"), "qualification_snapshot"
     )
 
-    if mode == "current_advisory":
+    if mode == "current_advisory" and not protected_current_advisory:
         return _semantic(
             "INCOMPLETE",
             "BOOTSTRAP_PROTECTED_AUTHORITY_UNAVAILABLE",
@@ -891,4 +900,26 @@ def evaluate(
         qualification=qualification_result,
         quorum=quorum_result,
         exclusions=exclusions,
+    )
+
+
+def evaluate(
+    input_document: dict[str, Any],
+    policy_document: dict[str, Any],
+) -> dict[str, Any]:
+    return _evaluate(
+        input_document,
+        policy_document,
+        protected_current_advisory=False,
+    )
+
+
+def _evaluate_protected_current_advisory(
+    input_document: dict[str, Any],
+    policy_document: dict[str, Any],
+) -> dict[str, Any]:
+    return _evaluate(
+        input_document,
+        policy_document,
+        protected_current_advisory=True,
     )
