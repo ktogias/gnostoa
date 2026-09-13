@@ -370,9 +370,7 @@ class ReviewAssuranceFinalLoopRegressions(unittest.TestCase):
 
     def test_submicrosecond_future_observation_fails_closed(self) -> None:
         input_document, policy_document = _documents()
-        input_document["evaluation_context"]["as_of"] = (
-            "2026-09-12T00:10:00.0000001Z"
-        )
+        input_document["evaluation_context"]["as_of"] = "2026-09-12T00:10:00.0000001Z"
         input_document["evidence_set"]["observations"][0]["observed_at"] = (
             "2026-09-12T00:10:00.0000002Z"
         )
@@ -385,9 +383,7 @@ class ReviewAssuranceFinalLoopRegressions(unittest.TestCase):
 
     def test_submicrosecond_freshness_boundary_is_exact(self) -> None:
         input_document, policy_document = _documents()
-        input_document["evaluation_context"]["as_of"] = (
-            "2026-09-12T00:15:00.0000001Z"
-        )
+        input_document["evaluation_context"]["as_of"] = "2026-09-12T00:15:00.0000001Z"
         input_document["subject"]["observed_at"] = "2026-09-12T00:00:00Z"
 
         code, payload = review_check.evaluate_documents(input_document, policy_document)

@@ -86,7 +86,9 @@ class _ExactSeconds(float):
         earlier: RFC3339DateTime,
     ) -> _ExactSeconds:
         whole = later._timeline_seconds - earlier._timeline_seconds
-        fraction_order = _fraction_compare(later._fraction_digits, earlier._fraction_digits)
+        fraction_order = _fraction_compare(
+            later._fraction_digits, earlier._fraction_digits
+        )
         approximate = float(whole)
         if whole == 0 and fraction_order:
             approximate = 0.5 if fraction_order > 0 else -0.5
@@ -237,7 +239,9 @@ def parse_rfc3339(value: object) -> datetime:
         try:
             offset = timezone(timedelta(minutes=minutes))
         except ValueError as exc:
-            raise ValueError("timestamp must use a valid RFC3339 numeric offset") from exc
+            raise ValueError(
+                "timestamp must use a valid RFC3339 numeric offset"
+            ) from exc
 
     fraction_digits = (match.group("fraction") or "").rstrip("0")
     represented_second = 59 if second == 60 else second
