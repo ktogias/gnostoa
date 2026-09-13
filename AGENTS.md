@@ -17,14 +17,17 @@ Start with `README.md`. Load only the route required by the task.
   Do not trust an embedded `CURRENT` status after its declared freshness window
   has expired, or after a newer integrated/provider event has superseded its
   observed subject: treat the view as stale and perform fresh provider/read-back
-  orientation before naming current or next work. For every status or “what
-  now?” answer, state the selected objective and the latest integrated slice's
-  unresolved invariant before choosing a successor. A generic roadmap ordering
-  must not demote a capability-specific mandatory successor when the selected
-  objective depends on that capability.
-  For a status or “what now?” request, stop there when the view is current unless
-  one of its source links is needed to answer a named question. Before proposing
-  or implementing a change, continue with
+  orientation before naming current or next work. When the selected work or its
+  successor is provider-authoritative, perform fresh provider read-back and
+  reconcile both the observed subject and provider state before naming current
+  or next work even if the embedded `CURRENT` freshness window has not expired.
+  For every status or “what now?” answer, state the selected objective and the
+  latest integrated slice's unresolved invariant before choosing a successor. A
+  generic roadmap ordering must not demote a capability-specific mandatory
+  successor when the selected objective depends on that capability.
+  For a status or “what now?” request, stop after that reconciliation when the
+  resulting view is current unless one of its source links is needed to answer a
+  named question. Before proposing or implementing a change, continue with
   `knowledge/lifecycles/evidence-gated-capability-evolution.md`,
   `knowledge/runbooks/deliver-bounded-self-hosted-slice.md`, Decision 0016,
   the current roadmap and the active Work Item before proposing implementation.
