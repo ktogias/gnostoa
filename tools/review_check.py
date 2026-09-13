@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import copy
 import json
 import math
 import sys
@@ -12,11 +11,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 from jsonschema.exceptions import SchemaError
 
 from .knowledge_common import KnowledgeFormatError, toolkit_root
-from .review_evaluate import (
-    ReviewInputError,
-    _evaluate_protected_current_advisory,
-    evaluate,
-)
+from .review_evaluate import ReviewInputError, evaluate
 from .review_model import (
     ERROR_EXIT_CODE,
     SEMANTIC_EXIT_CODES,
@@ -137,11 +132,8 @@ def _parse_finite_float(value: str) -> float:
     return parsed
 
 
-def _evaluate_documents(
-    input_document: object,
-    policy_document: object,
-    *,
-    protected_current_advisory: bool,
+def evaluate_documents(
+    input_document: object, policy_document: object
 ) -> tuple[int, dict[str, Any]]:
     if not isinstance(input_document, dict):
         payload = error_payload(
@@ -200,12 +192,7 @@ def _evaluate_documents(
                 details={"issues": policy_errors},
             )
         try:
-            semantic_evaluator = (
-                _evaluate_protected_current_advisory
-                if protected_current_advisory
-                else evaluate
-            )
-            result = semantic_evaluator(input_document, policy_document)
+            result = evaluate(input_document, policy_document)
         except RecursionError as exc:
             return ERROR_EXIT_CODE, error_payload(
                 "MALFORMED_INVOCATION",
@@ -251,79 +238,6 @@ def _evaluate_documents(
             details={"outcome": outcome},
         )
     return exit_code, result
-
-
-def evaluate_documents(
-    input_document: object, policy_document: object
-) -> tuple[int, dict[str, Any]]:
-    return _evaluate_documents(
-        input_document,
-        policy_document,
-        protected_current_advisory=False,
-    )
-
-
-def _evaluate_protected_current_advisory_documents(
-    input_document: object,
-    protected_policy: object,
-    *,
-    protected_authority: object,
-    protected_judge: object,
-    protected_qualification: object,
-) -> tuple[int, dict[str, Any]]:
-    if not isinstance(input_document, dict):
-        return ERROR_EXIT_CODE, error_payload(
-            "MALFORMED_INVOCATION", "review-check input must be an object"
-        )
-    if not isinstance(protected_policy, dict):
-        return ERROR_EXIT_CODE, error_payload(
-            "CONFIGURATION_ERROR", "protected review policy must be an object"
-        )
-    if not isinstance(protected_authority, dict):
-        return ERROR_EXIT_CODE, error_payload(
-            "CONFIGURATION_ERROR", "protected review authority must be an object"
-        )
-    if not isinstance(protected_judge, dict):
-        return ERROR_EXIT_CODE, error_payload(
-            "CONFIGURATION_ERROR", "protected judge binding must be an object"
-        )
-    if not isinstance(protected_qualification, dict):
-        return ERROR_EXIT_CODE, error_payload(
-            "CONFIGURATION_ERROR", "protected qualification snapshot must be an object"
-        )
-
-    context = input_document.get("evaluation_context")
-    if (
-        not isinstance(context, dict)
-        or context.get("mode") != "current_advisory"
-        or context.get("judge_relation") != "prior_integrated"
-        or context.get("fixture_only", False) is not False
-    ):
-        return ERROR_EXIT_CODE, error_payload(
-            "CONFIGURATION_ERROR",
-            "protected current_advisory route requires prior_integrated non-fixture context",
-        )
-
-    try:
-        protected_input = copy.deepcopy(input_document)
-        protected_policy_document = copy.deepcopy(protected_policy)
-        protected_input["authority"] = copy.deepcopy(protected_authority)
-        protected_input["acquired_judge"] = copy.deepcopy(protected_judge)
-        protected_input["qualification_snapshot"] = copy.deepcopy(
-            protected_qualification
-        )
-    except RecursionError as exc:
-        return ERROR_EXIT_CODE, error_payload(
-            "MALFORMED_INVOCATION",
-            "protected current_advisory inputs exhausted bounded copying",
-            details={"exception": type(exc).__name__},
-        )
-
-    return _evaluate_documents(
-        protected_input,
-        protected_policy_document,
-        protected_current_advisory=True,
-    )
 
 
 def _load_json(path: Path) -> object:
