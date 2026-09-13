@@ -18,12 +18,18 @@ Start with `README.md`. Load only the route required by the task.
   has expired, or after a newer integrated/provider event has superseded its
   observed subject: treat the view as stale and perform fresh provider/read-back
   orientation before naming current or next work. When the selected work or its
-  successor is provider-authoritative, perform fresh provider read-back and
-  reconcile both the observed subject and provider state before naming current
-  or next work even if the embedded `CURRENT` freshness window has not expired.
-  For every status or “what now?” answer, state the selected objective and the
-  latest integrated slice's unresolved invariant before choosing a successor. A
-  generic roadmap ordering must not demote a capability-specific mandatory
+  successor is provider-authoritative, perform fresh provider read-back even if
+  the embedded `CURRENT` freshness window has not expired. At minimum, read the
+  provider's open `roadmap:now` selection (zero is valid; more than one is
+  conflicting) and the protected `main` head/latest integration identity, then
+  reconcile those exact identities with the retained view's selected work,
+  observed subject and observation time. If that read-back is unavailable,
+  ambiguous or disagrees, do not name current or next work: treat the view as
+  blocked/stale and stop. In a status or “what now?” answer, report the exact
+  provider selection (or verified absence) and protected-main identity used for
+  that reconciliation. For every such answer, state the selected objective and
+  the latest integrated slice's unresolved invariant before choosing a successor.
+  A generic roadmap ordering must not demote a capability-specific mandatory
   successor when the selected objective depends on that capability.
   For a status or “what now?” request, stop there after that reconciliation when
   the resulting view is current unless one of its source links is needed to answer
