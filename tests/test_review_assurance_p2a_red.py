@@ -114,13 +114,9 @@ class ReviewAssuranceP2aTests(unittest.TestCase):
 
     def test_missing_protected_authority_document_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            repository, _ = _protected_repository(
-                Path(directory), include_bundle=False
-            )
+            repository, _ = _protected_repository(Path(directory), include_bundle=False)
             with self.assertRaises(ProtectedAcquisitionUnavailable):
-                review_protected._acquire_from_repository(
-                    str(repository), BUNDLE_PATH
-                )
+                review_protected._acquire_from_repository(str(repository), BUNDLE_PATH)
 
     def test_production_loader_has_no_caller_selectable_trust_inputs(self) -> None:
         signature = inspect.signature(
