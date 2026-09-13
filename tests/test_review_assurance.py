@@ -311,7 +311,7 @@ def verify_receipt() -> int:
         capture_output=True,
         check=False,
     )
-    if expected_exit == 0 or run.returncode == 0 or run.returncode != expected_exit:
+    if run.returncode != expected_exit:
         errors.append("observed:exit-code")
     if len(run.stdout) != stdout_bytes:
         errors.append("observed:stdout-bytes")
