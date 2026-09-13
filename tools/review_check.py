@@ -200,7 +200,9 @@ def _load_json(path: Path) -> object:
     try:
         value = json.loads(text)
     except RecursionError as exc:
-        raise ValueError("review-check input nesting exhausted the JSON parser") from exc
+        raise ValueError(
+            "review-check input nesting exhausted the JSON parser"
+        ) from exc
     _assert_document_depth(value, "review-check input")
     return value
 
