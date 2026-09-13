@@ -27,10 +27,7 @@ class ReviewPolicyLoader(KnowledgeLoader):
     """Strict policy loader that rejects merge-key expansion before construction."""
 
     def flatten_mapping(self, node: yaml.MappingNode) -> None:
-        if any(
-            key_node.tag == "tag:yaml.org,2002:merge"
-            for key_node, _ in node.value
-        ):
+        if any(key_node.tag == "tag:yaml.org,2002:merge" for key_node, _ in node.value):
             raise yaml.constructor.ConstructorError(
                 "while constructing review policy",
                 node.start_mark,
