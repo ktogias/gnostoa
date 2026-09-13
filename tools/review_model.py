@@ -71,9 +71,7 @@ def _days_before_year(year: int) -> int:
     # in [0000, year) directly rather than relying on datetime, whose range
     # begins at year 0001.
     leap_years = (
-        ((year - 1) // 4 + 1)
-        - ((year - 1) // 100 + 1)
-        + ((year - 1) // 400 + 1)
+        ((year - 1) // 4 + 1) - ((year - 1) // 100 + 1) + ((year - 1) // 400 + 1)
     )
     return 365 * year + leap_years
 
