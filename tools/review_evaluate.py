@@ -303,24 +303,6 @@ def _prepare_assessments(
                     )
             continue
 
-        if allow_synthetic_revision_lineage:
-            valid_rows = [
-                row
-                for row, revision in zip(rows, revisions, strict=True)
-                if isinstance(revision, int) and not isinstance(revision, bool)
-            ]
-            invalid_rows = [row for row in rows if row not in valid_rows]
-            if len(valid_rows) == 1:
-                semantic_rows.extend(valid_rows)
-                for row in invalid_rows:
-                    _exclude_row(
-                        row,
-                        "revision_lineage_unproven",
-                        assessments,
-                        exclusions,
-                    )
-                continue
-
         for row in rows:
             _exclude_row(
                 row,
