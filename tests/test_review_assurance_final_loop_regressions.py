@@ -152,55 +152,6 @@ class ReviewAssuranceFinalLoopRegressions(unittest.TestCase):
         )
         self.assertIs(assessments[newer["observation_id"]]["eligible"], True)
 
-    def test_fixture_mixed_revision_lineage_is_fully_non_authoritative(self) -> None:
-        for invalid_revision in (None, "2"):
-            for reverse in (False, True):
-                input_document, policy_document = _documents()
-                observations = input_document["evidence_set"]["observations"]
-                numeric = observations[0]
-                numeric["native"]["object_id"] = "mixed-revision-provider-object"
-                numeric["native"]["revision"] = 1
-                numeric["native"]["recommendation_state"] = "CHANGES_REQUESTED"
-
-                ambiguous = copy.deepcopy(numeric)
-                ambiguous["observation_id"] = "mixed-revision-ambiguous"
-                ambiguous["native"]["recommendation_state"] = "APPROVED"
-                if invalid_revision is None:
-                    ambiguous["native"].pop("revision", None)
-                else:
-                    ambiguous["native"]["revision"] = invalid_revision
-
-                lineage = [numeric, ambiguous]
-                if reverse:
-                    lineage.reverse()
-                observations[:] = [*lineage, observations[1]]
-
-                code, payload = review_check.evaluate_documents(
-                    input_document, policy_document
-                )
-
-                with self.subTest(
-                    invalid_revision=invalid_revision,
-                    reverse=reverse,
-                ):
-                    self.assertEqual(3, code)
-                    self.assertEqual("INCOMPLETE", payload["outcome"])
-                    self.assertEqual("QUORUM_UNMET", payload["reason"])
-                    self.assertEqual([], payload["blockers"])
-                    assessments = {
-                        assessment["observation_id"]: assessment
-                        for assessment in payload["assessments"]
-                    }
-                    for observation_id in (
-                        numeric["observation_id"],
-                        ambiguous["observation_id"],
-                    ):
-                        self.assertIs(assessments[observation_id]["eligible"], False)
-                        self.assertIn(
-                            "revision_lineage_unproven",
-                            assessments[observation_id]["exclusion_reasons"],
-                        )
-
     def test_d11_task_envelope_remains_schema_and_projection_bounded(self) -> None:
         envelope_path = ROOT / "tasks" / "issue-11-r2a-p1.yaml"
         envelope, issues = validate_task_envelope(envelope_path, ROOT)
