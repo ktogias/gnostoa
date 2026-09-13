@@ -368,6 +368,86 @@ class ReviewAssuranceFinalLoopRegressions(unittest.TestCase):
         self.assertEqual("MALFORMED_INVOCATION", _error_code(payload))
         self.assertTrue(payload["error"]["details"]["issues"])
 
+    def test_submicrosecond_future_observation_fails_closed(self) -> None:
+        input_document, policy_document = _documents()
+        input_document["evaluation_context"]["as_of"] = (
+            "2026-09-12T00:10:00.0000001Z"
+        )
+        input_document["evidence_set"]["observations"][0]["observed_at"] = (
+            "2026-09-12T00:10:00.0000002Z"
+        )
+
+        code, payload = review_check.evaluate_documents(input_document, policy_document)
+
+        self.assertEqual(2, code)
+        self.assertEqual("CONFIGURATION_ERROR", _error_code(payload))
+        self.assertIn("later than EvaluationContext.as_of", payload["error"]["message"])
+
+    def test_submicrosecond_freshness_boundary_is_exact(self) -> None:
+        input_document, policy_document = _documents()
+        input_document["evaluation_context"]["as_of"] = (
+            "2026-09-12T00:15:00.0000001Z"
+        )
+        input_document["subject"]["observed_at"] = "2026-09-12T00:00:00Z"
+
+        code, payload = review_check.evaluate_documents(input_document, policy_document)
+
+        self.assertEqual(3, code)
+        self.assertEqual("INCOMPLETE", payload["outcome"])
+        self.assertEqual("SUBJECT_NOT_CURRENT", payload["reason"])
+
+    def test_known_rfc3339_leap_second_has_exact_ordering(self) -> None:
+        before = parse_rfc3339("2016-12-31T23:59:59.5Z")
+        leap = parse_rfc3339("2016-12-31T23:59:60.5Z")
+        after = parse_rfc3339("2017-01-01T00:00:00.5Z")
+
+        self.assertLess(before, leap)
+        self.assertLess(leap, after)
+        self.assertEqual(1.0, (leap - before).total_seconds())
+        self.assertEqual(1.0, (after - leap).total_seconds())
+
+    def test_public_schema_accepts_known_rfc3339_leap_second(self) -> None:
+        input_document, _ = _documents()
+        input_document["evidence_set"]["observations"][0]["observed_at"] = (
+            "2016-12-31T23:59:60Z"
+        )
+
+        errors = review_check._schema_errors(
+            input_document,
+            "review-check-input.schema.json",
+        )
+
+        self.assertEqual([], errors)
+
+    def test_public_cli_accepts_known_rfc3339_leap_second(self) -> None:
+        input_document, policy_document = _documents()
+        input_document["evidence_set"]["observations"][0]["observed_at"] = (
+            "2016-12-31T23:59:60Z"
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_path = root / "input.json"
+            policy_path = root / "policy.json"
+            input_path.write_text(json.dumps(input_document), encoding="utf-8")
+            policy_path.write_text(json.dumps(policy_document), encoding="utf-8")
+            output = io.StringIO()
+
+            with redirect_stdout(output):
+                code = cli.main(
+                    [
+                        "review-check",
+                        "--input",
+                        str(input_path),
+                        "--policy",
+                        str(policy_path),
+                    ]
+                )
+
+        self.assertEqual(0, code)
+        payload = json.loads(output.getvalue())
+        self.assertEqual("PASS", payload["outcome"])
+
     def test_stale_subject_precedes_blocker_semantics(self) -> None:
         input_document, policy_document = _documents()
         input_document["subject"]["observed_at"] = "2026-09-11T23:40:00Z"
