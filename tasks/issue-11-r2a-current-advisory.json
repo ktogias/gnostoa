@@ -1,0 +1,99 @@
+{
+  "authority": {
+    "subject": {
+      "kind": "gnostoa-protected-main-record",
+      "value": "tasks/issue-11-r2a-current-advisory.json:v1"
+    },
+    "policy_digest": "sha256:6cd1e270ef49170dbfe839107d5e745d8f45b62f33ab4c9116f9846210095179",
+    "qualification_snapshot_digest": "sha256:db18242f682af42490369c85d2f0b770a46a133bfb69c4aba6f12ce6fa2f70a4",
+    "expected_judge": {
+      "acquisition": "oci",
+      "source_revision": "d66d1830d724d759db6ec87e1f8d5dcc0847f221",
+      "public_surface_digest": "sha256:ee2418fccd7e8907b8b8f60b0e0c7663e93c3e9abb66d9496efd1c3666ca1845",
+      "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:adcf9ce060a382b47973bbd9848ba9dff3bc05985c17411c4b8a2adb9b0c6504",
+      "runtime_revision": "d66d1830d724d759db6ec87e1f8d5dcc0847f221",
+      "supported_input_schema_versions": [
+        "1.0"
+      ],
+      "status": "accepted"
+    }
+  },
+  "policy": {
+    "subject": {
+      "comparison_kind": "merge_base",
+      "freshness": {
+        "mode": "max_age",
+        "seconds": 900
+      },
+      "observation_freshness": {
+        "mode": "not_age_sensitive"
+      }
+    },
+    "collection": {
+      "recognized_sources": [
+        "retained-review-evidence"
+      ],
+      "required_sources": [
+        "retained-review-evidence"
+      ],
+      "freshness": {
+        "mode": "max_age",
+        "seconds": 900
+      }
+    },
+    "qualification": {
+      "required_capabilities": [
+        "semantic-review"
+      ],
+      "owner_reviews_count": false,
+      "snapshot_freshness": {
+        "mode": "max_age",
+        "seconds": 86400
+      }
+    },
+    "quorum": {
+      "minimum_distinct_domains": 2,
+      "acceptable_recommendations": [
+        "APPROVE"
+      ]
+    },
+    "blockers": {
+      "recommendations": [
+        "REQUEST_CHANGES"
+      ],
+      "unresolved_threads": "ignore"
+    },
+    "conflicts": {
+      "pairs": [
+        [
+          "APPROVE",
+          "REQUEST_CHANGES"
+        ]
+      ]
+    },
+    "review_requirement": "required",
+    "schema_version": "1.0",
+    "id": "gnostoa-review-assurance",
+    "version": "1.0",
+    "abstract": false,
+    "change_class": "critical"
+  },
+  "qualification_snapshot": {
+    "snapshot_id": "gnostoa-r2a-qualification-empty-5659481721",
+    "revision": "5659481721",
+    "qualifying_authority": "https://github.com/ktogias/gnostoa/issues/10#issuecomment-5659481721",
+    "observed_at": "2026-09-14T05:32:08Z",
+    "entries": []
+  },
+  "acquired_judge": {
+    "acquisition": "oci",
+    "source_revision": "d66d1830d724d759db6ec87e1f8d5dcc0847f221",
+    "public_surface_digest": "sha256:ee2418fccd7e8907b8b8f60b0e0c7663e93c3e9abb66d9496efd1c3666ca1845",
+    "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:adcf9ce060a382b47973bbd9848ba9dff3bc05985c17411c4b8a2adb9b0c6504",
+    "runtime_revision": "d66d1830d724d759db6ec87e1f8d5dcc0847f221",
+    "supported_input_schema_versions": [
+      "1.0"
+    ],
+    "status": "accepted"
+  }
+}
