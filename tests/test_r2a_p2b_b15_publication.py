@@ -136,7 +136,13 @@ class R2AP2bB15PublicationTests(unittest.TestCase):
         )
 
         self.assertIn("surface-digest --root /opt/gnostoa", workflow_text)
-        self.assertIn('[[ "${public_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]', workflow_text)
+        self.assertIn(
+            '[[ ! "${public_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]', workflow_text
+        )
+        self.assertNotIn(
+            "sha256:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*",
+            workflow_text,
+        )
         self.assertIn("public_digest=", workflow_text)
         self.assertIn("--push-by-digest", workflow_text)
         self.assertIn("--metadata-file", workflow_text)
