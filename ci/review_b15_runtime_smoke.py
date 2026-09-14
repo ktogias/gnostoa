@@ -61,8 +61,7 @@ def main() -> int:
             command,
             check=False,
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             timeout=TIMEOUT_SECONDS,
             env=environment,
         )
