@@ -5,7 +5,7 @@ import json
 import unittest
 from pathlib import Path
 
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, FormatChecker
 
 from tools.review_model import canonical_digest
 from tools.review_policy import effective_policy_issues, resolve_project_policy
@@ -66,7 +66,7 @@ class ReviewAssuranceP2bAuthorityLandingTests(unittest.TestCase):
         )
         schema = json.loads(BUNDLE_SCHEMA_PATH.read_text(encoding="utf-8"))
         Draft202012Validator.check_schema(schema)
-        validator = Draft202012Validator(schema)
+        validator = Draft202012Validator(schema, format_checker=FormatChecker())
         bundle = _bundle()
         self.assertEqual("1.0", bundle.get("schema_version"))
         self.assertEqual([], list(validator.iter_errors(bundle)))
