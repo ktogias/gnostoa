@@ -55,6 +55,17 @@ class ReviewAssuranceP2bB15RuntimeRedTests(unittest.TestCase):
         self.assertIn(f"PYTHONPATH=. python {FOCUSED_TEST}", workflow)
         self.assertIn(f"PYTHONPATH=. python {SMOKE_PATH}", workflow)
 
+    def test_runtime_smoke_owns_and_confirms_container_cleanup(self) -> None:
+        smoke = SMOKE.read_text(encoding="utf-8")
+        self.assertIn('"create"', smoke)
+        self.assertIn('"start"', smoke)
+        self.assertNotIn('"--rm"', smoke)
+        self.assertIn("CLEANUP_ATTEMPTS", smoke)
+        self.assertIn('f"name=^/{container_name}$"', smoke)
+        self.assertIn(
+            "B1.5 runtime container cleanup could not be confirmed", smoke
+        )
+
     def test_semantic_review_guardrail_declares_the_b15_runtime_capability(
         self,
     ) -> None:
