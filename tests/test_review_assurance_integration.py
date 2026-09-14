@@ -110,7 +110,7 @@ class ReviewAssuranceIntegrationTests(unittest.TestCase):
         self.assertEqual("CONFIGURATION_ERROR", payload["error"]["code"])
         self.assertIn("installed review-assurance schema", payload["error"]["message"])
 
-    def test_current_advisory_bootstrap_rejects_self_authorizing_inputs(self) -> None:
+    def test_current_advisory_protected_route_rejects_self_authorizing_inputs(self) -> None:
         fixture = _fixture()
         base = fixture["base"]
         self.assertIsInstance(base, dict)
@@ -133,17 +133,16 @@ class ReviewAssuranceIntegrationTests(unittest.TestCase):
         self.assertIsNotNone(policy_issue)
         self.assertIn("caller-selected --policy", str(policy_issue))
 
-        authority_issue = review_check._current_advisory_bootstrap_issue(
-            input_document,
-            None,
+        self.assertIsNone(
+            review_check._current_advisory_bootstrap_issue(input_document, None)
         )
-        self.assertIsNotNone(authority_issue)
-        self.assertIn("prior-integrated authority acquisition", str(authority_issue))
+        self.assertTrue(review_check._is_protected_current_advisory(input_document))
 
         context["judge_relation"] = "candidate_under_test"
         self.assertIsNone(
             review_check._current_advisory_bootstrap_issue(input_document, None)
         )
+        self.assertFalse(review_check._is_protected_current_advisory(input_document))
 
     def test_shared_evaluator_cannot_self_authorize_current_advisory_pass(self) -> None:
         fixture = _fixture()
