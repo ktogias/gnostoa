@@ -17,12 +17,7 @@ BUNDLE_PATH = ROOT / "tasks" / "issue-11-r2a-current-advisory.json"
 
 
 def _timestamp_now() -> str:
-    return (
-        datetime.now(UTC)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _protected_looking_input() -> tuple[dict[str, object], dict[str, object]]:
