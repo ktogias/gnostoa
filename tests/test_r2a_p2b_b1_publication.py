@@ -105,6 +105,14 @@ class R2AP2bB1PublicationTests(unittest.TestCase):
             if isinstance(step, dict) and step.get("uses") == ATTEST_ACTION
         ]
         self.assertEqual(1, len(attest_steps))
+        self.assertEqual(
+            {
+                "subject-name": "${{ env.IMAGE_NAME }}",
+                "subject-digest": "${{ steps.publish.outputs.registry_digest }}",
+                "push-to-registry": "true",
+            },
+            attest_steps[0]["with"],
+        )
 
         self.assertIn(f"SOURCE_COMMIT: {SOURCE_COMMIT}", workflow_text)
         self.assertIn(f"SOURCE_TREE: {SOURCE_TREE}", workflow_text)
