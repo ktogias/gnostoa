@@ -26,7 +26,9 @@ class ReviewAssuranceP2bB15RuntimeRedTests(unittest.TestCase):
     def test_b15_keeps_candidate_current_advisory_dormant(self) -> None:
         review_check = REVIEW_CHECK.read_text(encoding="utf-8")
         self.assertIn("candidate-side P2b-B1 CLI", review_check)
-        self.assertIn("consumer must become prior-effective before activation", review_check)
+        self.assertIn(
+            "consumer must become prior-effective before activation", review_check
+        )
         self.assertNotIn("run_prior_effective_current_advisory", review_check)
 
     def test_b15_has_a_durable_runtime_capability_decision(self) -> None:
