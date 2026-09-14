@@ -124,9 +124,7 @@ class ReviewAssuranceP2aTests(unittest.TestCase):
                 with tempfile.TemporaryDirectory() as directory:
                     repository, _ = _protected_repository(Path(directory))
                     (repository / BUNDLE_PATH).write_text(
-                        '{"schema_version":"1.0","value":'
-                        + encoded_value
-                        + "}\n",
+                        '{"schema_version":"1.0","value":' + encoded_value + "}\n",
                         encoding="utf-8",
                     )
                     _git(repository, "add", BUNDLE_PATH)
