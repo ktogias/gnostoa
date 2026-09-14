@@ -6,6 +6,7 @@ import re
 import unittest
 from pathlib import Path
 
+import yaml
 from jsonschema import Draft202012Validator
 
 from tools.review_check import FORMAT_CHECKER
@@ -16,6 +17,15 @@ CONSUMER_AUTHORITY_PATH = ROOT / "tasks" / "issue-11-r2a-current-advisory-consum
 CONSUMER_SCHEMA_PATH = (
     ROOT / "schemas" / "review-protected-consumer-authority.schema.json"
 )
+DECISION_PATH = (
+    ROOT
+    / "knowledge"
+    / "decisions"
+    / "0070-protect-r2a-b1-outer-consumer-authority-separately.md"
+)
+WORKFLOW_PATH = ROOT / ".github" / "workflows" / "r2a-protected-current-advisory.yml"
+GUARDRAILS_PATH = ROOT / "policy" / "guardrails.yaml"
+FOCUSED_TEST_PATH = "tests/test_review_assurance_p2b_consumer_authority_red.py"
 
 B1_SOURCE_REVISION = "0dfd7e5e28e8ccb87e687e0be9dfe846b644c9c3"
 B1_SOURCE_TREE = "23a5f083f26f40a8287bc2a724bcd5282a9afa5e"
@@ -127,6 +137,59 @@ class ReviewAssuranceP2bConsumerAuthorityRedTests(unittest.TestCase):
         self.assertIn("expected_judge", semantic_authority)
         self.assertNotIn("expected_consumer", semantic_authority)
         self.assertNotIn("acquired_consumer", semantic)
+
+    def test_separate_outer_consumer_authority_has_durable_decision(self) -> None:
+        self.assertTrue(
+            DECISION_PATH.is_file(),
+            "P2B_OUTER_CONSUMER_AUTHORITY_DECISION_UNAVAILABLE",
+        )
+        decision = DECISION_PATH.read_text(encoding="utf-8")
+        self.assertIn("Decision 0067", decision)
+        self.assertIn("Decision 0069", decision)
+        self.assertIn(B1_OCI_IMAGE, decision)
+        self.assertIn("outer consumer", decision.lower())
+        self.assertIn("inner semantic", decision.lower())
+        self.assertIn("closed v1", decision.lower())
+        self.assertIn("P2b-B2", decision)
+        self.assertIn("does not activate", decision.lower())
+
+    def test_dedicated_workflow_covers_outer_consumer_authority(self) -> None:
+        workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertIn(
+            '- "tasks/issue-11-r2a-current-advisory-consumer.json"', workflow
+        )
+        self.assertIn(f'- "{FOCUSED_TEST_PATH}"', workflow)
+        self.assertIn(f"python -m ruff format --check \\\n", workflow)
+        self.assertGreaterEqual(workflow.count(FOCUSED_TEST_PATH), 4)
+        self.assertIn(f"PYTHONPATH=. python {FOCUSED_TEST_PATH}", workflow)
+
+    def test_semantic_review_guardrail_declares_outer_consumer_authority(self) -> None:
+        document = yaml.safe_load(GUARDRAILS_PATH.read_text(encoding="utf-8"))
+        self.assertIsInstance(document, dict)
+        guardrails = document.get("guardrails")
+        self.assertIsInstance(guardrails, list)
+        assert isinstance(guardrails, list)
+        guardrail = next(
+            entry
+            for entry in guardrails
+            if isinstance(entry, dict)
+            and entry.get("id") == "semantic-review-assurance"
+        )
+        implementation = guardrail.get("implementation")
+        tests = guardrail.get("tests")
+        self.assertIsInstance(implementation, list)
+        self.assertIsInstance(tests, list)
+        assert isinstance(implementation, list)
+        assert isinstance(tests, list)
+        self.assertLessEqual(
+            {
+                "schemas/review-protected-consumer-authority.schema.json",
+                "tasks/issue-11-r2a-current-advisory-consumer.json",
+                "knowledge/decisions/0070-protect-r2a-b1-outer-consumer-authority-separately.md",
+            },
+            set(implementation),
+        )
+        self.assertIn(FOCUSED_TEST_PATH, tests)
 
 
 if __name__ == "__main__":
