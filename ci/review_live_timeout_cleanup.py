@@ -57,7 +57,9 @@ def main() -> int:
                     f"protected Docker run failed for the wrong reason: {exc}"
                 ) from exc
         else:
-            raise RuntimeError("protected Docker timeout discriminator did not time out")
+            raise RuntimeError(
+                "protected Docker timeout discriminator did not time out"
+            )
 
         inspected = review_current._run_docker(
             ["container", "inspect", container_name],
