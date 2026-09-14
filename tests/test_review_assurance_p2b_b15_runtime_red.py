@@ -25,6 +25,9 @@ class ReviewAssuranceP2bB15RuntimeRedTests(unittest.TestCase):
     def test_runtime_adds_only_the_exact_pinned_docker_client(self) -> None:
         dockerfile = DOCKERFILE.read_text(encoding="utf-8")
         self.assertIn(f"ARG DOCKER_CLI_VERSION={DOCKER_CLI_VERSION}", dockerfile)
+        self.assertIn(
+            f'test "${{DOCKER_CLI_VERSION}}" = "{DOCKER_CLI_VERSION}"', dockerfile
+        )
         self.assertIn('"docker-cli=${DOCKER_CLI_VERSION}"', dockerfile)
         self.assertNotIn('"docker.io=${DOCKER_CLI_VERSION}"', dockerfile)
         self.assertNotIn("dockerd", dockerfile)
