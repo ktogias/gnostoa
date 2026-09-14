@@ -3,6 +3,8 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
 DOCKERFILE = ROOT / "Dockerfile"
 REVIEW_CHECK = ROOT / "tools" / "review_check.py"
@@ -11,8 +13,12 @@ DECISION = (
 )
 WORKFLOW = ROOT / ".github" / "workflows" / "r2a-protected-current-advisory.yml"
 SMOKE = ROOT / "ci" / "review_b15_runtime_smoke.py"
+GUARDRAILS = ROOT / "policy" / "guardrails.yaml"
 
 DOCKER_CLI_VERSION = "26.1.5+dfsg1-9+deb13u1"
+FOCUSED_TEST = "tests/test_review_assurance_p2b_b15_runtime_red.py"
+SMOKE_PATH = "ci/review_b15_runtime_smoke.py"
+DECISION_PATH = "knowledge/decisions/0071-add-docker-client-to-r2a-b1-runtime.md"
 
 
 class ReviewAssuranceP2bB15RuntimeRedTests(unittest.TestCase):
@@ -44,12 +50,34 @@ class ReviewAssuranceP2bB15RuntimeRedTests(unittest.TestCase):
     def test_dedicated_verification_builds_and_smokes_the_b15_runtime(self) -> None:
         self.assertTrue(SMOKE.is_file(), "P2B_B15_RUNTIME_SMOKE_UNAVAILABLE")
         workflow = WORKFLOW.read_text(encoding="utf-8")
-        focused_test = "tests/test_review_assurance_p2b_b15_runtime_red.py"
-        smoke = "ci/review_b15_runtime_smoke.py"
-        self.assertIn(f'- "{focused_test}"', workflow)
-        self.assertIn(f'- "{smoke}"', workflow)
-        self.assertIn(f"PYTHONPATH=. python {focused_test}", workflow)
-        self.assertIn(f"PYTHONPATH=. python {smoke}", workflow)
+        self.assertIn(f'- "{FOCUSED_TEST}"', workflow)
+        self.assertIn(f'- "{SMOKE_PATH}"', workflow)
+        self.assertIn(f"PYTHONPATH=. python {FOCUSED_TEST}", workflow)
+        self.assertIn(f"PYTHONPATH=. python {SMOKE_PATH}", workflow)
+
+    def test_semantic_review_guardrail_declares_the_b15_runtime_capability(self) -> None:
+        document = yaml.safe_load(GUARDRAILS.read_text(encoding="utf-8"))
+        self.assertIsInstance(document, dict)
+        guardrails = document.get("guardrails")
+        self.assertIsInstance(guardrails, list)
+        assert isinstance(guardrails, list)
+        guardrail = next(
+            entry
+            for entry in guardrails
+            if isinstance(entry, dict)
+            and entry.get("id") == "semantic-review-assurance"
+        )
+        implementation = guardrail.get("implementation")
+        tests = guardrail.get("tests")
+        self.assertIsInstance(implementation, list)
+        self.assertIsInstance(tests, list)
+        assert isinstance(implementation, list)
+        assert isinstance(tests, list)
+        self.assertLessEqual(
+            {"Dockerfile", DECISION_PATH, SMOKE_PATH}, set(implementation)
+        )
+        self.assertIn(FOCUSED_TEST, tests)
+        self.assertIn(SMOKE_PATH, tests)
 
 
 if __name__ == "__main__":
