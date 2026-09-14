@@ -313,16 +313,21 @@ def _current_advisory_bootstrap_issue(
         return None
     if policy_path is not None:
         return (
-            "current_advisory forbids caller-selected --policy; the bootstrap route "
-            "uses only the packaged Gnostoa-self policy"
-        )
-    if context.get("judge_relation") == "prior_integrated":
-        return (
-            "current_advisory prior-integrated authority acquisition is not available "
-            "in the bootstrap P1 file CLI; use candidate_under_test until a separately "
-            "integrated protected authority/judge record exists"
+            "current_advisory forbids caller-selected --policy; the protected route "
+            "uses only the prior-effective Gnostoa-self policy"
         )
     return None
+
+
+def _is_protected_current_advisory(input_document: object) -> bool:
+    if not isinstance(input_document, dict):
+        return False
+    context = input_document.get("evaluation_context")
+    return (
+        isinstance(context, dict)
+        and context.get("mode") == "current_advisory"
+        and context.get("judge_relation") == "prior_integrated"
+    )
 
 
 def _malformed(message: str) -> tuple[int, dict[str, Any]]:
@@ -346,6 +351,18 @@ def main(argv: list[str] | None = None) -> int:
         )
         if bootstrap_issue is not None:
             code, payload = _configuration(bootstrap_issue)
+        elif _is_protected_current_advisory(input_document):
+            if args.change_class is not None:
+                code, payload = _configuration(
+                    "current_advisory prior-integrated forbids caller-selected "
+                    "--change-class; protected authority supplies the effective policy"
+                )
+            else:
+                code, payload = _configuration(
+                    "current_advisory prior-integrated authority acquisition is not "
+                    "available in the candidate-side P2b-B1 CLI; the dormant outer "
+                    "consumer must become prior-effective before activation"
+                )
         else:
             try:
                 policy_document = _load_policy(args.policy, args.change_class)
