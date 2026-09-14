@@ -120,6 +120,8 @@ root = Path(sys.argv[1]).resolve()
 path = Path(sys.argv[2])
 if not path.is_absolute():
     raise SystemExit("metadata path must be absolute")
+if path.is_symlink():
+    raise SystemExit("metadata path must not be a symlink")
 resolved = path.resolve(strict=False)
 try:
     resolved.relative_to(root)
@@ -127,7 +129,7 @@ except ValueError:
     pass
 else:
     raise SystemExit("metadata path must be outside the candidate repository")
-if resolved.exists() or resolved.is_symlink():
+if resolved.exists():
     raise SystemExit("metadata path must not already exist")
 if not resolved.parent.is_dir():
     raise SystemExit("metadata parent must already exist")
@@ -245,7 +247,8 @@ rm -f "$CONTEXT/meta/.expected-modes" "$CONTEXT/meta/.actual-modes"
 MANIFEST_SHA256=$(sha256sum "$CONTEXT/meta/.gnostoa-source-files" | cut -d' ' -f1)
 
 if [ "$PUSH_BY_DIGEST_SET" -ne 0 ]; then
-    exec docker buildx build \
+    DIGEST_DOCKER_COMMAND=buildx
+    exec docker "$DIGEST_DOCKER_COMMAND" build \
         --target "$TARGET" \
         --build-context "candidate=$CONTEXT" \
         --build-arg "MANIFEST_SHA256=$MANIFEST_SHA256" \
