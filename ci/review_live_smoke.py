@@ -56,25 +56,45 @@ def main() -> int:
 
     code, payload = evaluate_gnostoa_current_advisory(input_document)
     if code != 3:
-        raise RuntimeError(f"protected current-advisory smoke expected exit 3, got {code}: {payload}")
-    if payload.get("outcome") != "INCOMPLETE" or payload.get("reason") != "QUORUM_UNMET":
-        raise RuntimeError(f"protected current-advisory smoke expected QUORUM_UNMET: {payload}")
+        raise RuntimeError(
+            f"protected current-advisory smoke expected exit 3, got {code}: {payload}"
+        )
+    if (
+        payload.get("outcome") != "INCOMPLETE"
+        or payload.get("reason") != "QUORUM_UNMET"
+    ):
+        raise RuntimeError(
+            f"protected current-advisory smoke expected QUORUM_UNMET: {payload}"
+        )
     if payload.get("binding") is not False:
-        raise RuntimeError(f"protected current-advisory smoke must remain advisory: {payload}")
+        raise RuntimeError(
+            f"protected current-advisory smoke must remain advisory: {payload}"
+        )
     context = payload.get("evaluation_context")
     if not isinstance(context, dict):
-        raise RuntimeError(f"protected current-advisory smoke returned no evaluation context: {payload}")
-    if context.get("mode") != "current_advisory" or context.get("judge_relation") != "prior_integrated":
-        raise RuntimeError(f"protected current-advisory smoke returned wrong live context: {payload}")
+        raise RuntimeError(
+            f"protected current-advisory smoke returned no evaluation context: {payload}"
+        )
+    if (
+        context.get("mode") != "current_advisory"
+        or context.get("judge_relation") != "prior_integrated"
+    ):
+        raise RuntimeError(
+            f"protected current-advisory smoke returned wrong live context: {payload}"
+        )
     if context.get("as_of") == input_document["evaluation_context"]["as_of"]:
-        raise RuntimeError("protected current-advisory smoke trusted the caller-selected evaluation cut")
+        raise RuntimeError(
+            "protected current-advisory smoke trusted the caller-selected evaluation cut"
+        )
     diagnostics = payload.get("diagnostics")
     if not isinstance(diagnostics, list) or not any(
         "protected prior-integrated OCI" in item
         for item in diagnostics
         if isinstance(item, str)
     ):
-        raise RuntimeError(f"protected OCI delegation is not explicit in diagnostics: {payload}")
+        raise RuntimeError(
+            f"protected OCI delegation is not explicit in diagnostics: {payload}"
+        )
 
     print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
     return 0
