@@ -19,7 +19,9 @@ FAILURE_RECORD_COMMENT = "5663773822"
 
 
 def _workflow() -> dict[str, object]:
-    loaded = yaml.load(WORKFLOW_PATH.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    loaded = yaml.load(
+        WORKFLOW_PATH.read_text(encoding="utf-8"), Loader=yaml.BaseLoader
+    )
     if not isinstance(loaded, dict):
         raise AssertionError("B1 publication workflow must be a YAML mapping")
     return loaded
@@ -27,9 +29,7 @@ def _workflow() -> dict[str, object]:
 
 def _step(steps: list[object], name: str) -> dict[str, object]:
     matches = [
-        step
-        for step in steps
-        if isinstance(step, dict) and step.get("name") == name
+        step for step in steps if isinstance(step, dict) and step.get("name") == name
     ]
     if len(matches) != 1:
         raise AssertionError(f"expected exactly one workflow step named {name!r}")
@@ -93,7 +93,9 @@ class R2AP2bB1PublicationRepairTests(unittest.TestCase):
         self.assertIsInstance(local_run, str)
         assert isinstance(local_run, str)
         self.assertIn("surface-digest --root /opt/gnostoa", local_run)
-        self.assertIn('echo "public_digest=${public_digest}" >> "${GITHUB_OUTPUT}"', local_run)
+        self.assertIn(
+            'echo "public_digest=${public_digest}" >> "${GITHUB_OUTPUT}"', local_run
+        )
 
         outputs = publish["outputs"]
         self.assertIsInstance(outputs, dict)
