@@ -23,7 +23,9 @@ DECISION_PATH = (
     / "decisions"
     / "0070-protect-r2a-b1-outer-consumer-authority-separately.md"
 )
-WORKFLOW_PATH = ROOT / ".github" / "workflows" / "r2a-protected-current-advisory.yml"
+WORKFLOW_PATH = (
+    ROOT / ".github" / "workflows" / "r2a-protected-current-advisory.yml"
+)
 GUARDRAILS_PATH = ROOT / "policy" / "guardrails.yaml"
 FOCUSED_TEST_PATH = "tests/test_review_assurance_p2b_consumer_authority_red.py"
 
