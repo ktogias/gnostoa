@@ -10,7 +10,6 @@ SOURCE_TREE = "384df86fec31208a02371b63722f903e63404134"
 PUBLIC_DIGEST = (
     "sha256:ee2418fccd7e8907b8b8f60b0e0c7663e93c3e9abb66d9496efd1c3666ca1845"
 )
-BOOTSTRAP_TAG = f"r2a-p2a-{SOURCE_COMMIT}"
 
 
 class R2AP2bBootstrapPublicationTests(unittest.TestCase):
@@ -39,8 +38,11 @@ class R2AP2bBootstrapPublicationTests(unittest.TestCase):
         self.assertIn(f"SOURCE_COMMIT: {SOURCE_COMMIT}", workflow)
         self.assertIn(f"SOURCE_TREE: {SOURCE_TREE}", workflow)
         self.assertIn(f"PUBLIC_DIGEST: {PUBLIC_DIGEST}", workflow)
-        self.assertIn(f"IMAGE_TAG: {BOOTSTRAP_TAG}", workflow)
         self.assertIn("IMAGE_NAME: ghcr.io/ktogias/gnostoa", workflow)
+        self.assertNotIn("IMAGE_TAG:", workflow)
+        self.assertNotIn("IMAGE_REF:", workflow)
+        self.assertIn("EVENT_BEFORE: ${{ github.event.before }}", workflow)
+        self.assertIn('test "${EVENT_BEFORE}" = "${SOURCE_COMMIT}"', workflow)
         self.assertIn("ref: ${{ env.SOURCE_COMMIT }}", workflow)
         self.assertIn('test "$(git rev-parse HEAD)" = "${SOURCE_COMMIT}"', workflow)
         self.assertIn(
@@ -48,8 +50,9 @@ class R2AP2bBootstrapPublicationTests(unittest.TestCase):
             workflow,
         )
 
-        self.assertGreaterEqual(workflow.count("assert_tag_absent"), 3)
-        self.assertIn('docker push "${IMAGE_REF}"', workflow)
+        self.assertIn("--push-by-digest", workflow)
+        self.assertIn("--metadata-file", workflow)
+        self.assertIn('metadata["containerimage.digest"]', workflow)
         self.assertIn("registry_digest=", workflow)
         self.assertIn('digest_ref="${IMAGE_NAME}@${registry_digest}"', workflow)
         self.assertIn('"org.opencontainers.image.revision"', workflow)
@@ -59,6 +62,8 @@ class R2AP2bBootstrapPublicationTests(unittest.TestCase):
         self.assertIn("anonymous_config=", workflow)
         self.assertIn('docker pull "${IMAGE_NAME}@${REGISTRY_DIGEST}"', workflow)
 
+        self.assertNotIn("assert_tag_absent", workflow)
+        self.assertNotIn("docker push", workflow)
         self.assertNotIn("refs/tags/", workflow)
         self.assertNotIn("gh release", workflow)
         self.assertNotIn("git tag", workflow)
