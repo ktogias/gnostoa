@@ -120,9 +120,7 @@ class R2AP2bBootstrapPublicationTests(unittest.TestCase):
         self.assertNotIn("IMAGE_TAG:", workflow_text)
         self.assertNotIn("IMAGE_REF:", workflow_text)
         self.assertIn("EVENT_BEFORE: ${{ github.event.before }}", workflow_text)
-        self.assertIn(
-            'test "${EVENT_BEFORE}" = "${SOURCE_COMMIT}"', workflow_text
-        )
+        self.assertIn('test "${EVENT_BEFORE}" = "${SOURCE_COMMIT}"', workflow_text)
         self.assertIn(
             'test "$(git rev-parse HEAD)" = "${SOURCE_COMMIT}"', workflow_text
         )
@@ -135,16 +133,10 @@ class R2AP2bBootstrapPublicationTests(unittest.TestCase):
         self.assertIn("--metadata-file", workflow_text)
         self.assertIn('metadata["containerimage.digest"]', workflow_text)
         self.assertIn("registry_digest=", workflow_text)
-        self.assertIn(
-            'digest_ref="${IMAGE_NAME}@${registry_digest}"', workflow_text
-        )
-        self.assertIn(
-            'digest_ref="${IMAGE_NAME}@${REGISTRY_DIGEST}"', workflow_text
-        )
+        self.assertIn('digest_ref="${IMAGE_NAME}@${registry_digest}"', workflow_text)
+        self.assertIn('digest_ref="${IMAGE_NAME}@${REGISTRY_DIGEST}"', workflow_text)
         self.assertIn('"org.opencontainers.image.revision"', workflow_text)
-        self.assertIn(
-            'test "${actual}" = "${PUBLIC_DIGEST}"', workflow_text
-        )
+        self.assertIn('test "${actual}" = "${PUBLIC_DIGEST}"', workflow_text)
         self.assertIn("gh attestation verify", workflow_text)
         self.assertIn("anonymous_config=", workflow_text)
         self.assertIn('docker pull "${digest_ref}"', workflow_text)
