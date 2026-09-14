@@ -147,7 +147,7 @@ class ReviewAssuranceP2bAuthorityLandingTests(unittest.TestCase):
         )
         self.assertEqual(EXPECTED_JUDGE, authority["expected_judge"])
 
-    def test_protected_main_readback_remains_authority_source_after_activation(
+    def test_protected_main_readback_remains_authority_source_while_b1_is_dormant(
         self,
     ) -> None:
         protected = (ROOT / "tools" / "review_protected.py").read_text(encoding="utf-8")
@@ -166,12 +166,20 @@ class ReviewAssuranceP2bAuthorityLandingTests(unittest.TestCase):
         self.assertNotIn("issue-11-r2a-current-advisory.json", cli)
         self.assertIn('if mode == "current_advisory":', evaluator)
         self.assertIn('"BOOTSTRAP_PROTECTED_AUTHORITY_UNAVAILABLE"', evaluator)
-        self.assertIn(
+        self.assertNotIn(
             "from .review_live import evaluate_gnostoa_current_advisory",
             cli,
         )
-        self.assertIn(
+        self.assertNotIn(
             "code, payload = evaluate_gnostoa_current_advisory(input_document)",
+            cli,
+        )
+        self.assertIn(
+            "prior-integrated authority acquisition is not",
+            cli,
+        )
+        self.assertIn(
+            "available in the candidate-side P2b-B1 CLI",
             cli,
         )
 
