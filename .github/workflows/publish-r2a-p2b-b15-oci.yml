@@ -117,10 +117,8 @@ jobs:
           test "$(docker run --rm --entrypoint id "${local_image}" -u)" = "10001"
           test "$(docker run --rm --entrypoint id "${local_image}" -g)" = "10001"
           public_digest="$(docker run --rm --entrypoint python "${local_image}" -m tools.cli surface-digest --root /opt/gnostoa)"
-          if [[ ! "${public_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "invalid public-surface digest" >&2
-            exit 1
-          fi
+          [[ "${public_digest}" =~ ^sha256:[0-9a-f]{64}$ ]] \
+            || { echo "invalid public-surface digest" >&2; exit 1; }
           echo "public_digest=${public_digest}" >> "${GITHUB_OUTPUT}"
           printf 'r2a_p2b_b15.public_digest=%s\n' "${public_digest}"
           docker run --rm --entrypoint sh "${local_image}" -ec \
