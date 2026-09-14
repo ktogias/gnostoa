@@ -12,9 +12,7 @@ from tools.review_check import FORMAT_CHECKER
 
 ROOT = Path(__file__).resolve().parents[1]
 SEMANTIC_BUNDLE_PATH = ROOT / "tasks" / "issue-11-r2a-current-advisory.json"
-CONSUMER_AUTHORITY_PATH = (
-    ROOT / "tasks" / "issue-11-r2a-current-advisory-consumer.json"
-)
+CONSUMER_AUTHORITY_PATH = ROOT / "tasks" / "issue-11-r2a-current-advisory-consumer.json"
 CONSUMER_SCHEMA_PATH = (
     ROOT / "schemas" / "review-protected-consumer-authority.schema.json"
 )
@@ -93,9 +91,7 @@ class ReviewAssuranceP2bConsumerAuthorityRedTests(unittest.TestCase):
 
         runtime_image = EXPECTED_CONSUMER["runtime_image"]
         self.assertIsNotNone(
-            re.fullmatch(
-                r"ghcr\.io/ktogias/gnostoa@sha256:[0-9a-f]{64}", runtime_image
-            )
+            re.fullmatch(r"ghcr\.io/ktogias/gnostoa@sha256:[0-9a-f]{64}", runtime_image)
         )
         materialization = authority.get("materialization")
         self.assertEqual(
