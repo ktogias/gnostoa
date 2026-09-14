@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import inspect
 import io
 import json
+import os
 import tempfile
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest import mock
 
-from tools import review_check
+from tools import review_check, review_live
+from tools.review_protected import ProtectedMainDocument
 
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLE_PATH = ROOT / "tasks" / "issue-11-r2a-current-advisory.json"
@@ -20,10 +23,15 @@ def _timestamp_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def _protected_looking_input() -> tuple[dict[str, object], dict[str, object]]:
+def _bundle() -> dict[str, object]:
     bundle = json.loads(BUNDLE_PATH.read_text(encoding="utf-8"))
     if not isinstance(bundle, dict):
         raise AssertionError("integrated P2b-A authority bundle must be a JSON object")
+    return bundle
+
+
+def _protected_looking_input() -> tuple[dict[str, object], dict[str, object]]:
+    bundle = _bundle()
     now = _timestamp_now()
     input_document: dict[str, object] = {
         "schema_version": "1.0",
@@ -64,6 +72,13 @@ def _protected_looking_input() -> tuple[dict[str, object], dict[str, object]]:
     return input_document, policy
 
 
+def _protected_document() -> ProtectedMainDocument:
+    return ProtectedMainDocument(
+        protected_main_revision="eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",  # pragma: allowlist secret -- synthetic protected-main revision
+        document=copy.deepcopy(_bundle()),
+    )
+
+
 class ReviewAssuranceP2bActivationRedTests(unittest.TestCase):
     def test_raw_evaluator_remains_bootstrap_incomplete(self) -> None:
         input_document, policy = _protected_looking_input()
@@ -75,6 +90,16 @@ class ReviewAssuranceP2bActivationRedTests(unittest.TestCase):
             payload["reason"],
         )
         self.assertFalse(payload["binding"])
+
+    def test_protected_consumer_has_no_caller_selectable_trust_inputs(self) -> None:
+        self.assertEqual(
+            ["input_document"],
+            list(
+                inspect.signature(
+                    review_live.evaluate_gnostoa_current_advisory
+                ).parameters
+            ),
+        )
 
     def test_live_cli_routes_prior_integrated_current_advisory_to_protected_consumer(
         self,
@@ -131,6 +156,153 @@ class ReviewAssuranceP2bActivationRedTests(unittest.TestCase):
         )
         protected_consumer.assert_called_once_with(input_document)
 
+    def test_live_consumer_replaces_caller_cut_and_preserves_truthful_quorum_unmet(
+        self,
+    ) -> None:
+        input_document, _ = _protected_looking_input()
+        context = input_document["evaluation_context"]
+        assert isinstance(context, dict)
+        context["as_of"] = "2000-01-01T00:00:00Z"
+        subject = input_document["subject"]
+        assert isinstance(subject, dict)
+        trusted_cut = subject["observed_at"]
+        assert isinstance(trusted_cut, str)
+        protected = _protected_document()
+
+        def execute(
+            delegated: dict[str, object], bundle: dict[str, object]
+        ) -> tuple[int, dict[str, object]]:
+            delegated_context = delegated["evaluation_context"]
+            assert isinstance(delegated_context, dict)
+            self.assertEqual("historical_replay", delegated_context["mode"])
+            self.assertEqual(trusted_cut, delegated_context["as_of"])
+            self.assertEqual("prior_integrated", delegated_context["judge_relation"])
+            self.assertFalse(delegated_context["fixture_only"])
+            self.assertEqual(bundle["authority"], delegated["authority"])
+            self.assertEqual(bundle["acquired_judge"], delegated["acquired_judge"])
+            self.assertEqual(
+                bundle["qualification_snapshot"], delegated["qualification_snapshot"]
+            )
+            policy = bundle["policy"]
+            assert isinstance(policy, dict)
+            return review_check.evaluate_documents(delegated, policy)
+
+        with (
+            mock.patch.object(
+                review_live,
+                "acquire_gnostoa_current_advisory_bundle",
+                return_value=protected,
+            ),
+            mock.patch.object(review_live, "_trusted_cut", return_value=trusted_cut),
+            mock.patch.object(
+                review_live,
+                "_execute_semantic_review",
+                side_effect=execute,
+            ),
+        ):
+            code, payload = review_live.evaluate_gnostoa_current_advisory(input_document)
+
+        self.assertEqual(3, code)
+        self.assertEqual("INCOMPLETE", payload["outcome"])
+        self.assertEqual("QUORUM_UNMET", payload["reason"])
+        self.assertFalse(payload["binding"])
+        projected_context = payload["evaluation_context"]
+        self.assertEqual("current_advisory", projected_context["mode"])
+        self.assertEqual(trusted_cut, projected_context["as_of"])
+        self.assertNotEqual(context["as_of"], projected_context["as_of"])
+        self.assertTrue(
+            any(
+                "protected prior-integrated OCI" in diagnostic
+                for diagnostic in payload["diagnostics"]
+            )
+        )
+
+    def test_live_consumer_rejects_caller_authority_drift_before_runtime(self) -> None:
+        input_document, _ = _protected_looking_input()
+        authority = input_document["authority"]
+        assert isinstance(authority, dict)
+        authority["policy_digest"] = "sha256:" + ("0" * 64)  # pragma: allowlist secret -- synthetic mismatch digest
+        protected = _protected_document()
+
+        with (
+            mock.patch.object(
+                review_live,
+                "acquire_gnostoa_current_advisory_bundle",
+                return_value=protected,
+            ),
+            mock.patch.object(review_live, "_execute_semantic_review") as execute,
+        ):
+            code, payload = review_live.evaluate_gnostoa_current_advisory(input_document)
+
+        self.assertEqual(2, code)
+        self.assertEqual("MALFORMED_INVOCATION", payload["error"]["code"])
+        self.assertIn("does not match protected", payload["error"]["message"])
+        execute.assert_not_called()
+
+    def test_bound_runtime_unavailable_is_trusted_incomplete_not_pass(self) -> None:
+        input_document, _ = _protected_looking_input()
+        protected = _protected_document()
+        subject = input_document["subject"]
+        assert isinstance(subject, dict)
+        trusted_cut = subject["observed_at"]
+        assert isinstance(trusted_cut, str)
+
+        with (
+            mock.patch.object(
+                review_live,
+                "acquire_gnostoa_current_advisory_bundle",
+                return_value=protected,
+            ),
+            mock.patch.object(review_live, "_trusted_cut", return_value=trusted_cut),
+            mock.patch.object(
+                review_live,
+                "_execute_semantic_review",
+                side_effect=review_live.ProtectedRuntimeError(
+                    "PRIOR_INTEGRATED_JUDGE_UNAVAILABLE",
+                    "synthetic unavailable runtime",
+                ),
+            ),
+        ):
+            code, payload = review_live.evaluate_gnostoa_current_advisory(input_document)
+
+        self.assertEqual(3, code)
+        self.assertEqual("INCOMPLETE", payload["outcome"])
+        self.assertEqual("PRIOR_INTEGRATED_JUDGE_UNAVAILABLE", payload["reason"])
+        self.assertFalse(payload["binding"])
+        self.assertEqual(protected.document["authority"], payload["authority"])
+        self.assertEqual(protected.document["acquired_judge"], payload["judge"])
+
+    def test_docker_runtime_selection_does_not_inherit_caller_context(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory)
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "DOCKER_HOST": "tcp://attacker.invalid:2375",
+                    "DOCKER_CONTEXT": "attacker",
+                    "DOCKER_CONFIG": "/attacker/config",
+                    "PATH": "/attacker/bin",
+                },
+                clear=False,
+            ):
+                environment = review_live._docker_environment(config)
+                self.assertEqual(
+                    {
+                        "DOCKER_CONFIG": str(config),
+                        "HOME": str(config),
+                        "LANG": "C",
+                        "LC_ALL": "C",
+                    },
+                    environment,
+                )
+                with mock.patch.object(
+                    review_live.shutil,
+                    "which",
+                    return_value="/usr/bin/docker",
+                ) as which:
+                    self.assertEqual("/usr/bin/docker", review_live._docker_executable())
+                    which.assert_called_once_with("docker", path=os.defpath)
+
     def test_current_advisory_still_rejects_caller_selected_policy(self) -> None:
         input_document, policy = _protected_looking_input()
         with tempfile.TemporaryDirectory() as directory:
@@ -149,6 +321,22 @@ class ReviewAssuranceP2bActivationRedTests(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertEqual("CONFIGURATION_ERROR", payload["error"]["code"])
         self.assertIn("forbids caller-selected --policy", payload["error"]["message"])
+
+    def test_protected_current_advisory_rejects_caller_change_class(self) -> None:
+        input_document, _ = _protected_looking_input()
+        with tempfile.TemporaryDirectory() as directory:
+            input_path = Path(directory) / "input.json"
+            input_path.write_text(json.dumps(input_document), encoding="utf-8")
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                code = review_check.main(
+                    ["--input", str(input_path), "--change-class", "critical"]
+                )
+
+        self.assertEqual(2, code)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual("CONFIGURATION_ERROR", payload["error"]["code"])
+        self.assertIn("forbids caller-selected --change-class", payload["error"]["message"])
 
 
 if __name__ == "__main__":
