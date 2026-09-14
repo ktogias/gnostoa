@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from unittest import mock
 
+import yaml
 from jsonschema.exceptions import SchemaError
 
 from tools import review_live
@@ -236,6 +237,47 @@ class ReviewAssuranceP2bB1ErrorPathRedTests(unittest.TestCase):
             "protected current-advisory runtime validation failed",
             payload["error"]["message"],
         )
+
+    def test_semantic_review_guardrail_declares_dormant_b1_surfaces(self) -> None:
+        document = yaml.safe_load(
+            (ROOT / "policy" / "guardrails.yaml").read_text(encoding="utf-8")
+        )
+        self.assertIsInstance(document, dict)
+        guardrails = document.get("guardrails")
+        self.assertIsInstance(guardrails, list)
+        guardrail = next(
+            entry
+            for entry in guardrails
+            if isinstance(entry, dict)
+            and entry.get("id") == "semantic-review-assurance"
+        )
+        implementation = guardrail.get("implementation")
+        tests = guardrail.get("tests")
+        self.assertIsInstance(implementation, list)
+        self.assertIsInstance(tests, list)
+
+        required_implementation = {
+            "schemas/review-protected-authority-bundle.schema.json",
+            "tools/review_protected.py",
+            "tools/review_current.py",
+            "tools/review_live.py",
+            ".github/workflows/r2a-protected-current-advisory.yml",
+        }
+        required_tests = {
+            "tests/test_review_assurance_p2b_red.py",
+            "tests/test_review_assurance_p2b_activation_red.py",
+            "tests/test_review_assurance_p2b_b1_dormancy_red.py",
+            "tests/test_review_assurance_p2b_b1_error_paths_red.py",
+            "ci/review_live_smoke.py",
+            "ci/review_live_timeout_cleanup.py",
+        }
+        self.assertLessEqual(required_implementation, set(implementation))
+        self.assertLessEqual(required_tests, set(tests))
+
+        workflow = (
+            ROOT / ".github" / "workflows" / "r2a-protected-current-advisory.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn('- "policy/guardrails.yaml"', workflow)
 
 
 if __name__ == "__main__":
