@@ -55,7 +55,9 @@ class ReviewAssuranceP2bB15RuntimeRedTests(unittest.TestCase):
         self.assertIn(f"PYTHONPATH=. python {FOCUSED_TEST}", workflow)
         self.assertIn(f"PYTHONPATH=. python {SMOKE_PATH}", workflow)
 
-    def test_semantic_review_guardrail_declares_the_b15_runtime_capability(self) -> None:
+    def test_semantic_review_guardrail_declares_the_b15_runtime_capability(
+        self,
+    ) -> None:
         document = yaml.safe_load(GUARDRAILS.read_text(encoding="utf-8"))
         self.assertIsInstance(document, dict)
         guardrails = document.get("guardrails")
