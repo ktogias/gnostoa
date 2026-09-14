@@ -1,10 +1,45 @@
 ---
-okf_version: "0.2"
+type: Decision
 title: Materialize the integrated R2A P2b-B1 outer consumer as a prior-effective digest-only OCI identity
+description: Materialize exact integrated P2b-B1 as a one-shot digest-only OCI outer-consumer identity before any P2b-B2 activation.
 status: draft
+generated:
+  by: agent:gpt-5.6-sol
+  at: "2026-09-14T11:36:00Z"
+sources:
+  - id: r2a-architecture
+    resource: ./0067-evaluate-semantic-review-assurance-through-bound-evidence.md
+    title: Decision 0067
+  - id: bootstrap-pattern
+    resource: ./0068-materialize-r2a-p2a-as-a-one-shot-digest-only-oci-judge.md
+    title: Decision 0068
+  - id: work-item
+    resource: https://github.com/ktogias/gnostoa/issues/11
+    title: Semantic capture reconciliation and rationale completeness
+  - id: b1-integration
+    resource: https://github.com/ktogias/gnostoa/pull/248
+    title: Integrated dormant P2b-B1 outer consumer
+  - id: owner-authorization
+    resource: https://github.com/ktogias/gnostoa/issues/11#issuecomment-5663169718
+    title: Owner authorization for intermediate B1 materialization and B2 convergence steps
+x-project-knowledge:
+  id: kit.decision.0069.materialize-integrated-r2a-p2b-b1-consumer-by-digest
+  owners:
+    - team:gnostoa-maintainers
+  scope:
+    - gnostoa
+  relations:
+    - kind: governed-by
+      target: /decisions/0005-container-first-runtime.md
+    - kind: governed-by
+      target: /decisions/0067-evaluate-semantic-review-assurance-through-bound-evidence.md
+    - kind: follows
+      target: /decisions/0068-materialize-r2a-p2a-as-a-one-shot-digest-only-oci-judge.md
+    - kind: implements
+      target: /decisions/0067-evaluate-semantic-review-assurance-through-bound-evidence.md
 ---
 
-# Decision 0069: Materialize the integrated R2A P2b-B1 outer consumer as a prior-effective digest-only OCI identity
+# Materialize the integrated R2A P2b-B1 outer consumer as a prior-effective digest-only OCI identity
 
 ## Context
 
