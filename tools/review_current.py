@@ -218,11 +218,15 @@ def run_prior_integrated_judge(
                 "protected judge does not report the authority-bound OCI digest"
             )
 
-        image_id = _checked_output(
-            ["image", "inspect", "--format", "{{.Id}}", image],
-            config_dir=config_dir,
-            description="cannot inspect protected prior-integrated judge image id",
-        ).decode("ascii", errors="strict").strip()
+        image_id = (
+            _checked_output(
+                ["image", "inspect", "--format", "{{.Id}}", image],
+                config_dir=config_dir,
+                description="cannot inspect protected prior-integrated judge image id",
+            )
+            .decode("ascii", errors="strict")
+            .strip()
+        )
         if _IMAGE_ID.fullmatch(image_id) is None:
             raise ProtectedJudgeUnavailable(
                 "protected judge did not resolve to an immutable image id"
