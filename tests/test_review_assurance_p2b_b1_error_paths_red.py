@@ -73,6 +73,22 @@ def _protected_document() -> ProtectedMainDocument:
     )
 
 
+def _valid_incomplete_result(
+    input_document: dict[str, object], trusted_cut: str
+) -> dict[str, object]:
+    bundle = _bundle()
+    code, payload = review_live._semantic_incomplete(
+        input_document,
+        bundle,
+        trusted_cut,
+        "QUORUM_UNMET",
+        "synthetic valid incomplete result",
+    )
+    if code != 3:
+        raise AssertionError("synthetic incomplete result must use semantic exit 3")
+    return payload
+
+
 class ReviewAssuranceP2bB1ErrorPathRedTests(unittest.TestCase):
     def test_installed_knowledge_format_error_is_tool_error(self) -> None:
         with (
@@ -123,6 +139,90 @@ class ReviewAssuranceP2bB1ErrorPathRedTests(unittest.TestCase):
                 review_live,
                 "run_prior_integrated_judge",
                 return_value=(3, {}),
+            ),
+            mock.patch.object(review_live, "_schema_errors", side_effect=schema_errors),
+        ):
+            code, payload = review_live.evaluate_gnostoa_current_advisory(
+                input_document
+            )
+
+        self.assertEqual(2, code)
+        self.assertEqual("TOOL_ERROR", payload["error"]["code"])
+        self.assertIn(
+            "protected current-advisory runtime validation failed",
+            payload["error"]["message"],
+        )
+
+    def test_incomplete_projection_validation_failure_is_controlled_tool_error(
+        self,
+    ) -> None:
+        input_document = _live_input()
+        protected = _protected_document()
+        subject = input_document["subject"]
+        assert isinstance(subject, dict)
+        trusted_cut = subject["observed_at"]
+        assert isinstance(trusted_cut, str)
+        original_schema_errors = review_live._schema_errors
+
+        def schema_errors(document: object, schema_name: str) -> list[str]:
+            if schema_name == "review-gate-result.schema.json":
+                raise SchemaError("synthetic incomplete projection validation failure")
+            return original_schema_errors(document, schema_name)
+
+        with (
+            mock.patch.object(
+                review_live,
+                "acquire_gnostoa_current_advisory_bundle",
+                return_value=protected,
+            ),
+            mock.patch.object(review_live, "_trusted_cut", return_value=trusted_cut),
+            mock.patch.object(
+                review_live,
+                "_execute_semantic_review",
+                side_effect=review_live.ProtectedRuntimeError(
+                    "PRIOR_INTEGRATED_JUDGE_UNAVAILABLE",
+                    "synthetic protected runtime failure",
+                ),
+            ),
+            mock.patch.object(review_live, "_schema_errors", side_effect=schema_errors),
+        ):
+            code, payload = review_live.evaluate_gnostoa_current_advisory(
+                input_document
+            )
+
+        self.assertEqual(2, code)
+        self.assertEqual("TOOL_ERROR", payload["error"]["code"])
+        self.assertIn(
+            "protected current-advisory runtime validation failed",
+            payload["error"]["message"],
+        )
+
+    def test_final_projection_validation_failure_is_controlled_tool_error(self) -> None:
+        input_document = _live_input()
+        protected = _protected_document()
+        subject = input_document["subject"]
+        assert isinstance(subject, dict)
+        trusted_cut = subject["observed_at"]
+        assert isinstance(trusted_cut, str)
+        result = _valid_incomplete_result(input_document, trusted_cut)
+        original_schema_errors = review_live._schema_errors
+
+        def schema_errors(document: object, schema_name: str) -> list[str]:
+            if schema_name == "review-gate-result.schema.json":
+                raise SchemaError("synthetic final projection validation failure")
+            return original_schema_errors(document, schema_name)
+
+        with (
+            mock.patch.object(
+                review_live,
+                "acquire_gnostoa_current_advisory_bundle",
+                return_value=protected,
+            ),
+            mock.patch.object(review_live, "_trusted_cut", return_value=trusted_cut),
+            mock.patch.object(
+                review_live,
+                "_execute_semantic_review",
+                return_value=(3, result),
             ),
             mock.patch.object(review_live, "_schema_errors", side_effect=schema_errors),
         ):
