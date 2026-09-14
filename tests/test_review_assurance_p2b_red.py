@@ -147,7 +147,9 @@ class ReviewAssuranceP2bAuthorityLandingTests(unittest.TestCase):
         )
         self.assertEqual(EXPECTED_JUDGE, authority["expected_judge"])
 
-    def test_protected_main_readback_remains_authority_source_after_activation(self) -> None:
+    def test_protected_main_readback_remains_authority_source_after_activation(
+        self,
+    ) -> None:
         protected = (ROOT / "tools" / "review_protected.py").read_text(encoding="utf-8")
         evaluator = (ROOT / "tools" / "review_evaluate.py").read_text(encoding="utf-8")
         cli = (ROOT / "tools" / "review_check.py").read_text(encoding="utf-8")
