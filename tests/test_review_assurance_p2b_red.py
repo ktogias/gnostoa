@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import copy
 import json
 import unittest
 from pathlib import Path
+
+from jsonschema import Draft202012Validator
 
 from tools.review_model import canonical_digest
 from tools.review_policy import effective_policy_issues, resolve_project_policy
 
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLE_PATH = ROOT / "tasks" / "issue-11-r2a-current-advisory.json"
+BUNDLE_SCHEMA_PATH = ROOT / "schemas" / "review-protected-authority-bundle.schema.json"
 POLICY_PATH = ROOT / "policy" / "review-policy.yaml"
 P2A_SOURCE_REVISION = "d66d1830d724d759db6ec87e1f8d5dcc0847f221"
 P2A_PUBLIC_SURFACE_DIGEST = (
@@ -44,18 +48,45 @@ EXPECTED_JUDGE = {
 }
 
 
+def _bundle() -> dict[str, object]:
+    value = json.loads(BUNDLE_PATH.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise AssertionError("P2b-A candidate landing bundle must be a JSON object")
+    return value
+
+
 class ReviewAssuranceP2bAuthorityLandingTests(unittest.TestCase):
-    def test_protected_p2b_a_bundle_binds_exact_prior_integrated_identities(
-        self,
-    ) -> None:
+    def test_p2b_a_candidate_landing_bundle_is_versioned_and_schema_closed(self) -> None:
+        self.assertTrue(
+            BUNDLE_SCHEMA_PATH.is_file(),
+            "P2B_AUTHORITY_BUNDLE_SCHEMA_UNAVAILABLE: dormant authority landing needs "
+            "a dedicated versioned closed schema before integration",
+        )
+        schema = json.loads(BUNDLE_SCHEMA_PATH.read_text(encoding="utf-8"))
+        Draft202012Validator.check_schema(schema)
+        validator = Draft202012Validator(schema)
+        bundle = _bundle()
+        self.assertEqual("1.0", bundle.get("schema_version"))
+        self.assertEqual([], list(validator.iter_errors(bundle)))
+
+        unknown = copy.deepcopy(bundle)
+        unknown["candidate_claim"] = True
+        self.assertNotEqual([], list(validator.iter_errors(unknown)))
+
+    def test_p2b_a_candidate_landing_declares_exact_intended_bindings(self) -> None:
         self.assertTrue(
             BUNDLE_PATH.is_file(),
-            "P2B_PROTECTED_AUTHORITY_UNAVAILABLE: protected current-advisory "
-            "authority bundle is absent; do not activate from candidate-authored trust data",
+            "P2B_AUTHORITY_LANDING_UNAVAILABLE: candidate authority landing artifact is absent",
         )
-        bundle = json.loads(BUNDLE_PATH.read_text(encoding="utf-8"))
+        bundle = _bundle()
         self.assertEqual(
-            {"authority", "policy", "qualification_snapshot", "acquired_judge"},
+            {
+                "schema_version",
+                "authority",
+                "policy",
+                "qualification_snapshot",
+                "acquired_judge",
+            },
             set(bundle),
         )
 
@@ -87,9 +118,21 @@ class ReviewAssuranceP2bAuthorityLandingTests(unittest.TestCase):
         )
         self.assertEqual(EXPECTED_JUDGE, authority["expected_judge"])
 
-    def test_p2b_a_remains_dormant_and_does_not_activate_current_advisory(self) -> None:
+    def test_candidate_landing_is_inert_until_protected_main_readback(self) -> None:
+        protected = (ROOT / "tools" / "review_protected.py").read_text(encoding="utf-8")
         evaluator = (ROOT / "tools" / "review_evaluate.py").read_text(encoding="utf-8")
         cli = (ROOT / "tools" / "review_check.py").read_text(encoding="utf-8")
+
+        self.assertIn(
+            '_GNOSTOA_SELF_BUNDLE_PATH = "tasks/issue-11-r2a-current-advisory.json"',
+            protected,
+        )
+        self.assertIn(
+            '"+refs/heads/main:refs/remotes/protected/main"',
+            protected,
+        )
+        self.assertNotIn("issue-11-r2a-current-advisory.json", evaluator)
+        self.assertNotIn("issue-11-r2a-current-advisory.json", cli)
         self.assertIn('if mode == "current_advisory":', evaluator)
         self.assertIn('"BOOTSTRAP_PROTECTED_AUTHORITY_UNAVAILABLE"', evaluator)
         self.assertIn(
