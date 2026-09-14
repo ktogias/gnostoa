@@ -8,15 +8,18 @@ on:
       - "ci/build-runtime"
       - "ci/review_live_smoke.py"
       - "ci/review_live_timeout_cleanup.py"
+      - "knowledge/decisions/0070-protect-r2a-b1-outer-consumer-authority-separately.md"
       - "policy/guardrails.yaml"
       - "pyproject.toml"
       - "requirements/development.lock"
       - "requirements/runtime.lock"
       - "schemas/review-*.schema.json"
       - "tasks/issue-11-r2a-current-advisory.json"
+      - "tasks/issue-11-r2a-current-advisory-consumer.json"
       - "tests/test_review_assurance_p2b_activation_red.py"
       - "tests/test_review_assurance_p2b_b1_dormancy_red.py"
       - "tests/test_review_assurance_p2b_b1_error_paths_red.py"
+      - "tests/test_review_assurance_p2b_consumer_authority_red.py"
       - "tools/cli.py"
       - "tools/knowledge_common.py"
       - "tools/review_check.py"
@@ -84,7 +87,8 @@ jobs:
             ci/review_live_timeout_cleanup.py \
             tests/test_review_assurance_p2b_activation_red.py \
             tests/test_review_assurance_p2b_b1_dormancy_red.py \
-            tests/test_review_assurance_p2b_b1_error_paths_red.py
+            tests/test_review_assurance_p2b_b1_error_paths_red.py \
+            tests/test_review_assurance_p2b_consumer_authority_red.py
           python -m ruff check \
             tools/review_check.py \
             tools/review_current.py \
@@ -93,7 +97,8 @@ jobs:
             ci/review_live_timeout_cleanup.py \
             tests/test_review_assurance_p2b_activation_red.py \
             tests/test_review_assurance_p2b_b1_dormancy_red.py \
-            tests/test_review_assurance_p2b_b1_error_paths_red.py
+            tests/test_review_assurance_p2b_b1_error_paths_red.py \
+            tests/test_review_assurance_p2b_consumer_authority_red.py
           python -m mypy \
             tools/review_check.py \
             tools/review_current.py \
@@ -112,6 +117,7 @@ jobs:
           PYTHONPATH=. python tests/test_review_assurance_p2b_activation_red.py
           PYTHONPATH=. python tests/test_review_assurance_p2b_b1_dormancy_red.py
           PYTHONPATH=. python tests/test_review_assurance_p2b_b1_error_paths_red.py
+          PYTHONPATH=. python tests/test_review_assurance_p2b_consumer_authority_red.py
 
       - name: Exercise candidate implementation against authority-bound OCI P2a via native orchestration fallback
         run: PYTHONPATH=. python ci/review_live_smoke.py

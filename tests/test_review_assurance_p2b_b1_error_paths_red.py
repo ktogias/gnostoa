@@ -258,6 +258,9 @@ class ReviewAssuranceP2bB1ErrorPathRedTests(unittest.TestCase):
 
         required_implementation = {
             "schemas/review-protected-authority-bundle.schema.json",
+            "schemas/review-protected-consumer-authority.schema.json",
+            "tasks/issue-11-r2a-current-advisory-consumer.json",
+            "knowledge/decisions/0070-protect-r2a-b1-outer-consumer-authority-separately.md",
             "tools/review_protected.py",
             "tools/review_current.py",
             "tools/review_live.py",
@@ -268,6 +271,7 @@ class ReviewAssuranceP2bB1ErrorPathRedTests(unittest.TestCase):
             "tests/test_review_assurance_p2b_activation_red.py",
             "tests/test_review_assurance_p2b_b1_dormancy_red.py",
             "tests/test_review_assurance_p2b_b1_error_paths_red.py",
+            "tests/test_review_assurance_p2b_consumer_authority_red.py",
             "ci/review_live_smoke.py",
             "ci/review_live_timeout_cleanup.py",
         }
