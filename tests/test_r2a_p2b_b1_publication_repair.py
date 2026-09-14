@@ -13,9 +13,15 @@ DECISION_PATH = (
     / "decisions"
     / "0069-materialize-integrated-r2a-p2b-b1-consumer-by-digest.md"
 )
+GUARDRAILS_PATH = ROOT / "policy" / "guardrails.yaml"
 FAILED_PUBLISHER_COMMIT = "8d1ac1812509a2f6beb220b4989ec9b472ff441b"
 FAILED_RUN_ID = "34842626132"
 FAILURE_RECORD_COMMENT = "5663773822"
+REPAIR_CONTRACT = (
+    "tests/test_r2a_p2b_b1_publication_repair.py::"
+    "R2AP2bB1PublicationRepairTests."
+    "test_prewrite_failure_repair_is_exact_and_container_first"
+)
 
 
 def _workflow() -> dict[str, object]:
@@ -128,6 +134,19 @@ class R2AP2bB1PublicationRepairTests(unittest.TestCase):
         self.assertIn(FAILURE_RECORD_COMMENT, decision)
         self.assertIn("before GHCR authentication", decision)
         self.assertIn("container", decision.lower())
+
+    def test_repair_contract_is_registered_under_provider_guardrail(self) -> None:
+        guardrails = GUARDRAILS_PATH.read_text(encoding="utf-8")
+        immutable_section = guardrails.split(
+            "  - id: immutable-provider-ci-adapters", 1
+        )[1].split("\n  - id:", 1)[0]
+        self.assertIn(
+            REPAIR_CONTRACT,
+            immutable_section,
+            "B1_REPAIR_GUARDRAIL_DECLARATION_UNAVAILABLE: the repair-specific "
+            "one-shot/container-first contract is not declared under the provider "
+            "CI guardrail",
+        )
 
 
 if __name__ == "__main__":
