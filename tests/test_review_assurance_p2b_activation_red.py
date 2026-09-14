@@ -6,7 +6,7 @@ import io
 import json
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest import mock
 
@@ -18,7 +18,7 @@ BUNDLE_PATH = ROOT / "tasks" / "issue-11-r2a-current-advisory.json"
 
 def _timestamp_now() -> str:
     return (
-        datetime.now(timezone.utc)
+        datetime.now(UTC)
         .replace(microsecond=0)
         .isoformat()
         .replace("+00:00", "Z")
