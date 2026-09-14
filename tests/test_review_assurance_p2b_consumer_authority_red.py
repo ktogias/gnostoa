@@ -21,35 +21,35 @@ DECISION_PATH = (
     ROOT
     / "knowledge"
     / "decisions"
-    / "0070-protect-r2a-b1-outer-consumer-authority-separately.md"
+    / "0073-promote-r2a-b15-outer-consumer-authority.md"
 )
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "r2a-protected-current-advisory.yml"
 GUARDRAILS_PATH = ROOT / "policy" / "guardrails.yaml"
 FOCUSED_TEST_PATH = "tests/test_review_assurance_p2b_consumer_authority_red.py"
 
-B1_SOURCE_REVISION = "0dfd7e5e28e8ccb87e687e0be9dfe846b644c9c3"
-B1_SOURCE_TREE = "23a5f083f26f40a8287bc2a724bcd5282a9afa5e"
-B1_PUBLIC_SURFACE_DIGEST = (
-    "sha256:72df7bfe999db7c84c199ff26424a434197865aaf95b3a5ae9e4e1026d8f5d45"
+B15_SOURCE_REVISION = "7093fd043f2269e09da74b03ce9d35fb6aece5da"  # pragma: allowlist secret -- public source revision
+B15_SOURCE_TREE = "e7a4f2142e72efd52133f4719d8acf9b2dccb89d"  # pragma: allowlist secret -- public source tree
+B15_PUBLIC_SURFACE_DIGEST = (
+    "sha256:b07aec4907919c0c9a92e4382524db4f7981bd346a5a1292f5ac48e4a1e6238e"
 )
-B1_OCI_IMAGE = (
+B15_OCI_IMAGE = (
     "ghcr.io/ktogias/gnostoa@"
-    "sha256:fcefee5af6deb089e4b1cbe09e1a0d2f4820a56ac0a6be18faa4dd11b2ab01b0"
+    "sha256:821b523d2ebe80d0194cfc366ff70c59e90b99c5524dd82df8e866ccfa00e1c3"
 )
-MATERIALIZATION_MAIN_REVISION = "28cc416480a5f101b3031a8de15ac7d4edb234ea"
-MATERIALIZATION_RUN = "34847802228"
-ATTESTATION_ID = "47345171"
-REKOR_LOG_INDEX = "2831113296"
-RECEIPT_COMMENT = "5664611991"
+MATERIALIZATION_MAIN_REVISION = "8b189f66c92859b4ef75a91d962f4aec38b30408"
+MATERIALIZATION_RUN = "34905764252"
+ATTESTATION_ID = "47472753"
+REKOR_LOG_INDEX = "2835934017"
+RECEIPT_COMMENT = "5671868333"
 
 EXPECTED_CONSUMER = {
     "role": "current_advisory_outer_consumer",
     "acquisition": "oci",
-    "source_revision": B1_SOURCE_REVISION,
-    "source_tree": B1_SOURCE_TREE,
-    "public_surface_digest": B1_PUBLIC_SURFACE_DIGEST,
-    "runtime_image": B1_OCI_IMAGE,
-    "runtime_revision": B1_SOURCE_REVISION,
+    "source_revision": B15_SOURCE_REVISION,
+    "source_tree": B15_SOURCE_TREE,
+    "public_surface_digest": B15_PUBLIC_SURFACE_DIGEST,
+    "runtime_image": B15_OCI_IMAGE,
+    "runtime_revision": B15_SOURCE_REVISION,
     "supported_input_schema_versions": ["1.0"],
     "status": "accepted",
 }
@@ -82,7 +82,7 @@ class ReviewAssuranceP2bConsumerAuthorityRedTests(unittest.TestCase):
         unknown["candidate_claim"] = True
         self.assertNotEqual([], list(validator.iter_errors(unknown)))
 
-    def test_outer_consumer_authority_binds_exact_materialized_b1(self) -> None:
+    def test_outer_consumer_authority_binds_exact_materialized_b15(self) -> None:
         self.assertTrue(
             CONSUMER_AUTHORITY_PATH.is_file(),
             "P2B_OUTER_CONSUMER_AUTHORITY_UNAVAILABLE",
@@ -138,18 +138,20 @@ class ReviewAssuranceP2bConsumerAuthorityRedTests(unittest.TestCase):
         self.assertNotIn("expected_consumer", semantic_authority)
         self.assertNotIn("acquired_consumer", semantic)
 
-    def test_separate_outer_consumer_authority_has_durable_decision(self) -> None:
+    def test_b15_outer_consumer_authority_has_durable_promotion_decision(self) -> None:
         self.assertTrue(
             DECISION_PATH.is_file(),
-            "P2B_OUTER_CONSUMER_AUTHORITY_DECISION_UNAVAILABLE",
+            "P2B_B15_OUTER_CONSUMER_AUTHORITY_DECISION_UNAVAILABLE",
         )
         decision = DECISION_PATH.read_text(encoding="utf-8")
-        self.assertIn("Decision 0067", decision)
-        self.assertIn("Decision 0069", decision)
-        self.assertIn(B1_OCI_IMAGE, decision)
+        self.assertIn("Decision 0070", decision)
+        self.assertIn("Decision 0071", decision)
+        self.assertIn("Decision 0072", decision)
+        self.assertIn(B15_OCI_IMAGE, decision)
+        self.assertIn(RECEIPT_COMMENT, decision)
+        self.assertIn("B1.5", decision)
         self.assertIn("outer consumer", decision.lower())
         self.assertIn("inner semantic", decision.lower())
-        self.assertIn("closed v1", decision.lower())
         self.assertIn("P2b-B2", decision)
         self.assertIn("does not activate", decision.lower())
 
@@ -184,6 +186,7 @@ class ReviewAssuranceP2bConsumerAuthorityRedTests(unittest.TestCase):
                 "schemas/review-protected-consumer-authority.schema.json",
                 "tasks/issue-11-r2a-current-advisory-consumer.json",
                 "knowledge/decisions/0070-protect-r2a-b1-outer-consumer-authority-separately.md",
+                "knowledge/decisions/0073-promote-r2a-b15-outer-consumer-authority.md",
             },
             set(implementation),
         )
