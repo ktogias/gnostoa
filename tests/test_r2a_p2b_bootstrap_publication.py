@@ -5,6 +5,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "publish-r2a-p2a-bootstrap-oci.yml"
+DECISION_PATH = (
+    ROOT
+    / "knowledge"
+    / "decisions"
+    / "0068-materialize-r2a-p2a-as-a-one-shot-digest-only-oci-judge.md"
+)
+GUARDRAILS_PATH = ROOT / "policy" / "guardrails.yaml"
 SOURCE_COMMIT = "d66d1830d724d759db6ec87e1f8d5dcc0847f221"
 SOURCE_TREE = "384df86fec31208a02371b63722f903e63404134"
 PUBLIC_DIGEST = (
@@ -70,6 +77,36 @@ class R2AP2bBootstrapPublicationTests(unittest.TestCase):
         self.assertNotIn("git tag", workflow)
         self.assertNotIn(":latest", workflow)
         self.assertNotIn("RELEASE_VERSION", workflow)
+
+    def test_bootstrap_publication_has_decision_and_guardrail_ownership(self) -> None:
+        self.assertTrue(
+            DECISION_PATH.is_file(),
+            "P2B_BOOTSTRAP_DECISION_UNAVAILABLE: privileged one-shot publication "
+            "must have a durable decision record",
+        )
+        decision = DECISION_PATH.read_text(encoding="utf-8")
+        self.assertIn("Decision 0067", decision)
+        self.assertIn("5658009912", decision)
+        self.assertIn(SOURCE_COMMIT, decision)
+        self.assertIn("digest-only", decision)
+        self.assertIn("no blind rerun", decision)
+        self.assertIn("read-only provider-state reconciliation", decision)
+        self.assertIn("not a release", decision)
+
+        guardrails = GUARDRAILS_PATH.read_text(encoding="utf-8")
+        immutable_section = guardrails.split(
+            "  - id: immutable-provider-ci-adapters", 1
+        )[1].split("\n  - id:", 1)[0]
+        self.assertIn(
+            ".github/workflows/publish-r2a-p2a-bootstrap-oci.yml",
+            immutable_section,
+        )
+        self.assertIn(
+            "tests/test_r2a_p2b_bootstrap_publication.py::"
+            "R2AP2bBootstrapPublicationTests."
+            "test_bootstrap_publication_has_decision_and_guardrail_ownership",
+            immutable_section,
+        )
 
 
 if __name__ == "__main__":
