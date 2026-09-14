@@ -8,6 +8,7 @@ on:
       - "schemas/review-*.schema.json"
       - "tasks/issue-11-r2a-current-advisory.json"
       - "tests/test_review_assurance_p2b_activation_red.py"
+      - "tests/test_review_assurance_p2b_b1_dormancy_red.py"
       - "tools/review_check.py"
       - "tools/review_current.py"
       - "tools/review_live.py"
@@ -54,13 +55,15 @@ jobs:
             tools/review_current.py \
             tools/review_live.py \
             ci/review_live_smoke.py \
-            tests/test_review_assurance_p2b_activation_red.py
+            tests/test_review_assurance_p2b_activation_red.py \
+            tests/test_review_assurance_p2b_b1_dormancy_red.py
           python -m ruff check \
             tools/review_check.py \
             tools/review_current.py \
             tools/review_live.py \
             ci/review_live_smoke.py \
-            tests/test_review_assurance_p2b_activation_red.py
+            tests/test_review_assurance_p2b_activation_red.py \
+            tests/test_review_assurance_p2b_b1_dormancy_red.py
           python -m mypy \
             tools/review_check.py \
             tools/review_current.py \
@@ -70,7 +73,9 @@ jobs:
             tools/review_protected.py
 
       - name: Run protected activation contract tests
-        run: PYTHONPATH=. python tests/test_review_assurance_p2b_activation_red.py
+        run: |
+          PYTHONPATH=. python tests/test_review_assurance_p2b_activation_red.py
+          PYTHONPATH=. python tests/test_review_assurance_p2b_b1_dormancy_red.py
 
       - name: Exercise the real authority-bound prior-integrated OCI judge
         run: PYTHONPATH=. python ci/review_live_smoke.py
