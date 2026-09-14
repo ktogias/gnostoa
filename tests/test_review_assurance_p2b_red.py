@@ -75,6 +75,28 @@ class ReviewAssuranceP2bAuthorityLandingTests(unittest.TestCase):
         unknown["candidate_claim"] = True
         self.assertNotEqual([], list(validator.iter_errors(unknown)))
 
+        nonempty_qualification = copy.deepcopy(bundle)
+        qualification = nonempty_qualification["qualification_snapshot"]
+        assert isinstance(qualification, dict)
+        qualification["entries"] = [
+            {
+                "reviewer_id": "unadmitted-reviewer",
+                "source_id": "unadmitted-source",
+                "independence_domain_id": "unadmitted-domain",
+                "capability_ids": ["semantic-review"],
+                "status": "established",
+                "observed_at": "2026-09-14T05:32:08Z",
+                "owner_relation": "non_owner",
+                "scope": {"candidate_claim": True},
+                "provenance": {"candidate_claim": True},
+            }
+        ]
+        self.assertNotEqual(
+            [],
+            list(validator.iter_errors(nonempty_qualification)),
+            "P2b-A v1 must not admit qualification facts beyond the protected empty #10 snapshot",
+        )
+
     def test_p2b_a_candidate_landing_declares_exact_intended_bindings(self) -> None:
         self.assertTrue(
             BUNDLE_PATH.is_file(),
