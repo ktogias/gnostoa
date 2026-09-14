@@ -218,12 +218,17 @@ jobs:
           DOCKER_CONFIG="${anonymous_config}" docker pull "${digest_ref}"
 
           test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "${digest_ref}")" = "linux/amd64"
+          test "$(docker image inspect --format '{{.Config.User}}' "${digest_ref}")" = "kit"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "${digest_ref}")" = "${KIT_VERSION}"
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${digest_ref}")" = "${SOURCE_COMMIT}"
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.created"}}' "${digest_ref}")" = "${BUILD_DATE}"
+          test "$(docker run --rm --entrypoint id "${digest_ref}" -u)" = "10001"
+          test "$(docker run --rm --entrypoint id "${digest_ref}" -g)" = "10001"
           actual="$(docker run --rm --entrypoint python "${digest_ref}" -m tools.cli surface-digest --root /opt/gnostoa)"
           test "${actual}" = "${PUBLIC_DIGEST}"
           docker run --rm --entrypoint sh "${digest_ref}" -ec \
-            'test -f /opt/gnostoa/tools/review_protected.py'
+            'test -f /opt/gnostoa/tools/review_protected.py; grep -Fx "tools/review_protected.py" /opt/gnostoa/.gnostoa-source-files >/dev/null'
+          docker run --rm "${digest_ref}" self-check --skip-tests
 
           {
             echo "### D11-R2A/P2a bootstrap OCI judge"
