@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import shutil
@@ -100,6 +101,15 @@ def _reject_non_finite_constant(value: str) -> NoReturn:
     )
 
 
+def _parse_finite_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ProtectedAcquisitionUnavailable(
+            f"protected authority document contains non-finite JSON number {value!r}"
+        )
+    return parsed
+
+
 def _acquire_from_repository(
     repository_url: str,
     bundle_path: str,
@@ -143,20 +153,38 @@ def _acquire_from_repository(
                 "protected main did not resolve to an exact Git commit"
             )
 
-        raw = _git_output(
-            ["show", f"{protected_main_revision}:{bundle_path}"],
+        object_spec = f"{protected_main_revision}:{bundle_path}"
+        encoded_size = _git_output(
+            ["cat-file", "-s", object_spec],
             cwd=repository,
             description="protected current-advisory authority document is unavailable",
         )
-        if len(raw) > _MAX_PROTECTED_DOCUMENT_BYTES:
+        try:
+            object_size = int(encoded_size.decode("ascii", errors="strict").strip())
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise ProtectedAcquisitionUnavailable(
+                "protected current-advisory authority document size is invalid"
+            ) from exc
+        if object_size > _MAX_PROTECTED_DOCUMENT_BYTES:
             raise ProtectedAcquisitionUnavailable(
                 "protected current-advisory authority document exceeds the bounded size"
+            )
+
+        raw = _git_output(
+            ["show", object_spec],
+            cwd=repository,
+            description="protected current-advisory authority document is unavailable",
+        )
+        if len(raw) != object_size:
+            raise ProtectedAcquisitionUnavailable(
+                "protected current-advisory authority document size changed during read-back"
             )
         try:
             document = json.loads(
                 raw.decode("utf-8"),
                 object_pairs_hook=_object_without_duplicate_fields,
                 parse_constant=_reject_non_finite_constant,
+                parse_float=_parse_finite_float,
             )
         except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
             raise ProtectedAcquisitionUnavailable(

@@ -119,19 +119,56 @@ class ReviewAssuranceP2aTests(unittest.TestCase):
                 review_protected._acquire_from_repository(str(repository), BUNDLE_PATH)
 
     def test_non_finite_protected_authority_document_fails_closed(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            repository, _ = _protected_repository(Path(directory))
-            (repository / BUNDLE_PATH).write_text(
-                '{"schema_version":"1.0","value":NaN}\n',
-                encoding="utf-8",
-            )
-            _git(repository, "add", BUNDLE_PATH)
-            _git(repository, "commit", "-q", "-m", "non-finite authority")
+        for encoded_value in ("NaN", "Infinity", "-Infinity", "1e999"):
+            with self.subTest(encoded_value=encoded_value):
+                with tempfile.TemporaryDirectory() as directory:
+                    repository, _ = _protected_repository(Path(directory))
+                    (repository / BUNDLE_PATH).write_text(
+                        '{"schema_version":"1.0","value":'
+                        + encoded_value
+                        + "}\n",
+                        encoding="utf-8",
+                    )
+                    _git(repository, "add", BUNDLE_PATH)
+                    _git(repository, "commit", "-q", "-m", "non-finite authority")
+                    with self.assertRaisesRegex(
+                        ProtectedAcquisitionUnavailable,
+                        "non-finite JSON number",
+                    ):
+                        review_protected._acquire_from_repository(
+                            str(repository), BUNDLE_PATH
+                        )
+
+    def test_oversized_authority_is_rejected_before_show_buffers_blob(self) -> None:
+        oversized = review_protected._MAX_PROTECTED_DOCUMENT_BYTES + 1
+
+        def fake_git_output(
+            arguments: list[str], *, cwd: Path, description: str
+        ) -> bytes:
+            del cwd, description
+            if arguments[0] == "fetch":
+                return b""
+            if arguments[0] == "rev-parse":
+                return ("a" * 40 + "\n").encode("ascii")
+            if arguments[:2] == ["cat-file", "-s"]:
+                return f"{oversized}\n".encode("ascii")
+            if arguments[0] == "show":
+                self.fail("oversized protected blob must be rejected before git show")
+            self.fail(f"unexpected Git command in bounded-size test: {arguments!r}")
+
+        with patch.object(
+            review_protected,
+            "_git_output",
+            side_effect=fake_git_output,
+        ):
             with self.assertRaisesRegex(
                 ProtectedAcquisitionUnavailable,
-                "non-finite JSON number",
+                "exceeds the bounded size",
             ):
-                review_protected._acquire_from_repository(str(repository), BUNDLE_PATH)
+                review_protected._acquire_from_repository(
+                    "https://example.invalid/ignored.git",
+                    BUNDLE_PATH,
+                )
 
     def test_production_loader_has_no_caller_selectable_trust_inputs(self) -> None:
         signature = inspect.signature(
