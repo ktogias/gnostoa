@@ -4,9 +4,11 @@ import json
 import math
 import os
 import re
+import selectors
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -21,6 +23,7 @@ _DIGEST_IMAGE = re.compile(
 )
 _DOCKER_TIMEOUT_SECONDS = 90
 _MAX_RUNTIME_OUTPUT_BYTES = 2_097_152
+_READ_CHUNK_BYTES = 65_536
 
 
 class ProtectedJudgeUnavailable(RuntimeError):
@@ -46,33 +49,99 @@ def _docker_environment(config_dir: Path) -> dict[str, str]:
     }
 
 
+def _kill_and_reap(process: subprocess.Popen[bytes]) -> None:
+    if process.poll() is None:
+        try:
+            process.kill()
+        except OSError:
+            pass
+    try:
+        process.wait()
+    except OSError:
+        pass
+
+
 def _run_docker(
     arguments: list[str],
     *,
     config_dir: Path,
     timeout: int = _DOCKER_TIMEOUT_SECONDS,
 ) -> subprocess.CompletedProcess[bytes]:
+    command = [_docker_executable(), *arguments]
     try:
-        result = subprocess.run(
-            [_docker_executable(), *arguments],
-            check=False,
-            capture_output=True,
-            timeout=timeout,
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             env=_docker_environment(config_dir),
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except OSError as exc:
         raise ProtectedJudgeUnavailable(
             f"protected Docker execution failed: {exc}"
         ) from exc
-    if len(result.stdout) > _MAX_RUNTIME_OUTPUT_BYTES:
+
+    if process.stdout is None or process.stderr is None:
+        _kill_and_reap(process)
+        raise ProtectedJudgeUnavailable("protected Docker output pipes are unavailable")
+
+    outputs = {
+        "stdout": bytearray(),
+        "stderr": bytearray(),
+    }
+    selector = selectors.DefaultSelector()
+    selector.register(process.stdout, selectors.EVENT_READ, "stdout")
+    selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+    deadline = time.monotonic() + timeout
+
+    try:
+        while selector.get_map():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(command, timeout)
+            events = selector.select(remaining)
+            if not events:
+                raise subprocess.TimeoutExpired(command, timeout)
+            for key, _ in events:
+                label = str(key.data)
+                buffer = outputs[label]
+                remaining_bound = _MAX_RUNTIME_OUTPUT_BYTES + 1 - len(buffer)
+                read_size = min(_READ_CHUNK_BYTES, max(1, remaining_bound))
+                chunk = os.read(key.fd, read_size)
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    continue
+                buffer.extend(chunk)
+                if len(buffer) > _MAX_RUNTIME_OUTPUT_BYTES:
+                    _kill_and_reap(process)
+                    raise ProtectedJudgeUnavailable(
+                        f"protected Docker {label} exceeds the bounded size"
+                    )
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(command, timeout)
+        returncode = process.wait(timeout=remaining)
+    except subprocess.TimeoutExpired as exc:
+        _kill_and_reap(process)
         raise ProtectedJudgeUnavailable(
-            "protected Docker stdout exceeds the bounded size"
-        )
-    if len(result.stderr) > _MAX_RUNTIME_OUTPUT_BYTES:
+            f"protected Docker execution failed: {exc}"
+        ) from exc
+    except OSError as exc:
+        _kill_and_reap(process)
         raise ProtectedJudgeUnavailable(
-            "protected Docker stderr exceeds the bounded size"
-        )
-    return result
+            f"protected Docker execution failed: {exc}"
+        ) from exc
+    finally:
+        selector.close()
+        process.stdout.close()
+        process.stderr.close()
+
+    return subprocess.CompletedProcess(
+        command,
+        returncode,
+        bytes(outputs["stdout"]),
+        bytes(outputs["stderr"]),
+    )
 
 
 def _checked_output(
