@@ -70,7 +70,7 @@ jobs:
             tools/review_protected.py
 
       - name: Run protected activation contract tests
-        run: python tests/test_review_assurance_p2b_activation_red.py
+        run: PYTHONPATH=. python tests/test_review_assurance_p2b_activation_red.py
 
       - name: Exercise the real authority-bound prior-integrated OCI judge
-        run: python ci/review_live_smoke.py
+        run: PYTHONPATH=. python ci/review_live_smoke.py
