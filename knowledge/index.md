@@ -81,6 +81,7 @@ inherited, copied or loaded by adopting projects.
 - [Materialize R2A P2a as a one-shot digest-only OCI bootstrap judge](decisions/0068-materialize-r2a-p2a-as-a-one-shot-digest-only-oci-judge.md)
 - [Materialize integrated R2A P2b-B1 as a prior-effective digest-only OCI outer consumer](decisions/0069-materialize-integrated-r2a-p2b-b1-consumer-by-digest.md)
 - [Protect the R2A B1 outer-consumer authority separately from the inner semantic authority](decisions/0070-protect-r2a-b1-outer-consumer-authority-separately.md)
+- [Add a pinned Docker client to the dormant R2A B1 runtime before P2b-B2 activation](decisions/0071-add-docker-client-to-r2a-b1-runtime.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Require explicit admission for retrospective findings](requirements/retrospective-findings-require-explicit-admission.md)
