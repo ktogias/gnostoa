@@ -79,7 +79,9 @@ class ReviewAssuranceP2bB1ErrorPathRedTests(unittest.TestCase):
             mock.patch.object(
                 review_live,
                 "_schema_errors",
-                side_effect=KnowledgeFormatError("synthetic installed knowledge failure"),
+                side_effect=KnowledgeFormatError(
+                    "synthetic installed knowledge failure"
+                ),
             ),
             mock.patch.object(
                 review_live,
