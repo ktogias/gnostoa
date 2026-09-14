@@ -8,6 +8,7 @@ on:
       - "ci/build-runtime"
       - "ci/review_live_smoke.py"
       - "ci/review_live_timeout_cleanup.py"
+      - "policy/guardrails.yaml"
       - "pyproject.toml"
       - "requirements/development.lock"
       - "requirements/runtime.lock"
