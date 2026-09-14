@@ -13,7 +13,13 @@
 #
 # Gnostoa-self build plumbing. Not a supported command, not adopter guidance.
 #
-# Usage: ci/build-runtime [--tag TAG] [--target TARGET] [docker build args...]
+# Usage:
+#   ci/build-runtime [--tag TAG] [--target TARGET] [docker build args...]
+#   ci/build-runtime --push-by-digest REPOSITORY --metadata-file PATH
+#                    [--target TARGET] [docker buildx build args...]
+#
+# Digest-only publication is an internal opt-in path. It emits no remote tag:
+# BuildKit pushes an unnamed image and records its content digest in PATH.
 #
 # GNOSTOA_CANDIDATE_REF asserts that the tracked candidate is exactly one
 # revision. It is verified before the build and written into image identity.
@@ -25,18 +31,122 @@ CANDIDATE_REF="${GNOSTOA_CANDIDATE_REF:-}"
 REQUESTED_KIT_VERSION="${GNOSTOA_KIT_VERSION:-}"
 KIT_VERSION=development
 TAG="gnostoa:source-checkout"
+TAG_EXPLICIT=0
 TARGET="runtime"
+PUSH_BY_DIGEST=""
+PUSH_BY_DIGEST_SET=0
+METADATA_FILE=""
+METADATA_FILE_SET=0
+
+require_value() {
+    option="$1"
+    count="$2"
+    if [ "$count" -lt 2 ]; then
+        echo "$option requires a value" >&2
+        exit 2
+    fi
+}
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --tag) TAG="$2"; shift 2 ;;
-        --target) TARGET="$2"; shift 2 ;;
+        --tag)
+            require_value "$1" "$#"
+            TAG="$2"
+            TAG_EXPLICIT=1
+            shift 2
+            ;;
+        --target)
+            require_value "$1" "$#"
+            TARGET="$2"
+            shift 2
+            ;;
+        --push-by-digest)
+            require_value "$1" "$#"
+            if [ "$PUSH_BY_DIGEST_SET" -ne 0 ]; then
+                echo "--push-by-digest may be supplied only once" >&2
+                exit 2
+            fi
+            PUSH_BY_DIGEST="$2"
+            PUSH_BY_DIGEST_SET=1
+            shift 2
+            ;;
+        --metadata-file)
+            require_value "$1" "$#"
+            if [ "$METADATA_FILE_SET" -ne 0 ]; then
+                echo "--metadata-file may be supplied only once" >&2
+                exit 2
+            fi
+            METADATA_FILE="$2"
+            METADATA_FILE_SET=1
+            shift 2
+            ;;
         *) break ;;
     esac
 done
 
 ROOT=$(git rev-parse --show-toplevel)
 cd "$ROOT"
+
+if [ "$PUSH_BY_DIGEST_SET" -ne "$METADATA_FILE_SET" ]; then
+    echo "--push-by-digest and --metadata-file must be supplied together" >&2
+    exit 2
+fi
+
+if [ "$PUSH_BY_DIGEST_SET" -ne 0 ]; then
+    if [ "$TAG_EXPLICIT" -ne 0 ]; then
+        echo "--tag cannot be combined with --push-by-digest" >&2
+        exit 2
+    fi
+
+    if ! python3 - "$PUSH_BY_DIGEST" <<'PY'
+import re
+import sys
+
+value = sys.argv[1]
+pattern = r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?:/[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?)+"
+if re.fullmatch(pattern, value) is None:
+    raise SystemExit(1)
+PY
+    then
+        echo "--push-by-digest must name one plain lowercase registry repository" >&2
+        exit 2
+    fi
+
+    METADATA_FILE=$(python3 - "$ROOT" "$METADATA_FILE" <<'PY'
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1]).resolve()
+path = Path(sys.argv[2])
+if not path.is_absolute():
+    raise SystemExit("metadata path must be absolute")
+resolved = path.resolve(strict=False)
+try:
+    resolved.relative_to(root)
+except ValueError:
+    pass
+else:
+    raise SystemExit("metadata path must be outside the candidate repository")
+if resolved.exists() or resolved.is_symlink():
+    raise SystemExit("metadata path must not already exist")
+if not resolved.parent.is_dir():
+    raise SystemExit("metadata parent must already exist")
+print(resolved)
+PY
+    ) || {
+        echo "invalid --metadata-file path" >&2
+        exit 2
+    }
+
+    for argument in "$@"; do
+        case "$argument" in
+            --tag|--tag=*|-t|-t=*|--output|--output=*|-o|-o=*|--push|--load|--metadata-file|--metadata-file=*)
+                echo "digest-only mode forbids alternate tag/output publication arguments" >&2
+                exit 2
+                ;;
+        esac
+    done
+fi
 
 CONTEXT=$(mktemp -d "${TMPDIR:-/tmp}/gnostoa-candidate.XXXXXX")
 trap 'rm -rf "$CONTEXT"' EXIT INT TERM
@@ -133,6 +243,19 @@ fi
 rm -f "$CONTEXT/meta/.expected-modes" "$CONTEXT/meta/.actual-modes"
 
 MANIFEST_SHA256=$(sha256sum "$CONTEXT/meta/.gnostoa-source-files" | cut -d' ' -f1)
+
+if [ "$PUSH_BY_DIGEST_SET" -ne 0 ]; then
+    exec docker buildx build \
+        --target "$TARGET" \
+        --build-context "candidate=$CONTEXT" \
+        --build-arg "MANIFEST_SHA256=$MANIFEST_SHA256" \
+        --build-arg "VCS_REF=$VCS_REF" \
+        --build-arg "KIT_VERSION=$KIT_VERSION" \
+        --output "type=image,name=$PUSH_BY_DIGEST,push=true,push-by-digest=true" \
+        --metadata-file "$METADATA_FILE" \
+        "$@" \
+        "$ROOT"
+fi
 
 exec docker build \
     --target "$TARGET" \
