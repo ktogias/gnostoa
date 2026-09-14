@@ -1,4 +1,4 @@
-name: R2A protected current-advisory verification
+name: R2A dormant current-advisory consumer verification
 
 on:
   pull_request:
@@ -25,7 +25,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  protected-current-advisory:
+  dormant-current-advisory-consumer:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -48,7 +48,7 @@ jobs:
             --require-hashes \
             -r requirements/development.lock
 
-      - name: Verify protected activation trust-domain sources
+      - name: Verify dormant consumer trust-domain sources
         run: |
           python -m ruff format --check \
             tools/review_check.py \
@@ -72,10 +72,10 @@ jobs:
             tools/review_policy.py \
             tools/review_protected.py
 
-      - name: Run protected activation contract tests
+      - name: Run dormant consumer contract tests
         run: |
           PYTHONPATH=. python tests/test_review_assurance_p2b_activation_red.py
           PYTHONPATH=. python tests/test_review_assurance_p2b_b1_dormancy_red.py
 
-      - name: Exercise the real authority-bound prior-integrated OCI judge
+      - name: Exercise candidate implementation against authority-bound OCI P2a
         run: PYTHONPATH=. python ci/review_live_smoke.py
