@@ -23,9 +23,7 @@ DECISION_PATH = (
     / "decisions"
     / "0070-protect-r2a-b1-outer-consumer-authority-separately.md"
 )
-WORKFLOW_PATH = (
-    ROOT / ".github" / "workflows" / "r2a-protected-current-advisory.yml"
-)
+WORKFLOW_PATH = ROOT / ".github" / "workflows" / "r2a-protected-current-advisory.yml"
 GUARDRAILS_PATH = ROOT / "policy" / "guardrails.yaml"
 FOCUSED_TEST_PATH = "tests/test_review_assurance_p2b_consumer_authority_red.py"
 
@@ -157,9 +155,7 @@ class ReviewAssuranceP2bConsumerAuthorityRedTests(unittest.TestCase):
 
     def test_dedicated_workflow_covers_outer_consumer_authority(self) -> None:
         workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
-        self.assertIn(
-            '- "tasks/issue-11-r2a-current-advisory-consumer.json"', workflow
-        )
+        self.assertIn('- "tasks/issue-11-r2a-current-advisory-consumer.json"', workflow)
         self.assertIn(f'- "{FOCUSED_TEST_PATH}"', workflow)
         self.assertIn(f"python -m ruff format --check \\\n", workflow)
         self.assertGreaterEqual(workflow.count(FOCUSED_TEST_PATH), 4)
