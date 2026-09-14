@@ -6,9 +6,11 @@ on:
       - ".github/workflows/r2a-protected-current-advisory.yml"
       - "Dockerfile"
       - "ci/build-runtime"
+      - "ci/review_b15_runtime_smoke.py"
       - "ci/review_live_smoke.py"
       - "ci/review_live_timeout_cleanup.py"
       - "knowledge/decisions/0070-protect-r2a-b1-outer-consumer-authority-separately.md"
+      - "knowledge/decisions/0071-add-docker-client-to-r2a-b1-runtime.md"
       - "policy/guardrails.yaml"
       - "pyproject.toml"
       - "requirements/development.lock"
@@ -17,6 +19,7 @@ on:
       - "tasks/issue-11-r2a-current-advisory.json"
       - "tasks/issue-11-r2a-current-advisory-consumer.json"
       - "tests/test_review_assurance_p2b_activation_red.py"
+      - "tests/test_review_assurance_p2b_b15_runtime_red.py"
       - "tests/test_review_assurance_p2b_b1_dormancy_red.py"
       - "tests/test_review_assurance_p2b_b1_error_paths_red.py"
       - "tests/test_review_assurance_p2b_consumer_authority_red.py"
@@ -83,9 +86,11 @@ jobs:
             tools/review_check.py \
             tools/review_current.py \
             tools/review_live.py \
+            ci/review_b15_runtime_smoke.py \
             ci/review_live_smoke.py \
             ci/review_live_timeout_cleanup.py \
             tests/test_review_assurance_p2b_activation_red.py \
+            tests/test_review_assurance_p2b_b15_runtime_red.py \
             tests/test_review_assurance_p2b_b1_dormancy_red.py \
             tests/test_review_assurance_p2b_b1_error_paths_red.py \
             tests/test_review_assurance_p2b_consumer_authority_red.py
@@ -93,9 +98,11 @@ jobs:
             tools/review_check.py \
             tools/review_current.py \
             tools/review_live.py \
+            ci/review_b15_runtime_smoke.py \
             ci/review_live_smoke.py \
             ci/review_live_timeout_cleanup.py \
             tests/test_review_assurance_p2b_activation_red.py \
+            tests/test_review_assurance_p2b_b15_runtime_red.py \
             tests/test_review_assurance_p2b_b1_dormancy_red.py \
             tests/test_review_assurance_p2b_b1_error_paths_red.py \
             tests/test_review_assurance_p2b_consumer_authority_red.py
@@ -105,7 +112,8 @@ jobs:
             tools/review_live.py \
             tools/review_model.py \
             tools/review_policy.py \
-            tools/review_protected.py
+            tools/review_protected.py \
+            ci/review_b15_runtime_smoke.py
 
       # Native execution is an explicit fallback here because these tests exercise
       # the host-side Docker orchestrator itself. Running them inside the candidate
@@ -115,9 +123,13 @@ jobs:
       - name: Run dormant consumer contract tests via native orchestration fallback
         run: |
           PYTHONPATH=. python tests/test_review_assurance_p2b_activation_red.py
+          PYTHONPATH=. python tests/test_review_assurance_p2b_b15_runtime_red.py
           PYTHONPATH=. python tests/test_review_assurance_p2b_b1_dormancy_red.py
           PYTHONPATH=. python tests/test_review_assurance_p2b_b1_error_paths_red.py
           PYTHONPATH=. python tests/test_review_assurance_p2b_consumer_authority_red.py
+
+      - name: Verify pinned Docker client in exact dormant B1.5 runtime
+        run: PYTHONPATH=. python ci/review_b15_runtime_smoke.py
 
       - name: Exercise candidate implementation against authority-bound OCI P2a via native orchestration fallback
         run: PYTHONPATH=. python ci/review_live_smoke.py
