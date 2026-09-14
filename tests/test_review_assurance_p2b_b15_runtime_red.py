@@ -58,6 +58,8 @@ class ReviewAssuranceP2bB15RuntimeRedTests(unittest.TestCase):
     def test_runtime_smoke_proves_client_only_daemon_absence(self) -> None:
         smoke = SMOKE.read_text(encoding="utf-8")
         self.assertIn("command -v docker >/dev/null", smoke)
+        self.assertIn("dpkg-query -W -f='${Version}' docker-cli", smoke)
+        self.assertIn("f'\"{DOCKER_CLI_VERSION}\"; '", smoke)
         self.assertIn("! command -v dockerd >/dev/null", smoke)
         self.assertIn("! command -v containerd >/dev/null", smoke)
         self.assertIn("! dpkg-query -W docker.io >/dev/null 2>&1", smoke)
