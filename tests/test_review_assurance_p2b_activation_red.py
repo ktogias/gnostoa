@@ -6,6 +6,7 @@ import inspect
 import io
 import json
 import os
+import sys
 import tempfile
 import unittest
 from datetime import UTC, datetime
@@ -353,6 +354,52 @@ class ReviewAssuranceP2bActivationRedTests(unittest.TestCase):
                         "/usr/bin/docker", review_current._docker_executable()
                     )
                     which.assert_called_once_with("docker", path=os.defpath)
+
+    def test_docker_output_bound_terminates_before_process_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory)
+            script = (
+                "import sys,time;"
+                f"sys.stdout.buffer.write(b'x'*{review_current._MAX_RUNTIME_OUTPUT_BYTES + 1});"
+                "sys.stdout.flush();"
+                "time.sleep(5)"
+            )
+            with mock.patch.object(
+                review_current,
+                "_docker_executable",
+                return_value=sys.executable,
+            ):
+                with self.assertRaisesRegex(
+                    review_current.ProtectedJudgeUnavailable,
+                    "stdout exceeds the bounded size",
+                ):
+                    review_current._run_docker(
+                        ["-c", script],
+                        config_dir=config,
+                        timeout=1,
+                    )
+
+    def test_malformed_installed_schema_is_tool_error(self) -> None:
+        input_document, _ = _protected_looking_input()
+        malformed = json.JSONDecodeError("synthetic malformed schema", "{", 0)
+        with (
+            mock.patch.object(review_live, "_schema_errors", side_effect=malformed),
+            mock.patch.object(
+                review_live,
+                "acquire_gnostoa_current_advisory_bundle",
+            ) as acquire,
+        ):
+            code, payload = review_live.evaluate_gnostoa_current_advisory(
+                input_document
+            )
+
+        self.assertEqual(2, code)
+        self.assertEqual("TOOL_ERROR", payload["error"]["code"])
+        self.assertIn(
+            "protected current-advisory authority is invalid",
+            payload["error"]["message"],
+        )
+        acquire.assert_not_called()
 
     def test_current_advisory_still_rejects_caller_selected_policy(self) -> None:
         input_document, policy = _protected_looking_input()
