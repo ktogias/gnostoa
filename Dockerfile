@@ -16,7 +16,8 @@ ARG UTIL_LINUX_VERSION=2.41.5-0+deb13u1
 ARG UTIL_LINUX_BSDUTILS_VERSION=1:2.41.5-0+deb13u1
 ARG UTIL_LINUX_LOGIN_VERSION=1:4.16.0-2+really2.41.5-0+deb13u1
 
-RUN apt-get update \
+RUN test "${DOCKER_CLI_VERSION}" = "26.1.5+dfsg1-9+deb13u1" \
+    && apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
       "git=${GIT_PACKAGE_VERSION}" \
       "docker-cli=${DOCKER_CLI_VERSION}" \
