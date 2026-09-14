@@ -12,7 +12,9 @@ from tools import review_check
 
 
 class ReviewAssuranceP2bB1DormancyRedTests(unittest.TestCase):
-    def test_candidate_cli_keeps_prior_integrated_current_advisory_dormant(self) -> None:
+    def test_candidate_cli_keeps_prior_integrated_current_advisory_dormant(
+        self,
+    ) -> None:
         input_document = {
             "evaluation_context": {
                 "mode": "current_advisory",
