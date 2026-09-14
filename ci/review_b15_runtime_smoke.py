@@ -67,7 +67,10 @@ def main() -> int:
             env=environment,
         )
 
-    if len(completed.stdout) > MAX_OUTPUT_BYTES or len(completed.stderr) > MAX_OUTPUT_BYTES:
+    if (
+        len(completed.stdout) > MAX_OUTPUT_BYTES
+        or len(completed.stderr) > MAX_OUTPUT_BYTES
+    ):
         raise RuntimeError("B1.5 runtime smoke output exceeded its bound")
     if completed.returncode != 0:
         stderr = completed.stderr.decode("utf-8", errors="replace").strip()
