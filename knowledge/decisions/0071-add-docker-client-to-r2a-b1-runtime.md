@@ -64,7 +64,7 @@ Introduce one bounded **B1.5** precursor before P2b-B2:
 1. Add exactly the version-pinned Debian package `docker-cli=26.1.5+dfsg1-9+deb13u1` to the Gnostoa base/runtime image.
 2. Do not install the `docker.io` daemon package, `dockerd`, containerd, or any other daemon solely for this precursor.
 3. Keep `knowledge review-check` current-advisory prior-integrated routing dormant. This slice **does not activate P2b-B2**.
-4. Verify the exact candidate runtime in centralized CI: it must run as the existing non-root `kit` user, contain the exact selected `docker-cli` package and executable, and contain no `dockerd` executable.
+4. Verify the exact candidate runtime in centralized CI: it must run as the existing non-root `kit` user, contain the exact selected `docker-cli` package and executable, contain neither the `docker.io` nor `containerd` daemon package, and contain neither a `dockerd` nor `containerd` executable.
 5. Do not mount or otherwise expose the host Docker socket to the dormant runtime. A later B2 activation must use a separately bounded execution substrate and must not treat the host Docker socket as implicit authority.
 6. After this B1.5 source is integrated, independently materialize that exact integrated source as a new digest-only OCI outer-consumer identity using the rolling Decision-0068/0069 pattern.
 7. Update the protected outer-consumer authority to the exact materialized B1.5 identity before any B2 candidate may use the new client capability.
