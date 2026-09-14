@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.gnostoa.dev/review-protected-consumer-authority.schema.json",
+  "$id": "https://ktogias.github.io/gnostoa/schemas/v1/review-protected-consumer-authority.schema.json",
   "title": "Gnostoa protected current-advisory outer-consumer authority",
   "type": "object",
   "additionalProperties": false,
