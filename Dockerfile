@@ -4,6 +4,7 @@ ARG PYTHON_BASE_IMAGE=python:3.12-slim@sha256:2c941e860699f878900b0edc2403613c23
 FROM ${PYTHON_BASE_IMAGE} AS base
 
 ARG GIT_PACKAGE_VERSION=1:2.47.3-0+deb13u1
+ARG DOCKER_CLI_VERSION=26.1.5+dfsg1-9+deb13u1
 
 # Debian security update for the util-linux source package already present in the
 # pinned base image. Every version below is pinned explicitly because the binary
@@ -17,6 +18,7 @@ ARG UTIL_LINUX_LOGIN_VERSION=1:4.16.0-2+really2.41.5-0+deb13u1
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
       "git=${GIT_PACKAGE_VERSION}" \
+      "docker-cli=${DOCKER_CLI_VERSION}" \
     && DEBIAN_FRONTEND=noninteractive apt-get install --yes --only-upgrade \
       --no-install-recommends \
       "bsdutils=${UTIL_LINUX_BSDUTILS_VERSION}" \
