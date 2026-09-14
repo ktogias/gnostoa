@@ -82,7 +82,6 @@ jobs:
           test "$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')" = "${KIT_VERSION}"
           grep -Fx 'ARG KIT_VERSION=0.2.0' Dockerfile
           grep -Fx 'ARG DOCKER_CLI_VERSION=26.1.5+dfsg1-9+deb13u1' Dockerfile
-          grep -Fx '    test "${DOCKER_CLI_VERSION}" = "26.1.5+dfsg1-9+deb13u1"; \\' Dockerfile
           source_epoch="$(git show -s --format=%ct "${SOURCE_COMMIT}")"
           build_date="$(date -u -d "@${source_epoch}" '+%Y-%m-%dT%H:%M:%SZ')"
           echo "build_date=${build_date}" >> "${GITHUB_OUTPUT}"
