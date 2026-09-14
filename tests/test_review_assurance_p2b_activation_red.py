@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from unittest import mock
 
-from tools import review_check, review_live
+from tools import review_check, review_current, review_live
 from tools.review_protected import ProtectedMainDocument
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -200,7 +200,9 @@ class ReviewAssuranceP2bActivationRedTests(unittest.TestCase):
                 side_effect=execute,
             ),
         ):
-            code, payload = review_live.evaluate_gnostoa_current_advisory(input_document)
+            code, payload = review_live.evaluate_gnostoa_current_advisory(
+                input_document
+            )
 
         self.assertEqual(3, code)
         self.assertEqual("INCOMPLETE", payload["outcome"])
@@ -221,7 +223,9 @@ class ReviewAssuranceP2bActivationRedTests(unittest.TestCase):
         input_document, _ = _protected_looking_input()
         authority = input_document["authority"]
         assert isinstance(authority, dict)
-        authority["policy_digest"] = "sha256:" + ("0" * 64)  # pragma: allowlist secret -- synthetic mismatch digest
+        authority["policy_digest"] = "sha256:" + (
+            "0" * 64
+        )  # pragma: allowlist secret -- synthetic mismatch digest
         protected = _protected_document()
 
         with (
@@ -232,7 +236,9 @@ class ReviewAssuranceP2bActivationRedTests(unittest.TestCase):
             ),
             mock.patch.object(review_live, "_execute_semantic_review") as execute,
         ):
-            code, payload = review_live.evaluate_gnostoa_current_advisory(input_document)
+            code, payload = review_live.evaluate_gnostoa_current_advisory(
+                input_document
+            )
 
         self.assertEqual(2, code)
         self.assertEqual("MALFORMED_INVOCATION", payload["error"]["code"])
@@ -263,7 +269,9 @@ class ReviewAssuranceP2bActivationRedTests(unittest.TestCase):
                 ),
             ),
         ):
-            code, payload = review_live.evaluate_gnostoa_current_advisory(input_document)
+            code, payload = review_live.evaluate_gnostoa_current_advisory(
+                input_document
+            )
 
         self.assertEqual(3, code)
         self.assertEqual("INCOMPLETE", payload["outcome"])
@@ -285,22 +293,24 @@ class ReviewAssuranceP2bActivationRedTests(unittest.TestCase):
                 },
                 clear=False,
             ):
-                environment = review_live._docker_environment(config)
+                environment = review_current._docker_environment(config)
                 self.assertEqual(
                     {
                         "DOCKER_CONFIG": str(config),
                         "HOME": str(config),
-                        "LANG": "C",
                         "LC_ALL": "C",
+                        "PATH": os.defpath,
                     },
                     environment,
                 )
                 with mock.patch.object(
-                    review_live.shutil,
+                    review_current.shutil,
                     "which",
                     return_value="/usr/bin/docker",
                 ) as which:
-                    self.assertEqual("/usr/bin/docker", review_live._docker_executable())
+                    self.assertEqual(
+                        "/usr/bin/docker", review_current._docker_executable()
+                    )
                     which.assert_called_once_with("docker", path=os.defpath)
 
     def test_current_advisory_still_rejects_caller_selected_policy(self) -> None:
@@ -336,7 +346,9 @@ class ReviewAssuranceP2bActivationRedTests(unittest.TestCase):
         self.assertEqual(2, code)
         payload = json.loads(stdout.getvalue())
         self.assertEqual("CONFIGURATION_ERROR", payload["error"]["code"])
-        self.assertIn("forbids caller-selected --change-class", payload["error"]["message"])
+        self.assertIn(
+            "forbids caller-selected --change-class", payload["error"]["message"]
+        )
 
 
 if __name__ == "__main__":
