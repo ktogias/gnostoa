@@ -97,6 +97,16 @@ class ReviewAssuranceP2bAuthorityLandingTests(unittest.TestCase):
             "P2b-A v1 must not admit qualification facts beyond the protected empty #10 snapshot",
         )
 
+        malformed_timestamp = copy.deepcopy(bundle)
+        qualification = malformed_timestamp["qualification_snapshot"]
+        assert isinstance(qualification, dict)
+        qualification["observed_at"] = "not-a-timestamp"
+        self.assertNotEqual(
+            [],
+            list(validator.iter_errors(malformed_timestamp)),
+            "P2b-A v1 date-time fields must reject malformed timestamps",
+        )
+
     def test_p2b_a_candidate_landing_declares_exact_intended_bindings(self) -> None:
         self.assertTrue(
             BUNDLE_PATH.is_file(),
