@@ -123,7 +123,7 @@ guardrails:
     title: Specializations add demonstrated rules or vocabulary
     applies_to: [kit, adopting-projects]
     enforcement: review
-    owner: team:adopting-project-maintainers
+    owner: team:gnostoa-maintainers
     guidance: guidance/workflows/create-specialization.md#procedure
 
   - id: task-scoped-guidance
@@ -296,7 +296,7 @@ guardrails:
       - tests/test_tools.py::RuntimeTests.test_toolkit_lock_template_placeholders_fail_closed
       - tests/test_tools.py::RuntimeTests.test_runtime_lock_reports_unreplaced_template_placeholders_actionably
       - tests/test_tools.py::RuntimeTests.test_runtime_image_template_rejects_digest_only_replacement
-      - tests/test_tools.py::RuntimeTests.test_runtime_image_template_rejects_append_while_sentinel-remains
+      - tests/test_tools.py::RuntimeTests.test_runtime_image_template_rejects_append_while_sentinel_remains
       - tests/test_tools.py::RuntimeTests.test_runtime_lock_cli_reports_missing_reference_and_unobserved_runtime
       - tests/test_tools.py::RuntimeTests.test_runtime_lock_cli_reports_supplied_reference_match_without_observation_pass
       - tests/test_tools.py::RuntimeTests.test_runtime_lock_cli_reports_supplied_reference_mismatch_as_fail
