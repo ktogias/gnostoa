@@ -24,6 +24,13 @@ CHECKOUT_ACTION = "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
 ATTEST_ACTION = "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6"
 
 
+def _load_workflow() -> dict[str, object]:
+    workflow = yaml.load(WORKFLOW_PATH.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    if not isinstance(workflow, dict):
+        raise AssertionError("bootstrap publication workflow must be a YAML mapping")
+    return workflow
+
+
 class R2AP2bBootstrapPublicationTests(unittest.TestCase):
     def test_one_shot_p2a_bootstrap_publication_contract(self) -> None:
         self.assertTrue(
@@ -32,9 +39,7 @@ class R2AP2bBootstrapPublicationTests(unittest.TestCase):
             "publisher exists for the exact integrated P2a source",
         )
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
-        workflow = yaml.load(workflow_text, Loader=yaml.BaseLoader)
-        self.assertIsInstance(workflow, dict)
-        assert isinstance(workflow, dict)
+        workflow = _load_workflow()
 
         self.assertEqual("Publish R2A P2a bootstrap OCI judge", workflow["name"])
         self.assertEqual(
@@ -149,6 +154,44 @@ class R2AP2bBootstrapPublicationTests(unittest.TestCase):
         self.assertNotIn(":latest", workflow_text)
         self.assertNotIn("RELEASE_VERSION", workflow_text)
         self.assertNotIn("workflow_dispatch", workflow_text)
+
+    def test_anonymous_reacquisition_revalidates_the_full_runtime_contract(self) -> None:
+        workflow = _load_workflow()
+        jobs = workflow["jobs"]
+        assert isinstance(jobs, dict)
+        publish = jobs["publish"]
+        assert isinstance(publish, dict)
+        steps = publish["steps"]
+        assert isinstance(steps, list)
+        matches = [
+            step
+            for step in steps
+            if isinstance(step, dict)
+            and step.get("name") == "Verify attestation and anonymous digest acquisition"
+        ]
+        self.assertEqual(1, len(matches))
+        run = matches[0].get("run")
+        self.assertIsInstance(run, str)
+        assert isinstance(run, str)
+
+        required_checks = (
+            "{{.Config.User}}",
+            '= "kit"',
+            '--entrypoint id "${digest_ref}" -u',
+            '--entrypoint id "${digest_ref}" -g',
+            '= "10001"',
+            '"org.opencontainers.image.version"',
+            '= "${KIT_VERSION}"',
+            'grep -Fx "tools/review_protected.py" /opt/gnostoa/.gnostoa-source-files',
+            'docker run --rm "${digest_ref}" self-check --skip-tests',
+        )
+        for required in required_checks:
+            with self.subTest(required=required):
+                self.assertIn(
+                    required,
+                    run,
+                    "anonymous OCI reacquisition must revalidate the full runtime contract",
+                )
 
     def test_bootstrap_publication_has_decision_and_guardrail_ownership(self) -> None:
         self.assertTrue(
