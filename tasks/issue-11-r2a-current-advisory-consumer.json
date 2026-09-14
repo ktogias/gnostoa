@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0",
+  "subject": {
+    "kind": "gnostoa-protected-main-consumer-record",
+    "value": "tasks/issue-11-r2a-current-advisory-consumer.json:v1"
+  },
+  "expected_consumer": {
+    "role": "current_advisory_outer_consumer",
+    "acquisition": "oci",
+    "source_revision": "0dfd7e5e28e8ccb87e687e0be9dfe846b644c9c3",
+    "source_tree": "23a5f083f26f40a8287bc2a724bcd5282a9afa5e",
+    "public_surface_digest": "sha256:72df7bfe999db7c84c199ff26424a434197865aaf95b3a5ae9e4e1026d8f5d45",
+    "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:fcefee5af6deb089e4b1cbe09e1a0d2f4820a56ac0a6be18faa4dd11b2ab01b0",
+    "runtime_revision": "0dfd7e5e28e8ccb87e687e0be9dfe846b644c9c3",
+    "supported_input_schema_versions": [
+      "1.0"
+    ],
+    "status": "accepted"
+  },
+  "acquired_consumer": {
+    "role": "current_advisory_outer_consumer",
+    "acquisition": "oci",
+    "source_revision": "0dfd7e5e28e8ccb87e687e0be9dfe846b644c9c3",
+    "source_tree": "23a5f083f26f40a8287bc2a724bcd5282a9afa5e",
+    "public_surface_digest": "sha256:72df7bfe999db7c84c199ff26424a434197865aaf95b3a5ae9e4e1026d8f5d45",
+    "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:fcefee5af6deb089e4b1cbe09e1a0d2f4820a56ac0a6be18faa4dd11b2ab01b0",
+    "runtime_revision": "0dfd7e5e28e8ccb87e687e0be9dfe846b644c9c3",
+    "supported_input_schema_versions": [
+      "1.0"
+    ],
+    "status": "accepted"
+  },
+  "materialization": {
+    "protected_main_revision": "28cc416480a5f101b3031a8de15ac7d4edb234ea",
+    "workflow_run": "34847802228",
+    "attestation_id": "47345171",
+    "rekor_log_index": "2831113296",
+    "receipt": "https://github.com/ktogias/gnostoa/issues/11#issuecomment-5664611991"
+  }
+}
