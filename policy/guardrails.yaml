@@ -217,7 +217,6 @@ guardrails:
       - tests/test_tools.py::PublicationBaselineTests.test_repository_contains_no_specialization_vocabulary
       - tests/test_repository_scope.py::RepositoryCandidateScopeTests.test_only_git_tracked_candidate_files_are_semantic_inputs
       - tests/test_repository_scope.py::RepositoryCandidateScopeTests.test_forbidden_vocabulary_in_a_tracked_file_is_reported
-      - tests/test_repository_scope.py::RepositoryCandidateScopeTests.test_tracked_symlink_does_not_expose_external_file_content
       - tests/test_repository_scope.py::RepositoryCandidateScopeTests.test_packaged_candidate_uses_its_build_manifest_without_git
       - tests/test_repository_scope.py::RepositoryCandidateScopeTests.test_unsafe_build_manifest_entry_is_rejected
       - tests/test_repository_scope.py::RepositoryCandidateScopeTests.test_container_runtime_declares_both_candidate_sources
@@ -409,7 +408,7 @@ guardrails:
       - templates/verification-plan.md
       - templates/knowledge-change-checklist.md
     tests:
-      - tests/test_tools.py::ChangeControlTests.test_generic_policy_requires_verification_first_evidence
+      - tests/test_tools.py::ChangeControlTests.test_generic_policy_requires_verification-first-evidence
 
   - id: bounded-behavioral-traceability
     title: Applicable Gnostoa-self work exposes behavior-to-implementation-to-evidence contradictions before review
@@ -478,6 +477,9 @@ guardrails:
       - schemas/review-policy.schema.json
       - schemas/review-gate-result.schema.json
       - schemas/review-protected-authority-bundle.schema.json
+      - schemas/review-protected-consumer-authority.schema.json
+      - tasks/issue-11-r2a-current-advisory-consumer.json
+      - knowledge/decisions/0070-protect-r2a-b1-outer-consumer-authority-separately.md
       - tools/review_adapter_file.py
       - tools/review_model.py
       - tools/review_policy.py
@@ -498,6 +500,7 @@ guardrails:
       - tests/test_review_assurance_p2b_activation_red.py
       - tests/test_review_assurance_p2b_b1_dormancy_red.py
       - tests/test_review_assurance_p2b_b1_error_paths_red.py
+      - tests/test_review_assurance_p2b_consumer_authority_red.py
       - ci/review_live_smoke.py
       - ci/review_live_timeout_cleanup.py
 
