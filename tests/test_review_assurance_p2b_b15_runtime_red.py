@@ -55,6 +55,14 @@ class ReviewAssuranceP2bB15RuntimeRedTests(unittest.TestCase):
         self.assertIn(f"PYTHONPATH=. python {FOCUSED_TEST}", workflow)
         self.assertIn(f"PYTHONPATH=. python {SMOKE_PATH}", workflow)
 
+    def test_runtime_smoke_proves_client_only_daemon_absence(self) -> None:
+        smoke = SMOKE.read_text(encoding="utf-8")
+        self.assertIn("command -v docker >/dev/null", smoke)
+        self.assertIn("! command -v dockerd >/dev/null", smoke)
+        self.assertIn("! command -v containerd >/dev/null", smoke)
+        self.assertIn("! dpkg-query -W docker.io >/dev/null 2>&1", smoke)
+        self.assertIn("! dpkg-query -W containerd >/dev/null 2>&1", smoke)
+
     def test_runtime_smoke_owns_and_confirms_container_cleanup(self) -> None:
         smoke = SMOKE.read_text(encoding="utf-8")
         self.assertIn('"create"', smoke)
