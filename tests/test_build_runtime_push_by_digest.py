@@ -37,7 +37,7 @@ def _invoke(
     root: Path, scratch: Path, *arguments: str
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
     fake_bin = scratch / "fake-bin"
-    fake_bin.mkdir()
+    fake_bin.mkdir(exist_ok=True)
     capture = scratch / "docker-arguments"
     docker = fake_bin / "docker"
     docker.write_text(
