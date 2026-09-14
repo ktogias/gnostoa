@@ -25,6 +25,9 @@ concurrency:
   group: r2a-protected-current-advisory-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  GNOSTOA_R2A_CANDIDATE_IMAGE: gnostoa-r2a-b1:${{ github.event.pull_request.head.sha || github.sha }}
+
 jobs:
   dormant-current-advisory-consumer:
     runs-on: ubuntu-24.04
@@ -34,6 +37,8 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
 
       - name: Set up Python 3.12
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
@@ -41,6 +46,16 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: requirements/development.lock
+
+      - name: Build and self-check the exact candidate runtime
+        run: |
+          set -eu
+          candidate_commit=$(git rev-parse HEAD)
+          test "${candidate_commit}" = "${{ github.event.pull_request.head.sha || github.sha }}"
+          GNOSTOA_CANDIDATE_REF="${candidate_commit}" \
+          GNOSTOA_KIT_VERSION=0.2.0 \
+            ./ci/build-runtime --tag "${GNOSTOA_R2A_CANDIDATE_IMAGE}"
+          docker run --rm "${GNOSTOA_R2A_CANDIDATE_IMAGE}" self-check
 
       - name: Install exact development dependencies
         run: |
@@ -75,13 +90,18 @@ jobs:
             tools/review_policy.py \
             tools/review_protected.py
 
-      - name: Run dormant consumer contract tests
+      # Native execution is an explicit fallback here because these tests exercise
+      # the host-side Docker orchestrator itself. Running them inside the candidate
+      # runtime would require exposing a Docker daemon/socket and CLI to that runtime,
+      # which would weaken the isolation boundary being tested. The exact candidate
+      # runtime was built and self-checked immediately above.
+      - name: Run dormant consumer contract tests via native orchestration fallback
         run: |
           PYTHONPATH=. python tests/test_review_assurance_p2b_activation_red.py
           PYTHONPATH=. python tests/test_review_assurance_p2b_b1_dormancy_red.py
 
-      - name: Exercise candidate implementation against authority-bound OCI P2a
+      - name: Exercise candidate implementation against authority-bound OCI P2a via native orchestration fallback
         run: PYTHONPATH=. python ci/review_live_smoke.py
 
-      - name: Verify timed-out protected Docker run cleanup
+      - name: Verify timed-out protected Docker run cleanup via native orchestration fallback
         run: PYTHONPATH=. python ci/review_live_timeout_cleanup.py
