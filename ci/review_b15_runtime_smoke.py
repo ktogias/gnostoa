@@ -124,7 +124,9 @@ def _container_exists(
             message or "B1.5 runtime container cleanup could not be inspected"
         )
 
-    matches = [line for line in stdout.decode("ascii", errors="strict").splitlines() if line]
+    matches = [
+        line for line in stdout.decode("ascii", errors="strict").splitlines() if line
+    ]
     if len(matches) > 1:
         raise RuntimeError("B1.5 runtime cleanup matched multiple containers")
     return bool(matches)
