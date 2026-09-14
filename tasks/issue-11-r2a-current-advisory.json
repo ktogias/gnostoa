@@ -1,4 +1,5 @@
 {
+  "schema_version": "1.0",
   "authority": {
     "subject": {
       "kind": "gnostoa-protected-main-record",
