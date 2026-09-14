@@ -1,0 +1,51 @@
+---
+okf_version: "0.2"
+title: Materialize the integrated R2A P2b-B1 outer consumer as a prior-effective digest-only OCI identity
+status: draft
+---
+
+# Decision 0069: Materialize the integrated R2A P2b-B1 outer consumer as a prior-effective digest-only OCI identity
+
+## Context
+
+Decision 0067 requires current-advisory trust to come from previously accepted evidence rather than candidate-controlled bytes. Decision 0068 established the first rolling bootstrap step by materializing exact integrated P2a as a one-shot, digest-only OCI judge.
+
+PR #248 has now integrated the dormant P2b-B1 outer current-advisory consumer into protected `main` at exact source revision `0dfd7e5e28e8ccb87e687e0be9dfe846b644c9c3` and tree `23a5f083f26f40a8287bc2a724bcd5282a9afa5e`. The B1 CLI remains dormant by design. Issue #11 comment `5661521818` records the anti-self-reference refinement: before P2b-B2 may activate the protected route, the outer consumer itself must become independently selected and prior-effective.
+
+The owner authorized the complete intermediate transition through B1 materialization, protected authority update, and B2 convergence in issue #11 comment `5663169718`. The final B2 activation merge remains separately owner-gated.
+
+## Decision
+
+Reuse the Decision 0068 rolling prior-integrated OCI pattern for the exact integrated B1 outer consumer.
+
+A dedicated one-shot protected-main workflow SHALL:
+
+1. admit only the first `push` to protected `main` that lands the workflow itself immediately after source commit `0dfd7e5e28e8ccb87e687e0be9dfe846b644c9c3`;
+2. refuse manual dispatch, retries and any context whose `event.before`, actor, branch, repository, run attempt, workflow identity, source commit or source tree differs from the selected transition;
+3. check out the exact integrated B1 source separately and derive its public-surface digest from those exact source bytes before any registry write;
+4. build and verify that exact runtime locally before authentication, including non-root identity, OCI source labels, public-surface digest, candidate source manifest, the protected acquisition module, the dormant outer consumer (`tools/review_live.py`), the protected Docker runner (`tools/review_current.py`), and `knowledge self-check`;
+5. perform one digest-only GHCR publication using the existing hardened `ci/build-runtime --push-by-digest` path, creating no remote tag;
+6. obtain the authoritative registry manifest digest from bounded BuildKit metadata and reacquire the image by that digest;
+7. verify the exact source revision and public-surface digest from the reacquired runtime;
+8. attest that exact registry manifest, verify the attestation, log out, and prove anonymous digest reacquisition with the same runtime checks; and
+9. emit a bounded receipt carrying the source commit, source tree, derived public-surface digest, OCI digest and workflow-run identity.
+
+The resulting `ghcr.io/ktogias/gnostoa@sha256:...` reference is the immutable B1 outer-consumer identity eligible for a subsequent protected authority update. Materialization alone does not activate P2b-B2 and does not establish semantic PASS or reviewer qualification.
+
+## Failure and rerun rule
+
+There is **no blind rerun** after a workflow attempt reaches the registry write boundary. A failure before the write effect may be repaired through a new verification-first change. An ambiguous or post-write failure must first reconcile read-only GHCR and attestation state against the exact source revision, source tree and derived public-surface digest. Existing matching immutable state is evidence to be retained, not permission to publish again.
+
+## Relationship to P2b-B2
+
+The intended trust chain is:
+
+`OCI(P2a) -> B1 candidate -> protected B1 integration -> OCI(B1) -> protected consumer-authority update -> P2b-B2 candidate`.
+
+P2b-B2 may consume only the independently materialized, protected-authority-bound B1 outer consumer. Candidate B2 bytes remain untrusted input/transport and must not become the provenance source for the final current-advisory result.
+
+After final P2b integration, the rolling invariant still requires materializing/promoting OCI(P2b) for the next transition.
+
+## Non-goals
+
+This is not a release. It creates no mutable tag, release object, deployment, package version, #15 workflow effect, qualified reviewer domain, semantic PASS, or B2 activation. It does not weaken the truthful empty #10 qualification state; `INCOMPLETE / QUORUM_UNMET` and `binding:false` remain legitimate outcomes.
