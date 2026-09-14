@@ -16,16 +16,16 @@ concurrency:
 env:
   KIT_VERSION: "0.2.0"
   IMAGE_NAME: ghcr.io/ktogias/gnostoa
-  IMAGE_TAG: r2a-p2a-d66d1830d724d759db6ec87e1f8d5dcc0847f221
-  IMAGE_REF: ghcr.io/ktogias/gnostoa:r2a-p2a-d66d1830d724d759db6ec87e1f8d5dcc0847f221
   SOURCE_COMMIT: d66d1830d724d759db6ec87e1f8d5dcc0847f221
   SOURCE_TREE: 384df86fec31208a02371b63722f903e63404134
   PUBLIC_DIGEST: sha256:ee2418fccd7e8907b8b8f60b0e0c7663e93c3e9abb66d9496efd1c3666ca1845
 
 jobs:
   authorize:
-    name: authorize protected-main bootstrap publication
+    name: authorize exact protected-main bootstrap transition
     runs-on: ubuntu-latest
+    env:
+      EVENT_BEFORE: ${{ github.event.before }}
     steps:
       - name: Refuse any context outside the admitted one-shot boundary
         shell: bash
@@ -39,10 +39,11 @@ jobs:
           test "${GITHUB_ACTOR}" = "ktogias"
           test "${GITHUB_TRIGGERING_ACTOR}" = "ktogias"
           test "${GITHUB_RUN_ATTEMPT}" = "1"
+          test "${EVENT_BEFORE}" = "${SOURCE_COMMIT}"
           test "${GITHUB_WORKFLOW_REF}" = "${GITHUB_REPOSITORY}/.github/workflows/publish-r2a-p2a-bootstrap-oci.yml@refs/heads/main"
 
   publish:
-    name: materialize exact integrated P2a judge
+    name: materialize exact integrated P2a judge by digest
     needs: authorize
     runs-on: ubuntu-latest
     permissions:
@@ -53,18 +54,27 @@ jobs:
     outputs:
       registry-digest: ${{ steps.publish.outputs.registry_digest }}
     steps:
-      - name: Check out the exact integrated P2a source
+      - name: Check out the integrated bootstrap publisher
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
-          fetch-depth: 0
+          fetch-depth: 1
+
+      - name: Check out the exact prior-integrated P2a source separately
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          fetch-depth: 1
           ref: ${{ env.SOURCE_COMMIT }}
+          path: p2a-source
 
       - name: Verify exact source identity and derive deterministic build date
         id: source
         shell: bash
         run: |
           set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          cd p2a-source
           test "$(git rev-parse HEAD)" = "${SOURCE_COMMIT}"
           test "$(git rev-parse 'HEAD^{tree}')" = "${SOURCE_TREE}"
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
@@ -74,67 +84,18 @@ jobs:
           build_date="$(date -u -d "@${source_epoch}" '+%Y-%m-%dT%H:%M:%SZ')"
           echo "build_date=${build_date}" >> "${GITHUB_OUTPUT}"
 
-      - name: Authenticate to GHCR for the bounded write
-        shell: bash
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          printf '%s' "${GHCR_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
-
-      - name: Build exact source, publish once, and read back the registry digest
-        id: publish
+      - name: Build and verify the exact P2a image locally before any registry effect
         shell: bash
         env:
           BUILD_DATE: ${{ steps.source.outputs.build_date }}
         run: |
           set -euo pipefail
-
-          assert_tag_absent() {
-            local output status
-            set +e
-            output="$(docker buildx imagetools inspect "${IMAGE_REF}" 2>&1)"
-            status=$?
-            set -e
-            if [ "${status}" -eq 0 ]; then
-              echo "refusing to overwrite existing bootstrap image tag ${IMAGE_REF}" >&2
-              exit 1
-            fi
-            if ! grep -Eqi 'manifest unknown|not found' <<<"${output}"; then
-              echo "bootstrap tag absence was not established authoritatively" >&2
-              printf '%s\n' "${output}" >&2
-              exit 1
-            fi
-          }
-
-          verify_image() {
-            local reference="$1" actual
-            test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "${reference}")" = "linux/amd64"
-            test "$(docker image inspect --format '{{.Config.User}}' "${reference}")" = "kit"
-            test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "${reference}")" = "${KIT_VERSION}"
-            test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${reference}")" = "${SOURCE_COMMIT}"
-            test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.created"}}' "${reference}")" = "${BUILD_DATE}"
-            test "$(docker run --rm --entrypoint id "${reference}" -u)" = "10001"
-            test "$(docker run --rm --entrypoint id "${reference}" -g)" = "10001"
-            actual="$(docker run --rm --entrypoint python "${reference}" -m tools.cli surface-digest --root /opt/gnostoa)"
-            test "${actual}" = "${PUBLIC_DIGEST}"
-            docker run --rm --entrypoint sh "${reference}" -ec \
-              'test -f /opt/gnostoa/tools/review_protected.py; grep -Fx "tools/review_protected.py" /opt/gnostoa/.gnostoa-source-files >/dev/null'
-            docker run --rm "${reference}" self-check --skip-tests
-          }
-
-          assert_tag_absent
-          builder="gnostoa-r2a-p2a-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          docker buildx create \
-            --name "${builder}" \
-            --driver docker-container \
-            --use >/dev/null
-          trap 'docker buildx rm "${builder}" >/dev/null 2>&1 || true' EXIT
-
+          local_image="gnostoa-r2a-p2a-verify:${SOURCE_COMMIT}"
+          cd p2a-source
           GNOSTOA_CANDIDATE_REF="${SOURCE_COMMIT}" \
           GNOSTOA_KIT_VERSION="${KIT_VERSION}" \
-            ./ci/build-runtime \
-              --tag "${IMAGE_REF}" \
+            ../ci/build-runtime \
+              --tag "${local_image}" \
               --platform linux/amd64 \
               --pull \
               --no-cache \
@@ -143,25 +104,94 @@ jobs:
               --load \
               --build-arg BUILD_DATE="${BUILD_DATE}"
 
-          verify_image "${IMAGE_REF}"
-          assert_tag_absent
-          docker push "${IMAGE_REF}"
+          test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "${local_image}")" = "linux/amd64"
+          test "$(docker image inspect --format '{{.Config.User}}' "${local_image}")" = "kit"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "${local_image}")" = "${KIT_VERSION}"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${local_image}")" = "${SOURCE_COMMIT}"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.created"}}' "${local_image}")" = "${BUILD_DATE}"
+          test "$(docker run --rm --entrypoint id "${local_image}" -u)" = "10001"
+          test "$(docker run --rm --entrypoint id "${local_image}" -g)" = "10001"
+          actual="$(docker run --rm --entrypoint python "${local_image}" -m tools.cli surface-digest --root /opt/gnostoa)"
+          test "${actual}" = "${PUBLIC_DIGEST}"
+          docker run --rm --entrypoint sh "${local_image}" -ec \
+            'test -f /opt/gnostoa/tools/review_protected.py; grep -Fx "tools/review_protected.py" /opt/gnostoa/.gnostoa-source-files >/dev/null'
+          docker run --rm "${local_image}" self-check --skip-tests
+          docker image rm "${local_image}" >/dev/null
 
-          registry_digest="$(docker buildx imagetools inspect "${IMAGE_REF}" --format '{{.Manifest.Digest}}')"
-          if ! [[ "${registry_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "invalid registry manifest digest: ${registry_digest}" >&2
-            exit 1
-          fi
+      - name: Authenticate to GHCR for the single digest-only effect
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${GHCR_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+
+      - name: Publish the exact P2a image without a remote tag and read back its digest
+        id: publish
+        shell: bash
+        env:
+          BUILD_DATE: ${{ steps.source.outputs.build_date }}
+        run: |
+          set -euo pipefail
+          builder="gnostoa-r2a-p2a-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          metadata_file="${RUNNER_TEMP}/r2a-p2a-build-metadata.json"
+          test ! -e "${metadata_file}"
+
+          docker buildx create \
+            --name "${builder}" \
+            --driver docker-container \
+            --use >/dev/null
+          trap 'docker buildx rm "${builder}" >/dev/null 2>&1 || true' EXIT
+
+          cd p2a-source
+          GNOSTOA_CANDIDATE_REF="${SOURCE_COMMIT}" \
+          GNOSTOA_KIT_VERSION="${KIT_VERSION}" \
+            ../ci/build-runtime \
+              --push-by-digest "${IMAGE_NAME}" \
+              --metadata-file "${metadata_file}" \
+              --platform linux/amd64 \
+              --pull \
+              --no-cache \
+              --provenance=false \
+              --sbom=false \
+              --build-arg BUILD_DATE="${BUILD_DATE}"
+
+          registry_digest="$(python - "${metadata_file}" <<'PY'
+          import json
+          import re
+          import sys
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+          if not path.is_file() or path.is_symlink() or path.stat().st_size > 65536:
+              raise SystemExit("invalid bounded BuildKit metadata file")
+          metadata = json.loads(path.read_text(encoding="utf-8"))
+          if not isinstance(metadata, dict):
+              raise SystemExit("BuildKit metadata must be an object")
+          digest = metadata["containerimage.digest"]
+          if not isinstance(digest, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
+              raise SystemExit("invalid containerimage.digest")
+          print(digest)
+          PY
+          )"
           echo "registry_digest=${registry_digest}" >> "${GITHUB_OUTPUT}"
           printf 'r2a_p2a.registry_digest=%s\n' "${registry_digest}"
 
-          docker image rm "${IMAGE_REF}"
           digest_ref="${IMAGE_NAME}@${registry_digest}"
           docker pull "${digest_ref}"
-          verify_image "${digest_ref}"
-          test "$(docker buildx imagetools inspect "${IMAGE_REF}" --format '{{.Manifest.Digest}}')" = "${registry_digest}"
+          test "$(docker buildx imagetools inspect "${digest_ref}" --format '{{.Manifest.Digest}}')" = "${registry_digest}"
+          test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "${digest_ref}")" = "linux/amd64"
+          test "$(docker image inspect --format '{{.Config.User}}' "${digest_ref}")" = "kit"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "${digest_ref}")" = "${KIT_VERSION}"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${digest_ref}")" = "${SOURCE_COMMIT}"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.created"}}' "${digest_ref}")" = "${BUILD_DATE}"
+          actual="$(docker run --rm --entrypoint python "${digest_ref}" -m tools.cli surface-digest --root /opt/gnostoa)"
+          test "${actual}" = "${PUBLIC_DIGEST}"
+          docker run --rm --entrypoint sh "${digest_ref}" -ec \
+            'test -f /opt/gnostoa/tools/review_protected.py; grep -Fx "tools/review_protected.py" /opt/gnostoa/.gnostoa-source-files >/dev/null'
+          docker run --rm "${digest_ref}" self-check --skip-tests
 
-      - name: Attest the registry-read-back manifest digest
+      - name: Attest the digest-only registry manifest
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
         with:
           subject-name: ${{ env.IMAGE_NAME }}
@@ -177,33 +207,34 @@ jobs:
         run: |
           set -euo pipefail
           test "${REGISTRY_DIGEST}" != ""
-          test "$(docker buildx imagetools inspect "${IMAGE_REF}" --format '{{.Manifest.Digest}}')" = "${REGISTRY_DIGEST}"
-          gh attestation verify "oci://${IMAGE_NAME}@${REGISTRY_DIGEST}" --repo "${GITHUB_REPOSITORY}"
+          digest_ref="${IMAGE_NAME}@${REGISTRY_DIGEST}"
+          test "$(docker buildx imagetools inspect "${digest_ref}" --format '{{.Manifest.Digest}}')" = "${REGISTRY_DIGEST}"
+          gh attestation verify "oci://${digest_ref}" --repo "${GITHUB_REPOSITORY}"
 
           docker logout ghcr.io >/dev/null 2>&1 || true
-          docker image rm "${IMAGE_NAME}@${REGISTRY_DIGEST}" >/dev/null 2>&1 || true
+          docker image rm "${digest_ref}" >/dev/null 2>&1 || true
           anonymous_config="$(mktemp -d)"
           trap 'rm -rf "${anonymous_config}"' EXIT
-          DOCKER_CONFIG="${anonymous_config}" docker pull "${IMAGE_NAME}@${REGISTRY_DIGEST}"
+          DOCKER_CONFIG="${anonymous_config}" docker pull "${digest_ref}"
 
-          test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "${IMAGE_NAME}@${REGISTRY_DIGEST}")" = "linux/amd64"
-          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${IMAGE_NAME}@${REGISTRY_DIGEST}")" = "${SOURCE_COMMIT}"
-          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.created"}}' "${IMAGE_NAME}@${REGISTRY_DIGEST}")" = "${BUILD_DATE}"
-          actual="$(docker run --rm --entrypoint python "${IMAGE_NAME}@${REGISTRY_DIGEST}" -m tools.cli surface-digest --root /opt/gnostoa)"
+          test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "${digest_ref}")" = "linux/amd64"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${digest_ref}")" = "${SOURCE_COMMIT}"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.created"}}' "${digest_ref}")" = "${BUILD_DATE}"
+          actual="$(docker run --rm --entrypoint python "${digest_ref}" -m tools.cli surface-digest --root /opt/gnostoa)"
           test "${actual}" = "${PUBLIC_DIGEST}"
-          docker run --rm --entrypoint sh "${IMAGE_NAME}@${REGISTRY_DIGEST}" -ec \
+          docker run --rm --entrypoint sh "${digest_ref}" -ec \
             'test -f /opt/gnostoa/tools/review_protected.py'
 
           {
             echo "### D11-R2A/P2a bootstrap OCI judge"
             echo
             echo "This is a bootstrap judge materialization, not a release."
+            echo "No remote tag is created; the judge identity is the registry manifest digest."
             echo
             echo "- source commit: \`${SOURCE_COMMIT}\`"
             echo "- source tree: \`${SOURCE_TREE}\`"
             echo "- public-surface digest: \`${PUBLIC_DIGEST}\`"
-            echo "- OCI image: \`${IMAGE_NAME}@${REGISTRY_DIGEST}\`"
-            echo "- source-bound bootstrap tag: \`${IMAGE_TAG}\`"
+            echo "- OCI image: \`${digest_ref}\`"
             echo "- workflow run: \`${GITHUB_RUN_ID}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
 
