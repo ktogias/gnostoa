@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.gnostoa.dev/review-protected-consumer-authority.schema.json",
+  "title": "Gnostoa protected current-advisory outer-consumer authority",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "subject",
+    "expected_consumer",
+    "acquired_consumer",
+    "materialization"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "value"],
+      "properties": {
+        "kind": {
+          "const": "gnostoa-protected-main-consumer-record"
+        },
+        "value": {
+          "const": "tasks/issue-11-r2a-current-advisory-consumer.json:v1"
+        }
+      }
+    },
+    "expected_consumer": {
+      "$ref": "#/$defs/consumer"
+    },
+    "acquired_consumer": {
+      "$ref": "#/$defs/consumer"
+    },
+    "materialization": {
+      "$ref": "#/$defs/materialization"
+    }
+  },
+  "$defs": {
+    "consumer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "acquisition",
+        "source_revision",
+        "source_tree",
+        "public_surface_digest",
+        "runtime_image",
+        "runtime_revision",
+        "supported_input_schema_versions",
+        "status"
+      ],
+      "properties": {
+        "role": {
+          "const": "current_advisory_outer_consumer"
+        },
+        "acquisition": {
+          "const": "oci"
+        },
+        "source_revision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "source_tree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "public_surface_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "runtime_image": {
+          "type": "string",
+          "pattern": "^ghcr\\.io/ktogias/gnostoa@sha256:[0-9a-f]{64}$"
+        },
+        "runtime_revision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "supported_input_schema_versions": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32
+          }
+        },
+        "status": {
+          "const": "accepted"
+        }
+      }
+    },
+    "materialization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protected_main_revision",
+        "workflow_run",
+        "attestation_id",
+        "rekor_log_index",
+        "receipt"
+      ],
+      "properties": {
+        "protected_main_revision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "workflow_run": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        "attestation_id": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        "rekor_log_index": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        "receipt": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://github\\.com/ktogias/gnostoa/issues/11#issuecomment-[0-9]+$"
+        }
+      }
+    }
+  }
+}
