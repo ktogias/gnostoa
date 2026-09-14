@@ -27,6 +27,7 @@ from .review_protected import (
 
 _MAX_DOCUMENT_DEPTH = 64
 _OCI_DIGEST_PREFIX = "@sha256:"
+_GNOSTOA_SELF_REPOSITORY = "https://github.com/ktogias/gnostoa"
 _AUTHORITY_SUBJECT = {
     "kind": "gnostoa-protected-main-record",
     "value": "tasks/issue-11-r2a-current-advisory.json:v1",
@@ -197,6 +198,14 @@ def _validate_live_input(input_document: object) -> dict[str, Any]:
         raise ValueError(
             "review-check input does not satisfy its public schema: "
             + "; ".join(issues)
+        )
+    subject = input_document.get("subject")
+    if (
+        not isinstance(subject, dict)
+        or subject.get("repository") != _GNOSTOA_SELF_REPOSITORY
+    ):
+        raise ValueError(
+            "protected current-advisory route requires the Gnostoa-self repository"
         )
     context = input_document.get("evaluation_context")
     if not isinstance(context, dict):
