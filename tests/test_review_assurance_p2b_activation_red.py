@@ -143,38 +143,8 @@ class ReviewAssuranceP2bActivationRedTests(unittest.TestCase):
         acquire.assert_not_called()
         execute_review.assert_not_called()
 
-    def test_live_cli_routes_prior_integrated_current_advisory_to_protected_consumer(
-        self,
-    ) -> None:
+    def test_dormant_b1_consumer_is_not_wired_into_candidate_cli(self) -> None:
         input_document, _ = _protected_looking_input()
-        protected_result = {
-            "outcome": "INCOMPLETE",
-            "reason": "QUORUM_UNMET",
-            "binding": False,
-            "evaluation_context": copy.deepcopy(input_document["evaluation_context"]),
-            "subject": copy.deepcopy(input_document["subject"]),
-            "authority": copy.deepcopy(input_document["authority"]),
-            "judge": copy.deepcopy(input_document["acquired_judge"]),
-            "policy": {
-                "id": "gnostoa-review-assurance",
-                "version": "1.0",
-                "change_class": "critical",
-                "review_requirement": "required",
-            },
-            "collection": {},
-            "qualification": {},
-            "quorum": {
-                "minimum_distinct_domains": 2,
-                "distinct_domains": 0,
-                "domain_ids": [],
-            },
-            "blockers": [],
-            "conflicts": [],
-            "exclusions": [],
-            "diagnostics": [],
-            "assessments": [],
-        }
-
         with tempfile.TemporaryDirectory() as directory:
             input_path = Path(directory) / "input.json"
             input_path.write_text(json.dumps(input_document), encoding="utf-8")
@@ -182,21 +152,27 @@ class ReviewAssuranceP2bActivationRedTests(unittest.TestCase):
             with mock.patch.object(
                 review_check,
                 "evaluate_gnostoa_current_advisory",
-                autospec=True,
-            ) as protected_consumer:
-                protected_consumer.return_value = (3, protected_result)
+                create=True,
+            ) as candidate_consumer:
+                candidate_consumer.return_value = (
+                    3,
+                    {
+                        "outcome": "INCOMPLETE",
+                        "reason": "SYNTHETIC_CANDIDATE_CONSUMER",
+                        "binding": False,
+                    },
+                )
                 with contextlib.redirect_stdout(stdout):
                     code = review_check.main(["--input", str(input_path)])
 
-        self.assertEqual(3, code)
+        self.assertEqual(2, code)
         payload = json.loads(stdout.getvalue())
-        self.assertEqual("INCOMPLETE", payload["outcome"])
-        self.assertEqual("QUORUM_UNMET", payload["reason"])
-        self.assertEqual("current_advisory", payload["evaluation_context"]["mode"])
-        self.assertEqual(
-            "prior_integrated", payload["evaluation_context"]["judge_relation"]
+        self.assertEqual("CONFIGURATION_ERROR", payload["error"]["code"])
+        self.assertIn(
+            "prior-integrated authority acquisition is not available",
+            payload["error"]["message"],
         )
-        protected_consumer.assert_called_once_with(input_document)
+        candidate_consumer.assert_not_called()
 
     def test_live_consumer_replaces_caller_cut_and_preserves_truthful_quorum_unmet(
         self,
