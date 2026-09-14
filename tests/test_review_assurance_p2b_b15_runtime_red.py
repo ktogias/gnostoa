@@ -6,7 +6,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DOCKERFILE = ROOT / "Dockerfile"
 REVIEW_CHECK = ROOT / "tools" / "review_check.py"
-DECISION = ROOT / "knowledge" / "decisions" / "0071-add-docker-client-to-r2a-b1-runtime.md"
+DECISION = (
+    ROOT / "knowledge" / "decisions" / "0071-add-docker-client-to-r2a-b1-runtime.md"
+)
 WORKFLOW = ROOT / ".github" / "workflows" / "r2a-protected-current-advisory.yml"
 SMOKE = ROOT / "ci" / "review_b15_runtime_smoke.py"
 
