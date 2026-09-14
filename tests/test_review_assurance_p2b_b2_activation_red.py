@@ -35,7 +35,9 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         )
         self.assertIn("sys.stdout.buffer.write(raw_result)", text)
 
-    def test_outer_runtime_is_selected_only_from_protected_consumer_authority(self) -> None:
+    def test_outer_runtime_is_selected_only_from_protected_consumer_authority(
+        self,
+    ) -> None:
         self.assertTrue(
             REVIEW_OUTER.is_file(),
             "P2B_B2_PRIOR_EFFECTIVE_OUTER_RUNTIME_UNAVAILABLE",
