@@ -17,7 +17,12 @@ BUNDLE_PATH = ROOT / "tasks" / "issue-11-r2a-current-advisory.json"
 
 
 def _timestamp_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def _protected_looking_input() -> tuple[dict[str, object], dict[str, object]]:
@@ -96,7 +101,11 @@ class ReviewAssuranceP2bActivationRedTests(unittest.TestCase):
             },
             "collection": {},
             "qualification": {},
-            "quorum": {"minimum_distinct_domains": 2, "distinct_domains": 0, "domain_ids": []},
+            "quorum": {
+                "minimum_distinct_domains": 2,
+                "distinct_domains": 0,
+                "domain_ids": [],
+            },
             "blockers": [],
             "conflicts": [],
             "exclusions": [],
@@ -122,7 +131,9 @@ class ReviewAssuranceP2bActivationRedTests(unittest.TestCase):
         self.assertEqual("INCOMPLETE", payload["outcome"])
         self.assertEqual("QUORUM_UNMET", payload["reason"])
         self.assertEqual("current_advisory", payload["evaluation_context"]["mode"])
-        self.assertEqual("prior_integrated", payload["evaluation_context"]["judge_relation"])
+        self.assertEqual(
+            "prior_integrated", payload["evaluation_context"]["judge_relation"]
+        )
         protected_consumer.assert_called_once_with(input_document)
 
     def test_current_advisory_still_rejects_caller_selected_policy(self) -> None:
