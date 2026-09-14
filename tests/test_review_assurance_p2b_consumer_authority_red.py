@@ -157,7 +157,7 @@ class ReviewAssuranceP2bConsumerAuthorityRedTests(unittest.TestCase):
         workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
         self.assertIn('- "tasks/issue-11-r2a-current-advisory-consumer.json"', workflow)
         self.assertIn(f'- "{FOCUSED_TEST_PATH}"', workflow)
-        self.assertIn(f"python -m ruff format --check \\\n", workflow)
+        self.assertIn("python -m ruff format --check \\\n", workflow)
         self.assertGreaterEqual(workflow.count(FOCUSED_TEST_PATH), 4)
         self.assertIn(f"PYTHONPATH=. python {FOCUSED_TEST_PATH}", workflow)
 
