@@ -45,7 +45,9 @@ EXPECTED_JUDGE = {
 
 
 class ReviewAssuranceP2bAuthorityLandingTests(unittest.TestCase):
-    def test_protected_p2b_a_bundle_binds_exact_prior_integrated_identities(self) -> None:
+    def test_protected_p2b_a_bundle_binds_exact_prior_integrated_identities(
+        self,
+    ) -> None:
         self.assertTrue(
             BUNDLE_PATH.is_file(),
             "P2B_PROTECTED_AUTHORITY_UNAVAILABLE: protected current-advisory "
