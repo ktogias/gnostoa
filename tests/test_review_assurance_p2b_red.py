@@ -56,7 +56,9 @@ def _bundle() -> dict[str, object]:
 
 
 class ReviewAssuranceP2bAuthorityLandingTests(unittest.TestCase):
-    def test_p2b_a_candidate_landing_bundle_is_versioned_and_schema_closed(self) -> None:
+    def test_p2b_a_candidate_landing_bundle_is_versioned_and_schema_closed(
+        self,
+    ) -> None:
         self.assertTrue(
             BUNDLE_SCHEMA_PATH.is_file(),
             "P2B_AUTHORITY_BUNDLE_SCHEMA_UNAVAILABLE: dormant authority landing needs "
