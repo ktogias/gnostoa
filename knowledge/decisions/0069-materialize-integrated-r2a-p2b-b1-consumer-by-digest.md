@@ -33,7 +33,7 @@ x-project-knowledge:
       target: /decisions/0005-container-first-runtime.md
     - kind: governed-by
       target: /decisions/0067-evaluate-semantic-review-assurance-through-bound-evidence.md
-    - kind: follows
+    - kind: governed-by
       target: /decisions/0068-materialize-r2a-p2a-as-a-one-shot-digest-only-oci-judge.md
     - kind: implements
       target: /decisions/0067-evaluate-semantic-review-assurance-through-bound-evidence.md
@@ -80,6 +80,14 @@ The intended trust chain is:
 P2b-B2 may consume only the independently materialized, protected-authority-bound B1 outer consumer. Candidate B2 bytes remain untrusted input/transport and must not become the provenance source for the final current-advisory result.
 
 After final P2b integration, the rolling invariant still requires materializing/promoting OCI(P2b) for the next transition.
+
+## Consequences
+
+- The exact integrated B1 outer consumer can obtain a durable, independently reacquirable identity without making candidate bytes authoritative.
+- The protected authority update for B2 can bind a digest-only OCI identity and exact public-surface digest rather than a mutable tag or branch state.
+- The materialization workflow is intentionally single-use and fail-closed; ambiguous post-write failures require read-only reconciliation instead of a blind retry.
+- P2b-B2 remains blocked until the resulting B1 identity is recorded through a separately protected, prior-effective authority update.
+- The truthful empty #10 qualification state is unchanged, so this transition does not manufacture semantic PASS or qualified independence.
 
 ## Non-goals
 
