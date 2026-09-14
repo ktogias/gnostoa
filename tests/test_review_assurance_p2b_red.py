@@ -14,16 +14,16 @@ ROOT = Path(__file__).resolve().parents[1]
 BUNDLE_PATH = ROOT / "tasks" / "issue-11-r2a-current-advisory.json"
 BUNDLE_SCHEMA_PATH = ROOT / "schemas" / "review-protected-authority-bundle.schema.json"
 POLICY_PATH = ROOT / "policy" / "review-policy.yaml"
-P2A_SOURCE_REVISION = "d66d1830d724d759db6ec87e1f8d5dcc0847f221"
+P2A_SOURCE_REVISION = "d66d1830d724d759db6ec87e1f8d5dcc0847f221"  # pragma: allowlist secret -- public prior-integrated source revision
 P2A_PUBLIC_SURFACE_DIGEST = (
-    "sha256:ee2418fccd7e8907b8b8f60b0e0c7663e93c3e9abb66d9496efd1c3666ca1845"
+    "sha256:ee2418fccd7e8907b8b8f60b0e0c7663e93c3e9abb66d9496efd1c3666ca1845"  # pragma: allowlist secret -- public surface digest
 )
 P2A_OCI_IMAGE = (
     "ghcr.io/ktogias/gnostoa@"
-    "sha256:adcf9ce060a382b47973bbd9848ba9dff3bc05985c17411c4b8a2adb9b0c6504"
+    "sha256:adcf9ce060a382b47973bbd9848ba9dff3bc05985c17411c4b8a2adb9b0c6504"  # pragma: allowlist secret -- public registry identity
 )
 CRITICAL_POLICY_DIGEST = (
-    "sha256:6cd1e270ef49170dbfe839107d5e745d8f45b62f33ab4c9116f9846210095179"
+    "sha256:6cd1e270ef49170dbfe839107d5e745d8f45b62f33ab4c9116f9846210095179"  # pragma: allowlist secret -- public policy digest
 )
 QUALIFICATION_SNAPSHOT = {
     "snapshot_id": "gnostoa-r2a-qualification-empty-5659481721",
@@ -35,7 +35,7 @@ QUALIFICATION_SNAPSHOT = {
     "entries": [],
 }
 QUALIFICATION_DIGEST = (
-    "sha256:db18242f682af42490369c85d2f0b770a46a133bfb69c4aba6f12ce6fa2f70a4"
+    "sha256:db18242f682af42490369c85d2f0b770a46a133bfb69c4aba6f12ce6fa2f70a4"  # pragma: allowlist secret -- public qualification snapshot digest
 )
 EXPECTED_JUDGE = {
     "acquisition": "oci",
