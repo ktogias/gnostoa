@@ -423,15 +423,59 @@ def evaluate_gnostoa_current_advisory(
         return ERROR_EXIT_CODE, error_payload("MALFORMED_INVOCATION", str(exc))
 
     try:
-        _, result = _execute_semantic_review(delegated, bundle)
-    except ProtectedRuntimeError as exc:
-        return _semantic_incomplete(
-            live_input,
-            bundle,
-            trusted_cut,
-            exc.reason,
-            str(exc),
+        try:
+            _, result = _execute_semantic_review(delegated, bundle)
+        except ProtectedRuntimeError as exc:
+            return _semantic_incomplete(
+                live_input,
+                bundle,
+                trusted_cut,
+                exc.reason,
+                str(exc),
+            )
+
+        projected = copy.deepcopy(result)
+        projected["evaluation_context"] = {
+            "mode": "current_advisory",
+            "as_of": trusted_cut,
+            "judge_relation": "prior_integrated",
+            "fixture_only": False,
+        }
+        projected["binding"] = False
+        diagnostics = projected.get("diagnostics")
+        if not isinstance(diagnostics, list) or not all(
+            isinstance(item, str) for item in diagnostics
+        ):
+            return ERROR_EXIT_CODE, error_payload(
+                "TOOL_ERROR",
+                "prior-integrated judge returned malformed diagnostics",
+            )
+        projected["diagnostics"] = sorted(
+            set(
+                [
+                    *diagnostics,
+                    "semantic predicates executed by protected prior-integrated OCI using non-fixture historical-replay delegation",
+                    f"protected authority read from main revision {protected.protected_main_revision}",
+                ]
+            )
         )
+        result_issues = _schema_errors(projected, "review-gate-result.schema.json")
+        if result_issues:
+            return ERROR_EXIT_CODE, error_payload(
+                "TOOL_ERROR",
+                "projected current-advisory result violates the public schema",
+                details={"issues": result_issues},
+            )
+        outcome = projected.get("outcome")
+        exit_code = (
+            SEMANTIC_EXIT_CODES.get(outcome) if isinstance(outcome, str) else None
+        )
+        if exit_code is None:
+            return ERROR_EXIT_CODE, error_payload(
+                "TOOL_ERROR",
+                "projected current-advisory result has unsupported outcome",
+            )
+        return exit_code, projected
     except (
         json.JSONDecodeError,
         ProtectedEvaluationUnavailable,
@@ -440,50 +484,10 @@ def evaluate_gnostoa_current_advisory(
         SchemaError,
         RecursionError,
         TypeError,
+        ValueError,
     ) as exc:
         return ERROR_EXIT_CODE, error_payload(
             "TOOL_ERROR",
             "protected current-advisory runtime validation failed",
             details={"error": str(exc)},
         )
-
-    projected = copy.deepcopy(result)
-    projected["evaluation_context"] = {
-        "mode": "current_advisory",
-        "as_of": trusted_cut,
-        "judge_relation": "prior_integrated",
-        "fixture_only": False,
-    }
-    projected["binding"] = False
-    diagnostics = projected.get("diagnostics")
-    if not isinstance(diagnostics, list) or not all(
-        isinstance(item, str) for item in diagnostics
-    ):
-        return ERROR_EXIT_CODE, error_payload(
-            "TOOL_ERROR",
-            "prior-integrated judge returned malformed diagnostics",
-        )
-    projected["diagnostics"] = sorted(
-        set(
-            [
-                *diagnostics,
-                "semantic predicates executed by protected prior-integrated OCI using non-fixture historical-replay delegation",
-                f"protected authority read from main revision {protected.protected_main_revision}",
-            ]
-        )
-    )
-    result_issues = _schema_errors(projected, "review-gate-result.schema.json")
-    if result_issues:
-        return ERROR_EXIT_CODE, error_payload(
-            "TOOL_ERROR",
-            "projected current-advisory result violates the public schema",
-            details={"issues": result_issues},
-        )
-    outcome = projected.get("outcome")
-    exit_code = SEMANTIC_EXIT_CODES.get(outcome) if isinstance(outcome, str) else None
-    if exit_code is None:
-        return ERROR_EXIT_CODE, error_payload(
-            "TOOL_ERROR",
-            "projected current-advisory result has unsupported outcome",
-        )
-    return exit_code, projected
