@@ -399,14 +399,6 @@ def evaluate_gnostoa_current_advisory(
         bundle = _validate_protected_bundle(protected)
         trusted_cut = _trusted_cut()
         delegated = _trusted_live_input(live_input, bundle, trusted_cut)
-    except json.JSONDecodeError as exc:
-        return ERROR_EXIT_CODE, error_payload(
-            "TOOL_ERROR",
-            "protected current-advisory authority is invalid",
-            details={"error": str(exc)},
-        )
-    except ValueError as exc:
-        return ERROR_EXIT_CODE, error_payload("MALFORMED_INVOCATION", str(exc))
     except ProtectedAcquisitionUnavailable as exc:
         return ERROR_EXIT_CODE, error_payload(
             "TOOL_ERROR",
@@ -414,6 +406,7 @@ def evaluate_gnostoa_current_advisory(
             details={"error": str(exc)},
         )
     except (
+        json.JSONDecodeError,
         ProtectedEvaluationUnavailable,
         KnowledgeFormatError,
         OSError,
@@ -426,6 +419,8 @@ def evaluate_gnostoa_current_advisory(
             "protected current-advisory authority is invalid",
             details={"error": str(exc)},
         )
+    except ValueError as exc:
+        return ERROR_EXIT_CODE, error_payload("MALFORMED_INVOCATION", str(exc))
 
     try:
         _, result = _execute_semantic_review(delegated, bundle)
@@ -436,6 +431,20 @@ def evaluate_gnostoa_current_advisory(
             trusted_cut,
             exc.reason,
             str(exc),
+        )
+    except (
+        json.JSONDecodeError,
+        ProtectedEvaluationUnavailable,
+        KnowledgeFormatError,
+        OSError,
+        SchemaError,
+        RecursionError,
+        TypeError,
+    ) as exc:
+        return ERROR_EXIT_CODE, error_payload(
+            "TOOL_ERROR",
+            "protected current-advisory runtime validation failed",
+            details={"error": str(exc)},
         )
 
     projected = copy.deepcopy(result)
