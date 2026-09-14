@@ -110,7 +110,9 @@ class ReviewAssuranceIntegrationTests(unittest.TestCase):
         self.assertEqual("CONFIGURATION_ERROR", payload["error"]["code"])
         self.assertIn("installed review-assurance schema", payload["error"]["message"])
 
-    def test_current_advisory_protected_route_rejects_self_authorizing_inputs(self) -> None:
+    def test_current_advisory_protected_route_rejects_self_authorizing_inputs(
+        self,
+    ) -> None:
         fixture = _fixture()
         base = fixture["base"]
         self.assertIsInstance(base, dict)
