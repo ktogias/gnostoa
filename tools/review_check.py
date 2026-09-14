@@ -12,7 +12,6 @@ from jsonschema.exceptions import SchemaError
 
 from .knowledge_common import KnowledgeFormatError, toolkit_root
 from .review_evaluate import ReviewInputError, evaluate
-from .review_live import evaluate_gnostoa_current_advisory
 from .review_model import (
     ERROR_EXIT_CODE,
     SEMANTIC_EXIT_CODES,
@@ -359,7 +358,11 @@ def main(argv: list[str] | None = None) -> int:
                     "--change-class; protected authority supplies the effective policy"
                 )
             else:
-                code, payload = evaluate_gnostoa_current_advisory(input_document)
+                code, payload = _configuration(
+                    "current_advisory prior-integrated authority acquisition is not "
+                    "available in the candidate-side P2b-B1 CLI; the dormant outer "
+                    "consumer must become prior-effective before activation"
+                )
         else:
             try:
                 policy_document = _load_policy(args.policy, args.change_class)
