@@ -290,6 +290,9 @@ def _create_container(
             'test "$(id -u)" = "10001"; '
             "command -v docker >/dev/null; "
             "! command -v dockerd >/dev/null; "
+            "! command -v containerd >/dev/null; "
+            "! dpkg-query -W docker.io >/dev/null 2>&1; "
+            "! dpkg-query -W containerd >/dev/null 2>&1; "
             "test \"$(dpkg-query -W -f='${Version}' docker-cli)\" = "
             f'"{DOCKER_CLI_VERSION}"; '
             "docker --version"
@@ -358,7 +361,7 @@ def main() -> int:
 
     print(
         "B1.5 runtime smoke passed: exact docker-cli package is present, "
-        "dockerd is absent, and the runtime remains non-root"
+        "Docker/containerd daemons are absent, and the runtime remains non-root"
     )
     return 0
 
