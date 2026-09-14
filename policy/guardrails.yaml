@@ -569,6 +569,7 @@ guardrails:
       - .github/workflows/publish-oci.yml
       - .github/workflows/publish-r2a-p2a-bootstrap-oci.yml
       - .github/workflows/publish-r2a-p2b-b1-oci.yml
+      - .github/workflows/publish-r2a-p2b-b15-oci.yml
       - ci/github-actions.yml
       - ci/gitlab-ci.yml
       - .gitlab-ci.yml
@@ -580,6 +581,7 @@ guardrails:
       - tests/test_r2a_p2b_bootstrap_publication.py::R2AP2bBootstrapPublicationTests.test_bootstrap_publication_has_decision_and_guardrail_ownership
       - tests/test_r2a_p2b_b1_publication.py::R2AP2bB1PublicationTests.test_b1_materialization_is_governed_and_declared
       - tests/test_r2a_p2b_b1_publication_repair.py::R2AP2bB1PublicationRepairTests.test_prewrite_failure_repair_is_exact_and_container_first
+      - tests/test_r2a_p2b_b15_publication.py::R2AP2bB15PublicationTests.test_b15_materialization_is_governed_and_declared
 
   - id: conditional-artifact-promotion
     title: Delivery activates for deployable artifacts and promotes the verified artifact
