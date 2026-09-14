@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import os
 import re
+import secrets
 import selectors
 import shutil
 import subprocess
 import tempfile
 import time
-from pathlib import Path
 
 DOCKER_CLI_VERSION = "26.1.5+dfsg1-9+deb13u1"
 MAX_OUTPUT_BYTES = 65_536
@@ -17,6 +17,7 @@ CLEANUP_TIMEOUT_SECONDS = 5
 CLEANUP_ATTEMPTS = 3
 CLEANUP_RETRY_DELAY_SECONDS = 0.25
 CLEANUP_OUTPUT_BYTES = 4_096
+OWNER_LABEL = "org.gnostoa.b15-smoke-owner"
 
 
 def _docker() -> str:
@@ -98,12 +99,12 @@ def _run_bounded(
         process.stderr.close()
 
 
-def _container_exists(
+def _single_container_id(
     docker: str,
-    container_name: str,
+    filter_expression: str,
     *,
     environment: dict[str, str],
-) -> bool:
+) -> str | None:
     returncode, stdout, stderr = _run_bounded(
         [
             docker,
@@ -112,7 +113,7 @@ def _container_exists(
             "--quiet",
             "--no-trunc",
             "--filter",
-            f"name=^/{container_name}$",
+            filter_expression,
         ],
         environment=environment,
         timeout_seconds=CLEANUP_TIMEOUT_SECONDS,
@@ -129,44 +130,118 @@ def _container_exists(
     ]
     if len(matches) > 1:
         raise RuntimeError("B1.5 runtime cleanup matched multiple containers")
-    return bool(matches)
+    if not matches:
+        return None
+    container_id = matches[0]
+    if re.fullmatch(r"[0-9a-f]{64}", container_id) is None:
+        raise RuntimeError(f"unexpected Docker container id: {container_id!r}")
+    return container_id
+
+
+def _container_id_by_name(
+    docker: str,
+    container_name: str,
+    *,
+    environment: dict[str, str],
+) -> str | None:
+    return _single_container_id(
+        docker,
+        f"name=^/{container_name}$",
+        environment=environment,
+    )
+
+
+def _container_id_exists(
+    docker: str,
+    container_id: str,
+    *,
+    environment: dict[str, str],
+) -> bool:
+    observed_id = _single_container_id(
+        docker,
+        f"id={container_id}",
+        environment=environment,
+    )
+    return observed_id == container_id
+
+
+def _container_owner(
+    docker: str,
+    container_id: str,
+    *,
+    environment: dict[str, str],
+) -> str:
+    returncode, stdout, stderr = _run_bounded(
+        [
+            docker,
+            "inspect",
+            "--format",
+            f'{{{{ index .Config.Labels "{OWNER_LABEL}" }}}}',
+            container_id,
+        ],
+        environment=environment,
+        timeout_seconds=CLEANUP_TIMEOUT_SECONDS,
+        max_output_bytes=CLEANUP_OUTPUT_BYTES,
+    )
+    if returncode != 0:
+        message = stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(
+            message or "B1.5 runtime container ownership could not be inspected"
+        )
+    return stdout.decode("utf-8", errors="strict").strip()
 
 
 def _remove_owned_container(
     docker: str,
     container_name: str,
+    owner_token: str,
     *,
+    known_container_id: str | None,
     environment: dict[str, str],
 ) -> None:
+    container_id = known_container_id
+    if container_id is None:
+        container_id = _container_id_by_name(
+            docker,
+            container_name,
+            environment=environment,
+        )
+        if container_id is None:
+            return
+    elif not _container_id_exists(docker, container_id, environment=environment):
+        return
+
+    observed_owner = _container_owner(docker, container_id, environment=environment)
+    if observed_owner != owner_token:
+        raise RuntimeError("refusing to clean non-owned B1.5 runtime container")
+
     last_error: Exception | None = None
     for attempt in range(CLEANUP_ATTEMPTS):
         try:
-            completed = subprocess.run(
-                [docker, "rm", "--force", container_name],
-                check=False,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=CLEANUP_TIMEOUT_SECONDS,
-                env=environment,
+            returncode, _stdout, stderr = _run_bounded(
+                [docker, "rm", "--force", container_id],
+                environment=environment,
+                timeout_seconds=CLEANUP_TIMEOUT_SECONDS,
+                max_output_bytes=CLEANUP_OUTPUT_BYTES,
             )
-            if completed.returncode != 0:
+            if returncode != 0:
+                message = stderr.decode("utf-8", errors="replace").strip()
                 last_error = RuntimeError(
-                    f"docker rm --force exited {completed.returncode}"
+                    message or f"docker rm --force exited {returncode}"
                 )
-        except (OSError, subprocess.TimeoutExpired) as exc:
+        except (OSError, subprocess.TimeoutExpired, RuntimeError) as exc:
             last_error = exc
 
         try:
-            if not _container_exists(
+            if not _container_id_exists(
                 docker,
-                container_name,
+                container_id,
                 environment=environment,
             ):
                 time.sleep(CLEANUP_RETRY_DELAY_SECONDS)
-                if not _container_exists(
+                if not _container_id_exists(
                     docker,
-                    container_name,
+                    container_id,
                     environment=environment,
                 ):
                     return
@@ -184,6 +259,7 @@ def _remove_owned_container(
 def _create_container(
     docker: str,
     container_name: str,
+    owner_token: str,
     image: str,
     *,
     environment: dict[str, str],
@@ -193,6 +269,8 @@ def _create_container(
         "create",
         "--name",
         container_name,
+        "--label",
+        f"{OWNER_LABEL}={owner_token}",
         "--pull=never",
         "--network",
         "none",
@@ -241,12 +319,15 @@ def main() -> int:
             "PATH": os.defpath,
         }
         docker = _docker()
-        container_name = Path(directory).name
+        owner_token = secrets.token_hex(16)
+        container_name = f"gnostoa-r2a-b15-smoke-{owner_token}"
+        container_id: str | None = None
         try:
             try:
                 container_id = _create_container(
                     docker,
                     container_name,
+                    owner_token,
                     image,
                     environment=environment,
                 )
@@ -270,6 +351,8 @@ def main() -> int:
             _remove_owned_container(
                 docker,
                 container_name,
+                owner_token,
+                known_container_id=container_id,
                 environment=environment,
             )
 
