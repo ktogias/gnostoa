@@ -101,6 +101,47 @@ class ReviewAssuranceP2bActivationRedTests(unittest.TestCase):
             ),
         )
 
+    def test_live_consumer_rejects_non_gnostoa_subject_before_protected_acquisition(
+        self,
+    ) -> None:
+        input_document, _ = _protected_looking_input()
+        subject = input_document["subject"]
+        assert isinstance(subject, dict)
+        subject["repository"] = "https://github.com/example/not-gnostoa"
+        trusted_cut = subject["observed_at"]
+        assert isinstance(trusted_cut, str)
+        protected = _protected_document()
+
+        def execute(
+            delegated: dict[str, object], bundle: dict[str, object]
+        ) -> tuple[int, dict[str, object]]:
+            policy = bundle["policy"]
+            assert isinstance(policy, dict)
+            return review_check.evaluate_documents(delegated, policy)
+
+        with (
+            mock.patch.object(
+                review_live,
+                "acquire_gnostoa_current_advisory_bundle",
+                return_value=protected,
+            ) as acquire,
+            mock.patch.object(review_live, "_trusted_cut", return_value=trusted_cut),
+            mock.patch.object(
+                review_live,
+                "_execute_semantic_review",
+                side_effect=execute,
+            ) as execute_review,
+        ):
+            code, payload = review_live.evaluate_gnostoa_current_advisory(
+                input_document
+            )
+
+        self.assertEqual(2, code)
+        self.assertEqual("MALFORMED_INVOCATION", payload["error"]["code"])
+        self.assertIn("Gnostoa-self repository", payload["error"]["message"])
+        acquire.assert_not_called()
+        execute_review.assert_not_called()
+
     def test_live_cli_routes_prior_integrated_current_advisory_to_protected_consumer(
         self,
     ) -> None:
