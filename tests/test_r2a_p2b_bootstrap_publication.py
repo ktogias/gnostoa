@@ -4,9 +4,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKFLOW_PATH = (
-    ROOT / ".github" / "workflows" / "publish-r2a-p2a-bootstrap-oci.yml"
-)
+WORKFLOW_PATH = ROOT / ".github" / "workflows" / "publish-r2a-p2a-bootstrap-oci.yml"
 SOURCE_COMMIT = "d66d1830d724d759db6ec87e1f8d5dcc0847f221"
 SOURCE_TREE = "384df86fec31208a02371b63722f903e63404134"
 PUBLIC_DIGEST = (
