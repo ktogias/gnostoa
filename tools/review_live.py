@@ -399,6 +399,12 @@ def evaluate_gnostoa_current_advisory(
         bundle = _validate_protected_bundle(protected)
         trusted_cut = _trusted_cut()
         delegated = _trusted_live_input(live_input, bundle, trusted_cut)
+    except json.JSONDecodeError as exc:
+        return ERROR_EXIT_CODE, error_payload(
+            "TOOL_ERROR",
+            "protected current-advisory authority is invalid",
+            details={"error": str(exc)},
+        )
     except ValueError as exc:
         return ERROR_EXIT_CODE, error_payload("MALFORMED_INVOCATION", str(exc))
     except ProtectedAcquisitionUnavailable as exc:
@@ -412,7 +418,6 @@ def evaluate_gnostoa_current_advisory(
         KnowledgeFormatError,
         OSError,
         SchemaError,
-        json.JSONDecodeError,
         RecursionError,
         TypeError,
     ) as exc:
