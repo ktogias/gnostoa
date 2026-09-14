@@ -103,32 +103,6 @@
       },
       "additionalProperties": false
     },
-    "qualificationEntry": {
-      "type": "object",
-      "required": [
-        "reviewer_id",
-        "source_id",
-        "independence_domain_id",
-        "capability_ids",
-        "status",
-        "observed_at",
-        "owner_relation",
-        "scope",
-        "provenance"
-      ],
-      "properties": {
-        "reviewer_id": {"$ref": "#/$defs/nonEmptyString"},
-        "source_id": {"$ref": "#/$defs/nonEmptyString"},
-        "independence_domain_id": {"$ref": "#/$defs/nonEmptyString"},
-        "capability_ids": {"$ref": "#/$defs/stringSet"},
-        "status": {"enum": ["established", "unestablished", "revoked"]},
-        "observed_at": {"$ref": "#/$defs/timestamp"},
-        "owner_relation": {"enum": ["owner", "non_owner", "unknown"]},
-        "scope": {"type": "object"},
-        "provenance": {"type": "object"}
-      },
-      "additionalProperties": false
-    },
     "qualificationSnapshot": {
       "type": "object",
       "required": [
@@ -145,7 +119,7 @@
         "observed_at": {"$ref": "#/$defs/timestamp"},
         "entries": {
           "type": "array",
-          "items": {"$ref": "#/$defs/qualificationEntry"}
+          "maxItems": 0
         }
       },
       "additionalProperties": false
