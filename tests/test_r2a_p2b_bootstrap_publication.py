@@ -25,7 +25,9 @@ ATTEST_ACTION = "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6"
 
 
 def _load_workflow() -> dict[str, object]:
-    workflow = yaml.load(WORKFLOW_PATH.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    workflow = yaml.load(
+        WORKFLOW_PATH.read_text(encoding="utf-8"), Loader=yaml.BaseLoader
+    )
     if not isinstance(workflow, dict):
         raise AssertionError("bootstrap publication workflow must be a YAML mapping")
     return workflow
@@ -155,7 +157,9 @@ class R2AP2bBootstrapPublicationTests(unittest.TestCase):
         self.assertNotIn("RELEASE_VERSION", workflow_text)
         self.assertNotIn("workflow_dispatch", workflow_text)
 
-    def test_anonymous_reacquisition_revalidates_the_full_runtime_contract(self) -> None:
+    def test_anonymous_reacquisition_revalidates_the_full_runtime_contract(
+        self,
+    ) -> None:
         workflow = _load_workflow()
         jobs = workflow["jobs"]
         assert isinstance(jobs, dict)
@@ -167,7 +171,8 @@ class R2AP2bBootstrapPublicationTests(unittest.TestCase):
             step
             for step in steps
             if isinstance(step, dict)
-            and step.get("name") == "Verify attestation and anonymous digest acquisition"
+            and step.get("name")
+            == "Verify attestation and anonymous digest acquisition"
         ]
         self.assertEqual(1, len(matches))
         run = matches[0].get("run")
