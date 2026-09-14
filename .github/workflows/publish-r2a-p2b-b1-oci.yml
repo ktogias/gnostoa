@@ -1,0 +1,257 @@
+name: Publish R2A P2b-B1 prior-effective OCI consumer
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/publish-r2a-p2b-b1-oci.yml"
+
+permissions: {}
+
+concurrency:
+  group: gnostoa-r2a-p2b-b1-oci
+  cancel-in-progress: false
+
+env:
+  KIT_VERSION: "0.2.0"
+  IMAGE_NAME: ghcr.io/ktogias/gnostoa
+  SOURCE_COMMIT: 0dfd7e5e28e8ccb87e687e0be9dfe846b644c9c3
+  SOURCE_TREE: 23a5f083f26f40a8287bc2a724bcd5282a9afa5e
+
+jobs:
+  authorize:
+    name: authorize exact protected-main B1 materialization transition
+    runs-on: ubuntu-latest
+    env:
+      EVENT_BEFORE: ${{ github.event.before }}
+    steps:
+      - name: Refuse any context outside the admitted one-shot boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REPOSITORY}" = "ktogias/gnostoa"
+          test "${GITHUB_EVENT_NAME}" = "push"
+          test "${GITHUB_REF}" = "refs/heads/main"
+          test "${GITHUB_REF_TYPE}" = "branch"
+          test "${GITHUB_REF_NAME}" = "main"
+          test "${GITHUB_ACTOR}" = "ktogias"
+          test "${GITHUB_TRIGGERING_ACTOR}" = "ktogias"
+          test "${GITHUB_RUN_ATTEMPT}" = "1"
+          test "${EVENT_BEFORE}" = "${SOURCE_COMMIT}"
+          test "${GITHUB_WORKFLOW_REF}" = "${GITHUB_REPOSITORY}/.github/workflows/publish-r2a-p2b-b1-oci.yml@refs/heads/main"
+
+  publish:
+    name: materialize exact integrated B1 consumer by digest
+    needs: authorize
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      registry-digest: ${{ steps.publish.outputs.registry_digest }}
+      public-digest: ${{ steps.source.outputs.public_digest }}
+    steps:
+      - name: Check out the integrated B1 publisher
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Check out the exact prior-integrated B1 source separately
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          ref: ${{ env.SOURCE_COMMIT }}
+          path: b1-source
+
+      - name: Verify exact B1 source identity and derive bound source metadata
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          cd b1-source
+          test "$(git rev-parse HEAD)" = "${SOURCE_COMMIT}"
+          test "$(git rev-parse 'HEAD^{tree}')" = "${SOURCE_TREE}"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          test "$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')" = "${KIT_VERSION}"
+          grep -Fx 'ARG KIT_VERSION=0.2.0' Dockerfile
+          public_digest="$(python -m tools.cli surface-digest --root .)"
+          case "${public_digest}" in
+            sha256:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;;
+            *) echo "invalid public-surface digest" >&2; exit 1 ;;
+          esac
+          test "${#public_digest}" -eq 71
+          source_epoch="$(git show -s --format=%ct "${SOURCE_COMMIT}")"
+          build_date="$(date -u -d "@${source_epoch}" '+%Y-%m-%dT%H:%M:%SZ')"
+          echo "public_digest=${public_digest}" >> "${GITHUB_OUTPUT}"
+          echo "build_date=${build_date}" >> "${GITHUB_OUTPUT}"
+          printf 'r2a_p2b_b1.public_digest=%s\n' "${public_digest}"
+
+      - name: Build and verify exact B1 consumer locally before any registry effect
+        shell: bash
+        env:
+          BUILD_DATE: ${{ steps.source.outputs.build_date }}
+          PUBLIC_DIGEST: ${{ steps.source.outputs.public_digest }}
+        run: |
+          set -euo pipefail
+          local_image="gnostoa-r2a-p2b-b1-verify:${SOURCE_COMMIT}"
+          cd b1-source
+          GNOSTOA_CANDIDATE_REF="${SOURCE_COMMIT}" \
+          GNOSTOA_KIT_VERSION="${KIT_VERSION}" \
+            ../ci/build-runtime \
+              --tag "${local_image}" \
+              --platform linux/amd64 \
+              --pull \
+              --no-cache \
+              --provenance=false \
+              --sbom=false \
+              --load \
+              --build-arg BUILD_DATE="${BUILD_DATE}"
+
+          test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "${local_image}")" = "linux/amd64"
+          test "$(docker image inspect --format '{{.Config.User}}' "${local_image}")" = "kit"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "${local_image}")" = "${KIT_VERSION}"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${local_image}")" = "${SOURCE_COMMIT}"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.created"}}' "${local_image}")" = "${BUILD_DATE}"
+          test "$(docker run --rm --entrypoint id "${local_image}" -u)" = "10001"
+          test "$(docker run --rm --entrypoint id "${local_image}" -g)" = "10001"
+          actual="$(docker run --rm --entrypoint python "${local_image}" -m tools.cli surface-digest --root /opt/gnostoa)"
+          test "${actual}" = "${PUBLIC_DIGEST}"
+          docker run --rm --entrypoint sh "${local_image}" -ec \
+            'test -f /opt/gnostoa/tools/review_protected.py; grep -Fx "tools/review_protected.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "tools/review_live.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "tools/review_current.py" /opt/gnostoa/.gnostoa-source-files >/dev/null'
+          docker run --rm "${local_image}" self-check --skip-tests
+          docker image rm "${local_image}" >/dev/null
+
+      - name: Authenticate to GHCR for the single digest-only effect
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${GHCR_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+
+      - name: Publish exact B1 consumer without a remote tag and read back digest
+        id: publish
+        shell: bash
+        env:
+          BUILD_DATE: ${{ steps.source.outputs.build_date }}
+          PUBLIC_DIGEST: ${{ steps.source.outputs.public_digest }}
+        run: |
+          set -euo pipefail
+          builder="gnostoa-r2a-p2b-b1-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          metadata_file="${RUNNER_TEMP}/r2a-p2b-b1-build-metadata.json"
+          test ! -e "${metadata_file}"
+
+          docker buildx create \
+            --name "${builder}" \
+            --driver docker-container \
+            --use >/dev/null
+          trap 'docker buildx rm "${builder}" >/dev/null 2>&1 || true' EXIT
+
+          cd b1-source
+          GNOSTOA_CANDIDATE_REF="${SOURCE_COMMIT}" \
+          GNOSTOA_KIT_VERSION="${KIT_VERSION}" \
+            ../ci/build-runtime \
+              --push-by-digest "${IMAGE_NAME}" \
+              --metadata-file "${metadata_file}" \
+              --platform linux/amd64 \
+              --pull \
+              --no-cache \
+              --provenance=false \
+              --sbom=false \
+              --build-arg BUILD_DATE="${BUILD_DATE}"
+
+          registry_digest="$(python - "${metadata_file}" <<'PY'
+          import json
+          import re
+          import sys
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+          if not path.is_file() or path.is_symlink() or path.stat().st_size > 65536:
+              raise SystemExit("invalid bounded BuildKit metadata file")
+          metadata = json.loads(path.read_text(encoding="utf-8"))
+          if not isinstance(metadata, dict):
+              raise SystemExit("BuildKit metadata must be an object")
+          digest = metadata["containerimage.digest"]
+          if not isinstance(digest, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
+              raise SystemExit("invalid containerimage.digest")
+          print(digest)
+          PY
+          )"
+          echo "registry_digest=${registry_digest}" >> "${GITHUB_OUTPUT}"
+          printf 'r2a_p2b_b1.registry_digest=%s\n' "${registry_digest}"
+
+          digest_ref="${IMAGE_NAME}@${registry_digest}"
+          docker pull "${digest_ref}"
+          test "$(docker buildx imagetools inspect "${digest_ref}" --format '{{.Manifest.Digest}}')" = "${registry_digest}"
+          test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "${digest_ref}")" = "linux/amd64"
+          test "$(docker image inspect --format '{{.Config.User}}' "${digest_ref}")" = "kit"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "${digest_ref}")" = "${KIT_VERSION}"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${digest_ref}")" = "${SOURCE_COMMIT}"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.created"}}' "${digest_ref}")" = "${BUILD_DATE}"
+          actual="$(docker run --rm --entrypoint python "${digest_ref}" -m tools.cli surface-digest --root /opt/gnostoa)"
+          test "${actual}" = "${PUBLIC_DIGEST}"
+          docker run --rm --entrypoint sh "${digest_ref}" -ec \
+            'test -f /opt/gnostoa/tools/review_protected.py; grep -Fx "tools/review_protected.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "tools/review_live.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "tools/review_current.py" /opt/gnostoa/.gnostoa-source-files >/dev/null'
+          docker run --rm "${digest_ref}" self-check --skip-tests
+
+      - name: Attest the digest-only registry manifest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.publish.outputs.registry_digest }}
+          push-to-registry: true
+
+      - name: Verify attestation and anonymous digest acquisition
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REGISTRY_DIGEST: ${{ steps.publish.outputs.registry_digest }}
+          BUILD_DATE: ${{ steps.source.outputs.build_date }}
+          PUBLIC_DIGEST: ${{ steps.source.outputs.public_digest }}
+        run: |
+          set -euo pipefail
+          test "${REGISTRY_DIGEST}" != ""
+          digest_ref="${IMAGE_NAME}@${REGISTRY_DIGEST}"
+          test "$(docker buildx imagetools inspect "${digest_ref}" --format '{{.Manifest.Digest}}')" = "${REGISTRY_DIGEST}"
+          gh attestation verify "oci://${digest_ref}" --repo "${GITHUB_REPOSITORY}"
+
+          docker logout ghcr.io >/dev/null 2>&1 || true
+          docker image rm "${digest_ref}" >/dev/null 2>&1 || true
+          anonymous_config="$(mktemp -d)"
+          trap 'rm -rf "${anonymous_config}"' EXIT
+          DOCKER_CONFIG="${anonymous_config}" docker pull "${digest_ref}"
+
+          test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "${digest_ref}")" = "linux/amd64"
+          test "$(docker image inspect --format '{{.Config.User}}' "${digest_ref}")" = "kit"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "${digest_ref}")" = "${KIT_VERSION}"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${digest_ref}")" = "${SOURCE_COMMIT}"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.created"}}' "${digest_ref}")" = "${BUILD_DATE}"
+          test "$(docker run --rm --entrypoint id "${digest_ref}" -u)" = "10001"
+          test "$(docker run --rm --entrypoint id "${digest_ref}" -g)" = "10001"
+          actual="$(docker run --rm --entrypoint python "${digest_ref}" -m tools.cli surface-digest --root /opt/gnostoa)"
+          test "${actual}" = "${PUBLIC_DIGEST}"
+          docker run --rm --entrypoint sh "${digest_ref}" -ec \
+            'test -f /opt/gnostoa/tools/review_protected.py; grep -Fx "tools/review_protected.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "tools/review_live.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "tools/review_current.py" /opt/gnostoa/.gnostoa-source-files >/dev/null'
+          docker run --rm "${digest_ref}" self-check --skip-tests
+
+          {
+            echo "### D11-R2A/P2b-B1 prior-effective OCI consumer"
+            echo
+            echo "This is an immutable B1 consumer materialization, not a release."
+            echo "No remote tag is created; the consumer identity is the registry manifest digest."
+            echo
+            echo "- source commit: \`${SOURCE_COMMIT}\`"
+            echo "- source tree: \`${SOURCE_TREE}\`"
+            echo "- public-surface digest: \`${PUBLIC_DIGEST}\`"
+            echo "- OCI image: \`${digest_ref}\`"
+            echo "- workflow run: \`${GITHUB_RUN_ID}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          printf 'r2a_p2b_b1.image=%s@%s\n' "${IMAGE_NAME}" "${REGISTRY_DIGEST}"
