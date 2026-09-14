@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 _GNOSTOA_SELF_REPOSITORY = "https://github.com/ktogias/gnostoa.git"
 _GNOSTOA_SELF_BUNDLE_PATH = "tasks/issue-11-r2a-current-advisory.json"
@@ -94,6 +94,12 @@ def _object_without_duplicate_fields(
     return result
 
 
+def _reject_non_finite_constant(value: str) -> NoReturn:
+    raise ProtectedAcquisitionUnavailable(
+        f"protected authority document contains non-finite JSON number {value!r}"
+    )
+
+
 def _acquire_from_repository(
     repository_url: str,
     bundle_path: str,
@@ -150,6 +156,7 @@ def _acquire_from_repository(
             document = json.loads(
                 raw.decode("utf-8"),
                 object_pairs_hook=_object_without_duplicate_fields,
+                parse_constant=_reject_non_finite_constant,
             )
         except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
             raise ProtectedAcquisitionUnavailable(

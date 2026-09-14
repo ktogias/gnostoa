@@ -118,6 +118,21 @@ class ReviewAssuranceP2aTests(unittest.TestCase):
             with self.assertRaises(ProtectedAcquisitionUnavailable):
                 review_protected._acquire_from_repository(str(repository), BUNDLE_PATH)
 
+    def test_non_finite_protected_authority_document_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository, _ = _protected_repository(Path(directory))
+            (repository / BUNDLE_PATH).write_text(
+                '{"schema_version":"1.0","value":NaN}\n',
+                encoding="utf-8",
+            )
+            _git(repository, "add", BUNDLE_PATH)
+            _git(repository, "commit", "-q", "-m", "non-finite authority")
+            with self.assertRaisesRegex(
+                ProtectedAcquisitionUnavailable,
+                "non-finite JSON number",
+            ):
+                review_protected._acquire_from_repository(str(repository), BUNDLE_PATH)
+
     def test_production_loader_has_no_caller_selectable_trust_inputs(self) -> None:
         signature = inspect.signature(
             review_protected.acquire_gnostoa_current_advisory_bundle
