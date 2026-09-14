@@ -17,6 +17,7 @@ DECISION_PATH = (
 GUARDRAILS_PATH = ROOT / "policy" / "guardrails.yaml"
 SOURCE_COMMIT = "0dfd7e5e28e8ccb87e687e0be9dfe846b644c9c3"
 SOURCE_TREE = "23a5f083f26f40a8287bc2a724bcd5282a9afa5e"
+AUTHORIZED_BEFORE_COMMIT = "8d1ac1812509a2f6beb220b4989ec9b472ff441b"
 CHECKOUT_ACTION = "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
 ATTEST_ACTION = "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6"
 
@@ -116,9 +117,14 @@ class R2AP2bB1PublicationTests(unittest.TestCase):
 
         self.assertIn(f"SOURCE_COMMIT: {SOURCE_COMMIT}", workflow_text)
         self.assertIn(f"SOURCE_TREE: {SOURCE_TREE}", workflow_text)
+        self.assertIn(
+            f"AUTHORIZED_BEFORE_COMMIT: {AUTHORIZED_BEFORE_COMMIT}", workflow_text
+        )
         self.assertIn("IMAGE_NAME: ghcr.io/ktogias/gnostoa", workflow_text)
         self.assertIn("EVENT_BEFORE: ${{ github.event.before }}", workflow_text)
-        self.assertIn('test "${EVENT_BEFORE}" = "${SOURCE_COMMIT}"', workflow_text)
+        self.assertIn(
+            'test "${EVENT_BEFORE}" = "${AUTHORIZED_BEFORE_COMMIT}"', workflow_text
+        )
         self.assertIn('test "${GITHUB_RUN_ATTEMPT}" = "1"', workflow_text)
         self.assertIn(
             'test "$(git rev-parse HEAD)" = "${SOURCE_COMMIT}"', workflow_text
@@ -128,7 +134,7 @@ class R2AP2bB1PublicationTests(unittest.TestCase):
             workflow_text,
         )
 
-        self.assertIn("surface-digest --root .", workflow_text)
+        self.assertIn("surface-digest --root /opt/gnostoa", workflow_text)
         self.assertIn("public_digest=", workflow_text)
         self.assertIn("--push-by-digest", workflow_text)
         self.assertIn("--metadata-file", workflow_text)

@@ -18,6 +18,7 @@ env:
   IMAGE_NAME: ghcr.io/ktogias/gnostoa
   SOURCE_COMMIT: 0dfd7e5e28e8ccb87e687e0be9dfe846b644c9c3
   SOURCE_TREE: 23a5f083f26f40a8287bc2a724bcd5282a9afa5e
+  AUTHORIZED_BEFORE_COMMIT: 8d1ac1812509a2f6beb220b4989ec9b472ff441b
 
 jobs:
   authorize:
@@ -38,7 +39,7 @@ jobs:
           test "${GITHUB_ACTOR}" = "ktogias"
           test "${GITHUB_TRIGGERING_ACTOR}" = "ktogias"
           test "${GITHUB_RUN_ATTEMPT}" = "1"
-          test "${EVENT_BEFORE}" = "${SOURCE_COMMIT}"
+          test "${EVENT_BEFORE}" = "${AUTHORIZED_BEFORE_COMMIT}"
           test "${GITHUB_WORKFLOW_REF}" = "${GITHUB_REPOSITORY}/.github/workflows/publish-r2a-p2b-b1-oci.yml@refs/heads/main"
 
   publish:
@@ -52,7 +53,7 @@ jobs:
       attestations: write
     outputs:
       registry-digest: ${{ steps.publish.outputs.registry_digest }}
-      public-digest: ${{ steps.source.outputs.public_digest }}
+      public-digest: ${{ steps.local.outputs.public_digest }}
     steps:
       - name: Check out the integrated B1 publisher
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -80,23 +81,15 @@ jobs:
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
           test "$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')" = "${KIT_VERSION}"
           grep -Fx 'ARG KIT_VERSION=0.2.0' Dockerfile
-          public_digest="$(python -m tools.cli surface-digest --root .)"
-          case "${public_digest}" in
-            sha256:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;;
-            *) echo "invalid public-surface digest" >&2; exit 1 ;;
-          esac
-          test "${#public_digest}" -eq 71
           source_epoch="$(git show -s --format=%ct "${SOURCE_COMMIT}")"
           build_date="$(date -u -d "@${source_epoch}" '+%Y-%m-%dT%H:%M:%SZ')"
-          echo "public_digest=${public_digest}" >> "${GITHUB_OUTPUT}"
           echo "build_date=${build_date}" >> "${GITHUB_OUTPUT}"
-          printf 'r2a_p2b_b1.public_digest=%s\n' "${public_digest}"
 
       - name: Build and verify exact B1 consumer locally before any registry effect
+        id: local
         shell: bash
         env:
           BUILD_DATE: ${{ steps.source.outputs.build_date }}
-          PUBLIC_DIGEST: ${{ steps.source.outputs.public_digest }}
         run: |
           set -euo pipefail
           local_image="gnostoa-r2a-p2b-b1-verify:${SOURCE_COMMIT}"
@@ -120,8 +113,14 @@ jobs:
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.created"}}' "${local_image}")" = "${BUILD_DATE}"
           test "$(docker run --rm --entrypoint id "${local_image}" -u)" = "10001"
           test "$(docker run --rm --entrypoint id "${local_image}" -g)" = "10001"
-          actual="$(docker run --rm --entrypoint python "${local_image}" -m tools.cli surface-digest --root /opt/gnostoa)"
-          test "${actual}" = "${PUBLIC_DIGEST}"
+          public_digest="$(docker run --rm --entrypoint python "${local_image}" -m tools.cli surface-digest --root /opt/gnostoa)"
+          case "${public_digest}" in
+            sha256:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;;
+            *) echo "invalid public-surface digest" >&2; exit 1 ;;
+          esac
+          test "${#public_digest}" -eq 71
+          echo "public_digest=${public_digest}" >> "${GITHUB_OUTPUT}"
+          printf 'r2a_p2b_b1.public_digest=%s\n' "${public_digest}"
           docker run --rm --entrypoint sh "${local_image}" -ec \
             'test -f /opt/gnostoa/tools/review_protected.py; grep -Fx "tools/review_protected.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "tools/review_live.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "tools/review_current.py" /opt/gnostoa/.gnostoa-source-files >/dev/null'
           docker run --rm "${local_image}" self-check --skip-tests
@@ -140,7 +139,7 @@ jobs:
         shell: bash
         env:
           BUILD_DATE: ${{ steps.source.outputs.build_date }}
-          PUBLIC_DIGEST: ${{ steps.source.outputs.public_digest }}
+          PUBLIC_DIGEST: ${{ steps.local.outputs.public_digest }}
         run: |
           set -euo pipefail
           builder="gnostoa-r2a-p2b-b1-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -214,7 +213,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REGISTRY_DIGEST: ${{ steps.publish.outputs.registry_digest }}
           BUILD_DATE: ${{ steps.source.outputs.build_date }}
-          PUBLIC_DIGEST: ${{ steps.source.outputs.public_digest }}
+          PUBLIC_DIGEST: ${{ steps.local.outputs.public_digest }}
         run: |
           set -euo pipefail
           test "${REGISTRY_DIGEST}" != ""
