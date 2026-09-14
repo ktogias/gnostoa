@@ -123,7 +123,7 @@ guardrails:
     title: Specializations add demonstrated rules or vocabulary
     applies_to: [kit, adopting-projects]
     enforcement: review
-    owner: team:gnostoa-maintainers
+    owner: team:adopting-project-maintainers
     guidance: guidance/workflows/create-specialization.md#procedure
 
   - id: task-scoped-guidance
@@ -296,7 +296,7 @@ guardrails:
       - tests/test_tools.py::RuntimeTests.test_toolkit_lock_template_placeholders_fail_closed
       - tests/test_tools.py::RuntimeTests.test_runtime_lock_reports_unreplaced_template_placeholders_actionably
       - tests/test_tools.py::RuntimeTests.test_runtime_image_template_rejects_digest_only_replacement
-      - tests/test_tools.py::RuntimeTests.test_runtime_image_template_rejects_append_while_sentinel_remains
+      - tests/test_tools.py::RuntimeTests.test_runtime_image_template_rejects_append_while_sentinel-remains
       - tests/test_tools.py::RuntimeTests.test_runtime_lock_cli_reports_missing_reference_and_unobserved_runtime
       - tests/test_tools.py::RuntimeTests.test_runtime_lock_cli_reports_supplied_reference_match_without_observation_pass
       - tests/test_tools.py::RuntimeTests.test_runtime_lock_cli_reports_supplied_reference_mismatch_as_fail
@@ -483,6 +483,7 @@ guardrails:
       - knowledge/decisions/0070-protect-r2a-b1-outer-consumer-authority-separately.md
       - Dockerfile
       - knowledge/decisions/0071-add-docker-client-to-r2a-b1-runtime.md
+      - knowledge/decisions/0073-promote-r2a-b15-outer-consumer-authority.md
       - ci/review_b15_runtime_smoke.py
       - tools/review_adapter_file.py
       - tools/review_model.py
