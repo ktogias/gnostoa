@@ -8,11 +8,13 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tools import review_live
+from tools import review_live_entrypoint
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI_PATH = ROOT / "tools" / "cli.py"
+ENTRYPOINT_PATH = ROOT / "tools" / "review_live_entrypoint.py"
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "r2a-protected-current-advisory.yml"
+GUARDRAIL_PATH = ROOT / "policy" / "guardrails.yaml"
 SMOKE_PATH = ROOT / "ci" / "review_b16_entrypoint_smoke.py"
 DECISION_PATH = (
     ROOT
@@ -21,18 +23,23 @@ DECISION_PATH = (
     / "0074-add-input-only-live-entrypoint-to-r2a-b15-runtime.md"
 )
 FOCUSED_TEST_PATH = "tests/test_review_assurance_p2b_b16_entrypoint_red.py"
+ENTRYPOINT_RELATIVE_PATH = "tools/review_live_entrypoint.py"
+DECISION_RELATIVE_PATH = (
+    "knowledge/decisions/0074-add-input-only-live-entrypoint-to-r2a-b15-runtime.md"
+)
+SMOKE_RELATIVE_PATH = "ci/review_b16_entrypoint_smoke.py"
 
 
 class ReviewAssuranceP2bB16EntrypointRedTests(unittest.TestCase):
-    def test_installed_cli_exposes_only_the_integrated_live_entrypoint(self) -> None:
-        cli = CLI_PATH.read_text(encoding="utf-8")
-        self.assertIn("review_live,", cli, "P2B_B16_LIVE_ENTRYPOINT_UNAVAILABLE")
-        self.assertIn('"review-current-advisory": (', cli)
-        self.assertIn("review_live.main", cli)
-
-        live = (ROOT / "tools" / "review_live.py").read_text(encoding="utf-8")
-        self.assertIn("def main(", live)
-        self.assertIn('"--input"', live)
+    def test_integrated_runtime_has_input_only_private_live_entrypoint(self) -> None:
+        self.assertTrue(
+            ENTRYPOINT_PATH.is_file(),
+            "P2B_B16_LIVE_ENTRYPOINT_UNAVAILABLE",
+        )
+        entrypoint = ENTRYPOINT_PATH.read_text(encoding="utf-8")
+        self.assertIn("review_live.evaluate_gnostoa_current_advisory", entrypoint)
+        self.assertIn('"--input"', entrypoint)
+        self.assertIn("canonical_json(payload)", entrypoint)
         for forbidden in (
             '"--policy"',
             '"--change-class"',
@@ -41,16 +48,15 @@ class ReviewAssuranceP2bB16EntrypointRedTests(unittest.TestCase):
             '"--docker-host"',
             '"--docker-context"',
         ):
-            self.assertNotIn(forbidden, live)
+            self.assertNotIn(forbidden, entrypoint)
+
+        cli = CLI_PATH.read_text(encoding="utf-8")
+        self.assertNotIn("review-current-advisory", cli)
+        self.assertNotIn("review_live_entrypoint", cli)
 
     def test_live_entrypoint_transports_the_evaluator_result_without_projection(
         self,
     ) -> None:
-        self.assertTrue(
-            hasattr(review_live, "main"),
-            "P2B_B16_LIVE_ENTRYPOINT_UNAVAILABLE",
-        )
-        main = review_live.main
         input_document = {"synthetic": "untrusted-input"}
         expected_payload = {
             "outcome": "INCOMPLETE",
@@ -64,37 +70,31 @@ class ReviewAssuranceP2bB16EntrypointRedTests(unittest.TestCase):
             stdout = io.StringIO()
             with (
                 mock.patch.object(
-                    review_live,
+                    review_live_entrypoint.review_live,
                     "evaluate_gnostoa_current_advisory",
                     return_value=(3, expected_payload),
                 ) as evaluate,
                 contextlib.redirect_stdout(stdout),
             ):
-                code = main(["--input", str(input_path)])
+                code = review_live_entrypoint.main(["--input", str(input_path)])
 
         self.assertEqual(3, code)
         self.assertEqual(expected_payload, json.loads(stdout.getvalue()))
         evaluate.assert_called_once_with(input_document)
 
     def test_live_entrypoint_rejects_ambiguous_json_before_evaluation(self) -> None:
-        self.assertTrue(
-            hasattr(review_live, "main"),
-            "P2B_B16_LIVE_ENTRYPOINT_UNAVAILABLE",
-        )
-        main = review_live.main
-
         with tempfile.TemporaryDirectory() as directory:
             input_path = Path(directory) / "input.json"
             input_path.write_text('{"duplicate":1,"duplicate":2}', encoding="utf-8")
             stdout = io.StringIO()
             with (
                 mock.patch.object(
-                    review_live,
+                    review_live_entrypoint.review_live,
                     "evaluate_gnostoa_current_advisory",
                 ) as evaluate,
                 contextlib.redirect_stdout(stdout),
             ):
-                code = main(["--input", str(input_path)])
+                code = review_live_entrypoint.main(["--input", str(input_path)])
 
         self.assertEqual(2, code)
         payload = json.loads(stdout.getvalue())
@@ -111,20 +111,30 @@ class ReviewAssuranceP2bB16EntrypointRedTests(unittest.TestCase):
             "P2B_B16_DURABLE_DECISION_UNAVAILABLE",
         )
         workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
-        self.assertIn(f'- "{FOCUSED_TEST_PATH}"', workflow)
-        self.assertIn('- "ci/review_b16_entrypoint_smoke.py"', workflow)
-        self.assertIn(
-            '- "knowledge/decisions/0074-add-input-only-live-entrypoint-to-r2a-b15-runtime.md"',
-            workflow,
-        )
+        for path in (
+            FOCUSED_TEST_PATH,
+            ENTRYPOINT_RELATIVE_PATH,
+            SMOKE_RELATIVE_PATH,
+            DECISION_RELATIVE_PATH,
+        ):
+            self.assertIn(f'- "{path}"', workflow)
         self.assertIn(
             f"PYTHONPATH=. python {FOCUSED_TEST_PATH}",
             workflow,
         )
         self.assertIn(
-            "PYTHONPATH=. python ci/review_b16_entrypoint_smoke.py",
+            f"PYTHONPATH=. python {SMOKE_RELATIVE_PATH}",
             workflow,
         )
+
+        guardrails = GUARDRAIL_PATH.read_text(encoding="utf-8")
+        for path in (
+            ENTRYPOINT_RELATIVE_PATH,
+            SMOKE_RELATIVE_PATH,
+            DECISION_RELATIVE_PATH,
+            FOCUSED_TEST_PATH,
+        ):
+            self.assertIn(f"      - {path}", guardrails)
 
 
 if __name__ == "__main__":
