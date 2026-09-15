@@ -8,12 +8,12 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_RELATIVE_PATH = ".github/workflows/publish-r2a-p2b-b16-oci.yml"
 WORKFLOW_PATH = ROOT / WORKFLOW_RELATIVE_PATH
-DECISION_PATH = (
-    ROOT
-    / "knowledge"
-    / "decisions"
-    / "0075-materialize-integrated-r2a-p2b-b16-consumer-by-digest.md"
+R2A_WORKFLOW_RELATIVE_PATH = ".github/workflows/r2a-protected-current-advisory.yml"
+R2A_WORKFLOW_PATH = ROOT / R2A_WORKFLOW_RELATIVE_PATH
+DECISION_RELATIVE_PATH = (
+    "knowledge/decisions/0075-materialize-integrated-r2a-p2b-b16-consumer-by-digest.md"
 )
+DECISION_PATH = ROOT / DECISION_RELATIVE_PATH
 GUARDRAILS_PATH = ROOT / "policy" / "guardrails.yaml"
 SOURCE_COMMIT = "f29499286bac9859364d45da0f6c59396518b749"  # pragma: allowlist secret -- public source revision
 SOURCE_TREE = "ff38abe5718ebc550054ea6af18a73d0aef8e514"  # pragma: allowlist secret -- public source tree
@@ -25,6 +25,10 @@ B15_SMOKE = "ci/review_b15_runtime_smoke.py"
 B16_SMOKE = "ci/review_b16_entrypoint_smoke.py"
 B16_ENTRYPOINT = "tools/review_live_entrypoint.py"
 B16_RUNTIME_LOCK = "b16-source/requirements/runtime.lock"
+RESTRICTED_NATIVE_RATIONALE = (
+    "Restricted native orchestration: the runner owns the Docker service; "
+    "the candidate receives no daemon or socket authority."
+)
 
 
 def _load_workflow() -> dict[str, object]:
@@ -34,6 +38,11 @@ def _load_workflow() -> dict[str, object]:
     if not isinstance(workflow, dict):
         raise AssertionError("B1.6 publication workflow must be a YAML mapping")
     return workflow
+
+
+def _guardrail_section(guardrails: str, guardrail_id: str) -> str:
+    marker = f"  - id: {guardrail_id}"
+    return guardrails.split(marker, 1)[1].split("\n  - id:", 1)[0]
 
 
 class R2AP2bB16PublicationTests(unittest.TestCase):
@@ -231,6 +240,16 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
         self.assertLess(setup_index, install_index)
         self.assertLess(install_index, local_verify_index)
 
+    def test_b16_native_smoke_path_is_explicitly_restricted_and_rationalized(
+        self,
+    ) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertEqual(
+            3,
+            workflow_text.count(RESTRICTED_NATIVE_RATIONALE),
+            "all three host smoke cuts must explain the restricted native Docker orchestration boundary",
+        )
+
     def test_b16_materialization_reproves_b15_and_b16_runtime_at_all_three_cuts(
         self,
     ) -> None:
@@ -319,6 +338,28 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
             anonymous_block.index(absence_probe), anonymous_block.index(anonymous_pull)
         )
 
+    def test_b16_decision_triggers_dedicated_r2a_verification(self) -> None:
+        workflow = yaml.load(
+            R2A_WORKFLOW_PATH.read_text(encoding="utf-8"), Loader=yaml.BaseLoader
+        )
+        self.assertIsInstance(workflow, dict)
+        assert isinstance(workflow, dict)
+        on = workflow["on"]
+        self.assertIsInstance(on, dict)
+        assert isinstance(on, dict)
+        pull_request = on["pull_request"]
+        self.assertIsInstance(pull_request, dict)
+        assert isinstance(pull_request, dict)
+        paths = pull_request["paths"]
+        self.assertIsInstance(paths, list)
+        assert isinstance(paths, list)
+        self.assertIn(DECISION_RELATIVE_PATH, paths)
+
+    def test_b16_decision_is_semantic_review_assurance_owned(self) -> None:
+        guardrails = GUARDRAILS_PATH.read_text(encoding="utf-8")
+        semantic_section = _guardrail_section(guardrails, "semantic-review-assurance")
+        self.assertIn(DECISION_RELATIVE_PATH, semantic_section)
+
     def test_b16_materialization_is_governed_and_declared(self) -> None:
         self.assertTrue(
             DECISION_PATH.is_file(),
@@ -344,9 +385,9 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
             self.assertIn(required, decision)
 
         guardrails = GUARDRAILS_PATH.read_text(encoding="utf-8")
-        immutable_section = guardrails.split(
-            "  - id: immutable-provider-ci-adapters", 1
-        )[1].split("\n  - id:", 1)[0]
+        immutable_section = _guardrail_section(
+            guardrails, "immutable-provider-ci-adapters"
+        )
         self.assertIn(WORKFLOW_RELATIVE_PATH, immutable_section)
         self.assertIn(
             "tests/test_r2a_p2b_b16_publication.py::"
