@@ -42,7 +42,7 @@ inherited, copied or loaded by adopting projects.
 - [Define authoritative source membership for the public-surface digest](decisions/0029-define-authoritative-source-membership-for-the-public-surface-digest.md)
 - [Refresh the official Python 3.12 base for CPython security fixes](decisions/0030-refresh-the-official-python-312-base-for-cpython-security-fixes.md)
 - [Accept bounded material Debian security uncertainty for the first OCI candidate](decisions/0031-accept-bounded-material-debian-security-uncertainty-for-the-first-oci-candidate.md)
-- [Omit composite OCI licence annotation until an image-wide expression is selected](decisions/0032-omit-composite-oci-license-annotation-until-an-image-wide-expression-is-selected.md)
+- [Omit composite OCI licence annotation until an image-wide expression is selected](decisions/0032-omit-composite-oci-licence-annotation-until-an-image-wide-expression-is-selected.md)
 - [Confine profile inheritance to the explicit project root](decisions/0033-confine-profile-inheritance-to-the-explicit-project-root.md)
 - [Confine local Markdown filesystem references to the explicit project root](decisions/0034-confine-local-markdown-filesystem-references-to-the-explicit-project-root.md)
 - [Accept bounded first-party source-security sufficiency for the first OCI candidate](decisions/0035-accept-bounded-first-party-source-security-sufficiency-for-the-first-oci-candidate.md)
