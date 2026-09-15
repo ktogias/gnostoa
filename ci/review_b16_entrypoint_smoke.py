@@ -93,9 +93,7 @@ def _outer_main() -> int:
         input_dir.mkdir(mode=0o755)
         input_path = input_dir / "input.json"
         input_path.write_text(
-            json.dumps(
-                _input_document(bundle), sort_keys=True, separators=(",", ":")
-            )
+            json.dumps(_input_document(bundle), sort_keys=True, separators=(",", ":"))
             + "\n",
             encoding="utf-8",
         )
