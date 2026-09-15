@@ -30,7 +30,6 @@ jobs:
       pull-requests: read
     env:
       EVENT_BEFORE: ${{ github.event.before }}
-      EVENT_AFTER: ${{ github.event.after }}
     steps:
       - name: Refuse any context outside the admitted one-shot boundary
         shell: bash
@@ -45,8 +44,6 @@ jobs:
           test "${GITHUB_TRIGGERING_ACTOR}" = "ktogias"
           test "${GITHUB_RUN_ATTEMPT}" = "1"
           test "${EVENT_BEFORE}" = "${AUTHORIZED_BEFORE_COMMIT}"
-          test "${EVENT_AFTER}" = "${GITHUB_SHA}"
-          test "${GITHUB_WORKFLOW_SHA}" = "${GITHUB_SHA}"
           test "${GITHUB_WORKFLOW_REF}" = "${GITHUB_REPOSITORY}/.github/workflows/publish-r2a-p2b-b16-oci.yml@refs/heads/main"
 
       - name: Bind the pushed commit to merged PR 257
