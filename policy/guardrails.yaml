@@ -1,4 +1,4 @@
-version: "0.16.0"
+version: "0.17.0"
 guardrails:
   - id: prior-art-before-self-change
     title: Gnostoa self-changes reuse applicable alternatives and license research before custom work
@@ -486,6 +486,7 @@ guardrails:
       - knowledge/decisions/0072-materialize-integrated-r2a-p2b-b15-consumer-by-digest.md
       - knowledge/decisions/0073-promote-r2a-b15-outer-consumer-authority.md
       - knowledge/decisions/0074-add-input-only-live-entrypoint-to-r2a-b15-runtime.md
+      - knowledge/decisions/0075-materialize-integrated-r2a-p2b-b16-consumer-by-digest.md
       - ci/review_b15_runtime_smoke.py
       - ci/review_b16_entrypoint_smoke.py
       - tools/review_adapter_file.py
@@ -577,6 +578,7 @@ guardrails:
       - .github/workflows/publish-r2a-p2a-bootstrap-oci.yml
       - .github/workflows/publish-r2a-p2b-b1-oci.yml
       - .github/workflows/publish-r2a-p2b-b15-oci.yml
+      - .github/workflows/publish-r2a-p2b-b16-oci.yml
       - ci/github-actions.yml
       - ci/gitlab-ci.yml
       - .gitlab-ci.yml
@@ -589,6 +591,7 @@ guardrails:
       - tests/test_r2a_p2b_b1_publication.py::R2AP2bB1PublicationTests.test_b1_materialization_is_governed_and_declared
       - tests/test_r2a_p2b_b1_publication_repair.py::R2AP2bB1PublicationRepairTests.test_prewrite_failure_repair_is_exact_and_container_first
       - tests/test_r2a_p2b_b15_publication.py::R2AP2bB15PublicationTests.test_b15_materialization_is_governed_and_declared
+      - tests/test_r2a_p2b_b16_publication.py::R2AP2bB16PublicationTests.test_b16_materialization_is_governed_and_declared
 
   - id: conditional-artifact-promotion
     title: Delivery activates for deployable artifacts and promotes the verified artifact
