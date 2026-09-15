@@ -127,6 +127,51 @@ class R2AP2bB16CubicFollowupTests(unittest.TestCase):
             "the follow-up regression guard must execute directly in dedicated R2A verification",
         )
 
+    def test_local_verification_image_cleanup_is_fail_closed(self) -> None:
+        workflow = _load_workflow(PUBLISH_WORKFLOW_PATH)
+        local_run = _bash_run(
+            _named_step(
+                _job_steps(workflow, "publish"),
+                "Build and verify exact B1.6 consumer locally before any registry effect",
+            )
+        )
+
+        cleanup_trap = "trap cleanup_local_image EXIT"
+        bounded_build = "timeout --kill-after=5s 900s ./ci/build-runtime"
+        for required in (
+            "cleanup_local_image()",
+            "local prior_status=$?",
+            "local cleanup_status=0",
+            "trap - EXIT",
+            'if ! docker image rm "${local_image}" >/dev/null 2>&1; then',
+            "cleanup_status=1",
+            'if docker image inspect "${local_image}" >/dev/null 2>&1; then',
+            'echo "local verification image remained cached" >&2',
+            'echo "local verification image cleanup failed" >&2',
+            'if [ "${cleanup_status}" -ne 0 ]; then',
+            'exit "${prior_status}"',
+            'exit "${cleanup_status}"',
+            cleanup_trap,
+            bounded_build,
+        ):
+            self.assertIn(required, local_run)
+
+        self.assertNotIn(
+            'trap \'docker image rm "${local_image}" >/dev/null 2>&1 || true\' EXIT',
+            local_run,
+            "local verification cleanup must not suppress removal failure",
+        )
+        self.assertLess(
+            local_run.index(cleanup_trap),
+            local_run.index(bounded_build),
+            "fail-closed cleanup must be armed before the local image can be created",
+        )
+        self.assertEqual(
+            "cleanup_local_image",
+            local_run.rstrip().splitlines()[-1],
+            "the successful local path must use the same fail-closed cleanup routine",
+        )
+
     def test_authorization_uses_meaningful_landing_binding_without_tautological_guards(
         self,
     ) -> None:
