@@ -30,13 +30,13 @@ FOCUSED_TEST_PATH = "tests/test_review_assurance_p2b_consumer_authority_red.py"
 B15_SOURCE_REVISION = "7093fd043f2269e09da74b03ce9d35fb6aece5da"  # pragma: allowlist secret -- public source revision
 B15_SOURCE_TREE = "e7a4f2142e72efd52133f4719d8acf9b2dccb89d"  # pragma: allowlist secret -- public source tree
 B15_PUBLIC_SURFACE_DIGEST = (
-    "sha256:b07aec4907919c0c9a92e4382524db4f7981bd346a5a1292f5ac48e4a1e6238e"
+    "sha256:b07aec4907919c0c9a92e4382524db4f7981bd346a5a1292f5ac48e4a1e6238e"  # pragma: allowlist secret -- public surface digest
 )
 B15_OCI_IMAGE = (
     "ghcr.io/ktogias/gnostoa@"
-    "sha256:821b523d2ebe80d0194cfc366ff70c59e90b99c5524dd82df8e866ccfa00e1c3"
+    "sha256:821b523d2ebe80d0194cfc366ff70c59e90b99c5524dd82df8e866ccfa00e1c3"  # pragma: allowlist secret -- public OCI digest
 )
-MATERIALIZATION_MAIN_REVISION = "8b189f66c92859b4ef75a91d962f4aec38b30408"
+MATERIALIZATION_MAIN_REVISION = "8b189f66c92859b4ef75a91d962f4aec38b30408"  # pragma: allowlist secret -- public protected-main revision
 MATERIALIZATION_RUN = "34905764252"
 ATTESTATION_ID = "47472753"
 REKOR_LOG_INDEX = "2835934017"
