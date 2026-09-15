@@ -209,6 +209,7 @@ jobs:
 
       - name: Authenticate to GHCR for the single digest-only effect
         shell: bash
+        timeout-minutes: 1
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -330,6 +331,7 @@ jobs:
 
       - name: Attest the digest-only registry manifest
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        timeout-minutes: 5
         with:
           subject-name: ${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.publish.outputs.registry_digest }}
@@ -382,7 +384,7 @@ jobs:
           bounded_registry_capture 30 gh attestation verify \
             "oci://${digest_ref}" --repo "${GITHUB_REPOSITORY}" >/dev/null
 
-          docker logout ghcr.io >/dev/null 2>&1
+          timeout --kill-after=5s 30s docker logout ghcr.io >/dev/null 2>&1
           docker image rm "${digest_ref}" >/dev/null
           if docker image inspect "${digest_ref}" >/dev/null 2>&1; then
             echo "digest image remained cached after authenticated readback" >&2
@@ -473,7 +475,7 @@ jobs:
             local cleanup_status=0
             trap - EXIT
 
-            if ! docker logout ghcr.io >/dev/null 2>&1; then
+            if ! timeout --kill-after=5s 30s docker logout ghcr.io >/dev/null 2>&1; then
               cleanup_status=1
             fi
             if [ -n "${digest_ref}" ] && docker image inspect "${digest_ref}" >/dev/null 2>&1; then
@@ -533,7 +535,7 @@ jobs:
           bounded_registry_capture 30 gh attestation verify \
             "oci://${digest_ref}" --repo "${GITHUB_REPOSITORY}" >/dev/null
 
-          docker logout ghcr.io >/dev/null 2>&1
+          timeout --kill-after=5s 30s docker logout ghcr.io >/dev/null 2>&1
           if docker image inspect "${digest_ref}" >/dev/null 2>&1; then
             docker image rm "${digest_ref}" >/dev/null
           fi
