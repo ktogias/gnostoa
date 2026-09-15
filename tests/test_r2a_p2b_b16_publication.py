@@ -178,20 +178,29 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
             f"python b16-source/{B15_SMOKE}"
         )
         local_b16 = (
-            'GNOSTOA_R2A_CANDIDATE_IMAGE="${local_image}" '
+            'PYTHONPATH=b16-source GNOSTOA_R2A_CANDIDATE_IMAGE="${local_image}" '
+            f"python b16-source/{B16_SMOKE}"
+        )
+        digest_b16 = (
+            'PYTHONPATH=b16-source GNOSTOA_R2A_CANDIDATE_IMAGE="${digest_ref}" '
             f"python b16-source/{B16_SMOKE}"
         )
         self.assertIn(local_b15, workflow_text)
         self.assertIn(local_b16, workflow_text)
+        self.assertEqual(
+            2,
+            workflow_text.count(digest_b16),
+            "authenticated and anonymous B1.6 smoke cuts must import from the exact source checkout",
+        )
         self.assertGreaterEqual(
             workflow_text.count(f"python b16-source/{B15_SMOKE}"),
             3,
             "B1.5 Docker-client/no-daemon capability must be re-proved at all cuts",
         )
-        self.assertGreaterEqual(
-            workflow_text.count(f"python b16-source/{B16_SMOKE}"),
+        self.assertEqual(
             3,
-            "B1.6 input-only module/daemonless capability must be re-proved at all cuts",
+            workflow_text.count(f"python b16-source/{B16_SMOKE}"),
+            "B1.6 input-only module/daemonless capability must be re-proved at exactly all three cuts",
         )
         login_index = workflow_text.index("docker login ghcr.io")
         self.assertLess(workflow_text.index(local_b15), login_index)
