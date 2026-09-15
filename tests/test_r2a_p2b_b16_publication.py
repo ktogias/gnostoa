@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 
@@ -30,6 +31,7 @@ RESTRICTED_NATIVE_RATIONALE = (
     "Restricted native orchestration: the runner owns the Docker service; "
     "the candidate receives no daemon or socket authority."
 )
+_HEREDOC_RE = re.compile(r"<<-?[\"']?([A-Za-z_][A-Za-z0-9_]*)[\"']?")
 
 
 def _load_workflow() -> dict[str, object]:
@@ -44,6 +46,77 @@ def _load_workflow() -> dict[str, object]:
 def _guardrail_section(guardrails: str, guardrail_id: str) -> str:
     marker = f"  - id: {guardrail_id}"
     return guardrails.split(marker, 1)[1].split("\n  - id:", 1)[0]
+
+
+def _named_bash_run_step(steps: list[object], name: str) -> str:
+    matches = [
+        step
+        for step in steps
+        if isinstance(step, dict) and step.get("name") == name
+    ]
+    if len(matches) != 1:
+        raise AssertionError(f"expected exactly one workflow step named {name!r}")
+    step = matches[0]
+    run = step.get("run")
+    if step.get("shell") != "bash" or not isinstance(run, str):
+        raise AssertionError(f"workflow step {name!r} must be a bash run step")
+    return run
+
+
+def _has_direct_top_level_shell_sequence(
+    script: str, sequence: tuple[str, ...]
+) -> bool:
+    lines = script.splitlines()
+    width = len(sequence)
+    starts = [
+        index
+        for index in range(len(lines) - width + 1)
+        if tuple(lines[index : index + width]) == sequence
+    ]
+    if len(starts) != 1:
+        return False
+
+    stack: list[str] = []
+    heredoc_delimiter: str | None = None
+    for raw_line in lines[: starts[0]]:
+        stripped = raw_line.strip()
+        if heredoc_delimiter is not None:
+            if stripped == heredoc_delimiter:
+                heredoc_delimiter = None
+            continue
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        heredoc_match = _HEREDOC_RE.search(stripped)
+        if heredoc_match is not None:
+            heredoc_delimiter = heredoc_match.group(1)
+            continue
+
+        closers = {"fi": "fi", "done": "done", "esac": "esac", ")": ")", "}": "}"}
+        if stripped in closers:
+            expected = closers[stripped]
+            if not stack or stack[-1] != expected:
+                return False
+            stack.pop()
+            continue
+        if stripped.startswith("if ") and stripped.endswith("; then"):
+            stack.append("fi")
+            continue
+        if stripped.startswith(("for ", "while ", "until ", "select ")) and stripped.endswith(
+            "; do"
+        ):
+            stack.append("done")
+            continue
+        if stripped.startswith("case ") and stripped.endswith(" in"):
+            stack.append("esac")
+            continue
+        if stripped == "(":
+            stack.append(")")
+            continue
+        if stripped.endswith("{"):
+            stack.append("}")
+
+    return heredoc_delimiter is None and not stack
 
 
 class R2AP2bB16PublicationTests(unittest.TestCase):
@@ -87,12 +160,7 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
         authorize_steps = authorize["steps"]
         self.assertIsInstance(authorize_steps, list)
         assert isinstance(authorize_steps, list)
-        authorize_run_text = "\n".join(
-            step["run"]
-            for step in authorize_steps
-            if isinstance(step, dict) and isinstance(step.get("run"), str)
-        )
-        for required_authorization_check in (
+        required_authorization_checks = (
             'test "${GITHUB_REPOSITORY}" = "ktogias/gnostoa"',
             'test "${GITHUB_EVENT_NAME}" = "push"',
             'test "${GITHUB_REF}" = "refs/heads/main"',
@@ -107,8 +175,18 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
                 '"${GITHUB_REPOSITORY}/.github/workflows/'
                 'publish-r2a-p2b-b16-oci.yml@refs/heads/main"'
             ),
-        ):
-            self.assertIn(required_authorization_check, authorize_run_text)
+        )
+        authorize_run_steps = [
+            step.get("run")
+            for step in authorize_steps
+            if isinstance(step, dict) and isinstance(step.get("run"), str)
+        ]
+        self.assertEqual(1, len(authorize_run_steps))
+        self.assertEqual(
+            ["set -euo pipefail", *required_authorization_checks],
+            authorize_run_steps[0].splitlines(),
+            "authorization guards must be direct executable commands in the authorize job",
+        )
         self.assertEqual(
             {
                 "contents": "read",
@@ -267,24 +345,32 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
     def test_b16_native_smoke_path_is_explicitly_restricted_and_rationalized(
         self,
     ) -> None:
-        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
-        local_block = workflow_text.split(
-            "- name: Build and verify exact B1.6 consumer locally before any registry effect",
-            1,
-        )[1].split("- name: Authenticate to GHCR for the single digest-only effect", 1)[
-            0
-        ]
-        authenticated_block = workflow_text.split(
-            "- name: Publish exact B1.6 consumer without a remote tag and read back digest",
-            1,
-        )[1].split("- name: Attest the digest-only registry manifest", 1)[0]
-        anonymous_block = workflow_text.split(
-            "- name: Verify attestation and anonymous digest acquisition", 1
-        )[1]
+        workflow = _load_workflow()
+        jobs = workflow["jobs"]
+        self.assertIsInstance(jobs, dict)
+        assert isinstance(jobs, dict)
+        publish = jobs["publish"]
+        self.assertIsInstance(publish, dict)
+        assert isinstance(publish, dict)
+        steps = publish["steps"]
+        self.assertIsInstance(steps, list)
+        assert isinstance(steps, list)
+
+        local_run = _named_bash_run_step(
+            steps,
+            "Build and verify exact B1.6 consumer locally before any registry effect",
+        )
+        authenticated_run = _named_bash_run_step(
+            steps,
+            "Publish exact B1.6 consumer without a remote tag and read back digest",
+        )
+        anonymous_run = _named_bash_run_step(
+            steps, "Verify attestation and anonymous digest acquisition"
+        )
         smoke_cuts = (
             (
                 "local",
-                local_block,
+                local_run,
                 'GNOSTOA_R2A_CANDIDATE_IMAGE="${local_image}" '
                 f"python b16-source/{B15_SMOKE}",
                 'PYTHONPATH=b16-source GNOSTOA_R2A_CANDIDATE_IMAGE="${local_image}" '
@@ -292,7 +378,7 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
             ),
             (
                 "authenticated",
-                authenticated_block,
+                authenticated_run,
                 'GNOSTOA_R2A_CANDIDATE_IMAGE="${digest_ref}" '
                 f"python b16-source/{B15_SMOKE}",
                 'PYTHONPATH=b16-source GNOSTOA_R2A_CANDIDATE_IMAGE="${digest_ref}" '
@@ -300,7 +386,7 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
             ),
             (
                 "anonymous",
-                anonymous_block,
+                anonymous_run,
                 'GNOSTOA_R2A_CANDIDATE_IMAGE="${digest_ref}" '
                 f"python b16-source/{B15_SMOKE}",
                 'PYTHONPATH=b16-source GNOSTOA_R2A_CANDIDATE_IMAGE="${digest_ref}" '
@@ -308,13 +394,15 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
             ),
         )
         rationale_line = f"# {RESTRICTED_NATIVE_RATIONALE}"
-        for cut_name, smoke_cut, b15_command, b16_command in smoke_cuts:
+        for cut_name, smoke_run, b15_command, b16_command in smoke_cuts:
             with self.subTest(cut=cut_name):
-                lines = [line.strip() for line in smoke_cut.splitlines()]
-                self.assertEqual(1, lines.count(rationale_line))
-                rationale_index = lines.index(rationale_line)
-                self.assertEqual(b15_command, lines[rationale_index + 1])
-                self.assertEqual(b16_command, lines[rationale_index + 2])
+                self.assertEqual("set -euo pipefail", smoke_run.splitlines()[0])
+                self.assertTrue(
+                    _has_direct_top_level_shell_sequence(
+                        smoke_run, (rationale_line, b15_command, b16_command)
+                    ),
+                    f"{cut_name} B1.5/B1.6 smoke must execute directly at shell top level",
+                )
 
     def test_b16_materialization_reproves_b15_and_b16_runtime_at_all_three_cuts(
         self,
