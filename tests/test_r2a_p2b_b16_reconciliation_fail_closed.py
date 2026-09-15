@@ -126,6 +126,20 @@ class R2AP2bB16ReconciliationFailClosedTests(unittest.TestCase):
             publish_run.index("--push-by-digest"),
         )
 
+    def test_post_publish_attestation_verification_is_bounded(self) -> None:
+        steps = _publish_steps()
+        verify = _named_step(
+            steps, "Verify attestation and anonymous digest acquisition"
+        )
+        verify_run = _run(verify)
+
+        bounded_attestation = "bounded_registry_capture 30 gh attestation verify"
+        self.assertIn(
+            bounded_attestation,
+            verify_run,
+            "post-publication attestation verification must terminate so reconciliation can run",
+        )
+
     def test_post_write_cleanup_failure_cannot_be_reported_as_success(self) -> None:
         steps = _publish_steps()
         reconciliation = _named_step(
@@ -141,6 +155,8 @@ class R2AP2bB16ReconciliationFailClosedTests(unittest.TestCase):
             "docker logout ghcr.io",
             'docker image inspect "${digest_ref}"',
             'docker image rm "${digest_ref}"',
+            'if docker image inspect "${digest_ref}" >/dev/null 2>&1; then',
+            'echo "digest image still present after cleanup" >&2',
             'if [ "${cleanup_status}" -ne 0 ]; then',
             'exit "${cleanup_status}"',
             'exit "${prior_status}"',
