@@ -643,11 +643,28 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
             "Build and verify exact B1.6 consumer locally before any registry effect",
         )
         local_image = 'local_image="gnostoa-r2a-p2b-b16-verify:${SOURCE_COMMIT}"'
-        local_cleanup = (
-            "trap 'docker image rm \"${local_image}\" >/dev/null 2>&1 || true' EXIT"
+        local_cleanup = "trap cleanup_local_image EXIT"
+        for required in (
+            "cleanup_local_image()",
+            "local prior_status=$?",
+            "local cleanup_status=0",
+            "trap - EXIT",
+            'if ! docker image rm "${local_image}" >/dev/null 2>&1; then',
+            'if docker image inspect "${local_image}" >/dev/null 2>&1; then',
+            'echo "local verification image remained cached" >&2',
+            'echo "local verification image cleanup failed" >&2',
+            'if [ "${cleanup_status}" -ne 0 ]; then',
+            'exit "${prior_status}"',
+            'exit "${cleanup_status}"',
+            local_cleanup,
+        ):
+            self.assertIn(required, local_run)
+        self.assertNotIn(
+            "trap 'docker image rm \"${local_image}\" >/dev/null 2>&1 || true' EXIT",
+            local_run,
         )
-        self.assertIn(local_cleanup, local_run)
         self.assertLess(local_run.index(local_image), local_run.index(local_cleanup))
+        self.assertEqual("cleanup_local_image", local_run.rstrip().splitlines()[-1])
 
         reconciliation_name = "Reconcile and clean post-publication state"
         reconciliation_matches = [
