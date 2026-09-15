@@ -69,7 +69,8 @@ Promote only the protected outer-consumer authority to exact OCI(B1.5).
 3. Bind the record's materialization provenance to protected-main revision `8b189f66c92859b4ef75a91d962f4aec38b30408`, workflow run `34905764252`, attestation `47472753`, Rekor index `2835934017`, and receipt comment `5671868333`.
 4. Preserve the existing closed outer-consumer authority schema. This transition changes the selected immutable identity, not the authority shape.
 5. Keep the dedicated R2A exact-head workflow and `semantic-review-assurance` guardrail responsible for this protected record and its focused contract. This Decision becomes a declared governed implementation surface as well.
-6. Once this authority update is integrated into protected `main`, OCI(B1.5) becomes the prior-effective outer current-advisory consumer eligible to evaluate a separately verified P2b-B2 activation candidate.
+6. Treat `knowledge/index.md` as navigation-only discoverability, not as protected semantic authority. It is intentionally outside the `semantic-review-assurance` implementation surface and the dedicated R2A path filter. An index-only change can alter navigation to this Decision, but cannot alter the protected consumer record, selected runtime, materialization provenance, inner semantic authority or P2b-B2 activation state; general knowledge validation remains responsible for index integrity.
+7. Once this authority update is integrated into protected `main`, OCI(B1.5) becomes the prior-effective outer current-advisory consumer eligible to evaluate a separately verified P2b-B2 activation candidate.
 
 This Decision **does not activate P2b-B2**. It creates the prerequisite prior-effective authority only.
 
