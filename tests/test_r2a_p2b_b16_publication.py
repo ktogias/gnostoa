@@ -241,6 +241,22 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
         self.assertEqual(1, anonymous_run.count(digest_b16))
 
         authenticated_pull = 'docker pull "${digest_ref}"'
+        authenticated_uid = (
+            'test "$(docker run --rm --entrypoint id "${digest_ref}" -u)" = "10001"'
+        )
+        authenticated_gid = (
+            'test "$(docker run --rm --entrypoint id "${digest_ref}" -g)" = "10001"'
+        )
+        self.assertIn(authenticated_uid, authenticated_run)
+        self.assertIn(authenticated_gid, authenticated_run)
+        self.assertLess(
+            authenticated_run.index(authenticated_pull),
+            authenticated_run.index(authenticated_uid),
+        )
+        self.assertLess(
+            authenticated_run.index(authenticated_pull),
+            authenticated_run.index(authenticated_gid),
+        )
         self.assertLess(
             authenticated_run.index(authenticated_pull),
             authenticated_run.index(digest_b15),
@@ -249,9 +265,22 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
             authenticated_run.index(authenticated_pull),
             authenticated_run.index(digest_b16),
         )
+
+        fail_closed_remove = 'docker image rm "${digest_ref}" >/dev/null'
+        permissive_remove = (
+            'docker image rm "${digest_ref}" >/dev/null 2>&1 || true'
+        )
+        cache_probe = 'if docker image inspect "${digest_ref}" >/dev/null 2>&1; then'
         anonymous_pull = (
             'DOCKER_CONFIG="${anonymous_config}" docker pull "${digest_ref}"'
         )
+        self.assertIn(fail_closed_remove, anonymous_run)
+        self.assertNotIn(permissive_remove, anonymous_run)
+        self.assertIn(cache_probe, anonymous_run)
+        self.assertLess(
+            anonymous_run.index(fail_closed_remove), anonymous_run.index(cache_probe)
+        )
+        self.assertLess(anonymous_run.index(cache_probe), anonymous_run.index(anonymous_pull))
         self.assertLess(
             anonymous_run.index(anonymous_pull), anonymous_run.index(digest_b15)
         )
