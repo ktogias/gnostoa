@@ -162,7 +162,28 @@ jobs:
         run: |
           set -euo pipefail
           local_image="gnostoa-r2a-p2b-b16-verify:${SOURCE_COMMIT}"
-          trap 'docker image rm "${local_image}" >/dev/null 2>&1 || true' EXIT
+          cleanup_local_image() {
+            local prior_status=$?
+            local cleanup_status=0
+            trap - EXIT
+
+            if ! docker image rm "${local_image}" >/dev/null 2>&1; then
+              cleanup_status=1
+            fi
+            if docker image inspect "${local_image}" >/dev/null 2>&1; then
+              echo "local verification image remained cached" >&2
+              cleanup_status=1
+            fi
+            if [ "${cleanup_status}" -ne 0 ]; then
+              echo "local verification image cleanup failed" >&2
+              if [ "${prior_status}" -ne 0 ]; then
+                exit "${prior_status}"
+              fi
+              exit "${cleanup_status}"
+            fi
+            exit "${prior_status}"
+          }
+          trap cleanup_local_image EXIT
           (
             cd b16-source
             GNOSTOA_CANDIDATE_REF="${SOURCE_COMMIT}" \
@@ -196,8 +217,7 @@ jobs:
           # Restricted native orchestration: the runner owns the Docker service; the candidate receives no daemon or socket authority.
           GNOSTOA_R2A_CANDIDATE_IMAGE="${local_image}" python b16-source/ci/review_b15_runtime_smoke.py
           PYTHONPATH=b16-source GNOSTOA_R2A_CANDIDATE_IMAGE="${local_image}" python b16-source/ci/review_b16_entrypoint_smoke.py
-          docker image rm "${local_image}" >/dev/null
-          trap - EXIT
+          cleanup_local_image
 
       - name: Authenticate to GHCR for the single digest-only effect
         id: authenticate
