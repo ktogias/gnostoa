@@ -241,11 +241,23 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
         self.assertEqual(1, anonymous_run.count(digest_b16))
 
         authenticated_pull = 'docker pull "${digest_ref}"'
-        self.assertLess(authenticated_run.index(authenticated_pull), authenticated_run.index(digest_b15))
-        self.assertLess(authenticated_run.index(authenticated_pull), authenticated_run.index(digest_b16))
-        anonymous_pull = 'DOCKER_CONFIG="${anonymous_config}" docker pull "${digest_ref}"'
-        self.assertLess(anonymous_run.index(anonymous_pull), anonymous_run.index(digest_b15))
-        self.assertLess(anonymous_run.index(anonymous_pull), anonymous_run.index(digest_b16))
+        self.assertLess(
+            authenticated_run.index(authenticated_pull),
+            authenticated_run.index(digest_b15),
+        )
+        self.assertLess(
+            authenticated_run.index(authenticated_pull),
+            authenticated_run.index(digest_b16),
+        )
+        anonymous_pull = (
+            'DOCKER_CONFIG="${anonymous_config}" docker pull "${digest_ref}"'
+        )
+        self.assertLess(
+            anonymous_run.index(anonymous_pull), anonymous_run.index(digest_b15)
+        )
+        self.assertLess(
+            anonymous_run.index(anonymous_pull), anonymous_run.index(digest_b16)
+        )
 
     def test_b16_materialization_is_governed_and_declared(self) -> None:
         self.assertTrue(
@@ -279,7 +291,8 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
         semantic_entries = [
             entry
             for entry in guardrails
-            if isinstance(entry, dict) and entry.get("id") == "semantic-review-assurance"
+            if isinstance(entry, dict)
+            and entry.get("id") == "semantic-review-assurance"
         ]
         self.assertEqual(1, len(immutable_entries))
         self.assertEqual(1, len(semantic_entries))
