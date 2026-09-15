@@ -91,6 +91,25 @@ class R2AP2bB16ReconciliationFailClosedTests(unittest.TestCase):
         for forbidden in ("docker push", "--push-by-digest"):
             self.assertNotIn(forbidden, reconciliation_run)
 
+    def test_digest_only_publication_registry_write_is_bounded(self) -> None:
+        steps = _publish_steps()
+        publish = _named_step(
+            steps,
+            "Publish exact B1.6 consumer without a remote tag and read back digest",
+        )
+        publish_run = _run(publish)
+
+        bounded_write = "timeout --kill-after=5s 900s ./ci/build-runtime"
+        self.assertIn(
+            bounded_write,
+            publish_run,
+            "the one registry write must terminate so fail-closed reconciliation can run",
+        )
+        self.assertLess(
+            publish_run.index(bounded_write),
+            publish_run.index("--push-by-digest"),
+        )
+
     def test_post_write_cleanup_failure_cannot_be_reported_as_success(self) -> None:
         steps = _publish_steps()
         reconciliation = _named_step(
@@ -106,7 +125,7 @@ class R2AP2bB16ReconciliationFailClosedTests(unittest.TestCase):
             "docker logout ghcr.io",
             'docker image inspect "${digest_ref}"',
             'docker image rm "${digest_ref}"',
-            "if [ \"${cleanup_status}\" -ne 0 ]; then",
+            'if [ "${cleanup_status}" -ne 0 ]; then',
             'exit "${cleanup_status}"',
             'exit "${prior_status}"',
         ):
@@ -146,9 +165,9 @@ class R2AP2bB16ReconciliationFailClosedTests(unittest.TestCase):
                 "docker image inspect --format "
                 "'{{.Config.User}}' \"${digest_ref}\""
             ),
-            'org.opencontainers.image.version',
-            'org.opencontainers.image.revision',
-            'org.opencontainers.image.created',
+            "org.opencontainers.image.version",
+            "org.opencontainers.image.revision",
+            "org.opencontainers.image.created",
             'docker run --rm --entrypoint id "${digest_ref}" -u',
             'docker run --rm --entrypoint id "${digest_ref}" -g',
             "surface-digest --root /opt/gnostoa",
