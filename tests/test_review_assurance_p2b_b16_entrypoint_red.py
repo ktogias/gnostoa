@@ -131,6 +131,9 @@ class ReviewAssuranceP2bB16EntrypointRedTests(unittest.TestCase):
         self.assertNotIn('"bridge"', smoke)
         self.assertIn("acquire_gnostoa_current_advisory_bundle", smoke)
         self.assertIn("review_live_entrypoint.main", smoke)
+        self.assertIn('"-m"', smoke)
+        self.assertIn('"tools.review_live_entrypoint"', smoke)
+        self.assertIn('"--input"', smoke)
 
         workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
         for path in (
