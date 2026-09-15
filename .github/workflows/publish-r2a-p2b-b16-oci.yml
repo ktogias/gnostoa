@@ -379,7 +379,8 @@ jobs:
             exit 1
           fi
           test "${registry_readback}" = "${REGISTRY_DIGEST}"
-          gh attestation verify "oci://${digest_ref}" --repo "${GITHUB_REPOSITORY}"
+          bounded_registry_capture 30 gh attestation verify \
+            "oci://${digest_ref}" --repo "${GITHUB_REPOSITORY}" >/dev/null
 
           docker logout ghcr.io >/dev/null 2>&1
           docker image rm "${digest_ref}" >/dev/null
