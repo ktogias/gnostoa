@@ -374,20 +374,29 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
         digest_gid_check = (
             'test "$(docker run --rm --entrypoint id "${digest_ref}" -g)" = "10001"'
         )
-        self.assertGreaterEqual(
-            workflow_text.count(digest_uid_check),
-            2,
-            "authenticated digest readback and anonymous reacquisition must both prove uid 10001",
-        )
-        self.assertGreaterEqual(
-            workflow_text.count(digest_gid_check),
-            2,
-            "authenticated digest readback and anonymous reacquisition must both prove gid 10001",
-        )
-
+        authenticated_block = workflow_text.split(
+            "- name: Publish exact B1.6 consumer without a remote tag and read back digest",
+            1,
+        )[1].split("- name: Attest the digest-only registry manifest", 1)[0]
         anonymous_block = workflow_text.split(
             "- name: Verify attestation and anonymous digest acquisition", 1
         )[1]
+        for cut_name, digest_cut in (
+            ("authenticated", authenticated_block),
+            ("anonymous", anonymous_block),
+        ):
+            with self.subTest(cut=cut_name):
+                self.assertIn(
+                    digest_uid_check,
+                    digest_cut,
+                    f"{cut_name} digest cut must prove uid 10001",
+                )
+                self.assertIn(
+                    digest_gid_check,
+                    digest_cut,
+                    f"{cut_name} digest cut must prove gid 10001",
+                )
+
         permissive_rm = 'docker image rm "${digest_ref}" >/dev/null 2>&1 || true'
         strict_rm = 'docker image rm "${digest_ref}" >/dev/null'
         absence_probe = 'if docker image inspect "${digest_ref}" >/dev/null 2>&1; then'
