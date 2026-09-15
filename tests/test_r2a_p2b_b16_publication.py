@@ -82,6 +82,34 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
         assert isinstance(publish, dict)
         self.assertEqual("authorize", publish["needs"])
         self.assertEqual(
+            {"EVENT_BEFORE": "${{ github.event.before }}"}, authorize["env"]
+        )
+        authorize_steps = authorize["steps"]
+        self.assertIsInstance(authorize_steps, list)
+        assert isinstance(authorize_steps, list)
+        authorize_run_text = "\n".join(
+            step["run"]
+            for step in authorize_steps
+            if isinstance(step, dict) and isinstance(step.get("run"), str)
+        )
+        for required_authorization_check in (
+            'test "${GITHUB_REPOSITORY}" = "ktogias/gnostoa"',
+            'test "${GITHUB_EVENT_NAME}" = "push"',
+            'test "${GITHUB_REF}" = "refs/heads/main"',
+            'test "${GITHUB_REF_TYPE}" = "branch"',
+            'test "${GITHUB_REF_NAME}" = "main"',
+            'test "${GITHUB_ACTOR}" = "ktogias"',
+            'test "${GITHUB_TRIGGERING_ACTOR}" = "ktogias"',
+            'test "${GITHUB_RUN_ATTEMPT}" = "1"',
+            'test "${EVENT_BEFORE}" = "${AUTHORIZED_BEFORE_COMMIT}"',
+            (
+                'test "${GITHUB_WORKFLOW_REF}" = '
+                '"${GITHUB_REPOSITORY}/.github/workflows/'
+                'publish-r2a-p2b-b16-oci.yml@refs/heads/main"'
+            ),
+        ):
+            self.assertIn(required_authorization_check, authorize_run_text)
+        self.assertEqual(
             {
                 "contents": "read",
                 "packages": "write",
@@ -136,11 +164,6 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
             f"AUTHORIZED_BEFORE_COMMIT: {AUTHORIZED_BEFORE_COMMIT}", workflow_text
         )
         self.assertIn("IMAGE_NAME: ghcr.io/ktogias/gnostoa", workflow_text)
-        self.assertIn("EVENT_BEFORE: ${{ github.event.before }}", workflow_text)
-        self.assertIn(
-            'test "${EVENT_BEFORE}" = "${AUTHORIZED_BEFORE_COMMIT}"', workflow_text
-        )
-        self.assertIn('test "${GITHUB_RUN_ATTEMPT}" = "1"', workflow_text)
         self.assertIn(
             'test "$(git rev-parse HEAD)" = "${SOURCE_COMMIT}"', workflow_text
         )
