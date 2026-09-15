@@ -225,11 +225,15 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
         permissive_rm = 'docker image rm "${digest_ref}" >/dev/null 2>&1 || true'
         strict_rm = 'docker image rm "${digest_ref}" >/dev/null'
         absence_probe = 'if docker image inspect "${digest_ref}" >/dev/null 2>&1; then'
-        anonymous_pull = 'DOCKER_CONFIG="${anonymous_config}" docker pull "${digest_ref}"'
+        anonymous_pull = (
+            'DOCKER_CONFIG="${anonymous_config}" docker pull "${digest_ref}"'
+        )
         self.assertNotIn(permissive_rm, anonymous_block)
         self.assertIn(strict_rm, anonymous_block)
         self.assertIn(absence_probe, anonymous_block)
-        self.assertLess(anonymous_block.index(strict_rm), anonymous_block.index(absence_probe))
+        self.assertLess(
+            anonymous_block.index(strict_rm), anonymous_block.index(absence_probe)
+        )
         self.assertLess(
             anonymous_block.index(absence_probe), anonymous_block.index(anonymous_pull)
         )
