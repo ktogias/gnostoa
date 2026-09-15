@@ -125,7 +125,7 @@ jobs:
             'test -f /opt/gnostoa/tools/review_protected.py; test -f /opt/gnostoa/tools/review_live_entrypoint.py; grep -Fx "tools/review_protected.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "tools/review_live.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "tools/review_current.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "tools/review_live_entrypoint.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "ci/review_b15_runtime_smoke.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "ci/review_b16_entrypoint_smoke.py" /opt/gnostoa/.gnostoa-source-files >/dev/null'
           docker run --rm "${local_image}" self-check --skip-tests
           GNOSTOA_R2A_CANDIDATE_IMAGE="${local_image}" python b16-source/ci/review_b15_runtime_smoke.py
-          GNOSTOA_R2A_CANDIDATE_IMAGE="${local_image}" python b16-source/ci/review_b16_entrypoint_smoke.py
+          PYTHONPATH=b16-source GNOSTOA_R2A_CANDIDATE_IMAGE="${local_image}" python b16-source/ci/review_b16_entrypoint_smoke.py
           docker image rm "${local_image}" >/dev/null
 
       - name: Authenticate to GHCR for the single digest-only effect
@@ -206,7 +206,7 @@ jobs:
             'test -f /opt/gnostoa/tools/review_protected.py; test -f /opt/gnostoa/tools/review_live_entrypoint.py; grep -Fx "tools/review_protected.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "tools/review_live.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "tools/review_current.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "tools/review_live_entrypoint.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "ci/review_b15_runtime_smoke.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "ci/review_b16_entrypoint_smoke.py" /opt/gnostoa/.gnostoa-source-files >/dev/null'
           docker run --rm "${digest_ref}" self-check --skip-tests
           GNOSTOA_R2A_CANDIDATE_IMAGE="${digest_ref}" python b16-source/ci/review_b15_runtime_smoke.py
-          GNOSTOA_R2A_CANDIDATE_IMAGE="${digest_ref}" python b16-source/ci/review_b16_entrypoint_smoke.py
+          PYTHONPATH=b16-source GNOSTOA_R2A_CANDIDATE_IMAGE="${digest_ref}" python b16-source/ci/review_b16_entrypoint_smoke.py
 
       - name: Attest the digest-only registry manifest
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
@@ -252,7 +252,7 @@ jobs:
             'test -f /opt/gnostoa/tools/review_protected.py; test -f /opt/gnostoa/tools/review_live_entrypoint.py; grep -Fx "tools/review_protected.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "tools/review_live.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "tools/review_current.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "tools/review_live_entrypoint.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "ci/review_b15_runtime_smoke.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "ci/review_b16_entrypoint_smoke.py" /opt/gnostoa/.gnostoa-source-files >/dev/null'
           docker run --rm "${digest_ref}" self-check --skip-tests
           GNOSTOA_R2A_CANDIDATE_IMAGE="${digest_ref}" python b16-source/ci/review_b15_runtime_smoke.py
-          GNOSTOA_R2A_CANDIDATE_IMAGE="${digest_ref}" python b16-source/ci/review_b16_entrypoint_smoke.py
+          PYTHONPATH=b16-source GNOSTOA_R2A_CANDIDATE_IMAGE="${digest_ref}" python b16-source/ci/review_b16_entrypoint_smoke.py
 
           {
             echo "### D11-R2A/P2b-B1.6 prior-effective OCI consumer"
