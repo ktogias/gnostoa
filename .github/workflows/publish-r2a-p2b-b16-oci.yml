@@ -170,6 +170,7 @@ jobs:
         run: |
           set -euo pipefail
           local_image="gnostoa-r2a-p2b-b16-verify:${SOURCE_COMMIT}"
+          trap 'docker image rm "${local_image}" >/dev/null 2>&1 || true' EXIT
           (
             cd b16-source
             GNOSTOA_CANDIDATE_REF="${SOURCE_COMMIT}" \
@@ -204,6 +205,7 @@ jobs:
           GNOSTOA_R2A_CANDIDATE_IMAGE="${local_image}" python b16-source/ci/review_b15_runtime_smoke.py
           PYTHONPATH=b16-source GNOSTOA_R2A_CANDIDATE_IMAGE="${local_image}" python b16-source/ci/review_b16_entrypoint_smoke.py
           docker image rm "${local_image}" >/dev/null
+          trap - EXIT
 
       - name: Authenticate to GHCR for the single digest-only effect
         shell: bash
@@ -423,3 +425,53 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY}"
 
           printf 'r2a_p2b_b16.image=%s@%s\n' "${IMAGE_NAME}" "${REGISTRY_DIGEST}"
+
+      - name: Reconcile and clean post-publication state
+        if: ${{ always() && steps.publish.outputs.registry_digest != '' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REGISTRY_DIGEST: ${{ steps.publish.outputs.registry_digest }}
+        run: |
+          set -euo pipefail
+          digest_ref="${IMAGE_NAME}@${REGISTRY_DIGEST}"
+
+          bounded_registry_capture() {
+            local timeout_seconds="$1"
+            shift
+            local output_file status bytes
+            output_file="$(mktemp "${RUNNER_TEMP}/r2a-reconcile-output.XXXXXX")"
+            set +e
+            timeout --kill-after=5s "${timeout_seconds}s" "$@" 2>&1 \
+              | head -c 4097 > "${output_file}"
+            status="${PIPESTATUS[0]}"
+            set -e
+            bytes="$(wc -c < "${output_file}")"
+            if [ "${bytes}" -gt 4096 ]; then
+              head -c 4096 "${output_file}" >&2
+              rm -f "${output_file}"
+              echo "registry reconciliation output exceeded 4096 bytes" >&2
+              return 1
+            fi
+            if [ "${status}" -ne 0 ]; then
+              cat "${output_file}" >&2
+              rm -f "${output_file}"
+              return "${status}"
+            fi
+            cat "${output_file}"
+            rm -f "${output_file}"
+          }
+
+          cleanup_post_write() {
+            docker logout ghcr.io >/dev/null 2>&1 || true
+            docker image rm "${digest_ref}" >/dev/null 2>&1 || true
+          }
+          trap cleanup_post_write EXIT
+
+          reconciled_manifest="$(
+            bounded_registry_capture 30 docker buildx imagetools inspect \
+              "${digest_ref}" --format '{{.Manifest.Digest}}'
+          )"
+          test "${reconciled_manifest}" = "${REGISTRY_DIGEST}"
+          bounded_registry_capture 30 gh attestation verify \
+            "oci://${digest_ref}" --repo "${GITHUB_REPOSITORY}" >/dev/null
