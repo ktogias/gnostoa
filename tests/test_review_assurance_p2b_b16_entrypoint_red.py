@@ -99,9 +99,14 @@ class ReviewAssuranceP2bB16EntrypointRedTests(unittest.TestCase):
         evaluate.assert_not_called()
 
     def test_live_entrypoint_rejects_oversized_input_before_evaluation(self) -> None:
+        oversized_json = json.dumps(
+            {"padding": "x" * review_check.MAX_REVIEW_INPUT_BYTES},
+            separators=(",", ":"),
+        ).encode("utf-8")
+        self.assertGreater(len(oversized_json), review_check.MAX_REVIEW_INPUT_BYTES)
         with tempfile.TemporaryDirectory() as directory:
             input_path = Path(directory) / "input.json"
-            input_path.write_bytes(b" " * (review_check.MAX_REVIEW_INPUT_BYTES + 1))
+            input_path.write_bytes(oversized_json)
             stdout = io.StringIO()
             with (
                 mock.patch.object(
@@ -115,6 +120,8 @@ class ReviewAssuranceP2bB16EntrypointRedTests(unittest.TestCase):
         self.assertEqual(2, code)
         payload = json.loads(stdout.getvalue())
         self.assertEqual("MALFORMED_INVOCATION", payload["error"]["code"])
+        self.assertIn("larger than the", stdout.getvalue())
+        self.assertIn("-byte operational bound", stdout.getvalue())
         evaluate.assert_not_called()
 
     def test_live_entrypoint_rejects_deep_nesting_before_evaluation(self) -> None:
@@ -155,6 +162,7 @@ class ReviewAssuranceP2bB16EntrypointRedTests(unittest.TestCase):
         self.assertEqual(2, code)
         payload = json.loads(stdout.getvalue())
         self.assertEqual("MALFORMED_INVOCATION", payload["error"]["code"])
+        self.assertIn("not valid UTF-8", stdout.getvalue())
         evaluate.assert_not_called()
 
     def test_live_entrypoint_rejects_symlink_loop_as_malformed_invocation(self) -> None:
@@ -186,7 +194,7 @@ class ReviewAssuranceP2bB16EntrypointRedTests(unittest.TestCase):
             "P2B_B16_DURABLE_DECISION_UNAVAILABLE",
         )
         smoke = SMOKE_PATH.read_text(encoding="utf-8")
-        self.assertIn('"--network",\n                "none"', smoke)
+        self.assertRegex(smoke, r'"--network",\s*"none"')
         self.assertNotIn('"bridge"', smoke)
         self.assertIn("acquire_gnostoa_current_advisory_bundle", smoke)
         self.assertIn("review_live_entrypoint.main", smoke)
