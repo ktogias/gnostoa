@@ -212,7 +212,6 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
             "timeout --kill-after=5s",
             "pulls/${AUTHORIZED_PR_NUMBER}",
             "merge_commit_sha",
-            "AUTHORIZED_BEFORE_COMMIT",
             "AUTHORIZED_PR_HEAD_REF",
             "GITHUB_SHA",
         ):
