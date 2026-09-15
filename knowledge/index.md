@@ -83,6 +83,7 @@ inherited, copied or loaded by adopting projects.
 - [Protect the R2A B1 outer-consumer authority separately from the inner semantic authority](decisions/0070-protect-r2a-b1-outer-consumer-authority-separately.md)
 - [Add a pinned Docker client to the dormant R2A B1 runtime before P2b-B2 activation](decisions/0071-add-docker-client-to-r2a-b1-runtime.md)
 - [Materialize integrated R2A P2b-B1.5 as a prior-effective digest-only OCI outer consumer](decisions/0072-materialize-integrated-r2a-p2b-b15-consumer-by-digest.md)
+- [Promote the protected R2A outer-consumer authority from OCI(B1) to OCI(B1.5)](decisions/0073-promote-r2a-b15-outer-consumer-authority.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Require explicit admission for retrospective findings](requirements/retrospective-findings-require-explicit-admission.md)
