@@ -50,9 +50,7 @@ def _guardrail_section(guardrails: str, guardrail_id: str) -> str:
 
 def _named_bash_run_step(steps: list[object], name: str) -> str:
     matches = [
-        step
-        for step in steps
-        if isinstance(step, dict) and step.get("name") == name
+        step for step in steps if isinstance(step, dict) and step.get("name") == name
     ]
     if len(matches) != 1:
         raise AssertionError(f"expected exactly one workflow step named {name!r}")
@@ -102,9 +100,9 @@ def _has_direct_top_level_shell_sequence(
         if stripped.startswith("if ") and stripped.endswith("; then"):
             stack.append("fi")
             continue
-        if stripped.startswith(("for ", "while ", "until ", "select ")) and stripped.endswith(
-            "; do"
-        ):
+        if stripped.startswith(
+            ("for ", "while ", "until ", "select ")
+        ) and stripped.endswith("; do"):
             stack.append("done")
             continue
         if stripped.startswith("case ") and stripped.endswith(" in"):
