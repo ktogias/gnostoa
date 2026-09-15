@@ -155,8 +155,11 @@ class R2AP2bB16ReconciliationFailClosedTests(unittest.TestCase):
             "docker logout ghcr.io",
             'docker image inspect "${digest_ref}"',
             'docker image rm "${digest_ref}"',
-            'if docker image inspect "${digest_ref}" >/dev/null 2>&1; then',
-            'echo "digest image still present after cleanup" >&2',
+            (
+                'if [ -n "${digest_ref}" ] && docker image inspect '
+                '"${digest_ref}" >/dev/null 2>&1; then'
+            ),
+            'echo "post-write digest image remained cached" >&2',
             'if [ "${cleanup_status}" -ne 0 ]; then',
             'exit "${cleanup_status}"',
             'exit "${prior_status}"',
