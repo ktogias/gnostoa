@@ -596,6 +596,20 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
         strict_rm = 'docker image rm "${digest_ref}" >/dev/null'
         absence_probe = 'if docker image inspect "${digest_ref}" >/dev/null 2>&1; then'
         anonymous_pull = 'docker pull --quiet "${digest_ref}"'
+        failure_exit = "exit 1"
+        for required_command in (
+            strict_rm,
+            absence_probe,
+            anonymous_pull,
+            permissive_rm,
+            failure_exit,
+        ):
+            self.assertIn(
+                required_command,
+                anonymous_block,
+                f"anonymous teardown ordering requires command {required_command!r}",
+            )
+
         strict_rm_index = anonymous_block.index(strict_rm)
         absence_probe_index = anonymous_block.index(absence_probe)
         anonymous_pull_index = anonymous_block.index(anonymous_pull)
@@ -607,7 +621,7 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
         self.assertLess(anonymous_pull_index, permissive_cleanup_index)
         self.assertLess(
             permissive_cleanup_index,
-            anonymous_block.index("exit 1", permissive_cleanup_index),
+            anonymous_block.index(failure_exit, permissive_cleanup_index),
         )
         self.assertLess(
             anonymous_pull_index,
