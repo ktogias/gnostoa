@@ -26,6 +26,9 @@ DECISION_PATH = (
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "r2a-protected-current-advisory.yml"
 GUARDRAILS_PATH = ROOT / "policy" / "guardrails.yaml"
 FOCUSED_TEST_PATH = "tests/test_review_assurance_p2b_consumer_authority_red.py"
+MATERIALIZATION_DECISION_PATH = (
+    "knowledge/decisions/0072-materialize-integrated-r2a-p2b-b15-consumer-by-digest.md"
+)
 
 B15_SOURCE_REVISION = "7093fd043f2269e09da74b03ce9d35fb6aece5da"  # pragma: allowlist secret -- public source revision
 B15_SOURCE_TREE = "e7a4f2142e72efd52133f4719d8acf9b2dccb89d"  # pragma: allowlist secret -- public source tree
@@ -169,6 +172,7 @@ class ReviewAssuranceP2bConsumerAuthorityRedTests(unittest.TestCase):
     def test_dedicated_workflow_covers_outer_consumer_authority(self) -> None:
         workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
         self.assertIn('- "tasks/issue-11-r2a-current-advisory-consumer.json"', workflow)
+        self.assertIn(f'- "{MATERIALIZATION_DECISION_PATH}"', workflow)
         self.assertIn(f'- "{FOCUSED_TEST_PATH}"', workflow)
         self.assertNotIn('- "knowledge/index.md"', workflow)
         self.assertIn("python -m ruff format --check \\\n", workflow)
@@ -198,6 +202,7 @@ class ReviewAssuranceP2bConsumerAuthorityRedTests(unittest.TestCase):
                 "schemas/review-protected-consumer-authority.schema.json",
                 "tasks/issue-11-r2a-current-advisory-consumer.json",
                 "knowledge/decisions/0070-protect-r2a-b1-outer-consumer-authority-separately.md",
+                "knowledge/decisions/0072-materialize-integrated-r2a-p2b-b15-consumer-by-digest.md",
                 "knowledge/decisions/0073-promote-r2a-b15-outer-consumer-authority.md",
             },
             set(implementation),
