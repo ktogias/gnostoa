@@ -155,23 +155,72 @@ class R2AP2bB16ReconciliationFailClosedTests(unittest.TestCase):
         )
         publish_run = _run(publish)
 
-        cleanup_trap = "trap 'timeout --kill-after=5s 30s docker buildx rm \"${builder}\" >/dev/null 2>&1 || true' EXIT"
         bounded_create = "timeout --kill-after=5s 120s docker buildx create"
-        self.assertIn(
-            cleanup_trap,
-            publish_run,
-            "builder cleanup must already be armed before BuildKit startup",
+        cleanup_function = "cleanup_builder()"
+        cleanup_trap = "trap cleanup_builder EXIT"
+        bounded_cleanup = (
+            'if ! timeout --kill-after=5s 30s docker buildx rm "${builder}" '
+            ">/dev/null 2>&1; then"
         )
-        self.assertIn(
+        for required in (
+            cleanup_function,
+            "local prior_status=$?",
+            "trap - EXIT",
+            bounded_cleanup,
+            'echo "BuildKit builder cleanup failed" >&2',
+            'exit "${prior_status}"',
+            cleanup_trap,
             bounded_create,
-            publish_run,
-            "BuildKit builder startup must have a finite execution bound",
+        ):
+            self.assertIn(
+                required,
+                publish_run,
+                "BuildKit builder cleanup must be bounded and fail closed",
+            )
+        self.assertNotIn(
+            'docker buildx rm "${builder}" >/dev/null 2>&1 || true', publish_run
         )
         self.assertLess(
             publish_run.index(cleanup_trap),
             publish_run.index(bounded_create),
             "builder cleanup must be armed before bounded builder creation",
         )
+
+    def test_failed_authentication_is_cleaned_before_publish_can_be_skipped(self) -> None:
+        steps = _publish_steps()
+        authenticate = _named_step(
+            steps, "Authenticate to GHCR for the single digest-only effect"
+        )
+        auth_cleanup = _named_step(
+            steps, "Clean GHCR authentication state after failed login"
+        )
+        publish = _named_step(
+            steps,
+            "Publish exact B1.6 consumer without a remote tag and read back digest",
+        )
+
+        self.assertEqual(
+            "authenticate",
+            authenticate.get("id"),
+            "authentication outcome must be addressable by the cleanup guard",
+        )
+        self.assertEqual(
+            "${{ always() && steps.authenticate.outcome == 'failure' }}",
+            auth_cleanup.get("if"),
+            "an attempted but failed authentication must still reach credential cleanup",
+        )
+        self.assertEqual(
+            "1",
+            auth_cleanup.get("timeout-minutes"),
+            "authentication cleanup must itself have a finite step bound",
+        )
+        self.assertIn(
+            "timeout --kill-after=5s 30s docker logout ghcr.io",
+            _run(auth_cleanup),
+            "failed authentication cleanup must bound credential removal",
+        )
+        self.assertLess(steps.index(authenticate), steps.index(auth_cleanup))
+        self.assertLess(steps.index(auth_cleanup), steps.index(publish))
 
     def test_post_publish_attestation_verification_is_bounded(self) -> None:
         steps = _publish_steps()
