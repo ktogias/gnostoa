@@ -32,6 +32,15 @@ def _load_workflow() -> dict[str, object]:
     return workflow
 
 
+def _load_guardrails() -> dict[str, object]:
+    document = yaml.load(
+        GUARDRAILS_PATH.read_text(encoding="utf-8"), Loader=yaml.BaseLoader
+    )
+    if not isinstance(document, dict):
+        raise AssertionError("guardrails must be a YAML mapping")
+    return document
+
+
 class R2AP2bB16PublicationTests(unittest.TestCase):
     def test_exact_integrated_b16_has_one_shot_digest_only_publisher(self) -> None:
         self.assertTrue(
@@ -55,6 +64,16 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
             workflow["on"],
         )
         self.assertEqual({}, workflow["permissions"])
+        self.assertEqual(
+            {
+                "KIT_VERSION": "0.2.0",
+                "IMAGE_NAME": "ghcr.io/ktogias/gnostoa",
+                "SOURCE_COMMIT": SOURCE_COMMIT,
+                "SOURCE_TREE": SOURCE_TREE,
+                "AUTHORIZED_BEFORE_COMMIT": AUTHORIZED_BEFORE_COMMIT,
+            },
+            workflow["env"],
+        )
 
         jobs = workflow["jobs"]
         self.assertIsInstance(jobs, dict)
@@ -116,12 +135,6 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
             attest_steps[0]["with"],
         )
 
-        self.assertIn(f"SOURCE_COMMIT: {SOURCE_COMMIT}", workflow_text)
-        self.assertIn(f"SOURCE_TREE: {SOURCE_TREE}", workflow_text)
-        self.assertIn(
-            f"AUTHORIZED_BEFORE_COMMIT: {AUTHORIZED_BEFORE_COMMIT}", workflow_text
-        )
-        self.assertIn("IMAGE_NAME: ghcr.io/ktogias/gnostoa", workflow_text)
         self.assertIn("EVENT_BEFORE: ${{ github.event.before }}", workflow_text)
         self.assertIn(
             'test "${EVENT_BEFORE}" = "${AUTHORIZED_BEFORE_COMMIT}"', workflow_text
@@ -165,12 +178,44 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
     def test_b16_materialization_reproves_exact_entrypoint_before_and_after_write(
         self,
     ) -> None:
-        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
-        for packaged_path in (B16_ENTRYPOINT, B15_SMOKE, B16_SMOKE):
-            self.assertIn(
-                f'grep -Fx "{packaged_path}" /opt/gnostoa/.gnostoa-source-files',
-                workflow_text,
-            )
+        workflow = _load_workflow()
+        jobs = workflow["jobs"]
+        self.assertIsInstance(jobs, dict)
+        assert isinstance(jobs, dict)
+        publish = jobs["publish"]
+        self.assertIsInstance(publish, dict)
+        assert isinstance(publish, dict)
+        steps = publish["steps"]
+        self.assertIsInstance(steps, list)
+        assert isinstance(steps, list)
+        step_runs = {
+            step["name"]: step["run"]
+            for step in steps
+            if isinstance(step, dict)
+            and isinstance(step.get("name"), str)
+            and isinstance(step.get("run"), str)
+        }
+
+        local_run = step_runs[
+            "Build and verify exact B1.6 consumer locally before any registry effect"
+        ]
+        authenticated_run = step_runs[
+            "Publish exact B1.6 consumer without a remote tag and read back digest"
+        ]
+        anonymous_run = step_runs["Verify attestation and anonymous digest acquisition"]
+
+        packaged_paths = (B16_ENTRYPOINT, B15_SMOKE, B16_SMOKE)
+        for cut_name, cut_run in (
+            ("local", local_run),
+            ("authenticated", authenticated_run),
+            ("anonymous", anonymous_run),
+        ):
+            with self.subTest(cut=cut_name):
+                for packaged_path in packaged_paths:
+                    self.assertIn(
+                        f'grep -Fx "{packaged_path}" /opt/gnostoa/.gnostoa-source-files',
+                        cut_run,
+                    )
 
         local_b15 = (
             'GNOSTOA_R2A_CANDIDATE_IMAGE="${local_image}" '
@@ -180,32 +225,27 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
             'GNOSTOA_R2A_CANDIDATE_IMAGE="${local_image}" '
             f"python b16-source/{B16_SMOKE}"
         )
-        self.assertIn(local_b15, workflow_text)
-        self.assertIn(local_b16, workflow_text)
-        self.assertIn(
+        digest_b15 = (
             'GNOSTOA_R2A_CANDIDATE_IMAGE="${digest_ref}" '
-            f"python b16-source/{B15_SMOKE}",
-            workflow_text,
+            f"python b16-source/{B15_SMOKE}"
         )
-        self.assertIn(
+        digest_b16 = (
             'GNOSTOA_R2A_CANDIDATE_IMAGE="${digest_ref}" '
-            f"python b16-source/{B16_SMOKE}",
-            workflow_text,
+            f"python b16-source/{B16_SMOKE}"
         )
-        self.assertGreaterEqual(
-            workflow_text.count(f"python b16-source/{B15_SMOKE}"),
-            3,
-            "B1.5 Docker-client capability must remain proven at all materialization cuts",
-        )
-        self.assertGreaterEqual(
-            workflow_text.count(f"python b16-source/{B16_SMOKE}"),
-            3,
-            "B1.6 exact-entrypoint smoke must run locally, after registry readback, "
-            "and after anonymous reacquisition",
-        )
-        login_index = workflow_text.index("docker login ghcr.io")
-        self.assertLess(workflow_text.index(local_b15), login_index)
-        self.assertLess(workflow_text.index(local_b16), login_index)
+        self.assertEqual(1, local_run.count(local_b15))
+        self.assertEqual(1, local_run.count(local_b16))
+        self.assertEqual(1, authenticated_run.count(digest_b15))
+        self.assertEqual(1, authenticated_run.count(digest_b16))
+        self.assertEqual(1, anonymous_run.count(digest_b15))
+        self.assertEqual(1, anonymous_run.count(digest_b16))
+
+        authenticated_pull = 'docker pull "${digest_ref}"'
+        self.assertLess(authenticated_run.index(authenticated_pull), authenticated_run.index(digest_b15))
+        self.assertLess(authenticated_run.index(authenticated_pull), authenticated_run.index(digest_b16))
+        anonymous_pull = 'DOCKER_CONFIG="${anonymous_config}" docker pull "${digest_ref}"'
+        self.assertLess(anonymous_run.index(anonymous_pull), anonymous_run.index(digest_b15))
+        self.assertLess(anonymous_run.index(anonymous_pull), anonymous_run.index(digest_b16))
 
     def test_b16_materialization_is_governed_and_declared(self) -> None:
         self.assertTrue(
@@ -226,18 +266,33 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
         self.assertIn("host Docker socket", decision)
         self.assertIn("input-only", decision)
 
-        guardrails = GUARDRAILS_PATH.read_text(encoding="utf-8")
-        immutable_section = guardrails.split(
-            "  - id: immutable-provider-ci-adapters", 1
-        )[1].split("\n  - id:", 1)[0]
-        self.assertIn(WORKFLOW_RELATIVE_PATH, immutable_section)
-        self.assertIn(DECISION_RELATIVE_PATH, guardrails)
+        document = _load_guardrails()
+        guardrails = document["guardrails"]
+        self.assertIsInstance(guardrails, list)
+        assert isinstance(guardrails, list)
+        immutable_entries = [
+            entry
+            for entry in guardrails
+            if isinstance(entry, dict)
+            and entry.get("id") == "immutable-provider-ci-adapters"
+        ]
+        semantic_entries = [
+            entry
+            for entry in guardrails
+            if isinstance(entry, dict) and entry.get("id") == "semantic-review-assurance"
+        ]
+        self.assertEqual(1, len(immutable_entries))
+        self.assertEqual(1, len(semantic_entries))
+        immutable = immutable_entries[0]
+        semantic = semantic_entries[0]
+        self.assertIn(WORKFLOW_RELATIVE_PATH, immutable["implementation"])
         self.assertIn(
             "tests/test_r2a_p2b_b16_publication.py::"
             "R2AP2bB16PublicationTests."
             "test_b16_materialization_is_governed_and_declared",
-            immutable_section,
+            immutable["tests"],
         )
+        self.assertIn(DECISION_RELATIVE_PATH, semantic["implementation"])
 
 
 if __name__ == "__main__":
