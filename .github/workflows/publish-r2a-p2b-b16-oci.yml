@@ -195,6 +195,8 @@ jobs:
           test "$(docker buildx imagetools inspect "${digest_ref}" --format '{{.Manifest.Digest}}')" = "${registry_digest}"
           test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "${digest_ref}")" = "linux/amd64"
           test "$(docker image inspect --format '{{.Config.User}}' "${digest_ref}")" = "kit"
+          test "$(docker run --rm --entrypoint id "${digest_ref}" -u)" = "10001"
+          test "$(docker run --rm --entrypoint id "${digest_ref}" -g)" = "10001"
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "${digest_ref}")" = "${KIT_VERSION}"
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${digest_ref}")" = "${SOURCE_COMMIT}"
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.created"}}' "${digest_ref}")" = "${BUILD_DATE}"
@@ -228,7 +230,11 @@ jobs:
           gh attestation verify "oci://${digest_ref}" --repo "${GITHUB_REPOSITORY}"
 
           docker logout ghcr.io >/dev/null 2>&1 || true
-          docker image rm "${digest_ref}" >/dev/null 2>&1 || true
+          docker image rm "${digest_ref}" >/dev/null
+          if docker image inspect "${digest_ref}" >/dev/null 2>&1; then
+            echo "digest image remained cached after authenticated readback" >&2
+            exit 1
+          fi
           anonymous_config="$(mktemp -d)"
           trap 'rm -rf "${anonymous_config}"' EXIT
           DOCKER_CONFIG="${anonymous_config}" docker pull "${digest_ref}"
