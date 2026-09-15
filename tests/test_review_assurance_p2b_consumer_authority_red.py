@@ -173,6 +173,10 @@ class ReviewAssuranceP2bConsumerAuthorityRedTests(unittest.TestCase):
         workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
         self.assertIn('- "tasks/issue-11-r2a-current-advisory-consumer.json"', workflow)
         self.assertIn(f'- "{MATERIALIZATION_DECISION_PATH}"', workflow)
+        self.assertIn(
+            '- "knowledge/decisions/0073-promote-r2a-b15-outer-consumer-authority.md"',
+            workflow,
+        )
         self.assertIn(f'- "{FOCUSED_TEST_PATH}"', workflow)
         self.assertNotIn('- "knowledge/index.md"', workflow)
         self.assertIn("python -m ruff format --check \\\n", workflow)
