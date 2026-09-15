@@ -45,6 +45,26 @@ def _run(step: dict[str, object]) -> str:
 
 
 class R2AP2bB16ReconciliationFailClosedTests(unittest.TestCase):
+    def test_terminal_publish_job_does_not_export_unused_job_outputs(self) -> None:
+        workflow = yaml.load(
+            WORKFLOW_PATH.read_text(encoding="utf-8"), Loader=yaml.BaseLoader
+        )
+        self.assertIsInstance(workflow, dict)
+        assert isinstance(workflow, dict)
+        jobs = workflow.get("jobs")
+        self.assertIsInstance(jobs, dict)
+        assert isinstance(jobs, dict)
+        publish = jobs.get("publish")
+        self.assertIsInstance(publish, dict)
+        assert isinstance(publish, dict)
+
+        self.assertNotIn(
+            "outputs",
+            publish,
+            "terminal publish job must not expose unused job-level outputs; "
+            "the digest step outputs remain internal to this job",
+        )
+
     def test_possible_push_reconciles_even_without_publish_step_output(self) -> None:
         steps = _publish_steps()
         publish = _named_step(
