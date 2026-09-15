@@ -20,6 +20,8 @@ GUARDRAILS_PATH = ROOT / "policy" / "guardrails.yaml"
 SOURCE_COMMIT = "f29499286bac9859364d45da0f6c59396518b749"  # pragma: allowlist secret -- public source revision
 SOURCE_TREE = "ff38abe5718ebc550054ea6af18a73d0aef8e514"  # pragma: allowlist secret -- public source tree
 AUTHORIZED_BEFORE_COMMIT = SOURCE_COMMIT
+AUTHORIZED_PR_NUMBER = "257"
+AUTHORIZED_PR_HEAD_REF = "r2a-b16-materialization"
 CHECKOUT_ACTION = "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
 SETUP_PYTHON_ACTION = "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1"
 ATTEST_ACTION = "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6"
@@ -31,7 +33,9 @@ RESTRICTED_NATIVE_RATIONALE = (
     "Restricted native orchestration: the runner owns the Docker service; "
     "the candidate receives no daemon or socket authority."
 )
-_HEREDOC_RE = re.compile(r"<<-?[\"']?([A-Za-z_][A-Za-z0-9_]*)[\"']?")
+_HEREDOC_RE = re.compile(
+    r"(?<!<)(<<-?)(?!<)\s*[\"']?([A-Za-z_][A-Za-z0-9_]*)[\"']?"
+)
 
 
 def _load_workflow() -> dict[str, object]:
@@ -75,46 +79,57 @@ def _has_direct_top_level_shell_sequence(
         return False
 
     stack: list[str] = []
-    heredoc_delimiter: str | None = None
+    heredoc: tuple[str, bool] | None = None
     for raw_line in lines[: starts[0]]:
         stripped = raw_line.strip()
-        if heredoc_delimiter is not None:
-            if stripped == heredoc_delimiter:
-                heredoc_delimiter = None
+        if heredoc is not None:
+            delimiter, strip_tabs = heredoc
+            candidate = raw_line.lstrip("\t") if strip_tabs else raw_line
+            if candidate == delimiter:
+                heredoc = None
             continue
         if not stripped or stripped.startswith("#"):
             continue
 
-        heredoc_match = _HEREDOC_RE.search(stripped)
-        if heredoc_match is not None:
-            heredoc_delimiter = heredoc_match.group(1)
+        if stripped.startswith(")") and stack and stack[-1] == "cmdsub":
+            stack.pop()
             continue
 
-        closers = {"fi": "fi", "done": "done", "esac": "esac", ")": ")", "}": "}"}
+        closers = {
+            "fi": "fi",
+            "done": "done",
+            "esac": "esac",
+            ")": ")",
+            "}": "}",
+        }
         if stripped in closers:
             expected = closers[stripped]
             if not stack or stack[-1] != expected:
                 return False
             stack.pop()
             continue
-        if stripped.startswith("if ") and stripped.endswith("; then"):
+
+        if stripped.startswith("if "):
             stack.append("fi")
-            continue
-        if stripped.startswith(
-            ("for ", "while ", "until ", "select ")
-        ) and stripped.endswith("; do"):
+        elif stripped.startswith(("for ", "while ", "until ", "select ")):
             stack.append("done")
-            continue
-        if stripped.startswith("case ") and stripped.endswith(" in"):
+        elif stripped.startswith("case "):
             stack.append("esac")
-            continue
-        if stripped == "(":
+        elif stripped == "(":
             stack.append(")")
-            continue
-        if stripped.endswith("{"):
+        elif stripped.endswith("{"):
             stack.append("}")
 
-    return heredoc_delimiter is None and not stack
+        last_command_sub = stripped.rfind("$(")
+        if last_command_sub >= 0 and ")" not in stripped[last_command_sub + 2 :]:
+            stack.append("cmdsub")
+
+        heredoc_match = _HEREDOC_RE.search(stripped)
+        if heredoc_match is not None:
+            operator, delimiter = heredoc_match.groups()
+            heredoc = (delimiter, operator == "<<-")
+
+    return heredoc is None and not stack
 
 
 class R2AP2bB16PublicationTests(unittest.TestCase):
@@ -140,6 +155,11 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
             workflow["on"],
         )
         self.assertEqual({}, workflow["permissions"])
+        workflow_env = workflow["env"]
+        self.assertIsInstance(workflow_env, dict)
+        assert isinstance(workflow_env, dict)
+        self.assertEqual(AUTHORIZED_PR_NUMBER, workflow_env["AUTHORIZED_PR_NUMBER"])
+        self.assertEqual(AUTHORIZED_PR_HEAD_REF, workflow_env["AUTHORIZED_PR_HEAD_REF"])
 
         jobs = workflow["jobs"]
         self.assertIsInstance(jobs, dict)
@@ -152,8 +172,13 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
         assert isinstance(authorize, dict)
         assert isinstance(publish, dict)
         self.assertEqual("authorize", publish["needs"])
+        self.assertEqual({"pull-requests": "read"}, authorize["permissions"])
         self.assertEqual(
-            {"EVENT_BEFORE": "${{ github.event.before }}"}, authorize["env"]
+            {
+                "EVENT_BEFORE": "${{ github.event.before }}",
+                "EVENT_AFTER": "${{ github.event.after }}",
+            },
+            authorize["env"],
         )
         authorize_steps = authorize["steps"]
         self.assertIsInstance(authorize_steps, list)
@@ -168,23 +193,34 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
             'test "${GITHUB_TRIGGERING_ACTOR}" = "ktogias"',
             'test "${GITHUB_RUN_ATTEMPT}" = "1"',
             'test "${EVENT_BEFORE}" = "${AUTHORIZED_BEFORE_COMMIT}"',
+            'test "${EVENT_AFTER}" = "${GITHUB_SHA}"',
+            'test "${GITHUB_WORKFLOW_SHA}" = "${GITHUB_SHA}"',
             (
                 'test "${GITHUB_WORKFLOW_REF}" = '
                 '"${GITHUB_REPOSITORY}/.github/workflows/'
                 'publish-r2a-p2b-b16-oci.yml@refs/heads/main"'
             ),
         )
-        authorize_run_steps = [
-            step.get("run")
-            for step in authorize_steps
-            if isinstance(step, dict) and isinstance(step.get("run"), str)
-        ]
-        self.assertEqual(1, len(authorize_run_steps))
+        boundary_run = _named_bash_run_step(
+            authorize_steps, "Refuse any context outside the admitted one-shot boundary"
+        )
         self.assertEqual(
             ["set -euo pipefail", *required_authorization_checks],
-            authorize_run_steps[0].splitlines(),
+            boundary_run.splitlines(),
             "authorization guards must be direct executable commands in the authorize job",
         )
+        provider_binding_run = _named_bash_run_step(
+            authorize_steps, "Bind the pushed commit to merged PR 257"
+        )
+        for required_provider_binding in (
+            "timeout --kill-after=5s",
+            "pulls/${AUTHORIZED_PR_NUMBER}",
+            "merge_commit_sha",
+            "AUTHORIZED_BEFORE_COMMIT",
+            "AUTHORIZED_PR_HEAD_REF",
+            "GITHUB_SHA",
+        ):
+            self.assertIn(required_provider_binding, provider_binding_run)
         self.assertEqual(
             {
                 "contents": "read",
@@ -402,6 +438,54 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
                     f"{cut_name} B1.5/B1.6 smoke must execute directly at shell top level",
                 )
 
+    def test_shell_structure_helper_rejects_inert_smoke_sequences(self) -> None:
+        rationale_line = f"# {RESTRICTED_NATIVE_RATIONALE}"
+        b15_command = (
+            'GNOSTOA_R2A_CANDIDATE_IMAGE="${digest_ref}" '
+            f"python b16-source/{B15_SMOKE}"
+        )
+        b16_command = (
+            'PYTHONPATH=b16-source GNOSTOA_R2A_CANDIDATE_IMAGE="${digest_ref}" '
+            f"python b16-source/{B16_SMOKE}"
+        )
+        sequence = (rationale_line, b15_command, b16_command)
+        heredoc_inert = "\n".join(
+            (
+                "set -euo pipefail",
+                "cat <<EOF",
+                "  EOF",
+                *sequence,
+                "EOF",
+            )
+        )
+        multiline_if_inert = "\n".join(
+            (
+                "set -euo pipefail",
+                "if false",
+                "then",
+                *sequence,
+                "fi",
+            )
+        )
+        multiline_loop_inert = "\n".join(
+            (
+                "set -euo pipefail",
+                "while false",
+                "do",
+                *sequence,
+                "done",
+            )
+        )
+        self.assertFalse(
+            _has_direct_top_level_shell_sequence(heredoc_inert, sequence)
+        )
+        self.assertFalse(
+            _has_direct_top_level_shell_sequence(multiline_if_inert, sequence)
+        )
+        self.assertFalse(
+            _has_direct_top_level_shell_sequence(multiline_loop_inert, sequence)
+        )
+
     def test_b16_materialization_reproves_b15_and_b16_runtime_at_all_three_cuts(
         self,
     ) -> None:
@@ -453,20 +537,30 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
     def test_digest_readback_is_uniform_and_anonymous_reacquisition_is_not_cached(
         self,
     ) -> None:
-        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        workflow = _load_workflow()
+        jobs = workflow["jobs"]
+        self.assertIsInstance(jobs, dict)
+        assert isinstance(jobs, dict)
+        publish = jobs["publish"]
+        self.assertIsInstance(publish, dict)
+        assert isinstance(publish, dict)
+        steps = publish["steps"]
+        self.assertIsInstance(steps, list)
+        assert isinstance(steps, list)
+
         digest_uid_check = (
             'test "$(docker run --rm --entrypoint id "${digest_ref}" -u)" = "10001"'
         )
         digest_gid_check = (
             'test "$(docker run --rm --entrypoint id "${digest_ref}" -g)" = "10001"'
         )
-        authenticated_block = workflow_text.split(
-            "- name: Publish exact B1.6 consumer without a remote tag and read back digest",
-            1,
-        )[1].split("- name: Attest the digest-only registry manifest", 1)[0]
-        anonymous_block = workflow_text.split(
-            "- name: Verify attestation and anonymous digest acquisition", 1
-        )[1]
+        authenticated_block = _named_bash_run_step(
+            steps,
+            "Publish exact B1.6 consumer without a remote tag and read back digest",
+        )
+        anonymous_block = _named_bash_run_step(
+            steps, "Verify attestation and anonymous digest acquisition"
+        )
         for cut_name, digest_cut in (
             ("authenticated", authenticated_block),
             ("anonymous", anonymous_block),
@@ -482,13 +576,16 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
                     digest_cut,
                     f"{cut_name} digest cut must prove gid 10001",
                 )
+                self.assertIn("bounded_registry_capture()", digest_cut)
+                self.assertIn("timeout --kill-after=5s", digest_cut)
+                self.assertIn("head -c 4097", digest_cut)
+                self.assertIn("docker buildx imagetools inspect", digest_cut)
+                self.assertIn('docker pull --quiet "${digest_ref}"', digest_cut)
 
         permissive_rm = 'docker image rm "${digest_ref}" >/dev/null 2>&1 || true'
         strict_rm = 'docker image rm "${digest_ref}" >/dev/null'
         absence_probe = 'if docker image inspect "${digest_ref}" >/dev/null 2>&1; then'
-        anonymous_pull = (
-            'DOCKER_CONFIG="${anonymous_config}" docker pull "${digest_ref}"'
-        )
+        anonymous_pull = 'docker pull --quiet "${digest_ref}"'
         self.assertNotIn(permissive_rm, anonymous_block)
         self.assertIn(strict_rm, anonymous_block)
         self.assertIn(absence_probe, anonymous_block)
@@ -497,6 +594,14 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
         )
         self.assertLess(
             anonymous_block.index(absence_probe), anonymous_block.index(anonymous_pull)
+        )
+        self.assertLess(
+            anonymous_block.index(anonymous_pull),
+            anonymous_block.index(digest_uid_check),
+        )
+        self.assertLess(
+            anonymous_block.index(anonymous_pull),
+            anonymous_block.index(digest_gid_check),
         )
 
     def test_b16_decision_triggers_dedicated_r2a_verification(self) -> None:
