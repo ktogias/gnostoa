@@ -198,6 +198,42 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
         self.assertLess(workflow_text.index(local_b16), login_index)
         self.assertNotIn("/var/run/docker.sock", workflow_text)
 
+    def test_digest_readback_is_uniform_and_anonymous_reacquisition_is_not_cached(
+        self,
+    ) -> None:
+        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        digest_uid_check = (
+            'test "$(docker run --rm --entrypoint id "${digest_ref}" -u)" = "10001"'
+        )
+        digest_gid_check = (
+            'test "$(docker run --rm --entrypoint id "${digest_ref}" -g)" = "10001"'
+        )
+        self.assertGreaterEqual(
+            workflow_text.count(digest_uid_check),
+            2,
+            "authenticated digest readback and anonymous reacquisition must both prove uid 10001",
+        )
+        self.assertGreaterEqual(
+            workflow_text.count(digest_gid_check),
+            2,
+            "authenticated digest readback and anonymous reacquisition must both prove gid 10001",
+        )
+
+        anonymous_block = workflow_text.split(
+            "- name: Verify attestation and anonymous digest acquisition", 1
+        )[1]
+        permissive_rm = 'docker image rm "${digest_ref}" >/dev/null 2>&1 || true'
+        strict_rm = 'docker image rm "${digest_ref}" >/dev/null'
+        absence_probe = 'if docker image inspect "${digest_ref}" >/dev/null 2>&1; then'
+        anonymous_pull = 'DOCKER_CONFIG="${anonymous_config}" docker pull "${digest_ref}"'
+        self.assertNotIn(permissive_rm, anonymous_block)
+        self.assertIn(strict_rm, anonymous_block)
+        self.assertIn(absence_probe, anonymous_block)
+        self.assertLess(anonymous_block.index(strict_rm), anonymous_block.index(absence_probe))
+        self.assertLess(
+            anonymous_block.index(absence_probe), anonymous_block.index(anonymous_pull)
+        )
+
     def test_b16_materialization_is_governed_and_declared(self) -> None:
         self.assertTrue(
             DECISION_PATH.is_file(),
