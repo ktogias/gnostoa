@@ -19,10 +19,12 @@ SOURCE_COMMIT = "f29499286bac9859364d45da0f6c59396518b749"  # pragma: allowlist 
 SOURCE_TREE = "ff38abe5718ebc550054ea6af18a73d0aef8e514"  # pragma: allowlist secret -- public source tree
 AUTHORIZED_BEFORE_COMMIT = SOURCE_COMMIT
 CHECKOUT_ACTION = "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
+SETUP_PYTHON_ACTION = "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1"
 ATTEST_ACTION = "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6"
 B15_SMOKE = "ci/review_b15_runtime_smoke.py"
 B16_SMOKE = "ci/review_b16_entrypoint_smoke.py"
 B16_ENTRYPOINT = "tools/review_live_entrypoint.py"
+B16_RUNTIME_LOCK = "b16-source/requirements/runtime.lock"
 
 
 def _load_workflow() -> dict[str, object]:
@@ -158,6 +160,76 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
         ):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, workflow_text)
+
+    def test_b16_host_smoke_uses_exact_source_runtime_dependencies(self) -> None:
+        workflow = _load_workflow()
+        jobs = workflow["jobs"]
+        self.assertIsInstance(jobs, dict)
+        assert isinstance(jobs, dict)
+        publish = jobs["publish"]
+        self.assertIsInstance(publish, dict)
+        assert isinstance(publish, dict)
+        steps = publish["steps"]
+        self.assertIsInstance(steps, list)
+        assert isinstance(steps, list)
+
+        source_checkout_index = next(
+            index
+            for index, step in enumerate(steps)
+            if isinstance(step, dict)
+            and step.get("uses") == CHECKOUT_ACTION
+            and isinstance(step.get("with"), dict)
+            and step["with"].get("path") == "b16-source"
+        )
+        setup_indices = [
+            index
+            for index, step in enumerate(steps)
+            if isinstance(step, dict) and step.get("uses") == SETUP_PYTHON_ACTION
+        ]
+        self.assertEqual(1, len(setup_indices))
+        setup_index = setup_indices[0]
+        setup_step = steps[setup_index]
+        assert isinstance(setup_step, dict)
+        self.assertEqual(
+            {
+                "python-version": "3.12",
+                "cache": "pip",
+                "cache-dependency-path": B16_RUNTIME_LOCK,
+            },
+            setup_step["with"],
+        )
+
+        install_indices = [
+            index
+            for index, step in enumerate(steps)
+            if isinstance(step, dict)
+            and step.get("name") == "Install exact B1.6 source runtime dependencies"
+        ]
+        self.assertEqual(1, len(install_indices))
+        install_index = install_indices[0]
+        install_step = steps[install_index]
+        assert isinstance(install_step, dict)
+        install_run = install_step.get("run")
+        self.assertIsInstance(install_run, str)
+        assert isinstance(install_run, str)
+        for required in (
+            "python -m pip install",
+            "--only-binary=:all:",
+            "--require-hashes",
+            f"-r {B16_RUNTIME_LOCK}",
+        ):
+            self.assertIn(required, install_run)
+
+        local_verify_index = next(
+            index
+            for index, step in enumerate(steps)
+            if isinstance(step, dict)
+            and step.get("name")
+            == "Build and verify exact B1.6 consumer locally before any registry effect"
+        )
+        self.assertLess(source_checkout_index, setup_index)
+        self.assertLess(setup_index, install_index)
+        self.assertLess(install_index, local_verify_index)
 
     def test_b16_materialization_reproves_b15_and_b16_runtime_at_all_three_cuts(
         self,
