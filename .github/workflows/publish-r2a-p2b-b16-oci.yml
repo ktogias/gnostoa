@@ -175,7 +175,7 @@ jobs:
             cd b16-source
             GNOSTOA_CANDIDATE_REF="${SOURCE_COMMIT}" \
             GNOSTOA_KIT_VERSION="${KIT_VERSION}" \
-              ./ci/build-runtime \
+              timeout --kill-after=5s 900s ./ci/build-runtime \
                 --tag "${local_image}" \
                 --platform linux/amd64 \
                 --pull \
@@ -263,7 +263,7 @@ jobs:
             cd b16-source
             GNOSTOA_CANDIDATE_REF="${SOURCE_COMMIT}" \
             GNOSTOA_KIT_VERSION="${KIT_VERSION}" \
-              ./ci/build-runtime \
+              timeout --kill-after=5s 900s ./ci/build-runtime \
                 --push-by-digest "${IMAGE_NAME}" \
                 --metadata-file "${metadata_file}" \
                 --platform linux/amd64 \
@@ -381,7 +381,7 @@ jobs:
           test "${registry_readback}" = "${REGISTRY_DIGEST}"
           gh attestation verify "oci://${digest_ref}" --repo "${GITHUB_REPOSITORY}"
 
-          docker logout ghcr.io >/dev/null 2>&1 || true
+          docker logout ghcr.io >/dev/null 2>&1
           docker image rm "${digest_ref}" >/dev/null
           if docker image inspect "${digest_ref}" >/dev/null 2>&1; then
             echo "digest image remained cached after authenticated readback" >&2
@@ -427,14 +427,19 @@ jobs:
           printf 'r2a_p2b_b16.image=%s@%s\n' "${IMAGE_NAME}" "${REGISTRY_DIGEST}"
 
       - name: Reconcile and clean post-publication state
-        if: ${{ always() && steps.publish.outputs.registry_digest != '' }}
+        if: ${{ always() && steps.publish.outcome != 'skipped' }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           REGISTRY_DIGEST: ${{ steps.publish.outputs.registry_digest }}
+          METADATA_FILE: ${{ runner.temp }}/r2a-p2b-b16-build-metadata.json
+          BUILD_DATE: ${{ steps.source.outputs.build_date }}
+          PUBLIC_DIGEST: ${{ steps.local.outputs.public_digest }}
         run: |
           set -euo pipefail
-          digest_ref="${IMAGE_NAME}@${REGISTRY_DIGEST}"
+          registry_digest="${REGISTRY_DIGEST}"
+          digest_ref=""
+          reconcile_config=""
 
           bounded_registry_capture() {
             local timeout_seconds="$1"
@@ -463,15 +468,93 @@ jobs:
           }
 
           cleanup_post_write() {
-            docker logout ghcr.io >/dev/null 2>&1 || true
-            docker image rm "${digest_ref}" >/dev/null 2>&1 || true
+            local prior_status=$?
+            local cleanup_status=0
+            trap - EXIT
+
+            if ! docker logout ghcr.io >/dev/null 2>&1; then
+              cleanup_status=1
+            fi
+            if [ -n "${digest_ref}" ] && docker image inspect "${digest_ref}" >/dev/null 2>&1; then
+              if ! docker image rm "${digest_ref}" >/dev/null 2>&1; then
+                cleanup_status=1
+              fi
+            fi
+            if [ -n "${digest_ref}" ] && docker image inspect "${digest_ref}" >/dev/null 2>&1; then
+              echo "post-write digest image remained cached" >&2
+              cleanup_status=1
+            fi
+            if [ -n "${reconcile_config}" ] && ! rm -rf "${reconcile_config}"; then
+              cleanup_status=1
+            fi
+            if [ "${cleanup_status}" -ne 0 ]; then
+              echo "post-write cleanup failed" >&2
+              exit "${cleanup_status}"
+            fi
+            exit "${prior_status}"
           }
           trap cleanup_post_write EXIT
+
+          reconcile_config="$(mktemp -d)"
+          test "$(git -C b16-source rev-parse HEAD)" = "${SOURCE_COMMIT}"
+          test "$(git -C b16-source rev-parse 'HEAD^{tree}')" = "${SOURCE_TREE}"
+          test -z "$(git -C b16-source status --porcelain=v1 --untracked-files=all)"
+
+          if [ -z "${registry_digest}" ]; then
+            registry_digest="$(python - "${METADATA_FILE}" <<'PY'
+          import json
+          import re
+          import sys
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+          if not path.is_file() or path.is_symlink() or path.stat().st_size > 65536:
+              raise SystemExit("invalid bounded BuildKit metadata file")
+          metadata = json.loads(path.read_text(encoding="utf-8"))
+          if not isinstance(metadata, dict):
+              raise SystemExit("BuildKit metadata must be an object")
+          digest = metadata["containerimage.digest"]
+          if not isinstance(digest, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
+              raise SystemExit("invalid containerimage.digest")
+          print(digest)
+          PY
+            )"
+          fi
+          [[ "${registry_digest}" =~ ^sha256:[0-9a-f]{64}$ ]] \
+            || { echo "invalid reconciled registry digest" >&2; exit 1; }
+          digest_ref="${IMAGE_NAME}@${registry_digest}"
 
           reconciled_manifest="$(
             bounded_registry_capture 30 docker buildx imagetools inspect \
               "${digest_ref}" --format '{{.Manifest.Digest}}'
           )"
-          test "${reconciled_manifest}" = "${REGISTRY_DIGEST}"
+          test "${reconciled_manifest}" = "${registry_digest}"
           bounded_registry_capture 30 gh attestation verify \
             "oci://${digest_ref}" --repo "${GITHUB_REPOSITORY}" >/dev/null
+
+          docker logout ghcr.io >/dev/null 2>&1
+          if docker image inspect "${digest_ref}" >/dev/null 2>&1; then
+            docker image rm "${digest_ref}" >/dev/null
+          fi
+          if docker image inspect "${digest_ref}" >/dev/null 2>&1; then
+            echo "digest image remained cached before reconciliation reacquisition" >&2
+            exit 1
+          fi
+          bounded_registry_capture 120 env DOCKER_CONFIG="${reconcile_config}" \
+            docker pull --quiet "${digest_ref}" >/dev/null
+
+          test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "${digest_ref}")" = "linux/amd64"
+          test "$(docker image inspect --format '{{.Config.User}}' "${digest_ref}")" = "kit"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "${digest_ref}")" = "${KIT_VERSION}"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${digest_ref}")" = "${SOURCE_COMMIT}"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.created"}}' "${digest_ref}")" = "${BUILD_DATE}"
+          test "$(docker run --rm --entrypoint id "${digest_ref}" -u)" = "10001"
+          test "$(docker run --rm --entrypoint id "${digest_ref}" -g)" = "10001"
+          actual="$(docker run --rm --entrypoint python "${digest_ref}" -m tools.cli surface-digest --root /opt/gnostoa)"
+          test "${actual}" = "${PUBLIC_DIGEST}"
+          docker run --rm --entrypoint sh "${digest_ref}" -ec \
+            'test -f /opt/gnostoa/tools/review_protected.py; test -f /opt/gnostoa/tools/review_live_entrypoint.py; grep -Fx "tools/review_protected.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "tools/review_live.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "tools/review_current.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "tools/review_live_entrypoint.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "ci/review_b15_runtime_smoke.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "ci/review_b16_entrypoint_smoke.py" /opt/gnostoa/.gnostoa-source-files >/dev/null'
+          docker run --rm "${digest_ref}" self-check --skip-tests
+          # Restricted native orchestration: the runner owns the Docker service; the candidate receives no daemon or socket authority.
+          GNOSTOA_R2A_CANDIDATE_IMAGE="${digest_ref}" python b16-source/ci/review_b15_runtime_smoke.py
+          PYTHONPATH=b16-source GNOSTOA_R2A_CANDIDATE_IMAGE="${digest_ref}" python b16-source/ci/review_b16_entrypoint_smoke.py

@@ -25,6 +25,7 @@ on:
       - "tasks/issue-11-r2a-current-advisory.json"
       - "tasks/issue-11-r2a-current-advisory-consumer.json"
       - "tests/test_r2a_p2b_b16_publication.py"
+      - "tests/test_r2a_p2b_b16_reconciliation_fail_closed.py"
       - "tests/test_review_assurance_p2b_activation_red.py"
       - "tests/test_review_assurance_p2b_b15_runtime_red.py"
       - "tests/test_review_assurance_p2b_b16_entrypoint_red.py"
@@ -101,6 +102,7 @@ jobs:
             ci/review_live_smoke.py \
             ci/review_live_timeout_cleanup.py \
             tests/test_r2a_p2b_b16_publication.py \
+            tests/test_r2a_p2b_b16_reconciliation_fail_closed.py \
             tests/test_review_assurance_p2b_activation_red.py \
             tests/test_review_assurance_p2b_b15_runtime_red.py \
             tests/test_review_assurance_p2b_b16_entrypoint_red.py \
@@ -117,6 +119,7 @@ jobs:
             ci/review_live_smoke.py \
             ci/review_live_timeout_cleanup.py \
             tests/test_r2a_p2b_b16_publication.py \
+            tests/test_r2a_p2b_b16_reconciliation_fail_closed.py \
             tests/test_review_assurance_p2b_activation_red.py \
             tests/test_review_assurance_p2b_b15_runtime_red.py \
             tests/test_review_assurance_p2b_b16_entrypoint_red.py \
@@ -142,6 +145,7 @@ jobs:
       - name: Run dormant consumer contract tests via native orchestration fallback
         run: |
           PYTHONPATH=. python tests/test_r2a_p2b_b16_publication.py
+          PYTHONPATH=. python tests/test_r2a_p2b_b16_reconciliation_fail_closed.py
           PYTHONPATH=. python tests/test_review_assurance_p2b_activation_red.py
           PYTHONPATH=. python tests/test_review_assurance_p2b_b15_runtime_red.py
           PYTHONPATH=. python tests/test_review_assurance_p2b_b16_entrypoint_red.py

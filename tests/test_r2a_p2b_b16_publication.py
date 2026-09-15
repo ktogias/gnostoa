@@ -12,6 +12,9 @@ WORKFLOW_PATH = ROOT / WORKFLOW_RELATIVE_PATH
 R2A_WORKFLOW_RELATIVE_PATH = ".github/workflows/r2a-protected-current-advisory.yml"
 R2A_WORKFLOW_PATH = ROOT / R2A_WORKFLOW_RELATIVE_PATH
 FOCUSED_TEST_RELATIVE_PATH = "tests/test_r2a_p2b_b16_publication.py"
+RECONCILIATION_TEST_RELATIVE_PATH = (
+    "tests/test_r2a_p2b_b16_reconciliation_fail_closed.py"
+)
 DECISION_RELATIVE_PATH = (
     "knowledge/decisions/0075-materialize-integrated-r2a-p2b-b16-consumer-by-digest.md"
 )
@@ -399,6 +402,9 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
         anonymous_run = _named_bash_run_step(
             steps, "Verify attestation and anonymous digest acquisition"
         )
+        reconciliation_run = _named_bash_run_step(
+            steps, "Reconcile and clean post-publication state"
+        )
         smoke_cuts = (
             (
                 "local",
@@ -419,6 +425,14 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
             (
                 "anonymous",
                 anonymous_run,
+                'GNOSTOA_R2A_CANDIDATE_IMAGE="${digest_ref}" '
+                f"python b16-source/{B15_SMOKE}",
+                'PYTHONPATH=b16-source GNOSTOA_R2A_CANDIDATE_IMAGE="${digest_ref}" '
+                f"python b16-source/{B16_SMOKE}",
+            ),
+            (
+                "reconciliation",
+                reconciliation_run,
                 'GNOSTOA_R2A_CANDIDATE_IMAGE="${digest_ref}" '
                 f"python b16-source/{B15_SMOKE}",
                 'PYTHONPATH=b16-source GNOSTOA_R2A_CANDIDATE_IMAGE="${digest_ref}" '
@@ -511,19 +525,19 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
         self.assertIn(local_b15, workflow_text)
         self.assertIn(local_b16, workflow_text)
         self.assertEqual(
-            2,
+            3,
             workflow_text.count(digest_b16),
-            "authenticated and anonymous B1.6 smoke cuts must import from the exact source checkout",
+            "authenticated, anonymous, and reconciliation B1.6 smoke cuts must import from the exact source checkout",
         )
         self.assertGreaterEqual(
             workflow_text.count(f"python b16-source/{B15_SMOKE}"),
-            3,
-            "B1.5 Docker-client/no-daemon capability must be re-proved at all cuts",
+            4,
+            "B1.5 Docker-client/no-daemon capability must be re-proved at all four cuts",
         )
         self.assertEqual(
-            3,
+            4,
             workflow_text.count(f"python b16-source/{B16_SMOKE}"),
-            "B1.6 input-only module/daemonless capability must be re-proved at exactly all three cuts",
+            "B1.6 input-only module/daemonless capability must be re-proved at exactly all four cuts",
         )
         login_index = workflow_text.index("docker login ghcr.io")
         self.assertLess(workflow_text.index(local_b15), login_index)
@@ -645,7 +659,7 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
         )
         self.assertLess(anonymous_index, reconciliation_index)
         self.assertEqual(
-            "${{ always() && steps.publish.outputs.registry_digest != '' }}",
+            "${{ always() && steps.publish.outcome != 'skipped' }}",
             reconciliation_step["if"],
         )
         self.assertEqual("bash", reconciliation_step["shell"])
@@ -653,26 +667,44 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
             {
                 "GH_TOKEN": "${{ github.token }}",
                 "REGISTRY_DIGEST": "${{ steps.publish.outputs.registry_digest }}",
+                "METADATA_FILE": "${{ runner.temp }}/r2a-p2b-b16-build-metadata.json",
+                "BUILD_DATE": "${{ steps.source.outputs.build_date }}",
+                "PUBLIC_DIGEST": "${{ steps.local.outputs.public_digest }}",
             },
             reconciliation_step["env"],
         )
         reconciliation_run = _named_bash_run_step(steps, reconciliation_name)
         for required in (
             "set -euo pipefail",
-            'digest_ref="${IMAGE_NAME}@${REGISTRY_DIGEST}"',
+            'registry_digest="${REGISTRY_DIGEST}"',
+            'if [ -z "${registry_digest}" ]; then',
+            'python - "${METADATA_FILE}"',
+            'metadata["containerimage.digest"]',
+            'digest_ref="${IMAGE_NAME}@${registry_digest}"',
             "bounded_registry_capture()",
             "timeout --kill-after=5s",
             "head -c 4097",
             "cleanup_post_write()",
             "trap cleanup_post_write EXIT",
-            "docker logout ghcr.io >/dev/null 2>&1 || true",
-            'docker image rm "${digest_ref}" >/dev/null 2>&1 || true',
+            "local prior_status=$?",
+            "local cleanup_status=0",
+            "trap - EXIT",
             "bounded_registry_capture 30 docker buildx imagetools inspect",
             "bounded_registry_capture 30 gh attestation verify",
-            '"oci://${digest_ref}" --repo "${GITHUB_REPOSITORY}"',
+            'env DOCKER_CONFIG="${reconcile_config}"',
+            'docker pull --quiet "${digest_ref}"',
+            'test "$(git -C b16-source rev-parse HEAD)" = "${SOURCE_COMMIT}"',
+            'test "${actual}" = "${PUBLIC_DIGEST}"',
         ):
             self.assertIn(required, reconciliation_run)
-        for forbidden in ("docker pull", "docker push", "--push-by-digest"):
+        self.assertNotIn(
+            "docker logout ghcr.io >/dev/null 2>&1 || true", reconciliation_run
+        )
+        self.assertNotIn(
+            'docker image rm "${digest_ref}" >/dev/null 2>&1 || true',
+            reconciliation_run,
+        )
+        for forbidden in ("docker push", "--push-by-digest"):
             self.assertNotIn(forbidden, reconciliation_run)
 
     def test_b16_decision_triggers_dedicated_r2a_verification(self) -> None:
@@ -696,6 +728,7 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
             WORKFLOW_RELATIVE_PATH,
             DECISION_RELATIVE_PATH,
             FOCUSED_TEST_RELATIVE_PATH,
+            RECONCILIATION_TEST_RELATIVE_PATH,
         ):
             self.assertIn(protected_path, paths)
 
