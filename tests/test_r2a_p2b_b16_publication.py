@@ -10,6 +10,7 @@ WORKFLOW_RELATIVE_PATH = ".github/workflows/publish-r2a-p2b-b16-oci.yml"
 WORKFLOW_PATH = ROOT / WORKFLOW_RELATIVE_PATH
 R2A_WORKFLOW_RELATIVE_PATH = ".github/workflows/r2a-protected-current-advisory.yml"
 R2A_WORKFLOW_PATH = ROOT / R2A_WORKFLOW_RELATIVE_PATH
+FOCUSED_TEST_RELATIVE_PATH = "tests/test_r2a_p2b_b16_publication.py"
 DECISION_RELATIVE_PATH = (
     "knowledge/decisions/0075-materialize-integrated-r2a-p2b-b16-consumer-by-digest.md"
 )
@@ -244,11 +245,51 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
         self,
     ) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
-        self.assertEqual(
-            3,
-            workflow_text.count(RESTRICTED_NATIVE_RATIONALE),
-            "all three host smoke cuts must explain the restricted native Docker orchestration boundary",
+        local_block = workflow_text.split(
+            "- name: Build and verify exact B1.6 consumer locally before any registry effect",
+            1,
+        )[1].split("- name: Authenticate to GHCR for the single digest-only effect", 1)[0]
+        authenticated_block = workflow_text.split(
+            "- name: Publish exact B1.6 consumer without a remote tag and read back digest",
+            1,
+        )[1].split("- name: Attest the digest-only registry manifest", 1)[0]
+        anonymous_block = workflow_text.split(
+            "- name: Verify attestation and anonymous digest acquisition", 1
+        )[1]
+        smoke_cuts = (
+            (
+                "local",
+                local_block,
+                'GNOSTOA_R2A_CANDIDATE_IMAGE="${local_image}" '
+                f"python b16-source/{B15_SMOKE}",
+                'PYTHONPATH=b16-source GNOSTOA_R2A_CANDIDATE_IMAGE="${local_image}" '
+                f"python b16-source/{B16_SMOKE}",
+            ),
+            (
+                "authenticated",
+                authenticated_block,
+                'GNOSTOA_R2A_CANDIDATE_IMAGE="${digest_ref}" '
+                f"python b16-source/{B15_SMOKE}",
+                'PYTHONPATH=b16-source GNOSTOA_R2A_CANDIDATE_IMAGE="${digest_ref}" '
+                f"python b16-source/{B16_SMOKE}",
+            ),
+            (
+                "anonymous",
+                anonymous_block,
+                'GNOSTOA_R2A_CANDIDATE_IMAGE="${digest_ref}" '
+                f"python b16-source/{B15_SMOKE}",
+                'PYTHONPATH=b16-source GNOSTOA_R2A_CANDIDATE_IMAGE="${digest_ref}" '
+                f"python b16-source/{B16_SMOKE}",
+            ),
         )
+        rationale_line = f"# {RESTRICTED_NATIVE_RATIONALE}"
+        for cut_name, smoke_cut, b15_command, b16_command in smoke_cuts:
+            with self.subTest(cut=cut_name):
+                lines = [line.strip() for line in smoke_cut.splitlines()]
+                self.assertEqual(1, lines.count(rationale_line))
+                rationale_index = lines.index(rationale_line)
+                self.assertEqual(b15_command, lines[rationale_index + 1])
+                self.assertEqual(b16_command, lines[rationale_index + 2])
 
     def test_b16_materialization_reproves_b15_and_b16_runtime_at_all_three_cuts(
         self,
@@ -353,7 +394,12 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
         paths = pull_request["paths"]
         self.assertIsInstance(paths, list)
         assert isinstance(paths, list)
-        self.assertIn(DECISION_RELATIVE_PATH, paths)
+        for protected_path in (
+            WORKFLOW_RELATIVE_PATH,
+            DECISION_RELATIVE_PATH,
+            FOCUSED_TEST_RELATIVE_PATH,
+        ):
+            self.assertIn(protected_path, paths)
 
     def test_b16_decision_is_semantic_review_assurance_owned(self) -> None:
         guardrails = GUARDRAILS_PATH.read_text(encoding="utf-8")
