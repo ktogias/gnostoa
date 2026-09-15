@@ -98,6 +98,25 @@ class ReviewAssuranceP2bB16EntrypointRedTests(unittest.TestCase):
         self.assertEqual("MALFORMED_INVOCATION", payload["error"]["code"])
         evaluate.assert_not_called()
 
+    def test_live_entrypoint_rejects_symlink_loop_as_malformed_invocation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            input_path = Path(directory) / "input.json"
+            input_path.symlink_to("input.json")
+            stdout = io.StringIO()
+            with (
+                mock.patch.object(
+                    review_live_entrypoint.review_live,
+                    "evaluate_gnostoa_current_advisory",
+                ) as evaluate,
+                contextlib.redirect_stdout(stdout),
+            ):
+                code = review_live_entrypoint.main(["--input", str(input_path)])
+
+        self.assertEqual(2, code)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual("MALFORMED_INVOCATION", payload["error"]["code"])
+        evaluate.assert_not_called()
+
     def test_precursor_remains_daemonless_and_is_dedicated_ci_protected(self) -> None:
         self.assertTrue(
             SMOKE_PATH.is_file(),
