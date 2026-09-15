@@ -582,21 +582,25 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
         strict_rm = 'docker image rm "${digest_ref}" >/dev/null'
         absence_probe = 'if docker image inspect "${digest_ref}" >/dev/null 2>&1; then'
         anonymous_pull = 'docker pull --quiet "${digest_ref}"'
-        self.assertNotIn(permissive_rm, anonymous_block)
-        self.assertIn(strict_rm, anonymous_block)
-        self.assertIn(absence_probe, anonymous_block)
+        strict_rm_index = anonymous_block.index(strict_rm)
+        absence_probe_index = anonymous_block.index(absence_probe)
+        anonymous_pull_index = anonymous_block.index(anonymous_pull)
+        permissive_cleanup_index = anonymous_block.index(permissive_rm)
+
+        self.assertEqual(1, anonymous_block.count(permissive_rm))
+        self.assertLess(strict_rm_index, absence_probe_index)
+        self.assertLess(absence_probe_index, anonymous_pull_index)
+        self.assertLess(anonymous_pull_index, permissive_cleanup_index)
         self.assertLess(
-            anonymous_block.index(strict_rm), anonymous_block.index(absence_probe)
+            permissive_cleanup_index,
+            anonymous_block.index("exit 1", permissive_cleanup_index),
         )
         self.assertLess(
-            anonymous_block.index(absence_probe), anonymous_block.index(anonymous_pull)
-        )
-        self.assertLess(
-            anonymous_block.index(anonymous_pull),
+            anonymous_pull_index,
             anonymous_block.index(digest_uid_check),
         )
         self.assertLess(
-            anonymous_block.index(anonymous_pull),
+            anonymous_pull_index,
             anonymous_block.index(digest_gid_check),
         )
 
