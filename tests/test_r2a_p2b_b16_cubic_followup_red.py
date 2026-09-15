@@ -59,9 +59,7 @@ def _run(step: dict[str, object]) -> str:
 
 def _continued_command(script: str, command_head: str) -> tuple[str, ...]:
     lines = script.splitlines()
-    starts = [
-        index for index, line in enumerate(lines) if line.strip() == command_head
-    ]
+    starts = [index for index, line in enumerate(lines) if line.strip() == command_head]
     if len(starts) != 1:
         raise AssertionError(f"expected exactly one command headed by {command_head!r}")
 
@@ -136,9 +134,7 @@ class R2AP2bB16CubicFollowupTests(unittest.TestCase):
         )
         for scope, command in ruff_commands:
             with self.subTest(scope=scope):
-                arguments = {
-                    line.removesuffix("\\").strip() for line in command[1:]
-                }
+                arguments = {line.removesuffix("\\").strip() for line in command[1:]}
                 self.assertIn(
                     FOLLOWUP_TEST_RELATIVE_PATH,
                     arguments,
