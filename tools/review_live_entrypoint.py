@@ -30,7 +30,11 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         args = _parser().parse_args(sys.argv[1:] if argv is None else argv)
-        input_document = _load_json(args.input.resolve())
+        try:
+            input_path = args.input.resolve()
+        except RuntimeError as exc:
+            raise ValueError(f"live input path cannot be resolved: {exc}") from exc
+        input_document = _load_json(input_path)
     except (OSError, RecursionError, ValueError) as exc:
         code = ERROR_EXIT_CODE
         payload = error_payload("MALFORMED_INVOCATION", str(exc))
