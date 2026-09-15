@@ -665,7 +665,7 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
             "head -c 4097",
             "cleanup_post_write()",
             "trap cleanup_post_write EXIT",
-            'docker logout ghcr.io >/dev/null 2>&1 || true',
+            "docker logout ghcr.io >/dev/null 2>&1 || true",
             'docker image rm "${digest_ref}" >/dev/null 2>&1 || true',
             "bounded_registry_capture 30 docker buildx imagetools inspect",
             "bounded_registry_capture 30 gh attestation verify",
