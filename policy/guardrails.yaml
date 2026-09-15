@@ -68,7 +68,7 @@ guardrails:
     applies_to: [kit]
     enforcement: automated
     owner: team:gnostoa-maintainers
-    guidance: guidance/guardrails/non-negotiable.md#rule
+    guidance: knowledge/decisions/0012-use-versioned-public-schema-identifiers.md#decision
     implementation:
       - schemas/change-control.schema.json
       - schemas/continuous-integration.schema.json
