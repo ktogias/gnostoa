@@ -127,6 +127,35 @@ class R2AP2bB16ReconciliationFailClosedTests(unittest.TestCase):
             publish_run.index("--push-by-digest"),
         )
 
+    def test_buildx_builder_setup_and_cleanup_are_bounded(self) -> None:
+        steps = _publish_steps()
+        publish = _named_step(
+            steps,
+            "Publish exact B1.6 consumer without a remote tag and read back digest",
+        )
+        publish_run = _run(publish)
+
+        cleanup_trap = (
+            "trap 'timeout --kill-after=5s 30s docker buildx rm "
+            '"${builder}" >/dev/null 2>&1 || true\' EXIT'
+        )
+        bounded_create = "timeout --kill-after=5s 120s docker buildx create"
+        self.assertIn(
+            cleanup_trap,
+            publish_run,
+            "builder cleanup must already be armed before BuildKit startup",
+        )
+        self.assertIn(
+            bounded_create,
+            publish_run,
+            "BuildKit builder startup must have a finite execution bound",
+        )
+        self.assertLess(
+            publish_run.index(cleanup_trap),
+            publish_run.index(bounded_create),
+            "builder cleanup must be armed before bounded builder creation",
+        )
+
     def test_post_publish_attestation_verification_is_bounded(self) -> None:
         steps = _publish_steps()
         verify = _named_step(
