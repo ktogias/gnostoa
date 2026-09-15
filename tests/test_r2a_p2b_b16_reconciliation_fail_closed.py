@@ -187,6 +187,8 @@ class R2AP2bB16ReconciliationFailClosedTests(unittest.TestCase):
                 "test \"$(git -C b16-source rev-parse 'HEAD^{tree}')\" "
                 '= "${SOURCE_TREE}"'
             ),
+            '[[ "${registry_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]',
+            'test "${reconciled_manifest}" = "${registry_digest}"',
             'docker image rm "${digest_ref}"',
             'env DOCKER_CONFIG="${reconcile_config}"',
             'docker pull --quiet "${digest_ref}"',
