@@ -70,6 +70,8 @@ class R2AP2bB16ReconciliationFailClosedTests(unittest.TestCase):
                 "GH_TOKEN": "${{ github.token }}",
                 "REGISTRY_DIGEST": "${{ steps.publish.outputs.registry_digest }}",
                 "METADATA_FILE": "${{ runner.temp }}/r2a-p2b-b16-build-metadata.json",
+                "BUILD_DATE": "${{ steps.source.outputs.build_date }}",
+                "PUBLIC_DIGEST": "${{ steps.local.outputs.public_digest }}",
             },
             reconciliation.get("env"),
         )
@@ -86,7 +88,7 @@ class R2AP2bB16ReconciliationFailClosedTests(unittest.TestCase):
             reconciliation_run.index('if [ -z "${registry_digest}" ]; then'),
             "cleanup must already be armed while recovering an ambiguous push identity",
         )
-        for forbidden in ("docker pull", "docker push", "--push-by-digest"):
+        for forbidden in ("docker push", "--push-by-digest"):
             self.assertNotIn(forbidden, reconciliation_run)
 
     def test_post_write_cleanup_failure_cannot_be_reported_as_success(self) -> None:
@@ -116,6 +118,49 @@ class R2AP2bB16ReconciliationFailClosedTests(unittest.TestCase):
             'docker image rm "${digest_ref}" >/dev/null 2>&1 || true',
             reconciliation_run,
         )
+
+    def test_reconciliation_reproves_exact_digest_runtime_identity(self) -> None:
+        steps = _publish_steps()
+        reconciliation = _named_step(
+            steps, "Reconcile and clean post-publication state"
+        )
+        reconciliation_run = _run(reconciliation)
+
+        for required in (
+            'reconcile_config="$(mktemp -d)"',
+            'test "$(git -C b16-source rev-parse HEAD)" = "${SOURCE_COMMIT}"',
+            (
+                'test "$(git -C b16-source rev-parse \'HEAD^{tree}\')" '
+                '= "${SOURCE_TREE}"'
+            ),
+            'docker image rm "${digest_ref}"',
+            'env DOCKER_CONFIG="${reconcile_config}"',
+            'docker pull --quiet "${digest_ref}"',
+            "bounded_registry_capture 30 docker buildx imagetools inspect",
+            "bounded_registry_capture 30 gh attestation verify",
+            (
+                "docker image inspect --format "
+                "'{{.Os}}/{{.Architecture}}' \"${digest_ref}\""
+            ),
+            (
+                "docker image inspect --format "
+                "'{{.Config.User}}' \"${digest_ref}\""
+            ),
+            'org.opencontainers.image.version',
+            'org.opencontainers.image.revision',
+            'org.opencontainers.image.created',
+            'docker run --rm --entrypoint id "${digest_ref}" -u',
+            'docker run --rm --entrypoint id "${digest_ref}" -g',
+            "surface-digest --root /opt/gnostoa",
+            'test "${actual}" = "${PUBLIC_DIGEST}"',
+            'docker run --rm "${digest_ref}" self-check --skip-tests',
+            'GNOSTOA_R2A_CANDIDATE_IMAGE="${digest_ref}"',
+            "python b16-source/ci/review_b15_runtime_smoke.py",
+            "python b16-source/ci/review_b16_entrypoint_smoke.py",
+        ):
+            self.assertIn(required, reconciliation_run)
+        self.assertNotIn("docker push", reconciliation_run)
+        self.assertNotIn("--push-by-digest", reconciliation_run)
 
 
 if __name__ == "__main__":
