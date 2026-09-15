@@ -108,9 +108,6 @@ jobs:
       packages: write
       id-token: write
       attestations: write
-    outputs:
-      registry-digest: ${{ steps.publish.outputs.registry_digest }}
-      public-digest: ${{ steps.local.outputs.public_digest }}
     steps:
       - name: Check out the integrated B1.6 publisher
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
