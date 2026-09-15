@@ -7,6 +7,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_PATH = ROOT / ".github/workflows/publish-r2a-p2b-b16-oci.yml"
+R2A_WORKFLOW_PATH = ROOT / ".github/workflows/r2a-protected-current-advisory.yml"
 
 
 def _publish_steps() -> list[object]:
@@ -139,6 +140,77 @@ class R2AP2bB16ReconciliationFailClosedTests(unittest.TestCase):
             verify_run,
             "post-publication attestation verification must terminate so reconciliation can run",
         )
+
+    def test_attestation_write_and_registry_credentials_are_bounded(self) -> None:
+        steps = _publish_steps()
+        authenticate = _named_step(
+            steps, "Authenticate to GHCR for the single digest-only effect"
+        )
+        attest = _named_step(steps, "Attest the digest-only registry manifest")
+        verify = _named_step(
+            steps, "Verify attestation and anonymous digest acquisition"
+        )
+        reconciliation = _named_step(
+            steps, "Reconcile and clean post-publication state"
+        )
+
+        self.assertEqual(
+            "1",
+            authenticate.get("timeout-minutes"),
+            "registry authentication must have a finite step bound",
+        )
+        self.assertEqual(
+            "5",
+            attest.get("timeout-minutes"),
+            "the attestation registry write must time out without cancelling later reconciliation",
+        )
+        self.assertEqual(
+            "${{ always() && steps.publish.outcome != 'skipped' }}",
+            reconciliation.get("if"),
+        )
+
+        bounded_logout = "timeout --kill-after=5s 30s docker logout ghcr.io"
+        self.assertIn(
+            bounded_logout,
+            _run(verify),
+            "post-write credential cleanup must terminate before anonymous reacquisition",
+        )
+        self.assertGreaterEqual(
+            _run(reconciliation).count(bounded_logout),
+            2,
+            "reconciliation must bound both immediate and EXIT-trap credential cleanup",
+        )
+
+    def test_dedicated_r2a_workflow_executes_both_b16_contracts(self) -> None:
+        workflow = yaml.load(
+            R2A_WORKFLOW_PATH.read_text(encoding="utf-8"), Loader=yaml.BaseLoader
+        )
+        if not isinstance(workflow, dict):
+            raise AssertionError("dedicated R2A workflow must be a mapping")
+        jobs = workflow.get("jobs")
+        if not isinstance(jobs, dict):
+            raise AssertionError("dedicated R2A jobs must be a mapping")
+        job = jobs.get("dormant-current-advisory-consumer")
+        if not isinstance(job, dict):
+            raise AssertionError("dedicated R2A consumer job must be a mapping")
+        steps = job.get("steps")
+        if not isinstance(steps, list):
+            raise AssertionError("dedicated R2A steps must be a list")
+        native_contracts = _named_step(
+            steps, "Run dormant consumer contract tests via native orchestration fallback"
+        )
+        run = native_contracts.get("run")
+        self.assertIsInstance(run, str)
+        assert isinstance(run, str)
+        for command in (
+            "PYTHONPATH=. python tests/test_r2a_p2b_b16_publication.py",
+            "PYTHONPATH=. python tests/test_r2a_p2b_b16_reconciliation_fail_closed.py",
+        ):
+            self.assertIn(
+                command,
+                run,
+                "path-filter coverage must be backed by native execution of each B1.6 contract",
+            )
 
     def test_post_write_cleanup_failure_cannot_be_reported_as_success(self) -> None:
         steps = _publish_steps()
