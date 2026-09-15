@@ -604,6 +604,77 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
             anonymous_block.index(digest_gid_check),
         )
 
+    def test_post_write_reconciliation_and_local_cleanup_are_fail_closed(self) -> None:
+        workflow = _load_workflow()
+        jobs = workflow["jobs"]
+        self.assertIsInstance(jobs, dict)
+        assert isinstance(jobs, dict)
+        publish = jobs["publish"]
+        self.assertIsInstance(publish, dict)
+        assert isinstance(publish, dict)
+        steps = publish["steps"]
+        self.assertIsInstance(steps, list)
+        assert isinstance(steps, list)
+
+        local_run = _named_bash_run_step(
+            steps,
+            "Build and verify exact B1.6 consumer locally before any registry effect",
+        )
+        local_image = 'local_image="gnostoa-r2a-p2b-b16-verify:${SOURCE_COMMIT}"'
+        local_cleanup = (
+            "trap 'docker image rm \"${local_image}\" >/dev/null 2>&1 || true' EXIT"
+        )
+        self.assertIn(local_cleanup, local_run)
+        self.assertLess(local_run.index(local_image), local_run.index(local_cleanup))
+
+        reconciliation_name = "Reconcile and clean post-publication state"
+        reconciliation_matches = [
+            (index, step)
+            for index, step in enumerate(steps)
+            if isinstance(step, dict) and step.get("name") == reconciliation_name
+        ]
+        self.assertEqual(1, len(reconciliation_matches))
+        reconciliation_index, reconciliation_step = reconciliation_matches[0]
+        assert isinstance(reconciliation_step, dict)
+        anonymous_index = next(
+            index
+            for index, step in enumerate(steps)
+            if isinstance(step, dict)
+            and step.get("name")
+            == "Verify attestation and anonymous digest acquisition"
+        )
+        self.assertLess(anonymous_index, reconciliation_index)
+        self.assertEqual(
+            "${{ always() && steps.publish.outputs.registry_digest != '' }}",
+            reconciliation_step["if"],
+        )
+        self.assertEqual("bash", reconciliation_step["shell"])
+        self.assertEqual(
+            {
+                "GH_TOKEN": "${{ github.token }}",
+                "REGISTRY_DIGEST": "${{ steps.publish.outputs.registry_digest }}",
+            },
+            reconciliation_step["env"],
+        )
+        reconciliation_run = _named_bash_run_step(steps, reconciliation_name)
+        for required in (
+            "set -euo pipefail",
+            'digest_ref="${IMAGE_NAME}@${REGISTRY_DIGEST}"',
+            "bounded_registry_capture()",
+            "timeout --kill-after=5s",
+            "head -c 4097",
+            "cleanup_post_write()",
+            "trap cleanup_post_write EXIT",
+            'docker logout ghcr.io >/dev/null 2>&1 || true',
+            'docker image rm "${digest_ref}" >/dev/null 2>&1 || true',
+            "bounded_registry_capture 30 docker buildx imagetools inspect",
+            "bounded_registry_capture 30 gh attestation verify",
+            '"oci://${digest_ref}" --repo "${GITHUB_REPOSITORY}"',
+        ):
+            self.assertIn(required, reconciliation_run)
+        for forbidden in ("docker pull", "docker push", "--push-by-digest"):
+            self.assertNotIn(forbidden, reconciliation_run)
+
     def test_b16_decision_triggers_dedicated_r2a_verification(self) -> None:
         workflow = yaml.load(
             R2A_WORKFLOW_PATH.read_text(encoding="utf-8"), Loader=yaml.BaseLoader
