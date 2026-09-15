@@ -267,9 +267,7 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
         )
 
         fail_closed_remove = 'docker image rm "${digest_ref}" >/dev/null'
-        permissive_remove = (
-            'docker image rm "${digest_ref}" >/dev/null 2>&1 || true'
-        )
+        permissive_remove = 'docker image rm "${digest_ref}" >/dev/null 2>&1 || true'
         cache_probe = 'if docker image inspect "${digest_ref}" >/dev/null 2>&1; then'
         anonymous_pull = (
             'DOCKER_CONFIG="${anonymous_config}" docker pull "${digest_ref}"'
@@ -280,7 +278,9 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
         self.assertLess(
             anonymous_run.index(fail_closed_remove), anonymous_run.index(cache_probe)
         )
-        self.assertLess(anonymous_run.index(cache_probe), anonymous_run.index(anonymous_pull))
+        self.assertLess(
+            anonymous_run.index(cache_probe), anonymous_run.index(anonymous_pull)
+        )
         self.assertLess(
             anonymous_run.index(anonymous_pull), anonymous_run.index(digest_b15)
         )
