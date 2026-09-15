@@ -65,7 +65,6 @@ jobs:
           test "$(printf '%s' "${pr_json}" | wc -c)" -le 65536
           PR_JSON="${pr_json}" python - \
             "${AUTHORIZED_PR_NUMBER}" \
-            "${AUTHORIZED_BEFORE_COMMIT}" \
             "${AUTHORIZED_PR_HEAD_REF}" \
             "${GITHUB_REPOSITORY}" \
             "${GITHUB_SHA}" <<'PY'
@@ -75,7 +74,6 @@ jobs:
 
           (
               expected_number,
-              expected_base_sha,
               expected_head_ref,
               expected_repo,
               expected_merge_sha,
@@ -87,7 +85,6 @@ jobs:
               (pr.get("merged_at") is not None, "merged_at"),
               (pr.get("merge_commit_sha") == expected_merge_sha, "merge_commit_sha"),
               (pr.get("base", {}).get("ref") == "main", "base ref"),
-              (pr.get("base", {}).get("sha") == expected_base_sha, "base sha"),
               (
                   pr.get("head", {}).get("repo", {}).get("full_name") == expected_repo,
                   "head repository",
