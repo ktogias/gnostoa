@@ -91,6 +91,22 @@ class R2AP2bB16ReconciliationFailClosedTests(unittest.TestCase):
         for forbidden in ("docker push", "--push-by-digest"):
             self.assertNotIn(forbidden, reconciliation_run)
 
+    def test_local_pre_effect_build_is_bounded(self) -> None:
+        steps = _publish_steps()
+        local = _named_step(
+            steps,
+            "Build and verify exact B1.6 consumer locally before any registry effect",
+        )
+        local_run = _run(local)
+
+        bounded_build = "timeout --kill-after=5s 900s ./ci/build-runtime"
+        self.assertIn(
+            bounded_build,
+            local_run,
+            "the pre-effect BuildKit cut must have a finite execution bound",
+        )
+        self.assertLess(local_run.index(bounded_build), local_run.index("--tag"))
+
     def test_digest_only_publication_registry_write_is_bounded(self) -> None:
         steps = _publish_steps()
         publish = _named_step(
@@ -149,7 +165,7 @@ class R2AP2bB16ReconciliationFailClosedTests(unittest.TestCase):
             'reconcile_config="$(mktemp -d)"',
             'test "$(git -C b16-source rev-parse HEAD)" = "${SOURCE_COMMIT}"',
             (
-                'test "$(git -C b16-source rev-parse \'HEAD^{tree}\')" '
+                "test \"$(git -C b16-source rev-parse 'HEAD^{tree}')\" "
                 '= "${SOURCE_TREE}"'
             ),
             'docker image rm "${digest_ref}"',
@@ -161,10 +177,7 @@ class R2AP2bB16ReconciliationFailClosedTests(unittest.TestCase):
                 "docker image inspect --format "
                 "'{{.Os}}/{{.Architecture}}' \"${digest_ref}\""
             ),
-            (
-                "docker image inspect --format "
-                "'{{.Config.User}}' \"${digest_ref}\""
-            ),
+            ("docker image inspect --format '{{.Config.User}}' \"${digest_ref}\""),
             "org.opencontainers.image.version",
             "org.opencontainers.image.revision",
             "org.opencontainers.image.created",
