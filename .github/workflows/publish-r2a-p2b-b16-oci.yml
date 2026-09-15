@@ -260,6 +260,9 @@ jobs:
             local prior_status=$?
             trap - EXIT
             if ! timeout --kill-after=5s 30s docker buildx rm "${builder}" >/dev/null 2>&1; then
+              if [ "${prior_status}" -ne 0 ]; then
+                exit "${prior_status}"
+              fi
               echo "BuildKit builder cleanup failed" >&2
               exit 1
             fi
