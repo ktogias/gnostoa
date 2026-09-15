@@ -620,6 +620,8 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
         self.assertIsInstance(paths, list)
         assert isinstance(paths, list)
         for protected_path in (
+            "knowledge/decisions/0072-materialize-integrated-r2a-p2b-b15-consumer-by-digest.md",
+            "knowledge/decisions/0073-promote-r2a-b15-outer-consumer-authority.md",
             WORKFLOW_RELATIVE_PATH,
             DECISION_RELATIVE_PATH,
             FOCUSED_TEST_RELATIVE_PATH,
@@ -629,6 +631,10 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
     def test_b16_decision_is_semantic_review_assurance_owned(self) -> None:
         guardrails = GUARDRAILS_PATH.read_text(encoding="utf-8")
         semantic_section = _guardrail_section(guardrails, "semantic-review-assurance")
+        self.assertIn(
+            "knowledge/decisions/0072-materialize-integrated-r2a-p2b-b15-consumer-by-digest.md",
+            semantic_section,
+        )
         self.assertIn(DECISION_RELATIVE_PATH, semantic_section)
 
     def test_b16_materialization_is_governed_and_declared(self) -> None:
