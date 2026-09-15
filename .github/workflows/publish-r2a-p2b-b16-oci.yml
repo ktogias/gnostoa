@@ -251,11 +251,11 @@ jobs:
           metadata_file="${RUNNER_TEMP}/r2a-p2b-b16-build-metadata.json"
           test ! -e "${metadata_file}"
 
-          docker buildx create \
+          trap 'timeout --kill-after=5s 30s docker buildx rm "${builder}" >/dev/null 2>&1 || true' EXIT
+          timeout --kill-after=5s 120s docker buildx create \
             --name "${builder}" \
             --driver docker-container \
             --use >/dev/null
-          trap 'docker buildx rm "${builder}" >/dev/null 2>&1 || true' EXIT
 
           (
             cd b16-source
