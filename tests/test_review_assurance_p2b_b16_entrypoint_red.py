@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from tools import review_live_entrypoint
+from tools.review_model import canonical_json
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI_PATH = ROOT / "tools" / "cli.py"
@@ -32,10 +33,6 @@ SMOKE_RELATIVE_PATH = "ci/review_b16_entrypoint_smoke.py"
 
 class ReviewAssuranceP2bB16EntrypointRedTests(unittest.TestCase):
     def test_integrated_runtime_has_input_only_private_live_entrypoint(self) -> None:
-        self.assertTrue(
-            ENTRYPOINT_PATH.is_file(),
-            "P2B_B16_LIVE_ENTRYPOINT_UNAVAILABLE",
-        )
         entrypoint = ENTRYPOINT_PATH.read_text(encoding="utf-8")
         self.assertIn("review_live.evaluate_gnostoa_current_advisory", entrypoint)
         self.assertIn('"--input"', entrypoint)
@@ -79,7 +76,7 @@ class ReviewAssuranceP2bB16EntrypointRedTests(unittest.TestCase):
                 code = review_live_entrypoint.main(["--input", str(input_path)])
 
         self.assertEqual(3, code)
-        self.assertEqual(expected_payload, json.loads(stdout.getvalue()))
+        self.assertEqual(canonical_json(expected_payload) + "\n", stdout.getvalue())
         evaluate.assert_called_once_with(input_document)
 
     def test_live_entrypoint_rejects_ambiguous_json_before_evaluation(self) -> None:
@@ -110,6 +107,12 @@ class ReviewAssuranceP2bB16EntrypointRedTests(unittest.TestCase):
             DECISION_PATH.is_file(),
             "P2B_B16_DURABLE_DECISION_UNAVAILABLE",
         )
+        smoke = SMOKE_PATH.read_text(encoding="utf-8")
+        self.assertIn('"--network",\n                "none"', smoke)
+        self.assertNotIn('"bridge"', smoke)
+        self.assertIn("acquire_gnostoa_current_advisory_bundle", smoke)
+        self.assertIn("review_live_entrypoint.main", smoke)
+
         workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
         for path in (
             FOCUSED_TEST_PATH,
