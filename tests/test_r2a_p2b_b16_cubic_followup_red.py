@@ -57,6 +57,24 @@ def _run(step: dict[str, object]) -> str:
     return run
 
 
+def _continued_command(script: str, command_head: str) -> tuple[str, ...]:
+    lines = script.splitlines()
+    starts = [
+        index for index, line in enumerate(lines) if line.strip() == command_head
+    ]
+    if len(starts) != 1:
+        raise AssertionError(f"expected exactly one command headed by {command_head!r}")
+
+    index = starts[0]
+    command = [lines[index].strip()]
+    while command[-1].endswith("\\"):
+        index += 1
+        if index >= len(lines):
+            raise AssertionError(f"unterminated continued command {command_head!r}")
+        command.append(lines[index].strip())
+    return tuple(command)
+
+
 class R2AP2bB16CubicFollowupTests(unittest.TestCase):
     def test_dedicated_r2a_executes_both_contracts_as_top_level_commands(self) -> None:
         workflow = _load_workflow(R2A_WORKFLOW_PATH)
@@ -109,11 +127,23 @@ class R2AP2bB16CubicFollowupTests(unittest.TestCase):
         static_run = _run(
             _named_step(steps, "Verify dormant consumer trust-domain sources")
         )
-        self.assertGreaterEqual(
-            static_run.count(FOLLOWUP_TEST_RELATIVE_PATH),
-            2,
-            "the follow-up regression guard must remain in both Ruff format and check scopes",
+        ruff_commands = (
+            (
+                "format",
+                _continued_command(static_run, "python -m ruff format --check \\"),
+            ),
+            ("check", _continued_command(static_run, "python -m ruff check \\")),
         )
+        for scope, command in ruff_commands:
+            with self.subTest(scope=scope):
+                arguments = {
+                    line.removesuffix("\\").strip() for line in command[1:]
+                }
+                self.assertIn(
+                    FOLLOWUP_TEST_RELATIVE_PATH,
+                    arguments,
+                    f"the follow-up regression guard must remain in Ruff {scope} scope",
+                )
 
         native_run = _run(
             _named_step(
