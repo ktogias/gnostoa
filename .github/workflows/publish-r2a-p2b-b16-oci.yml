@@ -203,6 +203,7 @@ jobs:
           trap - EXIT
 
       - name: Authenticate to GHCR for the single digest-only effect
+        id: authenticate
         shell: bash
         timeout-minutes: 1
         env:
@@ -210,6 +211,14 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s' "${GHCR_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+
+      - name: Clean GHCR authentication state after failed login
+        if: ${{ always() && steps.authenticate.outcome == 'failure' }}
+        shell: bash
+        timeout-minutes: 1
+        run: |
+          set -euo pipefail
+          timeout --kill-after=5s 30s docker logout ghcr.io >/dev/null 2>&1
 
       - name: Publish exact B1.6 consumer without a remote tag and read back digest
         id: publish
@@ -250,7 +259,16 @@ jobs:
           metadata_file="${RUNNER_TEMP}/r2a-p2b-b16-build-metadata.json"
           test ! -e "${metadata_file}"
 
-          trap 'timeout --kill-after=5s 30s docker buildx rm "${builder}" >/dev/null 2>&1 || true' EXIT
+          cleanup_builder() {
+            local prior_status=$?
+            trap - EXIT
+            if ! timeout --kill-after=5s 30s docker buildx rm "${builder}" >/dev/null 2>&1; then
+              echo "BuildKit builder cleanup failed" >&2
+              exit 1
+            fi
+            exit "${prior_status}"
+          }
+          trap cleanup_builder EXIT
           timeout --kill-after=5s 120s docker buildx create \
             --name "${builder}" \
             --driver docker-container \
