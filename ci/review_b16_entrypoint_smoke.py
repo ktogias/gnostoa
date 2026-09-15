@@ -138,7 +138,9 @@ def _outer_main() -> int:
                 binding_probe.stdout.decode("utf-8", errors="strict")
             )
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise RuntimeError("B1.6 exact module launch returned invalid JSON") from exc
+            raise RuntimeError(
+                "B1.6 exact module launch returned invalid JSON"
+            ) from exc
         if not isinstance(binding_payload, dict):
             raise RuntimeError("B1.6 exact module launch result must be an object")
         error = binding_payload.get("error")
