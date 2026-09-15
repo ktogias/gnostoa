@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tools import review_live_entrypoint
+from tools import review_check, review_live_entrypoint
 from tools.review_model import canonical_json
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -83,6 +83,65 @@ class ReviewAssuranceP2bB16EntrypointRedTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             input_path = Path(directory) / "input.json"
             input_path.write_text('{"duplicate":1,"duplicate":2}', encoding="utf-8")
+            stdout = io.StringIO()
+            with (
+                mock.patch.object(
+                    review_live_entrypoint.review_live,
+                    "evaluate_gnostoa_current_advisory",
+                ) as evaluate,
+                contextlib.redirect_stdout(stdout),
+            ):
+                code = review_live_entrypoint.main(["--input", str(input_path)])
+
+        self.assertEqual(2, code)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual("MALFORMED_INVOCATION", payload["error"]["code"])
+        evaluate.assert_not_called()
+
+    def test_live_entrypoint_rejects_oversized_input_before_evaluation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            input_path = Path(directory) / "input.json"
+            input_path.write_bytes(b" " * (review_check.MAX_REVIEW_INPUT_BYTES + 1))
+            stdout = io.StringIO()
+            with (
+                mock.patch.object(
+                    review_live_entrypoint.review_live,
+                    "evaluate_gnostoa_current_advisory",
+                ) as evaluate,
+                contextlib.redirect_stdout(stdout),
+            ):
+                code = review_live_entrypoint.main(["--input", str(input_path)])
+
+        self.assertEqual(2, code)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual("MALFORMED_INVOCATION", payload["error"]["code"])
+        evaluate.assert_not_called()
+
+    def test_live_entrypoint_rejects_deep_nesting_before_evaluation(self) -> None:
+        depth = review_check.MAX_REVIEW_DOCUMENT_DEPTH + 1
+        nested_json = "[" * depth + "null" + "]" * depth
+        with tempfile.TemporaryDirectory() as directory:
+            input_path = Path(directory) / "input.json"
+            input_path.write_text(nested_json, encoding="utf-8")
+            stdout = io.StringIO()
+            with (
+                mock.patch.object(
+                    review_live_entrypoint.review_live,
+                    "evaluate_gnostoa_current_advisory",
+                ) as evaluate,
+                contextlib.redirect_stdout(stdout),
+            ):
+                code = review_live_entrypoint.main(["--input", str(input_path)])
+
+        self.assertEqual(2, code)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual("MALFORMED_INVOCATION", payload["error"]["code"])
+        evaluate.assert_not_called()
+
+    def test_live_entrypoint_rejects_non_utf8_input_before_evaluation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            input_path = Path(directory) / "input.json"
+            input_path.write_bytes(b'{"invalid":"\xff"}')
             stdout = io.StringIO()
             with (
                 mock.patch.object(
