@@ -186,7 +186,9 @@ class R2AP2bB16ReconciliationFailClosedTests(unittest.TestCase):
             "builder cleanup must be armed before bounded builder creation",
         )
 
-    def test_failed_authentication_is_cleaned_before_publish_can_be_skipped(self) -> None:
+    def test_failed_authentication_is_cleaned_before_publish_can_be_skipped(
+        self,
+    ) -> None:
         steps = _publish_steps()
         authenticate = _named_step(
             steps, "Authenticate to GHCR for the single digest-only effect"
