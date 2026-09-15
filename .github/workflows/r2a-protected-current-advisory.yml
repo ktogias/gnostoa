@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/r2a-protected-current-advisory.yml"
+      - ".github/workflows/publish-r2a-p2b-b16-oci.yml"
       - "Dockerfile"
       - "ci/build-runtime"
       - "ci/review_b15_runtime_smoke.py"
@@ -15,6 +16,7 @@ on:
       - "knowledge/decisions/0072-materialize-integrated-r2a-p2b-b15-consumer-by-digest.md"
       - "knowledge/decisions/0073-promote-r2a-b15-outer-consumer-authority.md"
       - "knowledge/decisions/0074-add-input-only-live-entrypoint-to-r2a-b15-runtime.md"
+      - "knowledge/decisions/0075-materialize-integrated-r2a-p2b-b16-consumer-by-digest.md"
       - "policy/guardrails.yaml"
       - "pyproject.toml"
       - "requirements/development.lock"
@@ -22,6 +24,9 @@ on:
       - "schemas/review-*.schema.json"
       - "tasks/issue-11-r2a-current-advisory.json"
       - "tasks/issue-11-r2a-current-advisory-consumer.json"
+      - "tests/test_r2a_p2b_b16_cubic_followup_red.py"
+      - "tests/test_r2a_p2b_b16_publication.py"
+      - "tests/test_r2a_p2b_b16_reconciliation_fail_closed.py"
       - "tests/test_review_assurance_p2b_activation_red.py"
       - "tests/test_review_assurance_p2b_b15_runtime_red.py"
       - "tests/test_review_assurance_p2b_b16_entrypoint_red.py"
@@ -97,6 +102,9 @@ jobs:
             ci/review_b16_entrypoint_smoke.py \
             ci/review_live_smoke.py \
             ci/review_live_timeout_cleanup.py \
+            tests/test_r2a_p2b_b16_cubic_followup_red.py \
+            tests/test_r2a_p2b_b16_publication.py \
+            tests/test_r2a_p2b_b16_reconciliation_fail_closed.py \
             tests/test_review_assurance_p2b_activation_red.py \
             tests/test_review_assurance_p2b_b15_runtime_red.py \
             tests/test_review_assurance_p2b_b16_entrypoint_red.py \
@@ -112,6 +120,9 @@ jobs:
             ci/review_b16_entrypoint_smoke.py \
             ci/review_live_smoke.py \
             ci/review_live_timeout_cleanup.py \
+            tests/test_r2a_p2b_b16_cubic_followup_red.py \
+            tests/test_r2a_p2b_b16_publication.py \
+            tests/test_r2a_p2b_b16_reconciliation_fail_closed.py \
             tests/test_review_assurance_p2b_activation_red.py \
             tests/test_review_assurance_p2b_b15_runtime_red.py \
             tests/test_review_assurance_p2b_b16_entrypoint_red.py \
@@ -136,6 +147,9 @@ jobs:
       # runtime was built and self-checked immediately above.
       - name: Run dormant consumer contract tests via native orchestration fallback
         run: |
+          PYTHONPATH=. python tests/test_r2a_p2b_b16_cubic_followup_red.py
+          PYTHONPATH=. python tests/test_r2a_p2b_b16_publication.py
+          PYTHONPATH=. python tests/test_r2a_p2b_b16_reconciliation_fail_closed.py
           PYTHONPATH=. python tests/test_review_assurance_p2b_activation_red.py
           PYTHONPATH=. python tests/test_review_assurance_p2b_b15_runtime_red.py
           PYTHONPATH=. python tests/test_review_assurance_p2b_b16_entrypoint_red.py
