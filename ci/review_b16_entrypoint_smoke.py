@@ -100,6 +100,54 @@ def _outer_main() -> int:
         input_path.chmod(0o444)
 
         mount = f"type=bind,src={input_dir},dst=/gnostoa-input,readonly"
+        binding_probe = review_current._run_docker(
+            [
+                "run",
+                "--rm",
+                "--pull=never",
+                "--network",
+                "none",
+                "--read-only",
+                "--cap-drop",
+                "ALL",
+                "--security-opt",
+                "no-new-privileges",
+                "--tmpfs",
+                "/tmp:rw,noexec,nosuid,nodev,size=32m",
+                "--mount",
+                mount,
+                "--entrypoint",
+                "python",
+                image,
+                "-m",
+                "tools.review_live_entrypoint",
+                "--input",
+                "/gnostoa-input/missing.json",
+            ],
+            config_dir=config_dir,
+            timeout=90,
+        )
+        if binding_probe.returncode != 2:
+            detail = binding_probe.stderr.decode("utf-8", errors="replace").strip()
+            raise RuntimeError(
+                "B1.6 exact module launch expected canonical malformed-input exit 2, "
+                f"got {binding_probe.returncode}: {detail}"
+            )
+        try:
+            binding_payload = json.loads(
+                binding_probe.stdout.decode("utf-8", errors="strict")
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("B1.6 exact module launch returned invalid JSON") from exc
+        if not isinstance(binding_payload, dict):
+            raise RuntimeError("B1.6 exact module launch result must be an object")
+        error = binding_payload.get("error")
+        if not isinstance(error, dict) or error.get("code") != "MALFORMED_INVOCATION":
+            raise RuntimeError(
+                "B1.6 exact module launch did not reach the canonical input-only route: "
+                f"{binding_payload}"
+            )
+
         result = review_current._run_docker(
             [
                 "run",
@@ -149,8 +197,9 @@ def _outer_main() -> int:
         )
 
     print(
-        "B1.6 entrypoint smoke passed: the exact runtime accepts bounded live input, "
-        "remains advisory, and fails closed without network or injected Docker daemon"
+        "B1.6 entrypoint smoke passed: the exact module launch is packaged, the runtime "
+        "accepts bounded live input, remains advisory, and fails closed without network "
+        "or injected Docker daemon"
     )
     return 0
 
