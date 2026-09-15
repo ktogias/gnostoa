@@ -3,11 +3,14 @@ from __future__ import annotations
 import copy
 import json
 import os
+import sys
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest import mock
 
-from tools import review_current
+from tools import review_current, review_live, review_live_entrypoint
+from tools.review_protected import ProtectedMainDocument
 
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLE_PATH = ROOT / "tasks" / "issue-11-r2a-current-advisory.json"
@@ -17,11 +20,14 @@ def _now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def _input_document() -> dict[str, object]:
+def _protected_bundle() -> dict[str, object]:
     bundle = json.loads(BUNDLE_PATH.read_text(encoding="utf-8"))
     if not isinstance(bundle, dict):
         raise RuntimeError("integrated P2b-A authority bundle must be a JSON object")
+    return bundle
 
+
+def _input_document(bundle: dict[str, object]) -> dict[str, object]:
     now = _now()
     return {
         "schema_version": "1.0",
@@ -58,11 +64,27 @@ def _input_document() -> dict[str, object]:
     }
 
 
-def main() -> int:
+def _inner_main(input_path: Path) -> int:
+    """Exercise the real entrypoint without depending on live protected-main I/O."""
+
+    protected = ProtectedMainDocument(
+        protected_main_revision="0" * 40,
+        document=_protected_bundle(),
+    )
+    with mock.patch.object(
+        review_live,
+        "acquire_gnostoa_current_advisory_bundle",
+        return_value=protected,
+    ):
+        return review_live_entrypoint.main(["--input", str(input_path)])
+
+
+def _outer_main() -> int:
     image = os.environ.get("GNOSTOA_R2A_CANDIDATE_IMAGE", "").strip()
     if not image:
         raise RuntimeError("GNOSTOA_R2A_CANDIDATE_IMAGE is required")
 
+    bundle = _protected_bundle()
     with tempfile.TemporaryDirectory(prefix="gnostoa-r2a-b16-smoke-") as directory:
         root = Path(directory)
         config_dir = root / "docker-config"
@@ -71,7 +93,10 @@ def main() -> int:
         input_dir.mkdir(mode=0o755)
         input_path = input_dir / "input.json"
         input_path.write_text(
-            json.dumps(_input_document(), sort_keys=True, separators=(",", ":")) + "\n",
+            json.dumps(
+                _input_document(bundle), sort_keys=True, separators=(",", ":")
+            )
+            + "\n",
             encoding="utf-8",
         )
         input_path.chmod(0o444)
@@ -83,7 +108,7 @@ def main() -> int:
                 "--rm",
                 "--pull=never",
                 "--network",
-                "bridge",
+                "none",
                 "--read-only",
                 "--cap-drop",
                 "ALL",
@@ -96,9 +121,8 @@ def main() -> int:
                 "--entrypoint",
                 "python",
                 image,
-                "-m",
-                "tools.review_live_entrypoint",
-                "--input",
+                "/opt/gnostoa/ci/review_b16_entrypoint_smoke.py",
+                "--inner",
                 "/gnostoa-input/input.json",
             ],
             config_dir=config_dir,
@@ -128,9 +152,17 @@ def main() -> int:
 
     print(
         "B1.6 entrypoint smoke passed: the exact runtime accepts bounded live input, "
-        "remains advisory, and fails closed without any injected Docker daemon"
+        "remains advisory, and fails closed without network or injected Docker daemon"
     )
     return 0
+
+
+def main() -> int:
+    if len(sys.argv) == 3 and sys.argv[1] == "--inner":
+        return _inner_main(Path(sys.argv[2]))
+    if len(sys.argv) != 1:
+        raise RuntimeError("B1.6 smoke accepts only the internal fixed --inner route")
+    return _outer_main()
 
 
 if __name__ == "__main__":
