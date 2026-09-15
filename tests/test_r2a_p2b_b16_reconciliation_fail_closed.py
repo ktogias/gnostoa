@@ -167,6 +167,39 @@ class R2AP2bB16ReconciliationFailClosedTests(unittest.TestCase):
             "post-publication attestation verification must terminate so reconciliation can run",
         )
 
+    def test_runtime_verification_steps_have_finite_bounds(self) -> None:
+        steps = _publish_steps()
+        bounded_step_names = (
+            "Build and verify exact B1.6 consumer locally before any registry effect",
+            "Publish exact B1.6 consumer without a remote tag and read back digest",
+            "Verify attestation and anonymous digest acquisition",
+            "Reconcile and clean post-publication state",
+        )
+        invalid_bounds: list[str] = []
+        for name in bounded_step_names:
+            timeout = _named_step(steps, name).get("timeout-minutes")
+            if (
+                not isinstance(timeout, str)
+                or not timeout.isdigit()
+                or not 1 <= int(timeout) <= 30
+            ):
+                invalid_bounds.append(name)
+
+        self.assertEqual(
+            [],
+            invalid_bounds,
+            "every verification cut that can run containers or smoke harnesses must "
+            "have a finite step timeout so hangs cannot bypass fail-closed progression",
+        )
+        reconciliation = _named_step(
+            steps, "Reconcile and clean post-publication state"
+        )
+        self.assertEqual(
+            "${{ always() && steps.publish.outcome != 'skipped' }}",
+            reconciliation.get("if"),
+            "a timed-out post-write cut must still reach reconciliation",
+        )
+
     def test_attestation_write_and_registry_credentials_are_bounded(self) -> None:
         steps = _publish_steps()
         authenticate = _named_step(
