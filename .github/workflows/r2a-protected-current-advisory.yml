@@ -11,6 +11,7 @@ on:
       - "ci/review_live_timeout_cleanup.py"
       - "knowledge/decisions/0070-protect-r2a-b1-outer-consumer-authority-separately.md"
       - "knowledge/decisions/0071-add-docker-client-to-r2a-b1-runtime.md"
+      - "knowledge/decisions/0072-materialize-integrated-r2a-p2b-b15-consumer-by-digest.md"
       - "knowledge/decisions/0073-promote-r2a-b15-outer-consumer-authority.md"
       - "policy/guardrails.yaml"
       - "pyproject.toml"
