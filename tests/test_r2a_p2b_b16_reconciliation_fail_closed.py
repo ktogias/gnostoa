@@ -135,10 +135,7 @@ class R2AP2bB16ReconciliationFailClosedTests(unittest.TestCase):
         )
         publish_run = _run(publish)
 
-        cleanup_trap = (
-            "trap 'timeout --kill-after=5s 30s docker buildx rm "
-            '"${builder}" >/dev/null 2>&1 || true\' EXIT'
-        )
+        cleanup_trap = "trap 'timeout --kill-after=5s 30s docker buildx rm \"${builder}\" >/dev/null 2>&1 || true' EXIT"
         bounded_create = "timeout --kill-after=5s 120s docker buildx create"
         self.assertIn(
             cleanup_trap,
