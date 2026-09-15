@@ -33,9 +33,7 @@ RESTRICTED_NATIVE_RATIONALE = (
     "Restricted native orchestration: the runner owns the Docker service; "
     "the candidate receives no daemon or socket authority."
 )
-_HEREDOC_RE = re.compile(
-    r"(?<!<)(<<-?)(?!<)\s*[\"']?([A-Za-z_][A-Za-z0-9_]*)[\"']?"
-)
+_HEREDOC_RE = re.compile(r"(?<!<)(<<-?)(?!<)\s*[\"']?([A-Za-z_][A-Za-z0-9_]*)[\"']?")
 
 
 def _load_workflow() -> dict[str, object]:
@@ -476,9 +474,7 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
                 "done",
             )
         )
-        self.assertFalse(
-            _has_direct_top_level_shell_sequence(heredoc_inert, sequence)
-        )
+        self.assertFalse(_has_direct_top_level_shell_sequence(heredoc_inert, sequence))
         self.assertFalse(
             _has_direct_top_level_shell_sequence(multiline_if_inert, sequence)
         )
