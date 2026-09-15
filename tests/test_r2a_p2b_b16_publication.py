@@ -248,7 +248,9 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
         local_block = workflow_text.split(
             "- name: Build and verify exact B1.6 consumer locally before any registry effect",
             1,
-        )[1].split("- name: Authenticate to GHCR for the single digest-only effect", 1)[0]
+        )[1].split("- name: Authenticate to GHCR for the single digest-only effect", 1)[
+            0
+        ]
         authenticated_block = workflow_text.split(
             "- name: Publish exact B1.6 consumer without a remote tag and read back digest",
             1,
