@@ -11,6 +11,7 @@ from test_r2a_p2b_b16_publication import (
 ROOT = Path(__file__).resolve().parents[1]
 PUBLISH_WORKFLOW_PATH = ROOT / ".github/workflows/publish-r2a-p2b-b16-oci.yml"
 R2A_WORKFLOW_PATH = ROOT / ".github/workflows/r2a-protected-current-advisory.yml"
+FOLLOWUP_TEST_RELATIVE_PATH = "tests/test_r2a_p2b_b16_cubic_followup_red.py"
 
 
 def _load_workflow(path: Path) -> dict[str, object]:
@@ -49,6 +50,13 @@ def _bash_run(step: dict[str, object]) -> str:
     return run
 
 
+def _run(step: dict[str, object]) -> str:
+    run = step.get("run")
+    if not isinstance(run, str):
+        raise AssertionError("expected a run step")
+    return run
+
+
 class R2AP2bB16CubicFollowupTests(unittest.TestCase):
     def test_dedicated_r2a_executes_both_contracts_as_top_level_commands(self) -> None:
         workflow = _load_workflow(R2A_WORKFLOW_PATH)
@@ -80,6 +88,45 @@ class R2AP2bB16CubicFollowupTests(unittest.TestCase):
                     "commented, heredoc-contained, or unreachable commands are not execution coverage",
                 )
 
+    def test_dedicated_r2a_protects_this_followup_contract(self) -> None:
+        workflow = _load_workflow(R2A_WORKFLOW_PATH)
+        on = workflow.get("on")
+        self.assertIsInstance(on, dict)
+        assert isinstance(on, dict)
+        pull_request = on.get("pull_request")
+        self.assertIsInstance(pull_request, dict)
+        assert isinstance(pull_request, dict)
+        paths = pull_request.get("paths")
+        self.assertIsInstance(paths, list)
+        assert isinstance(paths, list)
+        self.assertIn(
+            FOLLOWUP_TEST_RELATIVE_PATH,
+            paths,
+            "the follow-up regression guard must itself trigger dedicated R2A verification",
+        )
+
+        steps = _job_steps(workflow, "dormant-current-advisory-consumer")
+        static_run = _run(
+            _named_step(steps, "Verify dormant consumer trust-domain sources")
+        )
+        self.assertGreaterEqual(
+            static_run.count(FOLLOWUP_TEST_RELATIVE_PATH),
+            2,
+            "the follow-up regression guard must remain in both Ruff format and check scopes",
+        )
+
+        native_run = _run(
+            _named_step(
+                steps,
+                "Run dormant consumer contract tests via native orchestration fallback",
+            )
+        )
+        command = f"PYTHONPATH=. python {FOLLOWUP_TEST_RELATIVE_PATH}"
+        self.assertTrue(
+            _has_direct_top_level_shell_sequence(native_run, (command,)),
+            "the follow-up regression guard must execute directly in dedicated R2A verification",
+        )
+
     def test_authorization_uses_meaningful_landing_binding_without_tautological_guards(
         self,
     ) -> None:
@@ -95,17 +142,31 @@ class R2AP2bB16CubicFollowupTests(unittest.TestCase):
             _named_step(authorize_steps, "Bind the pushed commit to merged PR 257")
         )
 
+        self.assertIn(
+            'test "${EVENT_BEFORE}" = "${AUTHORIZED_BEFORE_COMMIT}"',
+            boundary_run,
+            "the push event must remain bound to the exact protected-main predecessor",
+        )
         for required in (
             "merge_commit_sha",
             "expected_merge_sha",
             "GITHUB_SHA",
-            "AUTHORIZED_BEFORE_COMMIT",
             "AUTHORIZED_PR_HEAD_REF",
         ):
             self.assertIn(
                 required,
                 provider_binding_run,
                 "the merged-PR binding must remain the exact landing-commit authority",
+            )
+
+        for forbidden in (
+            "expected_base_sha",
+            'pr.get("base", {}).get("sha")',
+        ):
+            self.assertNotIn(
+                forbidden,
+                provider_binding_run,
+                "PR base.sha is not a documented merge-predecessor authority and must not reject an otherwise exact authorized landing",
             )
 
         tautological_guards = (
