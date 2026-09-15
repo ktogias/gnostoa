@@ -157,7 +157,7 @@ class R2AP2bB16CubicFollowupTests(unittest.TestCase):
             self.assertIn(required, local_run)
 
         self.assertNotIn(
-            'trap \'docker image rm "${local_image}" >/dev/null 2>&1 || true\' EXIT',
+            "trap 'docker image rm \"${local_image}\" >/dev/null 2>&1 || true' EXIT",
             local_run,
             "local verification cleanup must not suppress removal failure",
         )
