@@ -68,7 +68,7 @@ guardrails:
     applies_to: [kit]
     enforcement: automated
     owner: team:gnostoa-maintainers
-    guidance: knowledge/decisions/0012-use-versioned-public-schema-identifiers.md#decision
+    guidance: guidance/guardrails/non-negotiable.md#rule
     implementation:
       - schemas/change-control.schema.json
       - schemas/continuous-integration.schema.json
@@ -485,7 +485,9 @@ guardrails:
       - knowledge/decisions/0071-add-docker-client-to-r2a-b1-runtime.md
       - knowledge/decisions/0072-materialize-integrated-r2a-p2b-b15-consumer-by-digest.md
       - knowledge/decisions/0073-promote-r2a-b15-outer-consumer-authority.md
+      - knowledge/decisions/0074-add-input-only-live-entrypoint-to-r2a-b15-runtime.md
       - ci/review_b15_runtime_smoke.py
+      - ci/review_b16_entrypoint_smoke.py
       - tools/review_adapter_file.py
       - tools/review_model.py
       - tools/review_policy.py
@@ -494,6 +496,7 @@ guardrails:
       - tools/review_protected.py
       - tools/review_current.py
       - tools/review_live.py
+      - tools/review_live_entrypoint.py
       - tools/cli.py
       - .github/workflows/r2a-protected-current-advisory.yml
     tests:
@@ -508,7 +511,9 @@ guardrails:
       - tests/test_review_assurance_p2b_b1_error_paths_red.py
       - tests/test_review_assurance_p2b_consumer_authority_red.py
       - tests/test_review_assurance_p2b_b15_runtime_red.py
+      - tests/test_review_assurance_p2b_b16_entrypoint_red.py
       - ci/review_b15_runtime_smoke.py
+      - ci/review_b16_entrypoint_smoke.py
       - ci/review_live_smoke.py
       - ci/review_live_timeout_cleanup.py
 
