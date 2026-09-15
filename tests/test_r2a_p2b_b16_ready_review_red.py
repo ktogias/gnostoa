@@ -21,7 +21,9 @@ B16 = (
 
 
 def _workflow() -> dict[str, object]:
-    parsed = yaml.load(WORKFLOW_PATH.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    parsed = yaml.load(
+        WORKFLOW_PATH.read_text(encoding="utf-8"), Loader=yaml.BaseLoader
+    )
     if not isinstance(parsed, dict):
         raise AssertionError("publication workflow must be a mapping")
     return parsed
@@ -29,9 +31,7 @@ def _workflow() -> dict[str, object]:
 
 def _named_run(steps: list[object], name: str) -> str:
     matches = [
-        step
-        for step in steps
-        if isinstance(step, dict) and step.get("name") == name
+        step for step in steps if isinstance(step, dict) and step.get("name") == name
     ]
     if len(matches) != 1 or not isinstance(matches[0].get("run"), str):
         raise AssertionError(f"expected one run step named {name!r}")
@@ -64,7 +64,7 @@ class R2AP2bB16ReadyReviewRedTests(unittest.TestCase):
         for required in (
             'test "${EVENT_AFTER}" = "${GITHUB_SHA}"',
             'test "${GITHUB_WORKFLOW_SHA}" = "${GITHUB_SHA}"',
-            'pulls/${AUTHORIZED_PR_NUMBER}',
+            "pulls/${AUTHORIZED_PR_NUMBER}",
             "merge_commit_sha",
             "AUTHORIZED_BEFORE_COMMIT",
             "timeout --kill-after=5s",
@@ -121,12 +121,16 @@ class R2AP2bB16ReadyReviewRedTests(unittest.TestCase):
         self.assertFalse(helper(heredoc_inert, sequence))
         self.assertFalse(helper(multiline_if_inert, sequence))
 
-    def test_digest_contract_is_named_step_scoped_and_orders_anonymous_identity(self) -> None:
+    def test_digest_contract_is_named_step_scoped_and_orders_anonymous_identity(
+        self,
+    ) -> None:
         focused = FOCUSED_TEST_PATH.read_text(encoding="utf-8")
         digest_test = focused.split(
             "    def test_digest_readback_is_uniform_and_anonymous_reacquisition_is_not_cached(",
             1,
-        )[1].split("\n    def test_b16_decision_triggers_dedicated_r2a_verification", 1)[0]
+        )[1].split(
+            "\n    def test_b16_decision_triggers_dedicated_r2a_verification", 1
+        )[0]
         self.assertGreaterEqual(digest_test.count("_named_bash_run_step("), 2)
         self.assertIn("anonymous_block.index(anonymous_pull)", digest_test)
         self.assertIn("anonymous_block.index(digest_uid_check)", digest_test)
