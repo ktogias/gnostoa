@@ -140,6 +140,7 @@ jobs:
           docker run --rm --entrypoint sh "${local_image}" -ec \
             'test -f /opt/gnostoa/tools/review_protected.py; test -f /opt/gnostoa/tools/review_live_entrypoint.py; grep -Fx "tools/review_protected.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "tools/review_live.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "tools/review_current.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "tools/review_live_entrypoint.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "ci/review_b15_runtime_smoke.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "ci/review_b16_entrypoint_smoke.py" /opt/gnostoa/.gnostoa-source-files >/dev/null'
           docker run --rm "${local_image}" self-check --skip-tests
+          # Restricted native orchestration: the runner owns the Docker service; the candidate receives no daemon or socket authority.
           GNOSTOA_R2A_CANDIDATE_IMAGE="${local_image}" python b16-source/ci/review_b15_runtime_smoke.py
           PYTHONPATH=b16-source GNOSTOA_R2A_CANDIDATE_IMAGE="${local_image}" python b16-source/ci/review_b16_entrypoint_smoke.py
           docker image rm "${local_image}" >/dev/null
@@ -221,6 +222,7 @@ jobs:
           docker run --rm --entrypoint sh "${digest_ref}" -ec \
             'test -f /opt/gnostoa/tools/review_protected.py; test -f /opt/gnostoa/tools/review_live_entrypoint.py; grep -Fx "tools/review_protected.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "tools/review_live.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "tools/review_current.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "tools/review_live_entrypoint.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "ci/review_b15_runtime_smoke.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "ci/review_b16_entrypoint_smoke.py" /opt/gnostoa/.gnostoa-source-files >/dev/null'
           docker run --rm "${digest_ref}" self-check --skip-tests
+          # Restricted native orchestration: the runner owns the Docker service; the candidate receives no daemon or socket authority.
           GNOSTOA_R2A_CANDIDATE_IMAGE="${digest_ref}" python b16-source/ci/review_b15_runtime_smoke.py
           PYTHONPATH=b16-source GNOSTOA_R2A_CANDIDATE_IMAGE="${digest_ref}" python b16-source/ci/review_b16_entrypoint_smoke.py
 
@@ -267,6 +269,7 @@ jobs:
           docker run --rm --entrypoint sh "${digest_ref}" -ec \
             'test -f /opt/gnostoa/tools/review_protected.py; test -f /opt/gnostoa/tools/review_live_entrypoint.py; grep -Fx "tools/review_protected.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "tools/review_live.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "tools/review_current.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "tools/review_live_entrypoint.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "ci/review_b15_runtime_smoke.py" /opt/gnostoa/.gnostoa-source-files >/dev/null; grep -Fx "ci/review_b16_entrypoint_smoke.py" /opt/gnostoa/.gnostoa-source-files >/dev/null'
           docker run --rm "${digest_ref}" self-check --skip-tests
+          # Restricted native orchestration: the runner owns the Docker service; the candidate receives no daemon or socket authority.
           GNOSTOA_R2A_CANDIDATE_IMAGE="${digest_ref}" python b16-source/ci/review_b15_runtime_smoke.py
           PYTHONPATH=b16-source GNOSTOA_R2A_CANDIDATE_IMAGE="${digest_ref}" python b16-source/ci/review_b16_entrypoint_smoke.py
 
