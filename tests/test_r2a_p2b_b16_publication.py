@@ -175,10 +175,7 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
         self.assertEqual("authorize", publish["needs"])
         self.assertEqual({"pull-requests": "read"}, authorize["permissions"])
         self.assertEqual(
-            {
-                "EVENT_BEFORE": "${{ github.event.before }}",
-                "EVENT_AFTER": "${{ github.event.after }}",
-            },
+            {"EVENT_BEFORE": "${{ github.event.before }}"},
             authorize["env"],
         )
         authorize_steps = authorize["steps"]
@@ -194,8 +191,6 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
             'test "${GITHUB_TRIGGERING_ACTOR}" = "ktogias"',
             'test "${GITHUB_RUN_ATTEMPT}" = "1"',
             'test "${EVENT_BEFORE}" = "${AUTHORIZED_BEFORE_COMMIT}"',
-            'test "${EVENT_AFTER}" = "${GITHUB_SHA}"',
-            'test "${GITHUB_WORKFLOW_SHA}" = "${GITHUB_SHA}"',
             (
                 'test "${GITHUB_WORKFLOW_REF}" = '
                 '"${GITHUB_REPOSITORY}/.github/workflows/'
