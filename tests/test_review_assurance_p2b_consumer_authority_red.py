@@ -147,18 +147,32 @@ class ReviewAssuranceP2bConsumerAuthorityRedTests(unittest.TestCase):
         self.assertIn("Decision 0070", decision)
         self.assertIn("Decision 0071", decision)
         self.assertIn("Decision 0072", decision)
+        self.assertIn(B15_SOURCE_REVISION, decision)
+        self.assertIn(B15_SOURCE_TREE, decision)
+        self.assertIn(B15_PUBLIC_SURFACE_DIGEST, decision)
         self.assertIn(B15_OCI_IMAGE, decision)
+        self.assertIn(MATERIALIZATION_MAIN_REVISION, decision)
+        self.assertIn(MATERIALIZATION_RUN, decision)
+        self.assertIn(ATTESTATION_ID, decision)
+        self.assertIn(REKOR_LOG_INDEX, decision)
         self.assertIn(RECEIPT_COMMENT, decision)
         self.assertIn("B1.5", decision)
         self.assertIn("outer consumer", decision.lower())
         self.assertIn("inner semantic", decision.lower())
+        self.assertIn("closed v1", decision.lower())
         self.assertIn("P2b-B2", decision)
         self.assertIn("does not activate", decision.lower())
+        self.assertIn("knowledge/index.md", decision)
+        self.assertIn("navigation-only", decision.lower())
+        self.assertIn("index-only", decision.lower())
+        self.assertIn("semantic-review-assurance", decision)
+        self.assertIn("dedicated R2A", decision)
 
     def test_dedicated_workflow_covers_outer_consumer_authority(self) -> None:
         workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
         self.assertIn('- "tasks/issue-11-r2a-current-advisory-consumer.json"', workflow)
         self.assertIn(f'- "{FOCUSED_TEST_PATH}"', workflow)
+        self.assertNotIn('- "knowledge/index.md"', workflow)
         self.assertIn("python -m ruff format --check \\\n", workflow)
         self.assertGreaterEqual(workflow.count(FOCUSED_TEST_PATH), 4)
         self.assertIn(f"PYTHONPATH=. python {FOCUSED_TEST_PATH}", workflow)
@@ -190,6 +204,7 @@ class ReviewAssuranceP2bConsumerAuthorityRedTests(unittest.TestCase):
             },
             set(implementation),
         )
+        self.assertNotIn("knowledge/index.md", implementation)
         self.assertIn(FOCUSED_TEST_PATH, tests)
 
 
