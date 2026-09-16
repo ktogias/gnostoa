@@ -198,11 +198,15 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         assert isinstance(daemon_image, str)
         self.assertIsNotNone(_DIGEST_IMAGE.fullmatch(daemon_image))
         self.assertIn("--privileged", daemon_args)
-        self.assertIn(f"{socket_volume}:/var/run", daemon_args)
+        self.assertIn(f"{socket_volume}:/gnostoa-docker", daemon_args)
+        self.assertNotIn(f"{socket_volume}:/var/run", daemon_args)
         self.assertIn(f"{tmp_volume}:/tmp", daemon_args)
         daemon_image_index = daemon_args.index(daemon_image)
         self.assertEqual("dockerd", daemon_args[daemon_image_index + 1])
-        self.assertEqual(1, daemon_args.count("--host=unix:///var/run/docker.sock"))
+        self.assertEqual(
+            1, daemon_args.count("--host=unix:///gnostoa-docker/docker.sock")
+        )
+        self.assertEqual(1, daemon_args.count("--group=10001"))
         self.assertNotIn("tcp://0.0.0.0:2375", " ".join(daemon_args))
         self.assertNotIn("tcp://0.0.0.0:2376", " ".join(daemon_args))
 
@@ -212,6 +216,7 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         self.assertIn("ALL", outer_args)
         self.assertIn("no-new-privileges", " ".join(outer_args))
         self.assertIn(f"{socket_volume}:/var/run", outer_args)
+        self.assertNotIn("/gnostoa-docker", " ".join(outer_args))
         self.assertIn(f"{tmp_volume}:/tmp", outer_args)
         self.assertIn(
             f"type=bind,src={input_dir},dst=/gnostoa-input,readonly",
