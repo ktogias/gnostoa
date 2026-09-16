@@ -25,6 +25,9 @@ sources:
   - id: b16-promotion-integration-receipt
     resource: https://github.com/ktogias/gnostoa/issues/11#issuecomment-5694550281
     title: Integrated B1.6 outer-consumer authority receipt
+  - id: b2-canonical-red-run
+    resource: https://github.com/ktogias/gnostoa/actions/runs/35076426892
+    title: Canonical B2 RED exact-head provider run
   - id: owner-authorization
     resource: https://github.com/ktogias/gnostoa/issues/11#issuecomment-5671332574
     title: Owner authorization through full P2b activation completion
@@ -63,9 +66,19 @@ The prior-effective outer consumer selected from protected `main` is exactly:
 - public-surface digest `sha256:c8536ac1f726f1d04f331c95f85a9df128b7cdb818213785cbd6b0b0940f9c57`;
 - OCI `ghcr.io/ktogias/gnostoa@sha256:d4cc72b0ed7342f533dd3bcf32ddf9888203f85408154f4066883ba9d33fe867`.
 
-The canonical verification-first RED for B2 is commit `fd44941433cbb5a09bd58808c2c5101caf3f8e06`. Its exact candidate-image `self-check` ran 860 tests with exactly four intended B2 failures and three skips while Ruff, type, golden and policy pre-gates remained clean. The failures were limited to protected outer-consumer acquisition, candidate CLI delegation/raw-byte forwarding, the prior-effective outer runner and the isolated nested-daemon execution plan.
+The canonical verification-first RED for B2 is commit `fd44941433cbb5a09bd58808c2c5101caf3f8e06`, bound to GitHub Actions run `35076426892`. Its exact candidate-image `self-check` ran 860 tests with exactly four intended B2 failures and three skips while Ruff, type, golden and policy pre-gates remained clean. The failures were limited to protected outer-consumer acquisition, candidate CLI delegation/raw-byte forwarding, the prior-effective outer runner and the isolated nested-daemon execution plan. The run identifier and commit provide the durable provenance binding for this historical measurement; provider-hosted logs and artifacts remain subject to GitHub Actions retention and may cease to be downloadable, so these exact counts are recorded historical evidence rather than a claim that they can always be re-derived from source bytes alone.
 
 The activation candidate must not make candidate bytes the semantic judge of the same candidate. The trusted result must still come from the protected prior-effective outer consumer selected from protected `main`, and that outer consumer must retain its own pinned Docker client rather than receiving a host-selected executable or the host Docker socket.
+
+## Alternatives and license compatibility
+
+The B2 substrate intentionally uses a small repository-owned orchestration helper over the already required Docker CLI instead of adding a new general-purpose orchestration dependency. The following alternatives were considered before retaining custom orchestration:
+
+1. **Expose the host Docker daemon directly to OCI(B1.6).** Docker Engine and the Docker CLI are Apache-2.0 licensed, which is compatible with this repository's use. The alternative was rejected on security grounds rather than licensing: mounting host `/var/run/docker.sock` or injecting a host-selected Docker executable would collapse the trust boundary and let the prior-effective runtime control the host daemon instead of an isolated candidate-owned daemon.
+2. **Use the Docker SDK for Python (`docker-py`) as the host-side orchestration layer.** The Docker SDK for Python is Apache-2.0 licensed and license-compatible. It can replace individual CLI calls, but it does not solve the material trust requirement by itself: the protected B1.6 runtime still needs a separately selected, isolated Docker endpoint and its own pinned Docker client. Adding the SDK would therefore introduce another dependency and client/configuration surface without removing the custom trust-boundary logic that validates protected authority, constructs the isolated topology, owns cleanup names and transports canonical results.
+3. **Substitute a Docker-compatible daemon such as Podman for the nested daemon.** Podman is Apache-2.0 licensed and license-compatible, but Docker-API compatibility is not the same as using the exact Docker behavior already exercised and pinned by the prior-effective B1.6 lineage. Changing daemon semantics here would expand the proof obligation across image acquisition, socket behavior and Docker-client compatibility and would not strengthen the anti-self-reference property.
+
+The remaining requirement that none of those alternatives removes is precise candidate-owned lifecycle orchestration around a **fixed digest-pinned daemon**, protected-main-selected B1.6 runtime, ephemeral Unix socket, exact-name cleanup authority, fail-closed result transport and required GitHub/GHCR bootstrap egress. That bounded glue is why repository-owned orchestration remains necessary for this activation slice.
 
 ## Decision
 
@@ -74,9 +87,9 @@ Activate P2b-B2 only through the prior-effective OCI(B1.6) outer consumer select
 1. The public `current_advisory` CLI route may delegate to a new candidate-side orchestration helper, but candidate `review_live` / `review_evaluate` semantics remain non-authoritative for the protected current-advisory result.
 2. The candidate orchestration helper accepts only the untrusted review input. It acquires the outer-consumer record from protected Gnostoa `main`; callers cannot select the trusted runtime, protected authority document, policy, change class, Docker daemon image or Docker executable.
 3. Before execution, the candidate revalidates the protected record's exact digest-pinned OCI identity, source/runtime revision, platform/user label and public-surface digest. Any mismatch or unavailable protected acquisition is a controlled fail-closed tool error, never a semantic PASS.
-4. Run the exact prior-effective OCI(B1.6) against an **isolated nested Docker daemon**. The nested daemon image is fixed to `docker.io/library/docker@sha256:76cd6bbc3ab600fced21a7e1bea77ac00cb7c545eb95d5767e4ec4ffbcb242dc`.
+4. Run the exact prior-effective OCI(B1.6) against an **isolated nested Docker daemon**. The nested daemon image is fixed to `docker.io/library/docker@sha256:76cd6bbc3ab600fced21a7e1bea77ac00cb7c545eb95d5767e4ec4ffbcb242dc`. Invoke the image with an explicit `dockerd --host=unix:///var/run/docker.sock --group=10001` command so the image entrypoint cannot synthesize an unauthenticated TCP listener.
 5. Never expose host `/var/run/docker.sock` or a host-selected Docker executable to OCI(B1.6). The candidate creates ephemeral internal `/var/run` and `/tmp` volumes shared only by the isolated daemon and the protected outer runtime. The bounded input is mounted read-only.
-6. Privilege is confined to the isolated daemon substrate. OCI(B1.6) remains non-privileged, read-only, capability-dropped and `no-new-privileges` while using its own pinned Docker client through the isolated Unix socket.
+6. Privilege is confined to the isolated daemon substrate. OCI(B1.6) remains non-privileged, read-only, capability-dropped and `no-new-privileges` while using its own pinned Docker client through the isolated Unix socket. After daemon readiness, the candidate verifies that the Unix-socket Docker path works and that TCP Docker endpoints on 2375 and 2376 are unavailable before B1.6 is started.
 7. Validate the prior-effective runtime result as bounded canonical JSON and require semantic exit-code/result coherence plus `binding:false`. Forward the validated prior-effective result bytes byte-for-byte; do not project, repair or reinterpret them through candidate semantic code.
 8. Give every candidate-owned Docker container and volume a validated unique name before creation. A name becomes cleanup authority only after its create operation succeeds, and it is registered before the returned identity is validated so malformed stdout cannot orphan the object. Cleanup uses bounded retry/backoff and treats already-absent owned resources as reconciled; no resource name is guessed after a failed create.
 9. Preserve the truthful empty Issue #10 qualification state. A successful live execution is therefore expected to remain advisory `INCOMPLETE / QUORUM_UNMET` with `binding:false`; the prior-effective runtime, not the caller, owns the live evaluation cut.
@@ -100,10 +113,11 @@ Candidate B2 bytes therefore arrange the execution substrate but do not become t
 
 The candidate is eligible for human review only after all of the following are true on one exact head:
 
-- the canonical RED remains preserved as historical evidence;
-- the focused B2 contracts are green;
+- the canonical RED remains preserved as historical evidence and bound to its recorded provider run;
+- the focused B2 contracts are green, including deterministic proof that the daemon command starts with explicit `dockerd`, exposes only the intended Unix host and contains no TCP Docker host;
 - normal Gnostoa `policy`, `fast`, Python compatibility, `regression` and `smoke` gates are green;
 - the dedicated R2A workflow is green, including the real isolated nested-daemon smoke;
+- the live isolated-daemon path proves Unix-socket `docker info` succeeds while TCP 2375 and 2376 are unavailable before the protected outer runtime proceeds;
 - material independent-review findings are resolved and fresh exact-head review convergence is obtained.
 
 The live smoke must establish the currently truthful advisory result: exit 3, `INCOMPLETE`, `QUORUM_UNMET`, `binding:false`, replacement of caller-selected evaluation time and protected-OCI provenance diagnostics.
@@ -119,6 +133,7 @@ This Decision does not authorize those later publication or promotion effects by
 - `current_advisory` can become live without violating the anti-self-reference requirement.
 - The protected B1.6 identity remains independently selected from protected `main` and owns the Docker-client/live-entrypoint capability used for this candidate.
 - The host Docker daemon is lifecycle authority for candidate-owned isolated resources only; it is not the semantic execution endpoint presented to B1.6.
+- The nested daemon retains the required GitHub/GHCR egress but its Docker control plane is Unix-socket-only and verified fail closed before protected execution.
 - Exact result bytes and exit semantics remain attributable to the prior-effective runtime.
 - Cleanup is fail-closed, bounded-retry and exact-name-based after successful creation.
 - Human approval remains mandatory before integration because this is a critical Gnostoa-self change.
