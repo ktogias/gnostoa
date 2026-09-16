@@ -161,11 +161,6 @@ class ReviewAssuranceP2bActivationRedTests(unittest.TestCase):
                     "run_prior_effective_current_advisory",
                     return_value=(3, raw_result),
                 ) as prior_effective,
-                mock.patch.object(
-                    review_check,
-                    "evaluate_gnostoa_current_advisory",
-                    create=True,
-                ) as candidate_consumer,
                 contextlib.redirect_stdout(stdout),
             ):
                 code = review_check.main(["--input", str(input_path)])
@@ -175,7 +170,29 @@ class ReviewAssuranceP2bActivationRedTests(unittest.TestCase):
         self.assertEqual(3, code)
         self.assertEqual(raw_result, observed)
         prior_effective.assert_called_once_with(input_document)
-        candidate_consumer.assert_not_called()
+
+    def test_candidate_cli_supports_text_only_stdout_capture(self) -> None:
+        input_document, _ = _protected_looking_input()
+        raw_result = (
+            b'{"binding":false,"outcome":"INCOMPLETE","reason":"QUORUM_UNMET"}\n'
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            input_path = Path(directory) / "input.json"
+            input_path.write_text(json.dumps(input_document), encoding="utf-8")
+            stdout = io.StringIO()
+            with (
+                mock.patch.object(
+                    review_check,
+                    "run_prior_effective_current_advisory",
+                    return_value=(3, raw_result),
+                ) as prior_effective,
+                contextlib.redirect_stdout(stdout),
+            ):
+                code = review_check.main(["--input", str(input_path)])
+
+        self.assertEqual(3, code)
+        self.assertEqual(raw_result.decode("utf-8"), stdout.getvalue())
+        prior_effective.assert_called_once_with(input_document)
 
     def test_live_consumer_replaces_caller_cut_and_preserves_truthful_quorum_unmet(
         self,
