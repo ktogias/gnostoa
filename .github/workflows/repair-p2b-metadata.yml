@@ -1,0 +1,111 @@
+name: Repair P2b branch metadata from protected base
+
+on:
+  push:
+    branches:
+      - r2a-p2b-materialization
+    paths:
+      - ".github/workflows/repair-p2b-metadata.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: ${{ github.actor == 'ktogias' && github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out exact repair head
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+
+      - name: Restore protected-base bytes and apply only admitted insertions
+        shell: bash
+        env:
+          BASE_COMMIT: 2aa1ed3217c42819155b8ff36385b000720ba4f8
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from __future__ import annotations
+
+          import os
+          import subprocess
+          from pathlib import Path
+
+          base = os.environ["BASE_COMMIT"]
+
+          def base_bytes(path: str) -> bytes:
+              return subprocess.run(
+                  ["git", "show", f"{base}:{path}"],
+                  check=True,
+                  stdout=subprocess.PIPE,
+              ).stdout
+
+          def replace_once(data: bytes, old: bytes, new: bytes, label: str) -> bytes:
+              count = data.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected one protected-base anchor, found {count}")
+              return data.replace(old, new, 1)
+
+          index_path = Path("knowledge/index.md")
+          index = base_bytes(index_path.as_posix())
+          index_anchor = (
+              b"- [Activate R2A P2b-B2 through prior-effective OCI(B1.6)]"
+              b"(decisions/0077-activate-r2a-p2b-b2-through-prior-effective-b16.md)\n"
+          )
+          index_addition = index_anchor + (
+              b"- [Materialize the integrated R2A P2b runtime as a prior-effective "
+              b"digest-only OCI identity]"
+              b"(decisions/0078-materialize-integrated-r2a-p2b-runtime-by-digest.md)\n"
+          )
+          index_path.write_bytes(
+              replace_once(index, index_anchor, index_addition, "knowledge index")
+          )
+
+          guardrails_path = Path("policy/guardrails.yaml")
+          guardrails = base_bytes(guardrails_path.as_posix())
+          semantic_anchor = (
+              b"      - knowledge/decisions/0077-activate-r2a-p2b-b2-through-prior-effective-b16.md\n"
+          )
+          guardrails = replace_once(
+              guardrails,
+              semantic_anchor,
+              semantic_anchor
+              + b"      - knowledge/decisions/0078-materialize-integrated-r2a-p2b-runtime-by-digest.md\n",
+              "semantic-review-assurance",
+          )
+          provider_anchor = b"      - .github/workflows/publish-r2a-p2b-b16-oci.yml\n"
+          guardrails = replace_once(
+              guardrails,
+              provider_anchor,
+              provider_anchor + b"      - .github/workflows/publish-r2a-p2b-oci.yml\n",
+              "immutable provider workflow",
+          )
+          provider_test_anchor = (
+              b"      - tests/test_r2a_p2b_b16_publication.py::"
+              b"R2AP2bB16PublicationTests.test_b16_materialization_is_governed_and_declared\n"
+          )
+          guardrails = replace_once(
+              guardrails,
+              provider_test_anchor,
+              provider_test_anchor
+              + b"      - tests/test_r2a_p2b_integrated_materialization.py::"
+              + b"R2AP2bIntegratedMaterializationTests.test_materialization_is_governed_and_routed\n",
+              "immutable provider contract",
+          )
+          guardrails_path.write_bytes(guardrails)
+          PY
+          git diff --check
+          git diff --exit-code "${BASE_COMMIT}" -- knowledge/index.md policy/guardrails.yaml >/dev/null || true
+
+      - name: Commit the exact branch-only metadata repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "gnostoa-metadata-repair"
+          git config user.email "actions@users.noreply.github.com"
+          git add knowledge/index.md policy/guardrails.yaml
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: restore protected-base metadata around P2b materialization"
+          git push origin HEAD:r2a-p2b-materialization
