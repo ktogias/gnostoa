@@ -125,9 +125,11 @@ def _has_direct_top_level_shell_sequence(
         if last_command_sub >= 0 and ")" not in stripped[last_command_sub + 2 :]:
             stack.append("cmdsub")
 
-        heredoc_match = _HEREDOC_RE.search(stripped)
-        if heredoc_match is not None:
-            operator, delimiter = heredoc_match.groups()
+        heredoc_matches = list(_HEREDOC_RE.finditer(stripped))
+        if len(heredoc_matches) > 1:
+            return False
+        if heredoc_matches:
+            operator, delimiter = heredoc_matches[0].groups()
             heredoc = (delimiter, operator == "<<-")
 
     return heredoc is None and not stack
@@ -464,6 +466,15 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
                 "EOF",
             )
         )
+        multiple_heredoc_inert = "\n".join(
+            (
+                "set -euo pipefail",
+                "cat <<FIRST <<SECOND",
+                "FIRST",
+                *sequence,
+                "SECOND",
+            )
+        )
         multiline_if_inert = "\n".join(
             (
                 "set -euo pipefail",
@@ -483,6 +494,9 @@ class R2AP2bB16PublicationTests(unittest.TestCase):
             )
         )
         self.assertFalse(_has_direct_top_level_shell_sequence(heredoc_inert, sequence))
+        self.assertFalse(
+            _has_direct_top_level_shell_sequence(multiple_heredoc_inert, sequence)
+        )
         self.assertFalse(
             _has_direct_top_level_shell_sequence(multiline_if_inert, sequence)
         )
