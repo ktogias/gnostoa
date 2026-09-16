@@ -209,7 +209,9 @@ class R2AP2bIntegratedMaterializationTests(unittest.TestCase):
             self.assertIn(required, publication_run)
         self.assertNotIn("docker push ", publication_run)
 
-        attest_steps = [step for step in publish_steps if step.get("uses") == ATTEST_ACTION]
+        attest_steps = [
+            step for step in publish_steps if step.get("uses") == ATTEST_ACTION
+        ]
         self.assertEqual(1, len(attest_steps))
         attest_with = attest_steps[0].get("with")
         self.assertIsInstance(attest_with, dict)
@@ -222,7 +224,8 @@ class R2AP2bIntegratedMaterializationTests(unittest.TestCase):
         self.assertEqual("true", attest_with["push-to-registry"])
 
         _, reacquisition = _named_step(
-            publish_steps, "Verify attestation and anonymously reacquire exact P2b digest"
+            publish_steps,
+            "Verify attestation and anonymously reacquire exact P2b digest",
         )
         reacquisition_run = _step_run(reacquisition, "anonymous digest reacquisition")
         for required in (
