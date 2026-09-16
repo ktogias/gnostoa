@@ -19,6 +19,7 @@ from .review_model import (
     error_payload,
     parse_rfc3339,
 )
+from .review_outer import run_prior_effective_current_advisory
 from .review_policy import (
     default_project_policy_path,
     load_review_policy_source,
@@ -358,11 +359,9 @@ def main(argv: list[str] | None = None) -> int:
                     "--change-class; protected authority supplies the effective policy"
                 )
             else:
-                code, payload = _configuration(
-                    "current_advisory prior-integrated authority acquisition is not "
-                    "available in the candidate-side P2b-B1 CLI; the dormant outer "
-                    "consumer must become prior-effective before activation"
-                )
+                code, raw_result = run_prior_effective_current_advisory(input_document)
+                sys.stdout.buffer.write(raw_result)
+                return code
         else:
             try:
                 policy_document = _load_policy(args.policy, args.change_class)
