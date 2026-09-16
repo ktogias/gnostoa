@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -70,6 +71,82 @@ class ReviewOuterSocketTableTests(unittest.TestCase):
             config_dir=config_dir,
             timeout=5,
         )
+
+    def test_outer_image_reproves_effective_uid_gid_under_hardened_probe(self) -> None:
+        image = "ghcr.io/ktogias/gnostoa@sha256:" + "a" * 64
+        revision = "b" * 40
+        surface = "sha256:" + "c" * 64
+        consumer = {
+            "runtime_image": image,
+            "runtime_revision": revision,
+            "public_surface_digest": surface,
+        }
+        outputs = [
+            b"",
+            json.dumps([image]).encode("utf-8"),
+            f"linux|amd64|kit|{revision}\n".encode("utf-8"),
+            b"10001\n10001\n",
+            f"{surface}\n".encode("ascii"),
+        ]
+        config_dir = Path("/tmp/gnostoa-r2a-config-test")
+
+        with mock.patch.object(
+            review_outer, "_checked_output", side_effect=outputs
+        ) as checked:
+            review_outer._verify_outer_image(consumer, config_dir)
+
+        uid_gid_call = checked.call_args_list[3]
+        self.assertEqual(
+            [
+                "run",
+                "--rm",
+                "--pull=never",
+                "--network",
+                "none",
+                "--read-only",
+                "--cap-drop",
+                "ALL",
+                "--security-opt",
+                "no-new-privileges",
+                "--entrypoint",
+                "sh",
+                image,
+                "-ec",
+                "id -u; id -g",
+            ],
+            uid_gid_call.args[0],
+        )
+        self.assertEqual(config_dir, uid_gid_call.kwargs["config_dir"])
+        self.assertEqual(30, uid_gid_call.kwargs["timeout"])
+
+    def test_outer_image_rejects_effective_uid_or_gid_drift(self) -> None:
+        image = "ghcr.io/ktogias/gnostoa@sha256:" + "a" * 64
+        revision = "b" * 40
+        surface = "sha256:" + "c" * 64
+        consumer = {
+            "runtime_image": image,
+            "runtime_revision": revision,
+            "public_surface_digest": surface,
+        }
+        prefix = [
+            b"",
+            json.dumps([image]).encode("utf-8"),
+            f"linux|amd64|kit|{revision}\n".encode("utf-8"),
+        ]
+        config_dir = Path("/tmp/gnostoa-r2a-config-test")
+
+        for effective_ids in (b"1000\n10001\n", b"10001\n1000\n"):
+            with self.subTest(effective_ids=effective_ids):
+                with mock.patch.object(
+                    review_outer,
+                    "_checked_output",
+                    side_effect=[*prefix, effective_ids],
+                ):
+                    with self.assertRaisesRegex(
+                        PriorEffectiveOuterUnavailable,
+                        "runtime uid/gid do not match Docker socket ownership contract",
+                    ):
+                        review_outer._verify_outer_image(consumer, config_dir)
 
 
 if __name__ == "__main__":
