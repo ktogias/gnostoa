@@ -16,6 +16,12 @@ from tools.review_protected import ProtectedMainDocument
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "r2a-protected-current-advisory.yml"
+DECISION_PATH = (
+    ROOT
+    / "knowledge"
+    / "decisions"
+    / "0077-activate-r2a-p2b-b2-through-prior-effective-b16.md"
+)
 CONSUMER_PATH = "tasks/issue-11-r2a-current-advisory-consumer.json"
 PROTECTED_REPOSITORY = "https://github.com/ktogias/gnostoa.git"
 B16_SOURCE_REVISION = "f29499286bac9859364d45da0f6c59396518b749"  # pragma: allowlist secret -- public source revision
@@ -212,6 +218,22 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         self.assertEqual(
             B16_PUBLIC_SURFACE_DIGEST, consumer.get("public_surface_digest")
         )
+
+    def test_b2_has_durable_activation_decision_and_workflow_ownership(self) -> None:
+        self.assertTrue(DECISION_PATH.is_file(), "P2B_B2_ACTIVATION_DECISION_UNAVAILABLE")
+        decision = DECISION_PATH.read_text(encoding="utf-8")
+        self.assertIn("Decision 0076", decision)
+        self.assertIn(B16_SOURCE_REVISION, decision)
+        self.assertIn(B16_PUBLIC_SURFACE_DIGEST, decision)
+        self.assertIn(B16_OCI_IMAGE, decision)
+        self.assertIn("isolated nested Docker daemon", decision)
+        self.assertIn("does not authorize those later publication", decision)
+
+        workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+        decision_path = (
+            "knowledge/decisions/0077-activate-r2a-p2b-b2-through-prior-effective-b16.md"
+        )
+        self.assertIn(f'- "{decision_path}"', workflow)
 
     def test_dedicated_r2a_workflow_executes_canonical_b2_contract(self) -> None:
         workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
