@@ -229,10 +229,12 @@ class R2AP2bIntegratedMaterializationTests(unittest.TestCase):
         )
         reacquisition_run = _step_run(reacquisition, "anonymous digest reacquisition")
         for required in (
-            'gh attestation verify \\\n            "oci://${digest_ref}" --repo "${GITHUB_REPOSITORY}"',
+            "gh attestation verify",
+            '"oci://${digest_ref}" --repo "${GITHUB_REPOSITORY}"',
             'docker image rm "${digest_ref}" >/dev/null',
             "digest image remained cached before anonymous reacquisition",
-            'env DOCKER_CONFIG="${anonymous_config}" \\\n            docker pull --quiet "${digest_ref}"',
+            'DOCKER_CONFIG="${anonymous_config}"',
+            'docker pull --quiet "${digest_ref}"',
             'test "$(docker run --rm --entrypoint id "${digest_ref}" -u)" = "10001"',
             'test "$(docker run --rm --entrypoint id "${digest_ref}" -g)" = "10001"',
             'docker run --rm "${digest_ref}" self-check',
@@ -248,7 +250,8 @@ class R2AP2bIntegratedMaterializationTests(unittest.TestCase):
             "cleanup_status=0",
             'docker image rm "${digest_ref}" >/dev/null 2>&1 || cleanup_status=1',
             "digest image remained cached before reconciliation reacquisition",
-            'env DOCKER_CONFIG="${reconcile_config}" \\\n            docker pull --quiet "${digest_ref}"',
+            'DOCKER_CONFIG="${reconcile_config}"',
+            'docker pull --quiet "${digest_ref}"',
         ):
             self.assertIn(required, reconciliation_run)
 
