@@ -323,12 +323,13 @@ class R2AP2bB16ReconciliationFailClosedTests(unittest.TestCase):
         job = jobs.get("dormant-current-advisory-consumer")
         if not isinstance(job, dict):
             raise AssertionError("dedicated R2A consumer job must be a mapping")
+        self.assertEqual("protected-current-advisory-consumer", job.get("name"))
         steps = job.get("steps")
         if not isinstance(steps, list):
             raise AssertionError("dedicated R2A steps must be a list")
         native_contracts = _named_step(
             steps,
-            "Run dormant consumer contract tests via native orchestration fallback",
+            "Run protected current-advisory consumer contract tests via native orchestration fallback",
         )
         run = native_contracts.get("run")
         self.assertIsInstance(run, str)
