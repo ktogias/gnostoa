@@ -196,16 +196,16 @@ def _volume_create(
 ) -> str:
     if _RESOURCE_NAME.fullmatch(name) is None:
         raise PriorEffectiveOuterUnavailable("isolated-volume name is invalid")
+    # Register the exact predeclared name before the effect-capable Docker call.
+    # A timeout or transport failure can be ambiguous after Docker has created
+    # the object; final cleanup can therefore reconcile this name either way.
+    owned_volumes.append(name)
     raw = _checked_output(
         ["volume", "create", name],
         config_dir=config_dir,
         description="cannot create isolated R2A volume",
         timeout=30,
     )
-    # A successful create establishes this exact predeclared name even when the
-    # command's stdout is malformed. Register it before validating the reply so
-    # the final cleanup pass retains authority over the created object.
-    owned_volumes.append(name)
     observed = raw.decode("ascii", errors="strict").strip()
     if observed != name:
         raise PriorEffectiveOuterUnavailable(
@@ -222,15 +222,16 @@ def _container_create(
 ) -> str:
     if _RESOURCE_NAME.fullmatch(name) is None:
         raise PriorEffectiveOuterUnavailable("isolated-container name is invalid")
+    # Preserve cleanup authority before the create call for the same ambiguous
+    # timeout/transport-failure window as volumes. Removing a name that was not
+    # created is explicitly treated as successful reconciliation.
+    owned_containers.append(name)
     raw = _checked_output(
         ["create", "--name", name, *arguments],
         config_dir=config_dir,
         description="cannot create isolated R2A container",
         timeout=30,
     )
-    # As with volumes, record the exact successfully requested name before
-    # validating Docker's returned ID so malformed stdout cannot orphan it.
-    owned_containers.append(name)
     container_id = raw.decode("ascii", errors="strict").strip()
     if _CONTAINER_ID.fullmatch(container_id) is None:
         raise PriorEffectiveOuterUnavailable(
