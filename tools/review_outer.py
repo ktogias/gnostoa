@@ -349,12 +349,12 @@ def _build_isolated_execution_plan(
         "--env",
         "DOCKER_TLS_CERTDIR=",
         "--volume",
-        f"{socket_volume}:/var/run",
+        f"{socket_volume}:/gnostoa-docker",
         "--volume",
         f"{tmp_volume}:/tmp",
         _DAEMON_IMAGE,
         "dockerd",
-        "--host=unix:///var/run/docker.sock",
+        "--host=unix:///gnostoa-docker/docker.sock",
         "--group=10001",
     ]
     outer = [
@@ -390,7 +390,14 @@ def _wait_for_daemon(container_name: str, config_dir: Path) -> None:
     deadline = time.monotonic() + _DAEMON_READY_SECONDS
     while time.monotonic() < deadline:
         result = _run_docker(
-            ["exec", container_name, "docker", "info"],
+            [
+                "exec",
+                container_name,
+                "docker",
+                "--host",
+                "unix:///gnostoa-docker/docker.sock",
+                "info",
+            ],
             config_dir=config_dir,
             timeout=5,
         )
