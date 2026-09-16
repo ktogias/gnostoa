@@ -92,7 +92,9 @@ def _schema_errors(document: object, schema_name: str) -> list[str]:
     path = toolkit_root() / "schemas" / schema_name
     loaded = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(loaded, dict):
-        raise PriorEffectiveOuterUnavailable(f"installed schema must be an object: {path}")
+        raise PriorEffectiveOuterUnavailable(
+            f"installed schema must be an object: {path}"
+        )
     Draft202012Validator.check_schema(loaded)
     validator = Draft202012Validator(loaded, format_checker=_FORMAT_CHECKER)
     errors = sorted(
@@ -137,11 +139,17 @@ def _validate_consumer_authority(document: object) -> dict[str, Any]:
     runtime_revision = acquired.get("runtime_revision")
     source_revision = acquired.get("source_revision")
     public_surface_digest = acquired.get("public_surface_digest")
-    if not isinstance(runtime_image, str) or _DIGEST_IMAGE.fullmatch(runtime_image) is None:
+    if (
+        not isinstance(runtime_image, str)
+        or _DIGEST_IMAGE.fullmatch(runtime_image) is None
+    ):
         raise PriorEffectiveOuterUnavailable(
             "protected outer consumer is not digest-pinned"
         )
-    if not isinstance(runtime_revision, str) or _SHA40.fullmatch(runtime_revision) is None:
+    if (
+        not isinstance(runtime_revision, str)
+        or _SHA40.fullmatch(runtime_revision) is None
+    ):
         raise PriorEffectiveOuterUnavailable(
             "protected outer-consumer runtime revision is invalid"
         )
@@ -568,9 +576,7 @@ def run_prior_effective_current_advisory(
                 )
             _wait_for_daemon(daemon_id, config_dir)
 
-            outer_id = _container_create(
-                [str(item) for item in outer_args], config_dir
-            )
+            outer_id = _container_create([str(item) for item in outer_args], config_dir)
             owned_containers.append(outer_id)
             outer_result = _run_docker(
                 ["start", "--attach", outer_id],
