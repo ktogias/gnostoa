@@ -220,7 +220,9 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         )
 
     def test_b2_has_durable_activation_decision_and_workflow_ownership(self) -> None:
-        self.assertTrue(DECISION_PATH.is_file(), "P2B_B2_ACTIVATION_DECISION_UNAVAILABLE")
+        self.assertTrue(
+            DECISION_PATH.is_file(), "P2B_B2_ACTIVATION_DECISION_UNAVAILABLE"
+        )
         decision = DECISION_PATH.read_text(encoding="utf-8")
         self.assertIn("Decision 0076", decision)
         self.assertIn(B16_SOURCE_REVISION, decision)
@@ -230,9 +232,7 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         self.assertIn("does not authorize those later publication", decision)
 
         workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
-        decision_path = (
-            "knowledge/decisions/0077-activate-r2a-p2b-b2-through-prior-effective-b16.md"
-        )
+        decision_path = "knowledge/decisions/0077-activate-r2a-p2b-b2-through-prior-effective-b16.md"
         self.assertIn(f'- "{decision_path}"', workflow)
 
     def test_dedicated_r2a_workflow_executes_canonical_b2_contract(self) -> None:
