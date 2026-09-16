@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PUBLISH_WORKFLOW_PATH = ROOT / ".github/workflows/publish-r2a-p2b-b16-oci.yml"
 R2A_WORKFLOW_PATH = ROOT / ".github/workflows/r2a-protected-current-advisory.yml"
 FOLLOWUP_TEST_RELATIVE_PATH = "tests/test_r2a_p2b_b16_cubic_followup_red.py"
-R2A_COMPATIBILITY_JOB_KEY = "dormant-current-advisory-consumer"
+R2A_COMPATIBILITY_JOB_KEY = "protected-current-advisory-consumer"
 R2A_ACTIVE_DISPLAY_NAME = "protected-current-advisory-consumer"
 R2A_ACTIVE_CONTRACT_STEP = "Run protected current-advisory consumer contract tests via native orchestration fallback"
 

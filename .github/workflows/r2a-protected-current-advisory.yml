@@ -23,6 +23,7 @@ on:
       - "knowledge/decisions/0077-activate-r2a-p2b-b2-through-prior-effective-b16.md"
       - "knowledge/decisions/0078-materialize-integrated-r2a-p2b-runtime-by-digest.md"
       - "knowledge/decisions/0079-promote-r2a-p2b-outer-consumer-authority.md"
+      - "knowledge/decisions/0080-complete-r2a-p2b-rolling-trust-exit-by-negative-readback.md"
       - "policy/guardrails.yaml"
       - "pyproject.toml"
       - "requirements/development.lock"
@@ -41,6 +42,7 @@ on:
       - "tests/test_review_assurance_p2b_b1_dormancy_red.py"
       - "tests/test_review_assurance_p2b_b1_error_paths_red.py"
       - "tests/test_review_assurance_p2b_consumer_authority_red.py"
+      - "tests/test_review_assurance_p2b_exit_readback_red.py"
       - "tests/test_review_outer_socket_table_red.py"
       - "tools/cli.py"
       - "tools/knowledge_common.py"
@@ -66,7 +68,7 @@ env:
   GNOSTOA_R2A_CANDIDATE_IMAGE: gnostoa-r2a-b1:${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
-  dormant-current-advisory-consumer:
+  protected-current-advisory-consumer:
     name: protected-current-advisory-consumer
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -126,6 +128,7 @@ jobs:
             tests/test_review_assurance_p2b_b1_dormancy_red.py \
             tests/test_review_assurance_p2b_b1_error_paths_red.py \
             tests/test_review_assurance_p2b_consumer_authority_red.py \
+            tests/test_review_assurance_p2b_exit_readback_red.py \
             tests/test_review_outer_socket_table_red.py
           python -m ruff check \
             tools/review_check.py \
@@ -149,6 +152,7 @@ jobs:
             tests/test_review_assurance_p2b_b1_dormancy_red.py \
             tests/test_review_assurance_p2b_b1_error_paths_red.py \
             tests/test_review_assurance_p2b_consumer_authority_red.py \
+            tests/test_review_assurance_p2b_exit_readback_red.py \
             tests/test_review_outer_socket_table_red.py
           python -m mypy \
             tools/review_check.py \
@@ -165,7 +169,8 @@ jobs:
 
       # Native execution is an explicit fallback because these tests exercise the
       # host-side lifecycle orchestrator. Candidate bytes may create and clean the
-      # isolated topology but the protected B1.6 runtime never receives the host
+      # isolated topology but the protected prior-effective outer runtime never
+      # receives the host
       # Docker socket or a host-selected Docker executable.
       - name: Run protected current-advisory consumer contract tests via native orchestration fallback
         run: |
@@ -180,12 +185,13 @@ jobs:
           PYTHONPATH=. python tests/test_review_assurance_p2b_b1_dormancy_red.py
           PYTHONPATH=. python tests/test_review_assurance_p2b_b1_error_paths_red.py
           PYTHONPATH=. python tests/test_review_assurance_p2b_consumer_authority_red.py
+          PYTHONPATH=. python tests/test_review_assurance_p2b_exit_readback_red.py
           PYTHONPATH=. python tests/test_review_outer_socket_table_red.py
 
-      - name: Verify pinned Docker client in exact B1.6 lineage runtime
+      - name: Verify inherited pinned Docker client in exact candidate runtime
         run: PYTHONPATH=. python ci/review_b15_runtime_smoke.py
 
-      - name: Verify B1.6 input-only entrypoint fails closed without a nested daemon
+      - name: Verify exact candidate input-only entrypoint fails closed without a nested daemon
         run: PYTHONPATH=. python ci/review_b16_entrypoint_smoke.py
 
       - name: Exercise protected live implementation against authority-bound OCI P2a
@@ -194,5 +200,8 @@ jobs:
       - name: Verify timed-out protected Docker run cleanup
         run: PYTHONPATH=. python ci/review_live_timeout_cleanup.py
 
-      - name: Exercise activated prior-effective B1.6 through isolated nested daemon
-        run: PYTHONPATH=. python ci/review_outer_smoke.py
+      - name: Exercise promoted OCI(P2b) and reject candidate/stale selectors
+        env:
+          EXPECTED_PROTECTED_MAIN: ${{ github.event.pull_request.base.sha || github.sha }}
+        run: |
+          PYTHONPATH=. python ci/review_outer_smoke.py --expected-protected-main "${EXPECTED_PROTECTED_MAIN}"
