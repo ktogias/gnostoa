@@ -352,6 +352,7 @@ def _build_isolated_execution_plan(
         "--volume",
         f"{tmp_volume}:/tmp",
         _DAEMON_IMAGE,
+        "dockerd",
         "--host=unix:///var/run/docker.sock",
         "--group=10001",
     ]
@@ -396,6 +397,26 @@ def _wait_for_daemon(container_name: str, config_dir: Path) -> None:
             return
         time.sleep(0.5)
     raise PriorEffectiveOuterUnavailable("isolated Docker daemon did not become ready")
+
+
+def _verify_daemon_control_plane(container_name: str, config_dir: Path) -> None:
+    for port in (2375, 2376):
+        result = _run_docker(
+            [
+                "exec",
+                "--env",
+                f"DOCKER_HOST=tcp://127.0.0.1:{port}",
+                container_name,
+                "docker",
+                "info",
+            ],
+            config_dir=config_dir,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            raise PriorEffectiveOuterUnavailable(
+                f"isolated Docker daemon unexpectedly exposes TCP control plane on {port}"
+            )
 
 
 def _verify_outer_image(consumer: dict[str, Any], config_dir: Path) -> None:
@@ -663,6 +684,7 @@ def run_prior_effective_current_advisory(
                         "cannot start isolated Docker daemon"
                     )
                 _wait_for_daemon(daemon_container, config_dir)
+                _verify_daemon_control_plane(daemon_container, config_dir)
 
                 outer_container = _container_create(
                     [str(item) for item in outer_args],
