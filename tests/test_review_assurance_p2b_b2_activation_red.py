@@ -16,6 +16,7 @@ from tools.review_protected import ProtectedMainDocument
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "r2a-protected-current-advisory.yml"
+GUARDRAIL_PATH = ROOT / "policy" / "guardrails.yaml"
 DECISION_PATH = (
     ROOT
     / "knowledge"
@@ -219,21 +220,143 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
             B16_PUBLIC_SURFACE_DIGEST, consumer.get("public_surface_digest")
         )
 
-    def test_b2_has_durable_activation_decision_and_workflow_ownership(self) -> None:
+    def test_successful_create_registers_cleanup_name_before_reply_validation(
+        self,
+    ) -> None:
+        outer = _load_outer()
+        config_dir = Path("/tmp/gnostoa-r2a-test-config")
+
+        owned_volumes: list[str] = []
+        volume_name = "gnostoa-r2a-volume-test"
+        with mock.patch.object(
+            outer, "_checked_output", return_value=b"malformed-volume-reply\n"
+        ):
+            with self.assertRaisesRegex(
+                outer.PriorEffectiveOuterUnavailable,
+                "malformed isolated-volume identity",
+            ):
+                outer._volume_create(volume_name, config_dir, owned_volumes)
+        self.assertEqual([volume_name], owned_volumes)
+
+        owned_containers: list[str] = []
+        container_name = "gnostoa-r2a-container-test"
+        with mock.patch.object(
+            outer, "_checked_output", return_value=b"malformed-container-reply\n"
+        ):
+            with self.assertRaisesRegex(
+                outer.PriorEffectiveOuterUnavailable,
+                "malformed isolated-container identity",
+            ):
+                outer._container_create(
+                    [], container_name, config_dir, owned_containers
+                )
+        self.assertEqual([container_name], owned_containers)
+
+    def test_cleanup_retries_transient_container_failure(self) -> None:
+        outer = _load_outer()
+        failed = mock.Mock(returncode=1, stderr=b"synthetic busy")
+        succeeded = mock.Mock(returncode=0, stderr=b"")
+        with (
+            mock.patch.object(outer, "_run_docker", side_effect=[failed, succeeded]) as run,
+            mock.patch.object(outer.time, "sleep") as sleep,
+        ):
+            issue = outer._remove_container(
+                "gnostoa-r2a-container-test", Path("/tmp/config")
+            )
+        self.assertIsNone(issue)
+        self.assertEqual(2, run.call_count)
+        sleep.assert_called_once()
+
+    def test_tmp_initializer_keeps_helper_registered_when_cleanup_fails(self) -> None:
+        outer = _load_outer()
+        owned: list[str] = []
+
+        def create(
+            arguments: list[str],
+            name: str,
+            config_dir: Path,
+            owned_containers: list[str],
+        ) -> str:
+            del arguments, config_dir
+            owned_containers.append(name)
+            return name
+
+        with (
+            mock.patch.object(outer, "_container_create", side_effect=create),
+            mock.patch.object(
+                outer,
+                "_run_docker",
+                return_value=mock.Mock(returncode=0, stderr=b""),
+            ),
+            mock.patch.object(
+                outer,
+                "_remove_container",
+                return_value="synthetic cleanup failure",
+            ),
+        ):
+            with self.assertRaisesRegex(
+                outer.PriorEffectiveOuterUnavailable,
+                "synthetic cleanup failure",
+            ):
+                outer._initialize_tmp_volume(
+                    tmp_volume="gnostoa-r2a-tmp-test",
+                    config_dir=Path("/tmp/config"),
+                    owned_containers=owned,
+                )
+        self.assertEqual(1, len(owned))
+
+    def test_tmp_setup_failure_returns_canonical_tool_error(self) -> None:
+        outer = _load_outer()
+        protected = ProtectedMainDocument(
+            protected_main_revision="c" * 40,
+            document=_consumer_authority(),
+        )
+        with (
+            mock.patch.object(
+                outer,
+                "acquire_gnostoa_current_advisory_consumer",
+                return_value=protected,
+            ),
+            mock.patch.object(
+                outer.tempfile,
+                "TemporaryDirectory",
+                side_effect=OSError("synthetic /tmp unavailable"),
+            ),
+        ):
+            code, raw = outer.run_prior_effective_current_advisory(
+                _current_advisory_input()
+            )
+        payload = json.loads(raw.decode("utf-8"))
+        self.assertEqual(2, code)
+        self.assertEqual("TOOL_ERROR", payload["error"]["code"])
+        self.assertIn("synthetic /tmp unavailable", payload["error"]["details"]["error"])
+
+    def test_b2_has_durable_activation_decision_and_guardrail_ownership(self) -> None:
         self.assertTrue(
             DECISION_PATH.is_file(), "P2B_B2_ACTIVATION_DECISION_UNAVAILABLE"
         )
         decision = DECISION_PATH.read_text(encoding="utf-8")
+        self.assertIn("Decision 0077", decision)
         self.assertIn("Decision 0076", decision)
+        self.assertIn("kit.decision.0077.activate-r2a-p2b-b2-through-prior-effective-b16", decision)
         self.assertIn(B16_SOURCE_REVISION, decision)
         self.assertIn(B16_PUBLIC_SURFACE_DIGEST, decision)
         self.assertIn(B16_OCI_IMAGE, decision)
         self.assertIn("isolated nested Docker daemon", decision)
         self.assertIn("does not authorize those later publication", decision)
 
-        workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
         decision_path = "knowledge/decisions/0077-activate-r2a-p2b-b2-through-prior-effective-b16.md"
+        workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
         self.assertIn(f'- "{decision_path}"', workflow)
+
+        guardrails = GUARDRAIL_PATH.read_text(encoding="utf-8")
+        for protected_path in (
+            decision_path,
+            "tools/review_outer.py",
+            "ci/review_outer_smoke.py",
+            "tests/test_review_assurance_p2b_b2_activation_red.py",
+        ):
+            self.assertIn(f"- {protected_path}", guardrails)
 
     def test_dedicated_r2a_workflow_executes_canonical_b2_contract(self) -> None:
         workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
