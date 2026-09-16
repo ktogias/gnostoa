@@ -72,6 +72,8 @@ MATERIALIZATION_RUN = "35136892751"
 ATTESTATION_ID = "47999464"
 REKOR_LOG_INDEX = "2866053656"
 RECEIPT_COMMENT = "5703489461"
+HISTORICAL_B16_CONTAINMENT_RECEIPT_COMMENT = "5694072707"
+HISTORICAL_B16_REVALIDATION_RECEIPT_COMMENT = "5694179373"
 
 EXPECTED_CONSUMER = {
     "role": "current_advisory_outer_consumer",
@@ -186,6 +188,8 @@ class ReviewAssuranceP2bConsumerAuthorityRedTests(unittest.TestCase):
             "d4cc72b0ed7342f533dd3bcf32ddf9888203f85408154f4066883ba9d33fe867",  # pragma: allowlist secret -- historical public OCI digest
             decision,
         )
+        self.assertIn(HISTORICAL_B16_CONTAINMENT_RECEIPT_COMMENT, decision)
+        self.assertIn(HISTORICAL_B16_REVALIDATION_RECEIPT_COMMENT, decision)
         self.assertIn("does not activate", decision.lower())
 
     def test_p2b_outer_consumer_authority_has_durable_promotion_decision(self) -> None:
