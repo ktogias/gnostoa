@@ -22,6 +22,12 @@ sources:
   - id: b16-materialization-receipt
     resource: https://github.com/ktogias/gnostoa/issues/11#issuecomment-5692487663
     title: Successful immutable OCI(B1.6) materialization receipt
+  - id: b16-rerun-containment-receipt
+    resource: https://github.com/ktogias/gnostoa/issues/11#issuecomment-5694072707
+    title: Historical B1.6 publisher rerun-handle containment receipt
+  - id: b16-post-containment-revalidation-receipt
+    resource: https://github.com/ktogias/gnostoa/issues/11#issuecomment-5694179373
+    title: Successful read-only OCI(B1.6) post-containment revalidation receipt
   - id: owner-authorization
     resource: https://github.com/ktogias/gnostoa/issues/11#issuecomment-5671332574
     title: Owner authorization through full P2b activation completion
@@ -34,6 +40,8 @@ x-project-knowledge:
   relations:
     - kind: governed-by
       target: /decisions/0070-protect-r2a-b1-outer-consumer-authority-separately.md
+    - kind: governed-by
+      target: /decisions/0073-promote-r2a-b15-outer-consumer-authority.md
     - kind: governed-by
       target: /decisions/0074-add-input-only-live-entrypoint-to-r2a-b15-runtime.md
     - kind: governed-by
@@ -54,9 +62,13 @@ The independently reacquirable B1.6 outer-consumer runtime is exactly:
 
 `ghcr.io/ktogias/gnostoa@sha256:d4cc72b0ed7342f533dd3bcf32ddf9888203f85408154f4066883ba9d33fe867`
 
-The one-shot materialization ran as workflow run `35058782405`, produced GitHub attestation `47823269`, was recorded at Rekor log index `2855771710`, and is durably reconciled in issue #11 comment `5692487663`. The run proved exact source/tree identity, local pre-write runtime behavior, digest-only registry publication and readback, attestation, fresh anonymous digest reacquisition, B1.5 client-only smoke, B1.6 input-only live smoke, and final fail-closed reconciliation and cleanup. No mutable OCI tag, release or deployment was created.
+The one-shot materialization ran as historical workflow run `35058782405`, produced GitHub attestation `47823269`, was recorded at Rekor log index `2855771710`, and is durably reconciled in issue #11 comment `5692487663`. Attempt 1 proved exact source/tree identity, local pre-write runtime behavior, digest-only registry publication and readback, attestation, fresh anonymous digest reacquisition, B1.5 client-only smoke, B1.6 input-only live smoke, and final fail-closed reconciliation and cleanup. No mutable OCI tag, release or deployment was created.
 
-The protected outer-consumer authority still selects OCI(B1.5). That older identity intentionally lacks the integrated B1.6 input-only live entrypoint. The next P2b-B2 activation candidate must not smuggle that capability into the trust chain itself. Rolling trust therefore requires the protected authority to move first to the already materialized B1.6 identity.
+A post-merge provider-semantics review then found that the historical publisher fenced `GITHUB_RUN_ATTEMPT == 1` in the prerequisite authorization job but not independently at the effect-capable publication job. There is no evidence that any rerun occurred, but the surviving job-specific rerun handle was inconsistent with the intended one-shot authority claim. The attempt-1 evidence was therefore preserved independently, and the completed historical run object was deleted. A fresh provider lookup returns `404 Not Found`; the containment is recorded in issue #11 comment `5694072707`. The identifier `35058782405` remains historical provenance only and is not relied upon as live provider execution authority.
+
+After containment, a separate read-only verifier with only `contents: read`, `packages: read`, and `attestations: read` anonymously reacquired the exact OCI digest and re-proved its manifest identity, source/version/build labels, public-surface digest, B1.5 client-only/no-daemon behavior, and B1.6 dormant input-only entrypoint behavior. It then cryptographically verified matching provenance while binding repository `ktogias/gnostoa`, signer workflow `.github/workflows/publish-r2a-p2b-b16-oci.yml`, signer/source digest `f8aac5159c36a0ff8cb9a22dcc933285c6b52b81`, source ref `refs/heads/main`, hosted-runner provenance, and a verified transparency timestamp. That successful post-containment verification is recorded in issue #11 comment `5694179373`; no republish or registry mutation occurred.
+
+The protected outer-consumer authority still selects OCI(B1.5). That older identity intentionally lacks the integrated B1.6 input-only live entrypoint. The next P2b-B2 activation candidate must not smuggle that capability into the trust chain itself. Rolling trust therefore requires the protected authority to move first to the already materialized and post-containment-revalidated B1.6 identity.
 
 ## Decision
 
@@ -64,7 +76,7 @@ Promote only the protected outer-consumer authority from exact OCI(B1.5) to exac
 
 1. Keep `tasks/issue-11-r2a-current-advisory.json` unchanged as the closed v1 **inner semantic authority**. Its OCI(P2a) judge, policy and qualification snapshot remain separate from the outer consumer.
 2. Update `tasks/issue-11-r2a-current-advisory-consumer.json` so both `expected_consumer` and `acquired_consumer` bind source revision `f29499286bac9859364d45da0f6c59396518b749`, source tree `ff38abe5718ebc550054ea6af18a73d0aef8e514`, public-surface digest `sha256:c8536ac1f726f1d04f331c95f85a9df128b7cdb818213785cbd6b0b0940f9c57`, runtime revision `f29499286bac9859364d45da0f6c59396518b749`, and OCI identity `ghcr.io/ktogias/gnostoa@sha256:d4cc72b0ed7342f533dd3bcf32ddf9888203f85408154f4066883ba9d33fe867`.
-3. Bind the authority record's materialization provenance to protected-main revision `f8aac5159c36a0ff8cb9a22dcc933285c6b52b81`, workflow run `35058782405`, GitHub attestation `47823269`, Rekor index `2855771710`, and receipt comment `5692487663`.
+3. Bind the authority record's materialization provenance to protected-main revision `f8aac5159c36a0ff8cb9a22dcc933285c6b52b81`, historical workflow-run identifier `35058782405`, GitHub attestation `47823269`, Rekor index `2855771710`, and original materialization receipt `5692487663`; interpret that run identifier together with containment receipt `5694072707` and successful post-containment read-only revalidation receipt `5694179373`, not as a live rerun handle.
 4. Preserve the existing closed outer-consumer authority schema. This rolling-trust transition changes the selected immutable identity, not the authority shape or the closed v1 inner semantic contract.
 5. Keep the dedicated R2A exact-head workflow and the `semantic-review-assurance` guardrail responsible for the protected record, this Decision and the focused authority contract. This authority-promotion slice performs no OCI publication or other registry write.
 6. Treat `knowledge/index.md` as **navigation-only** discoverability and **index-only** projection. It remains outside the protected semantic authority and outside the dedicated R2A path filter; general knowledge validation owns index integrity.
@@ -88,8 +100,9 @@ The later P2b-B2 candidate may provide bounded orchestration and transport input
 
 - B1.6 becomes the independently selected prior-effective outer-consumer authority before P2b-B2 activation.
 - OCI(B1.5), Decision 0073 and its materialization receipt remain historical evidence but are no longer the selected protected outer-consumer identity.
+- Historical run `35058782405` is retained only as a preserved provenance identifier; its provider rerun handle was deliberately removed after evidence capture and the immutable B1.6 artifact/provenance was revalidated read-only afterward.
 - The inner semantic authority remains unchanged and closed v1.
-- No OCI publication occurs in this authority-promotion slice; it consumes the already verified Decision 0075 materialization receipt.
+- No OCI publication occurs in this authority-promotion slice; it consumes the already verified Decision 0075 materialization identity plus its containment and read-only revalidation receipts.
 - P2b-B2 remains dormant until the next activation candidate passes verification-first RED/GREEN evidence, exact-head CI and fresh review convergence.
 - The truthful empty Issue #10 qualification state remains unchanged; `INCOMPLETE / QUORUM_UNMET` and `binding:false` remain legitimate semantic outcomes.
 
