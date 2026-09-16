@@ -12,8 +12,7 @@ class ReviewOuterCleanupReconciliationTests(unittest.TestCase):
         absent = mock.Mock(
             returncode=1,
             stderr=(
-                b"Error response from daemon: get gnostoa-r2a-test: "
-                b"no such volume"
+                b"Error response from daemon: get gnostoa-r2a-test: no such volume"
             ),
         )
 
