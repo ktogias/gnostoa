@@ -410,19 +410,49 @@ def _listening_tcp_ports(raw: bytes) -> set[int]:
     listening: set[int] = set()
     for line in text.splitlines():
         fields = line.split()
-        if not fields or not fields[0].endswith(":"):
+        if not fields:
             continue
+        if fields[0] == "sl":
+            if fields[:4] != ["sl", "local_address", "rem_address", "st"]:
+                raise PriorEffectiveOuterUnavailable(
+                    "isolated Docker daemon socket table is malformed"
+                )
+            continue
+        if not fields[0].endswith(":") or not fields[0][:-1].isdigit():
+            raise PriorEffectiveOuterUnavailable(
+                "isolated Docker daemon socket table is malformed"
+            )
         if len(fields) < 4:
             raise PriorEffectiveOuterUnavailable(
                 "isolated Docker daemon socket table is malformed"
             )
         local_address = fields[1]
+        remote_address = fields[2]
         state = fields[3].upper()
-        if ":" not in local_address:
+        for address in (local_address, remote_address):
+            parts = address.split(":")
+            if len(parts) != 2:
+                raise PriorEffectiveOuterUnavailable(
+                    "isolated Docker daemon socket table is malformed"
+                )
+            host_hex, port_hex = parts
+            if len(host_hex) not in {8, 32} or len(port_hex) != 4:
+                raise PriorEffectiveOuterUnavailable(
+                    "isolated Docker daemon socket table is malformed"
+                )
+            try:
+                int(host_hex, 16)
+                int(port_hex, 16)
+            except ValueError as exc:
+                raise PriorEffectiveOuterUnavailable(
+                    "isolated Docker daemon socket table is malformed"
+                ) from exc
+        if len(state) != 2:
             raise PriorEffectiveOuterUnavailable(
                 "isolated Docker daemon socket table is malformed"
             )
         try:
+            int(state, 16)
             port = int(local_address.rsplit(":", 1)[1], 16)
         except ValueError as exc:
             raise PriorEffectiveOuterUnavailable(
