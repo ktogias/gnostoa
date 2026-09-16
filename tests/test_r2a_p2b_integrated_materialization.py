@@ -38,6 +38,35 @@ def _guardrail_section(text: str, guardrail_id: str) -> str:
     return text.split(marker, 1)[1].split("\n  - id:", 1)[0]
 
 
+def _job_steps(job: dict[str, object], job_name: str) -> list[dict[str, object]]:
+    steps = job.get("steps")
+    if not isinstance(steps, list) or not all(isinstance(step, dict) for step in steps):
+        raise AssertionError(f"{job_name} must expose structured steps")
+    return steps
+
+
+def _named_step(
+    steps: list[dict[str, object]], step_name: str
+) -> tuple[int, dict[str, object]]:
+    matches = [
+        (index, step)
+        for index, step in enumerate(steps)
+        if step.get("name") == step_name
+    ]
+    if len(matches) != 1:
+        raise AssertionError(
+            f"expected exactly one step named {step_name!r}, found {len(matches)}"
+        )
+    return matches[0]
+
+
+def _step_run(step: dict[str, object], step_name: str) -> str:
+    run = step.get("run")
+    if not isinstance(run, str):
+        raise AssertionError(f"{step_name} must be an executable run step")
+    return run
+
+
 class R2AP2bIntegratedMaterializationTests(unittest.TestCase):
     def test_exact_integrated_p2b_has_one_shot_digest_only_materializer(self) -> None:
         self.assertTrue(
@@ -45,7 +74,6 @@ class R2AP2bIntegratedMaterializationTests(unittest.TestCase):
             "P2B_OCI_PUBLISHER_UNAVAILABLE: exact integrated P2b has no "
             "protected-main one-shot digest-only OCI materializer",
         )
-        workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
         workflow = _load_workflow()
 
         self.assertEqual(
@@ -92,53 +120,142 @@ class R2AP2bIntegratedMaterializationTests(unittest.TestCase):
             publish["permissions"],
         )
 
-        self.assertEqual(
-            2,
-            workflow_text.count('test "${GITHUB_RUN_ATTEMPT}" = "1"'),
-            "both authorization and effect-capable publication must refuse reruns",
+        authorize_steps = _job_steps(authorize, "authorize")
+        publish_steps = _job_steps(publish, "publish")
+
+        _, authorize_guard = _named_step(
+            authorize_steps, "Refuse any context outside the admitted one-shot boundary"
         )
-        self.assertIn(
+        authorize_guard_run = _step_run(authorize_guard, "authorization guard")
+        for required in (
+            'test "${GITHUB_REPOSITORY}" = "ktogias/gnostoa"',
+            'test "${GITHUB_EVENT_NAME}" = "push"',
+            'test "${GITHUB_REF}" = "refs/heads/main"',
+            'test "${GITHUB_ACTOR}" = "ktogias"',
+            'test "${GITHUB_TRIGGERING_ACTOR}" = "ktogias"',
+            'test "${GITHUB_RUN_ATTEMPT}" = "1"',
             'test "${EVENT_BEFORE}" = "${AUTHORIZED_BEFORE_COMMIT}"',
-            workflow_text,
+        ):
+            self.assertIn(required, authorize_guard_run)
+
+        _, pr_binding = _named_step(
+            authorize_steps, "Bind the pushed commit to merged PR 267"
         )
-        self.assertIn("pulls/${AUTHORIZED_PR_NUMBER}", workflow_text)
-        self.assertIn("merge_commit_sha", workflow_text)
-        self.assertLess(
-            workflow_text.index("Refuse rerun at the effect-capable publication job"),
-            workflow_text.index("Authenticate to GHCR for the single digest-only effect"),
+        pr_binding_run = _step_run(pr_binding, "PR landing binding")
+        for required in (
+            "pulls/${AUTHORIZED_PR_NUMBER}",
+            "merge_commit_sha",
+            'pr.get("base", {}).get("ref") == "main"',
+            'pr.get("head", {}).get("ref") == expected_head_ref',
+        ):
+            self.assertIn(required, pr_binding_run)
+
+        publish_guard_index, publish_guard = _named_step(
+            publish_steps, "Refuse rerun at the effect-capable publication job"
         )
+        publish_guard_run = _step_run(publish_guard, "effect-capable rerun guard")
+        for required in (
+            'test "${GITHUB_RUN_ATTEMPT}" = "1"',
+            'test "${EVENT_BEFORE}" = "${AUTHORIZED_BEFORE_COMMIT}"',
+            'test "${GITHUB_EVENT_NAME}" = "push"',
+            'test "${GITHUB_REF}" = "refs/heads/main"',
+        ):
+            self.assertIn(required, publish_guard_run)
+
+        authenticate_index, _ = _named_step(
+            publish_steps, "Authenticate to GHCR for the single digest-only effect"
+        )
+        self.assertLess(publish_guard_index, authenticate_index)
 
         checkout_steps = [
-            step
-            for step in publish["steps"]
-            if isinstance(step, dict) and step.get("uses") == CHECKOUT_ACTION
+            step for step in publish_steps if step.get("uses") == CHECKOUT_ACTION
         ]
         self.assertEqual(2, len(checkout_steps))
-        self.assertEqual("${{ env.SOURCE_COMMIT }}", checkout_steps[1]["with"]["ref"])
-        self.assertEqual("p2b-source", checkout_steps[1]["with"]["path"])
+        source_checkout = checkout_steps[1]
+        source_checkout_with = source_checkout.get("with")
+        self.assertIsInstance(source_checkout_with, dict)
+        assert isinstance(source_checkout_with, dict)
+        self.assertEqual("${{ env.SOURCE_COMMIT }}", source_checkout_with["ref"])
+        self.assertEqual("p2b-source", source_checkout_with["path"])
 
-        attest_steps = [
-            step
-            for step in publish["steps"]
-            if isinstance(step, dict) and step.get("uses") == ATTEST_ACTION
-        ]
-        self.assertEqual(1, len(attest_steps))
-        self.assertIn("--push-by-digest", workflow_text)
-        self.assertIn('docker run --rm "${local_image}" self-check', workflow_text)
-        self.assertGreaterEqual(workflow_text.count("self-check"), 3)
-        self.assertIn("tools/review_outer.py", workflow_text)
-        self.assertIn("ci/review_outer_smoke.py", workflow_text)
-        self.assertIn(
-            "knowledge/decisions/0077-activate-r2a-p2b-b2-through-prior-effective-b16.md",
-            workflow_text,
+        _, local_verify = _named_step(
+            publish_steps,
+            "Build and verify exact integrated P2b runtime before any registry effect",
         )
-        self.assertIn("DOCKER_CONFIG", workflow_text)
-        self.assertIn("anonymous reacquisition", workflow_text)
-        self.assertIn("Reconcile and clean post-publication state", workflow_text)
-        self.assertIn("do not rerun blindly", workflow_text)
-        self.assertNotIn("docker push ", workflow_text)
-        self.assertNotIn("gh release create", workflow_text)
-        self.assertNotIn("workflow_dispatch", workflow_text)
+        local_verify_run = _step_run(local_verify, "local P2b verification")
+        for required in (
+            'test "$(docker run --rm --entrypoint id "${local_image}" -u)" = "10001"',
+            'test "$(docker run --rm --entrypoint id "${local_image}" -g)" = "10001"',
+            'docker run --rm "${local_image}" self-check',
+            "tools/review_outer.py",
+            "ci/review_outer_smoke.py",
+            "knowledge/decisions/0077-activate-r2a-p2b-b2-through-prior-effective-b16.md",
+        ):
+            self.assertIn(required, local_verify_run)
+
+        _, publication = _named_step(
+            publish_steps,
+            "Publish exact integrated P2b runtime without a remote tag and read back digest",
+        )
+        publication_run = _step_run(publication, "digest-only publication")
+        for required in (
+            '--push-by-digest "${IMAGE_NAME}"',
+            '--metadata-file "${metadata_file}"',
+            'echo "registry_digest=${registry_digest}" >> "${GITHUB_OUTPUT}"',
+            'test "$(docker run --rm --entrypoint id "${digest_ref}" -u)" = "10001"',
+            'test "$(docker run --rm --entrypoint id "${digest_ref}" -g)" = "10001"',
+            'docker run --rm "${digest_ref}" self-check',
+        ):
+            self.assertIn(required, publication_run)
+        self.assertNotIn("docker push ", publication_run)
+
+        attest_steps = [step for step in publish_steps if step.get("uses") == ATTEST_ACTION]
+        self.assertEqual(1, len(attest_steps))
+        attest_with = attest_steps[0].get("with")
+        self.assertIsInstance(attest_with, dict)
+        assert isinstance(attest_with, dict)
+        self.assertEqual("${{ env.IMAGE_NAME }}", attest_with["subject-name"])
+        self.assertEqual(
+            "${{ steps.publish.outputs.registry_digest }}",
+            attest_with["subject-digest"],
+        )
+        self.assertEqual("true", attest_with["push-to-registry"])
+
+        _, reacquisition = _named_step(
+            publish_steps, "Verify attestation and anonymously reacquire exact P2b digest"
+        )
+        reacquisition_run = _step_run(reacquisition, "anonymous digest reacquisition")
+        for required in (
+            'gh attestation verify \\\n            "oci://${digest_ref}" --repo "${GITHUB_REPOSITORY}"',
+            'docker image rm "${digest_ref}" >/dev/null',
+            "digest image remained cached before anonymous reacquisition",
+            'env DOCKER_CONFIG="${anonymous_config}" \\\n            docker pull --quiet "${digest_ref}"',
+            'test "$(docker run --rm --entrypoint id "${digest_ref}" -u)" = "10001"',
+            'test "$(docker run --rm --entrypoint id "${digest_ref}" -g)" = "10001"',
+            'docker run --rm "${digest_ref}" self-check',
+        ):
+            self.assertIn(required, reacquisition_run)
+
+        _, reconciliation = _named_step(
+            publish_steps, "Reconcile and clean post-publication state"
+        )
+        reconciliation_run = _step_run(reconciliation, "post-write reconciliation")
+        for required in (
+            "post-write outcome is ambiguous and no exact digest is available; do not rerun blindly",
+            "cleanup_status=0",
+            'docker image rm "${digest_ref}" >/dev/null 2>&1 || cleanup_status=1',
+            "digest image remained cached before reconciliation reacquisition",
+            'env DOCKER_CONFIG="${reconcile_config}" \\\n            docker pull --quiet "${digest_ref}"',
+        ):
+            self.assertIn(required, reconciliation_run)
+
+        all_run_text = "\n".join(
+            _step_run(step, str(step.get("name", "unnamed step")))
+            for step in authorize_steps + publish_steps
+            if "run" in step
+        )
+        self.assertNotIn("docker push ", all_run_text)
+        self.assertNotIn("gh release create", all_run_text)
 
     def test_materialization_has_durable_decision(self) -> None:
         self.assertTrue(
