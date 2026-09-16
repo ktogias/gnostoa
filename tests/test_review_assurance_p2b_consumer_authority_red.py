@@ -39,22 +39,14 @@ PROMOTION_DECISION_PATH = (
     "knowledge/decisions/0076-promote-r2a-b16-outer-consumer-authority.md"
 )
 
-B16_SOURCE_REVISION = (
-    "f29499286bac9859364d45da0f6c59396518b749"  # pragma: allowlist secret -- public source revision
-)
-B16_SOURCE_TREE = (
-    "ff38abe5718ebc550054ea6af18a73d0aef8e514"  # pragma: allowlist secret -- public source tree
-)
-B16_PUBLIC_SURFACE_DIGEST = (
-    "sha256:c8536ac1f726f1d04f331c95f85a9df128b7cdb818213785cbd6b0b0940f9c57"  # pragma: allowlist secret -- public surface digest
-)
+B16_SOURCE_REVISION = "f29499286bac9859364d45da0f6c59396518b749"  # pragma: allowlist secret -- public source revision
+B16_SOURCE_TREE = "ff38abe5718ebc550054ea6af18a73d0aef8e514"  # pragma: allowlist secret -- public source tree
+B16_PUBLIC_SURFACE_DIGEST = "sha256:c8536ac1f726f1d04f331c95f85a9df128b7cdb818213785cbd6b0b0940f9c57"  # pragma: allowlist secret -- public surface digest
 B16_OCI_IMAGE = (
     "ghcr.io/ktogias/gnostoa@"
     "sha256:d4cc72b0ed7342f533dd3bcf32ddf9888203f85408154f4066883ba9d33fe867"  # pragma: allowlist secret -- public OCI digest
 )
-MATERIALIZATION_MAIN_REVISION = (
-    "f8aac5159c36a0ff8cb9a22dcc933285c6b52b81"  # pragma: allowlist secret -- public protected-main revision
-)
+MATERIALIZATION_MAIN_REVISION = "f8aac5159c36a0ff8cb9a22dcc933285c6b52b81"  # pragma: allowlist secret -- public protected-main revision
 MATERIALIZATION_RUN = "35058782405"
 ATTESTATION_ID = "47823269"
 REKOR_LOG_INDEX = "2855771710"
