@@ -489,6 +489,7 @@ guardrails:
       - knowledge/decisions/0075-materialize-integrated-r2a-p2b-b16-consumer-by-digest.md
       - knowledge/decisions/0076-promote-r2a-b16-outer-consumer-authority.md
       - knowledge/decisions/0077-activate-r2a-p2b-b2-through-prior-effective-b16.md
+      - knowledge/decisions/0078-materialize-integrated-r2a-p2b-runtime-by-digest.md
       - ci/review_b15_runtime_smoke.py
       - ci/review_b16_entrypoint_smoke.py
       - ci/review_outer_smoke.py
@@ -504,6 +505,7 @@ guardrails:
       - tools/review_outer.py
       - tools/cli.py
       - .github/workflows/r2a-protected-current-advisory.yml
+      - .github/workflows/publish-r2a-p2b-oci.yml
     tests:
       - tests/test_review_assurance.py
       - tests/test_review_assurance_integration.py
@@ -518,6 +520,7 @@ guardrails:
       - tests/test_review_assurance_p2b_b15_runtime_red.py
       - tests/test_review_assurance_p2b_b16_entrypoint_red.py
       - tests/test_review_assurance_p2b_b2_activation_red.py
+      - tests/test_r2a_p2b_integrated_materialization.py
       - ci/review_b15_runtime_smoke.py
       - ci/review_b16_entrypoint_smoke.py
       - ci/review_live_smoke.py
@@ -585,6 +588,7 @@ guardrails:
       - .github/workflows/publish-r2a-p2b-b1-oci.yml
       - .github/workflows/publish-r2a-p2b-b15-oci.yml
       - .github/workflows/publish-r2a-p2b-b16-oci.yml
+      - .github/workflows/publish-r2a-p2b-oci.yml
       - ci/github-actions.yml
       - ci/gitlab-ci.yml
       - .gitlab-ci.yml
@@ -598,6 +602,7 @@ guardrails:
       - tests/test_r2a_p2b_b1_publication_repair.py::R2AP2bB1PublicationRepairTests.test_prewrite_failure_repair_is_exact_and_container_first
       - tests/test_r2a_p2b_b15_publication.py::R2AP2bB15PublicationTests.test_b15_materialization_is_governed_and_declared
       - tests/test_r2a_p2b_b16_publication.py::R2AP2bB16PublicationTests.test_b16_materialization_is_governed_and_declared
+      - tests/test_r2a_p2b_integrated_materialization.py::R2AP2bIntegratedMaterializationTests.test_materialization_is_governed_and_routed
 
   - id: conditional-artifact-promotion
     title: Delivery activates for deployable artifacts and promotes the verified artifact

@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/workflows/r2a-protected-current-advisory.yml"
       - ".github/workflows/publish-r2a-p2b-b16-oci.yml"
+      - ".github/workflows/publish-r2a-p2b-oci.yml"
       - "Dockerfile"
       - "ci/build-runtime"
       - "ci/review_b15_runtime_smoke.py"
@@ -20,6 +21,7 @@ on:
       - "knowledge/decisions/0075-materialize-integrated-r2a-p2b-b16-consumer-by-digest.md"
       - "knowledge/decisions/0076-promote-r2a-b16-outer-consumer-authority.md"
       - "knowledge/decisions/0077-activate-r2a-p2b-b2-through-prior-effective-b16.md"
+      - "knowledge/decisions/0078-materialize-integrated-r2a-p2b-runtime-by-digest.md"
       - "policy/guardrails.yaml"
       - "pyproject.toml"
       - "requirements/development.lock"
@@ -30,6 +32,7 @@ on:
       - "tests/test_r2a_p2b_b16_cubic_followup_red.py"
       - "tests/test_r2a_p2b_b16_publication.py"
       - "tests/test_r2a_p2b_b16_reconciliation_fail_closed.py"
+      - "tests/test_r2a_p2b_integrated_materialization.py"
       - "tests/test_review_assurance_p2b_activation_red.py"
       - "tests/test_review_assurance_p2b_b2_activation_red.py"
       - "tests/test_review_assurance_p2b_b15_runtime_red.py"
@@ -114,6 +117,7 @@ jobs:
             tests/test_r2a_p2b_b16_cubic_followup_red.py \
             tests/test_r2a_p2b_b16_publication.py \
             tests/test_r2a_p2b_b16_reconciliation_fail_closed.py \
+            tests/test_r2a_p2b_integrated_materialization.py \
             tests/test_review_assurance_p2b_activation_red.py \
             tests/test_review_assurance_p2b_b2_activation_red.py \
             tests/test_review_assurance_p2b_b15_runtime_red.py \
@@ -136,6 +140,7 @@ jobs:
             tests/test_r2a_p2b_b16_cubic_followup_red.py \
             tests/test_r2a_p2b_b16_publication.py \
             tests/test_r2a_p2b_b16_reconciliation_fail_closed.py \
+            tests/test_r2a_p2b_integrated_materialization.py \
             tests/test_review_assurance_p2b_activation_red.py \
             tests/test_review_assurance_p2b_b2_activation_red.py \
             tests/test_review_assurance_p2b_b15_runtime_red.py \
@@ -166,6 +171,7 @@ jobs:
           PYTHONPATH=. python tests/test_r2a_p2b_b16_cubic_followup_red.py
           PYTHONPATH=. python tests/test_r2a_p2b_b16_publication.py
           PYTHONPATH=. python tests/test_r2a_p2b_b16_reconciliation_fail_closed.py
+          PYTHONPATH=. python tests/test_r2a_p2b_integrated_materialization.py
           PYTHONPATH=. python tests/test_review_assurance_p2b_activation_red.py
           PYTHONPATH=. python tests/test_review_assurance_p2b_b2_activation_red.py
           PYTHONPATH=. python tests/test_review_assurance_p2b_b15_runtime_red.py
