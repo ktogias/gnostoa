@@ -37,6 +37,7 @@ on:
       - "tests/test_review_assurance_p2b_b1_dormancy_red.py"
       - "tests/test_review_assurance_p2b_b1_error_paths_red.py"
       - "tests/test_review_assurance_p2b_consumer_authority_red.py"
+      - "tests/test_review_outer_socket_table_red.py"
       - "tools/cli.py"
       - "tools/knowledge_common.py"
       - "tools/review_check.py"
@@ -119,7 +120,8 @@ jobs:
             tests/test_review_assurance_p2b_b16_entrypoint_red.py \
             tests/test_review_assurance_p2b_b1_dormancy_red.py \
             tests/test_review_assurance_p2b_b1_error_paths_red.py \
-            tests/test_review_assurance_p2b_consumer_authority_red.py
+            tests/test_review_assurance_p2b_consumer_authority_red.py \
+            tests/test_review_outer_socket_table_red.py
           python -m ruff check \
             tools/review_check.py \
             tools/review_current.py \
@@ -140,7 +142,8 @@ jobs:
             tests/test_review_assurance_p2b_b16_entrypoint_red.py \
             tests/test_review_assurance_p2b_b1_dormancy_red.py \
             tests/test_review_assurance_p2b_b1_error_paths_red.py \
-            tests/test_review_assurance_p2b_consumer_authority_red.py
+            tests/test_review_assurance_p2b_consumer_authority_red.py \
+            tests/test_review_outer_socket_table_red.py
           python -m mypy \
             tools/review_check.py \
             tools/review_current.py \
@@ -170,6 +173,7 @@ jobs:
           PYTHONPATH=. python tests/test_review_assurance_p2b_b1_dormancy_red.py
           PYTHONPATH=. python tests/test_review_assurance_p2b_b1_error_paths_red.py
           PYTHONPATH=. python tests/test_review_assurance_p2b_consumer_authority_red.py
+          PYTHONPATH=. python tests/test_review_outer_socket_table_red.py
 
       - name: Verify pinned Docker client in exact B1.6 lineage runtime
         run: PYTHONPATH=. python ci/review_b15_runtime_smoke.py
