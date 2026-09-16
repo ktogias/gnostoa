@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from unittest import mock
 
+from tools import review_outer
 from tools.review_outer import PriorEffectiveOuterUnavailable, _listening_tcp_ports
 
 
@@ -25,6 +28,48 @@ class ReviewOuterSocketTableTests(unittest.TestCase):
                     "socket table is malformed",
                 ):
                     _listening_tcp_ports(raw)
+
+    def test_daemon_private_runtime_is_not_shared_with_outer(self) -> None:
+        image = "ghcr.io/ktogias/gnostoa@sha256:" + "a" * 64
+        socket_volume = "gnostoa-r2a-socket-test"
+        plan = review_outer._build_isolated_execution_plan(
+            consumer={"runtime_image": image},
+            input_dir=Path("/tmp/gnostoa-r2a-input-test"),
+            socket_volume=socket_volume,
+            tmp_volume="gnostoa-r2a-tmp-test",
+            daemon_name="gnostoa-r2a-daemon-test",
+            outer_name="gnostoa-r2a-outer-test",
+        )
+        daemon_args = [str(item) for item in plan["daemon"]]
+        outer_args = [str(item) for item in plan["outer"]]
+
+        self.assertIn(f"{socket_volume}:/gnostoa-docker", daemon_args)
+        self.assertNotIn(f"{socket_volume}:/var/run", daemon_args)
+        self.assertEqual(
+            1, daemon_args.count("--host=unix:///gnostoa-docker/docker.sock")
+        )
+        self.assertEqual(1, daemon_args.count("--group=10001"))
+        self.assertIn(f"{socket_volume}:/var/run", outer_args)
+        self.assertNotIn("/gnostoa-docker", " ".join(outer_args))
+
+    def test_daemon_readiness_targets_dedicated_socket(self) -> None:
+        ready = mock.Mock(returncode=0)
+        config_dir = Path("/tmp/gnostoa-r2a-config-test")
+        with mock.patch.object(review_outer, "_run_docker", return_value=ready) as run:
+            review_outer._wait_for_daemon("gnostoa-r2a-daemon-test", config_dir)
+
+        run.assert_called_once_with(
+            [
+                "exec",
+                "gnostoa-r2a-daemon-test",
+                "docker",
+                "--host",
+                "unix:///gnostoa-docker/docker.sock",
+                "info",
+            ],
+            config_dir=config_dir,
+            timeout=5,
+        )
 
 
 if __name__ == "__main__":
