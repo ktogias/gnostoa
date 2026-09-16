@@ -32,6 +32,12 @@ DECISION_PATH = (
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "r2a-protected-current-advisory.yml"
 GUARDRAILS_PATH = ROOT / "policy" / "guardrails.yaml"
 FOCUSED_TEST_PATH = "tests/test_review_assurance_p2b_consumer_authority_red.py"
+HISTORICAL_MATERIALIZATION_DECISION_FILTER_PATH = (
+    "knowledge/decisions/0072-materialize-integrated-r2a-p2b-b15-consumer-by-digest.md"
+)
+HISTORICAL_PROMOTION_DECISION_FILTER_PATH = (
+    "knowledge/decisions/0073-promote-r2a-b15-outer-consumer-authority.md"
+)
 MATERIALIZATION_DECISION_PATH = (
     "knowledge/decisions/0075-materialize-integrated-r2a-p2b-b16-consumer-by-digest.md"
 )
@@ -51,6 +57,8 @@ MATERIALIZATION_RUN = "35058782405"
 ATTESTATION_ID = "47823269"
 REKOR_LOG_INDEX = "2855771710"
 RECEIPT_COMMENT = "5692487663"
+CONTAINMENT_RECEIPT_COMMENT = "5694072707"
+REVALIDATION_RECEIPT_COMMENT = "5694179373"
 
 EXPECTED_CONSUMER = {
     "role": "current_advisory_outer_consumer",
@@ -176,6 +184,9 @@ class ReviewAssuranceP2bConsumerAuthorityRedTests(unittest.TestCase):
             ATTESTATION_ID,
             REKOR_LOG_INDEX,
             RECEIPT_COMMENT,
+            CONTAINMENT_RECEIPT_COMMENT,
+            REVALIDATION_RECEIPT_COMMENT,
+            "target: /decisions/0073-promote-r2a-b15-outer-consumer-authority.md",
             "B1.6",
             "P2b-B2",
             "knowledge/index.md",
@@ -194,6 +205,8 @@ class ReviewAssuranceP2bConsumerAuthorityRedTests(unittest.TestCase):
         workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
         for protected_path in (
             "tasks/issue-11-r2a-current-advisory-consumer.json",
+            HISTORICAL_MATERIALIZATION_DECISION_FILTER_PATH,
+            HISTORICAL_PROMOTION_DECISION_FILTER_PATH,
             MATERIALIZATION_DECISION_PATH,
             PROMOTION_DECISION_PATH,
             FOCUSED_TEST_PATH,
