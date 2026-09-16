@@ -47,7 +47,8 @@ class ReviewOuterSocketTableTests(unittest.TestCase):
         self.assertIn(f"{socket_volume}:/gnostoa-docker", daemon_args)
         self.assertNotIn(f"{socket_volume}:/var/run", daemon_args)
         self.assertEqual(
-            1, daemon_args.count("--host=unix:///gnostoa-docker/docker.sock")
+            ["--host=unix:///gnostoa-docker/docker.sock"],
+            [item for item in daemon_args if item.startswith("--host=")],
         )
         self.assertEqual(1, daemon_args.count("--group=10001"))
         self.assertIn(f"{socket_volume}:/var/run", outer_args)
