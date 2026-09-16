@@ -19,6 +19,7 @@ on:
       - "knowledge/decisions/0074-add-input-only-live-entrypoint-to-r2a-b15-runtime.md"
       - "knowledge/decisions/0075-materialize-integrated-r2a-p2b-b16-consumer-by-digest.md"
       - "knowledge/decisions/0076-promote-r2a-b16-outer-consumer-authority.md"
+      - "knowledge/decisions/0077-activate-r2a-p2b-b2-through-prior-effective-b16.md"
       - "policy/guardrails.yaml"
       - "pyproject.toml"
       - "requirements/development.lock"
