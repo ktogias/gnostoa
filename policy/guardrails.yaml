@@ -491,6 +491,7 @@ guardrails:
       - knowledge/decisions/0077-activate-r2a-p2b-b2-through-prior-effective-b16.md
       - knowledge/decisions/0078-materialize-integrated-r2a-p2b-runtime-by-digest.md
       - knowledge/decisions/0079-promote-r2a-p2b-outer-consumer-authority.md
+      - knowledge/decisions/0080-complete-r2a-p2b-rolling-trust-exit-by-negative-readback.md
       - ci/review_b15_runtime_smoke.py
       - ci/review_b16_entrypoint_smoke.py
       - ci/review_outer_smoke.py
@@ -518,6 +519,7 @@ guardrails:
       - tests/test_review_assurance_p2b_b1_dormancy_red.py
       - tests/test_review_assurance_p2b_b1_error_paths_red.py
       - tests/test_review_assurance_p2b_consumer_authority_red.py
+      - tests/test_review_assurance_p2b_exit_readback_red.py
       - tests/test_review_assurance_p2b_b15_runtime_red.py
       - tests/test_review_assurance_p2b_b16_entrypoint_red.py
       - tests/test_review_assurance_p2b_b2_activation_red.py

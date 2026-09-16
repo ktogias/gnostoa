@@ -713,7 +713,7 @@ def _operational_error(message: str) -> tuple[int, bytes]:
 def run_prior_effective_current_advisory(
     input_document: object,
 ) -> tuple[int, bytes]:
-    """Run current-advisory through protected B1.6 plus an isolated daemon.
+    """Run current-advisory through the protected outer runtime and an isolated daemon.
 
     Public callers provide only untrusted review input. Protected main selects the
     outer runtime. The host Docker daemon owns bounded lifecycle orchestration only;

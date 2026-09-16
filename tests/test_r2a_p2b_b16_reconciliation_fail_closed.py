@@ -320,7 +320,7 @@ class R2AP2bB16ReconciliationFailClosedTests(unittest.TestCase):
         jobs = workflow.get("jobs")
         if not isinstance(jobs, dict):
             raise AssertionError("dedicated R2A jobs must be a mapping")
-        job = jobs.get("dormant-current-advisory-consumer")
+        job = jobs.get("protected-current-advisory-consumer")
         if not isinstance(job, dict):
             raise AssertionError("dedicated R2A consumer job must be a mapping")
         self.assertEqual("protected-current-advisory-consumer", job.get("name"))

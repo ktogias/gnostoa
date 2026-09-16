@@ -535,7 +535,7 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         jobs = workflow.get("jobs")
         self.assertIsInstance(jobs, dict)
         assert isinstance(jobs, dict)
-        job = jobs.get("dormant-current-advisory-consumer")
+        job = jobs.get("protected-current-advisory-consumer")
         self.assertIsInstance(job, dict)
         assert isinstance(job, dict)
         self.assertEqual("protected-current-advisory-consumer", job.get("name"))
