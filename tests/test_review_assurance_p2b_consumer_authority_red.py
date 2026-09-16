@@ -67,13 +67,25 @@ P2B_OCI_IMAGE = (
     "ghcr.io/ktogias/gnostoa@"
     "sha256:a657bb69c2cd1c117831558bf9794aa07caa74ac8adaff8d05b5650165b0d281"  # pragma: allowlist secret -- public OCI digest
 )
+HISTORICAL_B16_SOURCE_REVISION = "f29499286bac9859364d45da0f6c59396518b749"  # pragma: allowlist secret -- historical public source revision
+HISTORICAL_B16_SOURCE_TREE = "ff38abe5718ebc550054ea6af18a73d0aef8e514"  # pragma: allowlist secret -- historical public source tree
+HISTORICAL_B16_PUBLIC_SURFACE_DIGEST = "sha256:c8536ac1f726f1d04f331c95f85a9df128b7cdb818213785cbd6b0b0940f9c57"  # pragma: allowlist secret -- historical public surface digest
+HISTORICAL_B16_OCI_IMAGE = (
+    "ghcr.io/ktogias/gnostoa@"
+    "sha256:d4cc72b0ed7342f533dd3bcf32ddf9888203f85408154f4066883ba9d33fe867"  # pragma: allowlist secret -- historical public OCI digest
+)
+HISTORICAL_B16_MATERIALIZATION_MAIN_REVISION = "f8aac5159c36a0ff8cb9a22dcc933285c6b52b81"  # pragma: allowlist secret -- historical public protected-main revision
+HISTORICAL_B16_MATERIALIZATION_RUN = "35058782405"
+HISTORICAL_B16_ATTESTATION_ID = "47823269"
+HISTORICAL_B16_REKOR_LOG_INDEX = "2855771710"
+HISTORICAL_B16_RECEIPT_COMMENT = "5692487663"
+HISTORICAL_B16_CONTAINMENT_RECEIPT_COMMENT = "5694072707"
+HISTORICAL_B16_REVALIDATION_RECEIPT_COMMENT = "5694179373"
 MATERIALIZATION_MAIN_REVISION = "8feeb816d01ebda267e79ef57d5da7c0ccf61207"  # pragma: allowlist secret -- public protected-main revision
 MATERIALIZATION_RUN = "35136892751"
 ATTESTATION_ID = "47999464"
 REKOR_LOG_INDEX = "2866053656"
 RECEIPT_COMMENT = "5703489461"
-HISTORICAL_B16_CONTAINMENT_RECEIPT_COMMENT = "5694072707"
-HISTORICAL_B16_REVALIDATION_RECEIPT_COMMENT = "5694179373"
 
 EXPECTED_CONSUMER = {
     "role": "current_advisory_outer_consumer",
@@ -182,14 +194,21 @@ class ReviewAssuranceP2bConsumerAuthorityRedTests(unittest.TestCase):
     def test_b16_promotion_decision_remains_historical_evidence(self) -> None:
         self.assertTrue(HISTORICAL_B16_PROMOTION_DECISION_PATH.is_file())
         decision = HISTORICAL_B16_PROMOTION_DECISION_PATH.read_text(encoding="utf-8")
-        self.assertIn("B1.6", decision)
-        self.assertIn(
-            "ghcr.io/ktogias/gnostoa@sha256:"
-            "d4cc72b0ed7342f533dd3bcf32ddf9888203f85408154f4066883ba9d33fe867",  # pragma: allowlist secret -- historical public OCI digest
-            decision,
-        )
-        self.assertIn(HISTORICAL_B16_CONTAINMENT_RECEIPT_COMMENT, decision)
-        self.assertIn(HISTORICAL_B16_REVALIDATION_RECEIPT_COMMENT, decision)
+        for required in (
+            "B1.6",
+            HISTORICAL_B16_SOURCE_REVISION,
+            HISTORICAL_B16_SOURCE_TREE,
+            HISTORICAL_B16_PUBLIC_SURFACE_DIGEST,
+            HISTORICAL_B16_OCI_IMAGE,
+            HISTORICAL_B16_MATERIALIZATION_MAIN_REVISION,
+            HISTORICAL_B16_MATERIALIZATION_RUN,
+            HISTORICAL_B16_ATTESTATION_ID,
+            HISTORICAL_B16_REKOR_LOG_INDEX,
+            HISTORICAL_B16_RECEIPT_COMMENT,
+            HISTORICAL_B16_CONTAINMENT_RECEIPT_COMMENT,
+            HISTORICAL_B16_REVALIDATION_RECEIPT_COMMENT,
+        ):
+            self.assertIn(required, decision)
         self.assertIn("does not activate", decision.lower())
 
     def test_p2b_outer_consumer_authority_has_durable_promotion_decision(self) -> None:
