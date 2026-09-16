@@ -278,7 +278,7 @@ def _remove_volume(volume_name: str, config_dir: Path) -> str | None:
             if result.returncode == 0:
                 return None
             detail = result.stderr.decode("utf-8", errors="replace").strip()
-            if "No such volume" in detail:
+            if "no such volume" in detail.lower():
                 return None
             last_issue = detail or f"cannot remove owned volume {volume_name}"
         if attempt + 1 < _CLEANUP_ATTEMPTS:
