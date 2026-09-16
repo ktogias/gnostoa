@@ -34,8 +34,6 @@ x-project-knowledge:
   relations:
     - kind: governed-by
       target: /decisions/0070-protect-r2a-b1-outer-consumer-authority-separately.md
-    - kind: follows
-      target: /decisions/0073-promote-r2a-b15-outer-consumer-authority.md
     - kind: governed-by
       target: /decisions/0074-add-input-only-live-entrypoint-to-r2a-b15-runtime.md
     - kind: governed-by
