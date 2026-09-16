@@ -61,7 +61,8 @@ env:
   GNOSTOA_R2A_CANDIDATE_IMAGE: gnostoa-r2a-b1:${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
-  protected-current-advisory-consumer:
+  dormant-current-advisory-consumer:
+    name: protected-current-advisory-consumer
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
