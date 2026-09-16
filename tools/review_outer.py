@@ -5,6 +5,7 @@ import math
 import re
 import tempfile
 import time
+import uuid
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -36,11 +37,13 @@ _DIGEST_IMAGE = re.compile(
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 _CONTAINER_ID = re.compile(r"^[0-9a-f]{64}$")
-_VOLUME_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$")
+_RESOURCE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$")
 _MAX_RESULT_BYTES = 2_097_152
 _DAEMON_READY_SECONDS = 30
 _DOCKER_STEP_SECONDS = 120
 _OUTER_RUNTIME_SECONDS = 180
+_CLEANUP_ATTEMPTS = 3
+_CLEANUP_BACKOFF_SECONDS = 0.25
 _FORMAT_CHECKER = FormatChecker()
 
 
@@ -171,64 +174,117 @@ def _validate_consumer_authority(document: object) -> dict[str, Any]:
     return acquired
 
 
-def _volume_create(config_dir: Path) -> str:
+def _new_resource_name(role: str) -> str:
+    name = f"gnostoa-r2a-{role}-{uuid.uuid4().hex}"
+    if _RESOURCE_NAME.fullmatch(name) is None:
+        raise PriorEffectiveOuterUnavailable("generated Docker resource name is invalid")
+    return name
+
+
+def _volume_create(
+    name: str,
+    config_dir: Path,
+    owned_volumes: list[str],
+) -> str:
+    if _RESOURCE_NAME.fullmatch(name) is None:
+        raise PriorEffectiveOuterUnavailable("isolated-volume name is invalid")
     raw = _checked_output(
-        ["volume", "create"],
+        ["volume", "create", name],
         config_dir=config_dir,
         description="cannot create isolated R2A volume",
         timeout=30,
     )
-    name = raw.decode("ascii", errors="strict").strip()
-    if _VOLUME_NAME.fullmatch(name) is None:
+    # A successful create establishes this exact predeclared name even when the
+    # command's stdout is malformed. Register it before validating the reply so
+    # the final cleanup pass retains authority over the created object.
+    owned_volumes.append(name)
+    observed = raw.decode("ascii", errors="strict").strip()
+    if observed != name:
         raise PriorEffectiveOuterUnavailable(
             "Docker returned a malformed isolated-volume identity"
         )
     return name
 
 
-def _container_create(arguments: list[str], config_dir: Path) -> str:
+def _container_create(
+    arguments: list[str],
+    name: str,
+    config_dir: Path,
+    owned_containers: list[str],
+) -> str:
+    if _RESOURCE_NAME.fullmatch(name) is None:
+        raise PriorEffectiveOuterUnavailable("isolated-container name is invalid")
     raw = _checked_output(
-        ["create", *arguments],
+        ["create", "--name", name, *arguments],
         config_dir=config_dir,
         description="cannot create isolated R2A container",
         timeout=30,
     )
+    # As with volumes, record the exact successfully requested name before
+    # validating Docker's returned ID so malformed stdout cannot orphan it.
+    owned_containers.append(name)
     container_id = raw.decode("ascii", errors="strict").strip()
     if _CONTAINER_ID.fullmatch(container_id) is None:
         raise PriorEffectiveOuterUnavailable(
             "Docker returned a malformed isolated-container identity"
         )
-    return container_id
+    return name
 
 
-def _remove_container(container_id: str, config_dir: Path) -> str | None:
-    result = _run_docker(
-        ["rm", "-f", container_id],
-        config_dir=config_dir,
-        timeout=30,
-    )
-    if result.returncode == 0:
-        return None
-    return f"cannot remove owned container {container_id}"
+def _remove_container(container_name: str, config_dir: Path) -> str | None:
+    last_issue = f"cannot remove owned container {container_name}"
+    for attempt in range(_CLEANUP_ATTEMPTS):
+        try:
+            result = _run_docker(
+                ["rm", "-f", container_name],
+                config_dir=config_dir,
+                timeout=30,
+            )
+        except ProtectedJudgeUnavailable as exc:
+            last_issue = str(exc)
+        else:
+            if result.returncode == 0:
+                return None
+            detail = result.stderr.decode("utf-8", errors="replace").strip()
+            if "No such container" in detail:
+                return None
+            last_issue = detail or f"cannot remove owned container {container_name}"
+        if attempt + 1 < _CLEANUP_ATTEMPTS:
+            time.sleep(_CLEANUP_BACKOFF_SECONDS * (attempt + 1))
+    return f"cannot remove owned container {container_name}: {last_issue}"
 
 
 def _remove_volume(volume_name: str, config_dir: Path) -> str | None:
-    result = _run_docker(
-        ["volume", "rm", volume_name],
-        config_dir=config_dir,
-        timeout=30,
-    )
-    if result.returncode == 0:
-        return None
-    return f"cannot remove owned volume {volume_name}"
+    last_issue = f"cannot remove owned volume {volume_name}"
+    for attempt in range(_CLEANUP_ATTEMPTS):
+        try:
+            result = _run_docker(
+                ["volume", "rm", volume_name],
+                config_dir=config_dir,
+                timeout=30,
+            )
+        except ProtectedJudgeUnavailable as exc:
+            last_issue = str(exc)
+        else:
+            if result.returncode == 0:
+                return None
+            detail = result.stderr.decode("utf-8", errors="replace").strip()
+            if "No such volume" in detail:
+                return None
+            last_issue = detail or f"cannot remove owned volume {volume_name}"
+        if attempt + 1 < _CLEANUP_ATTEMPTS:
+            time.sleep(_CLEANUP_BACKOFF_SECONDS * (attempt + 1))
+    return f"cannot remove owned volume {volume_name}: {last_issue}"
 
 
 def _initialize_tmp_volume(
     *,
     tmp_volume: str,
     config_dir: Path,
-) -> str:
-    container_id = _container_create(
+    owned_containers: list[str],
+) -> None:
+    helper_name = _new_resource_name("tmp-init")
+    container_name = _container_create(
         [
             "--volume",
             f"{tmp_volume}:/tmp",
@@ -238,23 +294,28 @@ def _initialize_tmp_volume(
             "-c",
             "chmod 1777 /tmp",
         ],
+        helper_name,
         config_dir,
+        owned_containers,
     )
+    primary_issue: str | None = None
     try:
         result = _run_docker(
-            ["start", "--attach", container_id],
+            ["start", "--attach", container_name],
             config_dir=config_dir,
             timeout=30,
         )
         if result.returncode != 0:
-            raise PriorEffectiveOuterUnavailable(
-                "cannot initialize isolated R2A /tmp volume"
-            )
-    finally:
-        cleanup_issue = _remove_container(container_id, config_dir)
-        if cleanup_issue is not None:
-            raise PriorEffectiveOuterUnavailable(cleanup_issue)
-    return container_id
+            primary_issue = "cannot initialize isolated R2A /tmp volume"
+    except ProtectedJudgeUnavailable as exc:
+        primary_issue = str(exc)
+
+    cleanup_issue = _remove_container(container_name, config_dir)
+    if cleanup_issue is None:
+        owned_containers.remove(container_name)
+    issues = [item for item in (primary_issue, cleanup_issue) if item]
+    if issues:
+        raise PriorEffectiveOuterUnavailable("; ".join(issues))
 
 
 def _build_isolated_execution_plan(
@@ -315,11 +376,11 @@ def _build_isolated_execution_plan(
     }
 
 
-def _wait_for_daemon(container_id: str, config_dir: Path) -> None:
+def _wait_for_daemon(container_name: str, config_dir: Path) -> None:
     deadline = time.monotonic() + _DAEMON_READY_SECONDS
     while time.monotonic() < deadline:
         result = _run_docker(
-            ["exec", container_id, "docker", "info"],
+            ["exec", container_name, "docker", "info"],
             config_dir=config_dir,
             timeout=5,
         )
@@ -517,106 +578,124 @@ def run_prior_effective_current_advisory(
     ) as exc:
         return _operational_error(str(exc))
 
-    with tempfile.TemporaryDirectory(
-        prefix="gnostoa-r2a-outer-", dir="/tmp"
-    ) as directory:
-        root = Path(directory)
-        config_dir = root / "docker-config"
-        input_dir = root / "input"
-        config_dir.mkdir(mode=0o700)
-        input_dir.mkdir(mode=0o755)
-        input_path = input_dir / "input.json"
-        try:
-            input_path.write_text(
-                canonical_json(input_document) + "\n",
-                encoding="utf-8",
-            )
-            input_path.chmod(0o444)
-
-            _verify_outer_image(consumer, config_dir)
-            _checked_output(
-                ["pull", _DAEMON_IMAGE],
-                config_dir=config_dir,
-                description="cannot reacquire isolated Docker daemon image",
-                timeout=_DOCKER_STEP_SECONDS,
-            )
-
-            socket_volume = _volume_create(config_dir)
-            owned_volumes.append(socket_volume)
-            tmp_volume = _volume_create(config_dir)
-            owned_volumes.append(tmp_volume)
-            _initialize_tmp_volume(tmp_volume=tmp_volume, config_dir=config_dir)
-
-            plan = _build_isolated_execution_plan(
-                consumer=consumer,
-                input_dir=input_dir,
-                socket_volume=socket_volume,
-                tmp_volume=tmp_volume,
-                daemon_name="isolated-daemon",
-                outer_name="protected-b16",
-            )
-            daemon_args = plan["daemon"]
-            outer_args = plan["outer"]
-            assert isinstance(daemon_args, list)
-            assert isinstance(outer_args, list)
-
-            daemon_id = _container_create(
-                [str(item) for item in daemon_args], config_dir
-            )
-            owned_containers.append(daemon_id)
-            daemon_start = _run_docker(
-                ["start", daemon_id],
-                config_dir=config_dir,
-                timeout=30,
-            )
-            if daemon_start.returncode != 0:
-                raise PriorEffectiveOuterUnavailable(
-                    "cannot start isolated Docker daemon"
+    try:
+        with tempfile.TemporaryDirectory(
+            prefix="gnostoa-r2a-outer-", dir="/tmp"
+        ) as directory:
+            root = Path(directory)
+            config_dir = root / "docker-config"
+            input_dir = root / "input"
+            config_dir.mkdir(mode=0o700)
+            input_dir.mkdir(mode=0o755)
+            input_path = input_dir / "input.json"
+            try:
+                input_path.write_text(
+                    canonical_json(input_document) + "\n",
+                    encoding="utf-8",
                 )
-            _wait_for_daemon(daemon_id, config_dir)
+                input_path.chmod(0o444)
 
-            outer_id = _container_create([str(item) for item in outer_args], config_dir)
-            owned_containers.append(outer_id)
-            outer_result = _run_docker(
-                ["start", "--attach", outer_id],
-                config_dir=config_dir,
-                timeout=_OUTER_RUNTIME_SECONDS,
-            )
-            if outer_result.stderr:
-                raise PriorEffectiveOuterUnavailable(
-                    "prior-effective outer runtime emitted unexpected stderr"
+                _verify_outer_image(consumer, config_dir)
+                _checked_output(
+                    ["pull", _DAEMON_IMAGE],
+                    config_dir=config_dir,
+                    description="cannot reacquire isolated Docker daemon image",
+                    timeout=_DOCKER_STEP_SECONDS,
                 )
-            _decode_outer_result(outer_result.returncode, outer_result.stdout)
-            result = (outer_result.returncode, outer_result.stdout)
-        except (
-            OSError,
-            ProtectedJudgeUnavailable,
-            PriorEffectiveOuterUnavailable,
-            RecursionError,
-            TypeError,
-            ValueError,
-        ) as exc:
-            primary_error = str(exc)
-        finally:
-            cleanup_issues: list[str] = []
-            for container_id in reversed(owned_containers):
-                try:
-                    issue = _remove_container(container_id, config_dir)
-                except ProtectedJudgeUnavailable as exc:
-                    issue = str(exc)
-                if issue is not None:
-                    cleanup_issues.append(issue)
-            for volume_name in reversed(owned_volumes):
-                try:
+
+                socket_volume = _new_resource_name("socket")
+                _volume_create(socket_volume, config_dir, owned_volumes)
+                tmp_volume = _new_resource_name("tmp")
+                _volume_create(tmp_volume, config_dir, owned_volumes)
+                _initialize_tmp_volume(
+                    tmp_volume=tmp_volume,
+                    config_dir=config_dir,
+                    owned_containers=owned_containers,
+                )
+
+                daemon_name = _new_resource_name("daemon")
+                outer_name = _new_resource_name("outer")
+                plan = _build_isolated_execution_plan(
+                    consumer=consumer,
+                    input_dir=input_dir,
+                    socket_volume=socket_volume,
+                    tmp_volume=tmp_volume,
+                    daemon_name=daemon_name,
+                    outer_name=outer_name,
+                )
+                daemon_args = plan["daemon"]
+                outer_args = plan["outer"]
+                assert isinstance(daemon_args, list)
+                assert isinstance(outer_args, list)
+
+                daemon_container = _container_create(
+                    [str(item) for item in daemon_args],
+                    daemon_name,
+                    config_dir,
+                    owned_containers,
+                )
+                daemon_start = _run_docker(
+                    ["start", daemon_container],
+                    config_dir=config_dir,
+                    timeout=30,
+                )
+                if daemon_start.returncode != 0:
+                    raise PriorEffectiveOuterUnavailable(
+                        "cannot start isolated Docker daemon"
+                    )
+                _wait_for_daemon(daemon_container, config_dir)
+
+                outer_container = _container_create(
+                    [str(item) for item in outer_args],
+                    outer_name,
+                    config_dir,
+                    owned_containers,
+                )
+                outer_result = _run_docker(
+                    ["start", "--attach", outer_container],
+                    config_dir=config_dir,
+                    timeout=_OUTER_RUNTIME_SECONDS,
+                )
+                if outer_result.stderr:
+                    raise PriorEffectiveOuterUnavailable(
+                        "prior-effective outer runtime emitted unexpected stderr"
+                    )
+                _decode_outer_result(outer_result.returncode, outer_result.stdout)
+                result = (outer_result.returncode, outer_result.stdout)
+            except (
+                OSError,
+                ProtectedJudgeUnavailable,
+                PriorEffectiveOuterUnavailable,
+                RecursionError,
+                SchemaError,
+                TypeError,
+                ValueError,
+            ) as exc:
+                primary_error = str(exc)
+            finally:
+                cleanup_issues: list[str] = []
+                for container_name in reversed(owned_containers):
+                    issue = _remove_container(container_name, config_dir)
+                    if issue is not None:
+                        cleanup_issues.append(issue)
+                for volume_name in reversed(owned_volumes):
                     issue = _remove_volume(volume_name, config_dir)
-                except ProtectedJudgeUnavailable as exc:
-                    issue = str(exc)
-                if issue is not None:
-                    cleanup_issues.append(issue)
-            if cleanup_issues:
-                primary_error = "; ".join(
-                    [item for item in (primary_error, *cleanup_issues) if item]
-                )
+                    if issue is not None:
+                        cleanup_issues.append(issue)
+                if cleanup_issues:
+                    primary_error = "; ".join(
+                        [item for item in (primary_error, *cleanup_issues) if item]
+                    )
+    except (
+        OSError,
+        ProtectedJudgeUnavailable,
+        PriorEffectiveOuterUnavailable,
+        RecursionError,
+        SchemaError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        return _operational_error(str(exc))
 
     if primary_error is not None:
         return _operational_error(primary_error)
