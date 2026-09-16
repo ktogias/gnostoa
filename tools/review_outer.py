@@ -45,6 +45,12 @@ _OUTER_RUNTIME_SECONDS = 180
 _CLEANUP_ATTEMPTS = 3
 _CLEANUP_BACKOFF_SECONDS = 0.25
 _FORMAT_CHECKER = FormatChecker()
+_PUBLIC_ERROR_CODES = {
+    "MALFORMED_INVOCATION",
+    "UNSUPPORTED_INPUT",
+    "CONFIGURATION_ERROR",
+    "TOOL_ERROR",
+}
 
 
 @_FORMAT_CHECKER.checks("date-time")
@@ -527,12 +533,23 @@ def _decode_outer_result(exit_code: int, raw: bytes) -> dict[str, Any]:
         return document
 
     error = document.get("error")
-    if exit_code != ERROR_EXIT_CODE or not isinstance(error, dict):
+    if (
+        exit_code != ERROR_EXIT_CODE
+        or set(document) != {"error"}
+        or not isinstance(error, dict)
+        or set(error) != {"code", "message", "details"}
+    ):
         raise PriorEffectiveOuterUnavailable(
-            "prior-effective outer result has no valid semantic or error envelope"
+            "prior-effective outer error envelope is malformed"
         )
-    if not isinstance(error.get("code"), str) or not isinstance(
-        error.get("message"), str
+    code = error.get("code")
+    message = error.get("message")
+    details = error.get("details")
+    if (
+        not isinstance(code, str)
+        or code not in _PUBLIC_ERROR_CODES
+        or not isinstance(message, str)
+        or not isinstance(details, dict)
     ):
         raise PriorEffectiveOuterUnavailable(
             "prior-effective outer error envelope is malformed"
