@@ -276,7 +276,7 @@ class R2AP2bIntegratedMaterializationTests(unittest.TestCase):
         self.assertIn("digest-only", decision)
         self.assertIn("attest", decision.lower())
         self.assertIn("reacquir", decision.lower())
-        self.assertIn("run_attempt", decision)
+        self.assertIn("GITHUB_RUN_ATTEMPT", decision)
         self.assertIn("no rerun authority", decision)
         self.assertIn("not a release or promotion", decision.lower())
 
