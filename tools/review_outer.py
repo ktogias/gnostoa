@@ -439,7 +439,7 @@ def _verify_daemon_control_plane(container_name: str, config_dir: Path) -> None:
             "exec",
             container_name,
             "sh",
-            "-c",
+            "-ec",
             "cat /proc/1/net/tcp; [ ! -r /proc/1/net/tcp6 ] || cat /proc/1/net/tcp6",
         ],
         config_dir=config_dir,
