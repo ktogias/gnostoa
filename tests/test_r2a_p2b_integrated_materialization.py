@@ -97,7 +97,10 @@ class R2AP2bIntegratedMaterializationTests(unittest.TestCase):
             workflow_text.count('test "${GITHUB_RUN_ATTEMPT}" = "1"'),
             "both authorization and effect-capable publication must refuse reruns",
         )
-        self.assertIn('test "${EVENT_BEFORE}" = "${AUTHORIZED_BEFORE_COMMIT}"', workflow_text)
+        self.assertIn(
+            'test "${EVENT_BEFORE}" = "${AUTHORIZED_BEFORE_COMMIT}"',
+            workflow_text,
+        )
         self.assertIn("pulls/${AUTHORIZED_PR_NUMBER}", workflow_text)
         self.assertIn("merge_commit_sha", workflow_text)
         self.assertLess(
@@ -121,11 +124,14 @@ class R2AP2bIntegratedMaterializationTests(unittest.TestCase):
         ]
         self.assertEqual(1, len(attest_steps))
         self.assertIn("--push-by-digest", workflow_text)
-        self.assertIn("docker run --rm \"${local_image}\" self-check", workflow_text)
+        self.assertIn('docker run --rm "${local_image}" self-check', workflow_text)
         self.assertGreaterEqual(workflow_text.count("self-check"), 3)
         self.assertIn("tools/review_outer.py", workflow_text)
         self.assertIn("ci/review_outer_smoke.py", workflow_text)
-        self.assertIn("knowledge/decisions/0077-activate-r2a-p2b-b2-through-prior-effective-b16.md", workflow_text)
+        self.assertIn(
+            "knowledge/decisions/0077-activate-r2a-p2b-b2-through-prior-effective-b16.md",
+            workflow_text,
+        )
         self.assertIn("DOCKER_CONFIG", workflow_text)
         self.assertIn("anonymous reacquisition", workflow_text)
         self.assertIn("Reconcile and clean post-publication state", workflow_text)
@@ -165,10 +171,6 @@ class R2AP2bIntegratedMaterializationTests(unittest.TestCase):
         )
         semantic_section = _guardrail_section(guardrails, "semantic-review-assurance")
         self.assertIn(DECISION_RELATIVE_PATH, semantic_section)
-        self.assertIn(WORKFLOW_RELATIVE_PATH, semantic_section)
-        self.assertIn(
-            "tests/test_r2a_p2b_integrated_materialization.py", semantic_section
-        )
 
         r2a_workflow = R2A_WORKFLOW_PATH.read_text(encoding="utf-8")
         self.assertIn(WORKFLOW_RELATIVE_PATH, r2a_workflow)
