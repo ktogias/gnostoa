@@ -86,7 +86,7 @@ Activate P2b-B2 only through the prior-effective OCI(B1.6) outer consumer select
 
 1. The public `current_advisory` CLI route may delegate to a new candidate-side orchestration helper, but candidate `review_live` / `review_evaluate` semantics remain non-authoritative for the protected current-advisory result.
 2. The candidate orchestration helper accepts only the untrusted review input. It acquires the outer-consumer record from protected Gnostoa `main`; callers cannot select the trusted runtime, protected authority document, policy, change class, Docker daemon image or Docker executable.
-3. Before execution, the candidate revalidates the protected record's exact digest-pinned OCI identity, source/runtime revision, platform/user label and public-surface digest. Any mismatch or unavailable protected acquisition is a controlled fail-closed tool error, never a semantic PASS.
+3. Before execution, the candidate revalidates the protected record's exact digest-pinned OCI identity, source/runtime revision, platform/user label, effective runtime UID/GID `10001:10001` and public-surface digest. The effective IDs are measured by an offline, read-only, capability-dropped `--pull=never` run of that same digest using its default `kit` user. Any mismatch or unavailable protected acquisition is a controlled fail-closed tool error, never a semantic PASS.
 4. Run the exact prior-effective OCI(B1.6) against an **isolated nested Docker daemon**. The nested daemon image is fixed to `docker.io/library/docker@sha256:76cd6bbc3ab600fced21a7e1bea77ac00cb7c545eb95d5767e4ec4ffbcb242dc`. Invoke the image with an explicit `dockerd --host=unix:///gnostoa-docker/docker.sock --group=10001` command so the image entrypoint cannot synthesize an unauthenticated TCP listener.
 5. Never expose host `/var/run/docker.sock`, a host-selected Docker executable, or the nested daemon's private `/var/run` runtime state to OCI(B1.6). The daemon keeps its own `/var/run`; a dedicated ephemeral socket-handoff volume is mounted at `/gnostoa-docker` in the daemon and at `/var/run` in the protected outer runtime, so B1.6 sees only its expected `/var/run/docker.sock` handoff rather than daemon containerd/runtime sockets. The ephemeral `/tmp` volume remains shared for prior-effective Docker path/cidfile semantics, and the bounded input is mounted read-only.
 6. Privilege is confined to the isolated daemon substrate. OCI(B1.6) remains non-privileged, read-only, capability-dropped and `no-new-privileges` while using its own pinned Docker client through the isolated Unix socket. After daemon readiness on the dedicated socket host, the candidate verifies that the Unix-socket Docker path works and that TCP Docker endpoints on 2375 and 2376 are unavailable before B1.6 is started.
@@ -115,6 +115,7 @@ The candidate is eligible for human review only after all of the following are t
 
 - the canonical RED remains preserved as historical evidence and bound to its recorded provider run;
 - the focused B2 contracts are green, including deterministic proof that the daemon command starts with explicit `dockerd`, uses the dedicated socket-handoff path rather than sharing daemon `/var/run`, exposes only the intended Unix host and contains no TCP Docker host;
+- the protected B1.6 digest is re-proved to execute its default `kit` user as effective UID/GID `10001:10001` under an offline, read-only, capability-dropped probe before the outer runtime is allowed to use the group-owned Docker socket;
 - normal Gnostoa `policy`, `fast`, Python compatibility, `regression` and `smoke` gates are green;
 - the dedicated R2A workflow is green, including the real isolated nested-daemon smoke;
 - the live isolated-daemon path proves Unix-socket `docker info` succeeds while TCP 2375 and 2376 are unavailable before the protected outer runtime proceeds;
@@ -134,6 +135,7 @@ This Decision does not authorize those later publication or promotion effects by
 - The protected B1.6 identity remains independently selected from protected `main` and owns the Docker-client/live-entrypoint capability used for this candidate.
 - The host Docker daemon is lifecycle authority for candidate-owned isolated resources only; it is not the semantic execution endpoint presented to B1.6.
 - The nested daemon retains the required GitHub/GHCR egress, keeps its private runtime state out of the protected outer runtime, and exposes only the dedicated Unix-socket handoff; TCP Docker control-plane ports are verified absent before protected execution.
+- The protected B1.6 runtime's effective `kit` identity is re-measured as UID/GID `10001:10001` before it receives the group-owned Unix socket.
 - Exact result bytes and exit semantics remain attributable to the prior-effective runtime.
 - Cleanup is fail-closed, bounded-retry and exact-predeclared-name-based across successful and ambiguous create outcomes.
 - Human approval remains mandatory before integration because this is a critical Gnostoa-self change.
