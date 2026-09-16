@@ -71,11 +71,15 @@ def _load_outer() -> object:
     try:
         return importlib.import_module("tools.review_outer")
     except ModuleNotFoundError as exc:
-        raise AssertionError("P2B_B2_PRIOR_EFFECTIVE_OUTER_RUNTIME_UNAVAILABLE") from exc
+        raise AssertionError(
+            "P2B_B2_PRIOR_EFFECTIVE_OUTER_RUNTIME_UNAVAILABLE"
+        ) from exc
 
 
 class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
-    def test_protected_consumer_acquisition_is_fixed_to_gnostoa_main_record(self) -> None:
+    def test_protected_consumer_acquisition_is_fixed_to_gnostoa_main_record(
+        self,
+    ) -> None:
         protected = ProtectedMainDocument(
             protected_main_revision="c" * 40,
             document=_consumer_authority(),
@@ -104,14 +108,18 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         self,
     ) -> None:
         input_document = _current_advisory_input()
-        raw_result = b'{"binding":false,"outcome":"INCOMPLETE","reason":"QUORUM_UNMET"}\n'
+        raw_result = (
+            b'{"binding":false,"outcome":"INCOMPLETE","reason":"QUORUM_UNMET"}\n'
+        )
         delegate = mock.Mock(return_value=(3, raw_result))
 
         with tempfile.TemporaryDirectory() as directory:
             input_path = Path(directory) / "input.json"
             input_path.write_text(json.dumps(input_document), encoding="utf-8")
             output_bytes = io.BytesIO()
-            stdout = io.TextIOWrapper(output_bytes, encoding="utf-8", write_through=True)
+            stdout = io.TextIOWrapper(
+                output_bytes, encoding="utf-8", write_through=True
+            )
             with (
                 mock.patch.object(
                     review_check,
@@ -134,7 +142,9 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         runner = getattr(outer, "run_prior_effective_current_advisory", None)
         self.assertTrue(callable(runner), "P2B_B2_OUTER_RUNNER_UNAVAILABLE")
         if callable(runner):
-            self.assertEqual(["input_document"], list(inspect.signature(runner).parameters))
+            self.assertEqual(
+                ["input_document"], list(inspect.signature(runner).parameters)
+            )
 
     def test_isolated_nested_daemon_plan_shares_only_internal_socket_and_tmp(
         self,
@@ -199,7 +209,9 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         self.assertNotIn("GNOSTOA_R2A_CANDIDATE_IMAGE", joined)
         self.assertNotIn(str(ROOT), joined)
         self.assertEqual(B16_SOURCE_REVISION, consumer.get("runtime_revision"))
-        self.assertEqual(B16_PUBLIC_SURFACE_DIGEST, consumer.get("public_surface_digest"))
+        self.assertEqual(
+            B16_PUBLIC_SURFACE_DIGEST, consumer.get("public_surface_digest")
+        )
 
     def test_dedicated_r2a_workflow_executes_canonical_b2_contract(self) -> None:
         workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
