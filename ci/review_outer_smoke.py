@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import contextlib
 import copy
+import io
 import json
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
-from tools.review_outer import run_prior_effective_current_advisory
+from tools import review_check
 
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLE_PATH = ROOT / "tasks" / "issue-11-r2a-current-advisory.json"
@@ -54,7 +57,16 @@ def main() -> int:
         "qualification_snapshot": copy.deepcopy(bundle["qualification_snapshot"]),
     }
 
-    code, raw = run_prior_effective_current_advisory(input_document)
+    with tempfile.TemporaryDirectory(prefix="gnostoa-r2a-b2-smoke-") as directory:
+        input_path = Path(directory) / "input.json"
+        input_path.write_text(json.dumps(input_document), encoding="utf-8")
+        output_bytes = io.BytesIO()
+        stdout = io.TextIOWrapper(output_bytes, encoding="utf-8", write_through=True)
+        with contextlib.redirect_stdout(stdout):
+            code = review_check.main(["--input", str(input_path)])
+        stdout.flush()
+        raw = output_bytes.getvalue()
+
     try:
         payload = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
