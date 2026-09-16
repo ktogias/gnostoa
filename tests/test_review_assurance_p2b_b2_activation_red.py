@@ -11,6 +11,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import yaml
+from test_r2a_p2b_b16_publication import _has_direct_top_level_shell_sequence
+
 from tools import review_check, review_protected
 from tools.review_protected import ProtectedMainDocument
 
@@ -307,6 +310,73 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
                 )
         self.assertEqual(1, len(owned))
 
+    def test_outer_error_envelope_is_closed_and_typed(self) -> None:
+        outer = _load_outer()
+        error_codes = {
+            "MALFORMED_INVOCATION",
+            "UNSUPPORTED_INPUT",
+            "CONFIGURATION_ERROR",
+            "TOOL_ERROR",
+        }
+        for code in error_codes:
+            payload = {
+                "error": {
+                    "code": code,
+                    "message": "synthetic protected error",
+                    "details": {},
+                }
+            }
+            raw = (outer.canonical_json(payload) + "\n").encode("utf-8")
+            with self.subTest(valid_code=code):
+                self.assertEqual(payload, outer._decode_outer_result(2, raw))
+
+        invalid_payloads = (
+            {
+                "error": {
+                    "code": "UNKNOWN_ERROR",
+                    "message": "synthetic protected error",
+                    "details": {},
+                }
+            },
+            {
+                "error": {
+                    "code": "TOOL_ERROR",
+                    "message": "synthetic protected error",
+                }
+            },
+            {
+                "error": {
+                    "code": "TOOL_ERROR",
+                    "message": "synthetic protected error",
+                    "details": [],
+                }
+            },
+            {
+                "error": {
+                    "code": "TOOL_ERROR",
+                    "message": "synthetic protected error",
+                    "details": {},
+                    "extra": True,
+                }
+            },
+            {
+                "error": {
+                    "code": "TOOL_ERROR",
+                    "message": "synthetic protected error",
+                    "details": {},
+                },
+                "extra": True,
+            },
+        )
+        for payload in invalid_payloads:
+            raw = (outer.canonical_json(payload) + "\n").encode("utf-8")
+            with self.subTest(invalid_payload=payload):
+                with self.assertRaisesRegex(
+                    outer.PriorEffectiveOuterUnavailable,
+                    "error envelope is malformed",
+                ):
+                    outer._decode_outer_result(2, raw)
+
     def test_tmp_setup_failure_returns_canonical_tool_error(self) -> None:
         outer = _load_outer()
         protected = ProtectedMainDocument(
@@ -366,10 +436,49 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
             self.assertIn(f"- {protected_path}", guardrails)
 
     def test_dedicated_r2a_workflow_executes_canonical_b2_contract(self) -> None:
-        workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+        workflow = yaml.load(
+            WORKFLOW_PATH.read_text(encoding="utf-8"), Loader=yaml.BaseLoader
+        )
+        self.assertIsInstance(workflow, dict)
+        assert isinstance(workflow, dict)
+        on = workflow.get("on")
+        self.assertIsInstance(on, dict)
+        assert isinstance(on, dict)
+        pull_request = on.get("pull_request")
+        self.assertIsInstance(pull_request, dict)
+        assert isinstance(pull_request, dict)
+        paths = pull_request.get("paths")
+        self.assertIsInstance(paths, list)
+        assert isinstance(paths, list)
+
         test_path = "tests/test_review_assurance_p2b_b2_activation_red.py"
-        self.assertIn(f'- "{test_path}"', workflow)
-        self.assertIn(f"PYTHONPATH=. python {test_path}", workflow)
+        self.assertIn(test_path, paths)
+        jobs = workflow.get("jobs")
+        self.assertIsInstance(jobs, dict)
+        assert isinstance(jobs, dict)
+        job = jobs.get("dormant-current-advisory-consumer")
+        self.assertIsInstance(job, dict)
+        assert isinstance(job, dict)
+        self.assertEqual("protected-current-advisory-consumer", job.get("name"))
+        steps = job.get("steps")
+        self.assertIsInstance(steps, list)
+        assert isinstance(steps, list)
+        matches = [
+            step
+            for step in steps
+            if isinstance(step, dict)
+            and step.get("name")
+            == "Run protected current-advisory consumer contract tests via native orchestration fallback"
+        ]
+        self.assertEqual(1, len(matches))
+        run = matches[0].get("run")
+        self.assertIsInstance(run, str)
+        assert isinstance(run, str)
+        command = f"PYTHONPATH=. python {test_path}"
+        self.assertTrue(
+            _has_direct_top_level_shell_sequence(run, (command,)),
+            "the B2 contract must execute directly in dedicated R2A verification",
+        )
 
 
 if __name__ == "__main__":
