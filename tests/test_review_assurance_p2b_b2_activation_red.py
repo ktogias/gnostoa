@@ -257,7 +257,9 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         failed = mock.Mock(returncode=1, stderr=b"synthetic busy")
         succeeded = mock.Mock(returncode=0, stderr=b"")
         with (
-            mock.patch.object(outer, "_run_docker", side_effect=[failed, succeeded]) as run,
+            mock.patch.object(
+                outer, "_run_docker", side_effect=[failed, succeeded]
+            ) as run,
             mock.patch.object(outer.time, "sleep") as sleep,
         ):
             issue = outer._remove_container(
@@ -329,7 +331,9 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         payload = json.loads(raw.decode("utf-8"))
         self.assertEqual(2, code)
         self.assertEqual("TOOL_ERROR", payload["error"]["code"])
-        self.assertIn("synthetic /tmp unavailable", payload["error"]["details"]["error"])
+        self.assertIn(
+            "synthetic /tmp unavailable", payload["error"]["details"]["error"]
+        )
 
     def test_b2_has_durable_activation_decision_and_guardrail_ownership(self) -> None:
         self.assertTrue(
@@ -338,7 +342,10 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         decision = DECISION_PATH.read_text(encoding="utf-8")
         self.assertIn("Decision 0077", decision)
         self.assertIn("Decision 0076", decision)
-        self.assertIn("kit.decision.0077.activate-r2a-p2b-b2-through-prior-effective-b16", decision)
+        self.assertIn(
+            "kit.decision.0077.activate-r2a-p2b-b2-through-prior-effective-b16",
+            decision,
+        )
         self.assertIn(B16_SOURCE_REVISION, decision)
         self.assertIn(B16_PUBLIC_SURFACE_DIGEST, decision)
         self.assertIn(B16_OCI_IMAGE, decision)
