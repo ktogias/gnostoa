@@ -147,7 +147,7 @@ class ReviewAssuranceP2bAuthorityLandingTests(unittest.TestCase):
         )
         self.assertEqual(EXPECTED_JUDGE, authority["expected_judge"])
 
-    def test_protected_main_readback_remains_authority_source_while_b1_is_dormant(
+    def test_protected_main_readback_remains_authority_source_after_b2_activation(
         self,
     ) -> None:
         protected = (ROOT / "tools" / "review_protected.py").read_text(encoding="utf-8")
@@ -159,6 +159,10 @@ class ReviewAssuranceP2bAuthorityLandingTests(unittest.TestCase):
             protected,
         )
         self.assertIn(
+            '_GNOSTOA_SELF_CONSUMER_PATH = "tasks/issue-11-r2a-current-advisory-consumer.json"',
+            protected,
+        )
+        self.assertIn(
             '"+refs/heads/main:refs/remotes/protected/main"',
             protected,
         )
@@ -166,20 +170,20 @@ class ReviewAssuranceP2bAuthorityLandingTests(unittest.TestCase):
         self.assertNotIn("issue-11-r2a-current-advisory.json", cli)
         self.assertIn('if mode == "current_advisory":', evaluator)
         self.assertIn('"BOOTSTRAP_PROTECTED_AUTHORITY_UNAVAILABLE"', evaluator)
+        self.assertIn(
+            "from .review_outer import run_prior_effective_current_advisory",
+            cli,
+        )
+        self.assertIn(
+            "code, raw_result = run_prior_effective_current_advisory(input_document)",
+            cli,
+        )
         self.assertNotIn(
             "from .review_live import evaluate_gnostoa_current_advisory",
             cli,
         )
         self.assertNotIn(
             "code, payload = evaluate_gnostoa_current_advisory(input_document)",
-            cli,
-        )
-        self.assertIn(
-            "prior-integrated authority acquisition is not",
-            cli,
-        )
-        self.assertIn(
-            "available in the candidate-side P2b-B1 CLI",
             cli,
         )
 
