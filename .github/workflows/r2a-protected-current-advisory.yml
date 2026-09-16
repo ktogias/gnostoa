@@ -2,6 +2,8 @@ name: R2A protected current-advisory consumer verification
 
 on:
   pull_request:
+    branches:
+      - main
     paths:
       - ".github/workflows/r2a-protected-current-advisory.yml"
       - ".github/workflows/publish-r2a-p2b-b16-oci.yml"
@@ -201,7 +203,8 @@ jobs:
         run: PYTHONPATH=. python ci/review_live_timeout_cleanup.py
 
       - name: Exercise promoted OCI(P2b) and reject candidate/stale selectors
+        if: github.event_name == 'pull_request'
         env:
-          EXPECTED_PROTECTED_MAIN: ${{ github.event.pull_request.base.sha || github.sha }}
+          EXPECTED_PROTECTED_MAIN: ${{ github.event.pull_request.base.sha }}
         run: |
           PYTHONPATH=. python ci/review_outer_smoke.py --expected-protected-main "${EXPECTED_PROTECTED_MAIN}"

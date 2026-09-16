@@ -59,11 +59,14 @@ PR #268 integrated the promotion on protected `main` as commit
 - OCI runtime
   `ghcr.io/ktogias/gnostoa@sha256:a657bb69c2cd1c117831558bf9794aa07caa74ac8adaff8d05b5650165b0d281`.
 
-Integrated-main workflow run `35151620363`, attempt 1, succeeded after that
-landing. The exit boundary in issue #11 comment `5680382022` still requires a
-**subsequent candidate** to prove that this promoted identity, rather than a
-candidate-controlled runtime or stale B1.x authority, is the effective outer
-consumer.
+[Integrated-main workflow run `35151620363`](https://github.com/ktogias/gnostoa/actions/runs/35151620363),
+attempt 1, succeeded after that landing. Provider logs have provider-defined
+retention and may later become unavailable; the durable claim remains bounded
+by the protected promotion commit and tree, the authority record, Decision
+0079, and the issue #11 receipts cited above. The exit boundary in issue #11
+comment `5680382022` still requires a **subsequent candidate** to prove that
+this promoted identity, rather than a candidate-controlled runtime or stale
+B1.x authority, is the effective outer consumer.
 
 The historical stale identity used for the negative control is exact OCI(B1.6):
 
@@ -122,7 +125,9 @@ Complete the rolling-trust proof with one separate, read-only candidate.
    new authority surface.
 7. Route the focused contract, this Decision and the live proof through the
    dedicated R2A exact-head workflow and the existing
-   `semantic-review-assurance` guardrail.
+   `semantic-review-assurance` guardrail. Only a Pull Request targeting `main`
+   may emit the subsequent-candidate receipt; manual dispatch remains a
+   non-evidentiary compatibility run and skips that receipt-producing step.
 8. Leave the closed OCI(P2a) inner semantic authority and the promoted outer
    authority record unchanged. Perform **no registry write**, publication,
    rerun, tag, release, deployment or provider-setting mutation.

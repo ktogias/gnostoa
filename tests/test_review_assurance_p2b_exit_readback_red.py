@@ -193,6 +193,15 @@ class ReviewAssuranceP2bExitReadbackRedTests(unittest.TestCase):
         self.assertIsInstance(workflow, dict)
         assert isinstance(workflow, dict)
 
+        events = workflow.get("on")
+        self.assertIsInstance(events, dict)
+        assert isinstance(events, dict)
+        pull_request = events.get("pull_request")
+        self.assertIsInstance(pull_request, dict)
+        assert isinstance(pull_request, dict)
+        self.assertEqual(["main"], pull_request.get("branches"))
+        self.assertIn("workflow_dispatch", events)
+
         for protected_path in (DECISION_RELATIVE_PATH, FOCUSED_TEST_PATH):
             self.assertIn(f'- "{protected_path}"', workflow_text)
         self.assertGreaterEqual(workflow_text.count(FOCUSED_TEST_PATH), 4)
@@ -215,11 +224,12 @@ class ReviewAssuranceP2bExitReadbackRedTests(unittest.TestCase):
         ]
         self.assertEqual(1, len(matches))
         step = matches[0]
+        self.assertEqual("github.event_name == 'pull_request'", step.get("if"))
         env = step.get("env")
         self.assertIsInstance(env, dict)
         assert isinstance(env, dict)
         self.assertEqual(
-            "${{ github.event.pull_request.base.sha || github.sha }}",
+            "${{ github.event.pull_request.base.sha }}",
             env.get("EXPECTED_PROTECTED_MAIN"),
         )
         run = step.get("run")
