@@ -89,6 +89,7 @@ inherited, copied or loaded by adopting projects.
 - [Promote the protected R2A outer-consumer authority from OCI(B1.5) to OCI(B1.6)](decisions/0076-promote-r2a-b16-outer-consumer-authority.md)
 - [Activate R2A P2b-B2 through prior-effective OCI(B1.6)](decisions/0077-activate-r2a-p2b-b2-through-prior-effective-b16.md)
 - [Materialize the integrated R2A P2b runtime as a prior-effective digest-only OCI identity](decisions/0078-materialize-integrated-r2a-p2b-runtime-by-digest.md)
+- [Promote the protected R2A outer-consumer authority from OCI(B1.6) to OCI(P2b)](decisions/0079-promote-r2a-p2b-outer-consumer-authority.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Require explicit admission for retrospective findings](requirements/retrospective-findings-require-explicit-admission.md)

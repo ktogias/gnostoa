@@ -22,6 +22,7 @@ on:
       - "knowledge/decisions/0076-promote-r2a-b16-outer-consumer-authority.md"
       - "knowledge/decisions/0077-activate-r2a-p2b-b2-through-prior-effective-b16.md"
       - "knowledge/decisions/0078-materialize-integrated-r2a-p2b-runtime-by-digest.md"
+      - "knowledge/decisions/0079-promote-r2a-p2b-outer-consumer-authority.md"
       - "policy/guardrails.yaml"
       - "pyproject.toml"
       - "requirements/development.lock"
