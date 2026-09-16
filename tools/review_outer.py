@@ -255,7 +255,7 @@ def _remove_container(container_name: str, config_dir: Path) -> str | None:
             if result.returncode == 0:
                 return None
             detail = result.stderr.decode("utf-8", errors="replace").strip()
-            if "No such container" in detail:
+            if "no such container" in detail.lower():
                 return None
             last_issue = detail or f"cannot remove owned container {container_name}"
         if attempt + 1 < _CLEANUP_ATTEMPTS:
