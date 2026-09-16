@@ -62,9 +62,7 @@ def main() -> int:
     if not isinstance(payload, dict):
         raise RuntimeError("isolated B2 smoke result must be an object")
     if code != 3:
-        raise RuntimeError(
-            f"isolated B2 smoke expected exit 3, got {code}: {payload}"
-        )
+        raise RuntimeError(f"isolated B2 smoke expected exit 3, got {code}: {payload}")
     if (
         payload.get("outcome") != "INCOMPLETE"
         or payload.get("reason") != "QUORUM_UNMET"
@@ -82,7 +80,9 @@ def main() -> int:
     ):
         raise RuntimeError(f"isolated B2 smoke returned wrong live context: {payload}")
     if context.get("as_of") == input_document["evaluation_context"]["as_of"]:
-        raise RuntimeError("isolated B2 smoke trusted the caller-selected evaluation cut")
+        raise RuntimeError(
+            "isolated B2 smoke trusted the caller-selected evaluation cut"
+        )
     diagnostics = payload.get("diagnostics")
     if not isinstance(diagnostics, list) or not any(
         "protected prior-integrated OCI" in item
