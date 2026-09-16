@@ -84,7 +84,7 @@ class ReviewOuterSocketTableTests(unittest.TestCase):
         outputs = [
             b"",
             json.dumps([image]).encode("utf-8"),
-            f"linux|amd64|kit|{revision}\n".encode("utf-8"),
+            f"linux|amd64|kit|{revision}\n".encode(),
             b"10001\n10001\n",
             f"{surface}\n".encode("ascii"),
         ]
@@ -131,7 +131,7 @@ class ReviewOuterSocketTableTests(unittest.TestCase):
         prefix = [
             b"",
             json.dumps([image]).encode("utf-8"),
-            f"linux|amd64|kit|{revision}\n".encode("utf-8"),
+            f"linux|amd64|kit|{revision}\n".encode(),
         ]
         config_dir = Path("/tmp/gnostoa-r2a-config-test")
 
