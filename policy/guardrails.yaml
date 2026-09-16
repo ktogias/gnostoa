@@ -488,8 +488,10 @@ guardrails:
       - knowledge/decisions/0074-add-input-only-live-entrypoint-to-r2a-b15-runtime.md
       - knowledge/decisions/0075-materialize-integrated-r2a-p2b-b16-consumer-by-digest.md
       - knowledge/decisions/0076-promote-r2a-b16-outer-consumer-authority.md
+      - knowledge/decisions/0077-activate-r2a-p2b-b2-through-prior-effective-b16.md
       - ci/review_b15_runtime_smoke.py
       - ci/review_b16_entrypoint_smoke.py
+      - ci/review_outer_smoke.py
       - tools/review_adapter_file.py
       - tools/review_model.py
       - tools/review_policy.py
@@ -499,6 +501,7 @@ guardrails:
       - tools/review_current.py
       - tools/review_live.py
       - tools/review_live_entrypoint.py
+      - tools/review_outer.py
       - tools/cli.py
       - .github/workflows/r2a-protected-current-advisory.yml
     tests:
@@ -514,10 +517,12 @@ guardrails:
       - tests/test_review_assurance_p2b_consumer_authority_red.py
       - tests/test_review_assurance_p2b_b15_runtime_red.py
       - tests/test_review_assurance_p2b_b16_entrypoint_red.py
+      - tests/test_review_assurance_p2b_b2_activation_red.py
       - ci/review_b15_runtime_smoke.py
       - ci/review_b16_entrypoint_smoke.py
       - ci/review_live_smoke.py
       - ci/review_live_timeout_cleanup.py
+      - ci/review_outer_smoke.py
 
   - id: authoritative-centralized-ci
     title: Centralized CI authoritatively verifies the latest integration candidate

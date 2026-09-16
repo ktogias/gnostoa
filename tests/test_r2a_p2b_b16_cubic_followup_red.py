@@ -12,6 +12,9 @@ ROOT = Path(__file__).resolve().parents[1]
 PUBLISH_WORKFLOW_PATH = ROOT / ".github/workflows/publish-r2a-p2b-b16-oci.yml"
 R2A_WORKFLOW_PATH = ROOT / ".github/workflows/r2a-protected-current-advisory.yml"
 FOLLOWUP_TEST_RELATIVE_PATH = "tests/test_r2a_p2b_b16_cubic_followup_red.py"
+R2A_COMPATIBILITY_JOB_KEY = "dormant-current-advisory-consumer"
+R2A_ACTIVE_DISPLAY_NAME = "protected-current-advisory-consumer"
+R2A_ACTIVE_CONTRACT_STEP = "Run protected current-advisory consumer contract tests via native orchestration fallback"
 
 
 def _load_workflow(path: Path) -> dict[str, object]:
@@ -19,6 +22,16 @@ def _load_workflow(path: Path) -> dict[str, object]:
     if not isinstance(workflow, dict):
         raise AssertionError(f"workflow {path} must be a mapping")
     return workflow
+
+
+def _job(workflow: dict[str, object], job_name: str) -> dict[str, object]:
+    jobs = workflow.get("jobs")
+    if not isinstance(jobs, dict):
+        raise AssertionError("workflow jobs must be a mapping")
+    job = jobs.get(job_name)
+    if not isinstance(job, dict):
+        raise AssertionError(f"workflow job {job_name!r} must be a mapping")
+    return job
 
 
 def _named_step(steps: list[object], name: str) -> dict[str, object]:
@@ -31,12 +44,7 @@ def _named_step(steps: list[object], name: str) -> dict[str, object]:
 
 
 def _job_steps(workflow: dict[str, object], job_name: str) -> list[object]:
-    jobs = workflow.get("jobs")
-    if not isinstance(jobs, dict):
-        raise AssertionError("workflow jobs must be a mapping")
-    job = jobs.get(job_name)
-    if not isinstance(job, dict):
-        raise AssertionError(f"workflow job {job_name!r} must be a mapping")
+    job = _job(workflow, job_name)
     steps = job.get("steps")
     if not isinstance(steps, list):
         raise AssertionError(f"workflow job {job_name!r} steps must be a list")
@@ -76,9 +84,11 @@ def _continued_command(script: str, command_head: str) -> tuple[str, ...]:
 class R2AP2bB16CubicFollowupTests(unittest.TestCase):
     def test_dedicated_r2a_executes_both_contracts_as_top_level_commands(self) -> None:
         workflow = _load_workflow(R2A_WORKFLOW_PATH)
+        job = _job(workflow, R2A_COMPATIBILITY_JOB_KEY)
+        self.assertEqual(R2A_ACTIVE_DISPLAY_NAME, job.get("name"))
         native_step = _named_step(
-            _job_steps(workflow, "dormant-current-advisory-consumer"),
-            "Run dormant consumer contract tests via native orchestration fallback",
+            _job_steps(workflow, R2A_COMPATIBILITY_JOB_KEY),
+            R2A_ACTIVE_CONTRACT_STEP,
         )
         sequence = (
             "PYTHONPATH=. python tests/test_r2a_p2b_b16_publication.py",
@@ -121,9 +131,11 @@ class R2AP2bB16CubicFollowupTests(unittest.TestCase):
             "the follow-up regression guard must itself trigger dedicated R2A verification",
         )
 
-        steps = _job_steps(workflow, "dormant-current-advisory-consumer")
+        job = _job(workflow, R2A_COMPATIBILITY_JOB_KEY)
+        self.assertEqual(R2A_ACTIVE_DISPLAY_NAME, job.get("name"))
+        steps = _job_steps(workflow, R2A_COMPATIBILITY_JOB_KEY)
         static_run = _run(
-            _named_step(steps, "Verify dormant consumer trust-domain sources")
+            _named_step(steps, "Verify protected consumer trust-domain sources")
         )
         ruff_commands = (
             (
@@ -141,12 +153,7 @@ class R2AP2bB16CubicFollowupTests(unittest.TestCase):
                     f"the follow-up regression guard must remain in Ruff {scope} scope",
                 )
 
-        native_run = _run(
-            _named_step(
-                steps,
-                "Run dormant consumer contract tests via native orchestration fallback",
-            )
-        )
+        native_run = _run(_named_step(steps, R2A_ACTIVE_CONTRACT_STEP))
         command = f"PYTHONPATH=. python {FOLLOWUP_TEST_RELATIVE_PATH}"
         self.assertTrue(
             _has_direct_top_level_shell_sequence(native_run, (command,)),

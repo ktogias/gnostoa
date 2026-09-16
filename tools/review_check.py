@@ -19,6 +19,7 @@ from .review_model import (
     error_payload,
     parse_rfc3339,
 )
+from .review_outer import run_prior_effective_current_advisory
 from .review_policy import (
     default_project_policy_path,
     load_review_policy_source,
@@ -338,6 +339,14 @@ def _configuration(message: str) -> tuple[int, dict[str, Any]]:
     return ERROR_EXIT_CODE, error_payload("CONFIGURATION_ERROR", message)
 
 
+def _write_raw_result(raw_result: bytes) -> None:
+    output_buffer = getattr(sys.stdout, "buffer", None)
+    if output_buffer is not None:
+        output_buffer.write(raw_result)
+        return
+    sys.stdout.write(raw_result.decode("utf-8", errors="strict"))
+
+
 def main(argv: list[str] | None = None) -> int:
     try:
         args = _parser().parse_args(sys.argv[1:] if argv is None else argv)
@@ -358,11 +367,9 @@ def main(argv: list[str] | None = None) -> int:
                     "--change-class; protected authority supplies the effective policy"
                 )
             else:
-                code, payload = _configuration(
-                    "current_advisory prior-integrated authority acquisition is not "
-                    "available in the candidate-side P2b-B1 CLI; the dormant outer "
-                    "consumer must become prior-effective before activation"
-                )
+                code, raw_result = run_prior_effective_current_advisory(input_document)
+                _write_raw_result(raw_result)
+                return code
         else:
             try:
                 policy_document = _load_policy(args.policy, args.change_class)

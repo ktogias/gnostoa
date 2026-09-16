@@ -1,4 +1,4 @@
-name: R2A dormant current-advisory consumer verification
+name: R2A protected current-advisory consumer verification
 
 on:
   pull_request:
@@ -11,6 +11,7 @@ on:
       - "ci/review_b16_entrypoint_smoke.py"
       - "ci/review_live_smoke.py"
       - "ci/review_live_timeout_cleanup.py"
+      - "ci/review_outer_smoke.py"
       - "knowledge/decisions/0070-protect-r2a-b1-outer-consumer-authority-separately.md"
       - "knowledge/decisions/0071-add-docker-client-to-r2a-b1-runtime.md"
       - "knowledge/decisions/0072-materialize-integrated-r2a-p2b-b15-consumer-by-digest.md"
@@ -18,6 +19,7 @@ on:
       - "knowledge/decisions/0074-add-input-only-live-entrypoint-to-r2a-b15-runtime.md"
       - "knowledge/decisions/0075-materialize-integrated-r2a-p2b-b16-consumer-by-digest.md"
       - "knowledge/decisions/0076-promote-r2a-b16-outer-consumer-authority.md"
+      - "knowledge/decisions/0077-activate-r2a-p2b-b2-through-prior-effective-b16.md"
       - "policy/guardrails.yaml"
       - "pyproject.toml"
       - "requirements/development.lock"
@@ -29,11 +31,13 @@ on:
       - "tests/test_r2a_p2b_b16_publication.py"
       - "tests/test_r2a_p2b_b16_reconciliation_fail_closed.py"
       - "tests/test_review_assurance_p2b_activation_red.py"
+      - "tests/test_review_assurance_p2b_b2_activation_red.py"
       - "tests/test_review_assurance_p2b_b15_runtime_red.py"
       - "tests/test_review_assurance_p2b_b16_entrypoint_red.py"
       - "tests/test_review_assurance_p2b_b1_dormancy_red.py"
       - "tests/test_review_assurance_p2b_b1_error_paths_red.py"
       - "tests/test_review_assurance_p2b_consumer_authority_red.py"
+      - "tests/test_review_outer_socket_table_red.py"
       - "tools/cli.py"
       - "tools/knowledge_common.py"
       - "tools/review_check.py"
@@ -42,6 +46,7 @@ on:
       - "tools/review_live.py"
       - "tools/review_live_entrypoint.py"
       - "tools/review_model.py"
+      - "tools/review_outer.py"
       - "tools/review_policy.py"
       - "tools/review_protected.py"
   workflow_dispatch:
@@ -58,8 +63,9 @@ env:
 
 jobs:
   dormant-current-advisory-consumer:
+    name: protected-current-advisory-consumer
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Check out the exact candidate
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -92,80 +98,94 @@ jobs:
             --require-hashes \
             -r requirements/development.lock
 
-      - name: Verify dormant consumer trust-domain sources
+      - name: Verify protected consumer trust-domain sources
         run: |
           python -m ruff format --check \
             tools/review_check.py \
             tools/review_current.py \
             tools/review_live.py \
             tools/review_live_entrypoint.py \
+            tools/review_outer.py \
             ci/review_b15_runtime_smoke.py \
             ci/review_b16_entrypoint_smoke.py \
             ci/review_live_smoke.py \
             ci/review_live_timeout_cleanup.py \
+            ci/review_outer_smoke.py \
             tests/test_r2a_p2b_b16_cubic_followup_red.py \
             tests/test_r2a_p2b_b16_publication.py \
             tests/test_r2a_p2b_b16_reconciliation_fail_closed.py \
             tests/test_review_assurance_p2b_activation_red.py \
+            tests/test_review_assurance_p2b_b2_activation_red.py \
             tests/test_review_assurance_p2b_b15_runtime_red.py \
             tests/test_review_assurance_p2b_b16_entrypoint_red.py \
             tests/test_review_assurance_p2b_b1_dormancy_red.py \
             tests/test_review_assurance_p2b_b1_error_paths_red.py \
-            tests/test_review_assurance_p2b_consumer_authority_red.py
+            tests/test_review_assurance_p2b_consumer_authority_red.py \
+            tests/test_review_outer_socket_table_red.py
           python -m ruff check \
             tools/review_check.py \
             tools/review_current.py \
             tools/review_live.py \
             tools/review_live_entrypoint.py \
+            tools/review_outer.py \
             ci/review_b15_runtime_smoke.py \
             ci/review_b16_entrypoint_smoke.py \
             ci/review_live_smoke.py \
             ci/review_live_timeout_cleanup.py \
+            ci/review_outer_smoke.py \
             tests/test_r2a_p2b_b16_cubic_followup_red.py \
             tests/test_r2a_p2b_b16_publication.py \
             tests/test_r2a_p2b_b16_reconciliation_fail_closed.py \
             tests/test_review_assurance_p2b_activation_red.py \
+            tests/test_review_assurance_p2b_b2_activation_red.py \
             tests/test_review_assurance_p2b_b15_runtime_red.py \
             tests/test_review_assurance_p2b_b16_entrypoint_red.py \
             tests/test_review_assurance_p2b_b1_dormancy_red.py \
             tests/test_review_assurance_p2b_b1_error_paths_red.py \
-            tests/test_review_assurance_p2b_consumer_authority_red.py
+            tests/test_review_assurance_p2b_consumer_authority_red.py \
+            tests/test_review_outer_socket_table_red.py
           python -m mypy \
             tools/review_check.py \
             tools/review_current.py \
             tools/review_live.py \
             tools/review_live_entrypoint.py \
             tools/review_model.py \
+            tools/review_outer.py \
             tools/review_policy.py \
             tools/review_protected.py \
             ci/review_b15_runtime_smoke.py \
-            ci/review_b16_entrypoint_smoke.py
+            ci/review_b16_entrypoint_smoke.py \
+            ci/review_outer_smoke.py
 
-      # Native execution is an explicit fallback here because these tests exercise
-      # the host-side Docker orchestrator itself. Running them inside the candidate
-      # runtime would require exposing a Docker daemon/socket and CLI to that runtime,
-      # which would weaken the isolation boundary being tested. The exact candidate
-      # runtime was built and self-checked immediately above.
-      - name: Run dormant consumer contract tests via native orchestration fallback
+      # Native execution is an explicit fallback because these tests exercise the
+      # host-side lifecycle orchestrator. Candidate bytes may create and clean the
+      # isolated topology but the protected B1.6 runtime never receives the host
+      # Docker socket or a host-selected Docker executable.
+      - name: Run protected current-advisory consumer contract tests via native orchestration fallback
         run: |
           PYTHONPATH=. python tests/test_r2a_p2b_b16_cubic_followup_red.py
           PYTHONPATH=. python tests/test_r2a_p2b_b16_publication.py
           PYTHONPATH=. python tests/test_r2a_p2b_b16_reconciliation_fail_closed.py
           PYTHONPATH=. python tests/test_review_assurance_p2b_activation_red.py
+          PYTHONPATH=. python tests/test_review_assurance_p2b_b2_activation_red.py
           PYTHONPATH=. python tests/test_review_assurance_p2b_b15_runtime_red.py
           PYTHONPATH=. python tests/test_review_assurance_p2b_b16_entrypoint_red.py
           PYTHONPATH=. python tests/test_review_assurance_p2b_b1_dormancy_red.py
           PYTHONPATH=. python tests/test_review_assurance_p2b_b1_error_paths_red.py
           PYTHONPATH=. python tests/test_review_assurance_p2b_consumer_authority_red.py
+          PYTHONPATH=. python tests/test_review_outer_socket_table_red.py
 
-      - name: Verify pinned Docker client in exact dormant B1.5 runtime
+      - name: Verify pinned Docker client in exact B1.6 lineage runtime
         run: PYTHONPATH=. python ci/review_b15_runtime_smoke.py
 
-      - name: Verify input-only entrypoint remains dormant without a nested daemon
+      - name: Verify B1.6 input-only entrypoint fails closed without a nested daemon
         run: PYTHONPATH=. python ci/review_b16_entrypoint_smoke.py
 
-      - name: Exercise candidate implementation against authority-bound OCI P2a via native orchestration fallback
+      - name: Exercise protected live implementation against authority-bound OCI P2a
         run: PYTHONPATH=. python ci/review_live_smoke.py
 
-      - name: Verify timed-out protected Docker run cleanup via native orchestration fallback
+      - name: Verify timed-out protected Docker run cleanup
         run: PYTHONPATH=. python ci/review_live_timeout_cleanup.py
+
+      - name: Exercise activated prior-effective B1.6 through isolated nested daemon
+        run: PYTHONPATH=. python ci/review_outer_smoke.py
