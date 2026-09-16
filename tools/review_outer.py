@@ -408,17 +408,27 @@ def _listening_tcp_ports(raw: bytes) -> set[int]:
             "isolated Docker daemon socket table is not ASCII"
         ) from exc
 
+    valid_headers = {
+        ("sl", "local_address", "rem_address", "st"),
+        ("sl", "local_address", "remote_address", "st"),
+    }
+    saw_header = False
     listening: set[int] = set()
     for line in text.splitlines():
         fields = line.split()
         if not fields:
             continue
         if fields[0] == "sl":
-            if fields[:4] != ["sl", "local_address", "rem_address", "st"]:
+            if tuple(fields[:4]) not in valid_headers:
                 raise PriorEffectiveOuterUnavailable(
                     "isolated Docker daemon socket table is malformed"
                 )
+            saw_header = True
             continue
+        if not saw_header:
+            raise PriorEffectiveOuterUnavailable(
+                "isolated Docker daemon socket table is malformed"
+            )
         if not fields[0].endswith(":") or not fields[0][:-1].isdigit():
             raise PriorEffectiveOuterUnavailable(
                 "isolated Docker daemon socket table is malformed"
@@ -461,6 +471,10 @@ def _listening_tcp_ports(raw: bytes) -> set[int]:
             ) from exc
         if state == "0A":
             listening.add(port)
+    if not saw_header:
+        raise PriorEffectiveOuterUnavailable(
+            "isolated Docker daemon socket table is malformed"
+        )
     return listening
 
 
