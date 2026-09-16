@@ -228,29 +228,68 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
             B16_PUBLIC_SURFACE_DIGEST, consumer.get("public_surface_digest")
         )
 
-    def test_daemon_control_plane_rejects_tcp_docker_api(self) -> None:
+    def test_daemon_control_plane_rejects_listening_tcp_ports(self) -> None:
         outer = _load_outer()
-        failed = mock.Mock(returncode=1, stderr=b"connection refused")
+        no_forbidden_listener = mock.Mock(
+            returncode=0,
+            stdout=(
+                b"  sl  local_address rem_address   st\n"
+                b"   0: 0100007F:0016 00000000:0000 0A\n"
+            ),
+            stderr=b"",
+        )
         with mock.patch.object(
-            outer, "_run_docker", side_effect=[failed, failed]
+            outer, "_run_docker", return_value=no_forbidden_listener
         ) as run:
             outer._verify_daemon_control_plane(
                 "gnostoa-r2a-daemon-test", Path("/tmp/config")
             )
-        self.assertEqual(2, run.call_count)
-        commands = [call.args[0] for call in run.call_args_list]
-        self.assertTrue(
-            any("DOCKER_HOST=tcp://127.0.0.1:2375" in command for command in commands)
-        )
-        self.assertTrue(
-            any("DOCKER_HOST=tcp://127.0.0.1:2376" in command for command in commands)
+        run.assert_called_once()
+        command = run.call_args.args[0]
+        self.assertEqual(
+            [
+                "exec",
+                "gnostoa-r2a-daemon-test",
+                "sh",
+                "-c",
+                "cat /proc/1/net/tcp; [ ! -r /proc/1/net/tcp6 ] || cat /proc/1/net/tcp6",
+            ],
+            command,
         )
 
-        exposed = mock.Mock(returncode=0, stderr=b"")
-        with mock.patch.object(outer, "_run_docker", return_value=exposed):
+        forbidden_listeners = mock.Mock(
+            returncode=0,
+            stdout=(
+                b"  sl  local_address rem_address   st\n"
+                b"   0: 00000000:0947 00000000:0000 0A\n"
+                b"  sl  local_address rem_address   st\n"
+                b"   0: 00000000000000000000000000000000:0948 "
+                b"00000000000000000000000000000000:0000 0A\n"
+            ),
+            stderr=b"",
+        )
+        with mock.patch.object(
+            outer, "_run_docker", return_value=forbidden_listeners
+        ):
             with self.assertRaisesRegex(
                 outer.PriorEffectiveOuterUnavailable,
-                "unexpectedly exposes TCP control plane on 2375",
+                "unexpectedly exposes TCP control plane on 2375, 2376",
+            ):
+                outer._verify_daemon_control_plane(
+                    "gnostoa-r2a-daemon-test", Path("/tmp/config")
+                )
+
+        inspection_failure = mock.Mock(
+            returncode=1,
+            stdout=b"",
+            stderr=b"synthetic inspection failure",
+        )
+        with mock.patch.object(
+            outer, "_run_docker", return_value=inspection_failure
+        ):
+            with self.assertRaisesRegex(
+                outer.PriorEffectiveOuterUnavailable,
+                "cannot inspect isolated Docker daemon listening sockets",
             ):
                 outer._verify_daemon_control_plane(
                     "gnostoa-r2a-daemon-test", Path("/tmp/config")
