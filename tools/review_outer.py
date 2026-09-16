@@ -177,7 +177,9 @@ def _validate_consumer_authority(document: object) -> dict[str, Any]:
 def _new_resource_name(role: str) -> str:
     name = f"gnostoa-r2a-{role}-{uuid.uuid4().hex}"
     if _RESOURCE_NAME.fullmatch(name) is None:
-        raise PriorEffectiveOuterUnavailable("generated Docker resource name is invalid")
+        raise PriorEffectiveOuterUnavailable(
+            "generated Docker resource name is invalid"
+        )
     return name
 
 
