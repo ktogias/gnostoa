@@ -61,7 +61,7 @@ env:
   GNOSTOA_R2A_CANDIDATE_IMAGE: gnostoa-r2a-b1:${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
-  dormant-current-advisory-consumer:
+  protected-current-advisory-consumer:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -96,7 +96,7 @@ jobs:
             --require-hashes \
             -r requirements/development.lock
 
-      - name: Verify dormant consumer trust-domain sources
+      - name: Verify protected consumer trust-domain sources
         run: |
           python -m ruff format --check \
             tools/review_check.py \
@@ -157,7 +157,7 @@ jobs:
       # host-side lifecycle orchestrator. Candidate bytes may create and clean the
       # isolated topology but the protected B1.6 runtime never receives the host
       # Docker socket or a host-selected Docker executable.
-      - name: Run dormant consumer contract tests via native orchestration fallback
+      - name: Run protected current-advisory consumer contract tests via native orchestration fallback
         run: |
           PYTHONPATH=. python tests/test_r2a_p2b_b16_cubic_followup_red.py
           PYTHONPATH=. python tests/test_r2a_p2b_b16_publication.py
