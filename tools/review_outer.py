@@ -563,6 +563,37 @@ def _verify_outer_image(consumer: dict[str, Any], config_dir: Path) -> None:
             "protected outer-consumer runtime identity does not match authority"
         )
 
+    effective_ids = (
+        _checked_output(
+            [
+                "run",
+                "--rm",
+                "--pull=never",
+                "--network",
+                "none",
+                "--read-only",
+                "--cap-drop",
+                "ALL",
+                "--security-opt",
+                "no-new-privileges",
+                "--entrypoint",
+                "sh",
+                image,
+                "-ec",
+                "id -u; id -g",
+            ],
+            config_dir=config_dir,
+            description="cannot verify protected outer-consumer runtime uid/gid",
+            timeout=30,
+        )
+        .decode("ascii", errors="strict")
+        .splitlines()
+    )
+    if effective_ids != ["10001", "10001"]:
+        raise PriorEffectiveOuterUnavailable(
+            "protected outer-consumer runtime uid/gid do not match Docker socket ownership contract"
+        )
+
     surface = (
         _checked_output(
             [
