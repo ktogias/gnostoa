@@ -174,7 +174,17 @@ class R2AP2bB16CubicFollowupTests(unittest.TestCase):
         for required in (
             "cleanup_local_image()",
             "local prior_status=$?",
+            "local cleanup_status=0",
             "trap - EXIT",
+            'if ! docker image rm "${local_image}" >/dev/null 2>&1; then',
+            "cleanup_status=1",
+            'if docker image inspect "${local_image}" >/dev/null 2>&1; then',
+            'echo "local verification image remained cached" >&2',
+            'echo "local verification image cleanup failed" >&2',
+            'if [ "${cleanup_status}" -ne 0 ]; then',
+            'exit "${prior_status}"',
+            'exit "${cleanup_status}"',
+            cleanup_trap,
             bounded_build,
         ):
             self.assertIn(required, local_run)
