@@ -40,6 +40,8 @@ B16_OCI_IMAGE = (
     "sha256:d4cc72b0ed7342f533dd3bcf32ddf9888203f85408154f4066883ba9d33fe867"  # pragma: allowlist secret -- historical public OCI digest
 )
 CANDIDATE_IMAGE = "gnostoa-r2a-candidate:untrusted"
+PROTECTED_REPOSITORY = "https://github.com/ktogias/gnostoa.git"
+PROTECTED_CONSUMER_PATH = "tasks/issue-11-r2a-current-advisory-consumer.json"
 
 EXPECTED_CONSUMER = {
     "role": "current_advisory_outer_consumer",
@@ -128,7 +130,12 @@ class ReviewAssuranceP2bExitReadbackRedTests(unittest.TestCase):
             document=_load_json(AUTHORITY_PATH),
         )
 
-        def observe_candidate_poison() -> ProtectedMainDocument:
+        def observe_candidate_poison(
+            repository_url: str,
+            bundle_path: str,
+        ) -> ProtectedMainDocument:
+            self.assertEqual(PROTECTED_REPOSITORY, repository_url)
+            self.assertEqual(PROTECTED_CONSUMER_PATH, bundle_path)
             candidate_root = Path(os.environ["KNOWLEDGE_KIT_ROOT"])
             stale_path = (
                 candidate_root / "tasks" / "issue-11-r2a-current-advisory-consumer.json"
@@ -142,7 +149,7 @@ class ReviewAssuranceP2bExitReadbackRedTests(unittest.TestCase):
 
         with mock.patch.object(
             smoke.review_protected,
-            "acquire_gnostoa_current_advisory_consumer",
+            "_acquire_from_repository",
             side_effect=observe_candidate_poison,
         ) as protected_acquire:
             observed, consumer = acquire(
@@ -152,7 +159,10 @@ class ReviewAssuranceP2bExitReadbackRedTests(unittest.TestCase):
 
         self.assertEqual(protected, observed)
         self.assertEqual(EXPECTED_CONSUMER, consumer)
-        protected_acquire.assert_called_once_with()
+        protected_acquire.assert_called_once_with(
+            PROTECTED_REPOSITORY,
+            PROTECTED_CONSUMER_PATH,
+        )
 
     def test_selected_live_plan_rejects_candidate_and_stale_b16_images(self) -> None:
         smoke = _load_smoke()
