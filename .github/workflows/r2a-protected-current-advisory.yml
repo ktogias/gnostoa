@@ -95,7 +95,7 @@ jobs:
             --require-hashes \
             -r requirements/development.lock
 
-      - name: Verify protected consumer trust-domain sources
+      - name: Verify dormant consumer trust-domain sources
         run: |
           python -m ruff format --check \
             tools/review_check.py \
@@ -156,7 +156,7 @@ jobs:
       # host-side lifecycle orchestrator. Candidate bytes may create and clean the
       # isolated topology but the protected B1.6 runtime never receives the host
       # Docker socket or a host-selected Docker executable.
-      - name: Run protected consumer contract tests via native orchestration fallback
+      - name: Run dormant consumer contract tests via native orchestration fallback
         run: |
           PYTHONPATH=. python tests/test_r2a_p2b_b16_cubic_followup_red.py
           PYTHONPATH=. python tests/test_r2a_p2b_b16_publication.py
