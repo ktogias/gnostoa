@@ -268,9 +268,7 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
             ),
             stderr=b"",
         )
-        with mock.patch.object(
-            outer, "_run_docker", return_value=forbidden_listeners
-        ):
+        with mock.patch.object(outer, "_run_docker", return_value=forbidden_listeners):
             with self.assertRaisesRegex(
                 outer.PriorEffectiveOuterUnavailable,
                 "unexpectedly exposes TCP control plane on 2375, 2376",
@@ -284,9 +282,7 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
             stdout=b"",
             stderr=b"synthetic inspection failure",
         )
-        with mock.patch.object(
-            outer, "_run_docker", return_value=inspection_failure
-        ):
+        with mock.patch.object(outer, "_run_docker", return_value=inspection_failure):
             with self.assertRaisesRegex(
                 outer.PriorEffectiveOuterUnavailable,
                 "cannot inspect isolated Docker daemon listening sockets",
