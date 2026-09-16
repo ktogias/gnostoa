@@ -7,11 +7,11 @@
   "expected_consumer": {
     "role": "current_advisory_outer_consumer",
     "acquisition": "oci",
-    "source_revision": "7093fd043f2269e09da74b03ce9d35fb6aece5da",
-    "source_tree": "e7a4f2142e72efd52133f4719d8acf9b2dccb89d",
-    "public_surface_digest": "sha256:b07aec4907919c0c9a92e4382524db4f7981bd346a5a1292f5ac48e4a1e6238e",
-    "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:821b523d2ebe80d0194cfc366ff70c59e90b99c5524dd82df8e866ccfa00e1c3",
-    "runtime_revision": "7093fd043f2269e09da74b03ce9d35fb6aece5da",
+    "source_revision": "f29499286bac9859364d45da0f6c59396518b749",
+    "source_tree": "ff38abe5718ebc550054ea6af18a73d0aef8e514",
+    "public_surface_digest": "sha256:c8536ac1f726f1d04f331c95f85a9df128b7cdb818213785cbd6b0b0940f9c57",
+    "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:d4cc72b0ed7342f533dd3bcf32ddf9888203f85408154f4066883ba9d33fe867",
+    "runtime_revision": "f29499286bac9859364d45da0f6c59396518b749",
     "supported_input_schema_versions": [
       "1.0"
     ],
@@ -20,21 +20,21 @@
   "acquired_consumer": {
     "role": "current_advisory_outer_consumer",
     "acquisition": "oci",
-    "source_revision": "7093fd043f2269e09da74b03ce9d35fb6aece5da",
-    "source_tree": "e7a4f2142e72efd52133f4719d8acf9b2dccb89d",
-    "public_surface_digest": "sha256:b07aec4907919c0c9a92e4382524db4f7981bd346a5a1292f5ac48e4a1e6238e",
-    "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:821b523d2ebe80d0194cfc366ff70c59e90b99c5524dd82df8e866ccfa00e1c3",
-    "runtime_revision": "7093fd043f2269e09da74b03ce9d35fb6aece5da",
+    "source_revision": "f29499286bac9859364d45da0f6c59396518b749",
+    "source_tree": "ff38abe5718ebc550054ea6af18a73d0aef8e514",
+    "public_surface_digest": "sha256:c8536ac1f726f1d04f331c95f85a9df128b7cdb818213785cbd6b0b0940f9c57",
+    "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:d4cc72b0ed7342f533dd3bcf32ddf9888203f85408154f4066883ba9d33fe867",
+    "runtime_revision": "f29499286bac9859364d45da0f6c59396518b749",
     "supported_input_schema_versions": [
       "1.0"
     ],
     "status": "accepted"
   },
   "materialization": {
-    "protected_main_revision": "8b189f66c92859b4ef75a91d962f4aec38b30408",
-    "workflow_run": "34905764252",
-    "attestation_id": "47472753",
-    "rekor_log_index": "2835934017",
-    "receipt": "https://github.com/ktogias/gnostoa/issues/11#issuecomment-5671868333"
+    "protected_main_revision": "f8aac5159c36a0ff8cb9a22dcc933285c6b52b81",
+    "workflow_run": "35058782405",
+    "attestation_id": "47823269",
+    "rekor_log_index": "2855771710",
+    "receipt": "https://github.com/ktogias/gnostoa/issues/11#issuecomment-5692487663"
   }
 }
