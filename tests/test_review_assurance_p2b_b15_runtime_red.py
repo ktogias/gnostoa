@@ -32,13 +32,24 @@ class ReviewAssuranceP2bB15RuntimeRedTests(unittest.TestCase):
         self.assertNotIn('"docker.io=${DOCKER_CLI_VERSION}"', dockerfile)
         self.assertNotIn("dockerd", dockerfile)
 
-    def test_b15_keeps_candidate_current_advisory_dormant(self) -> None:
+    def test_b15_keeps_candidate_semantic_current_advisory_dormant(self) -> None:
         review_check = REVIEW_CHECK.read_text(encoding="utf-8")
-        self.assertIn("candidate-side P2b-B1 CLI", review_check)
         self.assertIn(
-            "consumer must become prior-effective before activation", review_check
+            "from .review_outer import run_prior_effective_current_advisory",
+            review_check,
         )
-        self.assertNotIn("run_prior_effective_current_advisory", review_check)
+        self.assertIn(
+            "code, raw_result = run_prior_effective_current_advisory(input_document)",
+            review_check,
+        )
+        self.assertNotIn(
+            "from .review_live import evaluate_gnostoa_current_advisory",
+            review_check,
+        )
+        self.assertNotIn(
+            "code, payload = evaluate_gnostoa_current_advisory(input_document)",
+            review_check,
+        )
 
     def test_b15_has_a_durable_runtime_capability_decision(self) -> None:
         self.assertTrue(DECISION.is_file(), "P2B_B15_RUNTIME_DECISION_UNAVAILABLE")
