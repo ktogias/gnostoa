@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import copy
-import importlib
+import importlib.util
 import json
 import os
 import unittest
 from pathlib import Path
+from types import ModuleType
 from unittest import mock
 
 import yaml
@@ -14,7 +15,7 @@ from tools import review_outer
 from tools.review_protected import ProtectedMainDocument
 
 ROOT = Path(__file__).resolve().parents[1]
-SMOKE_MODULE = "ci.review_outer_smoke"
+SMOKE_PATH = ROOT / "ci" / "review_outer_smoke.py"
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "r2a-protected-current-advisory.yml"
 AUTHORITY_PATH = ROOT / "tasks" / "issue-11-r2a-current-advisory-consumer.json"
 INNER_AUTHORITY_PATH = ROOT / "tasks" / "issue-11-r2a-current-advisory.json"
@@ -63,8 +64,16 @@ def _load_json(path: Path) -> dict[str, object]:
     return value
 
 
-def _load_smoke() -> object:
-    return importlib.import_module(SMOKE_MODULE)
+def _load_smoke() -> ModuleType:
+    spec = importlib.util.spec_from_file_location(
+        "gnostoa_r2a_p2b_exit_review_outer_smoke",
+        SMOKE_PATH,
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load protected smoke module from {SMOKE_PATH}")
+    smoke = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(smoke)
+    return smoke
 
 
 def _stale_b16_authority() -> dict[str, object]:
