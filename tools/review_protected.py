@@ -13,6 +13,7 @@ from typing import Any, NoReturn
 
 _GNOSTOA_SELF_REPOSITORY = "https://github.com/ktogias/gnostoa.git"
 _GNOSTOA_SELF_BUNDLE_PATH = "tasks/issue-11-r2a-current-advisory.json"
+_GNOSTOA_SELF_CONSUMER_PATH = "tasks/issue-11-r2a-current-advisory-consumer.json"
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
 _GIT_TIMEOUT_SECONDS = 20
 _MAX_PROTECTED_DOCUMENT_BYTES = 2_097_152
@@ -202,16 +203,18 @@ def _acquire_from_repository(
 
 
 def acquire_gnostoa_current_advisory_bundle() -> ProtectedMainDocument:
-    """Read the Gnostoa-self authority document from protected main only.
-
-    P2a deliberately establishes provider acquisition, not execution identity and
-    not semantic activation. The repository, branch and document path are fixed,
-    and Git runs with a minimal configuration-free environment. P2b must
-    independently bind a digest-pinned prior-integrated OCI execution identity
-    before it may connect this provider record to current-advisory evaluation.
-    """
+    """Read the Gnostoa-self inner semantic authority from protected main only."""
 
     return _acquire_from_repository(
         _GNOSTOA_SELF_REPOSITORY,
         _GNOSTOA_SELF_BUNDLE_PATH,
+    )
+
+
+def acquire_gnostoa_current_advisory_consumer() -> ProtectedMainDocument:
+    """Read the Gnostoa-self outer-consumer authority from protected main only."""
+
+    return _acquire_from_repository(
+        _GNOSTOA_SELF_REPOSITORY,
+        _GNOSTOA_SELF_CONSUMER_PATH,
     )
