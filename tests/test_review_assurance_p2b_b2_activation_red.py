@@ -251,7 +251,7 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
                 "exec",
                 "gnostoa-r2a-daemon-test",
                 "sh",
-                "-c",
+                "-ec",
                 "cat /proc/1/net/tcp; [ ! -r /proc/1/net/tcp6 ] || cat /proc/1/net/tcp6",
             ],
             command,
