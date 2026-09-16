@@ -17,17 +17,23 @@ CONSUMER_AUTHORITY_PATH = ROOT / "tasks" / "issue-11-r2a-current-advisory-consum
 CONSUMER_SCHEMA_PATH = (
     ROOT / "schemas" / "review-protected-consumer-authority.schema.json"
 )
-HISTORICAL_PROMOTION_DECISION_PATH = (
+HISTORICAL_B15_PROMOTION_DECISION_PATH = (
     ROOT
     / "knowledge"
     / "decisions"
     / "0073-promote-r2a-b15-outer-consumer-authority.md"
 )
-DECISION_PATH = (
+HISTORICAL_B16_PROMOTION_DECISION_PATH = (
     ROOT
     / "knowledge"
     / "decisions"
     / "0076-promote-r2a-b16-outer-consumer-authority.md"
+)
+DECISION_PATH = (
+    ROOT
+    / "knowledge"
+    / "decisions"
+    / "0079-promote-r2a-p2b-outer-consumer-authority.md"
 )
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "r2a-protected-current-advisory.yml"
 GUARDRAILS_PATH = ROOT / "policy" / "guardrails.yaml"
@@ -38,36 +44,43 @@ HISTORICAL_MATERIALIZATION_DECISION_FILTER_PATH = (
 HISTORICAL_PROMOTION_DECISION_FILTER_PATH = (
     "knowledge/decisions/0073-promote-r2a-b15-outer-consumer-authority.md"
 )
-MATERIALIZATION_DECISION_PATH = (
+B16_MATERIALIZATION_DECISION_FILTER_PATH = (
     "knowledge/decisions/0075-materialize-integrated-r2a-p2b-b16-consumer-by-digest.md"
 )
-PROMOTION_DECISION_PATH = (
+B16_PROMOTION_DECISION_FILTER_PATH = (
     "knowledge/decisions/0076-promote-r2a-b16-outer-consumer-authority.md"
 )
-
-B16_SOURCE_REVISION = "f29499286bac9859364d45da0f6c59396518b749"  # pragma: allowlist secret -- public source revision
-B16_SOURCE_TREE = "ff38abe5718ebc550054ea6af18a73d0aef8e514"  # pragma: allowlist secret -- public source tree
-B16_PUBLIC_SURFACE_DIGEST = "sha256:c8536ac1f726f1d04f331c95f85a9df128b7cdb818213785cbd6b0b0940f9c57"  # pragma: allowlist secret -- public surface digest
-B16_OCI_IMAGE = (
-    "ghcr.io/ktogias/gnostoa@"
-    "sha256:d4cc72b0ed7342f533dd3bcf32ddf9888203f85408154f4066883ba9d33fe867"  # pragma: allowlist secret -- public OCI digest
+P2B_ACTIVATION_DECISION_FILTER_PATH = (
+    "knowledge/decisions/0077-activate-r2a-p2b-b2-through-prior-effective-b16.md"
 )
-MATERIALIZATION_MAIN_REVISION = "f8aac5159c36a0ff8cb9a22dcc933285c6b52b81"  # pragma: allowlist secret -- public protected-main revision
-MATERIALIZATION_RUN = "35058782405"
-ATTESTATION_ID = "47823269"
-REKOR_LOG_INDEX = "2855771710"
-RECEIPT_COMMENT = "5692487663"
-CONTAINMENT_RECEIPT_COMMENT = "5694072707"
-REVALIDATION_RECEIPT_COMMENT = "5694179373"
+P2B_MATERIALIZATION_DECISION_FILTER_PATH = (
+    "knowledge/decisions/0078-materialize-integrated-r2a-p2b-runtime-by-digest.md"
+)
+P2B_PROMOTION_DECISION_FILTER_PATH = (
+    "knowledge/decisions/0079-promote-r2a-p2b-outer-consumer-authority.md"
+)
+
+P2B_SOURCE_REVISION = "2aa1ed3217c42819155b8ff36385b000720ba4f8"  # pragma: allowlist secret -- public source revision
+P2B_SOURCE_TREE = "4cda4e4a704cb518f56201423e313d4dd9db5e24"  # pragma: allowlist secret -- public source tree
+P2B_PUBLIC_SURFACE_DIGEST = "sha256:b69f11e1efe181f959a14310fed0a35d3533114d734de584790a85cba7bdb565"  # pragma: allowlist secret -- public surface digest
+P2B_OCI_IMAGE = (
+    "ghcr.io/ktogias/gnostoa@"
+    "sha256:a657bb69c2cd1c117831558bf9794aa07caa74ac8adaff8d05b5650165b0d281"  # pragma: allowlist secret -- public OCI digest
+)
+MATERIALIZATION_MAIN_REVISION = "8feeb816d01ebda267e79ef57d5da7c0ccf61207"  # pragma: allowlist secret -- public protected-main revision
+MATERIALIZATION_RUN = "35136892751"
+ATTESTATION_ID = "47999464"
+REKOR_LOG_INDEX = "2866053656"
+RECEIPT_COMMENT = "5703489461"
 
 EXPECTED_CONSUMER = {
     "role": "current_advisory_outer_consumer",
     "acquisition": "oci",
-    "source_revision": B16_SOURCE_REVISION,
-    "source_tree": B16_SOURCE_TREE,
-    "public_surface_digest": B16_PUBLIC_SURFACE_DIGEST,
-    "runtime_image": B16_OCI_IMAGE,
-    "runtime_revision": B16_SOURCE_REVISION,
+    "source_revision": P2B_SOURCE_REVISION,
+    "source_tree": P2B_SOURCE_TREE,
+    "public_surface_digest": P2B_PUBLIC_SURFACE_DIGEST,
+    "runtime_image": P2B_OCI_IMAGE,
+    "runtime_revision": P2B_SOURCE_REVISION,
     "supported_input_schema_versions": ["1.0"],
     "status": "accepted",
 }
@@ -100,7 +113,7 @@ class ReviewAssuranceP2bConsumerAuthorityRedTests(unittest.TestCase):
         unknown["candidate_claim"] = True
         self.assertNotEqual([], list(validator.iter_errors(unknown)))
 
-    def test_outer_consumer_authority_binds_exact_materialized_b16(self) -> None:
+    def test_outer_consumer_authority_binds_exact_materialized_p2b(self) -> None:
         authority = _load(CONSUMER_AUTHORITY_PATH)
         self.assertEqual("1.0", authority.get("schema_version"))
         self.assertEqual(
@@ -154,41 +167,52 @@ class ReviewAssuranceP2bConsumerAuthorityRedTests(unittest.TestCase):
         self.assertNotIn("acquired_consumer", semantic)
 
     def test_b15_promotion_decision_remains_historical_evidence(self) -> None:
-        self.assertTrue(HISTORICAL_PROMOTION_DECISION_PATH.is_file())
-        decision = HISTORICAL_PROMOTION_DECISION_PATH.read_text(encoding="utf-8")
+        self.assertTrue(HISTORICAL_B15_PROMOTION_DECISION_PATH.is_file())
+        decision = HISTORICAL_B15_PROMOTION_DECISION_PATH.read_text(encoding="utf-8")
         self.assertIn("B1.5", decision)
         self.assertIn(
             "ghcr.io/ktogias/gnostoa@sha256:"
-            "821b523d2ebe80d0194cfc366ff70c59e90b99c5524dd82df8e866ccfa00e1c3",
+            "821b523d2ebe80d0194cfc366ff70c59e90b99c5524dd82df8e866ccfa00e1c3",  # pragma: allowlist secret -- historical public OCI digest
             decision,
         )
         self.assertIn("does not activate", decision.lower())
 
-    def test_b16_outer_consumer_authority_has_durable_promotion_decision(self) -> None:
+    def test_b16_promotion_decision_remains_historical_evidence(self) -> None:
+        self.assertTrue(HISTORICAL_B16_PROMOTION_DECISION_PATH.is_file())
+        decision = HISTORICAL_B16_PROMOTION_DECISION_PATH.read_text(encoding="utf-8")
+        self.assertIn("B1.6", decision)
+        self.assertIn(
+            "ghcr.io/ktogias/gnostoa@sha256:"
+            "d4cc72b0ed7342f533dd3bcf32ddf9888203f85408154f4066883ba9d33fe867",  # pragma: allowlist secret -- historical public OCI digest
+            decision,
+        )
+        self.assertIn("does not activate", decision.lower())
+
+    def test_p2b_outer_consumer_authority_has_durable_promotion_decision(self) -> None:
         self.assertTrue(
             DECISION_PATH.is_file(),
-            "P2B_B16_OUTER_CONSUMER_AUTHORITY_DECISION_UNAVAILABLE",
+            "P2B_OUTER_CONSUMER_AUTHORITY_DECISION_UNAVAILABLE",
         )
         decision = DECISION_PATH.read_text(encoding="utf-8")
         for required in (
             "Decision 0070",
-            "Decision 0073",
-            "Decision 0074",
-            "Decision 0075",
-            B16_SOURCE_REVISION,
-            B16_SOURCE_TREE,
-            B16_PUBLIC_SURFACE_DIGEST,
-            B16_OCI_IMAGE,
+            "Decision 0076",
+            "Decision 0077",
+            "Decision 0078",
+            P2B_SOURCE_REVISION,
+            P2B_SOURCE_TREE,
+            P2B_PUBLIC_SURFACE_DIGEST,
+            P2B_OCI_IMAGE,
             MATERIALIZATION_MAIN_REVISION,
             MATERIALIZATION_RUN,
             ATTESTATION_ID,
             REKOR_LOG_INDEX,
             RECEIPT_COMMENT,
-            CONTAINMENT_RECEIPT_COMMENT,
-            REVALIDATION_RECEIPT_COMMENT,
-            "target: /decisions/0073-promote-r2a-b15-outer-consumer-authority.md",
-            "B1.6",
-            "P2b-B2",
+            "target: /decisions/0076-promote-r2a-b16-outer-consumer-authority.md",
+            "OCI(P2b)",
+            "subsequent candidate",
+            "negative read-back",
+            "stale B1.x",
             "knowledge/index.md",
             "semantic-review-assurance",
             "dedicated R2A",
@@ -197,18 +221,21 @@ class ReviewAssuranceP2bConsumerAuthorityRedTests(unittest.TestCase):
         self.assertIn("outer consumer", decision.lower())
         self.assertIn("inner semantic", decision.lower())
         self.assertIn("closed v1", decision.lower())
-        self.assertIn("does not activate", decision.lower())
+        self.assertIn("does not claim", decision.lower())
         self.assertIn("navigation-only", decision.lower())
         self.assertIn("index-only", decision.lower())
 
-    def test_dedicated_workflow_covers_b16_outer_consumer_authority(self) -> None:
+    def test_dedicated_workflow_covers_p2b_outer_consumer_authority(self) -> None:
         workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
         for protected_path in (
             "tasks/issue-11-r2a-current-advisory-consumer.json",
             HISTORICAL_MATERIALIZATION_DECISION_FILTER_PATH,
             HISTORICAL_PROMOTION_DECISION_FILTER_PATH,
-            MATERIALIZATION_DECISION_PATH,
-            PROMOTION_DECISION_PATH,
+            B16_MATERIALIZATION_DECISION_FILTER_PATH,
+            B16_PROMOTION_DECISION_FILTER_PATH,
+            P2B_ACTIVATION_DECISION_FILTER_PATH,
+            P2B_MATERIALIZATION_DECISION_FILTER_PATH,
+            P2B_PROMOTION_DECISION_FILTER_PATH,
             FOCUSED_TEST_PATH,
         ):
             self.assertIn(f'- "{protected_path}"', workflow)
@@ -217,7 +244,7 @@ class ReviewAssuranceP2bConsumerAuthorityRedTests(unittest.TestCase):
         self.assertGreaterEqual(workflow.count(FOCUSED_TEST_PATH), 4)
         self.assertIn(f"PYTHONPATH=. python {FOCUSED_TEST_PATH}", workflow)
 
-    def test_semantic_review_guardrail_declares_b16_outer_consumer_authority(
+    def test_semantic_review_guardrail_declares_p2b_outer_consumer_authority(
         self,
     ) -> None:
         document = yaml.safe_load(GUARDRAILS_PATH.read_text(encoding="utf-8"))
@@ -245,8 +272,11 @@ class ReviewAssuranceP2bConsumerAuthorityRedTests(unittest.TestCase):
                 "knowledge/decisions/0072-materialize-integrated-r2a-p2b-b15-consumer-by-digest.md",
                 "knowledge/decisions/0073-promote-r2a-b15-outer-consumer-authority.md",
                 "knowledge/decisions/0074-add-input-only-live-entrypoint-to-r2a-b15-runtime.md",
-                MATERIALIZATION_DECISION_PATH,
-                PROMOTION_DECISION_PATH,
+                B16_MATERIALIZATION_DECISION_FILTER_PATH,
+                B16_PROMOTION_DECISION_FILTER_PATH,
+                P2B_ACTIVATION_DECISION_FILTER_PATH,
+                P2B_MATERIALIZATION_DECISION_FILTER_PATH,
+                P2B_PROMOTION_DECISION_FILTER_PATH,
             },
             set(implementation),
         )

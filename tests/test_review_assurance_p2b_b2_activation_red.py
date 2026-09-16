@@ -34,6 +34,12 @@ B16_OCI_IMAGE = (
     "ghcr.io/ktogias/gnostoa@"
     "sha256:d4cc72b0ed7342f533dd3bcf32ddf9888203f85408154f4066883ba9d33fe867"  # pragma: allowlist secret -- public OCI digest
 )
+P2B_SOURCE_REVISION = "2aa1ed3217c42819155b8ff36385b000720ba4f8"  # pragma: allowlist secret -- public source revision
+P2B_PUBLIC_SURFACE_DIGEST = "sha256:b69f11e1efe181f959a14310fed0a35d3533114d734de584790a85cba7bdb565"  # pragma: allowlist secret -- public surface digest
+P2B_OCI_IMAGE = (
+    "ghcr.io/ktogias/gnostoa@"
+    "sha256:a657bb69c2cd1c117831558bf9794aa07caa74ac8adaff8d05b5650165b0d281"  # pragma: allowlist secret -- public OCI digest
+)
 _DIGEST_IMAGE = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9._:-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)+"
     r"@sha256:[0-9a-f]{64}$"
@@ -210,7 +216,7 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         self.assertNotIn("tcp://0.0.0.0:2375", " ".join(daemon_args))
         self.assertNotIn("tcp://0.0.0.0:2376", " ".join(daemon_args))
 
-        self.assertIn(B16_OCI_IMAGE, outer_args)
+        self.assertIn(P2B_OCI_IMAGE, outer_args)
         self.assertIn("--read-only", outer_args)
         self.assertIn("--cap-drop", outer_args)
         self.assertIn("ALL", outer_args)
@@ -228,9 +234,9 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         self.assertNotIn("/usr/bin/docker", joined)
         self.assertNotIn("GNOSTOA_R2A_CANDIDATE_IMAGE", joined)
         self.assertNotIn(str(ROOT), joined)
-        self.assertEqual(B16_SOURCE_REVISION, consumer.get("runtime_revision"))
+        self.assertEqual(P2B_SOURCE_REVISION, consumer.get("runtime_revision"))
         self.assertEqual(
-            B16_PUBLIC_SURFACE_DIGEST, consumer.get("public_surface_digest")
+            P2B_PUBLIC_SURFACE_DIGEST, consumer.get("public_surface_digest")
         )
 
     def test_daemon_control_plane_rejects_listening_tcp_ports(self) -> None:
