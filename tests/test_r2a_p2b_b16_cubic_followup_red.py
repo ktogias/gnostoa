@@ -77,8 +77,8 @@ class R2AP2bB16CubicFollowupTests(unittest.TestCase):
     def test_dedicated_r2a_executes_both_contracts_as_top_level_commands(self) -> None:
         workflow = _load_workflow(R2A_WORKFLOW_PATH)
         native_step = _named_step(
-            _job_steps(workflow, "dormant-current-advisory-consumer"),
-            "Run dormant consumer contract tests via native orchestration fallback",
+            _job_steps(workflow, "protected-current-advisory-consumer"),
+            "Run protected current-advisory consumer contract tests via native orchestration fallback",
         )
         sequence = (
             "PYTHONPATH=. python tests/test_r2a_p2b_b16_publication.py",
@@ -121,9 +121,9 @@ class R2AP2bB16CubicFollowupTests(unittest.TestCase):
             "the follow-up regression guard must itself trigger dedicated R2A verification",
         )
 
-        steps = _job_steps(workflow, "dormant-current-advisory-consumer")
+        steps = _job_steps(workflow, "protected-current-advisory-consumer")
         static_run = _run(
-            _named_step(steps, "Verify dormant consumer trust-domain sources")
+            _named_step(steps, "Verify protected consumer trust-domain sources")
         )
         ruff_commands = (
             (
@@ -144,7 +144,7 @@ class R2AP2bB16CubicFollowupTests(unittest.TestCase):
         native_run = _run(
             _named_step(
                 steps,
-                "Run dormant consumer contract tests via native orchestration fallback",
+                "Run protected current-advisory consumer contract tests via native orchestration fallback",
             )
         )
         command = f"PYTHONPATH=. python {FOLLOWUP_TEST_RELATIVE_PATH}"
