@@ -171,6 +171,10 @@ class R2AP2bIntegratedMaterializationTests(unittest.TestCase):
         )
         semantic_section = _guardrail_section(guardrails, "semantic-review-assurance")
         self.assertIn(DECISION_RELATIVE_PATH, semantic_section)
+        self.assertIn(WORKFLOW_RELATIVE_PATH, semantic_section)
+        self.assertIn(
+            "tests/test_r2a_p2b_integrated_materialization.py", semantic_section
+        )
 
         r2a_workflow = R2A_WORKFLOW_PATH.read_text(encoding="utf-8")
         self.assertIn(WORKFLOW_RELATIVE_PATH, r2a_workflow)

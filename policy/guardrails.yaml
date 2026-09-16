@@ -505,6 +505,7 @@ guardrails:
       - tools/review_outer.py
       - tools/cli.py
       - .github/workflows/r2a-protected-current-advisory.yml
+      - .github/workflows/publish-r2a-p2b-oci.yml
     tests:
       - tests/test_review_assurance.py
       - tests/test_review_assurance_integration.py
@@ -519,6 +520,7 @@ guardrails:
       - tests/test_review_assurance_p2b_b15_runtime_red.py
       - tests/test_review_assurance_p2b_b16_entrypoint_red.py
       - tests/test_review_assurance_p2b_b2_activation_red.py
+      - tests/test_r2a_p2b_integrated_materialization.py
       - ci/review_b15_runtime_smoke.py
       - ci/review_b16_entrypoint_smoke.py
       - ci/review_live_smoke.py
