@@ -200,6 +200,11 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         self.assertIn("--privileged", daemon_args)
         self.assertIn(f"{socket_volume}:/var/run", daemon_args)
         self.assertIn(f"{tmp_volume}:/tmp", daemon_args)
+        daemon_image_index = daemon_args.index(daemon_image)
+        self.assertEqual("dockerd", daemon_args[daemon_image_index + 1])
+        self.assertEqual(1, daemon_args.count("--host=unix:///var/run/docker.sock"))
+        self.assertNotIn("tcp://0.0.0.0:2375", " ".join(daemon_args))
+        self.assertNotIn("tcp://0.0.0.0:2376", " ".join(daemon_args))
 
         self.assertIn(B16_OCI_IMAGE, outer_args)
         self.assertIn("--read-only", outer_args)
@@ -222,6 +227,34 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         self.assertEqual(
             B16_PUBLIC_SURFACE_DIGEST, consumer.get("public_surface_digest")
         )
+
+    def test_daemon_control_plane_rejects_tcp_docker_api(self) -> None:
+        outer = _load_outer()
+        failed = mock.Mock(returncode=1, stderr=b"connection refused")
+        with mock.patch.object(
+            outer, "_run_docker", side_effect=[failed, failed]
+        ) as run:
+            outer._verify_daemon_control_plane(
+                "gnostoa-r2a-daemon-test", Path("/tmp/config")
+            )
+        self.assertEqual(2, run.call_count)
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertTrue(
+            any("DOCKER_HOST=tcp://127.0.0.1:2375" in command for command in commands)
+        )
+        self.assertTrue(
+            any("DOCKER_HOST=tcp://127.0.0.1:2376" in command for command in commands)
+        )
+
+        exposed = mock.Mock(returncode=0, stderr=b"")
+        with mock.patch.object(outer, "_run_docker", return_value=exposed):
+            with self.assertRaisesRegex(
+                outer.PriorEffectiveOuterUnavailable,
+                "unexpectedly exposes TCP control plane on 2375",
+            ):
+                outer._verify_daemon_control_plane(
+                    "gnostoa-r2a-daemon-test", Path("/tmp/config")
+                )
 
     def test_successful_create_registers_cleanup_name_before_reply_validation(
         self,
