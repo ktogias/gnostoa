@@ -339,6 +339,14 @@ def _configuration(message: str) -> tuple[int, dict[str, Any]]:
     return ERROR_EXIT_CODE, error_payload("CONFIGURATION_ERROR", message)
 
 
+def _write_raw_result(raw_result: bytes) -> None:
+    output_buffer = getattr(sys.stdout, "buffer", None)
+    if output_buffer is not None:
+        output_buffer.write(raw_result)
+        return
+    sys.stdout.write(raw_result.decode("utf-8", errors="strict"))
+
+
 def main(argv: list[str] | None = None) -> int:
     try:
         args = _parser().parse_args(sys.argv[1:] if argv is None else argv)
@@ -360,7 +368,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
             else:
                 code, raw_result = run_prior_effective_current_advisory(input_document)
-                sys.stdout.buffer.write(raw_result)
+                _write_raw_result(raw_result)
                 return code
         else:
             try:
