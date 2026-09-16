@@ -399,24 +399,64 @@ def _wait_for_daemon(container_name: str, config_dir: Path) -> None:
     raise PriorEffectiveOuterUnavailable("isolated Docker daemon did not become ready")
 
 
-def _verify_daemon_control_plane(container_name: str, config_dir: Path) -> None:
-    for port in (2375, 2376):
-        result = _run_docker(
-            [
-                "exec",
-                "--env",
-                f"DOCKER_HOST=tcp://127.0.0.1:{port}",
-                container_name,
-                "docker",
-                "info",
-            ],
-            config_dir=config_dir,
-            timeout=5,
-        )
-        if result.returncode == 0:
+def _listening_tcp_ports(raw: bytes) -> set[int]:
+    try:
+        text = raw.decode("ascii", errors="strict")
+    except UnicodeDecodeError as exc:
+        raise PriorEffectiveOuterUnavailable(
+            "isolated Docker daemon socket table is not ASCII"
+        ) from exc
+
+    listening: set[int] = set()
+    for line in text.splitlines():
+        fields = line.split()
+        if not fields or not fields[0].endswith(":"):
+            continue
+        if len(fields) < 4:
             raise PriorEffectiveOuterUnavailable(
-                f"isolated Docker daemon unexpectedly exposes TCP control plane on {port}"
+                "isolated Docker daemon socket table is malformed"
             )
+        local_address = fields[1]
+        state = fields[3].upper()
+        if ":" not in local_address:
+            raise PriorEffectiveOuterUnavailable(
+                "isolated Docker daemon socket table is malformed"
+            )
+        try:
+            port = int(local_address.rsplit(":", 1)[1], 16)
+        except ValueError as exc:
+            raise PriorEffectiveOuterUnavailable(
+                "isolated Docker daemon socket table is malformed"
+            ) from exc
+        if state == "0A":
+            listening.add(port)
+    return listening
+
+
+def _verify_daemon_control_plane(container_name: str, config_dir: Path) -> None:
+    result = _run_docker(
+        [
+            "exec",
+            container_name,
+            "sh",
+            "-c",
+            "cat /proc/1/net/tcp; [ ! -r /proc/1/net/tcp6 ] || cat /proc/1/net/tcp6",
+        ],
+        config_dir=config_dir,
+        timeout=5,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.decode("utf-8", errors="replace").strip()
+        raise PriorEffectiveOuterUnavailable(
+            "cannot inspect isolated Docker daemon listening sockets"
+            + (f": {detail}" if detail else "")
+        )
+    forbidden = sorted({2375, 2376} & _listening_tcp_ports(result.stdout))
+    if forbidden:
+        ports = ", ".join(str(port) for port in forbidden)
+        raise PriorEffectiveOuterUnavailable(
+            f"isolated Docker daemon unexpectedly exposes TCP control plane on {ports}"
+        )
 
 
 def _verify_outer_image(consumer: dict[str, Any], config_dir: Path) -> None:
