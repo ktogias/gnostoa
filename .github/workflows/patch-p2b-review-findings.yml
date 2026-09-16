@@ -20,7 +20,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Apply bounded exact review fixes
+      - name: Apply bounded non-workflow review fixes
         shell: bash
         run: |
           set -euo pipefail
@@ -32,25 +32,6 @@ jobs:
               if count != 1:
                   raise SystemExit(f"{label}: expected one anchor, found {count}")
               return text.replace(old, new, 1)
-
-          publisher_path = Path(".github/workflows/publish-r2a-p2b-oci.yml")
-          publisher = publisher_path.read_text(encoding="utf-8")
-
-          auth_anchor = '''          digest_ref="${IMAGE_NAME}@${registry_digest}"\n          timeout --kill-after=5s 120s docker pull --quiet "${digest_ref}" >/dev/null\n          test "$(timeout --kill-after=5s 30s docker buildx imagetools inspect "${digest_ref}" --format '{{.Manifest.Digest}}')" = "${registry_digest}"\n          test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "${digest_ref}")" = "linux/amd64"\n          test "$(docker image inspect --format '{{.Config.User}}' "${digest_ref}")" = "kit"\n          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${digest_ref}")" = "${SOURCE_COMMIT}"\n'''
-          auth_replacement = '''          digest_ref="${IMAGE_NAME}@${registry_digest}"\n          timeout --kill-after=5s 120s docker pull --quiet "${digest_ref}" >/dev/null\n          test "$(timeout --kill-after=5s 30s docker buildx imagetools inspect "${digest_ref}" --format '{{.Manifest.Digest}}')" = "${registry_digest}"\n          test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "${digest_ref}")" = "linux/amd64"\n          test "$(docker image inspect --format '{{.Config.User}}' "${digest_ref}")" = "kit"\n          test "$(docker run --rm --entrypoint id "${digest_ref}" -u)" = "10001"\n          test "$(docker run --rm --entrypoint id "${digest_ref}" -g)" = "10001"\n          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${digest_ref}")" = "${SOURCE_COMMIT}"\n'''
-          publisher = replace_once(
-              publisher, auth_anchor, auth_replacement, "authenticated UID/GID readback"
-          )
-
-          reconcile_anchor = '''          reconcile_config="$(mktemp -d)"\n          trap 'docker image rm "${digest_ref}" >/dev/null 2>&1 || true; rm -rf "${reconcile_config}"' EXIT\n          timeout --kill-after=5s 30s docker logout ghcr.io >/dev/null 2>&1 || true\n          docker image rm "${digest_ref}" >/dev/null 2>&1 || true\n          timeout --kill-after=5s 120s env DOCKER_CONFIG="${reconcile_config}" \\\n            docker pull --quiet "${digest_ref}" >/dev/null\n'''
-          reconcile_replacement = '''          reconcile_config="$(mktemp -d)"\n          cleanup_reconciliation() {\n            local prior_status=$?\n            local cleanup_status=0\n            trap - EXIT\n            if docker image inspect "${digest_ref}" >/dev/null 2>&1; then\n              docker image rm "${digest_ref}" >/dev/null 2>&1 || cleanup_status=1\n            fi\n            rm -rf "${reconcile_config}" || cleanup_status=1\n            if [ "${prior_status}" -ne 0 ]; then\n              exit "${prior_status}"\n            fi\n            exit "${cleanup_status}"\n          }\n          trap cleanup_reconciliation EXIT\n          timeout --kill-after=5s 30s docker logout ghcr.io >/dev/null 2>&1 || true\n          if docker image inspect "${digest_ref}" >/dev/null 2>&1; then\n            docker image rm "${digest_ref}" >/dev/null\n          fi\n          if docker image inspect "${digest_ref}" >/dev/null 2>&1; then\n            echo "digest image remained cached before reconciliation reacquisition" >&2\n            exit 1\n          fi\n          timeout --kill-after=5s 120s env DOCKER_CONFIG="${reconcile_config}" \\\n            docker pull --quiet "${digest_ref}" >/dev/null\n'''
-          publisher = replace_once(
-              publisher,
-              reconcile_anchor,
-              reconcile_replacement,
-              "uncached reconciliation reacquisition",
-          )
-          publisher_path.write_text(publisher, encoding="utf-8")
 
           guardrails_path = Path("policy/guardrails.yaml")
           guardrails = guardrails_path.read_text(encoding="utf-8")
@@ -92,7 +73,7 @@ jobs:
           set -euo pipefail
           git config user.name "gnostoa-review-fix"
           git config user.email "actions@users.noreply.github.com"
-          git add .github/workflows/publish-r2a-p2b-oci.yml policy/guardrails.yaml tests/test_r2a_p2b_integrated_materialization.py
+          git add policy/guardrails.yaml tests/test_r2a_p2b_integrated_materialization.py
           git diff --cached --quiet && exit 0
-          git commit -m "fix: close P2b materialization review findings"
+          git commit -m "fix: complete P2b materialization guardrail inventory"
           git push origin HEAD:r2a-p2b-materialization
