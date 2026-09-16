@@ -301,6 +301,8 @@ jobs:
           test "$(timeout --kill-after=5s 30s docker buildx imagetools inspect "${digest_ref}" --format '{{.Manifest.Digest}}')" = "${registry_digest}"
           test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "${digest_ref}")" = "linux/amd64"
           test "$(docker image inspect --format '{{.Config.User}}' "${digest_ref}")" = "kit"
+          test "$(docker run --rm --entrypoint id "${digest_ref}" -u)" = "10001"
+          test "$(docker run --rm --entrypoint id "${digest_ref}" -g)" = "10001"
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${digest_ref}")" = "${SOURCE_COMMIT}"
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.created"}}' "${digest_ref}")" = "${BUILD_DATE}"
           test "$(docker run --rm --entrypoint python "${digest_ref}" -m tools.cli surface-digest --root /opt/gnostoa)" = "${PUBLIC_DIGEST}"
@@ -407,9 +409,28 @@ jobs:
           timeout --kill-after=5s 30s gh attestation verify \
             "oci://${digest_ref}" --repo "${GITHUB_REPOSITORY}" >/dev/null
           reconcile_config="$(mktemp -d)"
-          trap 'docker image rm "${digest_ref}" >/dev/null 2>&1 || true; rm -rf "${reconcile_config}"' EXIT
+          cleanup_reconciliation() {
+            local prior_status=$?
+            local cleanup_status=0
+            trap - EXIT
+            if docker image inspect "${digest_ref}" >/dev/null 2>&1; then
+              docker image rm "${digest_ref}" >/dev/null 2>&1 || cleanup_status=1
+            fi
+            rm -rf "${reconcile_config}" || cleanup_status=1
+            if [ "${prior_status}" -ne 0 ]; then
+              exit "${prior_status}"
+            fi
+            exit "${cleanup_status}"
+          }
+          trap cleanup_reconciliation EXIT
           timeout --kill-after=5s 30s docker logout ghcr.io >/dev/null 2>&1 || true
-          docker image rm "${digest_ref}" >/dev/null 2>&1 || true
+          if docker image inspect "${digest_ref}" >/dev/null 2>&1; then
+            docker image rm "${digest_ref}" >/dev/null
+          fi
+          if docker image inspect "${digest_ref}" >/dev/null 2>&1; then
+            echo "digest image remained cached before reconciliation reacquisition" >&2
+            exit 1
+          fi
           timeout --kill-after=5s 120s env DOCKER_CONFIG="${reconcile_config}" \
             docker pull --quiet "${digest_ref}" >/dev/null
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${digest_ref}")" = "${SOURCE_COMMIT}"
