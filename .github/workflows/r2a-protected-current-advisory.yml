@@ -29,6 +29,7 @@ on:
       - "tests/test_r2a_p2b_b16_publication.py"
       - "tests/test_r2a_p2b_b16_reconciliation_fail_closed.py"
       - "tests/test_review_assurance_p2b_activation_red.py"
+      - "tests/test_review_assurance_p2b_b2_activation_red.py"
       - "tests/test_review_assurance_p2b_b15_runtime_red.py"
       - "tests/test_review_assurance_p2b_b16_entrypoint_red.py"
       - "tests/test_review_assurance_p2b_b1_dormancy_red.py"
@@ -107,6 +108,7 @@ jobs:
             tests/test_r2a_p2b_b16_publication.py \
             tests/test_r2a_p2b_b16_reconciliation_fail_closed.py \
             tests/test_review_assurance_p2b_activation_red.py \
+            tests/test_review_assurance_p2b_b2_activation_red.py \
             tests/test_review_assurance_p2b_b15_runtime_red.py \
             tests/test_review_assurance_p2b_b16_entrypoint_red.py \
             tests/test_review_assurance_p2b_b1_dormancy_red.py \
@@ -125,6 +127,7 @@ jobs:
             tests/test_r2a_p2b_b16_publication.py \
             tests/test_r2a_p2b_b16_reconciliation_fail_closed.py \
             tests/test_review_assurance_p2b_activation_red.py \
+            tests/test_review_assurance_p2b_b2_activation_red.py \
             tests/test_review_assurance_p2b_b15_runtime_red.py \
             tests/test_review_assurance_p2b_b16_entrypoint_red.py \
             tests/test_review_assurance_p2b_b1_dormancy_red.py \
@@ -152,6 +155,7 @@ jobs:
           PYTHONPATH=. python tests/test_r2a_p2b_b16_publication.py
           PYTHONPATH=. python tests/test_r2a_p2b_b16_reconciliation_fail_closed.py
           PYTHONPATH=. python tests/test_review_assurance_p2b_activation_red.py
+          PYTHONPATH=. python tests/test_review_assurance_p2b_b2_activation_red.py
           PYTHONPATH=. python tests/test_review_assurance_p2b_b15_runtime_red.py
           PYTHONPATH=. python tests/test_review_assurance_p2b_b16_entrypoint_red.py
           PYTHONPATH=. python tests/test_review_assurance_p2b_b1_dormancy_red.py
