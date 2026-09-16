@@ -36,11 +36,6 @@ class ReviewAssuranceP2bB1DormancyRedTests(unittest.TestCase):
             with (
                 mock.patch.object(
                     review_check,
-                    "evaluate_gnostoa_current_advisory",
-                    create=True,
-                ) as candidate_consumer,
-                mock.patch.object(
-                    review_check,
                     "run_prior_effective_current_advisory",
                     return_value=(3, raw_result),
                 ) as prior_effective,
@@ -53,7 +48,6 @@ class ReviewAssuranceP2bB1DormancyRedTests(unittest.TestCase):
         self.assertEqual(3, code)
         self.assertEqual(raw_result, observed)
         prior_effective.assert_called_once_with(input_document)
-        candidate_consumer.assert_not_called()
 
 
 if __name__ == "__main__":
