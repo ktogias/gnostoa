@@ -108,11 +108,9 @@ jobs:
             --only-binary=:all: \
             --require-hashes \
             -r requirements/development.lock
-      - name: Run per-change Ruff gates
+      - name: Run project style gate
         if: matrix.python-version == '3.12'
-        run: |
-          python -m ruff format --check tools ci tests
-          python -m ruff check tools ci tests
+        run: ./ci/style --check
       - name: Type-check experiment and review trust domains
         if: matrix.python-version == '3.12'
         run: |

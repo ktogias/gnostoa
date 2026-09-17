@@ -90,6 +90,24 @@ establish the applicable failing or characterization evidence before editing.
 Mechanical changes and emergency follow-up use the timing declared by
 `policy/change-control.yaml`.
 
+Before creating or pushing a candidate that changes Python source or Python
+verification surfaces, run `./ci/style --fix` over the Git-candidate-aware
+repository-root Ruff scope. The command fails if a tracked Ruff input is matched
+by Git or other Ruff-recognized ignore rules. Then rerun the focused contracts
+affected by the change **after** formatting, inspect the resulting diff, and only
+then treat the SHA as a review candidate. Do not use unsafe Ruff fixes implicitly.
+Provider CI stays check-only and remains the non-bypassable verifier.
+
+After PR #272 is integrated, record any potentially eligible candidate before
+fresh external review with an unedited top-level comment whose first line is
+`Exact review candidate: <40-character commit SHA>`. When assessing whether the
+repository-root Ruff gate adds value, use the pre-registered cohort, receipts,
+attribution rules, metrics and outcome rule in
+[Decision 0081](knowledge/decisions/0081-make-repository-root-ruff-scope-authoritative-before-candidate-sealing.md#post-integration-effectiveness-assessment)
+and write the required per-PR evidence table and result to
+`knowledge/assessments/0081-repository-root-ruff-effectiveness-result.md`. Green
+CI establishes candidate correctness, not effectiveness by itself.
+
 Before completion, run the applicable suites in the development container by
 default:
 

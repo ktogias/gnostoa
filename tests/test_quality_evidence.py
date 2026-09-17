@@ -741,6 +741,7 @@ class QualityEvidenceIntegrationTests(unittest.TestCase):
         self.assertIn("strict = true", project)
 
         verify = (ROOT / "ci" / "verify").read_text(encoding="utf-8")
+        self.assertIn("./ci/style --check", verify)
         self.assertIn("ci/quality_evidence.py", verify)
         self.assertIn("GNOSTOA_QUALITY_OUTPUT", verify)
 
