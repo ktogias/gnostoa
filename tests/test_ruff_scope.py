@@ -540,6 +540,7 @@ if "--show-files" in arguments:
 if arguments[:2] == ["check", "--fix"]:
     raise SystemExit(2 if scenario == "initial" else 1)
 if arguments[:2] == ["format", "--check"]:
+    Path("format-check-ran").write_text("observed\\n", encoding="utf-8")
     raise SystemExit({"final": 2, "format_only": 1}.get(scenario, 0))
 if arguments and arguments[0] == "format":
     Path("format-ran").write_text("unexpected\\n", encoding="utf-8")
@@ -564,7 +565,7 @@ raise SystemExit(0)
             ):
                 with self.subTest(scenario=scenario):
                     environment["FAKE_RUFF_SCENARIO"] = scenario
-                    for marker in ("format-ran", "lint-ran"):
+                    for marker in ("format-ran", "format-check-ran", "lint-ran"):
                         (root / marker).unlink(missing_ok=True)
                     completed = subprocess.run(
                         [str(ROOT / "ci" / "style"), "--fix"],
@@ -579,6 +580,10 @@ raise SystemExit(0)
                     self.assertEqual(
                         scenario != "initial",
                         (root / "format-ran").exists(),
+                    )
+                    self.assertEqual(
+                        scenario != "initial",
+                        (root / "format-check-ran").exists(),
                     )
                     self.assertEqual(
                         scenario != "initial",
