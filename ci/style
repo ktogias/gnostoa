@@ -70,6 +70,7 @@ def discovered(*options: str) -> set[str]:
             "-m",
             "ruff",
             "check",
+            "--no-cache",
             "--show-files",
             *options,
             ".",
@@ -101,8 +102,8 @@ case "${mode}" in
     enter_repository_root
     check_candidate_scope
     check_ruff_ignore_scope
-    python -m ruff format --check .
-    python -m ruff check .
+    python -m ruff format --check --no-cache .
+    python -m ruff check --no-cache .
     ;;
   --fix)
     enter_repository_root
@@ -111,15 +112,15 @@ case "${mode}" in
     # Remaining unfixable diagnostics must not prevent deterministic formatting;
     # execution/configuration failures must not be converted into a clean result.
     fix_status=0
-    python -m ruff check --fix . || fix_status=$?
+    python -m ruff check --fix --no-cache . || fix_status=$?
     if [ "${fix_status}" -gt 1 ]; then
       exit "${fix_status}"
     fi
-    python -m ruff format .
+    python -m ruff format --no-cache .
     format_status=0
-    python -m ruff format --check . || format_status=$?
+    python -m ruff format --check --no-cache . || format_status=$?
     lint_status=0
-    python -m ruff check . || lint_status=$?
+    python -m ruff check --no-cache . || lint_status=$?
     if [ "${format_status}" -gt 1 ]; then
       exit "${format_status}"
     fi
