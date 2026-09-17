@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import subprocess
 import sys
 import tempfile
@@ -42,6 +43,7 @@ EXPECTED_ROOT_OUTPUT_EXCLUDES = {
     "dist/**",
     "site/**",
 }
+RUFF_AVAILABLE = importlib.util.find_spec("ruff") is not None
 
 
 class RuffScopeContractTests(unittest.TestCase):
@@ -54,7 +56,14 @@ class RuffScopeContractTests(unittest.TestCase):
         self.assertFalse(ruff.get("extend-exclude"))
         self.assertTrue(EXPECTED_RECURSIVE_EXCLUDES <= exclusions)
         self.assertTrue(EXPECTED_ROOT_OUTPUT_EXCLUDES <= exclusions)
-        for bare_output in ("_build", "build", "buck-out", "context-packs", "dist", "site"):
+        for bare_output in (
+            "_build",
+            "build",
+            "buck-out",
+            "context-packs",
+            "dist",
+            "site",
+        ):
             with self.subTest(bare_output=bare_output):
                 self.assertNotIn(bare_output, exclusions)
         self.assertNotIn("tasks", exclusions)
@@ -62,16 +71,36 @@ class RuffScopeContractTests(unittest.TestCase):
         self.assertNotIn("ci", exclusions)
         self.assertNotIn("tests", exclusions)
 
-    def test_nested_output_names_remain_in_scope_and_gitignore_is_not_authority(self) -> None:
+    @unittest.skipUnless(
+        RUFF_AVAILABLE,
+        "Ruff is available only in the exact development verification environment",
+    )
+    def test_nested_output_names_remain_in_scope_and_gitignore_is_not_authority(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             nested = [
                 root / "pkg" / name / "covered.py"
-                for name in ("_build", "build", "buck-out", "context-packs", "dist", "site")
+                for name in (
+                    "_build",
+                    "build",
+                    "buck-out",
+                    "context-packs",
+                    "dist",
+                    "site",
+                )
             ]
             generated = [
                 root / name / "generated.py"
-                for name in ("_build", "build", "buck-out", "context-packs", "dist", "site")
+                for name in (
+                    "_build",
+                    "build",
+                    "buck-out",
+                    "context-packs",
+                    "dist",
+                    "site",
+                )
             ]
             for path in nested + generated:
                 path.parent.mkdir(parents=True, exist_ok=True)
