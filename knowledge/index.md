@@ -101,6 +101,7 @@ inherited, copied or loaded by adopting projects.
 - [Evidence-gated capability evolution](lifecycles/evidence-gated-capability-evolution.md)
 - [Self-dogfood bootstrap value assessment](assessments/gnostoa-self-dogfood-bootstrap-assessment.md)
 - [Human-agent governance scope and evolution assessment](assessments/human-agent-governance-scope-and-evolution.md)
+- [Chatbot-first serverless operating-platform assessment](assessments/chatbot-first-serverless-operating-platform.md)
 - [B2/P1 streamlined self-hosting measurements](assessments/b2-p1-streamlined-self-hosting-measurements.md)
 - [B2/P2 fresh-session resume and effect-authority findings](assessments/b2-p2-fresh-session-and-effect-authority-findings.md)
 - [B2 control selection and failure-path map](assessments/b2-control-selection-and-failure-path-map.md)
