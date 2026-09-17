@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import importlib
 import json
@@ -49,6 +50,66 @@ from tools.requirements_lock import locked_requirements
 from tools.validate_bundle import Issue, _validate_links, validate_bundle
 
 ROOT = Path(__file__).resolve().parent.parent
+
+_PROTECTED_JOB_SUITES = {
+    "policy": "policy",
+    "security-fast": "security-fast",
+    "fast": "fast",
+    "regression": "regression",
+    "smoke": "smoke",
+    "extended": "extended",
+    "branch-advisory-policy": "policy",
+    "branch-advisory-fast": "fast",
+}
+_PROTECTED_JOB_KEYS = {
+    "policy": frozenset({"name", "runs-on", "steps"}),
+    "security-fast": frozenset({"name", "runs-on", "timeout-minutes", "steps"}),
+    "fast": frozenset({"name", "runs-on", "steps"}),
+    "regression": frozenset({"name", "needs", "if", "runs-on", "steps"}),
+    "smoke": frozenset({"name", "needs", "runs-on", "steps"}),
+    "extended": frozenset(
+        {"name", "needs", "if", "runs-on", "timeout-minutes", "steps"}
+    ),
+    "branch-advisory-policy": frozenset({"name", "runs-on", "steps"}),
+    "branch-advisory-fast": frozenset({"name", "runs-on", "steps"}),
+}
+_PROTECTED_JOB_NEEDS = {
+    "policy": (),
+    "security-fast": (),
+    "fast": (),
+    "regression": (
+        "policy",
+        "security-fast",
+        "fast",
+        "python-compatibility",
+        "extended-route",
+        "extended",
+    ),
+    "smoke": ("regression",),
+    "extended": ("policy", "extended-route"),
+    "branch-advisory-policy": (),
+    "branch-advisory-fast": (),
+}
+_PROTECTED_JOB_TIMEOUTS = {
+    "security-fast": 10,
+    "extended": 45,
+}
+# These digests deliberately bind every ordered step, including action pins,
+# setup/build commands, environment writers, and the verification invocation.
+_PROTECTED_JOB_STEPS_SHA256 = {
+    "policy": "b594196b030bf1cffa5b705a687d1a1887473ebc38812880ca1a4bbd0a7d5712",  # pragma: allowlist secret -- reviewed workflow-structure digest
+    "security-fast": "5735155238d350b8413ddd2e9b28d5b95a819e58ca0adc2a84862b437c5bc9e0",  # pragma: allowlist secret -- reviewed workflow-structure digest
+    "fast": "04d8ee084f1640ddf6fa495ab7cfae88384615eee7b3e90d7e4831972b82bf78",  # pragma: allowlist secret -- reviewed workflow-structure digest
+    "regression": "bd3442b7343c7b6f478e9f1a02f6febad5f80f3e3ccc05c937ccd926d92a1da0",  # pragma: allowlist secret -- reviewed workflow-structure digest
+    "smoke": "c6cb64c9fc709f338ba12ae4d129826d1e44645d97e825988405acffc43b8f0b",  # pragma: allowlist secret -- reviewed workflow-structure digest
+    "extended": "0f56e849d2376c23fa3782bd31e42668310e70c6a4eedaae95377c3645503d7f",  # pragma: allowlist secret -- reviewed workflow-structure digest
+    "branch-advisory-policy": (
+        "1170a691c764b464a5342fbe6aab5361fc3a07bda1d1e00685c00e85831195cf"  # pragma: allowlist secret -- reviewed workflow-structure digest
+    ),
+    "branch-advisory-fast": (
+        "d163ad17ba3f0a36107e7ce696c3e159728055140a3b7404d8afdfd3f10a1d67"  # pragma: allowlist secret -- reviewed workflow-structure digest
+    ),
+}
 
 
 def _invokes_shared_verification_suite(command: str, suite: str) -> bool:
@@ -129,8 +190,35 @@ def _invokes_shared_verification_suite(command: str, suite: str) -> bool:
     )
 
 
-def _job_has_blocking_verification_suite(job: object, suite: str) -> bool:
+def _job_has_blocking_verification_suite(
+    job: object,
+    suite: str,
+    *,
+    job_name: str | None = None,
+) -> bool:
     if not isinstance(job, dict):
+        return False
+    profile = job_name or suite
+    expected_keys = _PROTECTED_JOB_KEYS.get(profile)
+    if (
+        expected_keys is None
+        or _PROTECTED_JOB_SUITES.get(profile) != suite
+        or frozenset(job) != expected_keys
+        or job.get("name") != profile
+        or job.get("runs-on") != "ubuntu-latest"
+        or job.get("timeout-minutes") != _PROTECTED_JOB_TIMEOUTS.get(profile)
+    ):
+        return False
+    raw_needs = job.get("needs", [])
+    if isinstance(raw_needs, str):
+        needs = (raw_needs,)
+    elif isinstance(raw_needs, list) and all(
+        isinstance(dependency, str) for dependency in raw_needs
+    ):
+        needs = tuple(raw_needs)
+    else:
+        return False
+    if needs != _PROTECTED_JOB_NEEDS[profile]:
         return False
     expected_conditions = {
         "regression": "always()",
@@ -161,6 +249,22 @@ def _job_has_blocking_verification_suite(job: object, suite: str) -> bool:
     steps = job.get("steps")
     if not isinstance(steps, list):
         return False
+    try:
+        canonical_steps = json.dumps(
+            steps,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    except (TypeError, ValueError):
+        return False
+    if (
+        hashlib.sha256(canonical_steps).hexdigest()
+        != _PROTECTED_JOB_STEPS_SHA256[profile]
+    ):
+        return False
+    suite_steps = 0
     for step in steps:
         if not isinstance(step, dict) or "run" not in step:
             continue
@@ -177,8 +281,8 @@ def _job_has_blocking_verification_suite(job: object, suite: str) -> bool:
             command,
             suite,
         ):
-            return True
-    return False
+            suite_steps += 1
+    return suite_steps == 1
 
 
 def _workflow_has_blocking_verification_suite(
@@ -195,7 +299,11 @@ def _workflow_has_blocking_verification_suite(
     jobs = workflow.get("jobs")
     if not isinstance(jobs, dict):
         return False
-    return _job_has_blocking_verification_suite(jobs.get(job_name), suite)
+    return _job_has_blocking_verification_suite(
+        jobs.get(job_name),
+        suite,
+        job_name=job_name,
+    )
 
 
 def _add_tar_bytes(archive: tarfile.TarFile, name: str, content: bytes) -> None:
@@ -380,6 +488,54 @@ class PublicationBaselineTests(unittest.TestCase):
                 ),
                 f"{suite} job does not invoke its shared verification suite",
             )
+        for suite in (
+            "policy",
+            "security-fast",
+            "fast",
+            "regression",
+            "smoke",
+            "extended",
+        ):
+            with self.subTest(suite=suite, mutation="preceding environment poison"):
+                mutated_workflow = copy.deepcopy(workflow_document)
+                mutated_workflow["jobs"][suite]["steps"].insert(
+                    0,
+                    {
+                        "name": "Poison the verification environment",
+                        "run": (
+                            'echo "GNOSTOA_CI_IMAGE=attacker-controlled:latest" '
+                            '>> "${GITHUB_ENV}"'
+                        ),
+                    },
+                )
+                self.assertFalse(
+                    _workflow_has_blocking_verification_suite(
+                        mutated_workflow,
+                        suite,
+                        suite,
+                    )
+                )
+            with self.subTest(suite=suite, mutation="untrusted prerequisite"):
+                mutated_workflow = copy.deepcopy(workflow_document)
+                mutated_workflow["jobs"][suite]["needs"] = [
+                    "attacker-controlled-prerequisite"
+                ]
+                self.assertFalse(
+                    _workflow_has_blocking_verification_suite(
+                        mutated_workflow,
+                        suite,
+                        suite,
+                    )
+                )
+        renamed_workflow = copy.deepcopy(workflow_document)
+        renamed_workflow["jobs"]["security-fast"]["name"] = "spoofed-context"
+        self.assertFalse(
+            _workflow_has_blocking_verification_suite(
+                renamed_workflow,
+                "security-fast",
+                "security-fast",
+            )
+        )
         for root_modifier in (
             {"defaults": {"run": {"shell": "bash {0} || true"}}},
             {

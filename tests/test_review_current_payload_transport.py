@@ -143,6 +143,17 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
                     ):
                         review_current._run_identity(arguments, config_dir)
 
+    def test_container_command_may_use_identity_like_arguments(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config_dir = Path(directory)
+            for arguments in (
+                ["run", "--rm", "example-image", "--name", "application-name"],
+                ["run", "--rm", "example-image", "--cidfile=/app/state"],
+            ):
+                with self.subTest(arguments=arguments):
+                    identity = review_current._run_identity(arguments, config_dir)
+                    self.assertIsNotNone(identity)
+
     def test_oversized_envelope_is_rejected_before_any_docker_operation(self) -> None:
         image = "ghcr.io/example/gnostoa@sha256:" + "a" * 64
         with (

@@ -32,6 +32,19 @@ _MAX_RUNTIME_INPUT_BYTES = 4_194_304
 _MAX_RUNTIME_OUTPUT_BYTES = 2_097_152
 _READ_CHUNK_BYTES = 65_536
 _WRITE_CHUNK_BYTES = 65_536
+_DOCKER_RUN_FLAG_OPTIONS = frozenset({"--interactive", "--read-only", "--rm", "-i"})
+_DOCKER_RUN_VALUE_OPTIONS = frozenset(
+    {
+        "--cap-drop",
+        "--entrypoint",
+        "--log-driver",
+        "--network",
+        "--pull",
+        "--security-opt",
+        "--tmpfs",
+    }
+)
+_DOCKER_RUN_IDENTITY_OPTIONS = frozenset({"--cidfile", "--name"})
 
 _CONTAINER_PAYLOAD_BRIDGE = f"""
 import json
@@ -138,6 +151,46 @@ def _kill_and_reap(process: subprocess.Popen[bytes]) -> None:
         ) from exc
 
 
+def _validate_docker_run_options(arguments: list[str]) -> None:
+    index = 1
+    while index < len(arguments):
+        token = arguments[index]
+        if token == "--":
+            if index + 1 >= len(arguments):
+                raise ProtectedJudgeUnavailable(
+                    "protected Docker run has no image argument"
+                )
+            return
+        option, separator, value = token.partition("=")
+        if option in _DOCKER_RUN_IDENTITY_OPTIONS:
+            raise ProtectedJudgeUnavailable(
+                "protected Docker run contains a caller-owned cleanup identity option"
+            )
+        if token in _DOCKER_RUN_FLAG_OPTIONS:
+            index += 1
+            continue
+        if option in _DOCKER_RUN_VALUE_OPTIONS:
+            if separator:
+                if not value:
+                    raise ProtectedJudgeUnavailable(
+                        "protected Docker run option has no value"
+                    )
+                index += 1
+                continue
+            if index + 1 >= len(arguments) or not arguments[index + 1]:
+                raise ProtectedJudgeUnavailable(
+                    "protected Docker run option has no value"
+                )
+            index += 2
+            continue
+        if token.startswith("-"):
+            raise ProtectedJudgeUnavailable(
+                "protected Docker run contains an unsupported option"
+            )
+        return
+    raise ProtectedJudgeUnavailable("protected Docker run has no image argument")
+
+
 def _run_identity(
     arguments: list[str],
     config_dir: Path,
@@ -151,15 +204,7 @@ def _run_identity(
                 "a protected Docker run name is valid only for a run command"
             )
         return None
-    if any(
-        item in {"--name", "--cidfile"}
-        or item.startswith("--name=")
-        or item.startswith("--cidfile=")
-        for item in arguments[1:]
-    ):
-        raise ProtectedJudgeUnavailable(
-            "protected Docker run contains a caller-owned cleanup identity option"
-        )
+    _validate_docker_run_options(arguments)
     if requested_name is not None and _RESOURCE_NAME.fullmatch(requested_name) is None:
         raise ProtectedJudgeUnavailable("protected Docker run name is invalid")
     nonce = f"{os.getpid()}-{time.monotonic_ns()}"

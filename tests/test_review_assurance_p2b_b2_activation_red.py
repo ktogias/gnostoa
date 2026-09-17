@@ -268,6 +268,7 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         host_payload_writes: list[Path] = []
         run_calls: list[tuple[list[str], dict[str, object]]] = []
         original_write_text = Path.write_text
+        original_write_bytes = Path.write_bytes
 
         def observe_write_text(
             path: Path,
@@ -277,7 +278,19 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         ) -> int:
             if marker in data:
                 host_payload_writes.append(path)
+                raise AssertionError("outer review payload reached a host text write")
             return original_write_text(path, data, *args, **kwargs)
+
+        def observe_write_bytes(
+            path: Path,
+            data: bytes,
+            *args: object,
+            **kwargs: object,
+        ) -> int:
+            if marker.encode("utf-8") in data:
+                host_payload_writes.append(path)
+                raise AssertionError("outer review payload reached a host byte write")
+            return original_write_bytes(path, data, *args, **kwargs)
 
         def create_volume(
             name: str,
@@ -317,6 +330,7 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
                 return_value=protected,
             ),
             mock.patch.object(Path, "write_text", observe_write_text),
+            mock.patch.object(Path, "write_bytes", observe_write_bytes),
             mock.patch.object(outer, "_verify_outer_image"),
             mock.patch.object(outer, "_checked_output"),
             mock.patch.object(outer, "_volume_create", side_effect=create_volume),
@@ -365,6 +379,33 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         self.assertEqual(2, code)
         self.assertEqual("TOOL_ERROR", payload["error"]["code"])
         self.assertIn("bounded size", payload["error"]["details"]["error"])
+        acquire.assert_not_called()
+        run_docker.assert_not_called()
+
+    def test_recursive_outer_input_failure_precedes_authority_and_docker(self) -> None:
+        outer = _load_outer()
+        input_document: dict[str, object] = {}
+        real_canonical_json = outer.canonical_json
+
+        def canonical_json(document: object) -> str:
+            if document is input_document:
+                raise RecursionError("candidate nesting exceeds the JSON bound")
+            return real_canonical_json(document)
+
+        with (
+            mock.patch.object(outer, "canonical_json", side_effect=canonical_json),
+            mock.patch.object(
+                outer,
+                "acquire_gnostoa_current_advisory_consumer",
+            ) as acquire,
+            mock.patch.object(outer, "_run_docker") as run_docker,
+        ):
+            code, raw = outer.run_prior_effective_current_advisory(input_document)
+
+        payload = json.loads(raw.decode("utf-8"))
+        self.assertEqual(2, code)
+        self.assertEqual("TOOL_ERROR", payload["error"]["code"])
+        self.assertIn("nesting", payload["error"]["details"]["error"])
         acquire.assert_not_called()
         run_docker.assert_not_called()
 

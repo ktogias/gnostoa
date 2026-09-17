@@ -12,6 +12,7 @@ from unittest import mock
 
 from tools import security_scan
 from tools.extended_route import route_extended
+from tools.knowledge_common import load_yaml
 from tools.repository_scope import RepositoryScopeError
 from tools.security_scan import (
     SecurityScanError,
@@ -61,7 +62,9 @@ class SecretBaselineTests(unittest.TestCase):
         scan = _report(
             {
                 PROTECTED_BASELINE_PATH: [_candidate(PUBLIC_HASH, line=12)],
-                "tools/new.py": [_candidate(UNKNOWN_HASH, line=9)],
+                "tools/new.py": [
+                    _candidate(UNKNOWN_HASH, line=9, filename="tools/new.py")
+                ],
             }
         )
         baseline = _report(
@@ -88,7 +91,9 @@ class SecretBaselineTests(unittest.TestCase):
         self.assertNotIn(UNKNOWN_HASH, repr(result))
 
     def test_same_hash_on_another_path_is_not_suppressed(self) -> None:
-        scan = _report({"tools/new.py": [_candidate(PUBLIC_HASH, line=7)]})
+        scan = _report(
+            {"tools/new.py": [_candidate(PUBLIC_HASH, line=7, filename="tools/new.py")]}
+        )
         baseline = _report(
             {
                 PROTECTED_BASELINE_PATH: [
@@ -158,7 +163,17 @@ class SecretBaselineTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(SecurityScanError, "unauthorized"):
             evaluate_secret_report(
-                _report({"tools/example.py": [_candidate(PUBLIC_HASH, line=12)]}),
+                _report(
+                    {
+                        "tools/example.py": [
+                            _candidate(
+                                PUBLIC_HASH,
+                                line=12,
+                                filename="tools/example.py",
+                            )
+                        ]
+                    }
+                ),
                 unauthorized,
             )
 
@@ -207,6 +222,18 @@ class SecretBaselineTests(unittest.TestCase):
                     path.write_text(content, encoding="utf-8")
                     with self.assertRaisesRegex(SecurityScanError, "duplicate"):
                         security_scan._read_document(path, "test document")
+
+    def test_json_reader_normalizes_excessive_nesting(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "document.json"
+            depth = 10_000
+            path.write_text(
+                '{"results":' + "[" * depth + "0" + "]" * depth + "}",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(SecurityScanError, "cannot read"):
+                security_scan._read_document(path, "test document")
 
     def test_baseline_rejects_every_non_finite_json_number(self) -> None:
         template = (
@@ -295,7 +322,13 @@ class SecretBaselineTests(unittest.TestCase):
                 "pattern": [r"^\.secrets\.baseline$"],
             }
         ]
-        scan = _report({"tracked.txt": [_candidate(CANDIDATE_HASH, line=3)]})
+        scan = _report(
+            {
+                "tracked.txt": [
+                    _candidate(CANDIDATE_HASH, line=3, filename="tracked.txt")
+                ]
+            }
+        )
         scan["filters_used"] = filters
         baseline = _report({})
         baseline["filters_used"] = filters
@@ -404,6 +437,74 @@ class SecretBaselineTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(SecurityScanError, "invalid JSON"):
                     scan_tracked_tree(root, tracked_paths=[Path("tracked.txt")])
+
+    def test_scanner_output_uses_strict_closed_json_decoder(self) -> None:
+        baseline = _report({})
+        finding_report = _report(
+            {
+                "tracked.txt": [
+                    _candidate(
+                        CANDIDATE_HASH,
+                        line=1,
+                        filename="tracked.txt",
+                    )
+                ]
+            }
+        )
+        duplicate_results = (
+            json.dumps(finding_report)[:-1] + ', "results": {}}'
+        ).encode("utf-8")
+        non_finite_report = _report({})
+        non_finite_report["generated_at"] = float("nan")
+        overflowing_float = (
+            json.dumps(_report({}))
+            .replace(
+                '"2026-09-17T14:33:10Z"',
+                "1e999",
+                1,
+            )
+            .encode("utf-8")
+        )
+        unknown_field_report = _report({})
+        unknown_field_report["candidate_owned"] = "ignored"
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".secrets.baseline").write_text(
+                json.dumps(baseline),
+                encoding="utf-8",
+            )
+            (root / "tracked.txt").write_text("candidate\n", encoding="utf-8")
+            for label, stdout, pattern in (
+                ("duplicate", duplicate_results, "duplicate"),
+                (
+                    "non-finite",
+                    json.dumps(non_finite_report).encode("utf-8"),
+                    "non-finite",
+                ),
+                ("overflowing float", overflowing_float, "non-finite"),
+                (
+                    "unknown field",
+                    json.dumps(unknown_field_report).encode("utf-8"),
+                    "report schema",
+                ),
+            ):
+                with self.subTest(label=label):
+                    completed = subprocess.CompletedProcess(
+                        ["detect-secrets"],
+                        0,
+                        stdout,
+                        b"",
+                    )
+                    with mock.patch(
+                        "tools.security_scan._run_bounded_scan",
+                        return_value=completed,
+                    ):
+                        with self.assertRaisesRegex(SecurityScanError, pattern):
+                            scan_tracked_tree(
+                                root,
+                                tracked_paths=[Path("tracked.txt")],
+                            )
 
     def test_scanner_reads_an_immutable_private_snapshot(self) -> None:
         baseline = _report({})
@@ -929,7 +1030,16 @@ class ProviderSecurityGateTests(unittest.TestCase):
             'if ! git diff --quiet "${BASE_SHA}" HEAD -- tools/extended_route.py; then',
             workflow,
         )
-        self.assertIn("reason=extended router changed", workflow)
+        self.assertIn(
+            'force_reason="comparison base unavailable"\n'
+            '                git ls-files -z > "${paths_file}"',
+            workflow,
+        )
+        self.assertIn(
+            'force_reason="${GITHUB_EVENT_NAME} requires full evidence"',
+            workflow,
+        )
+        self.assertIn('force_reason="extended router changed"', workflow)
         self.assertIn("python -m tools.extended_route", workflow)
         self.assertIn("needs: [policy, extended-route]", workflow)
         self.assertIn(
@@ -949,6 +1059,76 @@ class ProviderSecurityGateTests(unittest.TestCase):
             "(github.event_name != 'push' || github.ref == 'refs/heads/main')",
             workflow,
         )
+
+    def test_extended_router_fails_closed_without_a_verifiable_base(self) -> None:
+        workflow = load_yaml(ROOT / ".github" / "workflows" / "verification.yml")
+        route_steps = workflow["jobs"]["extended-route"]["steps"]
+        route_script = next(
+            step["run"]
+            for step in route_steps
+            if step.get("name") == "Classify extended verification applicability"
+        )
+        cases = (
+            ("pull_request", "", "comparison base unavailable"),
+            ("pull_request", "0" * 40, "comparison base unavailable"),
+            ("pull_request", "f" * 40, "comparison base unavailable"),
+            ("schedule", "", "schedule requires full evidence"),
+            (
+                "workflow_dispatch",
+                "",
+                "workflow_dispatch requires full evidence",
+            ),
+        )
+
+        for event, base_sha, reason in cases:
+            with self.subTest(event=event, base_sha=base_sha or "missing"):
+                with tempfile.TemporaryDirectory() as directory:
+                    temporary = Path(directory)
+                    fake_bin = temporary / "bin"
+                    fake_bin.mkdir()
+                    router_marker = temporary / "candidate-router-invoked"
+                    fake_python = fake_bin / "python"
+                    fake_python.write_text(
+                        '#!/bin/sh\n: > "${ROUTER_MARKER}"\nexit 97\n',
+                        encoding="utf-8",
+                    )
+                    fake_python.chmod(0o700)
+                    output = temporary / "github-output"
+                    environment = os.environ.copy()
+                    environment.update(
+                        {
+                            "BASE_SHA": base_sha,
+                            "GITHUB_EVENT_NAME": event,
+                            "GITHUB_OUTPUT": str(output),
+                            "GITHUB_REF": "refs/pull/278/head",
+                            "PATH": f"{fake_bin}{os.pathsep}{environment['PATH']}",
+                            "ROUTER_MARKER": str(router_marker),
+                            "RUNNER_TEMP": str(temporary),
+                        }
+                    )
+
+                    completed = subprocess.run(
+                        ["bash", "-c", route_script],
+                        cwd=ROOT,
+                        env=environment,
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+
+                    self.assertEqual(0, completed.returncode, completed.stderr)
+                    self.assertFalse(router_marker.exists())
+                    self.assertEqual(
+                        {
+                            "decision": "RUN",
+                            "run_extended": "true",
+                            "reason": reason,
+                        },
+                        dict(
+                            line.split("=", maxsplit=1)
+                            for line in output.read_text(encoding="utf-8").splitlines()
+                        ),
+                    )
 
 
 if __name__ == "__main__":

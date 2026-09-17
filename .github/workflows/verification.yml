@@ -393,9 +393,12 @@ jobs:
           set -eu
           paths_file="${RUNNER_TEMP}/gnostoa-extended-paths"
           force_extended=false
+          force_reason=""
           : > "${paths_file}"
           case "${GITHUB_EVENT_NAME}" in
             schedule|workflow_dispatch)
+              force_extended=true
+              force_reason="${GITHUB_EVENT_NAME} requires full evidence"
               ;;
             pull_request|merge_group|push)
               if test -n "${BASE_SHA:-}" \
@@ -404,8 +407,11 @@ jobs:
                 git diff --no-renames --name-only -z "${BASE_SHA}" HEAD > "${paths_file}"
                 if ! git diff --quiet "${BASE_SHA}" HEAD -- tools/extended_route.py; then
                   force_extended=true
+                  force_reason="extended router changed"
                 fi
               else
+                force_extended=true
+                force_reason="comparison base unavailable"
                 git ls-files -z > "${paths_file}"
               fi
               ;;
@@ -414,9 +420,9 @@ jobs:
             {
               echo "decision=RUN"
               echo "run_extended=true"
-              echo "reason=extended router changed"
+              echo "reason=${force_reason}"
             } >> "${GITHUB_OUTPUT}"
-            echo "extended route: RUN — extended router changed"
+            echo "extended route: RUN — ${force_reason}"
           else
             python -m tools.extended_route \
               --event "${GITHUB_EVENT_NAME}" \

@@ -69,8 +69,8 @@ class SecretScanResult:
 SecretIdentity = tuple[str, str, str, int]
 
 
-def _baseline_schema_error(detail: str) -> SecurityScanError:
-    return SecurityScanError(f"detect-secrets baseline schema is invalid: {detail}")
+def _report_schema_error(label: str, detail: str) -> SecurityScanError:
+    return SecurityScanError(f"{label} schema is invalid: {detail}")
 
 
 def _object_without_duplicate_fields(
@@ -88,6 +88,24 @@ def _reject_non_finite_constant(value: str) -> NoReturn:
     raise SecurityScanError("JSON document contains a non-finite number")
 
 
+def _strict_json_loads(raw: bytes | str) -> Any:
+    document = json.loads(
+        raw,
+        object_pairs_hook=_object_without_duplicate_fields,
+        parse_constant=_reject_non_finite_constant,
+    )
+    pending = [document]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, float) and not math.isfinite(value):
+            raise SecurityScanError("JSON document contains a non-finite number")
+        if isinstance(value, dict):
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
+    return document
+
+
 def _is_finite_number(value: object) -> bool:
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         return False
@@ -97,24 +115,26 @@ def _is_finite_number(value: object) -> bool:
         return False
 
 
-def _validate_baseline_schema(document: dict[str, Any]) -> None:
+def _validate_report_schema(document: dict[str, Any], *, label: str) -> None:
     if set(document) != _BASELINE_TOP_LEVEL_KEYS:
-        raise _baseline_schema_error("unexpected or missing top-level fields")
+        raise _report_schema_error(label, "unexpected or missing top-level fields")
 
     generated_at = document.get("generated_at")
     if (
         not isinstance(generated_at, str)
         or _BASELINE_GENERATED_AT.fullmatch(generated_at) is None
     ):
-        raise _baseline_schema_error("generated_at is not a UTC timestamp")
+        raise _report_schema_error(label, "generated_at is not a UTC timestamp")
     try:
         datetime.strptime(generated_at, "%Y-%m-%dT%H:%M:%SZ")
     except ValueError as exc:
-        raise _baseline_schema_error("generated_at is not a valid timestamp") from exc
+        raise _report_schema_error(
+            label, "generated_at is not a valid timestamp"
+        ) from exc
 
     plugins = document.get("plugins_used")
     if not isinstance(plugins, list):
-        raise _baseline_schema_error("plugins_used is not a list")
+        raise _report_schema_error(label, "plugins_used is not a list")
     for plugin in plugins:
         if (
             not isinstance(plugin, dict)
@@ -123,17 +143,17 @@ def _validate_baseline_schema(document: dict[str, Any]) -> None:
             or not isinstance(plugin.get("name"), str)
             or not plugin["name"]
         ):
-            raise _baseline_schema_error("plugin entry is malformed")
+            raise _report_schema_error(label, "plugin entry is malformed")
         limit = plugin.get("limit")
         if limit is not None and not _is_finite_number(limit):
-            raise _baseline_schema_error("plugin limit is malformed")
+            raise _report_schema_error(label, "plugin limit is malformed")
         keyword_exclude = plugin.get("keyword_exclude")
         if keyword_exclude is not None and not isinstance(keyword_exclude, str):
-            raise _baseline_schema_error("plugin keyword exclusion is malformed")
+            raise _report_schema_error(label, "plugin keyword exclusion is malformed")
 
     filters = document.get("filters_used")
     if not isinstance(filters, list):
-        raise _baseline_schema_error("filters_used is not a list")
+        raise _report_schema_error(label, "filters_used is not a list")
     for filter_entry in filters:
         if (
             not isinstance(filter_entry, dict)
@@ -142,23 +162,23 @@ def _validate_baseline_schema(document: dict[str, Any]) -> None:
             or not isinstance(filter_entry.get("path"), str)
             or not filter_entry["path"]
         ):
-            raise _baseline_schema_error("filter entry is malformed")
+            raise _report_schema_error(label, "filter entry is malformed")
         pattern = filter_entry.get("pattern")
         if pattern is not None and (
             not isinstance(pattern, list)
             or any(not isinstance(item, str) for item in pattern)
         ):
-            raise _baseline_schema_error("filter pattern is malformed")
+            raise _report_schema_error(label, "filter pattern is malformed")
 
     results = document.get("results")
     if not isinstance(results, dict):
-        raise _baseline_schema_error("results is not a mapping")
+        raise _report_schema_error(label, "results is not a mapping")
     allowed_candidate_keys = (
         _BASELINE_CANDIDATE_REQUIRED_KEYS | _BASELINE_CANDIDATE_OPTIONAL_KEYS
     )
     for path, candidates in results.items():
         if not isinstance(path, str) or not isinstance(candidates, list):
-            raise _baseline_schema_error("result entry is malformed")
+            raise _report_schema_error(label, "result entry is malformed")
         for candidate in candidates:
             if (
                 not isinstance(candidate, dict)
@@ -166,13 +186,17 @@ def _validate_baseline_schema(document: dict[str, Any]) -> None:
                 or not set(candidate) <= allowed_candidate_keys
                 or candidate.get("filename") != path
             ):
-                raise _baseline_schema_error("candidate entry is malformed")
+                raise _report_schema_error(label, "candidate entry is malformed")
             if "is_secret" in candidate and not isinstance(
                 candidate["is_secret"], bool
             ):
-                raise _baseline_schema_error("candidate is_secret is malformed")
+                raise _report_schema_error(label, "candidate is_secret is malformed")
             if "is_verified" in candidate and candidate["is_verified"] is not False:
-                raise _baseline_schema_error("candidate is_verified is malformed")
+                raise _report_schema_error(label, "candidate is_verified is malformed")
+
+
+def _validate_baseline_schema(document: dict[str, Any]) -> None:
+    _validate_report_schema(document, label="detect-secrets baseline")
 
 
 def _results(document: dict[str, Any], label: str) -> dict[str, Any]:
@@ -264,6 +288,7 @@ def evaluate_secret_report(
     """
 
     _validate_baseline_schema(baseline_document)
+    _validate_report_schema(scan_document, label="detect-secrets report")
 
     if _settings(scan_document, "detect-secrets report") != _settings(
         baseline_document,
@@ -303,12 +328,8 @@ def _read_document(path: Path, label: str) -> dict[str, Any]:
             raw = stream.read(_MAX_REPORT_BYTES + 1)
         if len(raw) > _MAX_REPORT_BYTES:
             raise SecurityScanError(f"{label} exceeds the bounded size")
-        document = json.loads(
-            raw,
-            object_pairs_hook=_object_without_duplicate_fields,
-            parse_constant=_reject_non_finite_constant,
-        )
-    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        document = _strict_json_loads(raw)
+    except (OSError, UnicodeDecodeError, ValueError, RecursionError) as exc:
         raise SecurityScanError(f"cannot read {label}: {exc}") from exc
     if not isinstance(document, dict):
         raise SecurityScanError(f"{label} is not a JSON object")
@@ -756,8 +777,8 @@ def scan_tracked_tree(
             f"tracked-tree secret scan returned status {completed.returncode}"
         )
     try:
-        scan_document = json.loads(completed.stdout)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        scan_document = _strict_json_loads(completed.stdout)
+    except (UnicodeDecodeError, ValueError, RecursionError) as exc:
         raise SecurityScanError(
             "tracked-tree secret scan returned invalid JSON"
         ) from exc

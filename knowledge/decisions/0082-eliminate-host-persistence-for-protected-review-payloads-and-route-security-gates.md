@@ -148,11 +148,12 @@ separate read-back.
    predeclared recovery name. Retain the executable used to launch Docker,
    treat unreadable or malformed CID content as a name fallback, bound child
    reaping, and attempt container cleanup even when client reaping cannot be
-   confirmed. Caller-owned Docker `--name` and `--cidfile` options are rejected;
-   the bounded timeout smoke requests its known name through the runner's
-   validated identity parameter, so launch and fallback cleanup cannot disagree.
-   Calls without input receive a closed stdin rather than inheriting the caller's
-   stream.
+   confirmed. Caller-owned Docker `--name` and `--cidfile` options are rejected
+   only in the Docker option region before the image; identically named arguments
+   in the container command remain container data. The bounded timeout smoke
+   requests its known name through the runner's validated identity parameter, so
+   launch and fallback cleanup cannot disagree. Calls without input receive a
+   closed stdin rather than inheriting the caller's stream.
 3. **Fixed in-container bridges.** Run each authority-bound image with fixed
    Python bridge code. The outer bridge reads bounded stdin, uses restrictive
    exclusive creation in a dedicated outer-only tmpfs, and execs the immutable
@@ -168,16 +169,18 @@ separate read-back.
    audited baseline. Bind the only two baseline-authorized JSON paths to their
    reviewed SHA-256 file identities, so changing a protected document and its
    baseline together still fails closed. The excluded baseline accepts only
-   its closed scanner schema; duplicate names at any JSON depth, unknown
-   top-level/plugin/filter/candidate fields, non-finite plugin limits, and
-   non-boolean candidate disposition values fail closed. Candidate identity
-   includes an exact, bounded line number as well as path, rule and hash, so
-   stale or arbitrary numeric audit metadata cannot suppress a finding. A stale
-   baseline entry, malformed entry, non-false-positive entry or new candidate
-   fails closed. Inline pragmas remain explicit, review-visible declarations
-   rather than self-authenticating proof that a value is public: additions or
-   changes require semantic review. This candidate-owned gate does not claim to
-   sandbox a malicious author who can also rewrite the gate itself.
+   its closed scanner schema. The baseline and scanner stdout share the same
+   strict decoder and closed report-schema validation: duplicate names at any
+   JSON depth, non-finite values including overflowing exponent forms, excessive
+   nesting, unknown top-level/plugin/filter/candidate fields, and non-boolean
+   candidate disposition values fail closed. Candidate identity includes an
+   exact, bounded line number as well as path, rule and hash, so stale or
+   arbitrary numeric audit metadata cannot suppress a finding. A stale baseline
+   entry, malformed entry, non-false-positive entry or new candidate fails
+   closed. Inline pragmas remain explicit, review-visible declarations rather
+   than self-authenticating proof that a value is public: additions or changes
+   require semantic review. This candidate-owned gate does not claim to sandbox
+   a malicious author who can also rewrite the gate itself.
 5. **One reusable tracked-tree scan.** Factor the scan/baseline comparison into
    one repository-owned command that emits only candidate metadata, never the
    candidate value or candidate-derived hash. Validate every scanner argument
@@ -219,16 +222,20 @@ separate read-back.
    conditionally skipped, but `regression` accepts only a successful applicable
    run or an exact `NOT_APPLICABLE`/skipped pair. Neither the router nor project
    records call that skip a pass.
-   A candidate change to `tools/extended_route.py` independently forces `RUN`
-   before the candidate-owned router is consulted. The required-context
+   Schedule/manual events, an unavailable or unverifiable comparison base, and a
+   candidate change to `tools/extended_route.py` independently force `RUN` in
+   shell before the candidate-owned router is consulted. The Python router runs
+   only for a verifiable base against which it is unchanged. The required-context
    workflow's `push` event is restricted to protected `main`. A separate
    topic-push advisory workflow preserves the inherited always-on branch-revision
    `policy` and `fast` suites under distinct `branch-advisory-*` names, so those
    runs cannot publish skipped jobs under Pull Request required-context names.
-   Structural contracts bind the exact event maps and root image environment,
-   reject workflow defaults and protected job/step environment overrides, and
-   reject suite steps or jobs that are disabled, non-blocking, containerized, or
-   wrapped by alternate shell/default behavior, while allowing only the exact
+   Structural contracts bind the exact event maps, root image environment,
+   required-context names, job keys, ordered complete step sequences and exact
+   dependency lists. They reject any inserted, removed or changed step, workflow
+   defaults, protected job/step environment overrides, renamed contexts, or
+   suite jobs that are disabled, non-blocking, containerized, dependency-skipped,
+   or wrapped by alternate shell/default behavior, while allowing only the exact
    declared `regression` and `extended` job predicates.
 8. **Provider CodeQL effect remains sequenced.** After this Decision and the
    implementation are integrated and provider read-back confirms clean
@@ -246,8 +253,8 @@ separate read-back.
 
 Pre-implementation RED evidence and the final candidate must demonstrate:
 
-- neither the outer nor inner protected consumer invokes a host payload write or
-  payload bind mount;
+- neither the outer nor inner protected consumer invokes a host text/byte payload
+  write or payload bind mount;
 - outer and inner input exceeding their bounds is rejected before authority or
   Docker effects;
 - large bounded input and output are multiplexed without deadlock, and early
@@ -263,9 +270,10 @@ Pre-implementation RED evidence and the final candidate must demonstrate:
 - both bridges are fixed, use container-only tmpfs mounts, and preserve the exact
   authority-bound consumer/judge invocations and result;
 - the reviewed tree has zero unresolved secret candidates, while an injected
-  candidate, stale or wrong-line baseline, duplicate JSON field, non-finite or
-  overflowing numeric input, unknown or unchecked baseline value, unauthorized
-  baseline entry and candidate scanner-module shadow fail;
+  candidate, stale or wrong-line baseline, duplicate scanner/baseline JSON field,
+  non-finite or overflowing numeric input, excessive JSON nesting, unknown or
+  unchecked report value, unauthorized baseline entry and candidate
+  scanner-module shadow fail;
 - snapshot acquisition rejects per-file/cumulative overflow and timeout; an
   in-place or ancestor-directory replacement cannot change the private bytes
   presented to the scanner; a FIFO replacement fails without blocking; and the
@@ -277,7 +285,8 @@ Pre-implementation RED evidence and the final candidate must demonstrate:
   separately named advisory `policy`/`fast` evidence, and the structural oracle
   rejects disabled, non-blocking, shell-wrapped or wrongly native suite jobs
   and steps, inherited defaults/environment overrides, or suppressing event
-  filters;
+  filters, inserted steps, altered dependency lists, renamed contexts, or an
+  unavailable-base route that would consult the candidate router;
 - policy, fast, regression, smoke, runtime self-check and applicable extended
   verification pass against the exact candidate.
 
