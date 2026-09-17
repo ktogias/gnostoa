@@ -17,25 +17,25 @@ sources:
     resource: https://github.com/ktogias/gnostoa/issues/14#issuecomment-5706634917
     title: Consolidated Ariadne v9 roadmap checkpoint
   - id: i-jepa
-    resource: https://arxiv.org/abs/2301.08243
+    resource: https://arxiv.org/abs/2301.08243v3
     title: Self-Supervised Learning from Images with a Joint-Embedding Predictive Architecture
   - id: v-jepa-2
-    resource: https://arxiv.org/abs/2506.09985
+    resource: https://arxiv.org/abs/2506.09985v1
     title: V-JEPA 2
   - id: leworldmodel
     resource: https://arxiv.org/html/2603.19312v1
     title: LeWorldModel
   - id: worldcoder
-    resource: https://arxiv.org/abs/2402.12275
+    resource: https://arxiv.org/abs/2402.12275v3
     title: WorldCoder
   - id: executable-world-models-arc
     resource: https://arxiv.org/html/2605.05138v1
     title: Executable World Models for ARC-AGI-3
   - id: webdreamer
-    resource: https://arxiv.org/abs/2411.06559
+    resource: https://arxiv.org/abs/2411.06559v2
     title: WebDreamer
   - id: code-world-model
-    resource: https://arxiv.org/abs/2510.02387
+    resource: https://arxiv.org/abs/2510.02387v1
     title: Code World Model
   - id: code-world-model-license
     resource: https://ai.meta.com/resources/models-and-libraries/cwm-license/
@@ -44,17 +44,17 @@ sources:
     resource: https://huggingface.co/facebook/cwm
     title: Code World Model model card
   - id: swe-world
-    resource: https://arxiv.org/abs/2602.03419
+    resource: https://arxiv.org/abs/2602.03419v1
     title: SWE-World
   - id: dreamerv3
     resource: https://doi.org/10.1038/s41586-025-08744-2
     title: Mastering diverse control tasks through world models
   - id: mopo
-    resource: https://arxiv.org/abs/2005.13239
+    resource: https://arxiv.org/abs/2005.13239v6
     title: Model-based Offline Policy Optimization
   - id: magentic-one
-    resource: https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/magentic-one.html
-    title: Magentic-One documentation
+    resource: https://arxiv.org/abs/2411.04468v1
+    title: Magentic-One paper
 x-project-knowledge:
   id: kit.assessment.jepa-inspired-operational-world-model
   owners:
@@ -81,6 +81,20 @@ x-project-knowledge:
 Research and architecture proposal — 17 September 2026.
 
 **Status:** source-backed research/proposal for [#273](https://github.com/ktogias/gnostoa/issues/273). This knowledge-only record and its non-disruptive linkage into Ariadne are selected. It does not admit predictor or planner implementation, execution of E0–E4, a public-contract change, a roadmap-order change, or any other authority. Proposed types, experiment names, and budgets are neither existing contracts nor binding decisions.
+
+### Source reproducibility boundary
+
+External prior art and engineering documentation were re-observed on 17 September 2026. This record binds durable claims as follows:
+
+| Source class | Reproducibility binding |
+|---|---|
+| Research papers | Every arXiv link is pinned to the consulted version; the DreamerV3 link is the published article DOI |
+| Engineering patterns | AgentBoard, Hypothesis, Temporal, and Kubernetes links resolve to exact repository commits observed on 17 September 2026 |
+| GitHub provider documentation | The merge endpoint is bound to REST API version 2022-11-28; the Actions concurrency page is explicitly a date-bound provider observation, not immutable or executed evidence, and must be re-read before reliance |
+| CWM usage constraints | The consulted license identifies itself as FAIR Noncommercial Research License v1, last updated 18 August 2025; the Hugging Face model card was observed on 17 September 2026 and is a mutable usage-warning surface, not durable admission evidence |
+| Gnostoa provider records | Issue, pull-request, and comment links identify the observed provider objects at the stated project cut; they can evolve and require a fresh read-back for any current-state claim |
+
+A future reuse decision must bind the exact code, dataset, model-card revision, weights digest, and then-current license. A mutable page without such a binding may supply dated context, but cannot by itself justify implementation, safety, licensing, or admission.
 
 ## 1. Conclusion
 
@@ -125,7 +139,7 @@ This outcome is expected: the retained snapshot is historical regression evidenc
 
 ## 3. The actual relationship to JEPA
 
-The original [I-JEPA](https://arxiv.org/abs/2301.08243) predicts representations of image regions from other regions. By itself, it is not an action controller. [V-JEPA 2](https://arxiv.org/abs/2506.09985) and [LeWorldModel](https://arxiv.org/html/2603.19312v1) connect representation learning to action-conditioned prediction and planning.
+The original [I-JEPA](https://arxiv.org/abs/2301.08243v3) predicts representations of image regions from other regions. By itself, it is not an action controller. [V-JEPA 2](https://arxiv.org/abs/2506.09985v1) and [LeWorldModel](https://arxiv.org/html/2603.19312v1) connect representation learning to action-conditioned prediction and planning.
 
 The useful principle for Gnostoa is to preserve the information needed to reason about an action's consequences without reproducing the entire history or all raw data.
 
@@ -142,7 +156,7 @@ For example, Gnostoa does not need the full prose of hundreds of comments merely
 
 A dashboard is a projection. A validator checks properties. A reconciler reconstructs and compares state. A **predictive operational model** begins only when action-conditioned expectations are explicit and their predictive utility is tested. These layers should not all be called JEPA.
 
-Research on [bisimulation and task-relevant representations](https://arxiv.org/abs/2006.10742) offers another useful principle: two states may be collapsed only when their differences do not alter relevant consequences. Applying that criterion to Gnostoa is our analogy, not a transfer of an MDP theorem to GitHub.
+Research on [bisimulation and task-relevant representations](https://arxiv.org/abs/2006.10742v2) offers another useful principle: two states may be collapsed only when their differences do not alter relevant consequences. Applying that criterion to Gnostoa is our analogy, not a transfer of an MDP theorem to GitHub.
 
 ## 4. Existing foundations and actual gaps
 
@@ -170,14 +184,14 @@ C4-v0 detected 3 of 8 false-ready cases, but none of the four positive controls 
 | Work or source | What it actually tests | What Gnostoa should retain | What must not be transferred |
 |---|---|---|---|
 | [LeWorldModel](https://arxiv.org/html/2603.19312v1) | Small action-conditioned latent model in control environments | Compact state, next consequence, controlled surprise | Proof of software autonomy or universal small-data sufficiency |
-| [WorldCoder](https://arxiv.org/abs/2402.12275) | An LLM writes an executable Python world model and repairs it from observations | Testable transitions, replay, counterexamples | Deterministic-world assumptions and optimism about unknown permissions |
+| [WorldCoder](https://arxiv.org/abs/2402.12275v3) | An LLM writes an executable Python world model and repairs it from observations | Testable transitions, replay, counterexamples | Deterministic-world assumptions and optimism about unknown permissions |
 | [Executable World Models for ARC-AGI-3](https://arxiv.org/html/2605.05138v1) | Predicted/observed state comparison and stop-on-mismatch in games | Check after each step; retain competing hypotheses | Prompt-only control where an executor can bypass guards |
-| [WebDreamer](https://arxiv.org/pdf/2411.06559) | Predict consequences of web actions before execution | One-step lookahead and replanning | Assuming a longer imagined rollout is automatically better |
+| [WebDreamer](https://arxiv.org/pdf/2411.06559v2) | Predict consequences of web actions before execution | One-step lookahead and replanning | Assuming a longer imagined rollout is automatically better |
 | [Meta CWM](https://arxiv.org/html/2510.02387v1), [license](https://ai.meta.com/resources/models-and-libraries/cwm-license/), and [model card](https://huggingface.co/facebook/cwm) | Coding LLM trained with execution and agent traces | Value of real action/result datasets | Prior art only: the released materials are limited to noncommercial research and are not intended for production or assistant use; any experiment requires separate approval |
 | [SWE-World](https://arxiv.org/html/2602.03419v1) | Real file operations combined with predicted execution/test feedback | Hybrid design and typed observations | Treating simulated PASS as verification evidence |
 | [DreamerV3](https://doi.org/10.1038/s41586-025-08744-2) | Policy learning over imagined trajectories with environment feedback | Separate model, policy, and evaluation | A reward of more merges or a direct analogy from games to governance |
-| [MOPO](https://arxiv.org/abs/2005.13239) | Offline model-based RL under distribution shift | Conservatism and explicit uncertainty beyond data coverage | A general guarantee for safe GitHub effects |
-| [Magentic-One](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/magentic-one.html) | Task and Progress Ledgers plus replanning on stalls | Separate facts, guesses, and progress; detect stalls | Treat an LLM-authored ledger as authoritative state |
+| [MOPO](https://arxiv.org/abs/2005.13239v6) | Offline model-based RL under distribution shift | Conservatism and explicit uncertainty beyond data coverage | A general guarantee for safe GitHub effects |
+| [Magentic-One](https://arxiv.org/abs/2411.04468v1) | Task and Progress Ledgers plus replanning on stalls | Separate facts, guesses, and progress; detect stalls | Treat an LLM-authored ledger as authoritative state |
 
 Two findings deserve particular attention:
 
@@ -186,15 +200,15 @@ Two findings deserve particular attention:
 
 ### Engineering patterns with nearer-term value than new ML
 
-**Reconciliation.** The [Kubernetes controller pattern](https://kubernetes.io/docs/concepts/architecture/controller/) separates desired from observed state and repeatedly reconciles them. Gnostoa should transfer the pattern, not a Kubernetes dependency or the assumption that software tasks are fully declarative.
+**Reconciliation.** The [Kubernetes controller pattern](https://github.com/kubernetes/website/blob/829193727bd7ba724a19bee71887e79dde36739c/content/en/docs/concepts/architecture/controller.md) separates desired from observed state and repeatedly reconciles them. Gnostoa should transfer the pattern, not a Kubernetes dependency or the assumption that software tasks are fully declarative.
 
-**Crash and retry semantics.** [Temporal's Activity documentation](https://docs.temporal.io/activity-definition) explains that an Activity may execute more than once even when completion is observed once. Gnostoa should distinguish intention, attempt, and observed effect. This principle does not justify installing Temporal.
+**Crash and retry semantics.** [Temporal's Activity documentation](https://github.com/temporalio/documentation/blob/8aec317ba64312bd0c4bcf010e96c7734df5b69e/docs/encyclopedia/activities/activity-definition.mdx) explains that an Activity may execute more than once even when completion is observed once. Gnostoa should distinguish intention, attempt, and observed effect. This principle does not justify installing Temporal.
 
-**Atomic preconditions.** The [GitHub merge endpoint](https://docs.github.com/en/rest/pulls/pulls#merge-a-pull-request) can require a specific SHA and reject a mismatch. Read-before-act alone leaves a race. A head precondition still does not atomically enforce Gnostoa's review-cut and authority constraints.
+**Atomic preconditions.** The [GitHub merge endpoint](https://docs.github.com/en/rest/pulls/pulls?apiVersion=2022-11-28#merge-a-pull-request) can require a specific SHA and reject a mismatch. Read-before-act alone leaves a race. A head precondition still does not atomically enforce Gnostoa's review-cut and authority constraints.
 
 **Concurrency.** The [GitHub Actions documentation read on 17 September 2026](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency) defines the optional queue values single and max. Max permits up to 100 pending runs and cannot be combined with cancel-in-progress set to true. This is date-bound provider-documentation input, not an executed characterization by this research. A concurrency group is still neither a durable transaction ledger nor a universal lock against external actors.
 
-**Interfaces and tests.** [SWE-agent](https://arxiv.org/abs/2405.15793) demonstrates the importance of tool interfaces. [Hypothesis stateful testing](https://hypothesis.readthedocs.io/en/latest/stateful.html) exercises action sequences and invariants. [AgentBoard](https://github.com/hkust-nlp/AgentBoard) measures intermediate progress, while [AgentDojo](https://arxiv.org/abs/2406.13352) evaluates attacks together with completion of legitimate tasks. This report selects none of these frameworks as a dependency.
+**Interfaces and tests.** [SWE-agent](https://arxiv.org/abs/2405.15793v3) demonstrates the importance of tool interfaces. [Hypothesis stateful testing](https://github.com/HypothesisWorks/hypothesis/blob/cd434f23be1a3598085cf096e28e6738c63b29b3/hypothesis/docs/stateful.rst) exercises action sequences and invariants. [AgentBoard](https://github.com/hkust-nlp/AgentBoard/tree/bb7255e2daf1989069a186dad9e53f70680961db) measures intermediate progress, while [AgentDojo](https://arxiv.org/abs/2406.13352v3) evaluates attacks together with completion of legitimate tasks. This report selects none of these frameworks as a dependency.
 
 The reuse assessment concerns ideas and patterns. Importing code, datasets, weights, or services requires a separate, version-bound suitability, license, and cost review. This report grants no such approval.
 
@@ -348,6 +362,8 @@ E1 success may support only a separately admitted, read-only E2 shadow-observati
 
 A distinct **L2 effect-boundary companion gate**, owned by [#15](https://github.com/ktogias/gnostoa/issues/15) and [#264](https://github.com/ktogias/gnostoa/issues/264), applies before any later experiment may call, recommend, schedule, or otherwise change a live effect-capable action. Under its own admission, that gate exercises the actual adapter code path deny-by-default with a provider mock or separately admitted non-production identity and verifies rejection of stale targets, duplicates, revoked or missing authority, ambiguous retries, and bypass attempts. It attempts no production effect. This gate is not part of E1, is not pulled forward into the L0/L1 sequence, and does not automatically admit L2 or any model-mediated action.
 
+Before E1's frozen fixture/oracle exposure, its preregistration must freeze two executable reducers. The **current/no-contract baseline** uses the existing typed projection and checks but has none of the proposed explicit expected-delta, invalidation, reconciliation, or mandatory-read-back transition contract. The **candidate reducer** adds that contract. Both receive the same ordered observations and actions, the same virtual time and exogenous events, and the same terminal oracle. Every sequence is scored as a pair; missing or divergent inputs invalidate the pair rather than being excluded after the result is known. The paired error-reduction and false-blocking non-inferiority rules below are frozen with the fixture cut.
+
 ### E2 — Shadow observation and one-step prediction
 
 **Hypothesis:** prediction adds actionable information beyond deterministic state.
@@ -395,7 +411,7 @@ The following are provisional preregistration defaults for a future admitted exp
 | Stage | Reproducible baseline | Primary endpoint | Provisional quantitative gate | Pass, fail, or stop decision |
 |---|---|---|---|---|
 | E0 | Full source-labelled fixture oracle compared with the proposed compact representation | Correct action-relevant discrimination or invariance for each paired fixture | 100% of safety, authority, subject, and effect-applicability pairs correct, and at least 95% correct overall on a frozen set of at least 30 pairs | Pass permits E1 fixture work; any critical collision fails and requires representation repair, while repeated noncritical aliasing stops compression of that field |
-| E1 | The same frozen sequences without the proposed transition contract | Correct terminal disposition, invalidation, reconciliation, and false-blocking rate in the offline reference model | At least 95% correct terminal dispositions and no more than 5% false blocking across at least 30 sequences; 100% correct simulated disposition of critical stale, duplicate, revoked-authority, unauthorized, ambiguous-retry, and bypass-attempt controls; zero provider writes | Pass may support only a separate read-only E2 shadow admission proposal and makes no effect-safety claim; any critical transition failure returns the design to E1, while any experiment that could change live action also requires the separately admitted L2/#264 companion gate |
+| E1 | Paired execution of every frozen sequence through the characterized current/no-contract reducer and the candidate transition-contract reducer | Paired change in incorrect terminal dispositions and stale-state or ambiguous-retry errors, with false blocking as a non-inferiority endpoint | At least 95% correct candidate terminal dispositions; 100% correct candidate disposition of critical controls; at least 20% relative reduction in incorrect dispositions and a paired net improvement of at least 2 sequences versus baseline; no critical regression; candidate false blocking no more than 5 percentage points worse than baseline and no more than 5% absolute; zero provider writes | Only all paired and absolute gates together may support a separate read-only E2 shadow admission proposal, with no effect-safety claim; a perfect baseline, gain below the minimum, invalid pair, or critical failure stops or returns E1 rather than promoting complexity, while live-action influence also requires the L2/#264 companion gate |
 | E2 | Best preregistered rule, frequency, or nearest-case predictor using the same frozen pre-action fields, episode predicate, denominator, and evaluation cut | Brier score for the preregistered one-step consequence classes | At least 15% lower paired Brier score than the best simple baseline, with a 90% bootstrap interval for the improvement above zero, on at least 50 scored episodes admitted by the frozen eligibility and missing-outcome rules; zero data-contract, authority, or information-leak violations | Pass permits an E3 admission proposal; an unmet sample/completeness bound is no result, while a failed effect or data boundary stops the branch |
 | E3 | Best deterministic admissible-action ranking under the same frozen selection rule, action set, initial-state reset, versioned oracle, horizon, and cost schedule | Paired predeclared action/read-back cost to reach a correct terminal disposition | At least 15% lower median cost over at least 30 mechanically reset branchable scenarios or separately preregistered prospective pairs, no reduction in completion rate, and zero authorization violations | Missing reset/oracle/cost equivalence is no result; a pass permits an E4 admission proposal only if a residual representation bottleneck is documented |
 | E4 | Best admitted E2 predictor under the same frozen inputs, outcomes, compute budget, loss, aggregation, and temporal/OOD construction | The exact preregistered one-step loss on the frozen temporal and OOD cuts | Planning default: at least 10% relative loss reduction on both cuts, no critical-invariant regression, and no more than 5 absolute percentage points of degradation on the separately named performance scale, within the preregistered cost cap | Non-executable until every metric term is frozen; a pass supports only a separate product or architecture decision, while failure retires the learned branch |
@@ -529,5 +545,7 @@ Subsequent exact-head PR review identified additional experiment-contract gaps a
 | E4 loss and OOD degradation were underspecified | Thresholds could be selected after the evaluation data was visible | Kept E4 non-executable until loss, aggregation, splits, scale, direction, and absolute/relative semantics are frozen |
 | Generic threshold-change wording was weaker than the stage freezes | Thresholds could change after enrollment, branch assignment, or cut exposure | Bound every change to its stage-specific exposure boundary and require a new versioned protocol and unexposed cut afterward |
 | A mandatory adapter subgate inside E1 conflicted with the L0/L1-first Ariadne order | L2/#264 effect enforcement would become an undeclared prerequisite for read-only shadow prediction | Moved real adapter-path enforcement to a separately admitted L2/#264 companion gate required before an experiment can change live action; E1 now gates only read-only E2 shadow admission |
+| Mutable prior-art and documentation links lacked reproducible observation bindings | Later page changes could silently alter the research basis | Version-pinned every paper, pinned engineering patterns to exact repository commits, bound the merge API version and CWM license version/date, and demoted remaining mutable pages to dated context that cannot admit reuse |
+| E1 named inputs but not executable baseline behavior or a paired delta | Absolute candidate scores could promote complexity without measured gain over current mechanics | Defined paired current/no-contract and candidate reducers, frozen identical inputs and oracle, preregistered improvement and false-blocking non-inferiority gates, and a stop rule for a perfect or unimproved baseline |
 
 Research contributions about the roadmap, papers, and engineering patterns were not used as semantic approvals. They remain bound to cited sources and stated limits.
