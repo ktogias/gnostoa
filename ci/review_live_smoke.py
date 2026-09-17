@@ -56,7 +56,9 @@ def main() -> int:
 
     code, payload = evaluate_gnostoa_current_advisory(input_document)
     if code != 3:
-        raise RuntimeError("protected current-advisory smoke returned an unexpected exit")
+        raise RuntimeError(
+            "protected current-advisory smoke returned an unexpected exit"
+        )
     if (
         payload.get("outcome") != "INCOMPLETE"
         or payload.get("reason") != "QUORUM_UNMET"
