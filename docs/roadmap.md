@@ -10,7 +10,7 @@ status, observation time and diagnostics before relying on current/next claims;
 this page preserves the fuller roadmap and historical results below.
 
 The detailed post-P2b ascent order is retained in the provider-side
-[Ariadne v7 roadmap checkpoint](https://github.com/ktogias/gnostoa/issues/14#issuecomment-5706405467).
+[consolidated Ariadne v9 roadmap checkpoint](https://github.com/ktogias/gnostoa/issues/14#issuecomment-5706634917).
 That checkpoint links the owning #10, #11 and #15 records; provider labels remain
 authoritative for the one currently selected Work Item.
 
