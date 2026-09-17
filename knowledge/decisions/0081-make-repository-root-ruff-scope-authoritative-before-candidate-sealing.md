@@ -143,20 +143,24 @@ obligation.
    root, so a later nested source path such as `pkg/dist/` remains eligible for
    the candidate. Before Ruff runs, the shared style surface fails closed when
    `git ls-files --cached --ignored --exclude-standard` reports a tracked
-   Ruff-relevant input; an ignore rule therefore cannot silently remove
-   any committed Ruff input from verification. The guard enumerates the pinned
-   Ruff default input classes, including Python, notebooks, Markdown and Ruff
-   configuration TOML. `pyproject.toml` separately declares the
+   Ruff-relevant input. Because Ruff also honors non-Git `.ignore` files, the
+   surface additionally compares Ruff discovery with and without ignore-file
+   handling and intersects the difference with the Git-tracked tree. An ignore
+   rule therefore cannot silently remove any committed Ruff input from
+   verification, while ignored untracked material remains outside the subject.
+   The Git guard enumerates the pinned Ruff default input classes, including
+   Python, notebooks, Markdown and Ruff configuration TOML. `pyproject.toml`
+   separately declares the
    explicit Ruff exclusions instead of inheriting broad default output
    basenames. Cache, VCS, environment and tool-state directories that are
    intentionally recursive remain recursive-name exclusions, while generated
    output roots use slash-containing root-relative patterns such as `dist/**`.
 3. **Add one bounded `ci/style` surface.** Both modes first reject tracked Ruff
-   inputs hidden by Git ignore rules. `ci/style --check` then runs formatter
-   check followed by lint check. `ci/style --fix` applies Ruff's ordinary safe
-   lint fixes, then formats the same repository-root subject, then proves that
-   the resulting subject is format/lint clean. Unsafe fixes are not enabled by
-   this surface.
+   inputs hidden by Git or other Ruff-recognized ignore rules. `ci/style --check`
+   then runs formatter check followed by lint check. `ci/style --fix` applies
+   Ruff's ordinary safe lint fixes, then formats the same repository-root subject,
+   then proves that the resulting subject is format/lint clean. Unsafe fixes are
+   not enabled by this surface.
 4. **CI consumes the shared check surface.** The ordinary Python 3.12
    compatibility gate invokes `./ci/style --check` instead of embedding its own
    Ruff path list. CI stays check-only and never writes candidate source.
@@ -166,8 +170,8 @@ obligation.
    substitute for completion verification. A skipped or bypassed hook satisfies
    no required check; provider CI remains authoritative.
 6. **Quality evidence uses the same candidate/root/config scope.** The extended
-   suite first consumes `ci/style --check`, including its tracked-ignore guard.
-   The collector may then invoke Ruff directly to retain structured JSON
+   suite first consumes `ci/style --check`, including its tracked-input ignore
+   guards. The collector may then invoke Ruff directly to retain structured JSON
    diagnostics, but its Ruff subject remains `.` and its additional exclusions
    remain derived from `pyproject.toml` rather than another positive path list.
 7. **Normalize before candidate sealing.** Agent guidance requires
@@ -187,8 +191,8 @@ The implementation must retain executable evidence that:
 - `ci/style --check` and `--fix` use the repository root and reject unknown
   modes;
 - the pre-push hook and ordinary PR workflow consume `ci/style --check`;
-- Git ignore rules exclude genuinely untracked local material while the shared
-  surface rejects any tracked Ruff input that an ignore rule would hide;
+- ignore rules exclude genuinely untracked local material while the shared
+  surface rejects any tracked Ruff input that Git or Ruff discovery would hide;
 - generated top-level outputs are ignored or excluded by root-relative patterns
   while identically named directories nested beneath a source path remain
   discoverable by both Git and Ruff;
@@ -211,8 +215,10 @@ failing/characterization evidence: repository-root Ruff detects drift under
   semantically invisible.
 - Git ignore rules define which untracked local material is outside the
   candidate, while `pyproject.toml` declares additional Ruff-specific
-  exclusions. A tracked Ruff input cannot cross that boundary silently because
-  the shared gate rejects it before formatting or linting.
+  exclusions. Ruff-recognized `.ignore` files may also remove untracked local
+  material from discovery, but a tracked Ruff input cannot cross either ignore
+  boundary silently because the shared gate rejects it before formatting or
+  linting.
 - The explicit list deliberately re-declares recursive cache/VCS/environment
   exclusions needed by this repository while narrowing generated output
   basenames to root-relative paths. Maintenance of that list is visible review

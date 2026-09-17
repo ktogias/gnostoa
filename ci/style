@@ -35,16 +35,79 @@ check_candidate_scope() {
   fi
 }
 
+check_ruff_ignore_scope() {
+  python - "${repository_root}" <<'PY'
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+repository_root = Path(sys.argv[1])
+tracked_result = subprocess.run(
+    [
+        "git",
+        "-c",
+        f"safe.directory={repository_root}",
+        "ls-files",
+        "-z",
+        "--cached",
+    ],
+    cwd=repository_root,
+    check=True,
+    stdout=subprocess.PIPE,
+)
+tracked = {
+    str(repository_root / os.fsdecode(path))
+    for path in tracked_result.stdout.split(b"\0")
+    if path
+}
+
+
+def discovered(*options: str) -> set[str]:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ruff",
+            "check",
+            "--show-files",
+            *options,
+            ".",
+        ],
+        cwd=repository_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return set(completed.stdout.splitlines())
+
+
+without_ignore_files = discovered("--no-respect-gitignore")
+with_ignore_files = discovered()
+hidden_tracked = sorted(tracked & (without_ignore_files - with_ignore_files))
+if hidden_tracked:
+    print(
+        "ERROR: tracked Ruff input is hidden by Ruff ignore rules:",
+        file=sys.stderr,
+    )
+    for path in hidden_tracked:
+        print(Path(path).relative_to(repository_root), file=sys.stderr)
+    raise SystemExit(1)
+PY
+}
+
 case "${mode}" in
   --check)
     enter_repository_root
     check_candidate_scope
+    check_ruff_ignore_scope
     python -m ruff format --check .
     python -m ruff check .
     ;;
   --fix)
     enter_repository_root
     check_candidate_scope
+    check_ruff_ignore_scope
     python -m ruff check --fix .
     python -m ruff format .
     python -m ruff format --check .

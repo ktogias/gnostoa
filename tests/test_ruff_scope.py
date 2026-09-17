@@ -354,6 +354,55 @@ class RuffScopeContractTests(unittest.TestCase):
         RUFF_AVAILABLE,
         "Ruff is available only in the exact development verification environment",
     )
+    def test_style_surface_rejects_tracked_input_hidden_by_dot_ignore(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            subprocess.run(
+                ["git", "init", "--quiet"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            hidden = root / "hidden.py"
+            hidden.write_text("value = 1\n", encoding="utf-8")
+            (root / ".ignore").write_text("/hidden.py\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "add", "hidden.py"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            environment = dict(os.environ)
+            environment["PATH"] = (
+                f"{Path(sys.executable).parent}{os.pathsep}{environment['PATH']}"
+            )
+            nested_cwd = root / "runner" / "nested"
+            nested_cwd.mkdir(parents=True)
+
+            completed = subprocess.run(
+                [str(ROOT / "ci" / "style"), "--check"],
+                cwd=nested_cwd,
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+
+            self.assertEqual(1, completed.returncode)
+            self.assertIn(
+                "tracked Ruff input is hidden by Ruff ignore rules",
+                completed.stderr,
+            )
+            self.assertIn("hidden.py", completed.stderr)
+
+    @unittest.skipUnless(
+        RUFF_AVAILABLE,
+        "Ruff is available only in the exact development verification environment",
+    )
     def test_nested_fix_covers_root_and_leaves_ignored_python_untouched(
         self,
     ) -> None:
@@ -367,11 +416,18 @@ class RuffScopeContractTests(unittest.TestCase):
                 text=True,
             )
             (root / ".gitignore").write_text("/local-scratch/\n", encoding="utf-8")
+            (root / ".ignore").write_text(
+                "/dot-ignore-scratch/\n",
+                encoding="utf-8",
+            )
             visible = root / "visible.py"
             visible.write_text("value=1\n", encoding="utf-8")
             ignored = root / "local-scratch" / "ignored.py"
             ignored.parent.mkdir()
             ignored.write_text("value=1\n", encoding="utf-8")
+            dot_ignore_ignored = root / "dot-ignore-scratch" / "ignored.py"
+            dot_ignore_ignored.parent.mkdir()
+            dot_ignore_ignored.write_text("value=1\n", encoding="utf-8")
             subprocess.run(
                 ["git", "add", ".gitignore", "visible.py"],
                 cwd=root,
@@ -398,6 +454,10 @@ class RuffScopeContractTests(unittest.TestCase):
             self.assertEqual(0, completed.returncode, completed.stderr)
             self.assertEqual("value = 1\n", visible.read_text(encoding="utf-8"))
             self.assertEqual("value=1\n", ignored.read_text(encoding="utf-8"))
+            self.assertEqual(
+                "value=1\n",
+                dot_ignore_ignored.read_text(encoding="utf-8"),
+            )
 
     def test_style_surface_is_repository_root_scoped(self) -> None:
         style_path = ROOT / "ci" / "style"
@@ -409,6 +469,8 @@ class RuffScopeContractTests(unittest.TestCase):
         self.assertIn("python -m ruff check --fix .", style)
         self.assertIn("python -m ruff format .", style)
         self.assertIn("ls-files --cached --ignored --exclude-standard", style)
+        self.assertIn("--no-respect-gitignore", style)
+        self.assertIn("without_ignore_files - with_ignore_files", style)
         for pathspec in EXPECTED_RUFF_GIT_PATHS:
             with self.subTest(pathspec=pathspec):
                 self.assertIn(f"'{pathspec}'", style)
