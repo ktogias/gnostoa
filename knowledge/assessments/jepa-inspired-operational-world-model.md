@@ -37,6 +37,12 @@ sources:
   - id: code-world-model
     resource: https://arxiv.org/abs/2510.02387
     title: Code World Model
+  - id: code-world-model-license
+    resource: https://ai.meta.com/resources/models-and-libraries/cwm-license/
+    title: Code World Model License
+  - id: code-world-model-card
+    resource: https://huggingface.co/facebook/cwm
+    title: Code World Model model card
   - id: swe-world
     resource: https://arxiv.org/abs/2602.03419
     title: SWE-World
@@ -167,7 +173,7 @@ C4-v0 detected 3 of 8 false-ready cases, but none of the four positive controls 
 | [WorldCoder](https://arxiv.org/abs/2402.12275) | An LLM writes an executable Python world model and repairs it from observations | Testable transitions, replay, counterexamples | Deterministic-world assumptions and optimism about unknown permissions |
 | [Executable World Models for ARC-AGI-3](https://arxiv.org/html/2605.05138v1) | Predicted/observed state comparison and stop-on-mismatch in games | Check after each step; retain competing hypotheses | Prompt-only control where an executor can bypass guards |
 | [WebDreamer](https://arxiv.org/pdf/2411.06559) | Predict consequences of web actions before execution | One-step lookahead and replanning | Assuming a longer imagined rollout is automatically better |
-| [Meta CWM](https://arxiv.org/html/2510.02387v1) | Coding LLM trained with execution and agent traces | Value of real action/result datasets | A production dependency; the paper states research-use restrictions |
+| [Meta CWM](https://arxiv.org/html/2510.02387v1), [license](https://ai.meta.com/resources/models-and-libraries/cwm-license/), and [model card](https://huggingface.co/facebook/cwm) | Coding LLM trained with execution and agent traces | Value of real action/result datasets | Prior art only: the released materials are limited to noncommercial research and are not intended for production or assistant use; any experiment requires separate approval |
 | [SWE-World](https://arxiv.org/html/2602.03419v1) | Real file operations combined with predicted execution/test feedback | Hybrid design and typed observations | Treating simulated PASS as verification evidence |
 | [DreamerV3](https://doi.org/10.1038/s41586-025-08744-2) | Policy learning over imagined trajectories with environment feedback | Separate model, policy, and evaluation | A reward of more merges or a direct analogy from games to governance |
 | [MOPO](https://arxiv.org/abs/2005.13239) | Offline model-based RL under distribution shift | Conservatism and explicit uncertainty beyond data coverage | A general guarantee for safe GitHub effects |
@@ -369,6 +375,20 @@ A possible research form is:
 Stop-gradient and anti-collapse choices would require their own evaluation. This proposal selects no architecture, loss, GPU, or model size.
 
 Proceed only with learning curves, adequate task diversity, out-of-distribution tests, comparison against simpler predictors at equal cost, and a demonstrated residual bottleneck. Otherwise keep this branch research-only or remove it.
+
+### Stage-specific promotion gates
+
+The following are provisional preregistration defaults for a future admitted experiment, not acceptance criteria for this report or automatic roadmap authority. A future Work Item may tighten or replace a number only before outcomes are inspected, with the reason and analysis plan recorded. Sections 10 and 13 still govern safety, cost, admission, and return. E2, E3, and E4 each require their own explicit admission even when the prior gate passes.
+
+| Stage | Reproducible baseline | Primary endpoint | Provisional quantitative gate | Pass, fail, or stop decision |
+|---|---|---|---|---|
+| E0 | Full source-labelled fixture oracle compared with the proposed compact representation | Correct action-relevant discrimination or invariance for each paired fixture | 100% of safety, authority, subject, and effect-applicability pairs correct, and at least 95% correct overall on a frozen set of at least 30 pairs | Pass permits E1 fixture work; any critical collision fails and requires representation repair, while repeated noncritical aliasing stops compression of that field |
+| E1 | The same frozen sequences evaluated with current deterministic checks and without the proposed transition contract | Correct terminal disposition after each injected sequence | Zero unauthorized, stale, or duplicate effects; at least 95% correct terminal dispositions; and no more than 5% false blocking of lawful positive controls across at least 30 sequences | Pass permits an E2 admission proposal; a critical effect violation fails, while progress below threshold returns the design to E0/E1 |
+| E2 | Best preregistered rule, frequency, or nearest-case predictor using the same pre-action fields and evaluation cut | Brier score for the preregistered one-step consequence classes | At least 15% lower paired Brier score than the best simple baseline, with a 90% bootstrap interval for the improvement above zero, on at least 50 eligible held-out episodes; zero authority or information-leak violations | Pass permits an E3 admission proposal; otherwise stop learned prediction or collect more prospectively without changing the frozen test cut |
+| E3 | Best deterministic admissible-action ranking using the same actions, information, horizon, and budget | Paired number of actions/read-backs needed to reach a correct terminal disposition | At least 15% lower median cost over at least 30 branchable or prospectively paired scenarios, no reduction in completion rate, and zero authorization violations | Pass permits an E4 admission proposal only if a residual representation bottleneck is documented; otherwise retain the simpler policy and stop planning expansion |
+| E4 | Best admitted E2 predictor under the same inputs, outcome definitions, compute budget, and temporal split | Held-out one-step prediction loss on temporal and out-of-distribution cuts | At least 10% lower loss on both cuts, no critical-invariant regression, out-of-distribution degradation no greater than 5 percentage points relative to in-distribution performance, and cost within the preregistered cap | Pass supports a separate product or architecture decision; failure keeps the deterministic or simpler predictor and retires the learned representation branch |
+
+A small 10–20 episode shadow pilot may test instrumentation and data integrity, but it cannot promote E2 to E3. Thresholds apply only after the stated eligible sample and frozen analysis are available.
 
 ## 10. Metrics that do not reward the wrong behavior
 
