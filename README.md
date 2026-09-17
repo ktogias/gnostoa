@@ -242,9 +242,13 @@ python -m pip install --only-binary=:all: --require-hashes \
 ./ci/verify extended
 ```
 
-The scheduled/manual `extended` suite checks Ruff formatting and a bounded,
-explicit lint rule set across `tools/`, `ci/` and `tests/`; runs strict mypy
-across `tools/` and `ci/`; and emits those reports with branch-aware coverage,
+The scheduled/manual `extended` suite first rejects tracked Ruff inputs hidden by
+Git or other Ruff-recognized ignore rules, then checks Ruff formatting and a
+bounded, explicit lint rule set over the repository-root subject (`.`).
+Root-anchored Git ignores keep local generated outputs outside the candidate
+while `pyproject.toml` declares the additional Ruff exclusions. The suite runs
+strict mypy across `tools/` and `ci/` and emits those reports with branch-aware
+coverage,
 exact-lock Python dependency audits, package-declared license inventories,
 strictly validated CycloneDX 1.6 SBOMs and a heuristic scan of the current
 Git-tracked tree into

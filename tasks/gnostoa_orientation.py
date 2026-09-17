@@ -201,9 +201,7 @@ def _git_environment() -> dict[str, str]:
     environment = {
         key: value for key, value in os.environ.items() if not key.startswith("GIT_")
     }
-    environment.update(
-        {"GIT_OPTIONAL_LOCKS": "0", "LC_ALL": "C", "LANG": "C"}
-    )
+    environment.update({"GIT_OPTIONAL_LOCKS": "0", "LC_ALL": "C", "LANG": "C"})
     return environment
 
 
@@ -240,7 +238,9 @@ def _git_output(root: Path, *args: str) -> str:
         raise OrientationError(f"cannot observe repository Git subject{suffix}")
     value = result.stdout.strip()
     if not value or "\n" in value or "\r" in value:
-        raise OrientationError("cannot observe repository Git subject: invalid Git output")
+        raise OrientationError(
+            "cannot observe repository Git subject: invalid Git output"
+        )
     return value
 
 
@@ -251,7 +251,10 @@ def _repository_subject(value: Any, label: str) -> dict[str, str]:
             raise OrientationError(
                 f"{label}.{name} must be a 40-character Git object ID"
             )
-    return {"source_commit": subject["source_commit"], "source_tree": subject["source_tree"]}
+    return {
+        "source_commit": subject["source_commit"],
+        "source_tree": subject["source_tree"],
+    }
 
 
 def observe_repository_subject(repository_root: Path) -> dict[str, str]:

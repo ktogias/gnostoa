@@ -75,6 +75,21 @@ fresh minimum Phase-D entrance/#183. Optional L4 stays inside the leverage gate
 and returns to that route. This research adds no rung, universal prerequisite,
 new v10 ordering or change to frozen Phase-D semantics.
 
+**Finalization read-back later on 2026-09-17:** protected main advanced to
+[`850b6842077ac4eb4069174cf132663ff9acb9d6`](https://github.com/ktogias/gnostoa/commit/850b6842077ac4eb4069174cf132663ff9acb9d6)
+through PR #272 while this recording was being prepared. The sole open
+`roadmap:now` remained #275; #262 was still open at that observation, but its
+source candidate had integrated. This supersedes the prospective return to a
+pending #272 candidate above. Consume #262 through its own integrated read-back
+and close-last reconciliation; do not implement its already-integrated source
+again. The original research remains bound to its earlier audited revision.
+
+**Interpretation correction to original section 10:** the established #15
+blueprint defines L5 as a second materially different **worker adapter**, not a
+second Git provider. The original Greek wording is retained as delivered; use
+this correction when interpreting the plan. GitLab/provider portability is a
+separate future evidence question and does not redefine L5.
+
 ## Operational synopsis
 
 The missing piece is a demonstrated end-to-end operating loop that composes
@@ -109,7 +124,7 @@ not modify normative admission or acceptance gates through a research document.
 | #15 L0-lite and #14 orientation | Name the real task, source/intent/authority boundaries, durable task source and minimal loop before adding abstractions. | A fresh session can identify the exact selected subject and next permitted step without replaying the raw ledger. |
 | #15 L1, #14 projection, #9 context admission | Build one useful live context packet with an explicit manifest; collect relevant issue comments, PR reviews and inline threads as distinct paginated channels before bounded selection. | Missing pages, stale observations or omitted blockers remain explicit; a packet does not claim completeness beyond its declared source set. |
 | #15 L2, with #5 recovery | Authenticated intake, accepted request bytes, exact source and intent generation, effect-specific authority, fenced publication, receipts and read-before-retry. | Duplicate request, timeout after an actual write, same-SHA new intent, concurrent supersession and late output cannot silently authorize a new effect. Candidate bytes survive session loss. |
-| #10 Q0, independently of L2 | Qualify interface, executor and reviewer separately by actual account/client/connector/route; record observation time, scope, identity, current availability and untested limits. | Read-only and tool-free routes cannot masquerade as writers; transport/schema success does not establish semantic competence or independence. |
+| #10 generic capabilities; reviewer-specific Q0 independently of L2 | Qualify Q0 reviewers under their existing assurance obligations. Observe interface/executor capabilities for the selected account/client/connector/route; keep those probes route-specific and non-gating for unrelated work. Record time, scope, identity, current availability and untested limits. | Read-only and tool-free routes cannot masquerade as writers; transport/schema success does not establish semantic competence or independence. |
 | #15 L3 with #11/R2A | Use a real available semantic reconciler under existing assurance obligations; deterministic collection and scheduling consume its result. | Unavailable qualified semantic capacity becomes an explicit wait; mechanical checks cannot resolve contested semantic findings by themselves. |
 | #8 watches and #15 recovery | Durable waits with event wake-up and bounded reconciliation; state distinguishes requested cancellation, effective revocation and stopped execution. | A missed event, delayed schedule or closed WebUI does not lose registered work; notification/monitoring is never claimed without a registered route. |
 | #264 provider characterization | Probe only semantics materially needed by the selected route: dispatch identity, token-trigger behavior, rerun generations, concurrency, conditional writes and cancellation races. | Claims bind to actual API/workflow/ref/credential behavior; concurrency groups and an operation ID alone are not a durable queue or an idempotency proof. |
@@ -486,5 +501,4 @@ Checkout, push, shell, Docker, μόνιμη μνήμη, background agents και
 Προτεινόμενα αρχικά acceptance targets: καμία αποδοχή των προεγγεγραμμένων stale/duplicate περιπτώσεων, 100% ανακτήσιμα receipts για το scope του πιλότου, μηδενική μη εγκεκριμένη χρέωση, και μετρήσιμη μείωση owner μηχανικής εργασίας. Ένα μικρό δείγμα με μηδέν λάθη δεν αποδεικνύει καθολική ασφάλεια.
 
 Το τελικό κριτήριο είναι πρακτικό: **αν αύριο χαθεί το ενεργό chat ή το διαθέσιμο paid quota, παραμένει μία κατανοητή, προσβάσιμη εργασία με διασωσμένα αποτελέσματα και σαφή επόμενο δρόμο.** Για επιτυχία της κανονικής integrated διαδρομής, αυτό πρέπει να επιτυγχάνεται χωρίς να μετατραπεί ο άνθρωπος σε μόνιμο μεταφορέα μηνυμάτων.
-
 <!-- END RETAINED ORIGINAL ASSESSMENT -->

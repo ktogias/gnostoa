@@ -1033,9 +1033,7 @@ def collect_quality_evidence(
                 "--check",
                 "--output-format",
                 "json",
-                "tools",
-                "ci",
-                "tests",
+                ".",
             ],
             root=root,
             environment=environment,
@@ -1050,9 +1048,7 @@ def collect_quality_evidence(
                 "check",
                 "--output-format",
                 "json",
-                "tools",
-                "ci",
-                "tests",
+                ".",
             ],
             root=root,
             environment=environment,
@@ -1202,7 +1198,7 @@ def collect_quality_evidence(
         "tools": _tool_versions(),
         "scope": {
             "static_quality": {
-                "format_and_lint": ["tools", "ci", "tests"],
+                "format_and_lint": ".",
                 "strict_typing": ["tools", "ci"],
             },
             "coverage": "branch-aware unittest coverage of the tools package",
@@ -1282,9 +1278,10 @@ def collect_quality_evidence(
         "reports": reports,
         "limits": [
             (
-                "Formatting, lint and static typing cover the declared Python "
-                "paths only; a clean result is not behavior, security or semantic "
-                "acceptance evidence."
+                "Formatting and lint cover the Git-candidate-aware repository-root "
+                "Ruff subject with explicit configuration exclusions; static typing "
+                "remains limited to its declared paths. A clean result is not "
+                "behavior, security or semantic acceptance evidence."
             ),
             "Coverage is a regression signal, not acceptance or test-quality proof.",
             (

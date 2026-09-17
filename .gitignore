@@ -6,10 +6,10 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .venv/
-site/
-dist/
+/site/
+/dist/
 *.egg-info/
 .DS_Store
 
 # Generated orientation artifacts are reproducible and must not become truth.
-context-packs/
+/context-packs/
