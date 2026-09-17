@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import os
@@ -507,6 +508,58 @@ class RuffScopeContractTests(unittest.TestCase):
             diagnostics = completed.stdout + completed.stderr
             self.assertGreaterEqual(diagnostics.count("F821"), 2, diagnostics)
 
+    def test_fix_propagates_ruff_execution_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            subprocess.run(
+                ["git", "init", "--quiet"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            source = root / "candidate.py"
+            source.write_text("value = 1\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "add", "candidate.py"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            (root / "ruff.py").write_text(
+                """from pathlib import Path
+import sys
+
+arguments = sys.argv[1:]
+if "--show-files" in arguments:
+    print((Path.cwd() / "candidate.py").resolve())
+    raise SystemExit(0)
+if arguments[:2] == ["check", "--fix"]:
+    raise SystemExit(2)
+if arguments and arguments[0] == "format":
+    Path("format-ran").write_text("unexpected\\n", encoding="utf-8")
+raise SystemExit(0)
+""",
+                encoding="utf-8",
+            )
+            environment = dict(os.environ)
+            environment["PATH"] = (
+                f"{Path(sys.executable).parent}{os.pathsep}{environment['PATH']}"
+            )
+
+            completed = subprocess.run(
+                [str(ROOT / "ci" / "style"), "--fix"],
+                cwd=root,
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+
+            self.assertEqual(2, completed.returncode)
+            self.assertFalse((root / "format-ran").exists())
+
     def test_style_surface_is_repository_root_scoped(self) -> None:
         style_path = ROOT / "ci" / "style"
         self.assertTrue(style_path.is_file())
@@ -556,7 +609,30 @@ class RuffScopeContractTests(unittest.TestCase):
             '"tools",\n                "ci",\n                "tests",',
             source,
         )
-        self.assertGreaterEqual(source.count('"."'), 2)
+        tree = ast.parse(source)
+        ruff_commands = []
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "_run"
+                and node.args
+                and isinstance(node.args[0], ast.List)
+            ):
+                continue
+            command = [
+                element.value if isinstance(element, ast.Constant) else None
+                for element in node.args[0].elts
+            ]
+            if "ruff" in command:
+                ruff_commands.append(command)
+
+        self.assertEqual(2, len(ruff_commands), ruff_commands)
+        for command in ruff_commands:
+            with self.subTest(command=command):
+                self.assertEqual(".", command[-1])
+        self.assertTrue(any("format" in command for command in ruff_commands))
+        self.assertTrue(any("check" in command for command in ruff_commands))
 
     def test_tasks_python_is_not_an_accidental_scope_exception(self) -> None:
         self.assertTrue((ROOT / "tasks" / "gnostoa_orientation.py").is_file())

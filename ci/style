@@ -109,8 +109,12 @@ case "${mode}" in
     check_candidate_scope
     check_ruff_ignore_scope
     # Remaining unfixable diagnostics must not prevent deterministic formatting;
-    # the final lint check still fails the command after all safe normalization.
-    python -m ruff check --fix . || :
+    # execution/configuration failures must not be converted into a clean result.
+    fix_status=0
+    python -m ruff check --fix . || fix_status=$?
+    if [ "${fix_status}" -gt 1 ]; then
+      exit "${fix_status}"
+    fi
     python -m ruff format .
     verification_status=0
     python -m ruff format --check . || verification_status=$?

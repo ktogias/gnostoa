@@ -191,7 +191,9 @@ The implementation must retain executable evidence that:
 - `ci/style --check` and `--fix` use the repository root and reject unknown
   modes;
 - `ci/style --fix` still completes deterministic formatting and final checks
-  before failing when safe lint fixes leave an unfixable diagnostic;
+  before failing when safe lint fixes leave an unfixable diagnostic, but
+  propagates a higher Ruff execution or configuration failure without
+  converting it into a clean result;
 - the pre-push hook and ordinary PR workflow consume `ci/style --check`;
 - ignore rules exclude genuinely untracked local material while the shared
   surface rejects any tracked Ruff input that Git or Ruff discovery would hide;
