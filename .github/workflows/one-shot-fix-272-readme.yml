@@ -1,0 +1,48 @@
+name: One-shot PR 272 README scope alignment
+
+on:
+  push:
+    branches:
+      - fix/ruff-authoritative-scope
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: fix/ruff-authoritative-scope
+          fetch-depth: 0
+      - name: Align README quality-evidence scope and remove one-shot workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("README.md")
+          text = path.read_text(encoding="utf-8")
+          old = """The scheduled/manual `extended` suite checks Ruff formatting and a bounded,
+          explicit lint rule set across `tools/`, `ci/` and `tests/`; runs strict mypy
+          across `tools/` and `ci/`; and emits those reports with branch-aware coverage,
+          """
+          new = """The scheduled/manual `extended` suite checks Ruff formatting and a bounded,
+          explicit lint rule set over the repository-root subject (`.`), using the exclusions
+          declared in `pyproject.toml`; runs strict mypy across `tools/` and `ci/`; and emits
+          those reports with branch-aware coverage,
+          """
+          if text.count(old) != 1:
+              raise SystemExit(f"expected one stale README scope paragraph, found {text.count(old)}")
+          path.write_text(text.replace(old, new), encoding="utf-8")
+          PY
+          rm .github/workflows/one-shot-fix-272-readme.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md .github/workflows/one-shot-fix-272-readme.yml
+          git diff --cached --check
+          git commit -m "Align README with repository-root Ruff scope"
+          git push origin HEAD:fix/ruff-authoritative-scope
