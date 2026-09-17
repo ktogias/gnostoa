@@ -5,7 +5,7 @@ description: Source-backed assessment of how Gnostoa can evolve from evidence-bo
 status: draft
 generated:
   by: openai/gpt-5
-  at: "2026-09-17T13:07:08Z"
+  at: "2026-09-17T13:16:51Z"
 sources:
   - id: operational-world-model-work-item
     resource: https://github.com/ktogias/gnostoa/issues/273
@@ -503,9 +503,9 @@ Before execution, choose a primary endpoint and minimum useful improvement, such
 
 Prospective E2–E4 collection requires a separately admitted, versioned data contract before any raw item crosses the collection boundary. The contract must whitelist allowed fields and sources; bind purpose, provenance, and subject authorization; define secret and personal-data exclusion or redaction; exclude prompts, private chain-of-thought and other private reasoning; set access roles, retention limits, deletion handling, and incident response; and identify the collector and scanner versions.
 
-The collector performs bounded-memory streaming parse, structured extraction, and secret/PII/private-reasoning scans before any disk, temporary-file, cache, debug trace, log, telemetry, crash dump, core dump, retained-artifact, or provider-side persistence under Gnostoa's control. Raw responses are never emitted through error messages. Debug/core-dump paths are disabled or structurally sanitized for this collector.
+A future separately admitted collector **must** perform bounded-memory streaming parse, structured extraction, and secret/PII/private-reasoning scans before any disk, temporary-file, cache, debug trace, log, telemetry, crash dump, core dump, retained-artifact, or provider-side persistence under Gnostoa's control. It must never emit raw responses through error messages, and its debug/core-dump paths must be disabled or structurally sanitized. These are prospective admission requirements, not claims about currently implemented enforcement.
 
-An unparseable item, scanner failure or hit, disallowed field, missing provenance, or deletion/retention conflict fails closed: raw bytes are discarded and only a contract-allowed non-sensitive episode identity, scanner version, and reason code may be retained. There is no raw-data quarantine by default. A future separately admitted incident process may create one only with encryption, named access roles and owner, immutable access audit, fixed expiry, deletion procedure, and incident rules; quarantined content remains unavailable to training, evaluation, embeddings, model context, and ordinary logs. Each accepted episode records the data-contract and scanner identities; later manual review cannot retroactively legitimize a failed admission.
+An unparseable item, scanner failure or hit, disallowed field, missing provenance, or deletion/retention conflict must fail closed: the future collector must discard raw bytes and may retain only a contract-allowed non-sensitive episode identity, scanner version, and reason code. Its admitted design must provide no raw-data quarantine by default. A future separately admitted incident process may create one only with encryption, named access roles and owner, immutable access audit, fixed expiry, deletion procedure, and incident rules; quarantined content must remain unavailable to training, evaluation, embeddings, model context, and ordinary logs. Each accepted episode must record the data-contract and scanner identities; later manual review cannot retroactively legitimize a failed admission.
 
 - Split by complete PR or task and by time; never put lines from the same review thread in both train and test.
 - Exclude later solutions, reviews, and ground-truth patches from pre-action context.
@@ -619,7 +619,7 @@ Subsequent exact-head PR review identified additional experiment-contract gaps a
 | E1 mixed safety and liveness denominators | Refusal or UNKNOWN could appear safe while blocking useful work | Split all-pair, critical-control, and P1 denominators; every non-`PROCEED` P1 outcome is a false block, and candidate P1 success must be at least 95% and no lower than baseline |
 | E2 shadow output could influence the outcome | An operator could act on the prediction and invalidate shadow evaluation | Restricted pre-outcome output to an isolated record and non-decision observer; actors, reviewers, selectors, and effect adapters cannot see it before the sealed outcome cut |
 | Engineering-source inventory and quantitative locators were incomplete | A future reader could miss material evidence or struggle to reproduce a numerical claim | Added every external engineering/research source to front matter and bound the WebDreamer horizon numbers to section 5.1 and Figure 5 of arXiv v2 |
-| The ingestion gate did not cover transient writes or raw quarantine | Protected content could leak through temp files, logs, telemetry, or failure paths before retained storage | Required bounded-memory scan before every write path, sanitized failures, discard-by-default, and separately admitted encrypted/expiring incident quarantine |
+| The ingestion gate did not cover transient writes or raw quarantine | Protected content could leak through temp files, logs, telemetry, or failure paths before retained storage | Made bounded-memory scanning before every write path, sanitized failures, discard-by-default, and separately admitted encrypted/expiring incident quarantine prospective requirements for any future collector |
 | CWM citation did not explicitly exclude its artifacts | The noncommercial release might be mistaken for an implementation dependency | Stated that E0–E4 use no CWM code, weights, data, traces, outputs, or derivatives; citation-only comparison remains the sole use |
 
 Research contributions about the roadmap, papers, and engineering patterns were not used as semantic approvals. They remain bound to cited sources and stated limits.
