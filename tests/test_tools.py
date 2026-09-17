@@ -2252,7 +2252,7 @@ class ContinuousIntegrationTests(unittest.TestCase):
         ruff_steps = [
             step
             for step in compatibility["steps"]
-            if step.get("name") == "Run per-change Ruff gates"
+            if step.get("name") == "Run project style gate"
         ]
         self.assertEqual(1, len(ruff_steps), ruff_steps)
         ruff_step = ruff_steps[0]
@@ -2263,13 +2263,7 @@ class ContinuousIntegrationTests(unittest.TestCase):
             compatibility["steps"][ruff_step_index - 1]["name"],
         )
         self.assertEqual("matrix.python-version == '3.12'", ruff_step["if"])
-        self.assertEqual(
-            (
-                "python -m ruff format --check tools ci tests\n"
-                "python -m ruff check tools ci tests\n"
-            ),
-            ruff_step["run"],
-        )
+        self.assertEqual("./ci/style --check", ruff_step["run"])
 
         self.assertEqual(
             ["policy", "fast", "python-compatibility"], regression["needs"]
