@@ -4,8 +4,10 @@ set -eu
 mode="${1:-}"
 
 check_candidate_scope() {
+  repository_root="$(pwd -P)"
   ignored_tracked="$(
-    git ls-files --cached --ignored --exclude-standard -- \
+    git -c "safe.directory=${repository_root}" \
+      ls-files --cached --ignored --exclude-standard -- \
       '*.py' '*.pyi' '*.ipynb'
   )"
   if [ -n "${ignored_tracked}" ]; then

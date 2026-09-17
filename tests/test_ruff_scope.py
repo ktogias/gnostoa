@@ -90,6 +90,8 @@ class RuffScopeContractTests(unittest.TestCase):
         ignored_tracked = subprocess.run(
             [
                 "git",
+                "-c",
+                f"safe.directory={ROOT.resolve()}",
                 "ls-files",
                 "--cached",
                 "--ignored",
@@ -314,7 +316,8 @@ class RuffScopeContractTests(unittest.TestCase):
         self.assertIn("python -m ruff check .", style)
         self.assertIn("python -m ruff check --fix .", style)
         self.assertIn("python -m ruff format .", style)
-        self.assertIn("git ls-files --cached --ignored --exclude-standard", style)
+        self.assertIn("ls-files --cached --ignored --exclude-standard", style)
+        self.assertIn('git -c "safe.directory=${repository_root}"', style)
         self.assertNotIn("tools ci tests", style)
 
         fix_branch = style.split("--fix)", 1)[1].split(";;", 1)[0]
