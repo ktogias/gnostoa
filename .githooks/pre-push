@@ -1,5 +1,8 @@
 #!/bin/sh
 set -eu
 
+# Early feedback only; provider CI remains authoritative.
+./ci/style --check
+
 # Keep this bounded; the Change Request pipeline runs broader evidence.
 exec ./ci/verify fast
