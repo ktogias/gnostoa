@@ -27,50 +27,53 @@ jobs:
 
           path = Path("tests/test_tools.py")
           text = path.read_text(encoding="utf-8")
-          old = '''        ruff_steps = [
-              step
-              for step in compatibility["steps"]
-              if step.get("name") == "Run per-change Ruff gates"
+          lines = text.splitlines(keepends=True)
+
+          stale = 'if step.get("name") == "Run per-change Ruff gates"'
+          current = 'if step.get("name") == "Run project style gate"'
+          stale_indexes = [i for i, line in enumerate(lines) if stale in line]
+
+          if not stale_indexes:
+              if sum(current in line for line in lines) == 1 and './ci/style --check' in text:
+                  print("stale CI contract is already repaired")
+                  raise SystemExit(0)
+              raise SystemExit("stale CI contract selector not found and repaired form is not unique")
+          if len(stale_indexes) != 1:
+              raise SystemExit(f"expected exactly one stale CI contract selector, found {len(stale_indexes)}")
+
+          selector_index = stale_indexes[0]
+          lines[selector_index] = lines[selector_index].replace(stale, current)
+
+          anchor = 'self.assertEqual("matrix.python-version == \'3.12\'", ruff_step["if"])'
+          anchor_indexes = [
+              i for i, line in enumerate(lines[selector_index:], start=selector_index) if anchor in line
           ]
-          self.assertEqual(1, len(ruff_steps), ruff_steps)
-          ruff_step = ruff_steps[0]
-          ruff_step_index = compatibility["steps"].index(ruff_step)
-          self.assertGreater(ruff_step_index, 0)
-          self.assertEqual(
-              "Install the exact development dependencies",
-              compatibility["steps"][ruff_step_index - 1]["name"],
-          )
-          self.assertEqual("matrix.python-version == '3.12'", ruff_step["if"])
-          self.assertEqual(
-              (
-                  "python -m ruff format --check tools ci tests\\n"
-                  "python -m ruff check tools ci tests\\n"
-              ),
-              ruff_step["run"],
-          )
-          '''
-          new = '''        ruff_steps = [
-              step
-              for step in compatibility["steps"]
-              if step.get("name") == "Run project style gate"
+          if len(anchor_indexes) != 1:
+              raise SystemExit(f"expected exactly one Ruff if-condition anchor, found {len(anchor_indexes)}")
+
+          start = anchor_indexes[0] + 1
+          if lines[start] != "        self.assertEqual(\n":
+              raise SystemExit(f"unexpected Ruff run assertion start: {lines[start]!r}")
+
+          run_line = None
+          for i in range(start + 1, min(start + 20, len(lines))):
+              if 'ruff_step["run"],' in lines[i]:
+                  run_line = i
+                  break
+          if run_line is None or run_line + 1 >= len(lines) or lines[run_line + 1] != "        )\n":
+              raise SystemExit("could not bound the stale Ruff run assertion")
+
+          lines[start : run_line + 2] = [
+              '        self.assertEqual("./ci/style --check", ruff_step["run"])\n'
           ]
-          self.assertEqual(1, len(ruff_steps), ruff_steps)
-          ruff_step = ruff_steps[0]
-          ruff_step_index = compatibility["steps"].index(ruff_step)
-          self.assertGreater(ruff_step_index, 0)
-          self.assertEqual(
-              "Install the exact development dependencies",
-              compatibility["steps"][ruff_step_index - 1]["name"],
-          )
-          self.assertEqual("matrix.python-version == '3.12'", ruff_step["if"])
-          self.assertEqual("./ci/style --check", ruff_step["run"])
-          '''
-          if text.count(old) != 1:
-              raise SystemExit(f"expected exactly one stale CI contract block, found {text.count(old)}")
-          path.write_text(text.replace(old, new), encoding="utf-8")
+          path.write_text("".join(lines), encoding="utf-8")
           PY
           python -m unittest tests.test_tools.ContinuousIntegrationTests.test_python_compatibility_gates_regression_fail_closed
           ./ci/style --check
+          if git diff --quiet -- tests/test_tools.py; then
+            echo "No repair commit needed"
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add tests/test_tools.py
