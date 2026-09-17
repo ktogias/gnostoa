@@ -98,6 +98,11 @@ affected by the change **after** formatting, inspect the resulting diff, and onl
 then treat the SHA as a review candidate. Do not use unsafe Ruff fixes implicitly.
 Provider CI stays check-only and remains the non-bypassable verifier.
 
+When assessing whether that repository-root Ruff gate adds value, use the
+pre-registered cohort, evidence, metrics and outcome rule in
+[Decision 0081](knowledge/decisions/0081-make-repository-root-ruff-scope-authoritative-before-candidate-sealing.md#post-integration-effectiveness-assessment).
+Green CI establishes candidate correctness, not effectiveness by itself.
+
 Before completion, run the applicable suites in the development container by
 default:
 

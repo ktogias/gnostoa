@@ -204,6 +204,120 @@ The existing #262 provider comments are retained as the pre-implementation
 failing/characterization evidence: repository-root Ruff detects drift under
 `tasks/` while the old per-change gate does not.
 
+## Post-integration effectiveness assessment
+
+Exact-head verification establishes that one candidate implements this Decision
+correctly. It does not by itself establish that the change reduces delivery
+churn or adds enough value to retain. After PR #272 is integrated, a later agent
+or developer must use this bounded assessment instead of inferring value from a
+green CI result.
+
+### Hypothesis and baseline
+
+The value hypothesis is that one early, repository-root Ruff decision moves
+deterministic style repairs before candidate sealing, while preserving complete
+tracked-input coverage and leaving ignored untracked material untouched. The
+expected observable effect is fewer Ruff-caused mutations and exact-head reruns
+after a candidate has first been presented for external review.
+
+The pre-implementation characterization is the #262 window: seven directly
+proven Ruff-failing candidate SHAs among 49 commits, including one
+partial-repair cascade. Commits and Pull Requests are different units, so that
+ratio is directional context, not a statistically comparable control group.
+Retain it to identify the failure shape; do not use it to manufacture a causal
+percentage improvement.
+
+### Cohort and observation window
+
+Start the observation window at the integration commit for PR #272. Assess the
+first ten subsequently integrated eligible Pull Requests, with a checkpoint no
+later than 60 calendar days after that integration.
+
+A Pull Request is eligible when its first sealed candidate either:
+
+- changes a path reported from that exact SHA, under the exact development lock,
+  by the pinned
+  `python -m ruff check --show-files --no-respect-gitignore .` discovery command;
+  or
+- changes `pyproject.toml`, Git/Ruff ignore rules, `ci/style`, the pre-push hook,
+  the ordinary provider workflow or the quality-evidence Ruff integration.
+
+The **sealed candidate** is the first exact SHA explicitly recorded in the Pull
+Request as ready for fresh external review. If that identity is not recorded,
+mark the entry as missing evidence; do not reconstruct a favorable boundary
+from later timestamps.
+
+If fewer than ten eligible Pull Requests exist at the 60-day checkpoint,
+publish the available observations as `INSUFFICIENT`. Do not silently extend the
+window or claim success. A separately admitted follow-up may continue the
+measurement.
+
+### Evidence to retain for each eligible Pull Request
+
+Record one row per Pull Request with:
+
+1. the Pull Request URL, integration SHA, sealed-candidate SHA and final SHA;
+2. every mutation after candidate sealing, bound to its commit and provider
+   evidence;
+3. each mutation classified as `RUFF_REPAIR`, `OTHER` or `MIXED`, with `MIXED`
+   counted conservatively as Ruff-related;
+4. the number of CI and fresh-review reruns caused solely by each Ruff-related
+   mutation;
+5. any partial-repair cascade, where a known Ruff report is not fully repaired
+   before the next candidate;
+6. any tracked Ruff input that escaped the gate, correctly ignored untracked
+   input that was rejected or mutated, or second ordinary-CI scope authority;
+   and
+7. provider-reported `ci/style` duration when available, reported as a range and
+   median across comparable jobs only.
+
+Retain links to provider runs, review requests and findings rather than relying
+on a narrative recollection. A local hook has no telemetry, so count a
+pre-sealing local catch only when the Pull Request retains explicit evidence of
+it; otherwise record it as unknown. Do not attribute general review latency or
+all SHA changes to this control.
+
+### Metrics and decision rule
+
+Aggregate at least these metrics:
+
+- eligible Pull Requests observed;
+- Pull Requests with at least one post-sealing Ruff-related mutation;
+- total post-sealing `RUFF_REPAIR` and `MIXED` mutations;
+- exact-head CI/review reruns caused solely by those mutations;
+- partial-repair cascades;
+- tracked-input escapes;
+- ignored-untracked false rejections or mutations;
+- ordinary-CI scope-authority drift; and
+- comparable `ci/style` duration range and median.
+
+Classify the result as follows:
+
+- `VALUE_SUPPORTED`: all ten eligible Pull Requests are observed; no
+  tracked-input escape, ignored-untracked false rejection or mutation, or
+  ordinary-CI scope-authority drift occurs; no partial-repair cascade occurs;
+  and at least nine of the ten Pull Requests require no post-sealing
+  Ruff-related mutation. This supports the value hypothesis but does not prove
+  that the hook alone caused the outcome.
+- `VALUE_NOT_SUPPORTED`: the complete ten-Pull-Request cohort does not meet the
+  `VALUE_SUPPORTED` rule. Preserve the observed technical successes and costs;
+  do not rewrite a missed threshold as success.
+- `CONTROL_FAILURE`: any tracked-input escape, ignored-untracked false rejection
+  or mutation, or ordinary-CI scope-authority drift occurs. This overrides
+  cohort size and requires a finding with evidence and a focused proposed fix;
+  remediation still follows ordinary admission and change control.
+- `INSUFFICIENT`: the observation checkpoint arrives without ten eligible Pull
+  Requests, or evidence gaps prevent the decision rule from being evaluated.
+
+The result must be written to
+`knowledge/assessments/0081-repository-root-ruff-effectiveness-result.md` and
+linked back to this Decision. It must bind the PR #272 integration commit, list
+the full cohort (including exclusions), present the per-PR evidence table and
+metric totals, state the classification and limitations, and keep any new
+finding separate as **finding / evidence / proposed fix**. The assessment may
+recommend retention, revision or removal, but it does not authorize a code
+change by itself.
+
 ## Consequences
 
 - A new Python-bearing top-level directory no longer needs a CI workflow edit to
