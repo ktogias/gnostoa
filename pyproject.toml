@@ -43,16 +43,38 @@ packages = ["tools", "tools.experiment", "tools.capsule", "tools.capsule.adapter
 [tool.ruff]
 target-version = "py311"
 line-length = 88
-extend-exclude = [
+respect-gitignore = false
+exclude = [
+  ".bzr",
+  ".direnv",
+  ".eggs",
+  ".git",
+  ".git-rewrite",
+  ".hg",
+  ".ipynb_checkpoints",
   ".mypy_cache",
+  ".nox",
+  ".pants.d",
+  ".pyenv",
   ".pytest_cache",
+  ".pytype",
   ".ruff_cache",
+  ".svn",
+  ".tox",
   ".venv",
+  ".vscode",
+  "__pypackages__",
   "__pycache__",
-  "context-packs",
-  "dist",
-  "site",
+  "node_modules",
+  "site-packages",
+  "venv",
   "*.egg-info",
+  "_build/**",
+  "build/**",
+  "buck-out/**",
+  "context-packs/**",
+  "dist/**",
+  "site/**",
 ]
 
 [tool.ruff.lint]
