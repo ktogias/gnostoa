@@ -243,8 +243,9 @@ python -m pip install --only-binary=:all: --require-hashes \
 ```
 
 The scheduled/manual `extended` suite checks Ruff formatting and a bounded,
-explicit lint rule set across `tools/`, `ci/` and `tests/`; runs strict mypy
-across `tools/` and `ci/`; and emits those reports with branch-aware coverage,
+explicit lint rule set over the repository-root subject (`.`), using the exclusions
+declared in `pyproject.toml`; runs strict mypy across `tools/` and `ci/`; and emits
+those reports with branch-aware coverage,
 exact-lock Python dependency audits, package-declared license inventories,
 strictly validated CycloneDX 1.6 SBOMs and a heuristic scan of the current
 Git-tracked tree into
