@@ -546,7 +546,7 @@ if arguments and arguments[0] == "format":
     raise SystemExit(0)
 if arguments and arguments[0] == "check":
     Path("lint-ran").write_text("observed\\n", encoding="utf-8")
-    raise SystemExit(1 if scenario == "final" else 0)
+    raise SystemExit({"final": 1, "final_lint": 2}.get(scenario, 0))
 raise SystemExit(0)
 """,
                 encoding="utf-8",
@@ -559,6 +559,7 @@ raise SystemExit(0)
             for scenario, expected_status in (
                 ("initial", 2),
                 ("final", 2),
+                ("final_lint", 2),
                 ("format_only", 1),
             ):
                 with self.subTest(scenario=scenario):
