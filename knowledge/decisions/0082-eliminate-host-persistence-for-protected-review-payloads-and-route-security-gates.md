@@ -96,6 +96,24 @@ mutated for scanner annotations. Do not add a broad hexadecimal filter, path
 exclusion, second scanner or hosted service. The existing dependency introduces
 no new acquisition, redistribution, attribution or NOTICE effect.
 
+Two concrete snapshot alternatives were considered. Python `shutil.copytree`
+(PSF License Version 2, compatible with this Apache-2.0 distribution and already
+part of the runtime) re-resolves pathnames while copying; its symlink options do
+not bind every component to opened directory descriptors or detect an in-place
+change across the read. `git archive` plus Python `tarfile` would use Git's
+GPL-2.0-only executable as an external development tool and the PSF-licensed
+standard library. That process-level use is compatible because Git is neither
+linked nor redistributed here, but it covers only a Git object tree, not the
+supported packaged-manifest or caller-supplied tracked-path surfaces, and safe
+tar extraction would add a second custom validation boundary. A new `rsync`
+dependency was also rejected: its GPL-3.0-or-later program can be invoked as a
+separate system tool without relicensing this project, but it is not locked or
+guaranteed in the runtime and path-based copy still does not supply the required
+descriptor binding. The selected standard-library implementation is therefore
+shared across all supported source forms, adds no dependency, opens each path
+relative to held directory descriptors with `O_NOFOLLOW | O_NONBLOCK`, and
+checks stable metadata around the copy.
+
 Keep GitHub-managed CodeQL default setup. Advanced setup is not required to fix
 the source operation or to make the provider result a later protected-branch
 gate. A green PR CodeQL result is not a branch-wide absence claim because
@@ -135,13 +153,14 @@ separate read-back.
    arguments, translate candidate-enumeration failures, and bound stdout/stderr
    while reading rather than after buffering. Acquire each candidate through
    descriptor-relative `O_NOFOLLOW` traversal into a private, disposable scan
-   snapshot, verify stable inode and file metadata across the copy, and run the
-   scanner only against those acquired bytes. The snapshot is deleted on exit
-   and is distinct from the protected-review payload, which is never written on
-   the host. `extended` reuses the command and retains a sanitized report plus
-   counts of reviewed and unresolved candidates. The baseline manifest itself
-   is the single exact scanner exclusion because scanning its candidate hashes
-   would create a recursive, unstable baseline.
+   snapshot. Open the final candidate non-blocking so a FIFO replacement cannot
+   stall acquisition, verify stable inode and file metadata across the copy,
+   and run the scanner only against those acquired bytes. The snapshot is
+   deleted on exit and is distinct from the protected-review payload, which is
+   never written on the host. `extended` reuses the command and retains a
+   sanitized report plus counts of reviewed and unresolved candidates. The
+   baseline manifest itself is the single exact scanner exclusion because
+   scanning its candidate hashes would create a recursive, unstable baseline.
 6. **Ordinary PR security gate.** Add `security-fast` as a visible provider job
    using the exact development lock and the shared scan command. It intentionally
    runs natively as the inexpensive exact-head gate before any image build. For
@@ -185,7 +204,8 @@ Pre-implementation RED evidence and the final candidate must demonstrate:
 - the reviewed tree has zero unresolved secret candidates, while an injected
   candidate, stale baseline and unauthorized baseline entry fail;
 - a concurrent worktree replacement cannot change the private bytes presented
-  to the scanner, and the disposable snapshot is removed after the scan;
+  to the scanner, a FIFO replacement fails without blocking, and the disposable
+  snapshot is removed after the scan;
 - protected JSON file identities are unchanged;
 - every relevant provider event/path class maps deterministically to `RUN` or
   `NOT_APPLICABLE`, and high-risk PRs actually execute `extended`;

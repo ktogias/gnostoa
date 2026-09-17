@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -262,6 +263,68 @@ class SecretBaselineTests(unittest.TestCase):
             self.assertIsNotNone(observed_snapshot)
             assert observed_snapshot is not None
             self.assertFalse(observed_snapshot.exists())
+
+    @unittest.skipUnless(
+        hasattr(os, "mkfifo") and hasattr(os, "O_NONBLOCK"),
+        "FIFO race regression requires POSIX non-blocking opens",
+    )
+    def test_fifo_replacement_before_snapshot_open_fails_without_blocking(
+        self,
+    ) -> None:
+        baseline = _report({})
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            candidate_path = Path("tracked.txt")
+            candidate = root / candidate_path
+            candidate.write_text("candidate\n", encoding="utf-8")
+            (root / ".secrets.baseline").write_text(
+                json.dumps(baseline),
+                encoding="utf-8",
+            )
+            real_validate = security_scan._validated_candidate_paths
+            real_open = os.open
+            replaced = False
+
+            def validate_then_replace(
+                candidate_root: Path,
+                paths: list[Path],
+            ) -> list[Path]:
+                nonlocal replaced
+                validated = real_validate(candidate_root, paths)
+                if (
+                    candidate_root == root
+                    and paths == [candidate_path]
+                    and not replaced
+                ):
+                    candidate.unlink()
+                    os.mkfifo(candidate)
+                    replaced = True
+                return validated
+
+            def require_nonblocking_open(
+                path: str | bytes | Path,
+                flags: int,
+                mode: int = 0o777,
+                *,
+                dir_fd: int | None = None,
+            ) -> int:
+                if path == candidate_path.name and dir_fd is not None:
+                    self.assertTrue(flags & os.O_NONBLOCK)
+                return real_open(path, flags, mode, dir_fd=dir_fd)
+
+            with (
+                mock.patch(
+                    "tools.security_scan._validated_candidate_paths",
+                    side_effect=validate_then_replace,
+                ),
+                mock.patch(
+                    "tools.security_scan.os.open",
+                    side_effect=require_nonblocking_open,
+                ),
+                self.assertRaisesRegex(SecurityScanError, "not a regular file"),
+            ):
+                scan_tracked_tree(root, tracked_paths=[candidate_path])
 
     def test_candidate_scope_errors_are_reported_as_security_scan_errors(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

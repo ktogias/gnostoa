@@ -351,9 +351,10 @@ def _copy_candidate_to_snapshot(
 ) -> None:
     nofollow = getattr(os, "O_NOFOLLOW", None)
     directory = getattr(os, "O_DIRECTORY", None)
-    if nofollow is None or directory is None:
+    nonblock = getattr(os, "O_NONBLOCK", None)
+    if nofollow is None or directory is None or nonblock is None:
         raise SecurityScanError(
-            "tracked-tree snapshot requires O_NOFOLLOW and O_DIRECTORY"
+            "tracked-tree snapshot requires O_NOFOLLOW, O_DIRECTORY and O_NONBLOCK"
         )
 
     parent_descriptor: int | None = None
@@ -372,7 +373,7 @@ def _copy_candidate_to_snapshot(
 
         source_descriptor = os.open(
             relative.name,
-            os.O_RDONLY | nofollow,
+            os.O_RDONLY | nofollow | nonblock,
             dir_fd=parent_descriptor,
         )
         before = os.fstat(source_descriptor)
