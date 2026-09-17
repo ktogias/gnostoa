@@ -19,6 +19,21 @@ sources:
   - id: ruff-0160
     resource: https://pypi.org/project/ruff/0.16.0/
     title: Ruff 0.16.0 project and configuration reference
+  - id: pre-commit-462
+    resource: https://github.com/pre-commit/pre-commit/tree/9767b6c8211a6bf683875a0afcf2b390457a4b66
+    title: pre-commit v4.6.2 inspected source
+  - id: pre-commit-462-license
+    resource: https://github.com/pre-commit/pre-commit/blob/9767b6c8211a6bf683875a0afcf2b390457a4b66/LICENSE
+    title: pre-commit v4.6.2 MIT license
+  - id: ruff-pre-commit-0160
+    resource: https://github.com/astral-sh/ruff-pre-commit/tree/cb8c523fd4835aba42af70f4cad5568db4df0b6c
+    title: ruff-pre-commit v0.16.0 inspected source
+  - id: ruff-pre-commit-0160-mit
+    resource: https://github.com/astral-sh/ruff-pre-commit/blob/cb8c523fd4835aba42af70f4cad5568db4df0b6c/LICENSE-MIT
+    title: ruff-pre-commit v0.16.0 MIT license option
+  - id: ruff-pre-commit-0160-apache
+    resource: https://github.com/astral-sh/ruff-pre-commit/blob/cb8c523fd4835aba42af70f4cad5568db4df0b6c/LICENSE-APACHE
+    title: ruff-pre-commit v0.16.0 Apache-2.0 license option
 x-project-knowledge:
   id: kit.decision.0081.make-repository-root-ruff-scope-authoritative-before-candidate-sealing
   owners:
@@ -82,14 +97,26 @@ repository already uses `ci/*` executable surfaces and Git hooks. Its purpose is
 composition only: invoke the existing pinned Ruff commands in one order over
 one subject. It must not grow into a general preflight/orchestration framework.
 
-Alternatives considered:
+Alternatives considered and licensing disposition:
 
 - keeping a shared explicit top-level include list was rejected because adding a
   new Python-bearing top-level path would still require updating a second scope
   declaration;
-- adopting `pre-commit` / `ruff-pre-commit` was rejected for this slice because
-  it adds another tool/configuration lifecycle when the existing hooks and
-  pinned Ruff executable are sufficient;
+- `pre-commit` **v4.6.2**, inspected at commit
+  `9767b6c8211a6bf683875a0afcf2b390457a4b66`, is MIT licensed. It was considered
+  as a generic local-hook framework. That license is compatible with inspection,
+  use and redistribution subject to its notice terms, but this slice does not
+  copy, package, depend on or distribute it. It was rejected because it adds a
+  separate dependency, configuration and installation lifecycle when Gnostoa
+  already owns repository hooks and a pinned Ruff executable;
+- `ruff-pre-commit` **v0.16.0**, inspected at commit
+  `cb8c523fd4835aba42af70f4cad5568db4df0b6c`, is offered under MIT or
+  Apache-2.0. It was considered as the Ruff-specific adapter for a pre-commit
+  installation. Its available licenses are compatible with the intended
+  evaluation and potential use, but this slice does not copy, package, depend on
+  or distribute it. It was rejected because it would add an external hook
+  repository/revision lifecycle on top of the already pinned Ruff dependency
+  without removing the need for Gnostoa's provider-side authoritative check;
 - a CI bot that formats and commits changes was rejected because it would mint a
   new, unreviewed SHA and recreate the exact-head invalidation this work is meant
   to reduce;
@@ -97,9 +124,11 @@ Alternatives considered:
   small shared surface is proven useful; #262 does not need a CI topology
   redesign to close the scope defect.
 
-Ruff is already present in the exact development lock. This Decision adds no new
-third-party component and therefore creates no new license, attribution or
-NOTICE obligation.
+The selected implementation reuses only Ruff, which is already present in the
+exact development lock. The rejected alternatives contributed design evidence
+only. No source or configuration from them is copied into Gnostoa, so this
+Decision introduces no new third-party distribution, attribution or NOTICE
+obligation.
 
 ## Decision
 
@@ -107,10 +136,16 @@ NOTICE obligation.
    invocations for Gnostoa source verification operate on `.` from the explicit
    repository root rather than naming `tools ci tests` or another positive
    top-level allow-list.
-2. **`pyproject.toml` owns exclusions.** Generated/cache/output paths that must
-   not become source-format subjects are declared explicitly there with
-   Ruff-compatible exclusions. No tracked Python source directory is excluded
-   merely because it was not known when this Decision was written.
+2. **`pyproject.toml` is the sole Ruff exclusion authority for this surface.**
+   Set `respect-gitignore = false` so unrelated Git ignore rules cannot silently
+   remove Python source from the verification domain, and declare one explicit
+   `exclude` list instead of inheriting Ruff's broad default output basenames.
+   Cache, VCS, environment and tool-state directories that are intentionally
+   recursive remain explicit recursive-name exclusions. Repository-generated
+   output roots such as `context-packs`, `dist` and `site` use slash-containing
+   root-relative patterns (for example `dist/**`) so a later nested source path
+   such as `pkg/dist/` does not escape verification merely because it reuses the
+   same basename.
 3. **Add one bounded `ci/style` surface.** `ci/style --check` runs formatter
    check followed by lint check. `ci/style --fix` applies Ruff's ordinary safe
    lint fixes, then formats the same repository-root subject, then proves that
@@ -120,12 +155,14 @@ NOTICE obligation.
    compatibility gate invokes `./ci/style --check` instead of embedding its own
    Ruff path list. CI stays check-only and never writes candidate source.
 5. **Pre-push consumes the same check surface.** The repository hook runs
-   `./ci/style --check` before its existing bounded verification. Hooks are early
-   feedback only; provider CI remains authoritative.
+   `./ci/style --check` before its existing bounded verification. This is the
+   advisory local-feedback layer defined by the tiered-CI pattern, not a
+   substitute for completion verification. A skipped or bypassed hook satisfies
+   no required check; provider CI remains authoritative.
 6. **Quality evidence uses the same root/config scope.** The extended collector
    may invoke Ruff directly to retain structured JSON diagnostics, but its Ruff
    subject is `.` and its scope is therefore derived from the same
-   `pyproject.toml` exclusions rather than another positive path list.
+   `pyproject.toml` exclusion authority rather than another positive path list.
 7. **Normalize before candidate sealing.** Agent guidance requires
    `./ci/style --fix` before creating/pushing a Python-affecting candidate, then
    focused contract tests after formatting and diff inspection before the SHA is
@@ -143,7 +180,11 @@ The implementation must retain executable evidence that:
 - `ci/style --check` and `--fix` use the repository root and reject unknown
   modes;
 - the pre-push hook and ordinary PR workflow consume `ci/style --check`;
-- generated/output exclusions are explicit in Ruff configuration;
+- `pyproject.toml` explicitly owns Ruff exclusions and Git ignore state is not a
+  second exclusion authority for the shared surface;
+- generated top-level outputs are excluded by root-relative patterns while
+  identically named directories nested beneath a source path remain discoverable
+  by Ruff;
 - `tasks/gnostoa_orientation.py` is inside the resulting Ruff domain; and
 - a future Python-bearing top-level path is covered automatically unless an
   explicit configuration exclusion is added and reviewed.
@@ -161,8 +202,13 @@ failing/characterization evidence: repository-root Ruff detects drift under
 - Formatting remains capable of changing source-shape proof surfaces; callers
   must still rerun focused tests after `--fix` rather than treating formatting as
   semantically invisible.
-- `pyproject.toml` becomes more important as the explicit exclusion authority;
-  excluding a new path is a reviewed scope change, not a local convenience.
+- `pyproject.toml` becomes the explicit exclusion authority for the shared Ruff
+  surface. Adding a new exclusion is a reviewed scope change, not a local
+  convenience or an accidental consequence of `.gitignore`.
+- The explicit list deliberately re-declares recursive cache/VCS/environment
+  exclusions needed by this repository while narrowing generated output
+  basenames to root-relative paths. Maintenance of that list is visible review
+  work rather than hidden default behavior.
 - The ordinary workflow still performs Ruff inside its existing pinned Python
   compatibility environment. A separate fail-fast style job remains an optional
   later optimization, not part of this Decision.
@@ -172,5 +218,5 @@ failing/characterization evidence: repository-root Ruff detects drift under
 This does not change Ruff version, lint rule selection, mypy coverage, test
 selection, branch protection, review policy, R2A trust boundaries, release or
 publication behavior. It does not claim that every generated directory in every
-future checkout is known today; it makes intentional repository-specific
-exclusions explicit and leaves Ruff's standard cache/VCS exclusions intact.
+future checkout is known today; it makes the repository's intentional exclusion
+boundary explicit and mechanically testable.
