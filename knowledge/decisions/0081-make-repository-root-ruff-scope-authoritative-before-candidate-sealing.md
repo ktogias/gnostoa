@@ -136,17 +136,21 @@ obligation.
    invocations for Gnostoa source verification operate on `.` from the explicit
    repository root rather than naming `tools ci tests` or another positive
    top-level allow-list.
-2. **`pyproject.toml` is the sole Ruff exclusion authority for this surface.**
-   Set `respect-gitignore = false` so unrelated Git ignore rules cannot silently
-   remove Python source from the verification domain, and declare one explicit
-   `exclude` list instead of inheriting Ruff's broad default output basenames.
-   Cache, VCS, environment and tool-state directories that are intentionally
-   recursive remain explicit recursive-name exclusions. Repository-generated
-   output roots such as `context-packs`, `dist` and `site` use slash-containing
-   root-relative patterns (for example `dist/**`) so a later nested source path
-   such as `pkg/dist/` does not escape verification merely because it reuses the
-   same basename.
-3. **Add one bounded `ci/style` surface.** `ci/style --check` runs formatter
+2. **Separate Git candidate membership from Ruff-specific exclusions.** Ruff
+   keeps `respect-gitignore = true`, so genuinely ignored, untracked local
+   material is neither checked nor rewritten. Generated-output Git patterns such
+   as `/context-packs/`, `/dist/` and `/site/` are anchored to the repository
+   root, so a later nested source path such as `pkg/dist/` remains eligible for
+   the candidate. Before Ruff runs, the shared style surface fails closed when
+   `git ls-files --cached --ignored --exclude-standard` reports a tracked
+   Ruff-relevant input; an ignore rule therefore cannot silently remove
+   committed Python from verification. `pyproject.toml` separately declares the
+   explicit Ruff exclusions instead of inheriting broad default output
+   basenames. Cache, VCS, environment and tool-state directories that are
+   intentionally recursive remain recursive-name exclusions, while generated
+   output roots use slash-containing root-relative patterns such as `dist/**`.
+3. **Add one bounded `ci/style` surface.** Both modes first reject tracked Ruff
+   inputs hidden by Git ignore rules. `ci/style --check` then runs formatter
    check followed by lint check. `ci/style --fix` applies Ruff's ordinary safe
    lint fixes, then formats the same repository-root subject, then proves that
    the resulting subject is format/lint clean. Unsafe fixes are not enabled by
@@ -159,10 +163,11 @@ obligation.
    advisory local-feedback layer defined by the tiered-CI pattern, not a
    substitute for completion verification. A skipped or bypassed hook satisfies
    no required check; provider CI remains authoritative.
-6. **Quality evidence uses the same root/config scope.** The extended collector
-   may invoke Ruff directly to retain structured JSON diagnostics, but its Ruff
-   subject is `.` and its scope is therefore derived from the same
-   `pyproject.toml` exclusion authority rather than another positive path list.
+6. **Quality evidence uses the same candidate/root/config scope.** The extended
+   suite first consumes `ci/style --check`, including its tracked-ignore guard.
+   The collector may then invoke Ruff directly to retain structured JSON
+   diagnostics, but its Ruff subject remains `.` and its additional exclusions
+   remain derived from `pyproject.toml` rather than another positive path list.
 7. **Normalize before candidate sealing.** Agent guidance requires
    `./ci/style --fix` before creating/pushing a Python-affecting candidate, then
    focused contract tests after formatting and diff inspection before the SHA is
@@ -180,11 +185,11 @@ The implementation must retain executable evidence that:
 - `ci/style --check` and `--fix` use the repository root and reject unknown
   modes;
 - the pre-push hook and ordinary PR workflow consume `ci/style --check`;
-- `pyproject.toml` explicitly owns Ruff exclusions and Git ignore state is not a
-  second exclusion authority for the shared surface;
-- generated top-level outputs are excluded by root-relative patterns while
-  identically named directories nested beneath a source path remain discoverable
-  by Ruff;
+- Git ignore rules exclude genuinely untracked local material while the shared
+  surface rejects any tracked Ruff input that an ignore rule would hide;
+- generated top-level outputs are ignored or excluded by root-relative patterns
+  while identically named directories nested beneath a source path remain
+  discoverable by both Git and Ruff;
 - `tasks/gnostoa_orientation.py` is inside the resulting Ruff domain; and
 - a future Python-bearing top-level path is covered automatically unless an
   explicit configuration exclusion is added and reviewed.
@@ -202,13 +207,15 @@ failing/characterization evidence: repository-root Ruff detects drift under
 - Formatting remains capable of changing source-shape proof surfaces; callers
   must still rerun focused tests after `--fix` rather than treating formatting as
   semantically invisible.
-- `pyproject.toml` becomes the explicit exclusion authority for the shared Ruff
-  surface. Adding a new exclusion is a reviewed scope change, not a local
-  convenience or an accidental consequence of `.gitignore`.
+- Git ignore rules define which untracked local material is outside the
+  candidate, while `pyproject.toml` declares additional Ruff-specific
+  exclusions. A tracked Ruff input cannot cross that boundary silently because
+  the shared gate rejects it before formatting or linting.
 - The explicit list deliberately re-declares recursive cache/VCS/environment
   exclusions needed by this repository while narrowing generated output
   basenames to root-relative paths. Maintenance of that list is visible review
   work rather than hidden default behavior.
+- `--fix` no longer rewrites genuinely ignored, untracked local Python files.
 - The ordinary workflow still performs Ruff inside its existing pinned Python
   compatibility environment. A separate fail-fast style job remains an optional
   later optimization, not part of this Decision.

@@ -3,12 +3,26 @@ set -eu
 
 mode="${1:-}"
 
+check_candidate_scope() {
+  ignored_tracked="$(
+    git ls-files --cached --ignored --exclude-standard -- \
+      '*.py' '*.pyi' '*.ipynb'
+  )"
+  if [ -n "${ignored_tracked}" ]; then
+    echo "ERROR: tracked Ruff input is ignored by Git:" >&2
+    printf '%s\n' "${ignored_tracked}" >&2
+    return 1
+  fi
+}
+
 case "${mode}" in
   --check)
+    check_candidate_scope
     python -m ruff format --check .
     python -m ruff check .
     ;;
   --fix)
+    check_candidate_scope
     python -m ruff check --fix .
     python -m ruff format .
     python -m ruff format --check .

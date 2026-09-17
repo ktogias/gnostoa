@@ -91,11 +91,12 @@ Mechanical changes and emergency follow-up use the timing declared by
 `policy/change-control.yaml`.
 
 Before creating or pushing a candidate that changes Python source or Python
-verification surfaces, run `./ci/style --fix` over the repository-authoritative
-Ruff scope. Then rerun the focused contracts affected by the change **after**
-formatting, inspect the resulting diff, and only then treat the SHA as a review
-candidate. Do not use unsafe Ruff fixes implicitly. Provider CI stays check-only
-and remains the non-bypassable verifier.
+verification surfaces, run `./ci/style --fix` over the Git-candidate-aware
+repository-root Ruff scope. The command fails if a tracked Ruff input is matched
+by Git ignore rules. Then rerun the focused contracts affected by the change
+**after** formatting, inspect the resulting diff, and only then treat the SHA as
+a review candidate. Do not use unsafe Ruff fixes implicitly. Provider CI stays
+check-only and remains the non-bypassable verifier.
 
 Before completion, run the applicable suites in the development container by
 default:

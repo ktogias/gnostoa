@@ -1278,10 +1278,10 @@ def collect_quality_evidence(
         "reports": reports,
         "limits": [
             (
-                "Formatting and lint cover the repository-root Ruff subject with "
-                "explicit configuration exclusions; static typing remains limited "
-                "to its declared paths. A clean result is not behavior, security or "
-                "semantic acceptance evidence."
+                "Formatting and lint cover the Git-candidate-aware repository-root "
+                "Ruff subject with explicit configuration exclusions; static typing "
+                "remains limited to its declared paths. A clean result is not "
+                "behavior, security or semantic acceptance evidence."
             ),
             "Coverage is a regression signal, not acceptance or test-quality proof.",
             (

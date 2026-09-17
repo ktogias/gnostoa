@@ -43,7 +43,7 @@ packages = ["tools", "tools.experiment", "tools.capsule", "tools.capsule.adapter
 [tool.ruff]
 target-version = "py311"
 line-length = 88
-respect-gitignore = false
+respect-gitignore = true
 exclude = [
   ".bzr",
   ".direnv",
