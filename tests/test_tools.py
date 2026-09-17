@@ -59,35 +59,58 @@ def _invokes_shared_verification_suite(command: str, suite: str) -> bool:
     if tokens == ["./ci/verify", suite]:
         return True
     expected_script = f"./ci/verify {suite}"
+    if tokens[:2] != ["docker", "run"]:
+        return False
+
+    # This is a fail-closed recognizer for the project's exact workflow shape,
+    # not a general Docker CLI parser. Unknown run options are rejected.
+    flag_options = {"--rm"}
+    value_options = {"--entrypoint", "--env", "--mount", "--user", "--workdir"}
+    option_values: dict[str, list[str]] = {option: [] for option in value_options}
+    docker_arguments = tokens[2:]
+    index = 0
+    while index < len(docker_arguments):
+        token = docker_arguments[index]
+        if token == "${GNOSTOA_CI_IMAGE}":
+            break
+        if token in flag_options:
+            index += 1
+            continue
+
+        option: str | None = None
+        value: str | None = None
+        if token in value_options:
+            if index + 1 >= len(docker_arguments):
+                return False
+            option = token
+            value = docker_arguments[index + 1]
+            index += 2
+        else:
+            for candidate in value_options:
+                prefix = f"{candidate}="
+                if token.startswith(prefix):
+                    option = candidate
+                    value = token.removeprefix(prefix)
+                    index += 1
+                    break
+        if option is None or not value:
+            return False
+        option_values[option].append(value)
+
+    command = docker_arguments[index:]
     if (
-        tokens[:2] != ["docker", "run"]
-        or len(tokens) < 6
-        or tokens[-2] not in {"-c", "-ec"}
-        or tokens[-1] != expected_script
-        or tokens[-3] != "${GNOSTOA_CI_IMAGE}"
+        len(command) != 3
+        or command[0] != "${GNOSTOA_CI_IMAGE}"
+        or command[1] not in {"-c", "-ec"}
+        or command[2] != expected_script
     ):
         return False
+
     required_mount = "type=bind,source=${GITHUB_WORKSPACE},target=/workspace,readonly"
-    entrypoint: str | None = None
-    mount_values: list[str] = []
-    workdir: str | None = None
-    for index, token in enumerate(tokens[:-1]):
-        if token == "--entrypoint" and index + 1 < len(tokens):
-            entrypoint = tokens[index + 1]
-        elif token.startswith("--entrypoint="):
-            entrypoint = token.partition("=")[2]
-        elif token == "--mount" and index + 1 < len(tokens):
-            mount_values.append(tokens[index + 1])
-        elif token.startswith("--mount="):
-            mount_values.append(token.partition("=")[2])
-        elif token == "--workdir" and index + 1 < len(tokens):
-            workdir = tokens[index + 1]
-        elif token.startswith("--workdir="):
-            workdir = token.partition("=")[2]
     return (
-        entrypoint in {"sh", "/bin/sh"}
-        and required_mount in mount_values
-        and workdir == "/workspace"
+        option_values["--entrypoint"] in (["sh"], ["/bin/sh"])
+        and required_mount in option_values["--mount"]
+        and option_values["--workdir"] == ["/workspace"]
     )
 
 
@@ -310,6 +333,16 @@ class PublicationBaselineTests(unittest.TestCase):
                 "type=bind,source=${GITHUB_WORKSPACE},target=/workspace,readonly "
                 "--workdir /workspace ${GNOSTOA_CI_IMAGE} "
                 "/dev/null -ec './ci/verify fast'",
+                "fast",
+            )
+        )
+        self.assertFalse(
+            _invokes_shared_verification_suite(
+                "docker run --entrypoint sh "
+                "--mount "
+                "type=bind,source=${GITHUB_WORKSPACE},target=/workspace,readonly "
+                "--workdir /workspace --name ${GNOSTOA_CI_IMAGE} "
+                "-ec './ci/verify fast'",
                 "fast",
             )
         )
