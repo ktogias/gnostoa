@@ -508,7 +508,7 @@ class RuffScopeContractTests(unittest.TestCase):
             diagnostics = completed.stdout + completed.stderr
             self.assertGreaterEqual(diagnostics.count("F821"), 2, diagnostics)
 
-    def test_fix_propagates_ruff_execution_failure(self) -> None:
+    def test_fix_propagates_ruff_execution_failures(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             subprocess.run(
@@ -529,16 +529,24 @@ class RuffScopeContractTests(unittest.TestCase):
             )
             (root / "ruff.py").write_text(
                 """from pathlib import Path
+import os
 import sys
 
 arguments = sys.argv[1:]
+scenario = os.environ["FAKE_RUFF_SCENARIO"]
 if "--show-files" in arguments:
     print((Path.cwd() / "candidate.py").resolve())
     raise SystemExit(0)
 if arguments[:2] == ["check", "--fix"]:
-    raise SystemExit(2)
+    raise SystemExit(2 if scenario == "initial" else 1)
+if arguments[:2] == ["format", "--check"]:
+    raise SystemExit({"final": 2, "format_only": 1}.get(scenario, 0))
 if arguments and arguments[0] == "format":
     Path("format-ran").write_text("unexpected\\n", encoding="utf-8")
+    raise SystemExit(0)
+if arguments and arguments[0] == "check":
+    Path("lint-ran").write_text("observed\\n", encoding="utf-8")
+    raise SystemExit(1 if scenario == "final" else 0)
 raise SystemExit(0)
 """,
                 encoding="utf-8",
@@ -548,17 +556,33 @@ raise SystemExit(0)
                 f"{Path(sys.executable).parent}{os.pathsep}{environment['PATH']}"
             )
 
-            completed = subprocess.run(
-                [str(ROOT / "ci" / "style"), "--fix"],
-                cwd=root,
-                check=False,
-                capture_output=True,
-                text=True,
-                env=environment,
-            )
+            for scenario, expected_status in (
+                ("initial", 2),
+                ("final", 2),
+                ("format_only", 1),
+            ):
+                with self.subTest(scenario=scenario):
+                    environment["FAKE_RUFF_SCENARIO"] = scenario
+                    for marker in ("format-ran", "lint-ran"):
+                        (root / marker).unlink(missing_ok=True)
+                    completed = subprocess.run(
+                        [str(ROOT / "ci" / "style"), "--fix"],
+                        cwd=root,
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                        env=environment,
+                    )
 
-            self.assertEqual(2, completed.returncode)
-            self.assertFalse((root / "format-ran").exists())
+                    self.assertEqual(expected_status, completed.returncode)
+                    self.assertEqual(
+                        scenario != "initial",
+                        (root / "format-ran").exists(),
+                    )
+                    self.assertEqual(
+                        scenario != "initial",
+                        (root / "lint-ran").exists(),
+                    )
 
     def test_style_surface_is_repository_root_scoped(self) -> None:
         style_path = ROOT / "ci" / "style"
@@ -631,8 +655,8 @@ raise SystemExit(0)
         for command in ruff_commands:
             with self.subTest(command=command):
                 self.assertEqual(".", command[-1])
-        self.assertTrue(any("format" in command for command in ruff_commands))
-        self.assertTrue(any("check" in command for command in ruff_commands))
+        subcommands = [command[command.index("ruff") + 1] for command in ruff_commands]
+        self.assertCountEqual(["format", "check"], subcommands)
 
     def test_tasks_python_is_not_an_accidental_scope_exception(self) -> None:
         self.assertTrue((ROOT / "tasks" / "gnostoa_orientation.py").is_file())

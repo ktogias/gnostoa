@@ -116,10 +116,20 @@ case "${mode}" in
       exit "${fix_status}"
     fi
     python -m ruff format .
-    verification_status=0
-    python -m ruff format --check . || verification_status=$?
-    python -m ruff check . || verification_status=$?
-    exit "${verification_status}"
+    format_status=0
+    python -m ruff format --check . || format_status=$?
+    lint_status=0
+    python -m ruff check . || lint_status=$?
+    if [ "${format_status}" -gt 1 ]; then
+      exit "${format_status}"
+    fi
+    if [ "${lint_status}" -gt 1 ]; then
+      exit "${lint_status}"
+    fi
+    if [ "${format_status}" -ne 0 ]; then
+      exit "${format_status}"
+    fi
+    exit "${lint_status}"
     ;;
   *)
     echo "usage: ./ci/style {--check|--fix}" >&2
