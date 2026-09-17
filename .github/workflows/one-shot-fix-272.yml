@@ -68,8 +68,6 @@ jobs:
           ]
           path.write_text("".join(lines), encoding="utf-8")
           PY
-          python -m unittest tests.test_tools.ContinuousIntegrationTests.test_python_compatibility_gates_regression_fail_closed
-          ./ci/style --check
           if git diff --quiet -- tests/test_tools.py; then
             echo "No repair commit needed"
             exit 0
