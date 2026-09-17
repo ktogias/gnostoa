@@ -9,6 +9,11 @@ For the compact “what now?” view, read the source-bound
 status, observation time and diagnostics before relying on current/next claims;
 this page preserves the fuller roadmap and historical results below.
 
+The detailed post-P2b ascent order is retained in the provider-side
+[consolidated Ariadne v9 roadmap checkpoint](https://github.com/ktogias/gnostoa/issues/14#issuecomment-5706634917).
+That checkpoint links the owning #10, #11 and #15 records; provider labels remain
+authoritative for the one currently selected Work Item.
+
 The categories are priorities, not acceptance or effectiveness states. Open
 Work Items remain open until their own lifecycle completes. Closed historical
 records are labelled explicitly, and none is a first-publication blocker unless
