@@ -108,10 +108,14 @@ case "${mode}" in
     enter_repository_root
     check_candidate_scope
     check_ruff_ignore_scope
-    python -m ruff check --fix .
+    # Remaining unfixable diagnostics must not prevent deterministic formatting;
+    # the final lint check still fails the command after all safe normalization.
+    python -m ruff check --fix . || :
     python -m ruff format .
-    python -m ruff format --check .
-    python -m ruff check .
+    verification_status=0
+    python -m ruff format --check . || verification_status=$?
+    python -m ruff check . || verification_status=$?
+    exit "${verification_status}"
     ;;
   *)
     echo "usage: ./ci/style {--check|--fix}" >&2

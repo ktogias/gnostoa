@@ -459,6 +459,54 @@ class RuffScopeContractTests(unittest.TestCase):
                 dot_ignore_ignored.read_text(encoding="utf-8"),
             )
 
+    @unittest.skipUnless(
+        RUFF_AVAILABLE,
+        "Ruff is available only in the exact development verification environment",
+    )
+    def test_fix_formats_before_failing_on_remaining_lint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            subprocess.run(
+                ["git", "init", "--quiet"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            source = root / "candidate.py"
+            source.write_text(
+                'payload={"value":[1,2,3]}\nprint(missing_name)\n',
+                encoding="utf-8",
+            )
+            subprocess.run(
+                ["git", "add", "candidate.py"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            environment = dict(os.environ)
+            environment["PATH"] = (
+                f"{Path(sys.executable).parent}{os.pathsep}{environment['PATH']}"
+            )
+
+            completed = subprocess.run(
+                [str(ROOT / "ci" / "style"), "--fix"],
+                cwd=root,
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+
+            self.assertEqual(1, completed.returncode)
+            self.assertEqual(
+                'payload = {"value": [1, 2, 3]}\nprint(missing_name)\n',
+                source.read_text(encoding="utf-8"),
+            )
+            diagnostics = completed.stdout + completed.stderr
+            self.assertGreaterEqual(diagnostics.count("F821"), 2, diagnostics)
+
     def test_style_surface_is_repository_root_scoped(self) -> None:
         style_path = ROOT / "ci" / "style"
         self.assertTrue(style_path.is_file())

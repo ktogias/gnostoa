@@ -190,6 +190,8 @@ The implementation must retain executable evidence that:
   gate and extended quality collector;
 - `ci/style --check` and `--fix` use the repository root and reject unknown
   modes;
+- `ci/style --fix` still completes deterministic formatting and final checks
+  before failing when safe lint fixes leave an unfixable diagnostic;
 - the pre-push hook and ordinary PR workflow consume `ci/style --check`;
 - ignore rules exclude genuinely untracked local material while the shared
   surface rejects any tracked Ruff input that Git or Ruff discovery would hide;
@@ -253,8 +255,13 @@ A Pull Request is eligible when its first sealed candidate either:
 
 Run discovery in an isolated checkout of the sealed SHA, using either the
 supported development container or a fresh environment installed with
-`--require-hashes` from that SHA's `requirements/development.lock`. Retain this
-eligibility receipt:
+`--require-hashes` from that SHA's `requirements/development.lock`. A pre-existing
+image or environment without a route-specific installation receipt is invalid.
+For the container route, retain the exact build command, Dockerfile SHA-256,
+content-addressed image ID, revision label and build log that bind the image to
+the sealed SHA. For the native route, create an empty virtual environment and
+retain pip's `--report` JSON from the hash-verified install, including the Ruff
+artifact hash, plus the report SHA-256. Retain this eligibility receipt:
 
 - sealed SHA and physical repository root;
 - SHA-256 of `requirements/development.lock`;
@@ -278,14 +285,28 @@ Exact review candidate: <40-character commit SHA>
 ```
 
 Retain the comment URL, numeric ID, `created_at` and `updated_at`, plus the first
-subsequent external-review request and response or provider run that binds the
-same SHA. The comment is valid only when `created_at` equals `updated_at`, the
-named SHA was the Pull Request head, and the comment predates the fresh-review
-request. If multiple valid comments exist, the earliest `created_at` wins, with
-the lowest numeric comment ID as the tie-breaker. A later annotation may not
-move the boundary. Missing, edited, conflicting or retrospectively created
-sealing evidence makes the result `INSUFFICIENT`; do not select a favorable SHA
-from later timestamps.
+subsequent explicit fresh-review request and provider response that bind the
+same SHA. An explicit fresh-review request is a top-level reviewer command,
+requested-reviewer event or equivalent deliberate dispatch; automatic
+push-triggered checks and development feedback are not sealing events.
+
+Before choosing the boundary, enumerate those canonical comments and every
+explicit fresh-review request chronologically from Pull Request creation through
+the first provider response. The selected comment is valid only when
+`created_at` equals `updated_at`, the named SHA was the Pull Request head, and no
+explicit fresh-review request predates it. Among canonical comments that precede
+the earliest explicit request:
+
+- zero comments makes the receipt `INSUFFICIENT`;
+- comments that all name the same SHA are non-conflicting, and the earliest
+  `created_at` with lowest numeric comment ID is the receipt; and
+- comments naming more than one SHA are conflicting and make the receipt
+  `INSUFFICIENT`; the tie-breaker must never choose between different SHAs.
+
+Later comments may record successor candidates but cannot move the first sealed
+boundary. An earlier omitted request, incomplete chronological search, edited
+comment, SHA mismatch or retrospective comment also makes the result
+`INSUFFICIENT`; do not select a favorable later event.
 
 If fewer than ten eligible Pull Requests exist at the 60-day checkpoint,
 publish the available observations as `INSUFFICIENT`. Do not silently extend the
@@ -369,33 +390,35 @@ Aggregate at least these metrics:
 - ordinary-CI scope-authority drift; and
 - comparable `ci/style` duration range and median.
 
-Classify the result as follows:
+Evaluate the result in this precedence order:
 
-- `VALUE_SUPPORTED`: all ten eligible Pull Requests are observed; no
-  `UNKNOWN` eligibility, invalid sealing evidence or `UNATTRIBUTABLE` mutation
-  exists; no `CONTROL_FAILURE` or partial-repair cascade occurs; and at least
-  one documented pre-sealing Ruff catch exists while at least nine of the ten
-  Pull Requests require no post-sealing Ruff-related mutation. This supports the
-  targeted convergence hypothesis but does not prove that the hook alone caused
-  the outcome.
-- `VALUE_NOT_SUPPORTED`: the complete ten-Pull-Request cohort has complete
-  attributable evidence, no `CONTROL_FAILURE` and at least one observed Ruff
-  opportunity, but does not meet the `VALUE_SUPPORTED` threshold. A cohort with
-  post-sealing Ruff-related mutations but no documented pre-sealing catch is
-  also `VALUE_NOT_SUPPORTED`. Preserve the observed technical successes and
-  costs; do not rewrite a missed threshold as success.
 - `CONTROL_FAILURE`: any tracked-input escape, ignored-untracked false rejection
   or mutation, ordinary-CI scope-authority drift, reproducibly incorrect guard
   rejection of a valid tracked input, or candidate regression attributable to
-  the gate or its `--fix` path occurs. This overrides cohort size and requires a
-  finding with evidence and a focused proposed fix; remediation still follows
-  ordinary admission and change control.
+  the gate or its `--fix` path occurs. A reproducibly established
+  `CONTROL_FAILURE` overrides cohort size and every `INSUFFICIENT` condition;
+  retain all evidence gaps as separate limitations. A suspected but unproven
+  failure is not inferred. This result requires a finding with evidence and a
+  focused proposed fix; remediation still follows ordinary admission and change
+  control.
 - `INSUFFICIENT`: the observation checkpoint arrives without ten eligible Pull
   Requests, or an `UNKNOWN` eligibility, missing/invalid environment or sealing
   receipt, `UNATTRIBUTABLE` mutation or other evidence gap prevents the rule
   from being evaluated. A complete cohort with neither a documented pre-sealing
   catch nor a post-sealing Ruff-related mutation is also `INSUFFICIENT` because
   it contains no observed Ruff opportunity from which to assess effectiveness.
+- `VALUE_SUPPORTED`: all ten eligible Pull Requests are observed; no
+  `INSUFFICIENT` condition or partial-repair cascade occurs; at least one
+  documented pre-sealing Ruff catch exists; and at least nine of the ten Pull
+  Requests require no post-sealing Ruff-related mutation. This supports the
+  targeted convergence hypothesis but does not prove that the hook alone caused
+  the outcome.
+- `VALUE_NOT_SUPPORTED`: the complete ten-Pull-Request cohort has complete
+  attributable evidence, no `CONTROL_FAILURE` or `INSUFFICIENT` condition and at
+  least one observed Ruff opportunity, but does not meet the `VALUE_SUPPORTED`
+  threshold. A cohort with post-sealing Ruff-related mutations but no documented
+  pre-sealing catch is also `VALUE_NOT_SUPPORTED`. Preserve the observed
+  technical successes and costs; do not rewrite a missed threshold as success.
 
 These classifications assess the targeted convergence hypothesis, not total
 return on investment. Report gate duration and any operational burden as costs;
