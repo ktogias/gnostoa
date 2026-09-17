@@ -175,6 +175,39 @@ class SecretBaselineTests(unittest.TestCase):
             self.assertNotIn(CANDIDATE_HASH, rendered)
             self.assertIn('"path": "tracked.txt"', rendered)
 
+    def test_tracked_scan_terminates_options_before_candidate_paths(self) -> None:
+        baseline = _report({})
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".secrets.baseline").write_text(
+                json.dumps(baseline),
+                encoding="utf-8",
+            )
+            completed = subprocess.CompletedProcess(
+                ["detect-secrets"],
+                0,
+                json.dumps(baseline).encode("utf-8"),
+                b"",
+            )
+            adversarial_path = Path("--exclude-files=^secret.txt$")
+
+            with mock.patch(
+                "tools.security_scan.subprocess.run",
+                return_value=completed,
+            ) as run:
+                scan_tracked_tree(
+                    root,
+                    tracked_paths=[adversarial_path, Path("secret.txt")],
+                )
+
+            command = run.call_args.args[0]
+            separator = command.index("--")
+            self.assertEqual(
+                [adversarial_path.as_posix(), "secret.txt"],
+                command[separator + 1 :],
+            )
+
 
 class ExtendedRoutingTests(unittest.TestCase):
     def test_schedule_and_manual_dispatch_always_run(self) -> None:

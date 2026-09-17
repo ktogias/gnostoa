@@ -201,6 +201,7 @@ def scan_tracked_tree(
                 "--no-verify",
                 "--exclude-files",
                 _BASELINE_EXCLUDE_PATTERN,
+                "--",
                 *(path.as_posix() for path in paths),
             ],
             cwd=root,
