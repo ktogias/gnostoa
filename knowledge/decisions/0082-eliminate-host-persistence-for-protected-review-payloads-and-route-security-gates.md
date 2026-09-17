@@ -164,6 +164,9 @@ separate read-back.
    sanitized report plus counts of reviewed and unresolved candidates. The
    baseline manifest itself is the single exact scanner exclusion because
    scanning its candidate hashes would create a recursive, unstable baseline.
+   A canonical scan requires that manifest to be part of the enumerated
+   candidate set; only an explicit caller-scoped scan may add a separately
+   supplied relative baseline to its disposable snapshot.
 6. **Ordinary PR security gate.** Add `security-fast` as a visible provider job
    using the exact development lock and the shared scan command. It intentionally
    runs natively as an inexpensive independent exact-head gate and may execute
@@ -181,6 +184,8 @@ separate read-back.
    reason. The heavyweight job may remain conditionally skipped, but `regression`
    accepts only a successful applicable run or an exact `NOT_APPLICABLE`/skipped
    pair. Neither the router nor project records call that skip a pass.
+   A candidate change to `tools/extended_route.py` independently forces `RUN`
+   before the candidate-owned router is consulted.
 8. **Provider CodeQL effect remains sequenced.** After this Decision and the
    implementation are integrated and provider read-back confirms clean
    exact-head/default-branch results, require the stable GitHub CodeQL result for

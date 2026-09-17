@@ -64,15 +64,31 @@ def _invokes_shared_verification_suite(command: str, suite: str) -> bool:
         or len(tokens) < 6
         or tokens[-2] not in {"-c", "-ec"}
         or tokens[-1] != expected_script
+        or "${GNOSTOA_CI_IMAGE}" not in tokens
     ):
         return False
+    required_mount = "type=bind,source=${GITHUB_WORKSPACE},target=/workspace,readonly"
     entrypoint: str | None = None
+    mount_values: list[str] = []
+    workdir: str | None = None
     for index, token in enumerate(tokens[:-1]):
         if token == "--entrypoint" and index + 1 < len(tokens):
             entrypoint = tokens[index + 1]
         elif token.startswith("--entrypoint="):
             entrypoint = token.partition("=")[2]
-    return entrypoint in {"sh", "/bin/sh"}
+        elif token == "--mount" and index + 1 < len(tokens):
+            mount_values.append(tokens[index + 1])
+        elif token.startswith("--mount="):
+            mount_values.append(token.partition("=")[2])
+        elif token == "--workdir" and index + 1 < len(tokens):
+            workdir = tokens[index + 1]
+        elif token.startswith("--workdir="):
+            workdir = token.partition("=")[2]
+    return (
+        entrypoint in {"sh", "/bin/sh"}
+        and required_mount in mount_values
+        and workdir == "/workspace"
+    )
 
 
 def _add_tar_bytes(archive: tarfile.TarFile, name: str, content: bytes) -> None:
@@ -256,6 +272,34 @@ class PublicationBaselineTests(unittest.TestCase):
         self.assertFalse(
             _invokes_shared_verification_suite(
                 "echo -ec './ci/verify fast'",
+                "fast",
+            )
+        )
+        self.assertFalse(
+            _invokes_shared_verification_suite(
+                "docker run --entrypoint sh "
+                "--mount "
+                "type=bind,source=${GITHUB_WORKSPACE},target=/workspace,readonly "
+                "--workdir /workspace unrelated-image "
+                "-ec './ci/verify fast'",
+                "fast",
+            )
+        )
+        self.assertFalse(
+            _invokes_shared_verification_suite(
+                "docker run --entrypoint sh ${GNOSTOA_CI_IMAGE} "
+                "--workdir /workspace "
+                "-ec './ci/verify fast'",
+                "fast",
+            )
+        )
+        self.assertFalse(
+            _invokes_shared_verification_suite(
+                "docker run --entrypoint sh "
+                "--mount "
+                "type=bind,source=${GITHUB_WORKSPACE},target=/workspace,readonly "
+                "--workdir /tmp ${GNOSTOA_CI_IMAGE} "
+                "-ec './ci/verify fast'",
                 "fast",
             )
         )

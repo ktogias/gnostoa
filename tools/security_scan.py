@@ -518,6 +518,10 @@ def scan_tracked_tree(
     if not baseline_path.is_absolute():
         relative_baseline = _validated_candidate_paths(root, [baseline_path])[0]
         if relative_baseline not in snapshot_paths:
+            if canonical_scan:
+                raise SecurityScanError(
+                    "detect-secrets baseline is outside the canonical candidate set"
+                )
             snapshot_paths.append(relative_baseline)
 
     baseline_document: dict[str, Any] | None = None

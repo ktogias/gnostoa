@@ -7,7 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from unittest import mock
 
 from tools import security_scan
@@ -368,6 +368,30 @@ class SecretBaselineTests(unittest.TestCase):
                 ):
                     scan_tracked_tree(root)
 
+    def test_canonical_scan_refuses_an_untracked_baseline(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "tracked.txt").write_text("candidate\n", encoding="utf-8")
+            (root / ".secrets.baseline").write_text(
+                json.dumps(_report({})),
+                encoding="utf-8",
+            )
+
+            with (
+                mock.patch(
+                    "tools.security_scan.candidate_paths",
+                    return_value=[Path("tracked.txt")],
+                ),
+                mock.patch("tools.security_scan._run_bounded_scan") as run,
+                self.assertRaisesRegex(
+                    SecurityScanError,
+                    "baseline is outside the canonical candidate set",
+                ),
+            ):
+                scan_tracked_tree(root)
+
+            run.assert_not_called()
+
     def test_caller_paths_must_be_repository_relative_regular_files(self) -> None:
         baseline = _report({})
 
@@ -565,10 +589,22 @@ class ProviderSecurityGateTests(unittest.TestCase):
                 key=lambda item: (item["path"], item["line"], item["type"]),
             ),
         )
-        self.assertEqual(
-            {"line", "path", "type"},
-            set().union(*(finding.keys() for finding in evidence["findings"])),
-        )
+        for finding in evidence["findings"]:
+            self.assertEqual({"line", "path", "type"}, set(finding))
+            path = finding["path"]
+            line = finding["line"]
+            finding_type = finding["type"]
+            self.assertIsInstance(path, str)
+            self.assertTrue(path)
+            self.assertTrue(path.isprintable())
+            self.assertFalse(PurePosixPath(path).is_absolute())
+            self.assertNotIn("..", PurePosixPath(path).parts)
+            self.assertIsInstance(line, int)
+            self.assertNotIsInstance(line, bool)
+            self.assertGreater(line, 0)
+            self.assertIsInstance(finding_type, str)
+            self.assertTrue(finding_type)
+            self.assertTrue(finding_type.isprintable())
         rendered = json.dumps(evidence)
         self.assertNotIn("hashed_secret", rendered)
         self.assertNotIn("candidate_text", rendered)
@@ -589,6 +625,11 @@ class ProviderSecurityGateTests(unittest.TestCase):
         self.assertIn("\n  extended-route:\n", workflow)
         self.assertIn("git diff --no-renames --name-only -z", workflow)
         self.assertNotIn("git diff --name-only -z", workflow)
+        self.assertIn(
+            'if ! git diff --quiet "${BASE_SHA}" HEAD -- tools/extended_route.py; then',
+            workflow,
+        )
+        self.assertIn("reason=extended router changed", workflow)
         self.assertIn("python -m tools.extended_route", workflow)
         self.assertIn("needs: [policy, extended-route]", workflow)
         self.assertIn(
