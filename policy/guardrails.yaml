@@ -523,6 +523,7 @@ guardrails:
       - tests/test_review_assurance_p2b_b15_runtime_red.py
       - tests/test_review_assurance_p2b_b16_entrypoint_red.py
       - tests/test_review_assurance_p2b_b2_activation_red.py
+      - tests/test_review_current_payload_transport.py
       - tests/test_r2a_p2b_integrated_materialization.py
       - ci/review_b15_runtime_smoke.py
       - ci/review_b16_entrypoint_smoke.py
@@ -586,6 +587,7 @@ guardrails:
     guidance: guidance/workflows/configure-continuous-integration.md#procedure
     implementation:
       - .github/workflows/verification.yml
+      - .secrets.baseline
       - .github/workflows/publish-oci.yml
       - .github/workflows/publish-r2a-p2a-bootstrap-oci.yml
       - .github/workflows/publish-r2a-p2b-b1-oci.yml
@@ -594,11 +596,16 @@ guardrails:
       - .github/workflows/publish-r2a-p2b-oci.yml
       - ci/github-actions.yml
       - ci/gitlab-ci.yml
+      - ci/security_scan.py
+      - ci/verify
       - .gitlab-ci.yml
       - guidance/reference/continuous-integration-contract.md
+      - tools/extended_route.py
+      - tools/security_scan.py
     tests:
       - tests/test_tools.py::ContinuousIntegrationTests.test_provider_adapters_cover_candidate_and_integration_events
       - tests/test_tools.py::PublicationBaselineTests.test_github_provider_surface_is_active_and_owned
+      - tests/test_security_gates.py
       - tests/test_tools.py::PublicationBaselineTests.test_ghcr_publication_workflow_is_exact_and_write_once
       - tests/test_r2a_p2b_bootstrap_publication.py::R2AP2bBootstrapPublicationTests.test_bootstrap_publication_has_decision_and_guardrail_ownership
       - tests/test_r2a_p2b_b1_publication.py::R2AP2bB1PublicationTests.test_b1_materialization_is_governed_and_declared

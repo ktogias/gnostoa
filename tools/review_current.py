@@ -24,8 +24,64 @@ _DIGEST_IMAGE = re.compile(
 )
 _DOCKER_TIMEOUT_SECONDS = 90
 _DOCKER_CLEANUP_TIMEOUT_SECONDS = 10
+_MAX_RUNTIME_INPUT_BYTES = 4_194_304
 _MAX_RUNTIME_OUTPUT_BYTES = 2_097_152
 _READ_CHUNK_BYTES = 65_536
+_WRITE_CHUNK_BYTES = 65_536
+
+_CONTAINER_PAYLOAD_BRIDGE = f"""
+import json
+import os
+import sys
+
+limit = {_MAX_RUNTIME_INPUT_BYTES}
+raw = sys.stdin.buffer.read(limit + 1)
+if len(raw) > limit:
+    raise SystemExit("protected payload envelope exceeds the bounded size")
+try:
+    envelope = json.loads(raw.decode("utf-8"))
+except (UnicodeDecodeError, json.JSONDecodeError):
+    raise SystemExit("protected payload envelope is invalid") from None
+if not isinstance(envelope, dict) or set(envelope) != {{"input", "policy"}}:
+    raise SystemExit("protected payload envelope has the wrong shape")
+if not isinstance(envelope["input"], dict) or not isinstance(envelope["policy"], dict):
+    raise SystemExit("protected payload envelope members must be objects")
+
+os.umask(0o077)
+paths = {{
+    "input": "/tmp/gnostoa-review-input.json",
+    "policy": "/tmp/gnostoa-review-policy.json",
+}}
+for name, path in paths.items():
+    data = json.dumps(
+        envelope[name],
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8") + b"\\n"
+    descriptor = os.open(
+        path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        0o400,
+    )
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(data)
+
+os.execv(
+    sys.executable,
+    [
+        sys.executable,
+        "-m",
+        "tools.cli",
+        "review-check",
+        "--input",
+        paths["input"],
+        "--policy",
+        paths["policy"],
+    ],
+)
+""".strip()
 
 
 class ProtectedJudgeUnavailable(RuntimeError):
@@ -118,7 +174,12 @@ def _run_docker(
     *,
     config_dir: Path,
     timeout: int = _DOCKER_TIMEOUT_SECONDS,
+    input_bytes: bytes | None = None,
 ) -> subprocess.CompletedProcess[bytes]:
+    if input_bytes is not None and len(input_bytes) > _MAX_RUNTIME_INPUT_BYTES:
+        raise ProtectedJudgeUnavailable(
+            "protected Docker input exceeds the bounded size"
+        )
     cidfile = _run_cidfile(arguments, config_dir)
     docker_arguments = arguments
     if cidfile is not None:
@@ -127,6 +188,7 @@ def _run_docker(
     try:
         process = subprocess.Popen(
             command,
+            stdin=subprocess.PIPE if input_bytes is not None else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=_docker_environment(config_dir),
@@ -136,7 +198,11 @@ def _run_docker(
             f"protected Docker execution failed: {exc}"
         ) from exc
 
-    if process.stdout is None or process.stderr is None:
+    if (
+        process.stdout is None
+        or process.stderr is None
+        or (input_bytes is not None and process.stdin is None)
+    ):
         try:
             _abort_docker_run(process, cidfile, config_dir)
         finally:
@@ -151,6 +217,16 @@ def _run_docker(
     selector = selectors.DefaultSelector()
     selector.register(process.stdout, selectors.EVENT_READ, "stdout")
     selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+    input_view: memoryview | None = None
+    input_offset = 0
+    if input_bytes is not None:
+        assert process.stdin is not None
+        if input_bytes:
+            input_view = memoryview(input_bytes)
+            os.set_blocking(process.stdin.fileno(), False)
+            selector.register(process.stdin, selectors.EVENT_WRITE, "stdin")
+        else:
+            process.stdin.close()
     deadline = time.monotonic() + timeout
 
     try:
@@ -163,6 +239,24 @@ def _run_docker(
                 raise subprocess.TimeoutExpired(command, timeout)
             for key, _ in events:
                 label = str(key.data)
+                if label == "stdin":
+                    assert input_view is not None
+                    try:
+                        written = os.write(
+                            key.fd,
+                            input_view[
+                                input_offset : input_offset + _WRITE_CHUNK_BYTES
+                            ],
+                        )
+                    except BrokenPipeError:
+                        written = 0
+                    if written > 0:
+                        input_offset += written
+                    if written == 0 or input_offset == len(input_view):
+                        selector.unregister(key.fileobj)
+                        assert process.stdin is not None
+                        process.stdin.close()
+                    continue
                 buffer = outputs[label]
                 remaining_bound = _MAX_RUNTIME_OUTPUT_BYTES + 1 - len(buffer)
                 read_size = min(_READ_CHUNK_BYTES, max(1, remaining_bound))
@@ -195,6 +289,10 @@ def _run_docker(
         selector.close()
         process.stdout.close()
         process.stderr.close()
+        if process.stdin is not None and not process.stdin.closed:
+            process.stdin.close()
+        if input_view is not None:
+            input_view.release()
         if cidfile is not None:
             cidfile.unlink(missing_ok=True)
 
@@ -295,7 +393,8 @@ def run_prior_integrated_judge(
     authority. Production exposes no repository, image, Docker context, daemon,
     credential, policy or runtime selector. The one network-capable Docker action
     is anonymous acquisition of the immutable digest; judge execution itself is
-    network-none and receives only two read-only JSON files.
+    network-none and receives one bounded stdin envelope. The compatibility files
+    required by the immutable judge exist only in the container's bounded tmpfs.
     """
 
     if _DIGEST_IMAGE.fullmatch(image) is None:
@@ -309,6 +408,14 @@ def run_prior_integrated_judge(
             "protected judge public-surface digest is invalid"
         )
 
+    envelope = (
+        canonical_json({"input": input_document, "policy": policy_document}) + "\n"
+    ).encode("utf-8")
+    if len(envelope) > _MAX_RUNTIME_INPUT_BYTES:
+        raise ProtectedJudgeUnavailable(
+            "protected Docker input exceeds the bounded size"
+        )
+
     # Use a fixed system temporary root instead of caller-controlled TMPDIR so the
     # bind-mount grammar cannot be redirected through a caller-selected path.
     with tempfile.TemporaryDirectory(
@@ -316,16 +423,7 @@ def run_prior_integrated_judge(
     ) as directory:
         root = Path(directory)
         config_dir = root / "docker-config"
-        payload_dir = root / "input"
         config_dir.mkdir(mode=0o700)
-        payload_dir.mkdir(mode=0o755)
-
-        input_path = payload_dir / "input.json"
-        policy_path = payload_dir / "policy.json"
-        input_path.write_text(canonical_json(input_document) + "\n", encoding="utf-8")
-        policy_path.write_text(canonical_json(policy_document) + "\n", encoding="utf-8")
-        input_path.chmod(0o444)
-        policy_path.chmod(0o444)
 
         _checked_output(
             ["pull", image],
@@ -411,23 +509,21 @@ def run_prior_integrated_judge(
                 "protected judge public surface does not match the authority binding"
             )
 
-        mount = f"type=bind,src={payload_dir},dst=/gnostoa-input,readonly"
         result = _run_docker(
             [
                 "run",
                 "--rm",
                 "--pull=never",
+                "-i",
                 *_security_arguments(),
-                "--mount",
-                mount,
+                "--entrypoint",
+                "python",
                 image,
-                "review-check",
-                "--input",
-                "/gnostoa-input/input.json",
-                "--policy",
-                "/gnostoa-input/policy.json",
+                "-c",
+                _CONTAINER_PAYLOAD_BRIDGE,
             ],
             config_dir=config_dir,
+            input_bytes=envelope,
         )
         payload = _decode_result(result.stdout)
         return result.returncode, payload

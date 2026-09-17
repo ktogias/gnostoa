@@ -204,7 +204,14 @@ class PublicationBaselineTests(unittest.TestCase):
             "workflow_dispatch:",
         ):
             self.assertIn(event, workflow)
-        for suite in ("policy", "fast", "regression", "smoke", "extended"):
+        for suite in (
+            "policy",
+            "security-fast",
+            "fast",
+            "regression",
+            "smoke",
+            "extended",
+        ):
             self.assertIn(f"./ci/verify {suite}", workflow)
         self.assertIn("permissions:", workflow)
         self.assertIn("contents: read", workflow)
@@ -220,7 +227,11 @@ class PublicationBaselineTests(unittest.TestCase):
         self.assertRegex(workflow, r"actions/checkout@[a-f0-9]{40}")
         self.assertRegex(workflow, r"actions/setup-python@[a-f0-9]{40}")
         self.assertIn('python-version: ["3.11", "3.12"]', workflow)
-        self.assertIn("needs: [policy, fast, python-compatibility]", workflow)
+        self.assertIn(
+            "needs: [policy, security-fast, fast, python-compatibility, "
+            "extended-route, extended]",
+            workflow,
+        )
         self.assertIn("./ci/verify fast", workflow)
         self.assertIn("docker build", workflow)
 
@@ -2238,7 +2249,7 @@ change_classes:
 
 
 class ContinuousIntegrationTests(unittest.TestCase):
-    def test_python_compatibility_gates_regression_fail_closed(self) -> None:
+    def test_candidate_prerequisites_gate_regression_fail_closed(self) -> None:
         workflow = load_yaml(ROOT / ".github" / "workflows" / "verification.yml")
         jobs = workflow["jobs"]
         compatibility = jobs["python-compatibility"]
@@ -2285,7 +2296,15 @@ class ContinuousIntegrationTests(unittest.TestCase):
                 self.assertTrue(mentions_ruff(wrapped_command))
 
         self.assertEqual(
-            ["policy", "fast", "python-compatibility"], regression["needs"]
+            [
+                "policy",
+                "security-fast",
+                "fast",
+                "python-compatibility",
+                "extended-route",
+                "extended",
+            ],
+            regression["needs"],
         )
         condition = regression["if"]
         self.assertIn("always()", condition)
@@ -2302,17 +2321,26 @@ class ContinuousIntegrationTests(unittest.TestCase):
         self.assertEqual(
             {
                 "POLICY_RESULT": "${{ needs.policy.result }}",
+                "SECURITY_FAST_RESULT": "${{ needs.security-fast.result }}",
                 "FAST_RESULT": "${{ needs.fast.result }}",
                 "PYTHON_COMPATIBILITY_RESULT": "${{ needs.python-compatibility.result }}",
+                "EXTENDED_ROUTE_RESULT": "${{ needs.extended-route.result }}",
+                "EXTENDED_DECISION": "${{ needs.extended-route.outputs.decision }}",
+                "EXTENDED_RESULT": "${{ needs.extended.result }}",
             },
             assertion["env"],
         )
         for result in (
             "POLICY_RESULT",
+            "SECURITY_FAST_RESULT",
             "FAST_RESULT",
             "PYTHON_COMPATIBILITY_RESULT",
+            "EXTENDED_ROUTE_RESULT",
         ):
             self.assertIn(f'test "${{{result}}}" = success', assertion["run"])
+        self.assertIn('case "${EXTENDED_DECISION}" in', assertion["run"])
+        self.assertIn('test "${EXTENDED_RESULT}" = success', assertion["run"])
+        self.assertIn('test "${EXTENDED_RESULT}" = skipped', assertion["run"])
 
     def test_generic_ci_policy_is_authoritative_and_tiered(self) -> None:
         module = importlib.import_module("tools.check_ci_policy")

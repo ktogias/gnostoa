@@ -15,9 +15,9 @@ DECISION_PATH = (
     / "0069-materialize-integrated-r2a-p2b-b1-consumer-by-digest.md"
 )
 GUARDRAILS_PATH = ROOT / "policy" / "guardrails.yaml"
-SOURCE_COMMIT = "0dfd7e5e28e8ccb87e687e0be9dfe846b644c9c3"
-SOURCE_TREE = "23a5f083f26f40a8287bc2a724bcd5282a9afa5e"
-AUTHORIZED_BEFORE_COMMIT = "8d1ac1812509a2f6beb220b4989ec9b472ff441b"
+SOURCE_COMMIT = "0dfd7e5e28e8ccb87e687e0be9dfe846b644c9c3"  # pragma: allowlist secret -- public source commit
+SOURCE_TREE = "23a5f083f26f40a8287bc2a724bcd5282a9afa5e"  # pragma: allowlist secret -- public source tree
+AUTHORIZED_BEFORE_COMMIT = "8d1ac1812509a2f6beb220b4989ec9b472ff441b"  # pragma: allowlist secret -- public transition commit
 CHECKOUT_ACTION = "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"
 ATTEST_ACTION = "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6"
 

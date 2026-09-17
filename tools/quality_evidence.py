@@ -24,6 +24,7 @@ from tools.requirements_lock import (
     locked_requirements,
     normalized_distribution_name,
 )
+from tools.security_scan import SecurityScanError, scan_tracked_tree
 
 DEFAULT_COVERAGE_FLOOR = 65.0
 
@@ -1129,21 +1130,15 @@ def collect_quality_evidence(
             root=root,
         )
 
-    with secret_report.open("w", encoding="utf-8") as stream:
-        statuses["secret_scan"] = _run(
-            [
-                python,
-                "-m",
-                "detect_secrets",
-                "--cores",
-                "1",
-                "scan",
-                "--no-verify",
-                *(path.as_posix() for path in tracked_paths),
-            ],
-            root=root,
-            stdout=stream,
+    try:
+        secret_result = scan_tracked_tree(
+            root,
+            report_path=secret_report,
+            tracked_paths=tracked_paths,
         )
+    except SecurityScanError as exc:
+        raise QualityEvidenceError(str(exc)) from exc
+    statuses["secret_scan"] = 0
 
     coverage_document = _read_json(coverage_report, "coverage report")
     runtime_document = _read_json(runtime_audit, "runtime dependency audit")
@@ -1151,7 +1146,6 @@ def collect_quality_evidence(
         development_audit,
         "development dependency audit",
     )
-    secret_document = _read_json(secret_report, "tracked-tree secret scan")
 
     totals = coverage_document.get("totals")
     if not isinstance(totals, dict) or not isinstance(
@@ -1160,7 +1154,7 @@ def collect_quality_evidence(
     ):
         raise QualityEvidenceError("coverage report has no total percentage")
     coverage_percent = float(totals["percent_covered"])
-    secret_candidates = secret_findings(secret_document)
+    secret_candidates = secret_result.unresolved_findings
     format_diagnostics = json_array_diagnostic_count(
         format_report,
         "Ruff format report",
@@ -1231,6 +1225,7 @@ def collect_quality_evidence(
             "secret_scan": {
                 "boundary": "current Git-tracked regular-file working tree only",
                 "tracked_files": len(tracked_paths),
+                "baseline": ".secrets.baseline",
             },
         },
         "thresholds": {"coverage_percent": coverage_floor},
@@ -1271,6 +1266,7 @@ def collect_quality_evidence(
             },
             "secret_scan": {
                 "candidates": len(secret_candidates),
+                "reviewed_false_positives": (secret_result.reviewed_false_positives),
                 "findings": secret_candidates,
             },
         },
@@ -1314,7 +1310,9 @@ def collect_quality_evidence(
             ),
             (
                 "The heuristic secret scan covers the current tracked tree, not "
-                "Git history, provider metadata, Actions artifacts or logs."
+                "Git history, provider metadata, Actions artifacts or logs. Its "
+                "reviewed baseline is an exact false-positive disposition, not a "
+                "general secret-pattern or path exclusion."
             ),
             "These unsigned CI reports are quality evidence, not release provenance.",
         ],

@@ -16,9 +16,9 @@ concurrency:
 env:
   KIT_VERSION: "0.2.0"
   IMAGE_NAME: ghcr.io/ktogias/gnostoa
-  SOURCE_COMMIT: f29499286bac9859364d45da0f6c59396518b749
-  SOURCE_TREE: ff38abe5718ebc550054ea6af18a73d0aef8e514
-  AUTHORIZED_BEFORE_COMMIT: f29499286bac9859364d45da0f6c59396518b749
+  SOURCE_COMMIT: f29499286bac9859364d45da0f6c59396518b749 # pragma: allowlist secret -- public source commit
+  SOURCE_TREE: ff38abe5718ebc550054ea6af18a73d0aef8e514 # pragma: allowlist secret -- public source tree
+  AUTHORIZED_BEFORE_COMMIT: f29499286bac9859364d45da0f6c59396518b749 # pragma: allowlist secret -- public source commit
   AUTHORIZED_PR_NUMBER: "257"
   AUTHORIZED_PR_HEAD_REF: r2a-b16-materialization
 

@@ -19,9 +19,10 @@ and self-knowledge surfaces.
 5. Run `knowledge self-check`.
 6. For CI or hook changes, follow
    [configure continuous integration](guidance/workflows/configure-continuous-integration.md)
-   and run `./ci/verify policy`. Run `./ci/verify extended` for changes that
-   affect the maintained Python quality, documentation or release-evidence
-   surfaces.
+   and run `./ci/verify policy` plus `./ci/verify security-fast`. Run
+   `./ci/verify extended` for changes that affect the maintained Python quality,
+   CI, dependency, documentation, release-evidence or protected-authority
+   surfaces; the provider router applies the same high-risk classification.
 7. Inspect the final diff before merge. Community contributions receive
    maintainer review; satisfy additional approval gates only when the effective
    specialization requires them.

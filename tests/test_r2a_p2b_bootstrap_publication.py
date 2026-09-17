@@ -14,8 +14,8 @@ DECISION_PATH = (
     / "0068-materialize-r2a-p2a-as-a-one-shot-digest-only-oci-judge.md"
 )
 GUARDRAILS_PATH = ROOT / "policy" / "guardrails.yaml"
-SOURCE_COMMIT = "d66d1830d724d759db6ec87e1f8d5dcc0847f221"
-SOURCE_TREE = "384df86fec31208a02371b63722f903e63404134"
+SOURCE_COMMIT = "d66d1830d724d759db6ec87e1f8d5dcc0847f221"  # pragma: allowlist secret -- public source commit
+SOURCE_TREE = "384df86fec31208a02371b63722f903e63404134"  # pragma: allowlist secret -- public source tree
 PUBLIC_DIGEST = (
     "sha256:ee2418fccd7e8907b8b8f60b0e0c7663e93c3e9abb66d9496efd1c3666ca1845"
 )

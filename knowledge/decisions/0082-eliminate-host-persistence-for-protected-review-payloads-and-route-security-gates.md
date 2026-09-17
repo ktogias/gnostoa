@@ -125,8 +125,10 @@ separate read-back.
    entry or new candidate fails closed.
 5. **One reusable tracked-tree scan.** Factor the scan/baseline comparison into
    one repository-owned command that emits only candidate metadata, never the
-   candidate value. `extended` reuses it and retains the raw hashed report plus
-   counts of reviewed and unresolved candidates.
+   candidate value or candidate-derived hash. `extended` reuses it and retains
+   a sanitized report plus counts of reviewed and unresolved candidates. The
+   baseline manifest itself is the single exact scanner exclusion because
+   scanning its candidate hashes would create a recursive, unstable baseline.
 6. **Ordinary PR security gate.** Add `security-fast` as a visible provider job
    using the exact development lock and the shared scan command. `regression`
    consumes its result with `always()` and fails unless it succeeded, so a
@@ -136,8 +138,10 @@ separate read-back.
    protected-integration changes that touch the declared maintained Python,
    CI/workflow, dependency, documentation, release-evidence or protected
    authority surfaces. Otherwise it reports `NOT_APPLICABLE` and a bounded
-   reason. The heavyweight job may remain conditionally skipped, but neither
-   the router nor project records call that skip a pass.
+   reason. The heavyweight job may remain conditionally skipped, but
+   `regression` accepts only a successful applicable run or an exact
+   `NOT_APPLICABLE`/skipped pair. Neither the router nor project records call
+   that skip a pass.
 8. **Provider CodeQL effect remains sequenced.** After this Decision and the
    implementation are integrated and provider read-back confirms clean
    exact-head/default-branch results, require the stable GitHub CodeQL result for
@@ -186,8 +190,10 @@ check.
 - Decision 0041 remains the historical pilot authority and is supplemented, not
   rewritten. Provider automation still supplies observation rather than repair,
   merge, release or publication authority.
-- PR #272 remains a separate candidate. Any overlap is reconciled explicitly
-  after one base is integrated; neither branch silently absorbs the other.
+- PR #272 was integrated at protected `main`
+  `850b6842077ac4eb4069174cf132663ff9acb9d6`. This candidate explicitly
+  preserves its authoritative repository-root Ruff scope while adding the
+  security gates; the overlap was reconciled before exact-base verification.
 
 ## Non-goals
 
