@@ -59,12 +59,20 @@ def _invokes_shared_verification_suite(command: str, suite: str) -> bool:
     if tokens == ["./ci/verify", suite]:
         return True
     expected_script = f"./ci/verify {suite}"
-    return any(
-        token in {"-c", "-ec"}
-        and index + 1 < len(tokens)
-        and tokens[index + 1] == expected_script
-        for index, token in enumerate(tokens)
-    )
+    if (
+        tokens[:2] != ["docker", "run"]
+        or len(tokens) < 6
+        or tokens[-2] not in {"-c", "-ec"}
+        or tokens[-1] != expected_script
+    ):
+        return False
+    entrypoint: str | None = None
+    for index, token in enumerate(tokens[:-1]):
+        if token == "--entrypoint" and index + 1 < len(tokens):
+            entrypoint = tokens[index + 1]
+        elif token.startswith("--entrypoint="):
+            entrypoint = token.partition("=")[2]
+    return entrypoint in {"sh", "/bin/sh"}
 
 
 def _add_tar_bytes(archive: tarfile.TarFile, name: str, content: bytes) -> None:
@@ -244,6 +252,12 @@ class PublicationBaselineTests(unittest.TestCase):
             )
         self.assertFalse(
             _invokes_shared_verification_suite("echo ./ci/verify fast", "fast")
+        )
+        self.assertFalse(
+            _invokes_shared_verification_suite(
+                "echo -ec './ci/verify fast'",
+                "fast",
+            )
         )
         self.assertFalse(
             _invokes_shared_verification_suite("./ci/verify fast-noop", "fast")
