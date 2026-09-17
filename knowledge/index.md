@@ -108,6 +108,7 @@ inherited, copied or loaded by adopting projects.
 - [B2 control selection and failure-path map](assessments/b2-control-selection-and-failure-path-map.md)
 - [C4-v0 readiness predicate experiment](assessments/b2-c4v0-readiness-predicate-experiment.md)
 - [Post-C4 evidence boundary selection](assessments/post-c4-evidence-boundary-selection.md)
+- [JEPA-inspired operational world model assessment](assessments/jepa-inspired-operational-world-model.md)
 - [Fresh-agent dogfood and routing-precursor result](assessments/fresh-agent-dogfood-and-routing-precursor-result.md)
 - [First source-only release pre-effect state](assessments/first-source-only-release-pre-effect-state.md)
 - [First source-only release result](assessments/first-source-only-release-result.md)
