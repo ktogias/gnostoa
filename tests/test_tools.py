@@ -2265,16 +2265,24 @@ class ContinuousIntegrationTests(unittest.TestCase):
         self.assertEqual("matrix.python-version == '3.12'", ruff_step["if"])
         self.assertEqual("./ci/style --check", ruff_step["run"])
 
-        direct_ruff_steps = [
-            step
-            for step in compatibility["steps"]
-            if re.search(
-                r"(?m)(?:^|[;&|])\s*"
-                r"(?:python(?:3(?:\.\d+)?)?\s+-m\s+)?ruff(?:\s|$)",
-                str(step.get("run", "")),
-            )
+        def mentions_ruff(run: object) -> bool:
+            return "ruff" in str(run).casefold()
+
+        ruff_run_steps = [
+            (job_name, step.get("name"), step["run"])
+            for job_name, job in jobs.items()
+            for step in job.get("steps", [])
+            if "run" in step and mentions_ruff(step["run"])
         ]
-        self.assertEqual([], direct_ruff_steps)
+        self.assertEqual([], ruff_run_steps)
+        for wrapped_command in (
+            "if python -m ruff check .; then exit 0; fi",
+            "! ruff format --check .",
+            "command ruff check .",
+            "env FOO=bar python -m ruff check .",
+        ):
+            with self.subTest(wrapped_command=wrapped_command):
+                self.assertTrue(mentions_ruff(wrapped_command))
 
         self.assertEqual(
             ["policy", "fast", "python-compatibility"], regression["needs"]
