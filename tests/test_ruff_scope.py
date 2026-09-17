@@ -36,16 +36,16 @@ class RuffScopeContractTests(unittest.TestCase):
         self.assertTrue(style_path.is_file())
         style = style_path.read_text(encoding="utf-8")
 
-        self.assertIn('python -m ruff format --check .', style)
-        self.assertIn('python -m ruff check .', style)
-        self.assertIn('python -m ruff check --fix .', style)
-        self.assertIn('python -m ruff format .', style)
+        self.assertIn("python -m ruff format --check .", style)
+        self.assertIn("python -m ruff check .", style)
+        self.assertIn("python -m ruff check --fix .", style)
+        self.assertIn("python -m ruff format .", style)
         self.assertNotIn("tools ci tests", style)
 
-        safe_fix = style.index('python -m ruff check --fix .')
-        format_fix = style.index('python -m ruff format .')
-        format_check = style.index('python -m ruff format --check .')
-        lint_check = style.index('python -m ruff check .')
+        safe_fix = style.index("python -m ruff check --fix .")
+        format_fix = style.index("python -m ruff format .")
+        format_check = style.index("python -m ruff format --check .")
+        lint_check = style.index("python -m ruff check .")
         self.assertLess(safe_fix, format_fix)
         self.assertLess(format_fix, format_check)
         self.assertLess(format_check, lint_check)
@@ -75,7 +75,9 @@ class RuffScopeContractTests(unittest.TestCase):
 
         document = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         exclusions = set(document["tool"]["ruff"].get("extend-exclude", []))
-        self.assertFalse(any(item == "tasks" or item.startswith("tasks/") for item in exclusions))
+        self.assertFalse(
+            any(item == "tasks" or item.startswith("tasks/") for item in exclusions)
+        )
 
 
 if __name__ == "__main__":
