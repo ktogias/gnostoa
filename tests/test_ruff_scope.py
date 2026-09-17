@@ -1,34 +1,110 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+import tempfile
 import tomllib
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_GENERATED_EXCLUDES = {
+EXPECTED_RECURSIVE_EXCLUDES = {
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".git-rewrite",
+    ".hg",
+    ".ipynb_checkpoints",
     ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".pyenv",
     ".pytest_cache",
+    ".pytype",
     ".ruff_cache",
+    ".svn",
+    ".tox",
     ".venv",
+    ".vscode",
+    "__pypackages__",
     "__pycache__",
-    "context-packs",
-    "dist",
-    "site",
+    "node_modules",
+    "site-packages",
+    "venv",
     "*.egg-info",
+}
+EXPECTED_ROOT_OUTPUT_EXCLUDES = {
+    "_build/**",
+    "build/**",
+    "buck-out/**",
+    "context-packs/**",
+    "dist/**",
+    "site/**",
 }
 
 
 class RuffScopeContractTests(unittest.TestCase):
-    def test_pyproject_declares_explicit_generated_exclusions(self) -> None:
+    def test_pyproject_declares_one_explicit_exclusion_authority(self) -> None:
         document = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         ruff = document["tool"]["ruff"]
-        exclusions = set(ruff.get("extend-exclude", []))
+        exclusions = set(ruff.get("exclude", []))
 
-        self.assertTrue(EXPECTED_GENERATED_EXCLUDES <= exclusions)
+        self.assertFalse(ruff.get("respect-gitignore", True))
+        self.assertFalse(ruff.get("extend-exclude"))
+        self.assertTrue(EXPECTED_RECURSIVE_EXCLUDES <= exclusions)
+        self.assertTrue(EXPECTED_ROOT_OUTPUT_EXCLUDES <= exclusions)
+        for bare_output in ("_build", "build", "buck-out", "context-packs", "dist", "site"):
+            with self.subTest(bare_output=bare_output):
+                self.assertNotIn(bare_output, exclusions)
         self.assertNotIn("tasks", exclusions)
         self.assertNotIn("tools", exclusions)
         self.assertNotIn("ci", exclusions)
         self.assertNotIn("tests", exclusions)
+
+    def test_nested_output_names_remain_in_scope_and_gitignore_is_not_authority(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            nested = [
+                root / "pkg" / name / "covered.py"
+                for name in ("_build", "build", "buck-out", "context-packs", "dist", "site")
+            ]
+            generated = [
+                root / name / "generated.py"
+                for name in ("_build", "build", "buck-out", "context-packs", "dist", "site")
+            ]
+            for path in nested + generated:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("value = 1\n", encoding="utf-8")
+
+            (root / ".gitignore").write_text(
+                "pkg/dist/\npkg/site/\npkg/context-packs/\npkg/build/\n",
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "ruff",
+                    "check",
+                    "--show-files",
+                    "--config",
+                    str(ROOT / "pyproject.toml"),
+                    ".",
+                ],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            discovered = completed.stdout
+
+            for path in nested:
+                with self.subTest(path=path):
+                    self.assertIn(str(path.resolve()), discovered)
+            for path in generated:
+                with self.subTest(path=path):
+                    self.assertNotIn(str(path.resolve()), discovered)
 
     def test_style_surface_is_repository_root_scoped(self) -> None:
         style_path = ROOT / "ci" / "style"
@@ -74,7 +150,7 @@ class RuffScopeContractTests(unittest.TestCase):
         self.assertTrue((ROOT / "tasks" / "gnostoa_orientation.py").is_file())
 
         document = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-        exclusions = set(document["tool"]["ruff"].get("extend-exclude", []))
+        exclusions = set(document["tool"]["ruff"].get("exclude", []))
         self.assertFalse(
             any(item == "tasks" or item.startswith("tasks/") for item in exclusions)
         )
