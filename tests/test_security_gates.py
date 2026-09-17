@@ -214,6 +214,55 @@ class SecretBaselineTests(unittest.TestCase):
                 command[separator + 1 :],
             )
 
+    def test_scanner_reads_an_immutable_private_snapshot(self) -> None:
+        baseline = _report({})
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            candidate = root / "tracked.txt"
+            candidate.write_text("original candidate\n", encoding="utf-8")
+            (root / ".secrets.baseline").write_text(
+                json.dumps(baseline),
+                encoding="utf-8",
+            )
+            completed = subprocess.CompletedProcess(
+                ["detect-secrets"],
+                0,
+                json.dumps(baseline).encode("utf-8"),
+                b"",
+            )
+            observed_snapshot: Path | None = None
+
+            def run_from_snapshot(
+                command: list[str],
+                *,
+                cwd: Path,
+                timeout: int,
+            ) -> subprocess.CompletedProcess[bytes]:
+                nonlocal observed_snapshot
+                observed_snapshot = cwd
+                self.assertNotEqual(root, cwd)
+                self.assertEqual(
+                    "original candidate\n",
+                    (cwd / "tracked.txt").read_text(encoding="utf-8"),
+                )
+                candidate.write_text("concurrent replacement\n", encoding="utf-8")
+                self.assertEqual(
+                    "original candidate\n",
+                    (cwd / "tracked.txt").read_text(encoding="utf-8"),
+                )
+                return completed
+
+            with mock.patch(
+                "tools.security_scan._run_bounded_scan",
+                side_effect=run_from_snapshot,
+            ):
+                scan_tracked_tree(root, tracked_paths=[Path("tracked.txt")])
+
+            self.assertIsNotNone(observed_snapshot)
+            assert observed_snapshot is not None
+            self.assertFalse(observed_snapshot.exists())
+
     def test_candidate_scope_errors_are_reported_as_security_scan_errors(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

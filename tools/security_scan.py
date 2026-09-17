@@ -10,7 +10,10 @@ import selectors
 import stat
 import subprocess
 import sys
+import tempfile
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -20,6 +23,7 @@ from tools.repository_scope import RepositoryScopeError, candidate_paths
 DEFAULT_BASELINE = Path(".secrets.baseline")
 _MAX_REPORT_BYTES = 8_388_608
 _READ_CHUNK_BYTES = 65_536
+_SNAPSHOT_CHUNK_BYTES = 65_536
 _SCAN_TIMEOUT_SECONDS = 300
 _BASELINE_EXCLUDE_PATTERN = r"^\.secrets\.baseline$"
 _PROTECTED_BASELINE_FILE_SHA256 = {
@@ -320,6 +324,129 @@ def _validated_candidate_paths(root: Path, paths: list[Path]) -> list[Path]:
     return validated
 
 
+def _stable_file_metadata(metadata: os.stat_result) -> tuple[int, ...]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        stat.S_IFMT(metadata.st_mode),
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def _write_all(descriptor: int, content: bytes) -> None:
+    offset = 0
+    while offset < len(content):
+        written = os.write(descriptor, content[offset:])
+        if written <= 0:
+            raise OSError("snapshot write made no progress")
+        offset += written
+
+
+def _copy_candidate_to_snapshot(
+    root_descriptor: int,
+    snapshot: Path,
+    relative: Path,
+) -> None:
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    directory = getattr(os, "O_DIRECTORY", None)
+    if nofollow is None or directory is None:
+        raise SecurityScanError(
+            "tracked-tree snapshot requires O_NOFOLLOW and O_DIRECTORY"
+        )
+
+    parent_descriptor: int | None = None
+    source_descriptor: int | None = None
+    destination_descriptor: int | None = None
+    try:
+        parent_descriptor = os.dup(root_descriptor)
+        for part in relative.parts[:-1]:
+            next_descriptor = os.open(
+                part,
+                os.O_RDONLY | directory | nofollow,
+                dir_fd=parent_descriptor,
+            )
+            os.close(parent_descriptor)
+            parent_descriptor = next_descriptor
+
+        source_descriptor = os.open(
+            relative.name,
+            os.O_RDONLY | nofollow,
+            dir_fd=parent_descriptor,
+        )
+        before = os.fstat(source_descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise SecurityScanError(
+                f"candidate path is not a regular file: {relative.as_posix()!r}"
+            )
+
+        destination = snapshot / relative
+        destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        destination_descriptor = os.open(
+            destination,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow,
+            0o600,
+        )
+        while True:
+            chunk = os.read(source_descriptor, _SNAPSHOT_CHUNK_BYTES)
+            if not chunk:
+                break
+            _write_all(destination_descriptor, chunk)
+
+        after = os.fstat(source_descriptor)
+        visible = os.stat(
+            relative.name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        if _stable_file_metadata(before) != _stable_file_metadata(
+            after
+        ) or _stable_file_metadata(after) != _stable_file_metadata(visible):
+            raise SecurityScanError(
+                f"candidate path changed while snapshotting: {relative.as_posix()!r}"
+            )
+    except SecurityScanError:
+        raise
+    except OSError as exc:
+        raise SecurityScanError(
+            f"cannot snapshot candidate path {relative.as_posix()!r}: {exc}"
+        ) from exc
+    finally:
+        if destination_descriptor is not None:
+            os.close(destination_descriptor)
+        if source_descriptor is not None:
+            os.close(source_descriptor)
+        if parent_descriptor is not None:
+            os.close(parent_descriptor)
+
+
+@contextmanager
+def _immutable_candidate_snapshot(
+    root: Path,
+    paths: list[Path],
+) -> Iterator[Path]:
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    directory = getattr(os, "O_DIRECTORY", None)
+    if nofollow is None or directory is None:
+        raise SecurityScanError(
+            "tracked-tree snapshot requires O_NOFOLLOW and O_DIRECTORY"
+        )
+
+    try:
+        root_descriptor = os.open(root, os.O_RDONLY | directory | nofollow)
+    except OSError as exc:
+        raise SecurityScanError("cannot open the tracked-tree root safely") from exc
+    try:
+        with tempfile.TemporaryDirectory(prefix="gnostoa-secret-scan-") as raw_snapshot:
+            snapshot = Path(raw_snapshot)
+            for relative in paths:
+                _copy_candidate_to_snapshot(root_descriptor, snapshot, relative)
+            yield snapshot
+    finally:
+        os.close(root_descriptor)
+
+
 def _file_sha256(root: Path, relative: Path) -> str:
     flags = os.O_RDONLY
     if hasattr(os, "O_NOFOLLOW"):
@@ -384,25 +511,50 @@ def scan_tracked_tree(
     if not paths:
         raise SecurityScanError("tracked-tree secret scan has no candidate files")
     paths = _validated_candidate_paths(root, paths)
-    _verify_protected_baseline_files(root, paths, require_all=canonical_scan)
+    snapshot_paths = list(paths)
+    relative_baseline: Path | None = None
+    if not baseline_path.is_absolute():
+        relative_baseline = _validated_candidate_paths(root, [baseline_path])[0]
+        if relative_baseline not in snapshot_paths:
+            snapshot_paths.append(relative_baseline)
 
-    completed = _run_bounded_scan(
-        [
-            sys.executable,
-            "-m",
-            "detect_secrets",
-            "--cores",
-            "1",
-            "scan",
-            "--no-verify",
-            "--exclude-files",
-            _BASELINE_EXCLUDE_PATTERN,
-            "--",
-            *(path.as_posix() for path in paths),
-        ],
-        cwd=root,
-        timeout=_SCAN_TIMEOUT_SECONDS,
-    )
+    baseline_document: dict[str, Any] | None = None
+    if baseline_path.is_absolute():
+        baseline_document = _read_document(
+            baseline_path,
+            "detect-secrets baseline",
+        )
+
+    with _immutable_candidate_snapshot(root, snapshot_paths) as snapshot:
+        scan_paths = _validated_candidate_paths(snapshot, paths)
+        _verify_protected_baseline_files(
+            snapshot,
+            scan_paths,
+            require_all=canonical_scan,
+        )
+        if relative_baseline is not None:
+            baseline_document = _read_document(
+                snapshot / relative_baseline,
+                "detect-secrets baseline",
+            )
+
+        completed = _run_bounded_scan(
+            [
+                sys.executable,
+                "-m",
+                "detect_secrets",
+                "--cores",
+                "1",
+                "scan",
+                "--no-verify",
+                "--exclude-files",
+                _BASELINE_EXCLUDE_PATTERN,
+                "--",
+                *(path.as_posix() for path in scan_paths),
+            ],
+            cwd=snapshot,
+            timeout=_SCAN_TIMEOUT_SECONDS,
+        )
     if completed.returncode != 0:
         raise SecurityScanError(
             f"tracked-tree secret scan returned status {completed.returncode}"
@@ -415,13 +567,8 @@ def scan_tracked_tree(
         ) from exc
     if not isinstance(scan_document, dict):
         raise SecurityScanError("tracked-tree secret scan report is not an object")
-    resolved_baseline = baseline_path
-    if not resolved_baseline.is_absolute():
-        resolved_baseline = root / resolved_baseline
-    baseline_document = _read_document(
-        resolved_baseline,
-        "detect-secrets baseline",
-    )
+    if baseline_document is None:
+        raise SecurityScanError("detect-secrets baseline was not acquired")
     result = evaluate_secret_report(scan_document, baseline_document)
     if report_path is not None:
         sanitized_report = {

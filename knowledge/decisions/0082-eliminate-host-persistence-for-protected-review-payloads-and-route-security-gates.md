@@ -133,10 +133,15 @@ separate read-back.
    candidate value or candidate-derived hash. Validate every scanner argument
    as a repository-relative regular file, terminate option parsing before those
    arguments, translate candidate-enumeration failures, and bound stdout/stderr
-   while reading rather than after buffering. `extended` reuses the command and
-   retains a sanitized report plus counts of reviewed and unresolved candidates.
-   The baseline manifest itself is the single exact scanner exclusion because
-   scanning its candidate hashes would create a recursive, unstable baseline.
+   while reading rather than after buffering. Acquire each candidate through
+   descriptor-relative `O_NOFOLLOW` traversal into a private, disposable scan
+   snapshot, verify stable inode and file metadata across the copy, and run the
+   scanner only against those acquired bytes. The snapshot is deleted on exit
+   and is distinct from the protected-review payload, which is never written on
+   the host. `extended` reuses the command and retains a sanitized report plus
+   counts of reviewed and unresolved candidates. The baseline manifest itself
+   is the single exact scanner exclusion because scanning its candidate hashes
+   would create a recursive, unstable baseline.
 6. **Ordinary PR security gate.** Add `security-fast` as a visible provider job
    using the exact development lock and the shared scan command. It intentionally
    runs natively as the inexpensive exact-head gate before any image build. For
@@ -179,6 +184,8 @@ Pre-implementation RED evidence and the final candidate must demonstrate:
   authority-bound judge invocation and result;
 - the reviewed tree has zero unresolved secret candidates, while an injected
   candidate, stale baseline and unauthorized baseline entry fail;
+- a concurrent worktree replacement cannot change the private bytes presented
+  to the scanner, and the disposable snapshot is removed after the scan;
 - protected JSON file identities are unchanged;
 - every relevant provider event/path class maps deterministically to `RUN` or
   `NOT_APPLICABLE`, and high-risk PRs actually execute `extended`;
