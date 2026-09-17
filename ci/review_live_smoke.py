@@ -56,31 +56,27 @@ def main() -> int:
 
     code, payload = evaluate_gnostoa_current_advisory(input_document)
     if code != 3:
-        raise RuntimeError(
-            f"protected current-advisory smoke expected exit 3, got {code}: {payload}"
-        )
+        raise RuntimeError("protected current-advisory smoke returned an unexpected exit")
     if (
         payload.get("outcome") != "INCOMPLETE"
         or payload.get("reason") != "QUORUM_UNMET"
     ):
         raise RuntimeError(
-            f"protected current-advisory smoke expected QUORUM_UNMET: {payload}"
+            "protected current-advisory smoke did not preserve truthful quorum state"
         )
     if payload.get("binding") is not False:
-        raise RuntimeError(
-            f"protected current-advisory smoke must remain advisory: {payload}"
-        )
+        raise RuntimeError("protected current-advisory smoke must remain advisory")
     context = payload.get("evaluation_context")
     if not isinstance(context, dict):
         raise RuntimeError(
-            f"protected current-advisory smoke returned no evaluation context: {payload}"
+            "protected current-advisory smoke returned no evaluation context"
         )
     if (
         context.get("mode") != "current_advisory"
         or context.get("judge_relation") != "prior_integrated"
     ):
         raise RuntimeError(
-            f"protected current-advisory smoke returned wrong live context: {payload}"
+            "protected current-advisory smoke returned the wrong live context"
         )
     if context.get("as_of") == input_document["evaluation_context"]["as_of"]:
         raise RuntimeError(
@@ -92,11 +88,9 @@ def main() -> int:
         for item in diagnostics
         if isinstance(item, str)
     ):
-        raise RuntimeError(
-            f"protected OCI delegation is not explicit in diagnostics: {payload}"
-        )
+        raise RuntimeError("protected OCI delegation is not explicit in diagnostics")
 
-    print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+    print("protected current-advisory smoke: PASS")
     return 0
 
 
