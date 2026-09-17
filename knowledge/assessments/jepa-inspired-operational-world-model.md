@@ -119,6 +119,15 @@ python3 tasks/gnostoa_orientation.py \
 
 Αποτέλεσμα: exit `1`, `STALE`, με ληγμένες πηγές, αλλαγμένο roadmap digest και διαφορετικό source commit/tree. Η εκτέλεση έγινε native ως read-only διάγνωση του υπάρχοντος standard-library εργαλείου, όχι ως πλήρης verification suite ή ισχυρισμός container parity.
 
+Δεν διατηρήθηκε το ακριβές stdout ούτε χωριστό execution receipt. Συνεπώς, η
+παραπάνω πρόταση είναι περιορισμένη, συσχετισμένη ερευνητική παρατήρηση και η
+απαρίθμηση των diagnostics είναι σύνοψη του αναλυτή, όχι επαληθεύσιμο exact-run
+artifact. Η σημερινή κατάσταση και η επιλογή εργασίας προκύπτουν από το χωριστό
+provider/source read-back της §2· δεν στηρίζονται σε αυτή την εκτέλεση. Το
+σταθερό `--evaluated-at`, η διατηρημένη είσοδος και ο συνδεδεμένος κώδικας
+επιτρέπουν νέα αναπαραγωγή, η οποία θα αποτελεί νέο observation και όχι
+αναδρομική απόδειξη του μη διατηρημένου stdout.
+
 Αυτό είναι αναμενόμενο: το retained snapshot είναι ιστορικό/regression evidence και **δεν πρέπει να «διορθωθεί» σβήνοντας την ιστορία του**. Δείχνει ότι ήδη υπάρχει detector τοπικής παλαίωσης. Δεν αποδεικνύει ότι υπάρχει πλήρης αυτόματος provider observer ή ότι κάθε consumer θα τον καλέσει σωστά. [Υπάρχων κώδικας](https://github.com/ktogias/gnostoa/blob/e071ab60a418eddda5bf008004ee96faafbf1e7c/tasks/gnostoa_orientation.py).
 
 ## 3. Η πραγματική σχέση με τη JEPA
@@ -190,7 +199,7 @@ python3 tasks/gnostoa_orientation.py \
 
 **Atomic preconditions:** το [GitHub merge endpoint](https://docs.github.com/en/rest/pulls/pulls#merge-a-pull-request) μπορεί να απαιτεί συγκεκριμένο `sha` και να απορρίψει mismatch. Το read-before-act από μόνο του αφήνει race. Το head precondition, όμως, δεν ελέγχει ατομικά όλα τα δικά μας review-cut/authority constraints.
 
-**Concurrency:** η [τρέχουσα τεκμηρίωση Actions](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency) περιγράφει και `queue: max`. Δεν είναι σωστό να στηρίξουμε τον σχεδιασμό σε παλιό απόλυτο ισχυρισμό ότι «δεν υπάρχει queue». Παρ’ όλα αυτά, concurrency group δεν αποτελεί durable transaction ledger ή καθολικό lock έναντι εξωτερικών actors.
+**Concurrency:** η [τεκμηρίωση Actions που αναγνώστηκε στις 17/09/2026](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency) ορίζει προαιρετικό `queue` με τιμές `single` και `max`: το `max` επιτρέπει έως 100 pending runs και δεν συνδυάζεται με `cancel-in-progress: true`. Αυτό είναι χρονικά δεσμευμένο provider-documentation input και όχι δική μας εκτελεσμένη characterization. Δεν είναι σωστό να στηρίξουμε τον σχεδιασμό σε παλιό απόλυτο ισχυρισμό ότι «δεν υπάρχει queue». Παρ’ όλα αυτά, concurrency group δεν αποτελεί durable transaction ledger ή καθολικό lock έναντι εξωτερικών actors.
 
 **Interfaces και tests:** το [SWE-agent](https://arxiv.org/abs/2405.15793) δείχνει τη σημασία της διεπαφής εργαλείων. Τα [stateful tests](https://hypothesis.readthedocs.io/en/latest/stateful.html) ελέγχουν ακολουθίες και invariants. Το [AgentBoard](https://github.com/hkust-nlp/AgentBoard) μετρά ενδιάμεση πρόοδο, ενώ το [AgentDojo](https://arxiv.org/abs/2406.13352) συνδυάζει αξιολόγηση επιθέσεων με εκτέλεση νόμιμων εργασιών. Δεν επιλέγεται κανένα νέο framework ως dependency.
 
