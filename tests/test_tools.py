@@ -66,6 +66,7 @@ def _invokes_shared_verification_suite(command: str, suite: str) -> bool:
     # not a general Docker CLI parser. Unknown run options are rejected.
     flag_options = {"--rm"}
     value_options = {"--entrypoint", "--env", "--mount", "--user", "--workdir"}
+    flag_counts = {option: 0 for option in flag_options}
     option_values: dict[str, list[str]] = {option: [] for option in value_options}
     docker_arguments = tokens[2:]
     index = 0
@@ -74,6 +75,7 @@ def _invokes_shared_verification_suite(command: str, suite: str) -> bool:
         if token == "${GNOSTOA_CI_IMAGE}":
             break
         if token in flag_options:
+            flag_counts[token] += 1
             index += 1
             continue
 
@@ -108,7 +110,8 @@ def _invokes_shared_verification_suite(command: str, suite: str) -> bool:
 
     required_mount = "type=bind,source=${GITHUB_WORKSPACE},target=/workspace,readonly"
     return (
-        option_values["--entrypoint"] in (["sh"], ["/bin/sh"])
+        flag_counts["--rm"] == 1
+        and option_values["--entrypoint"] in (["sh"], ["/bin/sh"])
         and required_mount in option_values["--mount"]
         and option_values["--workdir"] == ["/workspace"]
     )
@@ -300,7 +303,7 @@ class PublicationBaselineTests(unittest.TestCase):
         )
         self.assertFalse(
             _invokes_shared_verification_suite(
-                "docker run --entrypoint sh "
+                "docker run --rm --entrypoint sh "
                 "--mount "
                 "type=bind,source=${GITHUB_WORKSPACE},target=/workspace,readonly "
                 "--workdir /workspace unrelated-image "
@@ -310,7 +313,7 @@ class PublicationBaselineTests(unittest.TestCase):
         )
         self.assertFalse(
             _invokes_shared_verification_suite(
-                "docker run --entrypoint sh ${GNOSTOA_CI_IMAGE} "
+                "docker run --rm --entrypoint sh ${GNOSTOA_CI_IMAGE} "
                 "--workdir /workspace "
                 "-ec './ci/verify fast'",
                 "fast",
@@ -318,10 +321,30 @@ class PublicationBaselineTests(unittest.TestCase):
         )
         self.assertFalse(
             _invokes_shared_verification_suite(
-                "docker run --entrypoint sh "
+                "docker run --rm --entrypoint sh "
                 "--mount "
                 "type=bind,source=${GITHUB_WORKSPACE},target=/workspace,readonly "
                 "--workdir /tmp ${GNOSTOA_CI_IMAGE} "
+                "-ec './ci/verify fast'",
+                "fast",
+            )
+        )
+        self.assertFalse(
+            _invokes_shared_verification_suite(
+                "docker run --rm --entrypoint sh "
+                "--mount "
+                "type=bind,source=${GITHUB_WORKSPACE},target=/workspace,readonly "
+                "--workdir /workspace ${GNOSTOA_CI_IMAGE} "
+                "/dev/null -ec './ci/verify fast'",
+                "fast",
+            )
+        )
+        self.assertFalse(
+            _invokes_shared_verification_suite(
+                "docker run --rm --entrypoint sh "
+                "--mount "
+                "type=bind,source=${GITHUB_WORKSPACE},target=/workspace,readonly "
+                "--workdir /workspace --name ${GNOSTOA_CI_IMAGE} "
                 "-ec './ci/verify fast'",
                 "fast",
             )
@@ -332,16 +355,6 @@ class PublicationBaselineTests(unittest.TestCase):
                 "--mount "
                 "type=bind,source=${GITHUB_WORKSPACE},target=/workspace,readonly "
                 "--workdir /workspace ${GNOSTOA_CI_IMAGE} "
-                "/dev/null -ec './ci/verify fast'",
-                "fast",
-            )
-        )
-        self.assertFalse(
-            _invokes_shared_verification_suite(
-                "docker run --entrypoint sh "
-                "--mount "
-                "type=bind,source=${GITHUB_WORKSPACE},target=/workspace,readonly "
-                "--workdir /workspace --name ${GNOSTOA_CI_IMAGE} "
                 "-ec './ci/verify fast'",
                 "fast",
             )
