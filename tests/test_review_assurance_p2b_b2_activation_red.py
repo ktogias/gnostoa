@@ -208,7 +208,11 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         self.assertNotIn(f"{socket_volume}:/var/run", daemon_args)
         self.assertIn(f"{tmp_volume}:/tmp", daemon_args)
         daemon_image_index = daemon_args.index(daemon_image)
+        daemon_log_driver_index = daemon_args.index("--log-driver")
+        self.assertLess(daemon_log_driver_index, daemon_image_index)
+        self.assertEqual("none", daemon_args[daemon_log_driver_index + 1])
         self.assertEqual("dockerd", daemon_args[daemon_image_index + 1])
+        self.assertIn("--log-driver=none", daemon_args[daemon_image_index + 2 :])
         self.assertEqual(
             1, daemon_args.count("--host=unix:///gnostoa-docker/docker.sock")
         )
@@ -217,6 +221,10 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         self.assertNotIn("tcp://0.0.0.0:2376", " ".join(daemon_args))
 
         self.assertIn(P2B_OCI_IMAGE, outer_args)
+        outer_image_index = outer_args.index(P2B_OCI_IMAGE)
+        outer_log_driver_index = outer_args.index("--log-driver")
+        self.assertLess(outer_log_driver_index, outer_image_index)
+        self.assertEqual("none", outer_args[outer_log_driver_index + 1])
         self.assertIn("--read-only", outer_args)
         self.assertIn("--cap-drop", outer_args)
         self.assertIn("ALL", outer_args)

@@ -345,6 +345,8 @@ def _build_isolated_execution_plan(
     daemon = [
         "--label",
         f"gnostoa.r2a.role={daemon_name}",
+        "--log-driver",
+        "none",
         "--privileged",
         "--env",
         "DOCKER_TLS_CERTDIR=",
@@ -356,10 +358,13 @@ def _build_isolated_execution_plan(
         "dockerd",
         "--host=unix:///gnostoa-docker/docker.sock",
         "--group=10001",
+        "--log-driver=none",
     ]
     outer = [
         "--label",
         f"gnostoa.r2a.role={outer_name}",
+        "--log-driver",
+        "none",
         "--read-only",
         "--cap-drop",
         "ALL",

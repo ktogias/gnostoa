@@ -132,13 +132,39 @@ def _invokes_shared_verification_suite(command: str, suite: str) -> bool:
 def _job_has_blocking_verification_suite(job: object, suite: str) -> bool:
     if not isinstance(job, dict):
         return False
+    expected_conditions = {
+        "regression": "always()",
+        "extended": (
+            "always() && needs.policy.result == 'success' && "
+            "needs.extended-route.result == 'success' && "
+            "needs.extended-route.outputs.run_extended == 'true'"
+        ),
+    }
+    expected_condition = expected_conditions.get(suite)
+    if expected_condition is None:
+        if "if" in job:
+            return False
+    else:
+        condition = job.get("if")
+        if not isinstance(condition, str):
+            return False
+        normalized = " ".join(condition.split())
+        if normalized != expected_condition:
+            return False
+    if job.get("continue-on-error") not in (None, False) or "defaults" in job:
+        return False
     steps = job.get("steps")
     if not isinstance(steps, list):
         return False
     for step in steps:
         if not isinstance(step, dict) or "run" not in step:
             continue
-        if "if" in step or step.get("continue-on-error") not in (None, False):
+        if (
+            "if" in step
+            or step.get("continue-on-error") not in (None, False)
+            or "shell" in step
+            or "working-directory" in step
+        ):
             continue
         command = step.get("run")
         if isinstance(command, str) and _invokes_shared_verification_suite(
@@ -319,6 +345,7 @@ class PublicationBaselineTests(unittest.TestCase):
         for modifier in (
             {"if": "${{ false }}"},
             {"continue-on-error": True},
+            {"shell": "bash {0} || true"},
         ):
             with self.subTest(modifier=modifier):
                 self.assertFalse(
@@ -334,6 +361,29 @@ class PublicationBaselineTests(unittest.TestCase):
                         "security-fast",
                     )
                 )
+        for modifier in (
+            {"if": "${{ false }}"},
+            {"continue-on-error": True},
+            {"defaults": {"run": {"shell": "bash {0} || true"}}},
+        ):
+            with self.subTest(job_modifier=modifier):
+                self.assertFalse(
+                    _job_has_blocking_verification_suite(
+                        {
+                            **modifier,
+                            "steps": [{"run": "./ci/verify security-fast"}],
+                        },
+                        "security-fast",
+                    )
+                )
+        for suite, condition in (
+            ("regression", "${{ false }}"),
+            ("extended", "always()"),
+        ):
+            with self.subTest(suite=suite, condition=condition):
+                mutated = dict(workflow_jobs[suite])
+                mutated["if"] = condition
+                self.assertFalse(_job_has_blocking_verification_suite(mutated, suite))
         self.assertTrue(
             _invokes_shared_verification_suite(
                 "./ci/verify security-fast",
@@ -454,6 +504,25 @@ class PublicationBaselineTests(unittest.TestCase):
         )
         self.assertIn("./ci/verify fast", workflow)
         self.assertIn("docker build", workflow)
+
+        advisory_path = ROOT / ".github" / "workflows" / "branch-advisory.yml"
+        self.assertTrue(advisory_path.is_file())
+        advisory_text = advisory_path.read_text(encoding="utf-8")
+        advisory = load_yaml(advisory_path)
+        self.assertEqual(
+            ["main"],
+            advisory[True]["push"]["branches-ignore"],
+        )
+        self.assertNotIn("pull_request:", advisory_text)
+        advisory_jobs = advisory["jobs"]
+        self.assertEqual(
+            {"branch-advisory-policy", "branch-advisory-fast"},
+            set(advisory_jobs),
+        )
+        for suite in ("policy", "fast"):
+            job = advisory_jobs[f"branch-advisory-{suite}"]
+            self.assertEqual(f"branch-advisory-{suite}", job["name"])
+            self.assertTrue(_job_has_blocking_verification_suite(job, suite))
 
         codeowners = codeowners_path.read_text(encoding="utf-8")
         for owned_path in (

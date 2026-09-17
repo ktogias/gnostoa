@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import selectors
@@ -17,7 +18,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 from tools.repository_scope import RepositoryScopeError, candidate_paths
 
@@ -29,6 +30,7 @@ _MAX_SNAPSHOT_FILE_BYTES = 16_777_216
 _MAX_SNAPSHOT_TOTAL_BYTES = 67_108_864
 _SNAPSHOT_TIMEOUT_SECONDS = 60
 _SCAN_TIMEOUT_SECONDS = 300
+_PROCESS_REAP_TIMEOUT_SECONDS = 5
 _BASELINE_EXCLUDE_PATTERN = r"^\.secrets\.baseline$"
 _PROTECTED_BASELINE_FILE_SHA256 = {
     "tasks/issue-11-r2a-current-advisory-consumer.json": (
@@ -71,6 +73,21 @@ def _baseline_schema_error(detail: str) -> SecurityScanError:
     return SecurityScanError(f"detect-secrets baseline schema is invalid: {detail}")
 
 
+def _object_without_duplicate_fields(
+    pairs: list[tuple[str, Any]],
+) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise SecurityScanError("JSON document contains a duplicate field")
+        result[key] = value
+    return result
+
+
+def _reject_non_finite_constant(value: str) -> NoReturn:
+    raise SecurityScanError("JSON document contains a non-finite number")
+
+
 def _validate_baseline_schema(document: dict[str, Any]) -> None:
     if set(document) != _BASELINE_TOP_LEVEL_KEYS:
         raise _baseline_schema_error("unexpected or missing top-level fields")
@@ -100,7 +117,9 @@ def _validate_baseline_schema(document: dict[str, Any]) -> None:
             raise _baseline_schema_error("plugin entry is malformed")
         limit = plugin.get("limit")
         if limit is not None and (
-            not isinstance(limit, (int, float)) or isinstance(limit, bool)
+            not isinstance(limit, (int, float))
+            or isinstance(limit, bool)
+            or not math.isfinite(limit)
         ):
             raise _baseline_schema_error("plugin limit is malformed")
         keyword_exclude = plugin.get("keyword_exclude")
@@ -143,6 +162,12 @@ def _validate_baseline_schema(document: dict[str, Any]) -> None:
                 or candidate.get("filename") != path
             ):
                 raise _baseline_schema_error("candidate entry is malformed")
+            if "is_secret" in candidate and not isinstance(
+                candidate["is_secret"], bool
+            ):
+                raise _baseline_schema_error("candidate is_secret is malformed")
+            if "is_verified" in candidate and candidate["is_verified"] is not False:
+                raise _baseline_schema_error("candidate is_verified is malformed")
 
 
 def _results(document: dict[str, Any], label: str) -> dict[str, Any]:
@@ -272,7 +297,11 @@ def _read_document(path: Path, label: str) -> dict[str, Any]:
             raw = stream.read(_MAX_REPORT_BYTES + 1)
         if len(raw) > _MAX_REPORT_BYTES:
             raise SecurityScanError(f"{label} exceeds the bounded size")
-        document = json.loads(raw)
+        document = json.loads(
+            raw,
+            object_pairs_hook=_object_without_duplicate_fields,
+            parse_constant=_reject_non_finite_constant,
+        )
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise SecurityScanError(f"cannot read {label}: {exc}") from exc
     if not isinstance(document, dict):
@@ -287,9 +316,11 @@ def _terminate_and_reap(process: subprocess.Popen[bytes]) -> None:
         except OSError:
             pass
     try:
-        process.wait()
-    except OSError:
-        pass
+        process.wait(timeout=_PROCESS_REAP_TIMEOUT_SECONDS)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise SecurityScanError(
+            "tracked-tree secret scan child could not be reaped within the bound"
+        ) from exc
 
 
 def _run_bounded_scan(

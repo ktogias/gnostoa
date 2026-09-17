@@ -157,6 +157,43 @@ class SecretBaselineTests(unittest.TestCase):
                 baseline,
             )
 
+        candidate = _candidate(PUBLIC_HASH, line=12, false_positive=True)
+        candidate["is_verified"] = "candidate-controlled content"
+        baseline = _report({PROTECTED_BASELINE_PATH: [candidate]})
+        with self.assertRaisesRegex(SecurityScanError, "baseline schema"):
+            evaluate_secret_report(
+                _report({PROTECTED_BASELINE_PATH: [_candidate(PUBLIC_HASH, line=12)]}),
+                baseline,
+            )
+
+    def test_json_reader_rejects_duplicate_fields_at_every_depth(self) -> None:
+        documents = {
+            "top-level": '{"version":"1","version":"2"}',
+            "result-path": '{"results":{"tracked.py":[],"tracked.py":[]}}',
+            "candidate": (
+                '{"results":{"tracked.py":[{"hashed_secret":"a","hashed_secret":"b"}]}}'
+            ),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "document.json"
+            for label, content in documents.items():
+                with self.subTest(label=label):
+                    path.write_text(content, encoding="utf-8")
+                    with self.assertRaisesRegex(SecurityScanError, "duplicate"):
+                        security_scan._read_document(path, "test document")
+
+    def test_scanner_child_reaping_is_bounded(self) -> None:
+        process = mock.Mock(spec=subprocess.Popen)
+        process.poll.return_value = None
+        process.wait.return_value = 0
+
+        security_scan._terminate_and_reap(process)
+
+        process.kill.assert_called_once_with()
+        process.wait.assert_called_once_with(
+            timeout=security_scan._PROCESS_REAP_TIMEOUT_SECONDS
+        )
+
     def test_tracked_scan_excludes_only_its_manifest_and_writes_sanitized_evidence(
         self,
     ) -> None:

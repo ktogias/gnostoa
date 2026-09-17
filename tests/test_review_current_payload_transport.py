@@ -93,6 +93,7 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
         self.assertIsInstance(arguments, list)
         assert isinstance(arguments, list)
         self.assertIn("-i", arguments)
+        self.assertIn("--log-driver=none", arguments)
         self.assertNotIn("--mount", arguments)
         self.assertNotIn(marker, " ".join(arguments))
         bridge = arguments[arguments.index("-c") + 1]
@@ -230,7 +231,7 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
                         review_current,
                         "_docker_executable",
                         return_value="docker",
-                    ),
+                    ) as docker_executable,
                     mock.patch.object(
                         review_current.subprocess,
                         "Popen",
@@ -273,6 +274,7 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
                 ["docker", "rm", "-f", name],
                 cleanup.call_args.args[0],
             )
+            docker_executable.assert_called_once_with()
             process = observed["process"]
             self.assertIsInstance(process, subprocess.Popen)
             assert isinstance(process, subprocess.Popen)
@@ -419,6 +421,70 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
                     process.wait()
 
         cleanup.assert_called_once()
+
+    def test_non_ascii_cid_falls_back_to_the_predeclared_name(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config_dir = Path(directory)
+            cidfile = config_dir / "candidate.cid"
+            cidfile.write_bytes(b"\xff\xfe")
+            identity = review_current._ContainerRunIdentity(
+                name="gnostoa-protected-test",
+                cidfile=cidfile,
+            )
+            cleanup = mock.Mock(
+                return_value=subprocess.CompletedProcess(
+                    ["docker", "rm", "-f", identity.name],
+                    0,
+                )
+            )
+            with (
+                mock.patch.object(
+                    review_current,
+                    "_docker_executable",
+                    return_value="docker",
+                ),
+                mock.patch.object(review_current.subprocess, "run", cleanup),
+            ):
+                review_current._cleanup_container(identity, config_dir)
+
+        self.assertEqual(
+            ["docker", "rm", "-f", identity.name],
+            cleanup.call_args.args[0],
+        )
+
+    def test_abort_reap_is_bounded_and_cleanup_runs_after_reap_timeout(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config_dir = Path(directory)
+            identity = review_current._ContainerRunIdentity(
+                name="gnostoa-protected-test",
+                cidfile=config_dir / "candidate.cid",
+            )
+            process = mock.Mock(spec=subprocess.Popen)
+            process.poll.return_value = None
+            process.wait.side_effect = subprocess.TimeoutExpired(
+                ["docker", "run"],
+                1,
+            )
+            with mock.patch.object(
+                review_current,
+                "_cleanup_container",
+            ) as cleanup:
+                with self.assertRaisesRegex(
+                    review_current.ProtectedJudgeUnavailable,
+                    "reap.*recovery identity",
+                ):
+                    review_current._abort_docker_run(
+                        process,
+                        identity,
+                        config_dir,
+                    )
+
+        process.wait.assert_called_once_with(
+            timeout=review_current._PROCESS_REAP_TIMEOUT_SECONDS
+        )
+        cleanup.assert_called_once_with(identity, config_dir)
 
 
 if __name__ == "__main__":

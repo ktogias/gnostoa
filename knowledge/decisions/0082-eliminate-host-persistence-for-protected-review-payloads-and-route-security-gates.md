@@ -128,7 +128,11 @@ separate read-back.
 1. **No host payload persistence.** Canonicalize the protected input and policy
    into one JSON envelope in memory. Reject it before process creation when it
    exceeds a fixed byte bound. Do not write either document to a host file,
-   mount, argv, environment, stdout, stderr or exception message.
+   mount, argv, environment, stdout, stderr or exception message. Disable
+   Docker log persistence for the payload-bearing inner and outer containers,
+   for the isolated daemon container, and as the isolated daemon's default, so
+   attached result stdout is returned to the caller without being retained by
+   either daemon's container-log storage.
 2. **Bounded simultaneous pipe handling.** Extend the existing Docker runner
    with optional input bytes. When input exists, attach Docker stdin, stream it
    in bounded non-blocking chunks while draining stdout/stderr, close the pipe
@@ -137,8 +141,11 @@ separate read-back.
    predeclared non-payload name as well as a CID file; abort cleanup retries by
    CID when available and otherwise by that name. An unconfirmed cleanup does
    not proactively unlink the CID file before propagating and reports the
-   predeclared recovery name. Calls without input receive a closed stdin rather
-   than inheriting the caller's stream.
+   predeclared recovery name. Retain the executable used to launch Docker,
+   treat unreadable or malformed CID content as a name fallback, bound child
+   reaping, and attempt container cleanup even when client reaping cannot be
+   confirmed. Calls without input receive a closed stdin rather than inheriting
+   the caller's stream.
 3. **Fixed in-container bridge.** Run the authority-bound image with the existing
    security arguments and a fixed Python bridge. The bridge validates the closed
    envelope shape, uses restrictive creation semantics below `/tmp`, writes the
@@ -152,13 +159,14 @@ separate read-back.
    audited baseline. Bind the only two baseline-authorized JSON paths to their
    reviewed SHA-256 file identities, so changing a protected document and its
    baseline together still fails closed. The excluded baseline accepts only
-   its closed scanner schema; unknown top-level, plugin, filter or candidate
-   fields fail closed. A stale baseline entry, malformed entry,
-   non-false-positive entry or new candidate fails closed. Inline pragmas remain
-   explicit, review-visible declarations rather than self-authenticating proof
-   that a value is public: additions or changes require semantic review. This
-   candidate-owned gate does not claim to sandbox a malicious author who can
-   also rewrite the gate itself.
+   its closed scanner schema; duplicate names at any JSON depth, unknown
+   top-level/plugin/filter/candidate fields, non-finite plugin limits, and
+   non-boolean candidate disposition values fail closed. A stale baseline
+   entry, malformed entry, non-false-positive entry or new candidate fails
+   closed. Inline pragmas remain explicit, review-visible declarations rather
+   than self-authenticating proof that a value is public: additions or changes
+   require semantic review. This candidate-owned gate does not claim to sandbox
+   a malicious author who can also rewrite the gate itself.
 5. **One reusable tracked-tree scan.** Factor the scan/baseline comparison into
    one repository-owned command that emits only candidate metadata, never the
    candidate value or candidate-derived hash. Validate every scanner argument
@@ -201,10 +209,14 @@ separate read-back.
    run or an exact `NOT_APPLICABLE`/skipped pair. Neither the router nor project
    records call that skip a pass.
    A candidate change to `tools/extended_route.py` independently forces `RUN`
-   before the candidate-owned router is consulted. Topic branches are verified
-   by the Pull Request event only; the workflow's `push` event is restricted to
-   protected `main`, so a duplicate topic-push run cannot publish skipped jobs
-   under the same required context names.
+   before the candidate-owned router is consulted. The required-context
+   workflow's `push` event is restricted to protected `main`. A separate
+   topic-push advisory workflow preserves the inherited always-on branch-revision
+   `policy` and `fast` suites under distinct `branch-advisory-*` names, so those
+   runs cannot publish skipped jobs under Pull Request required-context names.
+   Structural contracts reject suite steps or jobs that are disabled,
+   non-blocking, or wrapped by alternate shell/default behavior, while allowing
+   only the exact declared `regression` and `extended` job predicates.
 8. **Provider CodeQL effect remains sequenced.** After this Decision and the
    implementation are integrated and provider read-back confirms clean
    exact-head/default-branch results, require the stable GitHub CodeQL result for
@@ -226,14 +238,19 @@ Pre-implementation RED evidence and the final candidate must demonstrate:
 - large bounded input and output are multiplexed without deadlock, and early
   stdin closure, timeout and output overflow terminate and clean up safely;
 - stdin setup and output-overflow aborts use the predeclared container identity;
-  failed cleanup is retried and leaves a reported recovery identity;
+  failed cleanup is retried and leaves a reported recovery identity; malformed
+  CID bytes fall back to the retained name/executable; and reaping is bounded
+  without preventing the container-cleanup attempt;
 - payload sentinels occur only in the stdin bytes supplied to the mocked/fake
   child, not argv, environment, output or exceptions;
+- payload-bearing inner/outer containers and the isolated daemon use
+  non-persisting Docker logging while attached result stdout remains available;
 - the bridge is fixed, uses the existing tmpfs, and preserves the exact
   authority-bound judge invocation and result;
 - the reviewed tree has zero unresolved secret candidates, while an injected
-  candidate, stale baseline, unknown baseline field, unauthorized baseline
-  entry and candidate scanner-module shadow fail;
+  candidate, stale baseline, duplicate JSON field, unknown or unchecked
+  baseline value, unauthorized baseline entry and candidate scanner-module
+  shadow fail;
 - snapshot acquisition rejects per-file/cumulative overflow and timeout; an
   in-place or ancestor-directory replacement cannot change the private bytes
   presented to the scanner; a FIFO replacement fails without blocking; and the
@@ -241,8 +258,10 @@ Pre-implementation RED evidence and the final candidate must demonstrate:
 - protected JSON file identities are unchanged;
 - every relevant provider event/path class maps deterministically to `RUN` or
   `NOT_APPLICABLE`, high-risk PRs actually execute `extended`, no topic-push
-  duplicate can satisfy a required name with a skipped job, and the structural
-  oracle rejects disabled, non-blocking or wrongly native suite steps;
+  duplicate can satisfy a required name with a skipped job, topic pushes retain
+  separately named advisory `policy`/`fast` evidence, and the structural oracle
+  rejects disabled, non-blocking, shell-wrapped or wrongly native suite jobs
+  and steps;
 - policy, fast, regression, smoke, runtime self-check and applicable extended
   verification pass against the exact candidate.
 

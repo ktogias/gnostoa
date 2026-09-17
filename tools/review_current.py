@@ -26,6 +26,7 @@ _DIGEST_IMAGE = re.compile(
 _DOCKER_TIMEOUT_SECONDS = 90
 _DOCKER_CLEANUP_TIMEOUT_SECONDS = 10
 _DOCKER_CLEANUP_ATTEMPTS = 3
+_PROCESS_REAP_TIMEOUT_SECONDS = 5
 _MAX_RUNTIME_INPUT_BYTES = 4_194_304
 _MAX_RUNTIME_OUTPUT_BYTES = 2_097_152
 _READ_CHUNK_BYTES = 65_536
@@ -100,6 +101,7 @@ class ProtectedJudgeUnavailable(RuntimeError):
 class _ContainerRunIdentity:
     name: str
     cidfile: Path
+    executable: str | None = None
 
 
 def _docker_executable() -> str:
@@ -128,14 +130,18 @@ def _kill_and_reap(process: subprocess.Popen[bytes]) -> None:
         except OSError:
             pass
     try:
-        process.wait()
-    except OSError:
-        pass
+        process.wait(timeout=_PROCESS_REAP_TIMEOUT_SECONDS)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ProtectedJudgeUnavailable(
+            "protected Docker client reap could not be confirmed within the bound"
+        ) from exc
 
 
 def _run_identity(
     arguments: list[str],
     config_dir: Path,
+    *,
+    executable: str | None = None,
 ) -> _ContainerRunIdentity | None:
     if not arguments or arguments[0] != "run":
         return None
@@ -143,6 +149,7 @@ def _run_identity(
     return _ContainerRunIdentity(
         name=f"gnostoa-protected-{nonce}",
         cidfile=config_dir / f"protected-run-{nonce}.cid",
+        executable=executable,
     )
 
 
@@ -157,16 +164,24 @@ def _cleanup_container(
         container_id = identity.cidfile.read_text(encoding="ascii").strip()
     except FileNotFoundError:
         pass
-    except OSError:
+    except (OSError, UnicodeError):
         pass
     else:
         if _CONTAINER_ID.fullmatch(container_id) is not None:
             cleanup_target = container_id
 
+    try:
+        executable = identity.executable or _docker_executable()
+    except ProtectedJudgeUnavailable as exc:
+        raise ProtectedJudgeUnavailable(
+            "protected Docker container cleanup could not resolve the retained "
+            f"executable; recovery identity: {identity.name}"
+        ) from exc
+
     for _attempt in range(_DOCKER_CLEANUP_ATTEMPTS):
         try:
             completed = subprocess.run(
-                [_docker_executable(), "rm", "-f", cleanup_target],
+                [executable, "rm", "-f", cleanup_target],
                 check=False,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
@@ -189,8 +204,17 @@ def _abort_docker_run(
     identity: _ContainerRunIdentity | None,
     config_dir: Path,
 ) -> None:
-    _kill_and_reap(process)
+    reap_issue: ProtectedJudgeUnavailable | None = None
+    try:
+        _kill_and_reap(process)
+    except ProtectedJudgeUnavailable as exc:
+        reap_issue = exc
     _cleanup_container(identity, config_dir)
+    if reap_issue is not None:
+        recovery = (
+            f"; recovery identity: {identity.name}" if identity is not None else ""
+        )
+        raise ProtectedJudgeUnavailable(f"{reap_issue}{recovery}") from reap_issue
 
 
 def _run_docker(
@@ -204,7 +228,12 @@ def _run_docker(
         raise ProtectedJudgeUnavailable(
             "protected Docker input exceeds the bounded size"
         )
-    identity = _run_identity(arguments, config_dir)
+    docker_executable = _docker_executable()
+    identity = _run_identity(
+        arguments,
+        config_dir,
+        executable=docker_executable,
+    )
     docker_arguments = arguments
     if identity is not None:
         docker_arguments = [
@@ -215,7 +244,7 @@ def _run_docker(
             str(identity.cidfile),
             *arguments[1:],
         ]
-    command = [_docker_executable(), *docker_arguments]
+    command = [docker_executable, *docker_arguments]
     try:
         process = subprocess.Popen(
             command,
@@ -556,6 +585,7 @@ def run_prior_integrated_judge(
             [
                 "run",
                 "--rm",
+                "--log-driver=none",
                 "--pull=never",
                 "-i",
                 *_security_arguments(),
