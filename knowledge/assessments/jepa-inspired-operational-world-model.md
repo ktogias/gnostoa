@@ -5,7 +5,7 @@ description: Source-backed assessment of how Gnostoa can evolve from evidence-bo
 status: draft
 generated:
   by: openai/gpt-5
-  at: "2026-09-17T11:19:30Z"
+  at: "2026-09-17T13:00:57Z"
 sources:
   - id: operational-world-model-work-item
     resource: https://github.com/ktogias/gnostoa/issues/273
@@ -55,6 +55,33 @@ sources:
   - id: magentic-one
     resource: https://arxiv.org/abs/2411.04468v1
     title: Magentic-One paper
+  - id: invariant-representations
+    resource: https://arxiv.org/abs/2006.10742v2
+    title: Learning Invariant Representations for Reinforcement Learning without Reconstruction
+  - id: swe-agent
+    resource: https://arxiv.org/abs/2405.15793v3
+    title: SWE-agent
+  - id: agentdojo
+    resource: https://arxiv.org/abs/2406.13352v3
+    title: AgentDojo
+  - id: kubernetes-controller-pattern
+    resource: https://github.com/kubernetes/website/blob/829193727bd7ba724a19bee71887e79dde36739c/content/en/docs/concepts/architecture/controller.md
+    title: Kubernetes controller pattern at the consulted repository revision
+  - id: temporal-activity-semantics
+    resource: https://github.com/temporalio/documentation/blob/8aec317ba64312bd0c4bcf010e96c7734df5b69e/docs/encyclopedia/activities/activity-definition.mdx
+    title: Temporal Activity semantics at the consulted repository revision
+  - id: github-merge-api
+    resource: https://docs.github.com/en/rest/pulls/pulls?apiVersion=2022-11-28#merge-a-pull-request
+    title: GitHub merge endpoint, REST API version 2022-11-28
+  - id: github-actions-concurrency
+    resource: https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency
+    title: GitHub Actions concurrency documentation observed on 17 September 2026
+  - id: hypothesis-stateful-testing
+    resource: https://github.com/HypothesisWorks/hypothesis/blob/cd434f23be1a3598085cf096e28e6738c63b29b3/hypothesis/docs/stateful.rst
+    title: Hypothesis stateful testing at the consulted repository revision
+  - id: agentboard
+    resource: https://github.com/hkust-nlp/AgentBoard/tree/bb7255e2daf1989069a186dad9e53f70680961db
+    title: AgentBoard at the consulted repository revision
 x-project-knowledge:
   id: kit.assessment.jepa-inspired-operational-world-model
   owners:
@@ -195,7 +222,7 @@ C4-v0 detected 3 of 8 false-ready cases, but none of the four positive controls 
 
 Two findings deserve particular attention:
 
-- In WebDreamer's Online-Mind2Web ablation, horizon 1 scored 37 percent and horizons 2/3 scored 32 percent. Longer rollouts could invent available actions. This is a result for that benchmark, not a universal optimum. For Gnostoa it supports the initial pattern **one prediction → one real action → read-back**.
+- In WebDreamer's Online-Mind2Web planning-horizon study ([section 5.1, “Planning Horizon,” Figure 5](https://arxiv.org/html/2411.06559v2#S5.SS1.SSS2)), horizon 1 scored 37 percent and horizons 2/3 scored 32 percent. The authors attribute the decline to hallucinated action proposals inside longer simulations. This is a result for that benchmark, not a universal optimum. For Gnostoa it supports the initial pattern **one prediction → one real action → read-back**.
 - SWE-World gives the simulator a ground-truth patch and initial analysis hidden from the agent. That is a privileged surrogate setup. Neither this nor limited predicted-reward accuracy justifies removing real test execution for an unknown pull request.
 
 ### Engineering patterns with nearer-term value than new ML
@@ -211,6 +238,8 @@ Two findings deserve particular attention:
 **Interfaces and tests.** [SWE-agent](https://arxiv.org/abs/2405.15793v3) demonstrates the importance of tool interfaces. [Hypothesis stateful testing](https://github.com/HypothesisWorks/hypothesis/blob/cd434f23be1a3598085cf096e28e6738c63b29b3/hypothesis/docs/stateful.rst) exercises action sequences and invariants. [AgentBoard](https://github.com/hkust-nlp/AgentBoard/tree/bb7255e2daf1989069a186dad9e53f70680961db) measures intermediate progress, while [AgentDojo](https://arxiv.org/abs/2406.13352v3) evaluates attacks together with completion of legitimate tasks. This report selects none of these frameworks as a dependency.
 
 The reuse assessment concerns ideas and patterns. Importing code, datasets, weights, or services requires a separate, version-bound suitability, license, and cost review. This report grants no such approval.
+
+E0–E4 as proposed use **no CWM code, weights, datasets, generated traces, model outputs, or derivative artifacts**. CWM supplies a cited research comparison only. Any later use of those materials requires a separately admitted, version-bound license, suitability, privacy, security, and cost decision; this report supplies none.
 
 ## 6. Proposed model: know, expect, permit, observe
 
@@ -362,13 +391,49 @@ E1 success may support only a separately admitted, read-only E2 shadow-observati
 
 A distinct **L2 effect-boundary companion gate**, owned by [#15](https://github.com/ktogias/gnostoa/issues/15) and [#264](https://github.com/ktogias/gnostoa/issues/264), applies before any later experiment may call, recommend, schedule, or otherwise change a live effect-capable action. Under its own admission, that gate exercises the actual adapter code path deny-by-default with a provider mock or separately admitted non-production identity and verifies rejection of stale targets, duplicates, revoked or missing authority, ambiguous retries, and bypass attempts. It attempts no production effect. This gate is not part of E1, is not pulled forward into the L0/L1 sequence, and does not automatically admit L2 or any model-mediated action.
 
-Before E1's frozen fixture/oracle exposure, its preregistration must freeze two executable reducers. The **current/no-contract baseline** uses the existing typed projection and checks but has none of the proposed explicit expected-delta, invalidation, reconciliation, or mandatory-read-back transition contract. The **candidate reducer** adds that contract. Both receive the same ordered observations and actions, the same virtual time and exogenous events, and the same terminal oracle. Every sequence is scored as a pair; missing or divergent inputs invalidate the pair rather than being excluded after the result is known. The cut contains at least 30 valid paired sequences and represents every declared critical-control class; otherwise E1 has no promotable result. False blocking is recorded as a percentage-point rate over that same denominator and also counts as an incorrect terminal disposition. The paired error-reduction and false-blocking non-inferiority procedure is frozen with the fixture cut.
+Before E1's frozen fixture/oracle exposure, its preregistration must freeze two executable reducers. The **current/no-contract baseline** uses the existing typed projection and checks but has none of the proposed explicit expected-delta, invalidation, reconciliation, or mandatory-read-back transition contract. The **candidate reducer** adds that contract. Both receive the same ordered observations and actions, virtual time, exogenous events, and terminal oracle.
+
+#### Frozen E1 unit, oracle, and denominators
+
+One **paired sequence** is the unit of analysis. Its versioned schema contains a stable `sequence_id`, source-case identity, primary class, optional secondary tags, initial typed state and observation cut, ordered observations/actions/exogenous events, virtual-time schedule, maximum scheduled-input count, virtual deadline, authoritative terminal oracle, and secondary invariants.
+
+A sequence starts when the harness loads the declared initial state and supplies the first scheduled input. It ends at the first reducer output in `PROCEED`, `WAIT_UNKNOWN`, `REJECT_INVALIDATE`, or `RECONCILE_READ_BACK`, or at the frozen input/time bound. Failure, exception, abstention, or failure to emit by that bound becomes `NO_TERMINAL`; it remains a scored result and cannot be discarded. The oracle assigns exactly one of the first four labels. Each reducer therefore contributes exactly one primary 0/1 terminal-disposition error per sequence. Secondary invariant violations are reported separately and cannot multiply the primary error count, although any such violation fails the critical-control gate where applicable.
+
+A pair is mechanically valid only when the fixture parses and the harness supplies both reducers with the same canonical input digest, harness and reducer versions, schedule, exogenous-event stream, and oracle version. Reducer failure is a valid negative result. Fixture or harness corruption invalidates the pair, remains visible in enrollment, and cannot be replaced after outcomes are seen.
+
+The frozen taxonomy is:
+
+| Primary class | Required behavior |
+|---|---|
+| C1 subject/head/target freshness | Reject or invalidate evidence and effects bound to a stale subject |
+| C2 new material evidence | Reconcile a changed review/evidence cut without pretending the source head changed |
+| C3 duplicate or replay | Deduplicate repeated operation, receipt, or wake-up identities |
+| C4 authority and bypass | Reject missing, expired, revoked, or bypassed authority |
+| C5 uncertain effect | Require read-back after timeout or missing receipt; do not unsafe-retry |
+| C6 observation integrity | Preserve UNKNOWN for stale, incomplete, paginated, or unavailable observations |
+| C7 generation and attempt identity | Separate rerun, attempt, and provider generation |
+| C8 false completion | Reject SUCCESS when preregistered required work was skipped |
+| C9 untrusted instruction | Prevent issue, review, or log content from changing policy or authority |
+| C10 publisher and resource ownership | Reject stale publication and conflicting worker/resource ownership |
+| P1 admissible progress | Return `PROCEED` for a fully observed, authorized, current, non-conflicting case |
+
+The exact cut size `N` is declared before exposure and must be at least 40 valid pairs: at least two whose primary class is each of C1–C10 and at least 20 whose primary class is P1. A multi-class case has one frozen primary class, selected by the listed C1→C10→P1 precedence, and counts toward only that class's minimum; all secondary tags remain available for stratified reporting.
+
+The preregistration freezes the versioned source pool, canonical fixture generator and seed, class matrix, and selection manifest. Within each primary class, eligible fixtures are ordered by `(source_case_id, sequence_id)`; mandatory class slots are taken first, then any declared extra slots are filled by lexical SHA-256 order of the canonical fixture payload. There is no result-based replacement. If corruption leaves fewer than `N` valid pairs or any minimum uncovered, E1 produces no promotable result; repair requires a new protocol version and a previously unexposed cut.
+
+Safety and liveness use separate denominators:
+
+- overall terminal correctness uses all valid paired sequences;
+- critical correctness uses C1–C10 and requires the oracle label plus every frozen critical invariant;
+- legitimate-progress correctness and false blocking use only P1. Any `WAIT_UNKNOWN`, rejection, reconciliation request, timeout, abstention, or `NO_TERMINAL` on P1 is a false block.
+
+Let `B` and `C` be baseline and candidate primary-error counts over the same all-pair denominator. Relative error reduction is `(B - C) / B`; if `B = 0`, the comparison is undefined and the branch stops. Net improvement is `B - C`. A **critical regression** occurs when the baseline is correct and the candidate is wrong on a C1–C10 sequence, or when the candidate violates one of that sequence's frozen critical invariants. Safety and liveness counts, rates, paired transitions, and percentage-point differences are all reported; the candidate cannot gain safety credit by returning UNKNOWN or refusing legitimate progress.
 
 ### E2 — Shadow observation and one-step prediction
 
 **Hypothesis:** prediction adds actionable information beyond deterministic state.
 
-The predictor sees only pre-action data, commits its prediction before the outcome exists, and does not send suggestions to an actor who could alter the outcome. It receives no write capability. Evaluate concrete consequences: probable failure category, next observation needed, rework likelihood, or timeout likelihood. Do not score a vague readiness label.
+The predictor sees only pre-action data, commits its prediction before the outcome exists, and receives no write capability. Until the outcome cut is sealed, its output is written only to an isolated evaluation record available to a non-decision observer. No operator, coordinator, workflow selector, reviewer, effect adapter, or other actor who could alter the episode may receive it. Evaluation access opens only after the outcome is fixed. Any pre-outcome human-facing display, recommendation, ranking, or workflow consumption requires a new admission and is outside E2. Evaluate concrete consequences: probable failure category, next observation needed, rework likelihood, or timeout likelihood. Do not score a vague readiness label.
 
 Before collection begins, the E2 preregistration must freeze the episode unit, enrollment window, exact pre-outcome field boundary and observation cut, permitted exclusions knowable without viewing the outcome, treatment of delayed or missing outcomes, pairing rule, denominator, and held-out test cut. The default episode shape is one declared decision point, one selected action or no-op, and the first qualifying read-back inside the fixed outcome window. No episode may be excluded because its outcome is difficult or inconvenient. Missing outcomes remain visible in the enrollment flow and are handled by the frozen rule; if the preregistered completeness bound is not met, the gate is not evaluated.
 
@@ -411,7 +476,7 @@ The following are provisional preregistration defaults for a future admitted exp
 | Stage | Reproducible baseline | Primary endpoint | Provisional quantitative gate | Pass, fail, or stop decision |
 |---|---|---|---|---|
 | E0 | Full source-labelled fixture oracle compared with the proposed compact representation | Correct action-relevant discrimination or invariance for each paired fixture | 100% of safety, authority, subject, and effect-applicability pairs correct, and at least 95% correct overall on a frozen set of at least 30 pairs | Pass permits E1 fixture work; any critical collision fails and requires representation repair, while repeated noncritical aliasing stops compression of that field |
-| E1 | Paired execution of every frozen sequence through the characterized current/no-contract reducer and the candidate transition-contract reducer | Paired change in incorrect terminal dispositions and stale-state or ambiguous-retry errors, with false blocking as a non-inferiority endpoint | On at least 30 valid paired sequences with every declared critical-control class represented: at least 95% correct candidate terminal dispositions, counting false blocks as incorrect; 100% correct candidate disposition of critical controls; at least 20% relative reduction in incorrect dispositions and a paired net improvement of at least 2 sequences versus baseline; no critical regression; candidate false-blocking rate no more than 5 percentage points above baseline under the frozen procedure; zero provider writes | Only all paired and absolute gates together may support a separate read-only E2 shadow admission proposal, with no effect-safety claim; too few valid pairs, missing critical-class coverage, a perfect baseline, gain below the minimum, invalid pair, or critical failure stops or returns E1 rather than promoting complexity, while live-action influence also requires the L2/#264 companion gate |
+| E1 | Paired execution of the frozen manifest through the characterized current/no-contract reducer and candidate transition-contract reducer | One terminal-disposition error per reducer and pair, plus separately reported critical-invariant and P1 liveness outcomes | On the frozen `N ≥ 40` cut with ≥2 primary cases per C1–C10 and ≥20 P1 controls: at least 95% correct candidate terminal labels overall; 100% correct labels and invariants on C1–C10; at least 20% relative error reduction and net improvement of at least 2 versus baseline; no critical regression; at least 95% P1 `PROCEED` and no fewer P1 successes than baseline; zero provider writes | Only all paired safety, improvement, and liveness gates together may support a separate read-only E2 shadow admission proposal; insufficient valid pairs/coverage, harness corruption, a perfect baseline, any critical failure, P1 degradation, or gain below the minimum yields no promotion, while live-action influence also requires the L2/#264 companion gate |
 | E2 | Best preregistered rule, frequency, or nearest-case predictor using the same frozen pre-action fields, episode predicate, denominator, and evaluation cut | Brier score for the preregistered one-step consequence classes | At least 15% lower paired Brier score than the best simple baseline, with a 90% bootstrap interval for the improvement above zero, on at least 50 scored episodes admitted by the frozen eligibility and missing-outcome rules; zero data-contract, authority, or information-leak violations | Pass permits an E3 admission proposal; an unmet sample/completeness bound is no result, while a failed effect or data boundary stops the branch |
 | E3 | Best deterministic admissible-action ranking under the same frozen selection rule, action set, initial-state reset, versioned oracle, horizon, and cost schedule | Paired predeclared action/read-back cost to reach a correct terminal disposition | At least 15% lower median cost over at least 30 mechanically reset branchable scenarios or separately preregistered prospective pairs, no reduction in completion rate, and zero authorization violations | Missing reset/oracle/cost equivalence is no result; a pass permits an E4 admission proposal only if a residual representation bottleneck is documented |
 | E4 | Best admitted E2 predictor under the same frozen inputs, outcomes, compute budget, loss, aggregation, and temporal/OOD construction | The exact preregistered one-step loss on the frozen temporal and OOD cuts | Planning default: at least 10% relative loss reduction on both cuts, no critical-invariant regression, and no more than 5 absolute percentage points of degradation on the separately named performance scale, within the preregistered cost cap | Non-executable until every metric term is frozen; a pass supports only a separate product or architecture decision, while failure retires the learned branch |
@@ -430,15 +495,17 @@ A small 10–20 episode shadow pilot may test instrumentation and data integrity
 | Human cost | Active review time and restart interventions | Fewer prompts but harder review |
 | Maintainability | New mechanisms, dependencies, manual mappings | Small temporary gain with permanent complexity |
 
-A reasonable initial engineering budget is 30–50 curated positive and negative controls, inexpensive generated sequences, and 10–20 prospective shadow episodes as they naturally arise. This is an engineering budget, **not statistically sufficient certification**.
+A reasonable initial E1 engineering budget is the frozen minimum of 40 paired controls defined above, plus any preregistered extras up to roughly 50; E2 may begin with 10–20 prospective shadow episodes as they naturally arise. This is an engineering budget, **not statistically sufficient certification**.
 
 Before execution, choose a primary endpoint and minimum useful improvement, such as owner liveness interventions or restart time. Do not redefine success after observing whichever metric improved. For small samples, report counts, paired differences, and uncertainty. Zero violations in a frozen suite are a requirement of that test, not a guarantee of zero real-world risk.
 
 ### Data integrity
 
-Prospective E2–E4 collection requires a separately admitted, versioned data contract before any raw item is persisted. The contract must whitelist allowed fields and sources; bind purpose, provenance, and subject authorization; define secret and personal-data exclusion or redaction; exclude prompts, private chain-of-thought and other private reasoning; set access roles, retention limits, deletion handling, and incident response; and identify the collector and scanner versions.
+Prospective E2–E4 collection requires a separately admitted, versioned data contract before any raw item crosses the collection boundary. The contract must whitelist allowed fields and sources; bind purpose, provenance, and subject authorization; define secret and personal-data exclusion or redaction; exclude prompts, private chain-of-thought and other private reasoning; set access roles, retention limits, deletion handling, and incident response; and identify the collector and scanner versions.
 
-Structured extraction and a pre-ingestion secret/PII/private-reasoning scan run before dataset or retained-artifact storage. An unparseable item, unresolved scanner hit, disallowed field, missing provenance, or deletion/retention conflict fails closed and stops ingestion and publication for that item. Quarantined material cannot enter training, evaluation, embeddings, or model context. Each accepted episode records the data-contract and scanner identities; later manual review cannot retroactively legitimize a failed admission.
+The collector performs bounded-memory streaming parse, structured extraction, and secret/PII/private-reasoning scans before any disk, temporary-file, cache, debug trace, log, telemetry, crash dump, core dump, retained-artifact, or provider-side persistence under Gnostoa's control. Raw responses are never emitted through error messages. Debug/core-dump paths are disabled or structurally sanitized for this collector.
+
+An unparseable item, scanner failure or hit, disallowed field, missing provenance, or deletion/retention conflict fails closed: raw bytes are discarded and only a contract-allowed non-sensitive episode identity, scanner version, and reason code may be retained. There is no raw-data quarantine by default. A future separately admitted incident process may create one only with encryption, named access roles and owner, immutable access audit, fixed expiry, deletion procedure, and incident rules; quarantined content remains unavailable to training, evaluation, embeddings, model context, and ordinary logs. Each accepted episode records the data-contract and scanner identities; later manual review cannot retroactively legitimize a failed admission.
 
 - Split by complete PR or task and by time; never put lines from the same review thread in both train and test.
 - Exclude later solutions, reviews, and ground-truth patches from pre-action context.
@@ -547,7 +614,12 @@ Subsequent exact-head PR review identified additional experiment-contract gaps a
 | A mandatory adapter subgate inside E1 conflicted with the L0/L1-first Ariadne order | L2/#264 effect enforcement would become an undeclared prerequisite for read-only shadow prediction | Moved real adapter-path enforcement to a separately admitted L2/#264 companion gate required before an experiment can change live action; E1 now gates only read-only E2 shadow admission |
 | Mutable prior-art and documentation links lacked reproducible observation bindings | Later page changes could silently alter the research basis | Version-pinned every paper, pinned engineering patterns to exact repository commits, bound the merge API version and CWM license version/date, and demoted remaining mutable pages to dated context that cannot admit reuse |
 | E1 named inputs but not executable baseline behavior or a paired delta | Absolute candidate scores could promote complexity without measured gain over current mechanics | Defined paired current/no-contract and candidate reducers, frozen identical inputs and oracle, preregistered improvement and false-blocking non-inferiority gates, and a stop rule for a perfect or unimproved baseline |
-| E1 had no minimum paired-fixture count or required coverage | Two hand-picked sequences could satisfy the mathematical gate | Required at least 30 valid pairs with every declared critical-control class represented; smaller or incomplete cuts produce no promotable result |
-| E1 mixed percent and percentage-point wording for false blocking | Equivalent results could receive different promotion decisions | Defined false blocking over the same paired denominator, counted it as an incorrect disposition, and froze one non-inferiority unit in percentage points |
+| E1 had no minimum paired-fixture count or required coverage | Two hand-picked sequences could satisfy the mathematical gate | Required a frozen `N ≥ 40` cut, two primary cases for each enumerated critical class, and 20 admissible-progress controls |
+| E1 denominator, episode boundary, class coverage, and selection remained open | Reviewers could count multi-error or multi-class cases differently or select a favorable cut | Added an executable sequence schema, one terminal label and 0/1 primary error per reducer, fixed terminal bounds, C1–C10/P1 taxonomy, single-primary coverage, and deterministic preregistered manifest selection |
+| E1 mixed safety and liveness denominators | Refusal or UNKNOWN could appear safe while blocking useful work | Split all-pair, critical-control, and P1 denominators; every non-`PROCEED` P1 outcome is a false block, and candidate P1 success must be at least 95% and no lower than baseline |
+| E2 shadow output could influence the outcome | An operator could act on the prediction and invalidate shadow evaluation | Restricted pre-outcome output to an isolated record and non-decision observer; actors, reviewers, selectors, and effect adapters cannot see it before the sealed outcome cut |
+| Engineering-source inventory and quantitative locators were incomplete | A future reader could miss material evidence or struggle to reproduce a numerical claim | Added every external engineering/research source to front matter and bound the WebDreamer horizon numbers to section 5.1 and Figure 5 of arXiv v2 |
+| The ingestion gate did not cover transient writes or raw quarantine | Protected content could leak through temp files, logs, telemetry, or failure paths before retained storage | Required bounded-memory scan before every write path, sanitized failures, discard-by-default, and separately admitted encrypted/expiring incident quarantine |
+| CWM citation did not explicitly exclude its artifacts | The noncommercial release might be mistaken for an implementation dependency | Stated that E0–E4 use no CWM code, weights, data, traces, outputs, or derivatives; citation-only comparison remains the sole use |
 
 Research contributions about the roadmap, papers, and engineering patterns were not used as semantic approvals. They remain bound to cited sources and stated limits.
