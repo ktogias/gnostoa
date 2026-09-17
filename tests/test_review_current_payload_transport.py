@@ -50,7 +50,19 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
             timeout: int = review_current._DOCKER_TIMEOUT_SECONDS,
             input_bytes: bytes | None = None,
         ) -> subprocess.CompletedProcess[bytes]:
-            del config_dir, timeout
+            del timeout
+            host_files = [
+                path for path in config_dir.parent.rglob("*") if path.is_file()
+            ]
+            for path in host_files:
+                self.assertNotIn(marker.encode("utf-8"), path.read_bytes())
+            self.assertFalse(
+                any(
+                    path.name
+                    in {"gnostoa-review-input.json", "gnostoa-review-policy.json"}
+                    for path in host_files
+                )
+            )
             observed_run.update(arguments=arguments, input_bytes=input_bytes)
             return subprocess.CompletedProcess(
                 arguments,
@@ -66,11 +78,6 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
                 side_effect=checked_output,
             ),
             mock.patch.object(review_current, "_run_docker", side_effect=run_docker),
-            mock.patch.object(
-                Path,
-                "write_text",
-                side_effect=AssertionError("protected payload reached a host file"),
-            ),
         ):
             code, payload = review_current.run_prior_integrated_judge(
                 image=image,
@@ -89,6 +96,8 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
         self.assertNotIn("--mount", arguments)
         self.assertNotIn(marker, " ".join(arguments))
         bridge = arguments[arguments.index("-c") + 1]
+        self.assertIn("while len(raw) <= limit", bridge)
+        self.assertIn("raw.extend(chunk)", bridge)
         self.assertIn("os.O_EXCL", bridge)
         self.assertIn("os.O_NOFOLLOW", bridge)
         self.assertIn("/tmp/gnostoa-review-input.json", bridge)
@@ -166,7 +175,13 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
         self.assertEqual(b"", result.stderr)
 
     def test_early_child_stdin_close_does_not_deadlock(self) -> None:
-        script = "import sys; sys.stdout.write('closed')"
+        script = (
+            "import os, sys, time;"
+            "os.close(0);"
+            "sys.stdout.write('closed');"
+            "sys.stdout.flush();"
+            "time.sleep(0.1)"
+        )
         with tempfile.TemporaryDirectory() as directory:
             with mock.patch.object(
                 review_current,

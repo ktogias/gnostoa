@@ -170,11 +170,16 @@ class SecretBaselineTests(unittest.TestCase):
 
             command = run.call_args.args[0]
             self.assertEqual(300, run.call_args.kwargs["timeout"])
+            self.assertEqual(1, command.count("--exclude-files"))
             self.assertEqual(
                 r"^\.secrets\.baseline$",
                 command[command.index("--exclude-files") + 1],
             )
-            self.assertIn(".secrets.baseline", command)
+            separator = command.index("--")
+            self.assertEqual(
+                [".secrets.baseline", "tracked.txt"],
+                command[separator + 1 :],
+            )
             self.assertEqual(1, len(result.unresolved_findings))
             rendered = evidence.read_text(encoding="utf-8")
             self.assertNotIn(CANDIDATE_HASH, rendered)
@@ -214,6 +219,30 @@ class SecretBaselineTests(unittest.TestCase):
                 [adversarial_path.as_posix(), "secret.txt"],
                 command[separator + 1 :],
             )
+
+    def test_invalid_utf8_scanner_output_is_normalized(self) -> None:
+        baseline = _report({})
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".secrets.baseline").write_text(
+                json.dumps(baseline),
+                encoding="utf-8",
+            )
+            (root / "tracked.txt").write_text("candidate\n", encoding="utf-8")
+            completed = subprocess.CompletedProcess(
+                ["detect-secrets"],
+                0,
+                b"\xff",
+                b"",
+            )
+
+            with mock.patch(
+                "tools.security_scan._run_bounded_scan",
+                return_value=completed,
+            ):
+                with self.assertRaisesRegex(SecurityScanError, "invalid JSON"):
+                    scan_tracked_tree(root, tracked_paths=[Path("tracked.txt")])
 
     def test_scanner_reads_an_immutable_private_snapshot(self) -> None:
         baseline = _report({})
@@ -407,6 +436,24 @@ class SecretBaselineTests(unittest.TestCase):
                                 timeout=5,
                             )
 
+    def test_baseline_input_is_bounded_and_invalid_utf8_is_normalized(self) -> None:
+        bounded_stream = mock.MagicMock()
+        bounded_stream.__enter__.return_value = bounded_stream
+        bounded_stream.read.return_value = b"x" * 65
+        with (
+            mock.patch.object(Path, "open", return_value=bounded_stream),
+            mock.patch.object(security_scan, "_MAX_REPORT_BYTES", 64),
+        ):
+            with self.assertRaisesRegex(SecurityScanError, "exceeds the bounded size"):
+                security_scan._read_document(Path("baseline.json"), "baseline")
+        bounded_stream.read.assert_called_once_with(65)
+
+        with tempfile.TemporaryDirectory() as directory:
+            baseline = Path(directory) / "baseline.json"
+            baseline.write_bytes(b'{{"results":"\xff"}}')
+            with self.assertRaisesRegex(SecurityScanError, "cannot read baseline"):
+                security_scan._read_document(baseline, "baseline")
+
 
 class ExtendedRoutingTests(unittest.TestCase):
     def test_schedule_and_manual_dispatch_always_run(self) -> None:
@@ -420,6 +467,7 @@ class ExtendedRoutingTests(unittest.TestCase):
             "tools/review_current.py",
             "ci/verify",
             ".github/workflows/verification.yml",
+            ".github/CODEOWNERS",
             ".gitlab-ci.yml",
             ".secrets.baseline",
             "requirements/development.lock",
@@ -433,7 +481,7 @@ class ExtendedRoutingTests(unittest.TestCase):
             with self.subTest(path=path):
                 result = route_extended("pull_request", (path,))
                 self.assertEqual("RUN", result.decision)
-                self.assertIn(path, result.reason)
+                self.assertEqual("applicable high-risk changed path", result.reason)
 
     def test_only_protected_integration_push_runs(self) -> None:
         protected = route_extended(
@@ -488,6 +536,35 @@ class ProviderSecurityGateTests(unittest.TestCase):
 
         self.assertEqual(21, evidence["source"]["finding_count"])
         self.assertEqual(21, len(evidence["findings"]))
+        self.assertEqual(
+            "gnostoa-secret-scan-triage-evidence/v2",
+            evidence["manifest_schema"],
+        )
+        self.assertEqual(
+            "".join(("e071ab60", "a418eddd", "a5bf0080", "04ee96fa", "afbf1e7c")),
+            "".join(evidence["source_binding"]["head_commit_hex_chunks"]),
+        )
+        self.assertEqual(
+            "".join(("46df4deb", "2b73579c", "fd4e8d43", "678ed002", "4722fe0e")),
+            "".join(evidence["source_binding"]["head_tree_hex_chunks"]),
+        )
+        self.assertEqual("schedule", evidence["source_binding"]["event"])
+        self.assertEqual(1, evidence["source_binding"]["run_attempt"])
+        self.assertLessEqual(
+            evidence["observation_cut"]["started_at"],
+            evidence["observation_cut"]["completed_at"],
+        )
+        self.assertEqual(
+            ["path", "line", "type"],
+            evidence["extraction"]["sort_order"],
+        )
+        self.assertEqual(
+            evidence["findings"],
+            sorted(
+                evidence["findings"],
+                key=lambda item: (item["path"], item["line"], item["type"]),
+            ),
+        )
         self.assertEqual(
             {"line", "path", "type"},
             set().union(*(finding.keys() for finding in evidence["findings"])),

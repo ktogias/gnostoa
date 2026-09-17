@@ -66,7 +66,10 @@ not narrowly dispositioned and the same inexpensive observation was absent from
 ordinary Pull Requests. The provider artifact is retention-bound, so the
 sanitized path/line/type inventory and its single disposition are retained in
 [`0082-secret-scan-triage-evidence.json`](../assessments/0082-secret-scan-triage-evidence.json).
-That record deliberately excludes candidate text and candidate-derived hashes.
+That versioned record binds the exact workflow run attempt, event, head commit,
+head tree and observation cut, and freezes the deterministic extraction and
+ordering rule. It deliberately excludes candidate text and candidate-derived
+hashes.
 
 ## Prior-art and reuse disposition
 

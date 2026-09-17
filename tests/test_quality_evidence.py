@@ -508,7 +508,8 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                 baseline_path=None,
                 tracked_paths=None,
             ):
-                del repository_root, baseline_path, tracked_paths
+                del repository_root, baseline_path
+                self.assertIsNone(tracked_paths)
                 assert report_path is not None
                 report_path.write_text('{"results": {}}\n', encoding="utf-8")
                 return SecretScanResult(
@@ -657,7 +658,8 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                 baseline_path=None,
                 tracked_paths=None,
             ):
-                del repository_root, baseline_path, tracked_paths
+                del repository_root, baseline_path
+                self.assertIsNone(tracked_paths)
                 assert report_path is not None
                 report_path.write_text(
                     '{"results":{"tracked.txt":[]}}\n',

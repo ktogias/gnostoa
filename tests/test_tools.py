@@ -5,6 +5,7 @@ import importlib
 import json
 import os
 import re
+import shlex
 import subprocess
 import tarfile
 import tempfile
@@ -48,6 +49,22 @@ from tools.requirements_lock import locked_requirements
 from tools.validate_bundle import Issue, _validate_links, validate_bundle
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def _invokes_shared_verification_suite(command: str, suite: str) -> bool:
+    try:
+        tokens = shlex.split(command, posix=True)
+    except ValueError:
+        return False
+    if tokens == ["./ci/verify", suite]:
+        return True
+    expected_script = f"./ci/verify {suite}"
+    return any(
+        token in {"-c", "-ec"}
+        and index + 1 < len(tokens)
+        and tokens[index + 1] == expected_script
+        for index, token in enumerate(tokens)
+    )
 
 
 def _add_tar_bytes(archive: tarfile.TarFile, name: str, content: bytes) -> None:
@@ -219,9 +236,18 @@ class PublicationBaselineTests(unittest.TestCase):
                 if "run" in step
             ]
             self.assertTrue(
-                any(f"./ci/verify {suite}" in command for command in commands),
+                any(
+                    _invokes_shared_verification_suite(command, suite)
+                    for command in commands
+                ),
                 f"{suite} job does not invoke its shared verification suite",
             )
+        self.assertFalse(
+            _invokes_shared_verification_suite("echo ./ci/verify fast", "fast")
+        )
+        self.assertFalse(
+            _invokes_shared_verification_suite("./ci/verify fast-noop", "fast")
+        )
         self.assertIn("permissions:", workflow)
         self.assertIn("contents: read", workflow)
         self.assertIn(

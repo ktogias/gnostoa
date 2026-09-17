@@ -1134,7 +1134,6 @@ def collect_quality_evidence(
         secret_result = scan_tracked_tree(
             root,
             report_path=secret_report,
-            tracked_paths=tracked_paths,
         )
     except SecurityScanError as exc:
         raise QualityEvidenceError(str(exc)) from exc

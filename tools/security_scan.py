@@ -174,11 +174,12 @@ def evaluate_secret_report(
 
 def _read_document(path: Path, label: str) -> dict[str, Any]:
     try:
-        raw = path.read_bytes()
+        with path.open("rb") as stream:
+            raw = stream.read(_MAX_REPORT_BYTES + 1)
         if len(raw) > _MAX_REPORT_BYTES:
             raise SecurityScanError(f"{label} exceeds the bounded size")
         document = json.loads(raw)
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise SecurityScanError(f"cannot read {label}: {exc}") from exc
     if not isinstance(document, dict):
         raise SecurityScanError(f"{label} is not a JSON object")
@@ -562,7 +563,7 @@ def scan_tracked_tree(
         )
     try:
         scan_document = json.loads(completed.stdout)
-    except json.JSONDecodeError as exc:
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise SecurityScanError(
             "tracked-tree secret scan returned invalid JSON"
         ) from exc

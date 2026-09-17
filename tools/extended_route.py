@@ -25,6 +25,7 @@ _HIGH_RISK_PREFIXES = (
     "tools/",
 )
 _HIGH_RISK_EXACT = {
+    ".github/CODEOWNERS",
     ".dockerignore",
     ".gitignore",
     ".gitlab-ci.yml",
@@ -93,7 +94,7 @@ def route_extended(
         raise ValueError("changed paths contain an unsafe repository-relative path")
     for path in sorted(set(changed_paths)):
         if _high_risk(path):
-            return ExtendedRoute("RUN", f"applicable changed path: {path}")
+            return ExtendedRoute("RUN", "applicable high-risk changed path")
     if not changed_paths:
         return ExtendedRoute("NOT_APPLICABLE", "candidate has no changed paths")
     return ExtendedRoute(

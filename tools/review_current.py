@@ -35,7 +35,13 @@ import os
 import sys
 
 limit = {_MAX_RUNTIME_INPUT_BYTES}
-raw = sys.stdin.buffer.read(limit + 1)
+raw = bytearray()
+while len(raw) <= limit:
+    remaining = limit + 1 - len(raw)
+    chunk = sys.stdin.buffer.read(min(65_536, remaining))
+    if not chunk:
+        break
+    raw.extend(chunk)
 if len(raw) > limit:
     raise SystemExit("protected payload envelope exceeds the bounded size")
 try:
