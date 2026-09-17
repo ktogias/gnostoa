@@ -1,0 +1,21 @@
+#!/bin/sh
+set -eu
+
+mode="${1:-}"
+
+case "${mode}" in
+  --check)
+    python -m ruff format --check .
+    python -m ruff check .
+    ;;
+  --fix)
+    python -m ruff check --fix .
+    python -m ruff format .
+    python -m ruff format --check .
+    python -m ruff check .
+    ;;
+  *)
+    echo "usage: ./ci/style {--check|--fix}" >&2
+    exit 2
+    ;;
+esac
