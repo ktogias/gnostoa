@@ -2265,6 +2265,17 @@ class ContinuousIntegrationTests(unittest.TestCase):
         self.assertEqual("matrix.python-version == '3.12'", ruff_step["if"])
         self.assertEqual("./ci/style --check", ruff_step["run"])
 
+        direct_ruff_steps = [
+            step
+            for step in compatibility["steps"]
+            if re.search(
+                r"(?m)(?:^|[;&|])\s*"
+                r"(?:python(?:3(?:\.\d+)?)?\s+-m\s+)?ruff(?:\s|$)",
+                str(step.get("run", "")),
+            )
+        ]
+        self.assertEqual([], direct_ruff_steps)
+
         self.assertEqual(
             ["policy", "fast", "python-compatibility"], regression["needs"]
         )
