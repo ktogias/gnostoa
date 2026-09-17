@@ -46,20 +46,24 @@ def _successful_payload() -> dict[str, object]:
 class ReviewLiveSmokeOutputTests(unittest.TestCase):
     def test_success_emits_only_static_pass_marker(self) -> None:
         smoke = _load_smoke_module()
-        output = io.StringIO()
+        stdout = io.StringIO()
+        stderr = io.StringIO()
         with (
             mock.patch.object(
                 smoke,
                 "evaluate_gnostoa_current_advisory",
                 return_value=(3, _successful_payload()),
             ),
-            contextlib.redirect_stdout(output),
+            contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
         ):
             code = smoke.main()
 
         self.assertEqual(0, code)
-        self.assertEqual("protected current-advisory smoke: PASS\n", output.getvalue())
-        self.assertNotIn(PAYLOAD_SENTINEL, output.getvalue())
+        self.assertEqual("protected current-advisory smoke: PASS\n", stdout.getvalue())
+        self.assertEqual("", stderr.getvalue())
+        self.assertNotIn(PAYLOAD_SENTINEL, stdout.getvalue())
+        self.assertNotIn(PAYLOAD_SENTINEL, stderr.getvalue())
 
     def test_failures_preserve_safe_category_without_payload_material(self) -> None:
         smoke = _load_smoke_module()
@@ -78,16 +82,24 @@ class ReviewLiveSmokeOutputTests(unittest.TestCase):
 
         for code, payload, expected_message in cases:
             with self.subTest(code=code, expected_message=expected_message):
-                with mock.patch.object(
-                    smoke,
-                    "evaluate_gnostoa_current_advisory",
-                    return_value=(code, payload),
+                stdout = io.StringIO()
+                stderr = io.StringIO()
+                with (
+                    mock.patch.object(
+                        smoke,
+                        "evaluate_gnostoa_current_advisory",
+                        return_value=(code, payload),
+                    ),
+                    contextlib.redirect_stdout(stdout),
+                    contextlib.redirect_stderr(stderr),
                 ):
                     with self.assertRaises(RuntimeError) as caught:
                         smoke.main()
                 message = str(caught.exception)
                 self.assertIn(expected_message, message)
                 self.assertNotIn(PAYLOAD_SENTINEL, message)
+                self.assertNotIn(PAYLOAD_SENTINEL, stdout.getvalue())
+                self.assertNotIn(PAYLOAD_SENTINEL, stderr.getvalue())
 
 
 if __name__ == "__main__":
