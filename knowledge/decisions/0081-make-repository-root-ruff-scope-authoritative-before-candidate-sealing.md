@@ -229,9 +229,17 @@ percentage improvement.
 
 ### Cohort and observation window
 
-Start the observation window at the integration commit for PR #272. Assess the
-first ten subsequently integrated eligible Pull Requests, with a checkpoint no
-later than 60 calendar days after that integration.
+Start the observation window at the integration commit for PR #272. Its boundary
+is the earlier of the tenth subsequently integrated eligible Pull Request or 60
+calendar days after that integration.
+
+Build a chronological population ledger of **every** Pull Request integrated
+between those boundaries. For each one, retain its URL, integration time,
+integration SHA and an `ELIGIBLE`, `NOT_ELIGIBLE` or `UNKNOWN` classification
+with evidence. The cohort is the first ten `ELIGIBLE` rows in integration order;
+an assessor may not omit a Pull Request and may not substitute a later eligible
+one for an earlier inconvenient one. Any `UNKNOWN` row that could change cohort
+membership makes the result `INSUFFICIENT`.
 
 A Pull Request is eligible when its first sealed candidate either:
 
@@ -239,12 +247,44 @@ A Pull Request is eligible when its first sealed candidate either:
   by the pinned
   `python -m ruff check --show-files --no-respect-gitignore .` discovery command;
   or
-- changes `pyproject.toml`, Git/Ruff ignore rules, `ci/style`, the pre-push hook,
-  the ordinary provider workflow or the quality-evidence Ruff integration.
+- changes `requirements/development.lock`, `pyproject.toml`, Git/Ruff ignore
+  rules, `ci/style`, the pre-push hook, the ordinary provider workflow or the
+  quality-evidence Ruff integration.
 
-The **sealed candidate** is the first exact SHA explicitly recorded in the Pull
-Request as ready for fresh external review. If that identity is not recorded,
-mark the entry as missing evidence; do not reconstruct a favorable boundary
+Run discovery in an isolated checkout of the sealed SHA, using either the
+supported development container or a fresh environment installed with
+`--require-hashes` from that SHA's `requirements/development.lock`. Retain this
+eligibility receipt:
+
+- sealed SHA and physical repository root;
+- SHA-256 of `requirements/development.lock`;
+- Python version, resolved Python and Ruff executable paths,
+  `python -m ruff --version`, and SHA-256 of the resolved Ruff executable;
+- the exact discovery command and exit status; and
+- the discovered paths normalized to repository-relative POSIX paths and sorted
+  bytewise, plus their count and SHA-256.
+
+The sealed SHA already binds `pyproject.toml` and ignore configuration. If a Pull
+Request changes the development lock, it is eligible through the second rule
+and discovery must use that sealed SHA's changed lock, never an environment
+reconstructed from a later SHA. A missing or irreproducible receipt cannot be
+replaced by inference.
+
+The **sealed candidate** is established before fresh external review by an
+unedited top-level Pull Request comment whose first line is exactly:
+
+```text
+Exact review candidate: <40-character commit SHA>
+```
+
+Retain the comment URL, numeric ID, `created_at` and `updated_at`, plus the first
+subsequent external-review request and response or provider run that binds the
+same SHA. The comment is valid only when `created_at` equals `updated_at`, the
+named SHA was the Pull Request head, and the comment predates the fresh-review
+request. If multiple valid comments exist, the earliest `created_at` wins, with
+the lowest numeric comment ID as the tie-breaker. A later annotation may not
+move the boundary. Missing, edited, conflicting or retrospectively created
+sealing evidence makes the result `INSUFFICIENT`; do not select a favorable SHA
 from later timestamps.
 
 If fewer than ten eligible Pull Requests exist at the 60-day checkpoint,
@@ -256,20 +296,51 @@ measurement.
 
 Record one row per Pull Request with:
 
-1. the Pull Request URL, integration SHA, sealed-candidate SHA and final SHA;
-2. every mutation after candidate sealing, bound to its commit and provider
-   evidence;
-3. each mutation classified as `RUFF_REPAIR`, `OTHER` or `MIXED`, with `MIXED`
-   counted conservatively as Ruff-related;
-4. the number of CI and fresh-review reruns caused solely by each Ruff-related
-   mutation;
-5. any partial-repair cascade, where a known Ruff report is not fully repaired
+1. the population-ledger data, eligibility receipt, sealing-event receipt and
+   final SHA;
+2. every mutation after candidate sealing, including predecessor SHA, successor
+   SHA, exact diff URL and retained reason for the mutation;
+3. the exact predecessor and successor `ci/style --check` results, plus the
+   provider finding, workflow or review evidence associated with the mutation;
+4. each distinct provider workflow run and fresh-review request bound to a
+   Ruff-related successor SHA, counted once by URL;
+5. every documented pre-sealing Ruff catch or repair, including its failing
+   output, affected paths/rules, before/after diff and sealed-SHA passing result;
+6. any partial-repair cascade, where a known Ruff report is not fully repaired
    before the next candidate;
-6. any tracked Ruff input that escaped the gate, correctly ignored untracked
-   input that was rejected or mutated, or second ordinary-CI scope authority;
-   and
-7. provider-reported `ci/style` duration when available, reported as a range and
+7. any tracked Ruff input that escaped the gate, correctly ignored untracked
+   input that was rejected or mutated, second ordinary-CI scope authority,
+   incorrect guard rejection, or candidate regression attributable to the gate
+   or its `--fix` path; and
+8. provider-reported `ci/style` duration when available, reported as a range and
    median across comparable jobs only.
+
+Classify each post-sealing mutation using these rules:
+
+- `RUFF_REPAIR` only when an exact predecessor result identifies a Ruff
+  diagnostic or deterministic format difference, the mutation contains no
+  unrelated behavior or configuration change, and the same exact check passes
+  on the successor SHA;
+- `OTHER` only when the predecessor check is retained as passing and the diff
+  plus linked evidence establish a non-Ruff reason for the mutation;
+- `MIXED` when one mutation combines a proven Ruff repair with any other change;
+  count it conservatively as Ruff-related without claiming Ruff was the sole
+  cause; or
+- `UNATTRIBUTABLE` when the predecessor result, successor result, diff or event
+  linkage is missing or conflicting. Never downgrade missing evidence to
+  `OTHER`; any `UNATTRIBUTABLE` mutation makes the result `INSUFFICIENT`.
+
+A **Ruff-related exact-head rerun** is a provider workflow run or fresh-review
+request bound to a successor SHA classified as `RUFF_REPAIR` or `MIXED`. Link and
+count each run or request once. For `MIXED`, report that the rerun is associated
+with, but not solely caused by, Ruff work.
+
+A **documented pre-sealing catch** requires a retained failing `ci/style --check`
+result before the sealing event, its exact base SHA and working-tree or candidate
+diff, and a passing result for the same command on the sealed SHA. A formatter
+or hook claim without those receipts is not an observed opportunity. This
+evidence shows that the control encountered relevant drift before sealing; it
+still does not prove what would have happened without the control.
 
 Retain links to provider runs, review requests and findings rather than relying
 on a narrative recollection. A local hook has no telemetry, so count a
@@ -281,42 +352,65 @@ all SHA changes to this control.
 
 Aggregate at least these metrics:
 
-- eligible Pull Requests observed;
+- total integrated Pull Requests screened and their
+  `ELIGIBLE`/`NOT_ELIGIBLE`/`UNKNOWN` counts;
+- eligible Pull Requests observed with complete environment and sealing
+  receipts;
 - Pull Requests with at least one post-sealing Ruff-related mutation;
-- total post-sealing `RUFF_REPAIR` and `MIXED` mutations;
-- exact-head CI/review reruns caused solely by those mutations;
+- Pull Requests with at least one documented pre-sealing Ruff catch or repair;
+- total post-sealing `RUFF_REPAIR`, `MIXED` and `UNATTRIBUTABLE` mutations;
+- Ruff-related successor SHAs, provider workflow reruns and fresh-review
+  requests;
 - partial-repair cascades;
 - tracked-input escapes;
 - ignored-untracked false rejections or mutations;
+- incorrect guard rejections or candidate regressions attributable to the gate
+  or its `--fix` path;
 - ordinary-CI scope-authority drift; and
 - comparable `ci/style` duration range and median.
 
 Classify the result as follows:
 
 - `VALUE_SUPPORTED`: all ten eligible Pull Requests are observed; no
-  tracked-input escape, ignored-untracked false rejection or mutation, or
-  ordinary-CI scope-authority drift occurs; no partial-repair cascade occurs;
-  and at least nine of the ten Pull Requests require no post-sealing
-  Ruff-related mutation. This supports the value hypothesis but does not prove
-  that the hook alone caused the outcome.
-- `VALUE_NOT_SUPPORTED`: the complete ten-Pull-Request cohort does not meet the
-  `VALUE_SUPPORTED` rule. Preserve the observed technical successes and costs;
-  do not rewrite a missed threshold as success.
+  `UNKNOWN` eligibility, invalid sealing evidence or `UNATTRIBUTABLE` mutation
+  exists; no `CONTROL_FAILURE` or partial-repair cascade occurs; and at least
+  one documented pre-sealing Ruff catch exists while at least nine of the ten
+  Pull Requests require no post-sealing Ruff-related mutation. This supports the
+  targeted convergence hypothesis but does not prove that the hook alone caused
+  the outcome.
+- `VALUE_NOT_SUPPORTED`: the complete ten-Pull-Request cohort has complete
+  attributable evidence, no `CONTROL_FAILURE` and at least one observed Ruff
+  opportunity, but does not meet the `VALUE_SUPPORTED` threshold. A cohort with
+  post-sealing Ruff-related mutations but no documented pre-sealing catch is
+  also `VALUE_NOT_SUPPORTED`. Preserve the observed technical successes and
+  costs; do not rewrite a missed threshold as success.
 - `CONTROL_FAILURE`: any tracked-input escape, ignored-untracked false rejection
-  or mutation, or ordinary-CI scope-authority drift occurs. This overrides
-  cohort size and requires a finding with evidence and a focused proposed fix;
-  remediation still follows ordinary admission and change control.
+  or mutation, ordinary-CI scope-authority drift, reproducibly incorrect guard
+  rejection of a valid tracked input, or candidate regression attributable to
+  the gate or its `--fix` path occurs. This overrides cohort size and requires a
+  finding with evidence and a focused proposed fix; remediation still follows
+  ordinary admission and change control.
 - `INSUFFICIENT`: the observation checkpoint arrives without ten eligible Pull
-  Requests, or evidence gaps prevent the decision rule from being evaluated.
+  Requests, or an `UNKNOWN` eligibility, missing/invalid environment or sealing
+  receipt, `UNATTRIBUTABLE` mutation or other evidence gap prevents the rule
+  from being evaluated. A complete cohort with neither a documented pre-sealing
+  catch nor a post-sealing Ruff-related mutation is also `INSUFFICIENT` because
+  it contains no observed Ruff opportunity from which to assess effectiveness.
+
+These classifications assess the targeted convergence hypothesis, not total
+return on investment. Report gate duration and any operational burden as costs;
+without a comparable pre-integration timing baseline and an owner-set cost
+budget, do not turn them into a fabricated net-value or retention claim.
 
 The result must be written to
 `knowledge/assessments/0081-repository-root-ruff-effectiveness-result.md` and
-linked back to this Decision. It must bind the PR #272 integration commit, list
-the full cohort (including exclusions), present the per-PR evidence table and
-metric totals, state the classification and limitations, and keep any new
-finding separate as **finding / evidence / proposed fix**. The assessment may
-recommend retention, revision or removal, but it does not authorize a code
-change by itself.
+linked back to this Decision. It must bind the PR #272 integration commit,
+present the complete chronological population ledger (including exclusions and
+unknowns), preserve every environment/sealing/attribution receipt, present the
+per-PR evidence table and metric totals, state the classification and
+limitations, and keep any new finding separate as **finding / evidence /
+proposed fix**. The assessment may recommend retention, revision or removal,
+but it does not authorize a code change by itself.
 
 ## Consequences
 
