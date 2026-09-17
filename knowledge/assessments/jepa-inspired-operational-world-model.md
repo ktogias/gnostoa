@@ -342,11 +342,20 @@ In a disposable local simulator or fixtures with virtual time, inject:
 
 Start with the existing test stack and a small reference model. Add generated stateful sequences only if they supply additional coverage. Formal model checking may later target one high-risk lease/effect protocol, not all of Gnostoa.
 
+E1 reports two independent surfaces:
+
+1. **Transition correctness:** the offline simulator or fixture suite checks state reduction, expected invalidation, reconciliation, and terminal disposition.
+2. **Effect-boundary enforcement:** the actual effect-adapter code path is exercised deny-by-default with a provider mock or separately admitted non-production credentials. It must reject stale targets, duplicates, revoked or missing authority, ambiguous timeout retries, and attempts to bypass the adapter.
+
+A simulator result never establishes that real credentials or provider effects are contained. Passing transition fixtures alone cannot support an E2 admission proposal. Both surfaces must pass, no production effect may be attempted, and every later predictor or planner must remain read-only with no merge, deployment, or provider-write capability.
+
 ### E2 — Shadow observation and one-step prediction
 
 **Hypothesis:** prediction adds actionable information beyond deterministic state.
 
 The predictor sees only pre-action data, commits its prediction before the outcome exists, and does not send suggestions to an actor who could alter the outcome. It receives no write capability. Evaluate concrete consequences: probable failure category, next observation needed, rework likelihood, or timeout likelihood. Do not score a vague readiness label.
+
+Before collection begins, the E2 preregistration must freeze the episode unit, enrollment window, exact pre-outcome field boundary and observation cut, permitted exclusions knowable without viewing the outcome, treatment of delayed or missing outcomes, pairing rule, denominator, and held-out test cut. The default episode shape is one declared decision point, one selected action or no-op, and the first qualifying read-back inside the fixed outcome window. No episode may be excluded because its outcome is difficult or inconvenient. Missing outcomes remain visible in the enrollment flow and are handled by the frozen rule; if the preregistered completeness bound is not met, the gate is not evaluated.
 
 Baselines:
 
@@ -364,6 +373,8 @@ Run only if E2 shows incremental value. Offer two or three admissible choices, h
 
 A replay of real history contains the outcome only for the action actually taken. It does **not** show what would have happened under another action. Planner comparison requires a branchable sandbox or a separately preregistered prospective experiment under the same CI and review obligations.
 
+A scenario is branchable only when the future admission freezes its selection rule and action set, restores and mechanically verifies an equivalent initial state for every branch, runs alternatives against the same versioned sandbox oracle, controls or replays exogenous events, and assigns every action and read-back a predeclared cost. If reset equivalence, oracle identity, or complete cost accounting cannot be demonstrated, the case is not counterfactual evidence and E3 must use a separately preregistered prospective design.
+
 ### E4 — Optional JEPA-inspired learned representation
 
 Input: semantic task history and action features. Target: a representation of actual next semantic state, with auxiliary predictions of observable consequences. Exact identifiers, authority, evidence cuts, and predicates remain in a parallel non-compressed channel.
@@ -376,17 +387,19 @@ Stop-gradient and anti-collapse choices would require their own evaluation. This
 
 Proceed only with learning curves, adequate task diversity, out-of-distribution tests, comparison against simpler predictors at equal cost, and a demonstrated residual bottleneck. Otherwise keep this branch research-only or remove it.
 
+E4 remains provisional and non-executable until a separately admitted preregistration freezes, before the evaluation cut is exposed, the exact loss function, outcome aggregation, temporal boundaries, in-distribution and out-of-distribution split construction, performance scale and direction, and whether every threshold is absolute or relative. The current percentages are planning defaults only; they cannot be evaluated or used for promotion until that protocol exists.
+
 ### Stage-specific promotion gates
 
-The following are provisional preregistration defaults for a future admitted experiment, not acceptance criteria for this report or automatic roadmap authority. A future Work Item may tighten or replace a number only before outcomes are inspected, with the reason and analysis plan recorded. Sections 10 and 13 still govern safety, cost, admission, and return. E2, E3, and E4 each require their own explicit admission even when the prior gate passes.
+The following are provisional preregistration defaults for a future admitted experiment, not acceptance criteria for this report or automatic roadmap authority. They are non-executable until the stage-specific protocol, data contract, evaluation cut, and analysis plan are frozen. A future Work Item may tighten or replace a number only before outcomes are inspected, with the reason recorded. Sections 10 and 13 still govern safety, cost, admission, and return. E2, E3, and E4 each require their own explicit admission even when the prior gate passes.
 
 | Stage | Reproducible baseline | Primary endpoint | Provisional quantitative gate | Pass, fail, or stop decision |
 |---|---|---|---|---|
 | E0 | Full source-labelled fixture oracle compared with the proposed compact representation | Correct action-relevant discrimination or invariance for each paired fixture | 100% of safety, authority, subject, and effect-applicability pairs correct, and at least 95% correct overall on a frozen set of at least 30 pairs | Pass permits E1 fixture work; any critical collision fails and requires representation repair, while repeated noncritical aliasing stops compression of that field |
-| E1 | The same frozen sequences evaluated with current deterministic checks and without the proposed transition contract | Correct terminal disposition after each injected sequence | Zero unauthorized, stale, or duplicate effects; at least 95% correct terminal dispositions; and no more than 5% false blocking of lawful positive controls across at least 30 sequences | Pass permits an E2 admission proposal; a critical effect violation fails, while progress below threshold returns the design to E0/E1 |
-| E2 | Best preregistered rule, frequency, or nearest-case predictor using the same pre-action fields and evaluation cut | Brier score for the preregistered one-step consequence classes | At least 15% lower paired Brier score than the best simple baseline, with a 90% bootstrap interval for the improvement above zero, on at least 50 eligible held-out episodes; zero authority or information-leak violations | Pass permits an E3 admission proposal; otherwise stop learned prediction or collect more prospectively without changing the frozen test cut |
-| E3 | Best deterministic admissible-action ranking using the same actions, information, horizon, and budget | Paired number of actions/read-backs needed to reach a correct terminal disposition | At least 15% lower median cost over at least 30 branchable or prospectively paired scenarios, no reduction in completion rate, and zero authorization violations | Pass permits an E4 admission proposal only if a residual representation bottleneck is documented; otherwise retain the simpler policy and stop planning expansion |
-| E4 | Best admitted E2 predictor under the same inputs, outcome definitions, compute budget, and temporal split | Held-out one-step prediction loss on temporal and out-of-distribution cuts | At least 10% lower loss on both cuts, no critical-invariant regression, out-of-distribution degradation no greater than 5 percentage points relative to in-distribution performance, and cost within the preregistered cap | Pass supports a separate product or architecture decision; failure keeps the deterministic or simpler predictor and retires the learned representation branch |
+| E1 | The same frozen sequences without the proposed transition contract, plus the same effect-adapter path under a provider mock or admitted non-production identity | Separately reported transition correctness and deny-by-default adapter enforcement | At least 95% correct terminal dispositions and no more than 5% false blocking across at least 30 sequences; 100% rejection of stale, duplicate, revoked-authority, unauthorized, ambiguous-retry, and adapter-bypass controls; zero production effects | Only both subgates together permit an E2 admission proposal; simulator-only success cannot promote, and any critical enforcement failure returns the design to E1 |
+| E2 | Best preregistered rule, frequency, or nearest-case predictor using the same frozen pre-action fields, episode predicate, denominator, and evaluation cut | Brier score for the preregistered one-step consequence classes | At least 15% lower paired Brier score than the best simple baseline, with a 90% bootstrap interval for the improvement above zero, on at least 50 scored episodes admitted by the frozen eligibility and missing-outcome rules; zero data-contract, authority, or information-leak violations | Pass permits an E3 admission proposal; an unmet sample/completeness bound is no result, while a failed effect or data boundary stops the branch |
+| E3 | Best deterministic admissible-action ranking under the same frozen selection rule, action set, initial-state reset, versioned oracle, horizon, and cost schedule | Paired predeclared action/read-back cost to reach a correct terminal disposition | At least 15% lower median cost over at least 30 mechanically reset branchable scenarios or separately preregistered prospective pairs, no reduction in completion rate, and zero authorization violations | Missing reset/oracle/cost equivalence is no result; a pass permits an E4 admission proposal only if a residual representation bottleneck is documented |
+| E4 | Best admitted E2 predictor under the same frozen inputs, outcomes, compute budget, loss, aggregation, and temporal/OOD construction | The exact preregistered one-step loss on the frozen temporal and OOD cuts | Planning default: at least 10% relative loss reduction on both cuts, no critical-invariant regression, and no more than 5 absolute percentage points of degradation on the separately named performance scale, within the preregistered cost cap | Non-executable until every metric term is frozen; a pass supports only a separate product or architecture decision, while failure retires the learned branch |
 
 A small 10–20 episode shadow pilot may test instrumentation and data integrity, but it cannot promote E2 to E3. Thresholds apply only after the stated eligible sample and frozen analysis are available.
 
@@ -408,12 +421,16 @@ Before execution, choose a primary endpoint and minimum useful improvement, such
 
 ### Data integrity
 
+Prospective E2–E4 collection requires a separately admitted, versioned data contract before any raw item is persisted. The contract must whitelist allowed fields and sources; bind purpose, provenance, and subject authorization; define secret and personal-data exclusion or redaction; exclude prompts, private chain-of-thought and other private reasoning; set access roles, retention limits, deletion handling, and incident response; and identify the collector and scanner versions.
+
+Structured extraction and a pre-ingestion secret/PII/private-reasoning scan run before dataset or retained-artifact storage. An unparseable item, unresolved scanner hit, disallowed field, missing provenance, or deletion/retention conflict fails closed and stops ingestion and publication for that item. Quarantined material cannot enter training, evaluation, embeddings, or model context. Each accepted episode records the data-contract and scanner identities; later manual review cannot retroactively legitimize a failed admission.
+
 - Split by complete PR or task and by time; never put lines from the same review thread in both train and test.
 - Exclude later solutions, reviews, and ground-truth patches from pre-action context.
 - Separate provider/infrastructure failure from code/semantic failure.
 - Record policy, schema, environment, and predictor versions.
 - Retain negative and inconvenient results.
-- Bound raw logs and personal data; include no secrets, hidden oracle, or private reasoning.
+- Do not ingest raw issue, review, CI-log, or model-trace dumps. Retain only whitelisted structured fields and allowed final outputs or tool events after fail-closed admission; include no secrets, hidden oracle, prompts, or private reasoning.
 - The same model family and common sources can create correlated errors. A different persona is not independence.
 
 ## 11. Assumptions, risks, and limits
@@ -422,7 +439,7 @@ Before execution, choose a primary endpoint and minimum useful improvement, such
 
 **Safety and liveness together.** A material authority or head mismatch blocks the affected effect. A delayed reviewer permits bounded waiting, re-observation, and unrelated already-admissible work. Do not freeze the whole system for every mismatch. Duplicate or irrelevant observations must not restart gates forever.
 
-**Bounded authority.** Credentials and effect adapters are the actual enforcement boundary. A planner with a direct bypass to GitHub can ignore a correct model.
+**Bounded authority.** Credentials and effect adapters are the actual enforcement boundary. A planner with a direct bypass to GitHub can ignore a correct model. Passing a simulator, prediction, or planning metric supplies no evidence that production authority is enforced; only tests on the real adapter code path and the effective credential boundary can support that narrower claim.
 
 **Uncertain effects.** After timeout, absence of a receipt does not prove that the effect did not occur. If safe deduplication and read-back are unavailable, keep the outcome unresolved and do not retry automatically.
 
@@ -501,5 +518,15 @@ The reviewer found the direction coherent and did not identify silent admission 
 | Ambiguous Phase D exclusion | Wording about one arm could permit a change to both | Corrected in section 12: no arm-visible introduction in either arm |
 | Planned versus executed characterization | #264 title could be read as evidence of an executed experiment | Corrected in section 8 with no execution claim |
 | Delta versus causal attribution | External actors can cause an observed outcome | Added explicit limitation in section 11 |
+
+Subsequent exact-head PR review identified additional experiment-contract gaps and produced these repairs:
+
+| Finding | Risk | Disposition |
+|---|---|---|
+| Prospective data exclusion was policy prose rather than an ingestion gate | Secrets, personal data, or private reasoning could enter retained artifacts before review | Added the versioned whitelist, access/retention/deletion rules, and fail-closed pre-ingestion contract in section 10 |
+| E1 simulator success could be read as effect-authority evidence | A model may pass while credentials or adapters remain bypassable | Split transition correctness from real adapter-path enforcement and require both before an E2 proposal |
+| E2 eligibility and missing outcomes were undefined | Post-outcome exclusion could bias the Brier comparison | Required the episode, window, fields, exclusions, denominator, missingness rule, and cut to be frozen before outcomes |
+| E3 branchability and cost were undefined | Historical replay could masquerade as counterfactual evidence | Required reset equivalence, versioned oracle, selection rule, exogenous-event control, and complete cost accounting |
+| E4 loss and OOD degradation were underspecified | Thresholds could be selected after the evaluation data was visible | Kept E4 non-executable until loss, aggregation, splits, scale, direction, and absolute/relative semantics are frozen |
 
 Research contributions about the roadmap, papers, and engineering patterns were not used as semantic approvals. They remain bound to cited sources and stated limits.
