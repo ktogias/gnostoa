@@ -53,7 +53,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def _invokes_shared_verification_suite(command: str, suite: str) -> bool:
     try:
-        tokens = shlex.split(command, posix=True)
+        tokens = shlex.split(command.replace("\\\n", " "), posix=True)
     except ValueError:
         return False
     if tokens == ["./ci/verify", suite]:
@@ -64,7 +64,7 @@ def _invokes_shared_verification_suite(command: str, suite: str) -> bool:
         or len(tokens) < 6
         or tokens[-2] not in {"-c", "-ec"}
         or tokens[-1] != expected_script
-        or "${GNOSTOA_CI_IMAGE}" not in tokens
+        or tokens[-3] != "${GNOSTOA_CI_IMAGE}"
     ):
         return False
     required_mount = "type=bind,source=${GITHUB_WORKSPACE},target=/workspace,readonly"
@@ -300,6 +300,16 @@ class PublicationBaselineTests(unittest.TestCase):
                 "type=bind,source=${GITHUB_WORKSPACE},target=/workspace,readonly "
                 "--workdir /tmp ${GNOSTOA_CI_IMAGE} "
                 "-ec './ci/verify fast'",
+                "fast",
+            )
+        )
+        self.assertFalse(
+            _invokes_shared_verification_suite(
+                "docker run --entrypoint sh "
+                "--mount "
+                "type=bind,source=${GITHUB_WORKSPACE},target=/workspace,readonly "
+                "--workdir /workspace ${GNOSTOA_CI_IMAGE} "
+                "/dev/null -ec './ci/verify fast'",
                 "fast",
             )
         )
