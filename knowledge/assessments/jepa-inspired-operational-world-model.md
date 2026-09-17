@@ -5,7 +5,7 @@ description: Source-backed assessment of how Gnostoa can evolve from evidence-bo
 status: draft
 generated:
   by: openai/gpt-5
-  at: "2026-09-17T13:00:57Z"
+  at: "2026-09-17T13:07:08Z"
 sources:
   - id: operational-world-model-work-item
     resource: https://github.com/ktogias/gnostoa/issues/273
@@ -109,7 +109,7 @@ Research and architecture proposal — 17 September 2026.
 
 **Status:** source-backed research/proposal for [#273](https://github.com/ktogias/gnostoa/issues/273). This knowledge-only record and its non-disruptive linkage into Ariadne are selected. It does not admit predictor or planner implementation, execution of E0–E4, a public-contract change, a roadmap-order change, or any other authority. Proposed types, experiment names, and budgets are neither existing contracts nor binding decisions.
 
-### Source reproducibility boundary
+## Source reproducibility boundary
 
 External prior art and engineering documentation were re-observed on 17 September 2026. This record binds durable claims as follows:
 
