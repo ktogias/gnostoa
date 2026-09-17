@@ -6,6 +6,7 @@ import inspect
 import io
 import json
 import re
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -179,10 +180,8 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         tmp_volume = "gnostoa-r2a-tmp-test"
         daemon_name = "gnostoa-r2a-daemon-test"
         outer_name = "gnostoa-r2a-outer-test"
-        input_dir = Path("/tmp/gnostoa-r2a-untrusted-input-test")
         plan = build_plan(
             consumer=consumer,
-            input_dir=input_dir,
             socket_volume=socket_volume,
             tmp_volume=tmp_volume,
             daemon_name=daemon_name,
@@ -232,10 +231,17 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         self.assertIn(f"{socket_volume}:/var/run", outer_args)
         self.assertNotIn("/gnostoa-docker", " ".join(outer_args))
         self.assertIn(f"{tmp_volume}:/tmp", outer_args)
-        self.assertIn(
-            f"type=bind,src={input_dir},dst=/gnostoa-input,readonly",
-            outer_args,
+        self.assertNotIn("--mount", outer_args)
+        self.assertIn("--interactive", outer_args)
+        self.assertIn("--stdin-once", outer_args)
+        outer_tmpfs_index = outer_args.index("--tmpfs")
+        self.assertEqual(
+            "/gnostoa-input:rw,noexec,nosuid,nodev,size=8m,"
+            "mode=0700,uid=10001,gid=10001",
+            outer_args[outer_tmpfs_index + 1],
         )
+        self.assertEqual("-c", outer_args[outer_image_index + 1])
+        self.assertIn("/gnostoa-input/input.json", outer_args[outer_image_index + 2])
         self.assertNotIn("--privileged", outer_args)
         joined = " ".join(outer_args)
         self.assertNotIn("src=/var/run/docker.sock", joined)
@@ -246,6 +252,121 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         self.assertEqual(
             P2B_PUBLIC_SURFACE_DIGEST, consumer.get("public_surface_digest")
         )
+
+    def test_outer_input_uses_bounded_stdin_and_never_a_host_payload_file(
+        self,
+    ) -> None:
+        outer = _load_outer()
+        marker = "OUTER_HOST_PERSISTENCE_SENTINEL_71f4d3"
+        input_document = _current_advisory_input()
+        input_document["candidate_claims"] = {"marker": marker}
+        expected_input = (outer.canonical_json(input_document) + "\n").encode("utf-8")
+        protected = ProtectedMainDocument(
+            protected_main_revision="c" * 40,
+            document=_consumer_authority(),
+        )
+        host_payload_writes: list[Path] = []
+        run_calls: list[tuple[list[str], dict[str, object]]] = []
+        original_write_text = Path.write_text
+
+        def observe_write_text(
+            path: Path,
+            data: str,
+            *args: object,
+            **kwargs: object,
+        ) -> int:
+            if marker in data:
+                host_payload_writes.append(path)
+            return original_write_text(path, data, *args, **kwargs)
+
+        def create_volume(
+            name: str,
+            config_dir: Path,
+            owned_volumes: list[str],
+        ) -> str:
+            del config_dir
+            owned_volumes.append(name)
+            return name
+
+        def create_container(
+            arguments: list[str],
+            name: str,
+            config_dir: Path,
+            owned_containers: list[str],
+        ) -> str:
+            del arguments, config_dir
+            owned_containers.append(name)
+            return name
+
+        def run_docker(
+            arguments: list[str],
+            **kwargs: object,
+        ) -> subprocess.CompletedProcess[bytes]:
+            run_calls.append((arguments, kwargs))
+            return subprocess.CompletedProcess(
+                arguments,
+                0,
+                stdout=b"{}\n",
+                stderr=b"",
+            )
+
+        with (
+            mock.patch.object(
+                outer,
+                "acquire_gnostoa_current_advisory_consumer",
+                return_value=protected,
+            ),
+            mock.patch.object(Path, "write_text", observe_write_text),
+            mock.patch.object(outer, "_verify_outer_image"),
+            mock.patch.object(outer, "_checked_output"),
+            mock.patch.object(outer, "_volume_create", side_effect=create_volume),
+            mock.patch.object(outer, "_initialize_tmp_volume"),
+            mock.patch.object(
+                outer,
+                "_container_create",
+                side_effect=create_container,
+            ),
+            mock.patch.object(outer, "_wait_for_daemon"),
+            mock.patch.object(outer, "_verify_daemon_control_plane"),
+            mock.patch.object(outer, "_run_docker", side_effect=run_docker),
+            mock.patch.object(outer, "_decode_outer_result"),
+            mock.patch.object(outer, "_remove_container", return_value=None),
+            mock.patch.object(outer, "_remove_volume", return_value=None),
+        ):
+            code, raw = outer.run_prior_effective_current_advisory(input_document)
+
+        self.assertEqual((0, b"{}\n"), (code, raw))
+        self.assertEqual([], host_payload_writes)
+        attached = [
+            (arguments, kwargs)
+            for arguments, kwargs in run_calls
+            if arguments[:3] == ["start", "--attach", "--interactive"]
+        ]
+        self.assertEqual(1, len(attached))
+        self.assertEqual(expected_input, attached[0][1].get("input_bytes"))
+        self.assertNotIn(
+            marker,
+            " ".join(item for arguments, _ in run_calls for item in arguments),
+        )
+
+    def test_outer_input_bound_precedes_every_docker_or_authority_effect(self) -> None:
+        outer = _load_outer()
+        oversized = {"payload": "x" * 4_194_304}
+        with (
+            mock.patch.object(
+                outer,
+                "acquire_gnostoa_current_advisory_consumer",
+            ) as acquire,
+            mock.patch.object(outer, "_run_docker") as run_docker,
+        ):
+            code, raw = outer.run_prior_effective_current_advisory(oversized)
+
+        payload = json.loads(raw.decode("utf-8"))
+        self.assertEqual(2, code)
+        self.assertEqual("TOOL_ERROR", payload["error"]["code"])
+        self.assertIn("bounded size", payload["error"]["details"]["error"])
+        acquire.assert_not_called()
+        run_docker.assert_not_called()
 
     def test_daemon_control_plane_rejects_listening_tcp_ports(self) -> None:
         outer = _load_outer()

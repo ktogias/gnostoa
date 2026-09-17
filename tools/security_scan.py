@@ -66,7 +66,7 @@ class SecretScanResult:
     unresolved_findings: list[dict[str, int | str]]
 
 
-SecretIdentity = tuple[str, str, str]
+SecretIdentity = tuple[str, str, str, int]
 
 
 def _baseline_schema_error(detail: str) -> SecurityScanError:
@@ -86,6 +86,15 @@ def _object_without_duplicate_fields(
 
 def _reject_non_finite_constant(value: str) -> NoReturn:
     raise SecurityScanError("JSON document contains a non-finite number")
+
+
+def _is_finite_number(value: object) -> bool:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _validate_baseline_schema(document: dict[str, Any]) -> None:
@@ -116,11 +125,7 @@ def _validate_baseline_schema(document: dict[str, Any]) -> None:
         ):
             raise _baseline_schema_error("plugin entry is malformed")
         limit = plugin.get("limit")
-        if limit is not None and (
-            not isinstance(limit, (int, float))
-            or isinstance(limit, bool)
-            or not math.isfinite(limit)
-        ):
+        if limit is not None and not _is_finite_number(limit):
             raise _baseline_schema_error("plugin limit is malformed")
         keyword_exclude = plugin.get("keyword_exclude")
         if keyword_exclude is not None and not isinstance(keyword_exclude, str):
@@ -229,13 +234,14 @@ def _identities(
                 or not isinstance(line, int)
                 or isinstance(line, bool)
                 or line < 1
+                or line > _MAX_SNAPSHOT_FILE_BYTES
             ):
                 raise SecurityScanError(f"{label} candidate identity is malformed")
             if require_false_positive and candidate.get("is_secret") is not False:
                 raise SecurityScanError(
                     f"{label} contains an entry not reviewed as a false positive"
                 )
-            identity = (path, candidate_type, secret_hash)
+            identity = (path, candidate_type, secret_hash, line)
             if identity in identities:
                 raise SecurityScanError(f"{label} repeats a candidate identity")
             identities.add(identity)
@@ -302,7 +308,7 @@ def _read_document(path: Path, label: str) -> dict[str, Any]:
             object_pairs_hook=_object_without_duplicate_fields,
             parse_constant=_reject_non_finite_constant,
         )
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
         raise SecurityScanError(f"cannot read {label}: {exc}") from exc
     if not isinstance(document, dict):
         raise SecurityScanError(f"{label} is not a JSON object")

@@ -125,10 +125,14 @@ separate read-back.
 
 ## Decision
 
-1. **No host payload persistence.** Canonicalize the protected input and policy
-   into one JSON envelope in memory. Reject it before process creation when it
-   exceeds a fixed byte bound. Do not write either document to a host file,
-   mount, argv, environment, stdout, stderr or exception message. Disable
+1. **No host payload persistence.** Canonicalize and bound the caller's outer
+   review input before authority acquisition or Docker activity, send it to the
+   prior-effective outer container only through stdin, and materialize the
+   compatibility input only in an outer-container-only tmpfs. Inside that
+   runtime, canonicalize the delegated protected input and policy into one
+   bounded JSON envelope in memory and send it through stdin to the
+   prior-integrated judge. Do not write any of those documents to a host file,
+   bind mount, argv, environment, stdout, stderr or exception message. Disable
    Docker log persistence for the payload-bearing inner and outer containers,
    for the isolated daemon container, and as the isolated daemon's default, so
    attached result stdout is returned to the caller without being retained by
@@ -144,15 +148,20 @@ separate read-back.
    predeclared recovery name. Retain the executable used to launch Docker,
    treat unreadable or malformed CID content as a name fallback, bound child
    reaping, and attempt container cleanup even when client reaping cannot be
-   confirmed. Calls without input receive a closed stdin rather than inheriting
-   the caller's stream.
-3. **Fixed in-container bridge.** Run the authority-bound image with the existing
-   security arguments and a fixed Python bridge. The bridge validates the closed
-   envelope shape, uses restrictive creation semantics below `/tmp`, writes the
-   two CLI inputs only to the container tmpfs, and execs `tools.cli review-check`
-   without a shell or payload interpolation. The existing network, read-only
-   root, capability, identity, surface and semantic-result checks remain
-   unchanged.
+   confirmed. Caller-owned Docker `--name` and `--cidfile` options are rejected;
+   the bounded timeout smoke requests its known name through the runner's
+   validated identity parameter, so launch and fallback cleanup cannot disagree.
+   Calls without input receive a closed stdin rather than inheriting the caller's
+   stream.
+3. **Fixed in-container bridges.** Run each authority-bound image with fixed
+   Python bridge code. The outer bridge reads bounded stdin, uses restrictive
+   exclusive creation in a dedicated outer-only tmpfs, and execs the immutable
+   `tools.review_live_entrypoint`. The inner bridge validates the closed envelope
+   shape, uses the same restrictive creation semantics below its own `/tmp`
+   tmpfs, writes the two CLI inputs there, and execs `tools.cli review-check`.
+   Neither bridge uses a shell or interpolates payload content. The existing
+   network, read-only root, capability, identity, surface and semantic-result
+   checks remain unchanged.
 4. **Narrow public-identity disposition.** Add line-scoped pragmas to the exact
    reviewed YAML/Python public identities. Preserve the bytes of protected
    authority JSON and record only its exact remaining candidate hashes in the
@@ -161,12 +170,14 @@ separate read-back.
    baseline together still fails closed. The excluded baseline accepts only
    its closed scanner schema; duplicate names at any JSON depth, unknown
    top-level/plugin/filter/candidate fields, non-finite plugin limits, and
-   non-boolean candidate disposition values fail closed. A stale baseline
-   entry, malformed entry, non-false-positive entry or new candidate fails
-   closed. Inline pragmas remain explicit, review-visible declarations rather
-   than self-authenticating proof that a value is public: additions or changes
-   require semantic review. This candidate-owned gate does not claim to sandbox
-   a malicious author who can also rewrite the gate itself.
+   non-boolean candidate disposition values fail closed. Candidate identity
+   includes an exact, bounded line number as well as path, rule and hash, so
+   stale or arbitrary numeric audit metadata cannot suppress a finding. A stale
+   baseline entry, malformed entry, non-false-positive entry or new candidate
+   fails closed. Inline pragmas remain explicit, review-visible declarations
+   rather than self-authenticating proof that a value is public: additions or
+   changes require semantic review. This candidate-owned gate does not claim to
+   sandbox a malicious author who can also rewrite the gate itself.
 5. **One reusable tracked-tree scan.** Factor the scan/baseline comparison into
    one repository-owned command that emits only candidate metadata, never the
    candidate value or candidate-derived hash. Validate every scanner argument
@@ -214,9 +225,11 @@ separate read-back.
    topic-push advisory workflow preserves the inherited always-on branch-revision
    `policy` and `fast` suites under distinct `branch-advisory-*` names, so those
    runs cannot publish skipped jobs under Pull Request required-context names.
-   Structural contracts reject suite steps or jobs that are disabled,
-   non-blocking, or wrapped by alternate shell/default behavior, while allowing
-   only the exact declared `regression` and `extended` job predicates.
+   Structural contracts bind the exact event maps and root image environment,
+   reject workflow defaults and protected job/step environment overrides, and
+   reject suite steps or jobs that are disabled, non-blocking, containerized, or
+   wrapped by alternate shell/default behavior, while allowing only the exact
+   declared `regression` and `extended` job predicates.
 8. **Provider CodeQL effect remains sequenced.** After this Decision and the
    implementation are integrated and provider read-back confirms clean
    exact-head/default-branch results, require the stable GitHub CodeQL result for
@@ -233,8 +246,10 @@ separate read-back.
 
 Pre-implementation RED evidence and the final candidate must demonstrate:
 
-- the protected consumer invokes no host payload write or payload bind mount;
-- input exceeding the bound is rejected without starting Docker;
+- neither the outer nor inner protected consumer invokes a host payload write or
+  payload bind mount;
+- outer and inner input exceeding their bounds is rejected before authority or
+  Docker effects;
 - large bounded input and output are multiplexed without deadlock, and early
   stdin closure, timeout and output overflow terminate and clean up safely;
 - stdin setup and output-overflow aborts use the predeclared container identity;
@@ -245,12 +260,12 @@ Pre-implementation RED evidence and the final candidate must demonstrate:
   child, not argv, environment, output or exceptions;
 - payload-bearing inner/outer containers and the isolated daemon use
   non-persisting Docker logging while attached result stdout remains available;
-- the bridge is fixed, uses the existing tmpfs, and preserves the exact
-  authority-bound judge invocation and result;
+- both bridges are fixed, use container-only tmpfs mounts, and preserve the exact
+  authority-bound consumer/judge invocations and result;
 - the reviewed tree has zero unresolved secret candidates, while an injected
-  candidate, stale baseline, duplicate JSON field, unknown or unchecked
-  baseline value, unauthorized baseline entry and candidate scanner-module
-  shadow fail;
+  candidate, stale or wrong-line baseline, duplicate JSON field, non-finite or
+  overflowing numeric input, unknown or unchecked baseline value, unauthorized
+  baseline entry and candidate scanner-module shadow fail;
 - snapshot acquisition rejects per-file/cumulative overflow and timeout; an
   in-place or ancestor-directory replacement cannot change the private bytes
   presented to the scanner; a FIFO replacement fails without blocking; and the
@@ -261,7 +276,8 @@ Pre-implementation RED evidence and the final candidate must demonstrate:
   duplicate can satisfy a required name with a skipped job, topic pushes retain
   separately named advisory `policy`/`fast` evidence, and the structural oracle
   rejects disabled, non-blocking, shell-wrapped or wrongly native suite jobs
-  and steps;
+  and steps, inherited defaults/environment overrides, or suppressing event
+  filters;
 - policy, fast, regression, smoke, runtime self-check and applicable extended
   verification pass against the exact candidate.
 

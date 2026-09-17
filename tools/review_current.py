@@ -19,6 +19,7 @@ _SHA40 = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 _IMAGE_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
 _CONTAINER_ID = re.compile(r"^[0-9a-f]{64}$")
+_RESOURCE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$")
 _DIGEST_IMAGE = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9._:-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)+"
     r"@sha256:[0-9a-f]{64}$"
@@ -142,12 +143,29 @@ def _run_identity(
     config_dir: Path,
     *,
     executable: str | None = None,
+    requested_name: str | None = None,
 ) -> _ContainerRunIdentity | None:
     if not arguments or arguments[0] != "run":
+        if requested_name is not None:
+            raise ProtectedJudgeUnavailable(
+                "a protected Docker run name is valid only for a run command"
+            )
         return None
+    if any(
+        item in {"--name", "--cidfile"}
+        or item.startswith("--name=")
+        or item.startswith("--cidfile=")
+        for item in arguments[1:]
+    ):
+        raise ProtectedJudgeUnavailable(
+            "protected Docker run contains a caller-owned cleanup identity option"
+        )
+    if requested_name is not None and _RESOURCE_NAME.fullmatch(requested_name) is None:
+        raise ProtectedJudgeUnavailable("protected Docker run name is invalid")
     nonce = f"{os.getpid()}-{time.monotonic_ns()}"
+    name = requested_name or f"gnostoa-protected-{nonce}"
     return _ContainerRunIdentity(
-        name=f"gnostoa-protected-{nonce}",
+        name=name,
         cidfile=config_dir / f"protected-run-{nonce}.cid",
         executable=executable,
     )
@@ -223,6 +241,7 @@ def _run_docker(
     config_dir: Path,
     timeout: int = _DOCKER_TIMEOUT_SECONDS,
     input_bytes: bytes | None = None,
+    run_name: str | None = None,
 ) -> subprocess.CompletedProcess[bytes]:
     if input_bytes is not None and len(input_bytes) > _MAX_RUNTIME_INPUT_BYTES:
         raise ProtectedJudgeUnavailable(
@@ -233,6 +252,7 @@ def _run_docker(
         arguments,
         config_dir,
         executable=docker_executable,
+        requested_name=run_name,
     )
     docker_arguments = arguments
     if identity is not None:

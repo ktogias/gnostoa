@@ -587,6 +587,7 @@ guardrails:
     guidance: guidance/workflows/configure-continuous-integration.md#procedure
     implementation:
       - .github/workflows/verification.yml
+      - .github/workflows/branch-advisory.yml
       - .secrets.baseline
       - .github/workflows/publish-oci.yml
       - .github/workflows/publish-r2a-p2a-bootstrap-oci.yml

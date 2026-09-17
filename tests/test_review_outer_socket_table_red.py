@@ -35,7 +35,6 @@ class ReviewOuterSocketTableTests(unittest.TestCase):
         socket_volume = "gnostoa-r2a-socket-test"
         plan = review_outer._build_isolated_execution_plan(
             consumer={"runtime_image": image},
-            input_dir=Path("/tmp/gnostoa-r2a-input-test"),
             socket_volume=socket_volume,
             tmp_volume="gnostoa-r2a-tmp-test",
             daemon_name="gnostoa-r2a-daemon-test",

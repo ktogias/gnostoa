@@ -127,6 +127,22 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
                     )
             popen.assert_not_called()
 
+    def test_docker_run_rejects_caller_owned_cleanup_identity_options(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config_dir = Path(directory)
+            for arguments in (
+                ["run", "--name", "caller-name", "example-image"],
+                ["run", "--name=caller-name", "example-image"],
+                ["run", "--cidfile", "/tmp/caller.cid", "example-image"],
+                ["run", "--cidfile=/tmp/caller.cid", "example-image"],
+            ):
+                with self.subTest(arguments=arguments):
+                    with self.assertRaisesRegex(
+                        review_current.ProtectedJudgeUnavailable,
+                        "cleanup identity option",
+                    ):
+                        review_current._run_identity(arguments, config_dir)
+
     def test_oversized_envelope_is_rejected_before_any_docker_operation(self) -> None:
         image = "ghcr.io/example/gnostoa@sha256:" + "a" * 64
         with (
@@ -224,6 +240,7 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
                 0,
             )
         )
+        requested_name = "gnostoa-protected-explicit-test"
         with tempfile.TemporaryDirectory() as directory:
             try:
                 with (
@@ -257,6 +274,7 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
                             config_dir=Path(directory),
                             input_bytes=b"payload",
                             timeout=5,
+                            run_name=requested_name,
                         )
             finally:
                 process = observed.get("process")
@@ -267,8 +285,10 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
             command = observed["command"]
             self.assertIsInstance(command, list)
             assert isinstance(command, list)
+            self.assertEqual(1, command.count("--name"))
             self.assertIn("--name", command)
             name = command[command.index("--name") + 1]
+            self.assertEqual(requested_name, name)
             cleanup.assert_called_once()
             self.assertEqual(
                 ["docker", "rm", "-f", name],

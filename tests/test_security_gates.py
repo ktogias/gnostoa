@@ -100,6 +100,32 @@ class SecretBaselineTests(unittest.TestCase):
         with self.assertRaisesRegex(SecurityScanError, "stale"):
             evaluate_secret_report(scan, baseline)
 
+    def test_false_positive_identity_binds_the_exact_bounded_line(self) -> None:
+        scan = _report({PROTECTED_BASELINE_PATH: [_candidate(PUBLIC_HASH, line=12)]})
+        wrong_line = _report(
+            {
+                PROTECTED_BASELINE_PATH: [
+                    _candidate(PUBLIC_HASH, line=13, false_positive=True)
+                ]
+            }
+        )
+        with self.assertRaisesRegex(SecurityScanError, "stale"):
+            evaluate_secret_report(scan, wrong_line)
+
+        oversized_line = _report(
+            {
+                PROTECTED_BASELINE_PATH: [
+                    _candidate(
+                        PUBLIC_HASH,
+                        line=security_scan._MAX_SNAPSHOT_FILE_BYTES + 1,
+                        false_positive=True,
+                    )
+                ]
+            }
+        )
+        with self.assertRaisesRegex(SecurityScanError, "identity is malformed"):
+            evaluate_secret_report(scan, oversized_line)
+
     def test_baseline_rejects_unreviewed_or_stale_entries(self) -> None:
         scan = _report({PROTECTED_BASELINE_PATH: [_candidate(PUBLIC_HASH, line=12)]})
         unreviewed = _report(
@@ -182,12 +208,78 @@ class SecretBaselineTests(unittest.TestCase):
                     with self.assertRaisesRegex(SecurityScanError, "duplicate"):
                         security_scan._read_document(path, "test document")
 
+    def test_baseline_rejects_every_non_finite_json_number(self) -> None:
+        template = (
+            '{"version":"1.5.0","plugins_used":['
+            '{"name":"HexHighEntropyString","limit":%s}],'
+            '"filters_used":[],"results":{},'
+            '"generated_at":"2026-09-17T14:33:10Z"}'
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "document.json"
+            for value in ("NaN", "Infinity", "-Infinity", "1e999"):
+                with self.subTest(value=value):
+                    path.write_text(template % value, encoding="utf-8")
+                    with self.assertRaisesRegex(
+                        SecurityScanError,
+                        "non-finite|plugin limit",
+                    ):
+                        document = security_scan._read_document(
+                            path,
+                            "test document",
+                        )
+                        security_scan._validate_baseline_schema(document)
+
+    def test_arbitrary_size_integer_limit_fails_closed_without_overflow(self) -> None:
+        huge_integer = 10**10_000
+        scan = _report({})
+        baseline = _report({})
+        for document in (scan, baseline):
+            document["plugins_used"] = [
+                {
+                    "name": "HexHighEntropyString",
+                    "limit": huge_integer,
+                }
+            ]
+
+        with self.assertRaisesRegex(SecurityScanError, "plugin limit"):
+            evaluate_secret_report(scan, baseline)
+
+    def test_json_integer_parser_limit_fails_closed(self) -> None:
+        content = (
+            '{"version":"1.5.0","plugins_used":['
+            '{"name":"HexHighEntropyString","limit":1'
+            + "0"
+            * 100_000
+            + '}],"filters_used":[],"results":{},'
+            '"generated_at":"2026-09-17T14:33:10Z"}'
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "document.json"
+            path.write_text(content, encoding="utf-8")
+
+            with self.assertRaisesRegex(SecurityScanError, "cannot read"):
+                security_scan._read_document(path, "test document")
+
     def test_scanner_child_reaping_is_bounded(self) -> None:
         process = mock.Mock(spec=subprocess.Popen)
         process.poll.return_value = None
         process.wait.return_value = 0
 
         security_scan._terminate_and_reap(process)
+
+        process.kill.assert_called_once_with()
+        process.wait.assert_called_once_with(
+            timeout=security_scan._PROCESS_REAP_TIMEOUT_SECONDS
+        )
+
+    def test_scanner_child_reap_timeout_fails_closed(self) -> None:
+        process = mock.Mock(spec=subprocess.Popen)
+        process.poll.return_value = None
+        process.wait.side_effect = subprocess.TimeoutExpired(["scanner"], 1)
+
+        with self.assertRaisesRegex(SecurityScanError, "could not be reaped"):
+            security_scan._terminate_and_reap(process)
 
         process.kill.assert_called_once_with()
         process.wait.assert_called_once_with(

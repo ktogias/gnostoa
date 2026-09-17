@@ -38,8 +38,6 @@ def main() -> int:
             review_current._run_docker(
                 [
                     "run",
-                    "--name",
-                    container_name,
                     "--rm",
                     "--pull=never",
                     "--entrypoint",
@@ -50,6 +48,7 @@ def main() -> int:
                 ],
                 config_dir=config_dir,
                 timeout=1,
+                run_name=container_name,
             )
         except review_current.ProtectedJudgeUnavailable as exc:
             if "timed out" not in str(exc):

@@ -185,7 +185,6 @@ class ReviewAssuranceP2bExitReadbackRedTests(unittest.TestCase):
 
         plan = review_outer._build_isolated_execution_plan(
             consumer=copy.deepcopy(EXPECTED_CONSUMER),
-            input_dir=Path("/tmp/gnostoa-r2a-exit-input"),
             socket_volume="gnostoa-r2a-exit-socket",
             tmp_volume="gnostoa-r2a-exit-tmp",
             daemon_name="gnostoa-r2a-exit-daemon",

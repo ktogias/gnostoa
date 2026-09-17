@@ -151,7 +151,12 @@ def _job_has_blocking_verification_suite(job: object, suite: str) -> bool:
         normalized = " ".join(condition.split())
         if normalized != expected_condition:
             return False
-    if job.get("continue-on-error") not in (None, False) or "defaults" in job:
+    if (
+        job.get("continue-on-error") not in (None, False)
+        or "defaults" in job
+        or "env" in job
+        or "container" in job
+    ):
         return False
     steps = job.get("steps")
     if not isinstance(steps, list):
@@ -164,6 +169,7 @@ def _job_has_blocking_verification_suite(job: object, suite: str) -> bool:
             or step.get("continue-on-error") not in (None, False)
             or "shell" in step
             or "working-directory" in step
+            or "env" in step
         ):
             continue
         command = step.get("run")
@@ -173,6 +179,23 @@ def _job_has_blocking_verification_suite(job: object, suite: str) -> bool:
         ):
             return True
     return False
+
+
+def _workflow_has_blocking_verification_suite(
+    workflow: object,
+    job_name: str,
+    suite: str,
+) -> bool:
+    if not isinstance(workflow, dict):
+        return False
+    if "defaults" in workflow or workflow.get("env") != {
+        "GNOSTOA_CI_IMAGE": "gnostoa-ci:${{ github.sha }}"
+    }:
+        return False
+    jobs = workflow.get("jobs")
+    if not isinstance(jobs, dict):
+        return False
+    return _job_has_blocking_verification_suite(jobs.get(job_name), suite)
 
 
 def _add_tar_bytes(archive: tarfile.TarFile, name: str, content: bytes) -> None:
@@ -321,7 +344,18 @@ class PublicationBaselineTests(unittest.TestCase):
         self.assertTrue(codeowners_path.is_file())
 
         workflow = workflow_path.read_text(encoding="utf-8")
-        workflow_jobs = load_yaml(workflow_path)["jobs"]
+        workflow_document = load_yaml(workflow_path)
+        self.assertEqual(
+            {
+                "pull_request": None,
+                "merge_group": {"types": ["checks_requested"]},
+                "push": {"branches": ["main"]},
+                "schedule": [{"cron": "17 3 * * *"}],
+                "workflow_dispatch": None,
+            },
+            workflow_document[True],
+        )
+        workflow_jobs = workflow_document["jobs"]
         for event in (
             "pull_request:",
             "merge_group:",
@@ -339,13 +373,37 @@ class PublicationBaselineTests(unittest.TestCase):
             "extended",
         ):
             self.assertTrue(
-                _job_has_blocking_verification_suite(workflow_jobs[suite], suite),
+                _workflow_has_blocking_verification_suite(
+                    workflow_document,
+                    suite,
+                    suite,
+                ),
                 f"{suite} job does not invoke its shared verification suite",
             )
+        for root_modifier in (
+            {"defaults": {"run": {"shell": "bash {0} || true"}}},
+            {
+                "env": {
+                    "GNOSTOA_CI_IMAGE": "attacker-controlled:latest",
+                    "BASH_ENV": "/tmp/bypass",
+                }
+            },
+        ):
+            with self.subTest(workflow_modifier=root_modifier):
+                mutated_workflow = dict(workflow_document)
+                mutated_workflow.update(root_modifier)
+                self.assertFalse(
+                    _workflow_has_blocking_verification_suite(
+                        mutated_workflow,
+                        "security-fast",
+                        "security-fast",
+                    )
+                )
         for modifier in (
             {"if": "${{ false }}"},
             {"continue-on-error": True},
             {"shell": "bash {0} || true"},
+            {"env": {"BASH_ENV": "/tmp/bypass"}},
         ):
             with self.subTest(modifier=modifier):
                 self.assertFalse(
@@ -365,6 +423,8 @@ class PublicationBaselineTests(unittest.TestCase):
             {"if": "${{ false }}"},
             {"continue-on-error": True},
             {"defaults": {"run": {"shell": "bash {0} || true"}}},
+            {"env": {"GNOSTOA_CI_IMAGE": "attacker-controlled:latest"}},
+            {"container": "attacker-controlled:latest"},
         ):
             with self.subTest(job_modifier=modifier):
                 self.assertFalse(
@@ -510,8 +570,8 @@ class PublicationBaselineTests(unittest.TestCase):
         advisory_text = advisory_path.read_text(encoding="utf-8")
         advisory = load_yaml(advisory_path)
         self.assertEqual(
-            ["main"],
-            advisory[True]["push"]["branches-ignore"],
+            {"push": {"branches-ignore": ["main"]}},
+            advisory[True],
         )
         self.assertNotIn("pull_request:", advisory_text)
         advisory_jobs = advisory["jobs"]
@@ -522,7 +582,16 @@ class PublicationBaselineTests(unittest.TestCase):
         for suite in ("policy", "fast"):
             job = advisory_jobs[f"branch-advisory-{suite}"]
             self.assertEqual(f"branch-advisory-{suite}", job["name"])
-            self.assertTrue(_job_has_blocking_verification_suite(job, suite))
+            self.assertTrue(
+                _workflow_has_blocking_verification_suite(
+                    advisory,
+                    f"branch-advisory-{suite}",
+                    suite,
+                )
+            )
+
+        guardrails = (ROOT / "policy" / "guardrails.yaml").read_text(encoding="utf-8")
+        self.assertIn("- .github/workflows/branch-advisory.yml", guardrails)
 
         codeowners = codeowners_path.read_text(encoding="utf-8")
         for owned_path in (
