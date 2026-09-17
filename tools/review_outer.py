@@ -406,7 +406,6 @@ def _build_isolated_execution_plan(
         "--log-driver",
         "none",
         "--interactive",
-        "--stdin-once",
         "--read-only",
         "--cap-drop",
         "ALL",

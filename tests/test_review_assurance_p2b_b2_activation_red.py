@@ -233,7 +233,7 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         self.assertIn(f"{tmp_volume}:/tmp", outer_args)
         self.assertNotIn("--mount", outer_args)
         self.assertIn("--interactive", outer_args)
-        self.assertIn("--stdin-once", outer_args)
+        self.assertNotIn("--stdin-once", outer_args)
         outer_tmpfs_index = outer_args.index("--tmpfs")
         self.assertEqual(
             "/gnostoa-input:rw,noexec,nosuid,nodev,size=8m,"
