@@ -70,425 +70,416 @@ x-project-knowledge:
       target: /assessments/b2-p2-fresh-session-and-effect-authority-findings.md
 ---
 
-# Gnostoa: από το επαληθεύσιμο project knowledge σε operational world model
+# Gnostoa: from verifiable project knowledge to an operational world model
 
-Έρευνα και αρχιτεκτονική πρόταση — 17 Σεπτεμβρίου 2026.
+Research and architecture proposal — 17 September 2026.
 
-**Κατάσταση:** source-backed research/proposal του [#273](https://github.com/ktogias/gnostoa/issues/273). Η παρούσα knowledge-only καταγραφή και η μη διαταρακτική σύνδεσή της με τον Μίτο έχουν επιλεγεί· καμία υλοποίηση predictor/planner, εκτέλεση E0–E4, αλλαγή public contract, αλλαγή σειράς roadmap ή άλλη εξουσιοδότηση δεν προκύπτει. Οι προτεινόμενοι τύποι, ονόματα πειραμάτων και προϋπολογισμοί δεν είναι υπάρχοντα contracts ή δεσμευτικές αποφάσεις.
+**Status:** source-backed research/proposal for [#273](https://github.com/ktogias/gnostoa/issues/273). This knowledge-only record and its non-disruptive linkage into Ariadne are selected. It does not admit predictor or planner implementation, execution of E0–E4, a public-contract change, a roadmap-order change, or any other authority. Proposed types, experiment names, and budgets are neither existing contracts nor binding decisions.
 
-## 1. Συμπέρασμα
+## 1. Conclusion
 
-Η κατεύθυνση είναι πολύ σχετική με το Gnostoa, αλλά πρέπει να διαχωρίσουμε τρία πράγματα:
+The direction is highly relevant to Gnostoa, provided that three layers remain distinct:
 
-1. **Επαληθεύσιμη επιχειρησιακή κατάσταση:** τι γνωρίζουμε τώρα, από ποιες πηγές, για ποιο ακριβές αντικείμενο και με ποιες εκκρεμότητες. Υπάρχουν ήδη σημαντικές βάσεις.
-2. **Ρητό μοντέλο μεταβάσεων:** τι συνεπάγεται μια ενέργεια, τι ακυρώνει, τι πρέπει να παρατηρήσουμε μετά και πώς συνεχίζουμε όταν το αποτέλεσμα αποκλίνει. Είναι φυσική εξειδίκευση του προγραμματισμένου L1/L2.
-3. **Μαθημένο predictive world model / JEPA:** στατιστική πρόβλεψη συνεπειών και ενδεχομένως σχεδιασμός ενεργειών. Είναι μελλοντική ερευνητική υπόθεση, όχι σημερινό προαπαιτούμενο.
+1. **Verifiable operational state:** what is currently known, from which sources, for which exact subject, and with which unresolved obligations. Gnostoa already has substantial foundations here.
+2. **Explicit transition model:** what an action is expected to change, what it invalidates, what must be observed afterward, and how execution continues when the outcome diverges. This is a natural specialization of the planned L1/L2 path.
+3. **Learned predictive world model or JEPA:** statistical prediction of consequences and possibly action planning. This is a later research hypothesis, not a current prerequisite.
 
-Η πρόταση είναι **evidence-grounded operational model πρώτα, learned prediction μόνο μετά από μετρημένη ανάγκη**. Δεν χρειαζόμαστε νέο «JEPA subsystem» δίπλα στο L1. Χρειαζόμαστε να περιγράψουμε και να ελέγξουμε τις παρατηρήσεις και μεταβάσεις που ούτως ή άλλως το L1/L2 πρέπει να χειρίζονται.
+The recommended direction is **an evidence-grounded operational model first, with learned prediction only after measured need**. Gnostoa does not need a new JEPA subsystem beside L1. It needs explicit, testable descriptions of observations and transitions that L1 and L2 must handle in any case.
 
-Το κρίσιμο ερευνητικό ερώτημα δεν είναι αν μπορούμε να χρησιμοποιήσουμε embeddings. Είναι:
+The central research question is not whether embeddings can be used. It is:
 
-> Βελτιώνει ένα ρητό μοντέλο συνεπειών την πρόοδο, την ανάκαμψη και το κόστος επίβλεψης, πέρα από το όφελος μιας σωστής, συμπαγούς προβολής της τρέχουσας κατάστασης;
+> Does an explicit model of consequences improve progress, recovery, and supervision cost beyond the benefit of a correct, compact projection of current state?
 
-## 2. Τι ελέγχθηκε και ποια είναι η πραγματική αφετηρία
+## 2. Inspected baseline and current project position
 
-Έγινε fresh provider read-back και επιθεώρηση πηγαίου κώδικα στο [main e071ab60a418eddda5bf008004ee96faafbf1e7c](https://github.com/ktogias/gnostoa/commit/e071ab60a418eddda5bf008004ee96faafbf1e7c). Μοναδικό ανοικτό Work Item με `roadmap:now` ήταν το [#262](https://github.com/ktogias/gnostoa/issues/262). Η επιλεγμένη εργασία είναι η συμφωνία μεταξύ δηλωμένου και πραγματικά ελεγχόμενου Ruff scope, όχι η ανάπτυξη world model.
+The research used a fresh provider read-back and inspected source at protected [main e071ab60a418eddda5bf008004ee96faafbf1e7c](https://github.com/ktogias/gnostoa/commit/e071ab60a418eddda5bf008004ee96faafbf1e7c). At the inspection cut, the sole open Work Item carrying roadmap:now was [#262](https://github.com/ktogias/gnostoa/issues/262). Its selected work is agreement between declared and actually enforced Ruff scope, not world-model development.
 
-- Το [#270](https://github.com/ktogias/gnostoa/pull/270) έχει ενσωματωθεί: συνδέει το roadmap με τον ενοποιημένο Μίτο v9. Δεν υλοποιεί controller.
-- Το [#272](https://github.com/ktogias/gnostoa/pull/272) ήταν ανοικτό και μη ενσωματωμένο, στο head `1159858f6b8be09ec99faab8faf96c81570d74c4`. Η έρευνα δεν επανεκτέλεσε ή πιστοποίησε το πλήρες CI/review convergence του.
-- Το P2b rolling-trust exit έχει καταγραφεί με το [Decision 0080](https://github.com/ktogias/gnostoa/blob/e071ab60a418eddda5bf008004ee96faafbf1e7c/knowledge/decisions/0080-complete-r2a-p2b-rolling-trust-exit-by-negative-readback.md). Αυτό δεν ισοδυναμεί με πλήρη reviewer qualification ή ολοκλήρωση του #11.
-- Το [Q0 checkpoint](https://github.com/ktogias/gnostoa/issues/10#issuecomment-5706402207) και το προστατευμένο qualification snapshot διατηρούν `entries: []`. Δεν επιτρέπεται να κατασκευάσουμε qualification ή independence για να εμφανιστεί πράσινο αποτέλεσμα.
+- [#270](https://github.com/ktogias/gnostoa/pull/270) was merged and connects the roadmap to consolidated Ariadne v9. It does not implement a controller.
+- [#272](https://github.com/ktogias/gnostoa/pull/272) was open and unmerged at head 1159858f6b8be09ec99faab8faf96c81570d74c4. This research did not rerun or certify its complete CI and review convergence.
+- The P2b rolling-trust exit is recorded by [Decision 0080](https://github.com/ktogias/gnostoa/blob/e071ab60a418eddda5bf008004ee96faafbf1e7c/knowledge/decisions/0080-complete-r2a-p2b-rolling-trust-exit-by-negative-readback.md). That does not establish full reviewer qualification or completion of #11.
+- The [Q0 checkpoint](https://github.com/ktogias/gnostoa/issues/10#issuecomment-5706402207) and protected qualification snapshot retain an empty entries collection. Qualification or independence must not be invented to produce a green result.
 
-Ο κανονικός δρόμος παραμένει:
+The canonical path remains:
 
-**#262 → L0-lite → χρήσιμο L1 → Q0 και L2 ανεξάρτητα/παράλληλα → L3 → μέτρηση οφέλους → #259 → μικρό #266-P0 ή αναβολή → νέα είσοδος στη Phase D.**
+**#262 → L0-lite → useful L1 → Q0 and L2 independently or in parallel → L3 → leverage measurement → #259 → small #266-P0 or defer → re-entry into Phase D.**
 
-Το L4 είναι προαιρετικό μόνο αν αποδειχθεί πρόσθετο όφελος· δεν είναι νέο υποχρεωτικό σκαλοπάτι. Πηγές: [Ariadne v9](https://github.com/ktogias/gnostoa/issues/14#issuecomment-5706634917), [πλήρης ανάλυση](https://github.com/ktogias/gnostoa/issues/14#issuecomment-5706705782), [διευκρίνιση σειράς](https://github.com/ktogias/gnostoa/issues/14#issuecomment-5706742527), [τελευταίο συμπλήρωμα provenance](https://github.com/ktogias/gnostoa/issues/14#issuecomment-5711686708).
+L4 remains optional and requires evidence of incremental value. It is not a new mandatory rung. Sources: [Ariadne v9](https://github.com/ktogias/gnostoa/issues/14#issuecomment-5706634917), [full analysis](https://github.com/ktogias/gnostoa/issues/14#issuecomment-5706705782), [ordering clarification](https://github.com/ktogias/gnostoa/issues/14#issuecomment-5706742527), and the [latest provenance addendum](https://github.com/ktogias/gnostoa/issues/14#issuecomment-5711686708).
 
-### Μικρός πραγματικός διαγνωστικός έλεγχος
+### Small diagnostic observation
 
-Εκτελέστηκε μόνο η υπάρχουσα προβολή orientation, χωρίς writes, με ρητό χρόνο αξιολόγησης `2026-09-17T11:00:00Z`:
+Only the existing orientation projection was run, without writes, at explicit evaluation time 2026-09-17T11:00:00Z:
 
-```bash
-python3 tasks/gnostoa_orientation.py \
-  --snapshot tasks/issue-14-orientation.json \
-  --repository-root . \
-  --evaluated-at 2026-09-17T11:00:00Z \
-  --format json
-```
+    python3 tasks/gnostoa_orientation.py       --snapshot tasks/issue-14-orientation.json       --repository-root .       --evaluated-at 2026-09-17T11:00:00Z       --format json
 
-Αποτέλεσμα: exit `1`, `STALE`, με ληγμένες πηγές, αλλαγμένο roadmap digest και διαφορετικό source commit/tree. Η εκτέλεση έγινε native ως read-only διάγνωση του υπάρχοντος standard-library εργαλείου, όχι ως πλήρης verification suite ή ισχυρισμός container parity.
+The observed result was exit 1 and STALE, with expired sources, a changed roadmap digest, and a different source commit/tree. The command ran natively as a read-only diagnostic of the existing standard-library tool. It was not a full verification suite and did not establish container parity.
 
-Δεν διατηρήθηκε το ακριβές stdout ούτε χωριστό execution receipt. Συνεπώς, η
-παραπάνω πρόταση είναι περιορισμένη, συσχετισμένη ερευνητική παρατήρηση και η
-απαρίθμηση των diagnostics είναι σύνοψη του αναλυτή, όχι επαληθεύσιμο exact-run
-artifact. Η σημερινή κατάσταση και η επιλογή εργασίας προκύπτουν από το χωριστό
-provider/source read-back της §2· δεν στηρίζονται σε αυτή την εκτέλεση. Το
-σταθερό `--evaluated-at`, η διατηρημένη είσοδος και ο συνδεδεμένος κώδικας
-επιτρέπουν νέα αναπαραγωγή, η οποία θα αποτελεί νέο observation και όχι
-αναδρομική απόδειξη του μη διατηρημένου stdout.
+Exact stdout and a separate execution receipt were not retained. The preceding statement is therefore a bounded, correlated research observation; the diagnostic enumeration is the analyst's summary, not a verifiable exact-run artifact. Current provider state and work selection come from the separate provider/source read-back above, not from this execution. The fixed evaluation time, retained input, and linked code permit a new reproduction, which would be a new observation rather than retroactive proof of the unretained stdout.
 
-Αυτό είναι αναμενόμενο: το retained snapshot είναι ιστορικό/regression evidence και **δεν πρέπει να «διορθωθεί» σβήνοντας την ιστορία του**. Δείχνει ότι ήδη υπάρχει detector τοπικής παλαίωσης. Δεν αποδεικνύει ότι υπάρχει πλήρης αυτόματος provider observer ή ότι κάθε consumer θα τον καλέσει σωστά. [Υπάρχων κώδικας](https://github.com/ktogias/gnostoa/blob/e071ab60a418eddda5bf008004ee96faafbf1e7c/tasks/gnostoa_orientation.py).
+This outcome is expected: the retained snapshot is historical regression evidence and should not be repaired by deleting its history. It shows an existing local staleness detector. It does not prove that a complete automated provider observer exists or that every consumer will invoke it correctly. See the [orientation implementation](https://github.com/ktogias/gnostoa/blob/e071ab60a418eddda5bf008004ee96faafbf1e7c/tasks/gnostoa_orientation.py).
 
-## 3. Η πραγματική σχέση με τη JEPA
+## 3. The actual relationship to JEPA
 
-Η αρχική [I-JEPA](https://arxiv.org/abs/2301.08243) προβλέπει αναπαραστάσεις τμημάτων εικόνας από άλλα τμήματα. Δεν είναι από μόνη της controller ενεργειών. Το [V-JEPA 2](https://arxiv.org/abs/2506.09985) και το [LeWorldModel](https://arxiv.org/html/2603.19312v1) συνδέουν την αναπαράσταση με προβλέψεις εξαρτώμενες από ενέργειες και planning.
+The original [I-JEPA](https://arxiv.org/abs/2301.08243) predicts representations of image regions from other regions. By itself, it is not an action controller. [V-JEPA 2](https://arxiv.org/abs/2506.09985) and [LeWorldModel](https://arxiv.org/html/2603.19312v1) connect representation learning to action-conditioned prediction and planning.
 
-Η αρχή που μας ενδιαφέρει είναι: **να κρατάμε ό,τι χρειάζεται για τις συνέπειες μιας ενέργειας, χωρίς να ξαναπαράγουμε όλο το ιστορικό ή όλα τα ακατέργαστα δεδομένα**.
+The useful principle for Gnostoa is to preserve the information needed to reason about an action's consequences without reproducing the entire history or all raw data.
 
-Για το Gnostoa αυτό σημαίνει, π.χ., ότι δεν χρειάζεται όλο το κείμενο εκατοντάδων σχολίων για να ξέρουμε ότι ένα review αφορά παλιό head. Χρειάζονται όμως το ακριβές head, η ταυτότητα του review, η προέλευση και το σχετικό review cut. Αυτά δεν είναι «θόρυβος» προς συμπίεση.
+For example, Gnostoa does not need the full prose of hundreds of comments merely to know that a review applies to an old head. It does need the exact head, review identity, provenance, and applicable review cut. Those fields are not noise to compress away.
 
-| Έννοια | Αντίστοιχο στο Gnostoa | Κρίσιμη διαφορά |
+| Concept | Gnostoa counterpart | Critical difference |
 |---|---|---|
-| Observation | Git/provider records, checks, reviews, artifact observations | Ελλιπείς και ασύγχρονες παρατηρήσεις, όχι παγκόσμιο snapshot |
-| Representation | Περιορισμένη προβολή project/task state | Exact identifiers παραμένουν εκτός latent συμπίεσης |
-| Action | Request review, εκτέλεση ελέγχου, mutation, consumption | Η δυνατότητα πρόβλεψης δεν παρέχει άδεια εκτέλεσης |
-| Transition model | Αναμενόμενες αλλαγές, invalidations και read-backs | Περιλαμβάνει εξωτερικά συμβάντα και πολλαπλά δυνατά αποτελέσματα |
-| Prediction error | Απόκλιση αναμενόμενου/παρατηρημένου αποτελέσματος | Δεν σημαίνει αυτομάτως bug ή κακόβουλο actor |
-| Planning | Επιλογή επόμενης ενέργειας που προωθεί τον σκοπό | Μόνο μέσα στην ήδη επιτρεπόμενη περιοχή ενεργειών |
+| Observation | Git/provider records, checks, reviews, artifact observations | Partial and asynchronous observations, not a global snapshot |
+| Representation | Bounded projection of project/task state | Exact identifiers remain outside latent compression |
+| Action | Request review, run a check, mutate, consume evidence | Predictability does not grant execution authority |
+| Transition model | Expected changes, invalidations, and read-backs | External events and multiple possible outcomes are normal |
+| Prediction error | Divergence between expected and observed outcome | Divergence does not automatically imply a bug or hostile actor |
+| Planning | Select a next action that advances the intent | Choices stay inside the already admissible action set |
 
-Ένα dashboard είναι προβολή. Ένας validator ελέγχει ιδιότητες. Ένας reconciler ανακατασκευάζει και συγκρίνει κατάσταση. **Predictive operational model** έχουμε όταν προσθέτουμε ρητές action-conditioned προσδοκίες και ελέγχουμε την προβλεπτική τους χρησιμότητα. Ας μην ονομάσουμε αυτά τα διαφορετικά επίπεδα όλα «JEPA».
+A dashboard is a projection. A validator checks properties. A reconciler reconstructs and compares state. A **predictive operational model** begins only when action-conditioned expectations are explicit and their predictive utility is tested. These layers should not all be called JEPA.
 
-Η σχετική έρευνα για [bisimulation και task-relevant representations](https://arxiv.org/abs/2006.10742) δίνει ακόμη μία χρήσιμη αρχή: δύο καταστάσεις μπορούν να συμπτυχθούν μόνο εφόσον οι διαφορές τους δεν αλλάζουν τις σχετικές συνέπειες. Η εφαρμογή αυτού του κριτηρίου στο Gnostoa είναι δική μας αναλογία, όχι μεταφορά θεωρητικής εγγύησης από MDPs σε GitHub.
+Research on [bisimulation and task-relevant representations](https://arxiv.org/abs/2006.10742) offers another useful principle: two states may be collapsed only when their differences do not alter relevant consequences. Applying that criterion to Gnostoa is our analogy, not a transfer of an MDP theorem to GitHub.
 
-## 4. Υπάρχοντα θεμέλια και πραγματικά κενά
+## 4. Existing foundations and actual gaps
 
-| Περιοχή | Ήδη υλοποιημένο/καταγεγραμμένο | Τι δεν συνεπάγεται | Κατάλληλη συνέχεια |
+| Area | Already implemented or recorded | What it does not imply | Suitable next use |
 |---|---|---|---|
-| Canonical knowledge | OKF, IDs, ownership, relations, μη αποδυνάμωση profiles | Όχι πλήρες μοντέλο της πραγματικής συμπεριφοράς του λογισμικού | Συνδεδεμένες, task-specific παρατηρήσεις και υποθέσεις |
-| Context packs | Deterministic graph traversal και budget | Όχι Markov-sufficient κατάσταση ή semantic completeness | Έλεγχος επάρκειας για συγκεκριμένες αποφάσεις |
-| Task envelopes | State, checkpoints, dependencies, handoff | Caller-supplied observations, όχι provider enforcement | Συλλογή και binding από τον σωστό observer |
-| Self-orientation | Freshness, digest και Git-subject checks | Όχι συνεχής provider reconciliation | L1 ως πραγματικός consumer |
-| Capsules | Stages, input digests, downstream invalidation, authority-bound execution | Όχι γενικός ασφαλής scheduler όλων των effects | Επαναχρησιμοποίηση μόνο των σχετικών αρχών/μηχανισμών |
-| R2A | Bound evidence, protected prior-integrated judge, advisory outcomes | Όχι αυτόματη reviewer qualification, acceptance ή merge authority | L1 collection, Q0 qualification, L3 πλήρης bounded loop |
-| Behavioral traceability | Υποχρεώσεις, υποθέσεις, implementation claims και evidence dependencies | Όχι απόδειξη ότι εντοπίστηκε σωστά το ζητούμενο πρόβλημα | Operational consequences ως διαψεύσιμοι ισχυρισμοί |
-| Μίτος/roadmap | Selection, admission, scope, return path | Όχι αυτόματη εξουσιοδότηση νέου πειράματος | Ένταξη μέσα στους υπάρχοντες owners |
+| Canonical knowledge | OKF, stable IDs, ownership, relations, non-weakening profiles | A complete model of actual software behavior | Source-linked task observations and hypotheses |
+| Context packs | Deterministic graph traversal and budgets | Markov-sufficient state or semantic completeness | Sufficiency tests for specific decisions |
+| Task envelopes | State, checkpoints, dependencies, handoff | Provider enforcement; observations are caller supplied | Collection and binding by the correct observer |
+| Self-orientation | Freshness, digest, and Git-subject checks | Continuous provider reconciliation | L1 as a real consumer |
+| Capsules | Stages, input digests, downstream invalidation, authority-bound execution | A safe general scheduler for every effect | Reuse only relevant principles and mechanisms |
+| R2A | Bound evidence, protected prior-integrated judge, advisory outcomes | Automatic reviewer qualification, acceptance, or merge authority | L1 collection, Q0 qualification, L3 bounded loop |
+| Behavioral traceability | Obligations, hypotheses, implementation claims, evidence dependencies | Proof that the correct problem was identified | Operational consequences as falsifiable claims |
+| Ariadne and roadmap | Selection, admission, scope, return path | Automatic authorization for a new experiment | Integration under current owners |
 
-Κώδικας αναφοράς: [task envelopes](https://github.com/ktogias/gnostoa/blob/e071ab60a418eddda5bf008004ee96faafbf1e7c/tools/task_envelope.py), [context packs](https://github.com/ktogias/gnostoa/blob/e071ab60a418eddda5bf008004ee96faafbf1e7c/tools/build_context_pack.py), [Capsule stages](https://github.com/ktogias/gnostoa/blob/e071ab60a418eddda5bf008004ee96faafbf1e7c/tools/capsule/stages.py), [Capsule authority](https://github.com/ktogias/gnostoa/blob/e071ab60a418eddda5bf008004ee96faafbf1e7c/tools/capsule/authority.py), [one-shot claims](https://github.com/ktogias/gnostoa/blob/e071ab60a418eddda5bf008004ee96faafbf1e7c/tools/capsule/effect_claim.py), [behavioral traceability](https://github.com/ktogias/gnostoa/blob/e071ab60a418eddda5bf008004ee96faafbf1e7c/knowledge/requirements/bounded-behavioral-traceability.md).
+Code anchors: [task envelopes](https://github.com/ktogias/gnostoa/blob/e071ab60a418eddda5bf008004ee96faafbf1e7c/tools/task_envelope.py), [context packs](https://github.com/ktogias/gnostoa/blob/e071ab60a418eddda5bf008004ee96faafbf1e7c/tools/build_context_pack.py), [Capsule stages](https://github.com/ktogias/gnostoa/blob/e071ab60a418eddda5bf008004ee96faafbf1e7c/tools/capsule/stages.py), [Capsule authority](https://github.com/ktogias/gnostoa/blob/e071ab60a418eddda5bf008004ee96faafbf1e7c/tools/capsule/authority.py), [one-shot effect claims](https://github.com/ktogias/gnostoa/blob/e071ab60a418eddda5bf008004ee96faafbf1e7c/tools/capsule/effect_claim.py), and [bounded behavioral traceability](https://github.com/ktogias/gnostoa/blob/e071ab60a418eddda5bf008004ee96faafbf1e7c/knowledge/requirements/bounded-behavioral-traceability.md).
 
-### Δύο προηγούμενα που δεν πρέπει να επαναλάβουμε
+### Two precedents that must not be repeated
 
-Το B2/P2 έδειξε ότι ένα καλό envelope μπορεί να βοηθά στην επανεκκίνηση, ενώ ο agent εξακολουθεί να κάνει μη εξουσιοδοτημένα provider effects. Η αποτύπωση κανόνα δεν είναι enforcement. [B2/P2 findings](https://github.com/ktogias/gnostoa/blob/e071ab60a418eddda5bf008004ee96faafbf1e7c/knowledge/assessments/b2-p2-fresh-session-and-effect-authority-findings.md).
+B2/P2 showed that a good envelope can assist restart while the agent still performs unauthorized provider effects. Recording a rule is not enforcement. See the [B2/P2 findings](https://github.com/ktogias/gnostoa/blob/e071ab60a418eddda5bf008004ee96faafbf1e7c/knowledge/assessments/b2-p2-fresh-session-and-effect-authority-findings.md).
 
-Το C4-v0 εντόπισε 3/8 false-ready περιπτώσεις, αλλά κανένας από τους τέσσερις θετικούς controls δεν έφτασε σε READY: παρέμειναν INDETERMINATE. Δεν ήταν επιτυχία επειδή «δεν πέρασε τίποτα επικίνδυνο». Απορρίφθηκε, και δεν πρέπει να αναβιώσει ως «world-model readiness score». [Αποτέλεσμα C4-v0](https://github.com/ktogias/gnostoa/blob/e071ab60a418eddda5bf008004ee96faafbf1e7c/knowledge/assessments/b2-c4v0-readiness-predicate-experiment.md).
+C4-v0 detected 3 of 8 false-ready cases, but none of the four positive controls reached READY; they remained INDETERMINATE. It was not successful merely because nothing unsafe passed. It was rejected and must not return as a world-model readiness score. See the [C4-v0 result](https://github.com/ktogias/gnostoa/blob/e071ab60a418eddda5bf008004ee96faafbf1e7c/knowledge/assessments/b2-c4v0-readiness-predicate-experiment.md).
 
-## 5. Τι λένε τα κοντινότερα experiments
+## 5. Closest experiments and transferable patterns
 
-| Έργο/πηγή | Τι πραγματικά δοκιμάζει | Τι κρατάμε | Τι δεν μεταφέρουμε |
+| Work or source | What it actually tests | What Gnostoa should retain | What must not be transferred |
 |---|---|---|---|
-| [LeWorldModel](https://arxiv.org/html/2603.19312v1) | Μικρό action-conditioned latent model σε περιβάλλοντα ελέγχου | Compact state, επόμενη συνέπεια, ελεγχόμενη έκπληξη | Όχι απόδειξη software autonomy ή μικρών αναγκών για κάθε domain |
-| [WorldCoder](https://arxiv.org/abs/2402.12275) | LLM γράφει εκτελέσιμο Python world model και το διορθώνει με πραγματικά observations | Ελέγξιμες μεταβάσεις, replay, counterexamples | Deterministic-world παραδοχή και optimism σε άγνωστα permissions |
-| [Executable World Models for ARC-AGI-3](https://arxiv.org/html/2605.05138v1) | Σύγκριση predicted/observed state και stop-on-mismatch σε παιχνίδια | Έλεγχος μετά από κάθε βήμα, competing hypotheses | Δεν αρκεί prompt-based executor όταν υπάρχει διαδρομή παράκαμψης |
-| [WebDreamer](https://arxiv.org/pdf/2411.06559) | Πρόβλεψη συνεπειών web actions πριν από την εκτέλεση | One-step lookahead και replanning | Μεγαλύτερο φανταστικό rollout δεν είναι αυτομάτως καλύτερο |
-| [Meta CWM](https://arxiv.org/html/2510.02387v1) | Coding LLM εκπαιδευμένο και σε execution/agent traces | Αξία πραγματικών action/result datasets | Δεν επιλέγεται production dependency· το paper δηλώνει research-use περιορισμούς |
-| [SWE-World](https://arxiv.org/html/2602.03419v1) | Πραγματικές file operations μαζί με προβλεπόμενο execution/test feedback | Hybrid design, διαφορετικοί τύποι observations | Simulated PASS δεν είναι verification evidence |
-| [DreamerV3](https://doi.org/10.1038/s41586-025-08744-2) | Policy learning μέσα σε imagined trajectories με περιβαλλοντικό feedback | Χωρισμός model, policy, αξιολόγησης | Reward «περισσότερα merges» και αναγωγή παιχνιδιών σε governance |
-| [MOPO](https://arxiv.org/abs/2005.13239) | Offline model-based RL υπό distribution shift | Συντηρητικότητα και explicit uncertainty εκτός κάλυψης δεδομένων | Καμία γενική εγγύηση ασφαλών GitHub effects |
-| [Magentic-One](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/magentic-one.html) | Task/Progress Ledgers και ανασχεδιασμός όταν η ομάδα κολλά | Χωρισμός facts/guesses/progress, stall detection | LLM-authored ledger ως authoritative state |
+| [LeWorldModel](https://arxiv.org/html/2603.19312v1) | Small action-conditioned latent model in control environments | Compact state, next consequence, controlled surprise | Proof of software autonomy or universal small-data sufficiency |
+| [WorldCoder](https://arxiv.org/abs/2402.12275) | An LLM writes an executable Python world model and repairs it from observations | Testable transitions, replay, counterexamples | Deterministic-world assumptions and optimism about unknown permissions |
+| [Executable World Models for ARC-AGI-3](https://arxiv.org/html/2605.05138v1) | Predicted/observed state comparison and stop-on-mismatch in games | Check after each step; retain competing hypotheses | Prompt-only control where an executor can bypass guards |
+| [WebDreamer](https://arxiv.org/pdf/2411.06559) | Predict consequences of web actions before execution | One-step lookahead and replanning | Assuming a longer imagined rollout is automatically better |
+| [Meta CWM](https://arxiv.org/html/2510.02387v1) | Coding LLM trained with execution and agent traces | Value of real action/result datasets | A production dependency; the paper states research-use restrictions |
+| [SWE-World](https://arxiv.org/html/2602.03419v1) | Real file operations combined with predicted execution/test feedback | Hybrid design and typed observations | Treating simulated PASS as verification evidence |
+| [DreamerV3](https://doi.org/10.1038/s41586-025-08744-2) | Policy learning over imagined trajectories with environment feedback | Separate model, policy, and evaluation | A reward of more merges or a direct analogy from games to governance |
+| [MOPO](https://arxiv.org/abs/2005.13239) | Offline model-based RL under distribution shift | Conservatism and explicit uncertainty beyond data coverage | A general guarantee for safe GitHub effects |
+| [Magentic-One](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/magentic-one.html) | Task and Progress Ledgers plus replanning on stalls | Separate facts, guesses, and progress; detect stalls | Treat an LLM-authored ledger as authoritative state |
 
-Δύο ευρήματα αξίζουν ιδιαίτερη προσοχή:
+Two findings deserve particular attention:
 
-- Στο WebDreamer, η συγκεκριμένη ablation του Online-Mind2Web έδωσε 37% για horizon 1 και 32% για horizons 2/3. Τα μεγαλύτερα rollouts μπορούσαν να επινοούν διαθέσιμες ενέργειες. Πρόκειται για αποτέλεσμα εκείνου του benchmark, όχι καθολικό optimum. Στη δική μας αφετηρία συνηγορεί υπέρ **μία πρόβλεψη → μία πραγματική ενέργεια → read-back**.
-- Το SWE-World δίνει στον simulator ground-truth patch και αρχική ανάλυση, κρυμμένα από τον agent. Είναι privileged surrogate setup. Ούτε αυτό ούτε η περιορισμένη ακρίβεια του predicted reward τεκμηριώνουν ότι μπορούμε να καταργήσουμε την πραγματική εκτέλεση tests σε άγνωστο PR.
+- In WebDreamer's Online-Mind2Web ablation, horizon 1 scored 37 percent and horizons 2/3 scored 32 percent. Longer rollouts could invent available actions. This is a result for that benchmark, not a universal optimum. For Gnostoa it supports the initial pattern **one prediction → one real action → read-back**.
+- SWE-World gives the simulator a ground-truth patch and initial analysis hidden from the agent. That is a privileged surrogate setup. Neither this nor limited predicted-reward accuracy justifies removing real test execution for an unknown pull request.
 
-### Engineering patterns που είναι πιο άμεσα χρήσιμα από νέο ML
+### Engineering patterns with nearer-term value than new ML
 
-**Reconciliation:** το [Kubernetes controller pattern](https://kubernetes.io/docs/concepts/architecture/controller/) διαχωρίζει επιθυμητή και παρατηρημένη κατάσταση και επαναλαμβάνει τη σύγκριση. Μεταφέρουμε το pattern, όχι Kubernetes dependency ή την υπόθεση ότι τα software tasks είναι πλήρως δηλωτικά.
+**Reconciliation.** The [Kubernetes controller pattern](https://kubernetes.io/docs/concepts/architecture/controller/) separates desired from observed state and repeatedly reconciles them. Gnostoa should transfer the pattern, not a Kubernetes dependency or the assumption that software tasks are fully declarative.
 
-**Crash/retry semantics:** η [Temporal τεκμηρίωση](https://docs.temporal.io/activity-definition) εξηγεί ότι ένα Activity μπορεί να εκτελεστεί πάνω από μία φορά, ακόμη και αν το completion παρατηρείται μία φορά. Άρα διαχωρίζουμε intention, attempt και observed effect. Δεν εγκαθιστούμε Temporal μόνο για να πάρουμε αυτή την αρχή.
+**Crash and retry semantics.** [Temporal's Activity documentation](https://docs.temporal.io/activity-definition) explains that an Activity may execute more than once even when completion is observed once. Gnostoa should distinguish intention, attempt, and observed effect. This principle does not justify installing Temporal.
 
-**Atomic preconditions:** το [GitHub merge endpoint](https://docs.github.com/en/rest/pulls/pulls#merge-a-pull-request) μπορεί να απαιτεί συγκεκριμένο `sha` και να απορρίψει mismatch. Το read-before-act από μόνο του αφήνει race. Το head precondition, όμως, δεν ελέγχει ατομικά όλα τα δικά μας review-cut/authority constraints.
+**Atomic preconditions.** The [GitHub merge endpoint](https://docs.github.com/en/rest/pulls/pulls#merge-a-pull-request) can require a specific SHA and reject a mismatch. Read-before-act alone leaves a race. A head precondition still does not atomically enforce Gnostoa's review-cut and authority constraints.
 
-**Concurrency:** η [τεκμηρίωση Actions που αναγνώστηκε στις 17/09/2026](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency) ορίζει προαιρετικό `queue` με τιμές `single` και `max`: το `max` επιτρέπει έως 100 pending runs και δεν συνδυάζεται με `cancel-in-progress: true`. Αυτό είναι χρονικά δεσμευμένο provider-documentation input και όχι δική μας εκτελεσμένη characterization. Δεν είναι σωστό να στηρίξουμε τον σχεδιασμό σε παλιό απόλυτο ισχυρισμό ότι «δεν υπάρχει queue». Παρ’ όλα αυτά, concurrency group δεν αποτελεί durable transaction ledger ή καθολικό lock έναντι εξωτερικών actors.
+**Concurrency.** The [GitHub Actions documentation read on 17 September 2026](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency) defines the optional queue values single and max. Max permits up to 100 pending runs and cannot be combined with cancel-in-progress set to true. This is date-bound provider-documentation input, not an executed characterization by this research. A concurrency group is still neither a durable transaction ledger nor a universal lock against external actors.
 
-**Interfaces και tests:** το [SWE-agent](https://arxiv.org/abs/2405.15793) δείχνει τη σημασία της διεπαφής εργαλείων. Τα [stateful tests](https://hypothesis.readthedocs.io/en/latest/stateful.html) ελέγχουν ακολουθίες και invariants. Το [AgentBoard](https://github.com/hkust-nlp/AgentBoard) μετρά ενδιάμεση πρόοδο, ενώ το [AgentDojo](https://arxiv.org/abs/2406.13352) συνδυάζει αξιολόγηση επιθέσεων με εκτέλεση νόμιμων εργασιών. Δεν επιλέγεται κανένα νέο framework ως dependency.
+**Interfaces and tests.** [SWE-agent](https://arxiv.org/abs/2405.15793) demonstrates the importance of tool interfaces. [Hypothesis stateful testing](https://hypothesis.readthedocs.io/en/latest/stateful.html) exercises action sequences and invariants. [AgentBoard](https://github.com/hkust-nlp/AgentBoard) measures intermediate progress, while [AgentDojo](https://arxiv.org/abs/2406.13352) evaluates attacks together with completion of legitimate tasks. This report selects none of these frameworks as a dependency.
 
-Η ερευνητική επαναχρησιμοποίηση εδώ αφορά ιδέες και patterns. Εισαγωγή κώδικα, datasets, model weights ή services θα απαιτήσει χωριστό version-bound έλεγχο καταλληλότητας, αδειών και κόστους. Δεν έχει δοθεί τέτοια έγκριση από την παρούσα αναφορά.
+The reuse assessment concerns ideas and patterns. Importing code, datasets, weights, or services requires a separate, version-bound suitability, license, and cost review. This report grants no such approval.
 
-## 6. Προτεινόμενο μοντέλο: γνωρίζω, περιμένω, επιτρέπω, παρατηρώ
+## 6. Proposed model: know, expect, permit, observe
 
-Δεν μπορούμε να γνωρίζουμε όλη την πραγματική κατάσταση του GitHub την ίδια στιγμή. Μπορούμε να κατασκευάζουμε ένα **μερικό μοντέλο γνώσης** από συγκεκριμένες παρατηρήσεις:
+Gnostoa cannot know all real GitHub state at one instant. It can construct a **partial knowledge model** from identified observations:
 
-`B_t = reduce(observations through cut t, effective intent, policy, authority)`
+**B at time t = reduce(observations through cut t, effective intent, policy, authority)**
 
-Και να εκτιμούμε:
+It can then estimate:
 
-`predict(B_t, action) → expected delta, possible outcomes, invalidations, required read-backs`
+**predict(B, action) → expected delta, possible outcomes, invalidations, required read-backs**
 
-Τέλος:
+Finally:
 
-`reconcile(B_t, action, new observations) → revised belief, discrepancy, next admissible options`
+**reconcile(B, action, new observations) → revised belief, discrepancy, next admissible options**
 
-Αυτά είναι προτεινόμενα λογικά interfaces, όχι καινούργια public APIs. Η μετάβαση είναι γενικά **σχέση πιθανών αποτελεσμάτων**, όχι μια μοναδική deterministic function του κόσμου: παρεμβαίνουν άνθρωποι, reviewers, χρονικές λήξεις και provider delays.
+These are proposed logical interfaces, not new public APIs. The transition is generally a relation over possible outcomes rather than a single deterministic world function because people, reviewers, expirations, and provider delays intervene.
 
-### Τέσσερις διακριτές περιοχές
+### Four separate planes
 
-| Περιοχή | Περιεχόμενο | Πηγή εγκυρότητας |
+| Plane | Contents | Source of validity |
 |---|---|---|
-| Intent/policy/authority | Σκοπός, non-goals, απαιτήσεις, όρια effects | Υφιστάμενα Work Items, Decisions και effective authority |
-| Observed/derived state | Source identities, checks, review cut, pending effects | Παρατηρήσεις δεμένες σε πηγές και χρόνο |
-| Dynamics/predictions | Αναμενόμενες αλλαγές, κίνδυνοι, κόστος, πληροφορία που λείπει | Εκτελέσιμοι κανόνες ή ρητά σημειωμένη inference |
-| Execution/assurance | Guards, actual effects, receipts, review, owner choice | Υφιστάμενοι effect handlers, R2A και ανθρώπινη αρμοδιότητα |
+| Intent, policy, authority | Purpose, non-goals, requirements, effect bounds | Existing Work Items, Decisions, and effective authority |
+| Observed and derived state | Source identities, checks, review cut, pending effects | Observations bound to source and time |
+| Dynamics and predictions | Expected changes, risks, costs, missing information | Executable rules or explicitly labelled inference |
+| Execution and assurance | Guards, actual effects, receipts, review, owner choice | Existing effect handlers, R2A, and human authority |
 
-Η γνώση ότι μια ενέργεια επιτρέπεται **δεν αποδεικνύει ότι είναι χρήσιμη**. Η πρόβλεψη ότι θα πετύχει **δεν την εξουσιοδοτεί**. Και ένα ορθό workflow **δεν αποδεικνύει ότι λύσαμε το σωστό πρόβλημα**.
+Knowing that an action is permitted does not show that it is useful. Predicting that it will succeed does not authorize it. A correct workflow does not prove that it solved the right problem.
 
-### Ελάχιστη, όχι καθολική αναπαράσταση
+### Minimal, task-specific representation
 
-Κάθε task-specific state χρειάζεται μόνο τα πεδία που επηρεάζουν τη συγκεκριμένη απόφαση:
+Each state needs only fields that affect the relevant decision:
 
-- ακριβές repository, candidate head, base/merge-base και relevant subject closure·
-- effective intent/Decision/policy generation·
-- checks και reviews με subject και observation cut, όχι απλώς «πράσινο»·
-- qualification/authority identities, scope, τυχόν expiry ή revocation·
-- pending attempts, run generation, resource ownership και άγνωστα outcomes·
-- διαθέσιμα evidence locators, completeness και freshness·
-- μικρό σύνολο unresolved obligations/hypotheses και next actions.
+- exact repository, candidate head, base or merge-base, and relevant subject closure;
+- effective intent, Decision, and policy generation;
+- checks and reviews bound to subject and observation cut, rather than a generic green state;
+- qualification and authority identities, scope, expiry, and revocation when relevant;
+- pending attempts, run generation, resource ownership, and unknown outcomes;
+- evidence locators, completeness, and freshness;
+- a small set of unresolved obligations, hypotheses, and next actions.
 
-Η προέλευση, η φρεσκάδα, η πληρότητα και η βεβαιότητα είναι διαφορετικές διαστάσεις. Ένα record μπορεί να είναι παρατηρημένο αλλά stale, ή current αλλά partial. Δεν τα συμπιέζουμε σε ένα enum ούτε σε ένα confidence score.
+Provenance, freshness, completeness, and certainty are different dimensions. A record can be observed but stale, or current but partial. They should not be collapsed into one enum or confidence score.
 
-Δεν υπολογίζουμε digest που να περιέχει τον ίδιο τον εαυτό του ή συνεχώς μεταβαλλόμενα άσχετα πεδία. Ορίζουμε πρώτα το relevant closure και το versioning. Ένα timestamp κάθε δευτερόλεπτο δεν πρέπει να ακυρώνει άσχετα reviews.
+A digest must not include itself or continuously changing irrelevant fields. The relevant closure and its versioning must be defined first. A timestamp changing every second must not invalidate unrelated reviews.
 
-### Παραδείγματα μεταβάσεων
+### Example transitions
 
-| Συμβάν/ενέργεια | Τι γνωρίζουμε μηχανικά | Τι παραμένει άγνωστο | Υποχρεωτική επόμενη παρατήρηση |
+| Event or action | Mechanically known | Still unknown | Mandatory next observation |
 |---|---|---|---|
-| Νέο candidate head | Τα παλιά head-bound αποτελέσματα δεν αποδεικνύουν το νέο head | Αν η αλλαγή είναι ορθή ή αν θα περάσει τα tests | Νέο subject, applicable exact-head checks/reviews |
-| Νέο material finding στο ίδιο head | Το προηγούμενο review cut δεν περιγράφει πλέον την ίδια κατάσταση | Αν το finding είναι πραγματικό | Finding/evidence/proposed fix και reconciliation |
-| CI request έγινε δεκτό | Υπάρχει αίτημα/attempt, όχι PASS | Ολοκλήρωση, αποτέλεσμα, πιθανή λανθασμένη generation | Ακριβές run/job/attempt και execution result |
-| Timeout μετά από effect | Το outcome μπορεί να είναι άγνωστο | Αν συνέβη το effect πριν χαθεί η απάντηση | Read-back πριν από μη idempotent retry |
-| Νέα observation δημοσιεύεται | Αλλάζει η control/evidence projection | Όχι ο candidate source subject | Currentness-safe publication, όχι νέο source commit |
-| Αλλαγή owner intent | Ίδιο code head μπορεί να ανήκει πλέον σε άλλο scope | Ισχύς παλιού worker plan/authority | Νέα generation και επικαιροποιημένος scope έλεγχος |
+| New candidate head | Old head-bound results do not prove the new head | Correctness and test outcome | New subject and applicable exact-head checks/reviews |
+| New material finding on same head | Prior review cut no longer describes the same evidence state | Whether the finding is valid | Finding, evidence, proposed fix, and reconciliation |
+| CI request accepted | A request/attempt exists; PASS does not | Completion, result, correct generation | Exact run, job, attempt, and execution result |
+| Timeout after an effect | Outcome may be unknown | Whether the effect happened before response loss | Read-back before a non-idempotent retry |
+| New observation published | Control/evidence projection changes | Candidate source subject does not | Currentness-safe publication, not a new source commit |
+| Owner intent changes | Same code head may now belong to another scope | Validity of old plan and authority | New generation and refreshed scope check |
 
-Η παλιά evidence δεν διαγράφεται. Αλλάζει η εφαρμοσιμότητά της. Reuse επιτρέπεται μόνο όταν αποδεικνύεται ότι το σχετικό subject και οι όροι χρήσης της παραμένουν ίδιοι. [Evidence non-self-invalidation](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5649048174).
+Old evidence is not deleted. Its applicability changes. Reuse is allowed only when the relevant subject and use conditions are shown to remain unchanged. See [evidence non-self-invalidation](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5649048174).
 
-## 7. Ποιος κατέχει τι — χωρίς δεύτερη οντολογία
+## 7. Ownership without a second ontology
 
-| Ευθύνη | Υπάρχων owner | Ρόλος της νέας οπτικής |
+| Responsibility | Existing owner | Role of this perspective |
 |---|---|---|
-| Σκοπός/προτεραιότητα/admission | Work Item, Decision, owner, #6/#14 | Snapshot, όχι δεύτερο IntentStore |
-| Fresh provider collection και μηχανική συνέχεια | #15/L1 | Ρητό observation/reconciliation model |
-| Review semantics | #11/R2A | Κατανάλωση αποτελέσματος, όχι δεύτερος judge |
-| Qualification/independence | #10/Q0 | Καμία inference από brands ή αριθμό reviewers |
-| Worker/effect validity | #15/L2, #264 | Transition guards στην πραγματική διαδρομή effect |
-| Αποστολές ανεξάρτητου ελέγχου | #263, με τα όρια του #261 | Διάψευση claims, όχι consensus επί προβλέψεων |
-| Γενίκευση στο προϊόν | #259 | Απόφαση τι αξίζει να γίνει public ή να αφαιρεθεί |
-| Πειραματική αιτιότητα Phase D | #183 | Καμία τροποποίηση treatment ή oracle |
+| Purpose, priority, admission | Work Item, Decision, owner, #6/#14 | Snapshot; no second IntentStore |
+| Fresh provider collection and mechanical continuation | #15/L1 | Explicit observation and reconciliation model |
+| Review semantics | #11/R2A | Consume the result; do not create a second judge |
+| Qualification and independence | #10/Q0 | Infer nothing from brands or reviewer count |
+| Worker and effect validity | #15/L2, #264 | Transition guards in the real effect path |
+| Independent checking missions | #263 under #261 boundaries | Falsify claims rather than vote on predictions |
+| Product generalization | #259 | Decide what becomes public, remains internal, or is removed |
+| Phase D experimental causality | #183 | Do not alter the treatment or oracle |
 
-Το [composition contract #15 ← R2A](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5648522367) ήδη επιβάλλει αυτόν τον χωρισμό. Τα νέα records πρέπει αρχικά να είναι implementation-private και να συνθέτουν τους υπάρχοντες τύπους. Αν αργότερα εμφανιστούν δύο πραγματικά ανεξάρτητοι consumers, τότε εξετάζουμε κοινό public contract.
+The existing [composition contract #15 ← R2A](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5648522367) already requires this separation. New records should begin as implementation-private structures composed from existing types. A common public contract should be considered only after two genuinely independent consumers emerge.
 
-### Όχι μόνο «CI και permissions»
+### Beyond CI and permissions
 
-Μακροπρόθεσμα ο κόσμος του Gnostoa περιλαμβάνει και το domain του έργου: requirements, components, invariants, dependencies και ανταγωνιστικές υποθέσεις για bugs. Εκεί μπορεί να προκύψει η μεγαλύτερη αξία πρόβλεψης: ποια απαίτηση επηρεάζει μια αλλαγή, ποιο test διακρίνει δύο πιθανές αιτίες, ποια αρχιτεκτονική υπόθεση παραμένει ανεπιβεβαίωτη.
+Gnostoa's long-term world also includes the project's domain: requirements, components, invariants, dependencies, and competing bug hypotheses. Prediction may be most useful here: which requirement a change affects, which test distinguishes two plausible causes, and which architectural assumption remains unverified.
 
-Αυτό δεν απαιτεί να γίνει το Gnostoa universal simulator. Αρκεί task-specific, source-linked συμπεριφορικό μοντέλο. Ένας latent predictor θα μπορούσε μελλοντικά να προτείνει πιθανές σχέσεις· οι σχέσεις παραμένουν inferred μέχρι να αποκτήσουν κατάλληλη τεκμηρίωση. Το υπάρχον behavior map είναι η ασφαλέστερη γέφυρα προς αυτή την περιοχή.
+That does not require a universal simulator. A task-specific, source-linked behavioral model is enough. A latent predictor could later propose likely relationships; they remain inferred until appropriate evidence supports them. The existing behavior map is the safest bridge into this domain.
 
-## 8. Ένταξη στον σημερινό Μίτο, βήμα προς βήμα
+## 8. Integration into the current Ariadne path
 
-| Στάδιο | Μικρό πρόσθετο που αξίζει να εξεταστεί | Κριτήριο εξόδου | Τι δεν ανοίγουμε |
+| Stage | Small addition worth considering | Exit criterion | Work that remains closed |
 |---|---|---|---|
-| #262/#272 | Καμία νέα OWM λειτουργία· διατηρούμε evidence του normalization/candidate boundary | Ολοκλήρωση της ήδη επιλεγμένης εργασίας | Scope expansion στο ενεργό PR |
-| L0-lite | Λίγες πραγματικές μεταβάσεις και baseline κόστους από υπάρχοντα records | Ξέρουμε πού χάνεται χρόνος/κατάσταση και τι είναι UNKNOWN | Telemetry platform, πλήρης εισαγωγή ιστορικού |
-| L1 | Fresh acquisition, bounded state, expectations βασισμένες σε υφιστάμενους κανόνες, next action | Χρήσιμο current view και restart χωρίς συνομιλία | Prediction ως authority ή broad planner |
-| Q0 | Ακριβής προέλευση qualification και independence | Truthful qualified/unqualified disposition | Κατασκευασμένο quorum |
-| L2/#264 | State/action generation, target binding, fencing, read-back και retry semantics | Stale/duplicate effects απορρίπτονται στα όριά τους | General scheduler ή δοκιμές effects χωρίς admission |
-| L3/#263/#261 | Έλεγχος των action claims από διαφορετικές αποστολές review | Πλήρης bounded loop με μετρημένο κόστος/διορθώσεις | «Περισσότεροι reviewers = ανεξαρτησία» |
-| Leverage gate | Σύγκριση με baseline και αφαίρεση περιττών μηχανισμών | Διατήρηση μόνο αποδεδειγμένου οφέλους | Αυτόματη επέκταση σε L4 ή JEPA training |
-| #259 | Distillation: core, guidance, self-only, lab ή retire | Καθαρότερο προϊόν, όχι μεγαλύτερο framework | Πρόωρη δημόσια οντολογία world model |
-| #266-P0 | Μικρή provenance/citation φροντίδα εφόσον χωρά | Ακριβείς ισχυρισμοί και επιστροφή στο delivery | AI branding ή promotion χωρίς αποτελέσματα |
-| Phase D | OWM το πολύ common control-plane/shadow, εφόσον επιτρέπεται | Αμετάβλητο frozen experiment | Νέο treatment χωρίς νέο preregistration |
+| #262/#272 | No OWM behavior; retain normalization and candidate-boundary evidence | Complete already-selected work | Scope expansion in the active PR |
+| L0-lite | A few real transitions and baseline cost from existing records | Locate state loss, time loss, and UNKNOWN cases | Telemetry platform or full history ingestion |
+| L1 | Fresh acquisition, bounded state, rule-based expectations, next action | Useful current view and restart without conversation history | Prediction as authority or broad planner |
+| Q0 | Exact qualification and independence provenance | Truthful qualified or unqualified disposition | Manufactured quorum |
+| L2/#264 | State/action generation, target binding, fencing, read-back, retry semantics | Reject stale or duplicate effects at their boundaries | General scheduler or unadmitted effect trials |
+| L3/#263/#261 | Distinct review missions challenge action claims | Complete bounded loop with measured cost and corrections | Equating more reviewers with independence |
+| Leverage gate | Compare to baseline and remove unnecessary machinery | Retain only measured value | Automatic expansion into L4 or JEPA training |
+| #259 | Distil into core, guidance, self-only, lab, or retire | A clearer product rather than a larger framework | Premature public world-model ontology |
+| #266-P0 | Small provenance/citation work if it fits | Exact claims, then return to delivery | AI branding or promotion without results |
+| Phase D | At most common control-plane or shadow support, if allowed | Frozen experiment unchanged | New treatment without new preregistration |
 
-Η ειδική σειρά και τα όρια L1/L2 στηρίζονται στο [execution blueprint](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5706403186) και στις [early-value refinements](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5706556769).
+The L1/L2 sequence and bounds follow the [execution blueprint](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5706403186) and [early-value refinements](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5706556769).
 
-### Το πρώτο χρήσιμο L1 δεν χρειάζεται πράσινο quorum
+### The first useful L1 does not require a green quorum
 
-Μπορεί να πει με ακρίβεια: «αυτό είναι το head, αυτοί οι έλεγχοι εκκρεμούν, αυτά τα reviews είναι παλιά, qualification δεν έχει ακόμη θεμελιωθεί, το αποτέλεσμα είναι INCOMPLETE/QUORUM_UNMET». Αυτή είναι ήδη χρήσιμη αυτοματοποίηση. Δεν απαιτεί να έχουν ολοκληρωθεί Q0 και worker lifecycle για να παραδοθεί.
+L1 can truthfully report: this is the head, these checks are pending, these reviews are stale, qualification is not established, and the disposition is INCOMPLETE or QUORUM_UNMET. That is already useful automation. Q0 and the worker lifecycle do not need to be complete before that view is valuable.
 
-Το L1 είναι candidate-read-only, όχι απολύτως χωρίς writes: το ενημερωμένο PR comment απαιτεί περιορισμένη εξουσιοδότηση και προστασία από stale publisher. Παλιότερο job δεν πρέπει να αντικαθιστά νεότερη προβολή. Οι snapshots/evidence ζουν στην control plane και δεν αλλάζουν το candidate H, αλλιώς δημιουργείται βρόχος αυτοακύρωσης.
+L1 is candidate-read-only, not absolutely write-free: updating a PR comment requires bounded authority and stale-publisher protection. An older job must not overwrite a newer projection. Snapshots and evidence belong to the control plane and must not modify candidate head H, or they create a self-invalidation loop.
 
-### Το #264 προσφέρει το κατάλληλο σημείο για operational-dynamics characterization
+### #264 is the right place for operational-dynamics characterization
 
-Rerun ολόκληρου workflow και rerun συγκεκριμένου job δεν είναι αναγκαστικά ίδια μετάβαση. Attempt, generation, prerequisites και artifacts μπορεί να διαφέρουν. Το [#264](https://github.com/ktogias/gnostoa/issues/264) είναι το κατάλληλο μέρος για περιορισμένη, αβλαβή provider characterization, όχι αφορμή για νέο γενικό simulator.
+Rerunning a workflow and rerunning one job are not necessarily the same transition. Attempts, generations, prerequisites, and artifacts may differ. [#264](https://github.com/ktogias/gnostoa/issues/264) is the appropriate owner for narrow, harmless provider characterization. It is not a reason to build a general simulator.
 
-### Το #259 είναι το σημείο κρίσης της product identity
+### #259 is the product-identity gate
 
-Το [#259](https://github.com/ktogias/gnostoa/issues/259) ορίζει την κατεύθυνση ως Git-native, συνδεδεμένη, επαληθεύσιμη operational knowledge με περιορισμένο κόστος. Ένα pattern μπορεί να γίνει public guidance χωρίς να γίνει δημόσιος state-machine engine. Η αποτυχία ενός predictor δεν ακυρώνει την αξία της knowledge βάσης.
+[#259](https://github.com/ktogias/gnostoa/issues/259) defines the direction as Git-native, connected, verifiable operational knowledge with bounded cost. A pattern can become public guidance without becoming a public state-machine engine. Failure of a predictor would not invalidate the value of the knowledge foundation.
 
-## 9. Πειραματικό πρόγραμμα με καθαρές υποθέσεις
+## 9. Experimental program with falsifiable hypotheses
 
-Τα E0–E4 είναι τοπικά ονόματα αυτής της πρότασης, όχι νέες ενεργές εργασίες.
+E0–E4 are local labels in this proposal. They are not active work items.
 
-### E0 — Representation sufficiency και aliasing
+### E0 — Representation sufficiency and aliasing
 
-**Υπόθεση:** η συμπαγής κατάσταση διατηρεί τις διαφορές που αλλάζουν την επιτρεπτή ή χρήσιμη επόμενη ενέργεια.
+**Hypothesis:** the compact state preserves every distinction that changes the admissible or useful next action.
 
-Κατασκευάζουμε ζεύγη με όμοια επιφανειακή περιγραφή αλλά διαφορετικό νόημα: ίδιο «CI green» για άλλο head· ίδιο head με νέο material review· ίδιο artifact tag με άλλο digest· ίδιο review text με άλλη προέλευση· αλλαγμένο intent· ελλιπής συλλογή έναντι πραγματικής απουσίας αποτελεσμάτων.
+Build pairs with a similar surface description but different meaning: the same CI-green label for a different head; the same head with a new material review; the same artifact tag with a different digest; the same review text with different provenance; changed intent; incomplete collection versus true absence of results.
 
-Προσθέτουμε και ζεύγη που **πρέπει** να είναι ισοδύναμα: διαφορετική σειρά άφιξης/απαρίθμησης με διατηρημένες τις ταυτότητες, source versions, causal order και το ίδιο observation cut· διπλή observation με την ίδια ταυτότητα και το ίδιο payload· άσχετο formatting. Δεν αναδιατάσσουμε τα πραγματικά συμβάντα ούτε εξισώνουμε αντιφατικά duplicates. Έτσι ελέγχουμε και υπερβολική ευαισθησία, όχι μόνο απώλεια πληροφορίας.
+Also build pairs that **must** be equivalent: different arrival or enumeration order while retaining identities, source versions, causal order, and the same observation cut; a duplicate observation with the same identity and payload; irrelevant formatting differences. Do not reorder real events or equate conflicting duplicates. This tests excess sensitivity as well as information loss.
 
-Έξοδος: curated fixture matrix με ρητά αναμενόμενα discriminations/invariances. Δεν απαιτεί ML ή provider writes.
+Output: a curated fixture matrix with explicit expected discriminations and invariances. No ML or provider writes are required.
 
-### E1 — Offline transition replay και μικρό failure laboratory
+### E1 — Offline transition replay and small failure laboratory
 
-**Υπόθεση:** ρητά transition contracts μειώνουν stale-state mistakes και αμφίσημα retries χωρίς να παγώνουν νόμιμη πρόοδο.
+**Hypothesis:** explicit transition contracts reduce stale-state mistakes and ambiguous retries without blocking legitimate progress.
 
-Αρχικό corpus: #240 same-head/new-evidence, #257/rolling-trust provider generations, #262/#272 normalization και candidate boundary, B2 recovery cases. Δεν επινοούμε timestamps ή owner effort που δεν καταγράφηκαν. Ιστορική ανακατασκευή με σημερινή γνώση σημειώνεται ως retrospective.
+Initial corpus: #240 same-head/new-evidence behavior, #257 rolling-trust provider generations, #262/#272 normalization and candidate boundaries, and B2 recovery cases. Do not invent timestamps or owner effort that were not recorded. Mark reconstruction with current knowledge as retrospective.
 
-Σε disposable local simulator/fixtures, με virtual time, εισάγουμε:
+In a disposable local simulator or fixtures with virtual time, inject:
 
-- αλλαγή head μεταξύ observation και effect·
-- νέο finding χωρίς αλλαγή head·
-- duplicate, delayed και out-of-order wake-ups·
-- ελλιπή pagination, API outage και expired observation·
-- αλλαγή ή ανάκληση authority·
-- timeout αφού συνέβη το effect και crash πριν το receipt·
-- παλιό worker result και δύο workers στον ίδιο πόρο·
-- targeted rerun με διαφορετική generation·
-- provider SUCCESS με required work SKIPPED·
-- malicious instruction μέσα σε issue/review/log·
-- stale publisher που προσπαθεί να αντικαταστήσει νεότερο state.
+- head change between observation and effect;
+- a new finding without head change;
+- duplicate, delayed, and out-of-order wake-ups;
+- incomplete pagination, API outage, and expired observation;
+- authority change or revocation;
+- timeout after the effect and crash before the receipt;
+- stale worker result and two workers targeting one resource;
+- targeted rerun with a different generation;
+- provider SUCCESS while required work is SKIPPED;
+- malicious instruction inside an issue, review, or log;
+- stale publisher attempting to replace newer state.
 
-Αρχικά χρησιμοποιούμε το υπάρχον test stack και έναν μικρό reference model. Generated stateful sequences έρχονται μόνο αν προσφέρουν επιπλέον κάλυψη. Formal model checking μπορεί αργότερα να περιοριστεί σε ένα υψηλού κινδύνου lease/effect protocol· όχι ολόκληρο το Gnostoa.
+Start with the existing test stack and a small reference model. Add generated stateful sequences only if they supply additional coverage. Formal model checking may later target one high-risk lease/effect protocol, not all of Gnostoa.
 
-### E2 — Shadow observation και one-step prediction
+### E2 — Shadow observation and one-step prediction
 
-**Υπόθεση:** η πρόβλεψη προσθέτει χρήσιμη πληροφορία πέρα από τη deterministic κατάσταση.
+**Hypothesis:** prediction adds actionable information beyond deterministic state.
 
-Ο predictor βλέπει μόνο pre-action στοιχεία, καταγράφει την πρόβλεψη πριν εμφανιστεί το outcome και δεν στέλνει τις προτάσεις του σε actor που θα άλλαζε την έκβαση. Δεν αποκτά write capability. Μετράμε συγκεκριμένες συνέπειες: κατηγορία πιθανής αποτυχίας, νέα observation που θα χρειαστεί, πιθανότητα rework ή timeout, όχι αόριστη «ετοιμότητα».
+The predictor sees only pre-action data, commits its prediction before the outcome exists, and does not send suggestions to an actor who could alter the outcome. It receives no write capability. Evaluate concrete consequences: probable failure category, next observation needed, rework likelihood, or timeout likelihood. Do not score a vague readiness label.
 
 Baselines:
 
-1. υπάρχουσα πρακτική χωρίς νέο μοντέλο·
-2. typed state/projection και σημερινοί deterministic checks·
-3. το ίδιο μαζί με explicit transition expectations·
-4. απλός frequency/rule/nearest-case predictor·
-5. structured LLM predictor, μόνο αν παραμένει μη μηχανική αβεβαιότητα.
+1. current practice without a new model;
+2. typed state/projection and current deterministic checks;
+3. the same state plus explicit transition expectations;
+4. a simple frequency, rule, or nearest-case predictor;
+5. a structured LLM predictor only if non-mechanical uncertainty remains.
 
-Αν η βελτίωση εμφανίζεται ήδη στο 2 ή στο 3, δεν την αποδίδουμε στη JEPA. Αν ο predictor μαθαίνει μόνο ότι «νέο head χρειάζεται νέα checks», σταματάμε το ML σκέλος.
+If the gain appears at baseline 2 or 3, do not attribute it to JEPA. If the predictor merely learns that a new head requires new checks, stop the ML branch.
 
-### E3 — Προσεκτική δοκιμή planning
+### E3 — Conservative planning trial
 
-Μόνο αν το E2 δείξει πρόσθετη αξία. Δύο ή τρεις επιτρεπτές επιλογές, horizon 1, fixed budget, πραγματικός replan μετά το επόμενο observation. Παράδειγμα: ποια από δύο αναγνώσεις ή diagnostics θα διακρίνει γρηγορότερα τις πιθανές αιτίες;
+Run only if E2 shows incremental value. Offer two or three admissible choices, horizon 1, a fixed budget, and real replanning after the next observation. A suitable question is which of two reads or diagnostics will distinguish likely causes sooner.
 
-Replay πραγματικού ιστορικού έχει outcome μόνο για την ενέργεια που πράγματι έγινε. **Δεν αποδεικνύει τι θα γινόταν με άλλη ενέργεια.** Σύγκριση planners απαιτεί branchable sandbox ή χωριστά προεγγεγραμμένο prospective πείραμα με ίδιες υποχρεώσεις CI/review.
+A replay of real history contains the outcome only for the action actually taken. It does **not** show what would have happened under another action. Planner comparison requires a branchable sandbox or a separately preregistered prospective experiment under the same CI and review obligations.
 
-### E4 — JEPA-inspired learned representation, προαιρετικό μεταγενέστερο σκέλος
+### E4 — Optional JEPA-inspired learned representation
 
-Είσοδος: semantic task history και action features. Target: αναπαράσταση της πραγματικής επόμενης semantic κατάστασης, με βοηθητικές προβλέψεις παρατηρήσιμων συνεπειών. Exact IDs, authority, evidence cuts και predicates παραμένουν σε παράλληλο μη συμπιεζόμενο κανάλι.
+Input: semantic task history and action features. Target: a representation of actual next semantic state, with auxiliary predictions of observable consequences. Exact identifiers, authority, evidence cuts, and predicates remain in a parallel non-compressed channel.
 
-Μία πιθανή ερευνητική μορφή είναι `predictor(encoder(history), action) ≈ target_encoder(next observation)`, με stop-gradient/anti-collapse επιλογές που θα απαιτούν δική τους αξιολόγηση. Δεν επιλέγουμε τώρα architecture, loss, GPU ή model size.
+A possible research form is:
 
-Απαιτούνται learning curves, επαρκή task diversity, out-of-distribution tests, σύγκριση με απλούστερους predictors υπό ίδιο κόστος και αποδεδειγμένο residual bottleneck. Διαφορετικά το σκέλος παραμένει research-only ή αφαιρείται.
+**predictor(encoder(history), action) approximates target_encoder(next observation)**
 
-## 10. Μετρήσεις που δεν επιβραβεύουν λάθος συμπεριφορά
+Stop-gradient and anti-collapse choices would require their own evaluation. This proposal selects no architecture, loss, GPU, or model size.
 
-| Διάσταση | Μέτρηση | Αντιπαράδειγμα παραπλανητικού score |
+Proceed only with learning curves, adequate task diversity, out-of-distribution tests, comparison against simpler predictors at equal cost, and a demonstrated residual bottleneck. Otherwise keep this branch research-only or remove it.
+
+## 10. Metrics that do not reward the wrong behavior
+
+| Dimension | Measure | Misleading score to reject |
 |---|---|---|
-| Safety | Unauthorized/stale/duplicate effects, false-complete | «Μηδέν λάθη» επειδή αρνείται τα πάντα |
-| Progress | Ορθή επόμενη ενέργεια, ολοκλήρωση νόμιμων cases, recovery | Πολλά checks χωρίς λύση της εργασίας |
-| Knowledge | Unknown/conflict detection, observation completeness | Υψηλό confidence χωρίς σωστή provenance |
-| Prediction | Changed-field precision/recall, calibration, abstention | Υψηλή accuracy επειδή προβλέπει πάντα WAIT/no-change |
-| Efficiency | Tokens, API calls, latency, reviewer rework | Λιγότερα tokens επειδή παραλείφθηκαν απαιτούμενα tests |
-| Human cost | Ενεργός χρόνος review και παρεμβάσεις επανεκκίνησης | Λιγότερα prompts αλλά περισσότερο δύσκολο review |
-| Maintainability | Νέοι μηχανισμοί, εξαρτήσεις, χειροκίνητα mappings | Μικρό προσωρινό κέρδος με μόνιμη πολυπλοκότητα |
+| Safety | Unauthorized, stale, or duplicate effects; false-complete | Zero errors because the system refuses everything |
+| Progress | Correct next action, legitimate-case completion, recovery | Many checks without completing the task |
+| Knowledge | Unknown/conflict detection, observation completeness | High confidence without correct provenance |
+| Prediction | Changed-field precision/recall, calibration, abstention | High accuracy from always predicting WAIT or no change |
+| Efficiency | Tokens, API calls, latency, reviewer rework | Fewer tokens because required tests were skipped |
+| Human cost | Active review time and restart interventions | Fewer prompts but harder review |
+| Maintainability | New mechanisms, dependencies, manual mappings | Small temporary gain with permanent complexity |
 
-Προτεινόμενος αρχικός προϋπολογισμός: 30–50 curated cases με θετικούς και αρνητικούς controls, φθηνές generated ακολουθίες, και 10–20 επόμενα shadow episodes όταν φυσικά προκύψουν. Είναι engineering budget, **όχι στατιστικά επαρκής πιστοποίηση**.
+A reasonable initial engineering budget is 30–50 curated positive and negative controls, inexpensive generated sequences, and 10–20 prospective shadow episodes as they naturally arise. This is an engineering budget, **not statistically sufficient certification**.
 
-Πριν την εκτέλεση επιλέγουμε primary endpoint και ελάχιστη χρήσιμη βελτίωση, π.χ. σε owner liveness interventions ή χρόνο επανεκκίνησης. Δεν ορίζουμε εκ των υστέρων ως επιτυχία όποια μέτρηση βελτιώθηκε. Για μικρά δείγματα αναφέρουμε counts, paired differences και αβεβαιότητα. Μηδενικές παραβιάσεις στο frozen suite είναι απαίτηση εκείνης της δοκιμής, όχι εγγύηση μηδενικού πραγματικού κινδύνου.
+Before execution, choose a primary endpoint and minimum useful improvement, such as owner liveness interventions or restart time. Do not redefine success after observing whichever metric improved. For small samples, report counts, paired differences, and uncertainty. Zero violations in a frozen suite are a requirement of that test, not a guarantee of zero real-world risk.
 
-### Ακεραιότητα δεδομένων
+### Data integrity
 
-- Split ανά ολόκληρο PR/task και χρόνο, όχι τυχαίες γραμμές του ίδιου review thread σε train και test.
-- Καμία μεταγενέστερη λύση, review ή ground-truth patch στο pre-action context.
-- Χωρισμός provider/infrastructure failure από code/semantic failure.
-- Καταγραφή version του policy, schema, environment και predictor.
-- Διατήρηση αρνητικών και άβολων αποτελεσμάτων.
-- Περιορισμός raw logs/προσωπικών δεδομένων, χωρίς secrets, hidden oracle ή ιδιωτικό reasoning.
-- Η ίδια model family και κοινές πηγές μπορούν να παράγουν συσχετισμένα λάθη· διαφορετική persona δεν είναι ανεξαρτησία.
+- Split by complete PR or task and by time; never put lines from the same review thread in both train and test.
+- Exclude later solutions, reviews, and ground-truth patches from pre-action context.
+- Separate provider/infrastructure failure from code/semantic failure.
+- Record policy, schema, environment, and predictor versions.
+- Retain negative and inconvenient results.
+- Bound raw logs and personal data; include no secrets, hidden oracle, or private reasoning.
+- The same model family and common sources can create correlated errors. A different persona is not independence.
 
-## 11. Παραδοχές, κίνδυνοι και όρια
+## 11. Assumptions, risks, and limits
 
-**Μερική παρατηρησιμότητα:** exact SHA δεν σημαίνει exact world state. Η συλλογή από πολλά APIs δεν είναι ατομική. Χρειάζεται σαφές cut, freshness και επανέλεγχος των πραγματικά κρίσιμων dependencies.
+**Partial observability.** An exact SHA is not an exact world state. Collection across several APIs is not atomic. Define an observation cut, freshness, and revalidation of dependencies that truly matter.
 
-**Safety και liveness μαζί:** ουσιώδης authority/head απόκλιση σταματά το επηρεαζόμενο effect. Απλή καθυστέρηση reviewer επιτρέπει bounded wait/re-observation και άσχετη ήδη επιτρεπτή εργασία. Δεν παγώνουμε το σύνολο για κάθε mismatch. Διπλές ή άσχετες observations δεν πρέπει να επανεκκινούν επ’ άπειρον τα gates.
+**Safety and liveness together.** A material authority or head mismatch blocks the affected effect. A delayed reviewer permits bounded waiting, re-observation, and unrelated already-admissible work. Do not freeze the whole system for every mismatch. Duplicate or irrelevant observations must not restart gates forever.
 
-**Περιορισμός εξουσίας:** τα credentials και οι effect adapters είναι πραγματικό enforcement boundary. Ένας planner που έχει άμεση παρακαμπτήρια διαδρομή στο GitHub μπορεί να αγνοήσει κάθε σωστό μοντέλο.
+**Bounded authority.** Credentials and effect adapters are the actual enforcement boundary. A planner with a direct bypass to GitHub can ignore a correct model.
 
-**Αβέβαιο effect:** μετά από timeout, το absence of receipt δεν αποδεικνύει ότι το effect δεν έγινε. Αν δεν υπάρχει ασφαλής deduplication/read-back, μένει unresolved και δεν επαναλαμβάνεται αυτόματα.
+**Uncertain effects.** After timeout, absence of a receipt does not prove that the effect did not occur. If safe deduplication and read-back are unavailable, keep the outcome unresolved and do not retry automatically.
 
-**Χρονική σειρά δεν σημαίνει αιτιότητα:** ένα postcondition μπορεί να προκλήθηκε από άλλον actor. Κρατάμε χωριστά operation identity, receipt, παρατηρημένο delta και βαθμό βεβαιότητας της απόδοσής του στη δική μας ενέργεια. Replay της προβολής δεν αναπαράγει ολόκληρο το ιστορικό κατανεμημένο σύστημα. Ένα hash παραμέτρων επίσης δεν αποδεικνύει ότι δύο requests εκφράζουν την ίδια πρόθεση· το logical operation ID και η σημασιολογία retry πρέπει να ανήκουν στο υφιστάμενο effect contract.
+**Sequence is not causality.** Another actor may cause a postcondition. Keep operation identity, receipt, observed delta, and attribution confidence separate. Projection replay does not reproduce the entire distributed system history. A parameter hash also does not prove that two requests have the same intent; logical operation identity and retry semantics belong in the existing effect contract.
 
-**Άγνωστο domain behavior:** tests και policies δεν μπορούν να αποδείξουν μια ιδιότητα για την οποία δεν υπάρχει επαρκές oracle. Η συμπίεση ή η αύξηση μοντέλων δεν λύνει αυτό το επιστημικό όριο.
+**Unknown domain behavior.** Tests and policies cannot prove a property without an adequate oracle. Compression or a larger model does not solve that epistemic limit.
 
-**Ανεξαρτησία ελεγκτή:** ο candidate δεν μπορεί να τροποποιεί τις effective validation/authority παραδοχές που θα τον εγκρίνουν. Αλλαγή του transition model απαιτεί versioning, έλεγχο και κανονική admission, όχι live self-rewriting rules.
+**Assessor independence.** A candidate must not modify the effective validation or authority assumptions that approve it. Changing a transition model requires versioning, review, and normal admission, not live self-rewriting rules.
 
-**No-hosting:** stateless Actions και περιορισμένα GitHub records/retained artifacts, με ελεγμένη retention/recovery συμπεριφορά. Δεν δημιουργείται event bus, δική μας βάση, μόνιμος server ή γενικός workflow engine. Hash μόνος του δεν παρέχει authenticity ή availability.
+**No hosting.** Prefer stateless Actions and bounded GitHub records or retained artifacts with tested retention and recovery. Do not introduce an event bus, owned database, persistent server, or general workflow engine. A hash alone supplies neither authenticity nor availability.
 
-**Κόστος:** κανένα νέο paid fallback, training job ή εξωτερική μεταφορά δεδομένων χωρίς ξεχωριστή επιλογή. Δεν είναι ασφαλές να υποσχεθούμε ότι τα quotas των providers θα επαρκούν μόνιμα.
+**Cost.** No paid fallback, training job, or external data transfer is admitted without separate selection. Provider quotas cannot safely be promised as permanently sufficient.
 
-**Όρια scope:** το [#14](https://github.com/ktogias/gnostoa/issues/14) εξαιρεί predictive planning χωρίς χωριστή admission. Τα deterministic expectations που ήδη απορρέουν από τα L1/L2 contracts δεν νομιμοποιούν έναν learned planner μέσα στην προβολή του #14.
+**Scope.** [#14](https://github.com/ktogias/gnostoa/issues/14) excludes predictive planning without separate admission. Deterministic expectations already implied by L1/L2 contracts do not authorize a learned planner inside #14.
 
-## 12. Προστασία της Phase D
+## 12. Protecting Phase D
 
-Η υπάρχουσα Phase D **δεν είναι «Gnostoa εναντίον no-Gnostoa» ούτε πείραμα JEPA**. Η frozen σύγκριση αφορά pre-#182 έναντι post-#182 behavioral-diagnosis contract, με #170 κοινό. Τα #14/#15 είναι κοινή υποδομή και η καταγεγραμμένη προσδοκία άμεσης επίδρασής τους στη διαφορά των arms είναι μηδενική. [Frozen expectation card](https://github.com/ktogias/gnostoa/issues/183#issuecomment-5681057669), [linkage/όρια](https://github.com/ktogias/gnostoa/issues/183#issuecomment-5682216176).
+Existing Phase D is **neither Gnostoa versus no Gnostoa nor a JEPA experiment**. The frozen comparison is the pre-#182 versus post-#182 behavioral-diagnosis contract, with #170 shared. #14 and #15 are common infrastructure, and their recorded expected direct effect on the arm difference is zero. See the [frozen expectation card](https://github.com/ktogias/gnostoa/issues/183#issuecomment-5681057669) and [linkage boundaries](https://github.com/ktogias/gnostoa/issues/183#issuecomment-5682216176).
 
-Συνεπώς:
+Therefore:
 
-1. Δεν προσθέτουμε arm-visible operational predictions ή νέο decision aid σε οποιοδήποτε από τα δύο arms.
-2. Δεν αλλάζουμε tasks, repeats, scoring, oracle ή qualification για να δοκιμάσουμε αυτή την ιδέα.
-3. Κοινή υποδομή ή shadow observation πρέπει να ελέγχεται ώστε να μην επηρεάζει το treatment· δεν υποθέτουμε ότι το «shadow» είναι δωρεάν αν αλλάζει inputs ή timing ουσιωδώς.
-4. Αιτιώδης αξιολόγηση OWM/planning θα είναι χωριστό, μελλοντικό preregistered πείραμα.
+1. Add no arm-visible operational prediction or new decision aid to either arm.
+2. Change no tasks, repeats, scoring, oracle, or qualification to test this idea.
+3. Check common infrastructure or shadow observation for treatment effects; shadow is not free if it materially changes inputs or timing.
+4. Evaluate OWM planning causally only in a separate, future preregistered experiment.
 
-## 13. Καταγραφή στον Μίτο — χωρίς ενεργοποίηση
+## 13. Ariadne record without activation
 
-Η knowledge-only καταγραφή συνδέεται με τους υπάρχοντες owners και δεν δημιουργεί ανταγωνιστική πορεία:
+This knowledge-only record connects to existing owners and creates no competing route:
 
-| Πεδίο | Προτεινόμενο περιεχόμενο |
+| Field | Recorded direction |
 |---|---|
-| Κατεύθυνση | Evidence-grounded operational state και ελέγξιμες action consequences |
-| Σχέση με v9 | Cross-cutting ερμηνεία/κριτήρια L0–L3, χωρίς αλλαγή σειράς |
-| Πρώτη υπόθεση | Μειώνουμε state drift και recovery/review toil χωρίς false readiness |
-| Πρώτο πείραμα | Μικρή E0/E1 fixture/replay συμπλήρωση στον αρμόδιο υπάρχοντα slice |
-| Consumer | Το χρήσιμο L1/L2, όχι νέο world-model dashboard |
-| Baseline | Ίδια typed state και checks χωρίς predictor |
-| Εκτός scope | JEPA training, νέος planner, νέα authority, hosted engine, Phase-D treatment changes |
-| Admission | Ξεχωριστή επιλογή συγκεκριμένου surface/class, required Decision και pre-implementation evidence |
-| Stop/return | Αν δεν υπάρχει πρόσθετο όφελος, στενεύουμε/αφαιρούμε και επιστρέφουμε #259/Phase D |
+| Direction | Evidence-grounded operational state and testable action consequences |
+| Relationship to v9 | Cross-cutting interpretation and criteria for L0–L3; ordering unchanged |
+| First hypothesis | Reduce state drift and recovery/review toil without false readiness |
+| First experiment | Small E0/E1 fixture and replay addition in the responsible existing slice |
+| Consumer | Useful L1/L2, not a new world-model dashboard |
+| Baseline | Same typed state and checks without a predictor |
+| Out of scope | JEPA training, new planner, new authority, hosted engine, Phase D treatment changes |
+| Admission | Separate selection of a concrete surface/class, required Decision, and pre-implementation evidence |
+| Stop/return | If incremental value is absent, narrow or remove it and return to #259/Phase D |
 
-Η έρευνα δεν προτείνει αυτόματα νέα Issue για κάθε υποϊδέα. Ο [κανόνας explicit admission](https://github.com/ktogias/gnostoa/blob/e071ab60a418eddda5bf008004ee96faafbf1e7c/knowledge/requirements/retrospective-findings-require-explicit-admission.md) επιτρέπει knowledge-only υπόθεση έως ότου υπάρχει συγκεκριμένο actionable outcome. Για ήδη-owned ανάγκες επαναχρησιμοποιούμε #15/#264/#263/#259.
+This research does not automatically propose a new issue for every sub-idea. The [explicit-admission rule](https://github.com/ktogias/gnostoa/blob/e071ab60a418eddda5bf008004ee96faafbf1e7c/knowledge/requirements/retrospective-findings-require-explicit-admission.md) permits a knowledge-only hypothesis until a concrete actionable outcome exists. Reuse #15, #264, #263, and #259 for needs they already own.
 
-## 14. Πρώτη πρακτική επιλογή που συνιστάται
+## 14. Recommended first practical selection
 
-Μετά τη διάθεση του #262, να εξεταστεί στο L0-lite/L1 **ένα μικρό, χωρίς ML, transition fidelity πείραμα** με τρεις οικογένειες:
+After #262 is disposed, consider one small, non-ML **transition-fidelity experiment** in L0-lite/L1 with three families:
 
-1. `head/intent changes → evidence applicability and worker validity`.
-2. `new review evidence → review-cut reconciliation without changing source`.
-3. `attempt/timeout/restart → observed effect before any retry`.
+1. Head or intent changes → evidence applicability and worker validity.
+2. New review evidence → review-cut reconciliation without changing source.
+3. Attempt, timeout, or restart → observe the effect before any retry.
 
-Πρώτα fixtures και replay, μετά πραγματικό shadow observation στο ήδη επιλεγμένο workflow. Το ζητούμενο είναι να δούμε αν αυτή η ρητή δομή μειώνει την ανάγκη να ξανασυναρμολογούμε νοερά την κατάσταση από comments και συνομιλίες.
+Start with fixtures and replay, then real shadow observation in the already-selected workflow. The question is whether the explicit structure reduces the need to mentally reconstruct state from comments and conversations.
 
-**Δεν συνιστάται τώρα:** αγορά GPU, model training, Temporal/AutoGen migration, νέο γενικό schema, ανασχεδιασμός του #272, δεύτερος review oracle ή αναβολή της Phase D.
+Do not select GPU purchase, model training, Temporal or AutoGen migration, a new general schema, redesign of #272, a second review oracle, or delay of Phase D at this point.
 
-Η πιθανή μακροπρόθεσμη διαφοροποίηση δεν είναι «το Gnostoa έχει μνήμη» ή «έχει JEPA». Είναι:
+The possible long-term distinction is not that Gnostoa has memory or has JEPA. It is:
 
-> Οι άνθρωποι και οι agents χρησιμοποιούν την ίδια συμπαγή, επαληθεύσιμη εικόνα του έργου· ξεχωρίζουν όσα ξέρουν από όσα προβλέπουν· και κάθε σημαντική ενέργεια συνδέεται με επιτρεπτές προϋποθέσεις, αναμενόμενες συνέπειες και πραγματική επαλήθευση.
+> Humans and agents use the same compact, verifiable project view; distinguish what they know from what they predict; and bind every material action to admissible preconditions, expected consequences, and actual verification.
 
-Αυτό είναι συνεπές με την κατεύθυνση του Gnostoa. Το αν η learned prediction προσθέτει αξία παραμένει πείραμα, όχι υπόσχεση.
+That is consistent with Gnostoa's direction. Whether learned prediction adds value remains an experiment, not a promise.
 
-## 15. Όρια της ίδιας της έρευνας
+## 15. Limits of this research
 
-Ελέγχθηκαν live provider state, σχετικός πηγαίος κώδικας, canonical records και πρωτογενείς papers/τεκμηριώσεις. Δεν έγινε exhaustive code audit, νέο benchmark ή μέτρηση οφέλους του προτεινόμενου συστήματος. Πέρα από τη read-only orientation διάγνωση, τα E0–E4 **δεν εκτελέστηκαν**. Αποτελέσματα papers παραμένουν αποτελέσματα των δικών τους περιβαλλόντων. Οι προτάσεις ένταξης, η αρχιτεκτονική και τα κριτήρια πειραμάτων είναι σύνθεση αυτής της έρευνας.
+The work inspected live provider state, relevant source code, canonical records, and primary papers or documentation. It did not perform an exhaustive code audit, a new benchmark, or a benefit measurement of the proposed system. Beyond the read-only orientation diagnostic, E0–E4 were **not executed**. Paper results remain results from their own environments. The roadmap integration, architecture, and experimental criteria are this research's synthesis.
 
-## 16. Καταγραφή ελέγχου της πρότασης
+## 16. Proposal review record
 
-Έγινε χωριστή agent review της σύνθεσης και του προσχεδίου αυτής της αναφοράς στις 17/09/2026, από τον reviewer με session attribution `synthesis_critic`. Πρόκειται για ξεχωριστή ερευνητική αποστολή, όχι authenticated reviewer identity, Q0 qualification, εγγύηση ανεξαρτησίας μοντέλων ή ανθρώπινη αποδοχή. Subject ήταν η πρόταση/αναφορά, όχι νέο code candidate.
+A separate agent reviewed the synthesis and draft on 17 September 2026 under session attribution synthesis_critic. That was a distinct research assignment, not an authenticated reviewer identity, Q0 qualification, a guarantee of model independence, or human acceptance. Its subject was this proposal, not a new code candidate.
 
-Συνολική σύσταση reviewer: η κατεύθυνση είναι συνεπής, χωρίς εντοπισμένη σιωπηρή admission ή αντικατάσταση του roadmap, με τις παρακάτω διορθώσεις. Δεν επανεπαλήθευσε ανεξάρτητα κάθε αποτέλεσμα εξωτερικού paper.
+The reviewer found the direction coherent and did not identify silent admission or roadmap replacement after the following repairs. It did not independently reverify every external-paper result.
 
-| Finding | Evidence στην πρόταση | Disposition |
+| Finding | Evidence in the draft | Disposition |
 |---|---|---|
-| Υπερβολικά γενική order invariance | Το αρχικό E0 εξίσωνε αδιακρίτως διαφορετικές σειρές observations | Διορθώθηκε στο §9: ίδια IDs/payloads, source versions, causal order και cut |
-| Κίνδυνος αμφίσημης Phase-D εξαίρεσης | Η φράση «σε ένα arm» μπορούσε να επιτρέψει αλλαγή και στα δύο | Διορθώθηκε στο §12: καμία arm-visible εισαγωγή σε οποιοδήποτε arm |
-| Planned έναντι executed characterization | Ο τίτλος του #264 μπορούσε να διαβαστεί ως εκτελεσμένο experiment | Διορθώθηκε στο §8, χωρίς ισχυρισμό εκτέλεσης |
-| Delta έναντι αιτιώδους απόδοσης | Εξωτερικοί actors μπορούν να προκαλέσουν το παρατηρημένο αποτέλεσμα | Προστέθηκε ρητός περιορισμός στο §11 |
+| Over-broad order invariance | Initial E0 equated different observation orders without qualification | Corrected in section 9: identities, payloads, source versions, causal order, and cut must match |
+| Ambiguous Phase D exclusion | Wording about one arm could permit a change to both | Corrected in section 12: no arm-visible introduction in either arm |
+| Planned versus executed characterization | #264 title could be read as evidence of an executed experiment | Corrected in section 8 with no execution claim |
+| Delta versus causal attribution | External actors can cause an observed outcome | Added explicit limitation in section 11 |
 
-Οι ερευνητικές συνεισφορές για roadmap, papers και engineering patterns δεν χρησιμοποιήθηκαν ως semantic approvals. Παραμένουν δεμένες στις παρατιθέμενες πηγές και στους δηλωμένους περιορισμούς.
+Research contributions about the roadmap, papers, and engineering patterns were not used as semantic approvals. They remain bound to cited sources and stated limits.
