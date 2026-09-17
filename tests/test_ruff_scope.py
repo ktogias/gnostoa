@@ -41,10 +41,11 @@ class RuffScopeContractTests(unittest.TestCase):
         self.assertIn("python -m ruff format .", style)
         self.assertNotIn("tools ci tests", style)
 
-        safe_fix = style.index("python -m ruff check --fix .")
-        format_fix = style.index("python -m ruff format .")
-        format_check = style.index("python -m ruff format --check .")
-        lint_check = style.index("python -m ruff check .")
+        fix_branch = style.split("--fix)", 1)[1].split(";;", 1)[0]
+        safe_fix = fix_branch.index("python -m ruff check --fix .")
+        format_fix = fix_branch.index("python -m ruff format .")
+        format_check = fix_branch.index("python -m ruff format --check .")
+        lint_check = fix_branch.index("python -m ruff check .")
         self.assertLess(safe_fix, format_fix)
         self.assertLess(format_fix, format_check)
         self.assertLess(format_check, lint_check)
