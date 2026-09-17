@@ -163,11 +163,12 @@ separate read-back.
    scanning its candidate hashes would create a recursive, unstable baseline.
 6. **Ordinary PR security gate.** Add `security-fast` as a visible provider job
    using the exact development lock and the shared scan command. It intentionally
-   runs natively as the inexpensive exact-head gate before any image build. For
-   applicable candidates, `extended` reruns that same implementation inside the
-   development image; the native result does not substitute for containerized
-   evidence. `regression` consumes its result with `always()` and fails unless
-   it succeeded, so a failed scan cannot become a skipped-green downstream gate.
+   runs natively as an inexpensive independent exact-head gate and may execute
+   concurrently with image-building jobs. For applicable candidates, `extended`
+   reruns that same implementation inside the development image; the native
+   result does not substitute for containerized evidence. `regression` consumes
+   its result with `always()` and fails unless it succeeded, so a failed scan
+   cannot become a skipped-green downstream gate.
 7. **Explicit extended applicability.** Add one always-running routing job. It
    reports `RUN` for schedule/manual and for Pull Request, merge-candidate or
    protected-integration changes that touch the declared maintained Python,

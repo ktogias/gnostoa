@@ -196,6 +196,7 @@ class PublicationBaselineTests(unittest.TestCase):
         self.assertTrue(codeowners_path.is_file())
 
         workflow = workflow_path.read_text(encoding="utf-8")
+        workflow_jobs = load_yaml(workflow_path)["jobs"]
         for event in (
             "pull_request:",
             "merge_group:",
@@ -212,7 +213,15 @@ class PublicationBaselineTests(unittest.TestCase):
             "smoke",
             "extended",
         ):
-            self.assertIn(f"./ci/verify {suite}", workflow)
+            commands = [
+                str(step["run"])
+                for step in workflow_jobs[suite]["steps"]
+                if "run" in step
+            ]
+            self.assertTrue(
+                any(f"./ci/verify {suite}" in command for command in commands),
+                f"{suite} job does not invoke its shared verification suite",
+            )
         self.assertIn("permissions:", workflow)
         self.assertIn("contents: read", workflow)
         self.assertIn(
