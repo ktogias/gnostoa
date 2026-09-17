@@ -144,7 +144,9 @@ obligation.
    the candidate. Before Ruff runs, the shared style surface fails closed when
    `git ls-files --cached --ignored --exclude-standard` reports a tracked
    Ruff-relevant input; an ignore rule therefore cannot silently remove
-   committed Python from verification. `pyproject.toml` separately declares the
+   any committed Ruff input from verification. The guard enumerates the pinned
+   Ruff default input classes, including Python, notebooks, Markdown and Ruff
+   configuration TOML. `pyproject.toml` separately declares the
    explicit Ruff exclusions instead of inheriting broad default output
    basenames. Cache, VCS, environment and tool-state directories that are
    intentionally recursive remain recursive-name exclusions, while generated

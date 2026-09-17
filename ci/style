@@ -3,12 +3,30 @@ set -eu
 
 mode="${1:-}"
 
-check_candidate_scope() {
+enter_repository_root() {
   repository_root="$(pwd -P)"
+  while [ ! -e "${repository_root}/.git" ]; do
+    if [ "${repository_root}" = "/" ]; then
+      echo "ERROR: ./ci/style must run inside a Git worktree" >&2
+      return 1
+    fi
+    repository_root="$(dirname "${repository_root}")"
+  done
+  cd "${repository_root}"
+}
+
+check_candidate_scope() {
   ignored_tracked="$(
     git -c "safe.directory=${repository_root}" \
       ls-files --cached --ignored --exclude-standard -- \
-      '*.py' '*.pyi' '*.ipynb'
+      ':(glob)**/*.py' \
+      ':(glob)**/*.pyi' \
+      ':(glob)**/*.pyw' \
+      ':(glob)**/*.ipynb' \
+      ':(glob)**/*.md' \
+      ':(glob)**/pyproject.toml' \
+      ':(glob)**/ruff.toml' \
+      ':(glob)**/.ruff.toml'
   )"
   if [ -n "${ignored_tracked}" ]; then
     echo "ERROR: tracked Ruff input is ignored by Git:" >&2
@@ -19,11 +37,13 @@ check_candidate_scope() {
 
 case "${mode}" in
   --check)
+    enter_repository_root
     check_candidate_scope
     python -m ruff format --check .
     python -m ruff check .
     ;;
   --fix)
+    enter_repository_root
     check_candidate_scope
     python -m ruff check --fix .
     python -m ruff format .
