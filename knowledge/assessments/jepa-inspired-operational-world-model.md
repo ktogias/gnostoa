@@ -391,7 +391,7 @@ E4 remains provisional and non-executable until a separately admitted preregistr
 
 ### Stage-specific promotion gates
 
-The following are provisional preregistration defaults for a future admitted experiment, not acceptance criteria for this report or automatic roadmap authority. They are non-executable until the stage-specific protocol, data contract, evaluation cut, and analysis plan are frozen. A future Work Item may tighten or replace a number only before outcomes are inspected, with the reason recorded. Sections 10 and 13 still govern safety, cost, admission, and return. E2, E3, and E4 each require their own explicit admission even when the prior gate passes.
+The following are provisional preregistration defaults for a future admitted experiment, not acceptance criteria for this report or automatic roadmap authority. They are non-executable until the stage-specific protocol, data contract, evaluation cut, and analysis plan are frozen. A future Work Item may tighten or replace a number only before that stage's preregistered exposure boundary: before the frozen fixture/oracle is exposed for E0/E1, before collection or enrollment for E2, before branch assignment or outcome exposure for E3, and before evaluation-cut exposure for E4. After a boundary is crossed, any change requires a new versioned protocol and a new prospectively collected or independently frozen, previously unexposed cut; exposed observations remain exploratory and cannot be reused for confirmatory evaluation. Sections 10 and 13 still govern safety, cost, admission, and return. E2, E3, and E4 each require their own explicit admission even when the prior gate passes.
 
 | Stage | Reproducible baseline | Primary endpoint | Provisional quantitative gate | Pass, fail, or stop decision |
 |---|---|---|---|---|
@@ -528,5 +528,6 @@ Subsequent exact-head PR review identified additional experiment-contract gaps a
 | E2 eligibility and missing outcomes were undefined | Post-outcome exclusion could bias the Brier comparison | Required the episode, window, fields, exclusions, denominator, missingness rule, and cut to be frozen before outcomes |
 | E3 branchability and cost were undefined | Historical replay could masquerade as counterfactual evidence | Required reset equivalence, versioned oracle, selection rule, exogenous-event control, and complete cost accounting |
 | E4 loss and OOD degradation were underspecified | Thresholds could be selected after the evaluation data was visible | Kept E4 non-executable until loss, aggregation, splits, scale, direction, and absolute/relative semantics are frozen |
+| Generic threshold-change wording was weaker than the stage freezes | Thresholds could change after enrollment, branch assignment, or cut exposure | Bound every change to its stage-specific exposure boundary and require a new versioned protocol and unexposed cut afterward |
 
 Research contributions about the roadmap, papers, and engineering patterns were not used as semantic approvals. They remain bound to cited sources and stated limits.
