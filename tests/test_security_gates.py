@@ -587,7 +587,8 @@ class ProviderSecurityGateTests(unittest.TestCase):
         )
         self.assertIn('test "${SECURITY_FAST_RESULT}" = success', workflow)
         self.assertIn("\n  extended-route:\n", workflow)
-        self.assertIn("git diff --name-only -z", workflow)
+        self.assertIn("git diff --no-renames --name-only -z", workflow)
+        self.assertNotIn("git diff --name-only -z", workflow)
         self.assertIn("python -m tools.extended_route", workflow)
         self.assertIn("needs: [policy, extended-route]", workflow)
         self.assertIn(

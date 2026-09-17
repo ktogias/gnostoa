@@ -401,7 +401,7 @@ jobs:
               if test -n "${BASE_SHA:-}" \
                 && test "${BASE_SHA}" != "0000000000000000000000000000000000000000" \
                 && git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
-                git diff --name-only -z "${BASE_SHA}" HEAD > "${paths_file}"
+                git diff --no-renames --name-only -z "${BASE_SHA}" HEAD > "${paths_file}"
               else
                 git ls-files -z > "${paths_file}"
               fi
