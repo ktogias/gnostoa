@@ -2,24 +2,35 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
+import selectors
+import stat
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from tools.repository_scope import candidate_paths
+from tools.repository_scope import RepositoryScopeError, candidate_paths
 
 DEFAULT_BASELINE = Path(".secrets.baseline")
 _MAX_REPORT_BYTES = 8_388_608
+_READ_CHUNK_BYTES = 65_536
 _SCAN_TIMEOUT_SECONDS = 300
 _BASELINE_EXCLUDE_PATTERN = r"^\.secrets\.baseline$"
-_ALLOWED_BASELINE_PATHS = {
-    "tasks/issue-11-r2a-current-advisory-consumer.json",
-    "tasks/issue-11-r2a-current-advisory.json",
+_PROTECTED_BASELINE_FILE_SHA256 = {
+    "tasks/issue-11-r2a-current-advisory-consumer.json": (
+        "c55f9b9d0d564c3e617f7cee5de050b321f3ca60a1d094dc36720ccb6c1394ee"  # pragma: allowlist secret -- reviewed protected-authority content digest
+    ),
+    "tasks/issue-11-r2a-current-advisory.json": (
+        "d6d07e104213a9e18cba909ca1727a5c276e87c9dcaa2e38023053161a3335fb"  # pragma: allowlist secret -- reviewed protected-authority content digest
+    ),
 }
+_ALLOWED_BASELINE_PATHS = frozenset(_PROTECTED_BASELINE_FILE_SHA256)
 _SECRET_HASH = re.compile(r"^[0-9a-f]{40}$")
 
 
@@ -170,6 +181,186 @@ def _read_document(path: Path, label: str) -> dict[str, Any]:
     return document
 
 
+def _terminate_and_reap(process: subprocess.Popen[bytes]) -> None:
+    if process.poll() is None:
+        try:
+            process.kill()
+        except OSError:
+            pass
+    try:
+        process.wait()
+    except OSError:
+        pass
+
+
+def _run_bounded_scan(
+    command: list[str],
+    *,
+    cwd: Path,
+    timeout: int,
+) -> subprocess.CompletedProcess[bytes]:
+    """Run the scanner while bounding both captured streams in memory."""
+
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=cwd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except OSError as exc:
+        raise SecurityScanError("cannot execute the tracked-tree secret scan") from exc
+
+    if process.stdout is None or process.stderr is None:
+        _terminate_and_reap(process)
+        raise SecurityScanError("tracked-tree secret scan pipes are unavailable")
+
+    outputs = {"report": bytearray(), "diagnostics": bytearray()}
+    selector: selectors.BaseSelector | None = None
+    deadline = time.monotonic() + timeout
+    try:
+        selector = selectors.DefaultSelector()
+        selector.register(process.stdout, selectors.EVENT_READ, "report")
+        selector.register(process.stderr, selectors.EVENT_READ, "diagnostics")
+        while selector.get_map():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(command, timeout)
+            events = selector.select(remaining)
+            if not events:
+                raise subprocess.TimeoutExpired(command, timeout)
+            for key, _ in events:
+                label = str(key.data)
+                buffer = outputs[label]
+                remaining_bound = _MAX_REPORT_BYTES + 1 - len(buffer)
+                read_size = min(_READ_CHUNK_BYTES, max(1, remaining_bound))
+                chunk = os.read(key.fd, read_size)
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    continue
+                buffer.extend(chunk)
+                if len(buffer) > _MAX_REPORT_BYTES:
+                    _terminate_and_reap(process)
+                    raise SecurityScanError(
+                        f"tracked-tree secret scan {label} exceeds the bound"
+                    )
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(command, timeout)
+        returncode = process.wait(timeout=remaining)
+    except subprocess.TimeoutExpired as exc:
+        _terminate_and_reap(process)
+        raise SecurityScanError("tracked-tree secret scan timed out") from exc
+    except OSError as exc:
+        _terminate_and_reap(process)
+        raise SecurityScanError("cannot execute the tracked-tree secret scan") from exc
+    finally:
+        if selector is not None:
+            selector.close()
+        process.stdout.close()
+        process.stderr.close()
+
+    return subprocess.CompletedProcess(
+        command,
+        returncode,
+        bytes(outputs["report"]),
+        bytes(outputs["diagnostics"]),
+    )
+
+
+def _validated_candidate_paths(root: Path, paths: list[Path]) -> list[Path]:
+    validated: list[Path] = []
+    for relative in sorted(set(paths), key=lambda path: path.as_posix()):
+        rendered = relative.as_posix()
+        if (
+            relative == Path(".")
+            or not rendered.isprintable()
+            or relative.is_absolute()
+            or ".." in relative.parts
+        ):
+            raise SecurityScanError(
+                f"tracked-tree secret scan has an unsafe candidate path: {rendered!r}"
+            )
+
+        current = root
+        for part in relative.parts[:-1]:
+            current /= part
+            try:
+                mode = current.lstat().st_mode
+            except OSError as exc:
+                raise SecurityScanError(
+                    f"cannot inspect candidate path {rendered!r}: {exc}"
+                ) from exc
+            if stat.S_ISLNK(mode):
+                raise SecurityScanError(
+                    f"tracked-tree secret scan refuses symlink parent for {rendered!r}"
+                )
+            if not stat.S_ISDIR(mode):
+                raise SecurityScanError(
+                    f"candidate path parent is not a directory: {rendered!r}"
+                )
+
+        try:
+            mode = (root / relative).lstat().st_mode
+        except OSError as exc:
+            raise SecurityScanError(
+                f"cannot inspect candidate path {rendered!r}: {exc}"
+            ) from exc
+        if stat.S_ISLNK(mode):
+            raise SecurityScanError(
+                f"tracked-tree secret scan refuses symlinks: {rendered}"
+            )
+        if not stat.S_ISREG(mode):
+            raise SecurityScanError(
+                f"candidate path is not a regular file: {rendered!r}"
+            )
+        validated.append(relative)
+    return validated
+
+
+def _file_sha256(root: Path, relative: Path) -> str:
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(root / relative, flags)
+    except OSError as exc:
+        raise SecurityScanError(
+            f"cannot read protected baseline file {relative.as_posix()!r}"
+        ) from exc
+    try:
+        with os.fdopen(descriptor, "rb") as stream:
+            return hashlib.file_digest(stream, "sha256").hexdigest()
+    except OSError as exc:
+        raise SecurityScanError(
+            f"cannot read protected baseline file {relative.as_posix()!r}"
+        ) from exc
+
+
+def _verify_protected_baseline_files(
+    root: Path,
+    paths: list[Path],
+    *,
+    require_all: bool,
+) -> None:
+    rendered_paths = {path.as_posix() for path in paths}
+    if require_all:
+        missing = sorted(_ALLOWED_BASELINE_PATHS - rendered_paths)
+        if missing:
+            raise SecurityScanError(
+                "tracked-tree secret scan is missing protected baseline files"
+            )
+    for rendered, expected in _PROTECTED_BASELINE_FILE_SHA256.items():
+        if rendered not in rendered_paths:
+            continue
+        if _file_sha256(root, Path(rendered)) != expected:
+            raise SecurityScanError(
+                f"protected baseline file identity changed: {rendered}"
+            )
+
+
 def scan_tracked_tree(
     repository_root: Path,
     *,
@@ -180,46 +371,42 @@ def scan_tracked_tree(
     """Scan the exact tracked regular-file tree and apply the reviewed baseline."""
 
     root = repository_root.resolve()
-    paths = candidate_paths(root) if tracked_paths is None else list(tracked_paths)
+    canonical_scan = tracked_paths is None
+    if canonical_scan:
+        try:
+            paths = candidate_paths(root)
+        except RepositoryScopeError as exc:
+            raise SecurityScanError(
+                f"cannot enumerate tracked-tree candidates: {exc}"
+            ) from exc
+    else:
+        paths = list(tracked_paths)
     if not paths:
         raise SecurityScanError("tracked-tree secret scan has no candidate files")
-    tracked_symlinks = [path.as_posix() for path in paths if (root / path).is_symlink()]
-    if tracked_symlinks:
-        raise SecurityScanError(
-            "tracked-tree secret scan refuses symlinks: " + ", ".join(tracked_symlinks)
-        )
+    paths = _validated_candidate_paths(root, paths)
+    _verify_protected_baseline_files(root, paths, require_all=canonical_scan)
 
-    try:
-        completed = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "detect_secrets",
-                "--cores",
-                "1",
-                "scan",
-                "--no-verify",
-                "--exclude-files",
-                _BASELINE_EXCLUDE_PATTERN,
-                "--",
-                *(path.as_posix() for path in paths),
-            ],
-            cwd=root,
-            check=False,
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            timeout=_SCAN_TIMEOUT_SECONDS,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise SecurityScanError("tracked-tree secret scan timed out") from exc
-    except OSError as exc:
-        raise SecurityScanError("cannot execute the tracked-tree secret scan") from exc
+    completed = _run_bounded_scan(
+        [
+            sys.executable,
+            "-m",
+            "detect_secrets",
+            "--cores",
+            "1",
+            "scan",
+            "--no-verify",
+            "--exclude-files",
+            _BASELINE_EXCLUDE_PATTERN,
+            "--",
+            *(path.as_posix() for path in paths),
+        ],
+        cwd=root,
+        timeout=_SCAN_TIMEOUT_SECONDS,
+    )
     if completed.returncode != 0:
         raise SecurityScanError(
             f"tracked-tree secret scan returned status {completed.returncode}"
         )
-    if len(completed.stdout) > _MAX_REPORT_BYTES:
-        raise SecurityScanError("tracked-tree secret scan report exceeds the bound")
     try:
         scan_document = json.loads(completed.stdout)
     except json.JSONDecodeError as exc:

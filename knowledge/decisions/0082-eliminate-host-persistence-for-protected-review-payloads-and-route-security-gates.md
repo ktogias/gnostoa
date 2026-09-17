@@ -63,7 +63,10 @@ strings. Review of its retained report and source locations classified all 21 as
 public Git commit/tree identities, OCI digests or public-surface digests. The
 scanner behaved as designed; the defect is that reviewed benign identities were
 not narrowly dispositioned and the same inexpensive observation was absent from
-ordinary Pull Requests.
+ordinary Pull Requests. The provider artifact is retention-bound, so the
+sanitized path/line/type inventory and its single disposition are retained in
+[`0082-secret-scan-triage-evidence.json`](../assessments/0082-secret-scan-triage-evidence.json).
+That record deliberately excludes candidate text and candidate-derived hashes.
 
 ## Prior-art and reuse disposition
 
@@ -121,27 +124,35 @@ separate read-back.
 4. **Narrow public-identity disposition.** Add line-scoped pragmas to the exact
    reviewed YAML/Python public identities. Preserve the bytes of protected
    authority JSON and record only its exact remaining candidate hashes in the
-   audited baseline. A stale baseline entry, malformed entry, non-false-positive
-   entry or new candidate fails closed.
+   audited baseline. Bind the only two baseline-authorized JSON paths to their
+   reviewed SHA-256 file identities, so changing a protected document and its
+   baseline together still fails closed. A stale baseline entry, malformed
+   entry, non-false-positive entry or new candidate fails closed.
 5. **One reusable tracked-tree scan.** Factor the scan/baseline comparison into
    one repository-owned command that emits only candidate metadata, never the
-   candidate value or candidate-derived hash. `extended` reuses it and retains
-   a sanitized report plus counts of reviewed and unresolved candidates. The
-   baseline manifest itself is the single exact scanner exclusion because
+   candidate value or candidate-derived hash. Validate every scanner argument
+   as a repository-relative regular file, terminate option parsing before those
+   arguments, translate candidate-enumeration failures, and bound stdout/stderr
+   while reading rather than after buffering. `extended` reuses the command and
+   retains a sanitized report plus counts of reviewed and unresolved candidates.
+   The baseline manifest itself is the single exact scanner exclusion because
    scanning its candidate hashes would create a recursive, unstable baseline.
 6. **Ordinary PR security gate.** Add `security-fast` as a visible provider job
-   using the exact development lock and the shared scan command. `regression`
-   consumes its result with `always()` and fails unless it succeeded, so a
-   failed scan cannot become a skipped-green downstream gate.
+   using the exact development lock and the shared scan command. It intentionally
+   runs natively as the inexpensive exact-head gate before any image build. For
+   applicable candidates, `extended` reruns that same implementation inside the
+   development image; the native result does not substitute for containerized
+   evidence. `regression` consumes its result with `always()` and fails unless
+   it succeeded, so a failed scan cannot become a skipped-green downstream gate.
 7. **Explicit extended applicability.** Add one always-running routing job. It
    reports `RUN` for schedule/manual and for Pull Request, merge-candidate or
    protected-integration changes that touch the declared maintained Python,
    CI/workflow, dependency, documentation, release-evidence or protected
-   authority surfaces. Otherwise it reports `NOT_APPLICABLE` and a bounded
-   reason. The heavyweight job may remain conditionally skipped, but
-   `regression` accepts only a successful applicable run or an exact
-   `NOT_APPLICABLE`/skipped pair. Neither the router nor project records call
-   that skip a pass.
+   authority surfaces, including `.gitlab-ci.yml`, `.secrets.baseline`, and the
+   complete `policy/` tree. Otherwise it reports `NOT_APPLICABLE` and a bounded
+   reason. The heavyweight job may remain conditionally skipped, but `regression`
+   accepts only a successful applicable run or an exact `NOT_APPLICABLE`/skipped
+   pair. Neither the router nor project records call that skip a pass.
 8. **Provider CodeQL effect remains sequenced.** After this Decision and the
    implementation are integrated and provider read-back confirms clean
    exact-head/default-branch results, require the stable GitHub CodeQL result for
@@ -173,6 +184,12 @@ Pre-implementation RED evidence and the final candidate must demonstrate:
   `NOT_APPLICABLE`, and high-risk PRs actually execute `extended`;
 - policy, fast, regression, smoke, runtime self-check and applicable extended
   verification pass against the exact candidate.
+
+Provider subjects are deliberately complementary. `security-fast`, routing,
+`extended`, and smoke bind the Pull Request head so the sealed source itself is
+observed. Policy, fast, Python compatibility, and regression use the provider's
+merge candidate to establish integration compatibility. Regression requires the
+results from both subjects; neither set alone is convergence evidence.
 
 Tests establish the mechanics they execute. Only GitHub provider read-back can
 establish alert closure, exact-head job status and the later effective required

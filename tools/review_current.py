@@ -214,22 +214,23 @@ def _run_docker(
         "stdout": bytearray(),
         "stderr": bytearray(),
     }
-    selector = selectors.DefaultSelector()
-    selector.register(process.stdout, selectors.EVENT_READ, "stdout")
-    selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+    selector: selectors.BaseSelector | None = None
     input_view: memoryview | None = None
     input_offset = 0
-    if input_bytes is not None:
-        assert process.stdin is not None
-        if input_bytes:
-            input_view = memoryview(input_bytes)
-            os.set_blocking(process.stdin.fileno(), False)
-            selector.register(process.stdin, selectors.EVENT_WRITE, "stdin")
-        else:
-            process.stdin.close()
     deadline = time.monotonic() + timeout
 
     try:
+        selector = selectors.DefaultSelector()
+        selector.register(process.stdout, selectors.EVENT_READ, "stdout")
+        selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+        if input_bytes is not None:
+            assert process.stdin is not None
+            if input_bytes:
+                input_view = memoryview(input_bytes)
+                os.set_blocking(process.stdin.fileno(), False)
+                selector.register(process.stdin, selectors.EVENT_WRITE, "stdin")
+            else:
+                process.stdin.close()
         while selector.get_map():
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -286,7 +287,8 @@ def _run_docker(
             f"protected Docker execution failed: {exc}"
         ) from exc
     finally:
-        selector.close()
+        if selector is not None:
+            selector.close()
         process.stdout.close()
         process.stderr.close()
         if process.stdin is not None and not process.stdin.closed:

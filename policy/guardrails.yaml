@@ -600,6 +600,8 @@ guardrails:
       - ci/verify
       - .gitlab-ci.yml
       - guidance/reference/continuous-integration-contract.md
+      - knowledge/assessments/0082-secret-scan-triage-evidence.json
+      - knowledge/decisions/0082-eliminate-host-persistence-for-protected-review-payloads-and-route-security-gates.md
       - tools/extended_route.py
       - tools/security_scan.py
     tests:

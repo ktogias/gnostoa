@@ -183,6 +183,54 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
         self.assertEqual(0, result.returncode)
         self.assertEqual(b"closed", result.stdout)
 
+    def test_nonblocking_stdin_setup_failure_aborts_the_started_child(self) -> None:
+        script = "import time; time.sleep(30)"
+        real_popen = subprocess.Popen
+        observed: dict[str, subprocess.Popen[bytes]] = {}
+
+        def start_process(*args: object, **kwargs: object) -> subprocess.Popen[bytes]:
+            process = real_popen(*args, **kwargs)
+            observed["process"] = process
+            return process
+
+        try:
+            with (
+                tempfile.TemporaryDirectory() as directory,
+                mock.patch.object(
+                    review_current,
+                    "_docker_executable",
+                    return_value=sys.executable,
+                ),
+                mock.patch.object(
+                    review_current.subprocess,
+                    "Popen",
+                    side_effect=start_process,
+                ),
+                mock.patch.object(
+                    review_current.os,
+                    "set_blocking",
+                    side_effect=OSError("cannot configure stdin"),
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    review_current.ProtectedJudgeUnavailable,
+                    "cannot configure stdin",
+                ):
+                    review_current._run_docker(
+                        ["-c", script],
+                        config_dir=Path(directory),
+                        input_bytes=b"payload",
+                        timeout=5,
+                    )
+        finally:
+            process = observed.get("process")
+            if process is not None and process.poll() is None:
+                process.kill()
+                process.wait()
+
+        self.assertIn("process", observed)
+        self.assertIsNotNone(observed["process"].poll())
+
 
 if __name__ == "__main__":
     unittest.main()

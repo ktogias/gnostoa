@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
+from tools import security_scan
 from tools.extended_route import route_extended
+from tools.repository_scope import RepositoryScopeError
 from tools.security_scan import (
     SecurityScanError,
     evaluate_secret_report,
@@ -154,7 +158,7 @@ class SecretBaselineTests(unittest.TestCase):
             )
 
             with mock.patch(
-                "tools.security_scan.subprocess.run",
+                "tools.security_scan._run_bounded_scan",
                 return_value=completed,
             ) as run:
                 result = scan_tracked_tree(
@@ -191,9 +195,11 @@ class SecretBaselineTests(unittest.TestCase):
                 b"",
             )
             adversarial_path = Path("--exclude-files=^secret.txt$")
+            (root / adversarial_path).write_text("marker\n", encoding="utf-8")
+            (root / "secret.txt").write_text("candidate\n", encoding="utf-8")
 
             with mock.patch(
-                "tools.security_scan.subprocess.run",
+                "tools.security_scan._run_bounded_scan",
                 return_value=completed,
             ) as run:
                 scan_tracked_tree(
@@ -208,6 +214,87 @@ class SecretBaselineTests(unittest.TestCase):
                 command[separator + 1 :],
             )
 
+    def test_candidate_scope_errors_are_reported_as_security_scan_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with mock.patch(
+                "tools.security_scan.candidate_paths",
+                side_effect=RepositoryScopeError("candidate enumeration failed"),
+            ):
+                with self.assertRaisesRegex(
+                    SecurityScanError,
+                    "cannot enumerate tracked-tree candidates",
+                ):
+                    scan_tracked_tree(root)
+
+    def test_caller_paths_must_be_repository_relative_regular_files(self) -> None:
+        baseline = _report({})
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".secrets.baseline").write_text(
+                json.dumps(baseline),
+                encoding="utf-8",
+            )
+            (root / "directory").mkdir()
+
+            for candidate, expected in (
+                (Path("/outside-repository"), "unsafe candidate path"),
+                (Path("directory"), "not a regular file"),
+                (Path("missing.txt"), "cannot inspect candidate path"),
+            ):
+                with self.subTest(candidate=candidate):
+                    with self.assertRaisesRegex(SecurityScanError, expected):
+                        scan_tracked_tree(root, tracked_paths=[candidate])
+
+    def test_protected_baseline_file_identity_is_bound(self) -> None:
+        relative = Path(PROTECTED_BASELINE_PATH)
+        baseline = _report(
+            {
+                relative.as_posix(): [
+                    _candidate(PUBLIC_HASH, line=1, false_positive=True)
+                ]
+            }
+        )
+        approved = b"approved protected authority\n"
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / relative).parent.mkdir(parents=True)
+            (root / relative).write_bytes(b"modified protected authority\n")
+            (root / ".secrets.baseline").write_text(
+                json.dumps(baseline),
+                encoding="utf-8",
+            )
+            expected = hashlib.sha256(approved).hexdigest()
+
+            with mock.patch.dict(
+                security_scan._PROTECTED_BASELINE_FILE_SHA256,
+                {relative.as_posix(): expected},
+                clear=True,
+            ):
+                with self.assertRaisesRegex(
+                    SecurityScanError,
+                    "protected baseline file identity changed",
+                ):
+                    scan_tracked_tree(root, tracked_paths=[relative])
+
+    def test_scanner_output_is_bounded_while_it_is_read(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            for stream, expected in (
+                ("stdout", "report exceeds the bound"),
+                ("stderr", "diagnostics exceeds the bound"),
+            ):
+                script = f"import sys; sys.{stream}.buffer.write(b'x' * 65)"
+                with self.subTest(stream=stream):
+                    with mock.patch.object(security_scan, "_MAX_REPORT_BYTES", 64):
+                        with self.assertRaisesRegex(SecurityScanError, expected):
+                            security_scan._run_bounded_scan(
+                                [sys.executable, "-c", script],
+                                cwd=Path(directory),
+                                timeout=5,
+                            )
+
 
 class ExtendedRoutingTests(unittest.TestCase):
     def test_schedule_and_manual_dispatch_always_run(self) -> None:
@@ -221,8 +308,11 @@ class ExtendedRoutingTests(unittest.TestCase):
             "tools/review_current.py",
             "ci/verify",
             ".github/workflows/verification.yml",
+            ".gitlab-ci.yml",
+            ".secrets.baseline",
             "requirements/development.lock",
             "knowledge/decisions/example.md",
+            "policy/guardrails.yaml",
             "tasks/protected.json",
             "docs/status.md",
             "Dockerfile",
@@ -274,6 +364,26 @@ class ExtendedRoutingTests(unittest.TestCase):
 
 
 class ProviderSecurityGateTests(unittest.TestCase):
+    def test_retained_secret_triage_evidence_is_sanitized_and_complete(self) -> None:
+        evidence = json.loads(
+            (
+                ROOT
+                / "knowledge"
+                / "assessments"
+                / "0082-secret-scan-triage-evidence.json"
+            ).read_text(encoding="utf-8")
+        )
+
+        self.assertEqual(21, evidence["source"]["finding_count"])
+        self.assertEqual(21, len(evidence["findings"]))
+        self.assertEqual(
+            {"line", "path", "type"},
+            set().union(*(finding.keys() for finding in evidence["findings"])),
+        )
+        rendered = json.dumps(evidence)
+        self.assertNotIn("hashed_secret", rendered)
+        self.assertNotIn("candidate_text", rendered)
+
     def test_pr_security_gate_and_extended_router_are_explicit(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "verification.yml").read_text(
             encoding="utf-8"

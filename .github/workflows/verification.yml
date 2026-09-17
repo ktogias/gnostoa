@@ -42,6 +42,9 @@ jobs:
             "${GNOSTOA_CI_IMAGE}" \
             -ec './ci/verify policy'
 
+  # This exact-head, exact-lock native job is the inexpensive early gate. For an
+  # applicable candidate, extended reruns the shared scan inside the development
+  # image; this native result does not substitute for that containerized evidence.
   security-fast:
     name: security-fast
     runs-on: ubuntu-latest

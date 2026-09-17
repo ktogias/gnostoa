@@ -16,6 +16,7 @@ _HIGH_RISK_PREFIXES = (
     "docs/",
     "guidance/",
     "knowledge/",
+    "policy/",
     "requirements/",
     "schemas/",
     "tasks/",
@@ -26,6 +27,8 @@ _HIGH_RISK_PREFIXES = (
 _HIGH_RISK_EXACT = {
     ".dockerignore",
     ".gitignore",
+    ".gitlab-ci.yml",
+    ".secrets.baseline",
     "AGENTS.md",
     "CONTRIBUTING.md",
     "Dockerfile",
