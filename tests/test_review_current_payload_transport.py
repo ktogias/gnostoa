@@ -198,53 +198,227 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
         self.assertEqual(0, result.returncode)
         self.assertEqual(b"closed", result.stdout)
 
-    def test_nonblocking_stdin_setup_failure_aborts_the_started_child(self) -> None:
+    def test_nonblocking_stdin_setup_failure_uses_predeclared_cleanup_identity(
+        self,
+    ) -> None:
         script = "import time; time.sleep(30)"
         real_popen = subprocess.Popen
-        observed: dict[str, subprocess.Popen[bytes]] = {}
+        observed: dict[str, object] = {}
 
-        def start_process(*args: object, **kwargs: object) -> subprocess.Popen[bytes]:
-            process = real_popen(*args, **kwargs)
+        def start_process(
+            command: list[str],
+            **kwargs: object,
+        ) -> subprocess.Popen[bytes]:
+            observed["command"] = command
+            process = real_popen(
+                [sys.executable, "-c", script],
+                **kwargs,
+            )
             observed["process"] = process
             return process
 
-        try:
-            with (
-                tempfile.TemporaryDirectory() as directory,
-                mock.patch.object(
-                    review_current,
-                    "_docker_executable",
-                    return_value=sys.executable,
-                ),
-                mock.patch.object(
-                    review_current.subprocess,
-                    "Popen",
-                    side_effect=start_process,
-                ),
-                mock.patch.object(
-                    review_current.os,
-                    "set_blocking",
-                    side_effect=OSError("cannot configure stdin"),
-                ),
-            ):
-                with self.assertRaisesRegex(
-                    review_current.ProtectedJudgeUnavailable,
-                    "cannot configure stdin",
+        cleanup = mock.Mock(
+            return_value=subprocess.CompletedProcess(
+                ["docker", "rm", "-f", "candidate"],
+                0,
+            )
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            try:
+                with (
+                    mock.patch.object(
+                        review_current,
+                        "_docker_executable",
+                        return_value="docker",
+                    ),
+                    mock.patch.object(
+                        review_current.subprocess,
+                        "Popen",
+                        side_effect=start_process,
+                    ),
+                    mock.patch.object(
+                        review_current.os,
+                        "set_blocking",
+                        side_effect=OSError("cannot configure stdin"),
+                    ),
+                    mock.patch.object(
+                        review_current.subprocess,
+                        "run",
+                        cleanup,
+                    ),
                 ):
-                    review_current._run_docker(
-                        ["-c", script],
-                        config_dir=Path(directory),
-                        input_bytes=b"payload",
-                        timeout=5,
-                    )
-        finally:
-            process = observed.get("process")
-            if process is not None and process.poll() is None:
-                process.kill()
-                process.wait()
+                    with self.assertRaisesRegex(
+                        review_current.ProtectedJudgeUnavailable,
+                        "cannot configure stdin",
+                    ):
+                        review_current._run_docker(
+                            ["run", "--rm", "example-image"],
+                            config_dir=Path(directory),
+                            input_bytes=b"payload",
+                            timeout=5,
+                        )
+            finally:
+                process = observed.get("process")
+                if isinstance(process, subprocess.Popen) and process.poll() is None:
+                    process.kill()
+                    process.wait()
 
-        self.assertIn("process", observed)
-        self.assertIsNotNone(observed["process"].poll())
+            command = observed["command"]
+            self.assertIsInstance(command, list)
+            assert isinstance(command, list)
+            self.assertIn("--name", command)
+            name = command[command.index("--name") + 1]
+            cleanup.assert_called_once()
+            self.assertEqual(
+                ["docker", "rm", "-f", name],
+                cleanup.call_args.args[0],
+            )
+            process = observed["process"]
+            self.assertIsInstance(process, subprocess.Popen)
+            assert isinstance(process, subprocess.Popen)
+            self.assertIsNotNone(process.poll())
+
+    def test_failed_cleanup_retries_and_retains_recovery_identity(self) -> None:
+        real_popen = subprocess.Popen
+        observed: dict[str, object] = {}
+
+        def start_process(
+            command: list[str],
+            **kwargs: object,
+        ) -> subprocess.Popen[bytes]:
+            observed["command"] = command
+            cidfile = Path(command[command.index("--cidfile") + 1])
+            cidfile.write_text("a" * 64, encoding="ascii")
+            observed["cidfile"] = cidfile
+            process = real_popen(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+                **kwargs,
+            )
+            observed["process"] = process
+            return process
+
+        cleanup = mock.Mock(
+            return_value=subprocess.CompletedProcess(
+                ["docker", "rm", "-f", "candidate"],
+                1,
+            )
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            try:
+                with (
+                    mock.patch.object(
+                        review_current,
+                        "_docker_executable",
+                        return_value="docker",
+                    ),
+                    mock.patch.object(
+                        review_current.subprocess,
+                        "Popen",
+                        side_effect=start_process,
+                    ),
+                    mock.patch.object(
+                        review_current.os,
+                        "set_blocking",
+                        side_effect=OSError("cannot configure stdin"),
+                    ),
+                    mock.patch.object(
+                        review_current.subprocess,
+                        "run",
+                        cleanup,
+                    ),
+                ):
+                    with self.assertRaisesRegex(
+                        review_current.ProtectedJudgeUnavailable,
+                        "cleanup.*recovery identity",
+                    ):
+                        review_current._run_docker(
+                            ["run", "--rm", "example-image"],
+                            config_dir=Path(directory),
+                            input_bytes=b"payload",
+                            timeout=5,
+                        )
+            finally:
+                process = observed.get("process")
+                if isinstance(process, subprocess.Popen) and process.poll() is None:
+                    process.kill()
+                    process.wait()
+
+            self.assertEqual(3, cleanup.call_count)
+            cidfile = observed["cidfile"]
+            self.assertIsInstance(cidfile, Path)
+            assert isinstance(cidfile, Path)
+            self.assertTrue(cidfile.exists())
+
+    def test_output_overflow_aborts_and_cleans_the_named_container(self) -> None:
+        real_popen = subprocess.Popen
+        observed: dict[str, object] = {}
+
+        def start_process(
+            command: list[str],
+            **kwargs: object,
+        ) -> subprocess.Popen[bytes]:
+            observed["command"] = command
+            cidfile = Path(command[command.index("--cidfile") + 1])
+            cidfile.write_text("b" * 64, encoding="ascii")
+            process = real_popen(
+                [
+                    sys.executable,
+                    "-c",
+                    "import sys, time; "
+                    "sys.stdout.buffer.write(b'x' * 65); "
+                    "sys.stdout.buffer.flush(); time.sleep(30)",
+                ],
+                **kwargs,
+            )
+            observed["process"] = process
+            return process
+
+        cleanup = mock.Mock(
+            return_value=subprocess.CompletedProcess(
+                ["docker", "rm", "-f", "candidate"],
+                0,
+            )
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            try:
+                with (
+                    mock.patch.object(
+                        review_current,
+                        "_docker_executable",
+                        return_value="docker",
+                    ),
+                    mock.patch.object(
+                        review_current,
+                        "_MAX_RUNTIME_OUTPUT_BYTES",
+                        64,
+                    ),
+                    mock.patch.object(
+                        review_current.subprocess,
+                        "Popen",
+                        side_effect=start_process,
+                    ),
+                    mock.patch.object(
+                        review_current.subprocess,
+                        "run",
+                        cleanup,
+                    ),
+                ):
+                    with self.assertRaisesRegex(
+                        review_current.ProtectedJudgeUnavailable,
+                        "stdout exceeds the bounded size",
+                    ):
+                        review_current._run_docker(
+                            ["run", "--rm", "example-image"],
+                            config_dir=Path(directory),
+                            timeout=5,
+                        )
+            finally:
+                process = observed.get("process")
+                if isinstance(process, subprocess.Popen) and process.poll() is None:
+                    process.kill()
+                    process.wait()
+
+        cleanup.assert_called_once()
 
 
 if __name__ == "__main__":

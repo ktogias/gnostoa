@@ -133,8 +133,12 @@ separate read-back.
    with optional input bytes. When input exists, attach Docker stdin, stream it
    in bounded non-blocking chunks while draining stdout/stderr, close the pipe
    after the final byte, and preserve the single deadline, output limits,
-   kill/reap and container cleanup semantics. Calls without input receive a
-   closed stdin rather than inheriting the caller's stream.
+   kill/reap and container cleanup semantics. Every started `docker run` has a
+   predeclared non-payload name as well as a CID file; abort cleanup retries by
+   CID when available and otherwise by that name. An unconfirmed cleanup does
+   not proactively unlink the CID file before propagating and reports the
+   predeclared recovery name. Calls without input receive a closed stdin rather
+   than inheriting the caller's stream.
 3. **Fixed in-container bridge.** Run the authority-bound image with the existing
    security arguments and a fixed Python bridge. The bridge validates the closed
    envelope shape, uses restrictive creation semantics below `/tmp`, writes the
@@ -147,8 +151,14 @@ separate read-back.
    authority JSON and record only its exact remaining candidate hashes in the
    audited baseline. Bind the only two baseline-authorized JSON paths to their
    reviewed SHA-256 file identities, so changing a protected document and its
-   baseline together still fails closed. A stale baseline entry, malformed
-   entry, non-false-positive entry or new candidate fails closed.
+   baseline together still fails closed. The excluded baseline accepts only
+   its closed scanner schema; unknown top-level, plugin, filter or candidate
+   fields fail closed. A stale baseline entry, malformed entry,
+   non-false-positive entry or new candidate fails closed. Inline pragmas remain
+   explicit, review-visible declarations rather than self-authenticating proof
+   that a value is public: additions or changes require semantic review. This
+   candidate-owned gate does not claim to sandbox a malicious author who can
+   also rewrite the gate itself.
 5. **One reusable tracked-tree scan.** Factor the scan/baseline comparison into
    one repository-owned command that emits only candidate metadata, never the
    candidate value or candidate-derived hash. Validate every scanner argument
@@ -157,8 +167,12 @@ separate read-back.
    while reading rather than after buffering. Acquire each candidate through
    descriptor-relative `O_NOFOLLOW` traversal into a private, disposable scan
    snapshot. Open the final candidate non-blocking so a FIFO replacement cannot
-   stall acquisition, verify stable inode and file metadata across the copy,
-   and run the scanner only against those acquired bytes. The snapshot is
+   stall acquisition, enforce per-file, cumulative-byte and acquisition-time
+   bounds, verify stable inode and file metadata across the copy, and re-traverse
+   the complete path from the retained repository-root descriptor so replacement
+   of an ancestor directory cannot validate a detached object. Invoke the pinned
+   scanner with isolated Python module resolution so candidate files cannot
+   shadow the dependency, and scan only the acquired bytes. The snapshot is
    deleted on exit and is distinct from the protected-review payload, which is
    never written on the host. `extended` reuses the command and retains a
    sanitized report plus counts of reviewed and unresolved candidates. The
@@ -179,13 +193,18 @@ separate read-back.
    reports `RUN` for schedule/manual and for Pull Request, merge-candidate or
    protected-integration changes that touch the declared maintained Python,
    CI/workflow, dependency, documentation, release-evidence or protected
-   authority surfaces, including `.gitlab-ci.yml`, `.secrets.baseline`, and the
-   complete `policy/` tree. Otherwise it reports `NOT_APPLICABLE` and a bounded
-   reason. The heavyweight job may remain conditionally skipped, but `regression`
-   accepts only a successful applicable run or an exact `NOT_APPLICABLE`/skipped
-   pair. Neither the router nor project records call that skip a pass.
+   authority surfaces, including `.gitlab-ci.yml`, `.secrets.baseline`,
+   `LICENSE`, `LICENSING.md`, `NOTICE`, `SUPPORT.md`,
+   `THIRD_PARTY_NOTICES`, and the complete `policy/` tree. Otherwise it reports
+   `NOT_APPLICABLE` and a bounded reason. The heavyweight job may remain
+   conditionally skipped, but `regression` accepts only a successful applicable
+   run or an exact `NOT_APPLICABLE`/skipped pair. Neither the router nor project
+   records call that skip a pass.
    A candidate change to `tools/extended_route.py` independently forces `RUN`
-   before the candidate-owned router is consulted.
+   before the candidate-owned router is consulted. Topic branches are verified
+   by the Pull Request event only; the workflow's `push` event is restricted to
+   protected `main`, so a duplicate topic-push run cannot publish skipped jobs
+   under the same required context names.
 8. **Provider CodeQL effect remains sequenced.** After this Decision and the
    implementation are integrated and provider read-back confirms clean
    exact-head/default-branch results, require the stable GitHub CodeQL result for
@@ -206,18 +225,24 @@ Pre-implementation RED evidence and the final candidate must demonstrate:
 - input exceeding the bound is rejected without starting Docker;
 - large bounded input and output are multiplexed without deadlock, and early
   stdin closure, timeout and output overflow terminate and clean up safely;
+- stdin setup and output-overflow aborts use the predeclared container identity;
+  failed cleanup is retried and leaves a reported recovery identity;
 - payload sentinels occur only in the stdin bytes supplied to the mocked/fake
   child, not argv, environment, output or exceptions;
 - the bridge is fixed, uses the existing tmpfs, and preserves the exact
   authority-bound judge invocation and result;
 - the reviewed tree has zero unresolved secret candidates, while an injected
-  candidate, stale baseline and unauthorized baseline entry fail;
-- a concurrent worktree replacement cannot change the private bytes presented
-  to the scanner, a FIFO replacement fails without blocking, and the disposable
-  snapshot is removed after the scan;
+  candidate, stale baseline, unknown baseline field, unauthorized baseline
+  entry and candidate scanner-module shadow fail;
+- snapshot acquisition rejects per-file/cumulative overflow and timeout; an
+  in-place or ancestor-directory replacement cannot change the private bytes
+  presented to the scanner; a FIFO replacement fails without blocking; and the
+  disposable snapshot is removed after the scan;
 - protected JSON file identities are unchanged;
 - every relevant provider event/path class maps deterministically to `RUN` or
-  `NOT_APPLICABLE`, and high-risk PRs actually execute `extended`;
+  `NOT_APPLICABLE`, high-risk PRs actually execute `extended`, no topic-push
+  duplicate can satisfy a required name with a skipped job, and the structural
+  oracle rejects disabled, non-blocking or wrongly native suite steps;
 - policy, fast, regression, smoke, runtime self-check and applicable extended
   verification pass against the exact candidate.
 

@@ -33,8 +33,13 @@ _HIGH_RISK_EXACT = {
     "AGENTS.md",
     "CONTRIBUTING.md",
     "Dockerfile",
+    "LICENSE",
+    "LICENSING.md",
+    "NOTICE",
     "README.md",
     "SECURITY.md",
+    "SUPPORT.md",
+    "THIRD_PARTY_NOTICES",
     "mkdocs.yml",
     "pyproject.toml",
 }

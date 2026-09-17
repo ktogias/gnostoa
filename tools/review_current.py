@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -24,6 +25,7 @@ _DIGEST_IMAGE = re.compile(
 )
 _DOCKER_TIMEOUT_SECONDS = 90
 _DOCKER_CLEANUP_TIMEOUT_SECONDS = 10
+_DOCKER_CLEANUP_ATTEMPTS = 3
 _MAX_RUNTIME_INPUT_BYTES = 4_194_304
 _MAX_RUNTIME_OUTPUT_BYTES = 2_097_152
 _READ_CHUNK_BYTES = 65_536
@@ -94,6 +96,12 @@ class ProtectedJudgeUnavailable(RuntimeError):
     """Raised when the exact prior-integrated OCI judge cannot be used safely."""
 
 
+@dataclass(frozen=True)
+class _ContainerRunIdentity:
+    name: str
+    cidfile: Path
+
+
 def _docker_executable() -> str:
     executable = shutil.which("docker", path=os.defpath)
     if executable is None:
@@ -125,54 +133,64 @@ def _kill_and_reap(process: subprocess.Popen[bytes]) -> None:
         pass
 
 
-def _run_cidfile(arguments: list[str], config_dir: Path) -> Path | None:
+def _run_identity(
+    arguments: list[str],
+    config_dir: Path,
+) -> _ContainerRunIdentity | None:
     if not arguments or arguments[0] != "run":
         return None
-    return config_dir / f"protected-run-{os.getpid()}-{time.monotonic_ns()}.cid"
+    nonce = f"{os.getpid()}-{time.monotonic_ns()}"
+    return _ContainerRunIdentity(
+        name=f"gnostoa-protected-{nonce}",
+        cidfile=config_dir / f"protected-run-{nonce}.cid",
+    )
 
 
-def _cleanup_container(cidfile: Path | None, config_dir: Path) -> None:
-    if cidfile is None:
+def _cleanup_container(
+    identity: _ContainerRunIdentity | None,
+    config_dir: Path,
+) -> None:
+    if identity is None:
         return
+    cleanup_target = identity.name
     try:
-        container_id = cidfile.read_text(encoding="ascii").strip()
+        container_id = identity.cidfile.read_text(encoding="ascii").strip()
     except FileNotFoundError:
-        return
-    except OSError as exc:
-        raise ProtectedJudgeUnavailable(
-            f"protected Docker container cleanup identity is unavailable: {exc}"
-        ) from exc
-    if _CONTAINER_ID.fullmatch(container_id) is None:
-        raise ProtectedJudgeUnavailable(
-            "protected Docker container cleanup identity is malformed"
-        )
-    try:
-        completed = subprocess.run(
-            [_docker_executable(), "rm", "-f", container_id],
-            check=False,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=_DOCKER_CLEANUP_TIMEOUT_SECONDS,
-            env=_docker_environment(config_dir),
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise ProtectedJudgeUnavailable(
-            f"protected Docker container cleanup failed: {exc}"
-        ) from exc
-    if completed.returncode != 0:
-        raise ProtectedJudgeUnavailable(
-            "protected Docker container cleanup returned a non-zero status"
-        )
+        pass
+    except OSError:
+        pass
+    else:
+        if _CONTAINER_ID.fullmatch(container_id) is not None:
+            cleanup_target = container_id
+
+    for _attempt in range(_DOCKER_CLEANUP_ATTEMPTS):
+        try:
+            completed = subprocess.run(
+                [_docker_executable(), "rm", "-f", cleanup_target],
+                check=False,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=_DOCKER_CLEANUP_TIMEOUT_SECONDS,
+                env=_docker_environment(config_dir),
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if completed.returncode == 0:
+            return
+    raise ProtectedJudgeUnavailable(
+        "protected Docker container cleanup failed after retries; "
+        f"recovery identity: {identity.name}"
+    )
 
 
 def _abort_docker_run(
     process: subprocess.Popen[bytes],
-    cidfile: Path | None,
+    identity: _ContainerRunIdentity | None,
     config_dir: Path,
 ) -> None:
     _kill_and_reap(process)
-    _cleanup_container(cidfile, config_dir)
+    _cleanup_container(identity, config_dir)
 
 
 def _run_docker(
@@ -186,10 +204,17 @@ def _run_docker(
         raise ProtectedJudgeUnavailable(
             "protected Docker input exceeds the bounded size"
         )
-    cidfile = _run_cidfile(arguments, config_dir)
+    identity = _run_identity(arguments, config_dir)
     docker_arguments = arguments
-    if cidfile is not None:
-        docker_arguments = ["run", "--cidfile", str(cidfile), *arguments[1:]]
+    if identity is not None:
+        docker_arguments = [
+            "run",
+            "--name",
+            identity.name,
+            "--cidfile",
+            str(identity.cidfile),
+            *arguments[1:],
+        ]
     command = [_docker_executable(), *docker_arguments]
     try:
         process = subprocess.Popen(
@@ -204,16 +229,20 @@ def _run_docker(
             f"protected Docker execution failed: {exc}"
         ) from exc
 
+    cleanup_attempted = False
+    cleanup_confirmed = False
     if (
         process.stdout is None
         or process.stderr is None
         or (input_bytes is not None and process.stdin is None)
     ):
+        cleanup_attempted = True
         try:
-            _abort_docker_run(process, cidfile, config_dir)
+            _abort_docker_run(process, identity, config_dir)
+            cleanup_confirmed = True
         finally:
-            if cidfile is not None:
-                cidfile.unlink(missing_ok=True)
+            if identity is not None and cleanup_confirmed:
+                identity.cidfile.unlink(missing_ok=True)
         raise ProtectedJudgeUnavailable("protected Docker output pipes are unavailable")
 
     outputs = {
@@ -273,7 +302,9 @@ def _run_docker(
                     continue
                 buffer.extend(chunk)
                 if len(buffer) > _MAX_RUNTIME_OUTPUT_BYTES:
-                    _abort_docker_run(process, cidfile, config_dir)
+                    cleanup_attempted = True
+                    _abort_docker_run(process, identity, config_dir)
+                    cleanup_confirmed = True
                     raise ProtectedJudgeUnavailable(
                         f"protected Docker {label} exceeds the bounded size"
                     )
@@ -283,12 +314,16 @@ def _run_docker(
             raise subprocess.TimeoutExpired(command, timeout)
         returncode = process.wait(timeout=remaining)
     except subprocess.TimeoutExpired as exc:
-        _abort_docker_run(process, cidfile, config_dir)
+        cleanup_attempted = True
+        _abort_docker_run(process, identity, config_dir)
+        cleanup_confirmed = True
         raise ProtectedJudgeUnavailable(
             f"protected Docker execution failed: {exc}"
         ) from exc
     except OSError as exc:
-        _abort_docker_run(process, cidfile, config_dir)
+        cleanup_attempted = True
+        _abort_docker_run(process, identity, config_dir)
+        cleanup_confirmed = True
         raise ProtectedJudgeUnavailable(
             f"protected Docker execution failed: {exc}"
         ) from exc
@@ -301,8 +336,8 @@ def _run_docker(
             process.stdin.close()
         if input_view is not None:
             input_view.release()
-        if cidfile is not None:
-            cidfile.unlink(missing_ok=True)
+        if identity is not None and (not cleanup_attempted or cleanup_confirmed):
+            identity.cidfile.unlink(missing_ok=True)
 
     return subprocess.CompletedProcess(
         command,

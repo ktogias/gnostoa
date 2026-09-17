@@ -33,6 +33,7 @@ def _report(results: dict[str, list[dict[str, object]]]) -> dict[str, object]:
         "plugins_used": [{"name": "HexHighEntropyString"}],
         "filters_used": [],
         "results": results,
+        "generated_at": "2026-09-17T14:33:10Z",
     }
 
 
@@ -40,11 +41,12 @@ def _candidate(
     secret_hash: str,
     *,
     line: int = 1,
+    filename: str = PROTECTED_BASELINE_PATH,
     false_positive: bool | None = None,
 ) -> dict[str, object]:
     result: dict[str, object] = {
         "type": "Hex High Entropy String",
-        "filename": "ignored-by-format",
+        "filename": filename,
         "hashed_secret": secret_hash,
         "line_number": line,
     }
@@ -119,7 +121,12 @@ class SecretBaselineTests(unittest.TestCase):
         unauthorized = _report(
             {
                 "tools/example.py": [
-                    _candidate(PUBLIC_HASH, line=12, false_positive=True)
+                    _candidate(
+                        PUBLIC_HASH,
+                        line=12,
+                        filename="tools/example.py",
+                        false_positive=True,
+                    )
                 ]
             }
         )
@@ -127,6 +134,27 @@ class SecretBaselineTests(unittest.TestCase):
             evaluate_secret_report(
                 _report({"tools/example.py": [_candidate(PUBLIC_HASH, line=12)]}),
                 unauthorized,
+            )
+
+    def test_baseline_schema_rejects_unvalidated_content(self) -> None:
+        scan = _report({})
+        for field, value in (
+            ("unvalidated_extra", "candidate-controlled content"),
+            ("generated_at", "not-a-timestamp"),
+        ):
+            with self.subTest(field=field):
+                baseline = _report({})
+                baseline[field] = value
+                with self.assertRaisesRegex(SecurityScanError, "baseline schema"):
+                    evaluate_secret_report(scan, baseline)
+
+        candidate = _candidate(PUBLIC_HASH, line=12, false_positive=True)
+        candidate["unvalidated_extra"] = "candidate-controlled content"
+        baseline = _report({PROTECTED_BASELINE_PATH: [candidate]})
+        with self.assertRaisesRegex(SecurityScanError, "baseline schema"):
+            evaluate_secret_report(
+                _report({PROTECTED_BASELINE_PATH: [_candidate(PUBLIC_HASH, line=12)]}),
+                baseline,
             )
 
     def test_tracked_scan_excludes_only_its_manifest_and_writes_sanitized_evidence(
@@ -169,6 +197,10 @@ class SecretBaselineTests(unittest.TestCase):
                 )
 
             command = run.call_args.args[0]
+            self.assertEqual(
+                [sys.executable, "-I", "-m", "detect_secrets"],
+                command[:4],
+            )
             self.assertEqual(300, run.call_args.kwargs["timeout"])
             self.assertEqual(1, command.count("--exclude-files"))
             self.assertEqual(
@@ -292,6 +324,140 @@ class SecretBaselineTests(unittest.TestCase):
             self.assertIsNotNone(observed_snapshot)
             assert observed_snapshot is not None
             self.assertFalse(observed_snapshot.exists())
+
+    def test_snapshot_rejects_per_file_and_cumulative_size_overflow(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "first.txt").write_bytes(b"a" * 40)
+            (root / "second.txt").write_bytes(b"b" * 40)
+
+            with (
+                mock.patch.object(
+                    security_scan,
+                    "_MAX_SNAPSHOT_FILE_BYTES",
+                    32,
+                    create=True,
+                ),
+                self.assertRaisesRegex(SecurityScanError, "snapshot file size"),
+            ):
+                with security_scan._immutable_candidate_snapshot(
+                    root,
+                    [Path("first.txt")],
+                ):
+                    pass
+
+            with (
+                mock.patch.object(
+                    security_scan,
+                    "_MAX_SNAPSHOT_FILE_BYTES",
+                    64,
+                    create=True,
+                ),
+                mock.patch.object(
+                    security_scan,
+                    "_MAX_SNAPSHOT_TOTAL_BYTES",
+                    64,
+                    create=True,
+                ),
+                self.assertRaisesRegex(SecurityScanError, "snapshot total size"),
+            ):
+                with security_scan._immutable_candidate_snapshot(
+                    root,
+                    [Path("first.txt"), Path("second.txt")],
+                ):
+                    pass
+
+    def test_snapshot_acquisition_has_its_own_deadline(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "tracked.txt").write_text("candidate\n", encoding="utf-8")
+
+            with (
+                mock.patch.object(
+                    security_scan,
+                    "_SNAPSHOT_TIMEOUT_SECONDS",
+                    0,
+                    create=True,
+                ),
+                self.assertRaisesRegex(SecurityScanError, "snapshot timed out"),
+            ):
+                with security_scan._immutable_candidate_snapshot(
+                    root,
+                    [Path("tracked.txt")],
+                ):
+                    pass
+
+    def test_ancestor_replacement_during_copy_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original_parent = root / "nested"
+            detached_parent = root / "detached"
+            original_parent.mkdir()
+            (original_parent / "tracked.txt").write_text(
+                "benign before swap\n",
+                encoding="utf-8",
+            )
+            real_read = os.read
+            swapped = False
+
+            def swap_parent_then_read(descriptor: int, size: int) -> bytes:
+                nonlocal swapped
+                if not swapped:
+                    original_parent.rename(detached_parent)
+                    original_parent.mkdir()
+                    (original_parent / "tracked.txt").write_text(
+                        "secret after swap\n",
+                        encoding="utf-8",
+                    )
+                    swapped = True
+                return real_read(descriptor, size)
+
+            with (
+                mock.patch(
+                    "tools.security_scan.os.read", side_effect=swap_parent_then_read
+                ),
+                self.assertRaisesRegex(SecurityScanError, "changed while snapshotting"),
+            ):
+                with security_scan._immutable_candidate_snapshot(
+                    root,
+                    [Path("nested/tracked.txt")],
+                ):
+                    pass
+
+            self.assertTrue(swapped)
+
+    def test_in_place_change_during_copy_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            candidate = root / "tracked.txt"
+            candidate.write_bytes(b"a" * (security_scan._SNAPSHOT_CHUNK_BYTES + 1))
+            real_read = os.read
+            changed = False
+
+            def change_after_first_read(descriptor: int, size: int) -> bytes:
+                nonlocal changed
+                chunk = real_read(descriptor, size)
+                if chunk and not changed:
+                    candidate.write_bytes(
+                        b"b" * (security_scan._SNAPSHOT_CHUNK_BYTES + 1)
+                    )
+                    changed = True
+                return chunk
+
+            with (
+                mock.patch(
+                    "tools.security_scan.os.read",
+                    side_effect=change_after_first_read,
+                ),
+                self.assertRaisesRegex(SecurityScanError, "changed while snapshotting"),
+            ):
+                with security_scan._immutable_candidate_snapshot(
+                    root,
+                    [Path("tracked.txt")],
+                ):
+                    pass
+
+            self.assertTrue(changed)
 
     @unittest.skipUnless(
         hasattr(os, "mkfifo") and hasattr(os, "O_NONBLOCK"),
@@ -499,6 +665,11 @@ class ExtendedRoutingTests(unittest.TestCase):
             "policy/guardrails.yaml",
             "tasks/protected.json",
             "docs/status.md",
+            "LICENSE",
+            "LICENSING.md",
+            "NOTICE",
+            "SUPPORT.md",
+            "THIRD_PARTY_NOTICES",
             "Dockerfile",
             "pyproject.toml",
         ):
@@ -524,7 +695,7 @@ class ExtendedRoutingTests(unittest.TestCase):
         self.assertIn("protected integration", topic.reason)
 
     def test_low_risk_or_empty_change_is_explicitly_not_applicable(self) -> None:
-        for paths in ((), ("LICENSE",), (".github/ISSUE_TEMPLATE/question.yml",)):
+        for paths in ((), ("notes.txt",), (".github/ISSUE_TEMPLATE/question.yml",)):
             with self.subTest(paths=paths):
                 result = route_extended("pull_request", paths)
                 self.assertEqual("NOT_APPLICABLE", result.decision)
@@ -642,6 +813,11 @@ class ProviderSecurityGateTests(unittest.TestCase):
         self.assertNotIn(
             "if: github.event_name == 'schedule' || "
             "github.event_name == 'workflow_dispatch'",
+            workflow,
+        )
+        self.assertIn("  push:\n    branches: [main]", workflow)
+        self.assertNotIn(
+            "(github.event_name != 'push' || github.ref == 'refs/heads/main')",
             workflow,
         )
 

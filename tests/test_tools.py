@@ -57,7 +57,7 @@ def _invokes_shared_verification_suite(command: str, suite: str) -> bool:
     except ValueError:
         return False
     if tokens == ["./ci/verify", suite]:
-        return True
+        return suite == "security-fast"
     expected_script = f"./ci/verify {suite}"
     if tokens[:2] != ["docker", "run"]:
         return False
@@ -127,6 +127,26 @@ def _invokes_shared_verification_suite(command: str, suite: str) -> bool:
         and option_values["--user"] == approved_user
         and option_values["--workdir"] == ["/workspace"]
     )
+
+
+def _job_has_blocking_verification_suite(job: object, suite: str) -> bool:
+    if not isinstance(job, dict):
+        return False
+    steps = job.get("steps")
+    if not isinstance(steps, list):
+        return False
+    for step in steps:
+        if not isinstance(step, dict) or "run" not in step:
+            continue
+        if "if" in step or step.get("continue-on-error") not in (None, False):
+            continue
+        command = step.get("run")
+        if isinstance(command, str) and _invokes_shared_verification_suite(
+            command,
+            suite,
+        ):
+            return True
+    return False
 
 
 def _add_tar_bytes(archive: tarfile.TarFile, name: str, content: bytes) -> None:
@@ -292,18 +312,42 @@ class PublicationBaselineTests(unittest.TestCase):
             "smoke",
             "extended",
         ):
-            commands = [
-                str(step["run"])
-                for step in workflow_jobs[suite]["steps"]
-                if "run" in step
-            ]
             self.assertTrue(
-                any(
-                    _invokes_shared_verification_suite(command, suite)
-                    for command in commands
-                ),
+                _job_has_blocking_verification_suite(workflow_jobs[suite], suite),
                 f"{suite} job does not invoke its shared verification suite",
             )
+        for modifier in (
+            {"if": "${{ false }}"},
+            {"continue-on-error": True},
+        ):
+            with self.subTest(modifier=modifier):
+                self.assertFalse(
+                    _job_has_blocking_verification_suite(
+                        {
+                            "steps": [
+                                {
+                                    "run": "./ci/verify security-fast",
+                                    **modifier,
+                                }
+                            ]
+                        },
+                        "security-fast",
+                    )
+                )
+        self.assertTrue(
+            _invokes_shared_verification_suite(
+                "./ci/verify security-fast",
+                "security-fast",
+            )
+        )
+        for suite in ("policy", "fast", "regression", "smoke", "extended"):
+            with self.subTest(native_suite=suite):
+                self.assertFalse(
+                    _invokes_shared_verification_suite(
+                        f"./ci/verify {suite}",
+                        suite,
+                    )
+                )
         self.assertFalse(
             _invokes_shared_verification_suite("echo ./ci/verify fast", "fast")
         )
@@ -398,11 +442,8 @@ class PublicationBaselineTests(unittest.TestCase):
             "github.event.pull_request.number || github.ref",
             workflow,
         )
-        self.assertIn("always() &&", workflow)
-        self.assertIn(
-            "(github.event_name != 'push' || github.ref == 'refs/heads/main')",
-            workflow,
-        )
+        self.assertIn("  push:\n    branches: [main]", workflow)
+        self.assertIn("    if: always()", workflow)
         self.assertRegex(workflow, r"actions/checkout@[a-f0-9]{40}")
         self.assertRegex(workflow, r"actions/setup-python@[a-f0-9]{40}")
         self.assertIn('python-version: ["3.11", "3.12"]', workflow)
@@ -2486,9 +2527,8 @@ class ContinuousIntegrationTests(unittest.TestCase):
             regression["needs"],
         )
         condition = regression["if"]
-        self.assertIn("always()", condition)
-        self.assertIn("github.event_name != 'push'", condition)
-        self.assertIn("github.ref == 'refs/heads/main'", condition)
+        self.assertEqual("always()", condition)
+        self.assertEqual(["main"], workflow[True]["push"]["branches"])
 
         assertions = [
             step

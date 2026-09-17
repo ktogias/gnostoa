@@ -15,6 +15,7 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,9 @@ DEFAULT_BASELINE = Path(".secrets.baseline")
 _MAX_REPORT_BYTES = 8_388_608
 _READ_CHUNK_BYTES = 65_536
 _SNAPSHOT_CHUNK_BYTES = 65_536
+_MAX_SNAPSHOT_FILE_BYTES = 16_777_216
+_MAX_SNAPSHOT_TOTAL_BYTES = 67_108_864
+_SNAPSHOT_TIMEOUT_SECONDS = 60
 _SCAN_TIMEOUT_SECONDS = 300
 _BASELINE_EXCLUDE_PATTERN = r"^\.secrets\.baseline$"
 _PROTECTED_BASELINE_FILE_SHA256 = {
@@ -36,6 +40,16 @@ _PROTECTED_BASELINE_FILE_SHA256 = {
 }
 _ALLOWED_BASELINE_PATHS = frozenset(_PROTECTED_BASELINE_FILE_SHA256)
 _SECRET_HASH = re.compile(r"^[0-9a-f]{40}$")
+_BASELINE_TOP_LEVEL_KEYS = frozenset(
+    {"version", "plugins_used", "filters_used", "results", "generated_at"}
+)
+_BASELINE_PLUGIN_KEYS = frozenset({"name", "limit", "keyword_exclude"})
+_BASELINE_FILTER_KEYS = frozenset({"path", "pattern"})
+_BASELINE_CANDIDATE_REQUIRED_KEYS = frozenset(
+    {"type", "filename", "hashed_secret", "line_number"}
+)
+_BASELINE_CANDIDATE_OPTIONAL_KEYS = frozenset({"is_secret", "is_verified"})
+_BASELINE_GENERATED_AT = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 
 class SecurityScanError(RuntimeError):
@@ -51,6 +65,84 @@ class SecretScanResult:
 
 
 SecretIdentity = tuple[str, str, str]
+
+
+def _baseline_schema_error(detail: str) -> SecurityScanError:
+    return SecurityScanError(f"detect-secrets baseline schema is invalid: {detail}")
+
+
+def _validate_baseline_schema(document: dict[str, Any]) -> None:
+    if set(document) != _BASELINE_TOP_LEVEL_KEYS:
+        raise _baseline_schema_error("unexpected or missing top-level fields")
+
+    generated_at = document.get("generated_at")
+    if (
+        not isinstance(generated_at, str)
+        or _BASELINE_GENERATED_AT.fullmatch(generated_at) is None
+    ):
+        raise _baseline_schema_error("generated_at is not a UTC timestamp")
+    try:
+        datetime.strptime(generated_at, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError as exc:
+        raise _baseline_schema_error("generated_at is not a valid timestamp") from exc
+
+    plugins = document.get("plugins_used")
+    if not isinstance(plugins, list):
+        raise _baseline_schema_error("plugins_used is not a list")
+    for plugin in plugins:
+        if (
+            not isinstance(plugin, dict)
+            or "name" not in plugin
+            or not set(plugin) <= _BASELINE_PLUGIN_KEYS
+            or not isinstance(plugin.get("name"), str)
+            or not plugin["name"]
+        ):
+            raise _baseline_schema_error("plugin entry is malformed")
+        limit = plugin.get("limit")
+        if limit is not None and (
+            not isinstance(limit, (int, float)) or isinstance(limit, bool)
+        ):
+            raise _baseline_schema_error("plugin limit is malformed")
+        keyword_exclude = plugin.get("keyword_exclude")
+        if keyword_exclude is not None and not isinstance(keyword_exclude, str):
+            raise _baseline_schema_error("plugin keyword exclusion is malformed")
+
+    filters = document.get("filters_used")
+    if not isinstance(filters, list):
+        raise _baseline_schema_error("filters_used is not a list")
+    for filter_entry in filters:
+        if (
+            not isinstance(filter_entry, dict)
+            or "path" not in filter_entry
+            or not set(filter_entry) <= _BASELINE_FILTER_KEYS
+            or not isinstance(filter_entry.get("path"), str)
+            or not filter_entry["path"]
+        ):
+            raise _baseline_schema_error("filter entry is malformed")
+        pattern = filter_entry.get("pattern")
+        if pattern is not None and (
+            not isinstance(pattern, list)
+            or any(not isinstance(item, str) for item in pattern)
+        ):
+            raise _baseline_schema_error("filter pattern is malformed")
+
+    results = document.get("results")
+    if not isinstance(results, dict):
+        raise _baseline_schema_error("results is not a mapping")
+    allowed_candidate_keys = (
+        _BASELINE_CANDIDATE_REQUIRED_KEYS | _BASELINE_CANDIDATE_OPTIONAL_KEYS
+    )
+    for path, candidates in results.items():
+        if not isinstance(path, str) or not isinstance(candidates, list):
+            raise _baseline_schema_error("result entry is malformed")
+        for candidate in candidates:
+            if (
+                not isinstance(candidate, dict)
+                or not _BASELINE_CANDIDATE_REQUIRED_KEYS <= set(candidate)
+                or not set(candidate) <= allowed_candidate_keys
+                or candidate.get("filename") != path
+            ):
+                raise _baseline_schema_error("candidate entry is malformed")
 
 
 def _results(document: dict[str, Any], label: str) -> dict[str, Any]:
@@ -139,6 +231,8 @@ def evaluate_secret_report(
     Candidate hashes are used only as in-memory comparison identities and are
     deliberately absent from the returned result and diagnostics.
     """
+
+    _validate_baseline_schema(baseline_document)
 
     if _settings(scan_document, "detect-secrets report") != _settings(
         baseline_document,
@@ -349,7 +443,10 @@ def _copy_candidate_to_snapshot(
     root_descriptor: int,
     snapshot: Path,
     relative: Path,
-) -> None:
+    *,
+    deadline: float,
+    remaining_total_bytes: int,
+) -> int:
     nofollow = getattr(os, "O_NOFOLLOW", None)
     directory = getattr(os, "O_DIRECTORY", None)
     nonblock = getattr(os, "O_NONBLOCK", None)
@@ -382,6 +479,14 @@ def _copy_candidate_to_snapshot(
             raise SecurityScanError(
                 f"candidate path is not a regular file: {relative.as_posix()!r}"
             )
+        if before.st_size > _MAX_SNAPSHOT_FILE_BYTES:
+            raise SecurityScanError(
+                f"candidate exceeds the snapshot file size bound: {relative.as_posix()!r}"
+            )
+        if before.st_size > remaining_total_bytes:
+            raise SecurityScanError(
+                "tracked-tree snapshot total size exceeds the bound"
+            )
 
         destination = snapshot / relative
         destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -390,10 +495,22 @@ def _copy_candidate_to_snapshot(
             os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow,
             0o600,
         )
+        copied_bytes = 0
         while True:
+            if time.monotonic() >= deadline:
+                raise SecurityScanError("tracked-tree snapshot timed out")
             chunk = os.read(source_descriptor, _SNAPSHOT_CHUNK_BYTES)
             if not chunk:
                 break
+            copied_bytes += len(chunk)
+            if copied_bytes > _MAX_SNAPSHOT_FILE_BYTES:
+                raise SecurityScanError(
+                    f"candidate exceeds the snapshot file size bound: {relative.as_posix()!r}"
+                )
+            if copied_bytes > remaining_total_bytes:
+                raise SecurityScanError(
+                    "tracked-tree snapshot total size exceeds the bound"
+                )
             _write_all(destination_descriptor, chunk)
 
         after = os.fstat(source_descriptor)
@@ -402,12 +519,36 @@ def _copy_candidate_to_snapshot(
             dir_fd=parent_descriptor,
             follow_symlinks=False,
         )
-        if _stable_file_metadata(before) != _stable_file_metadata(
-            after
-        ) or _stable_file_metadata(after) != _stable_file_metadata(visible):
+        current_parent_descriptor = os.dup(root_descriptor)
+        try:
+            for part in relative.parts[:-1]:
+                next_descriptor = os.open(
+                    part,
+                    os.O_RDONLY | directory | nofollow,
+                    dir_fd=current_parent_descriptor,
+                )
+                os.close(current_parent_descriptor)
+                current_parent_descriptor = next_descriptor
+            current_visible = os.stat(
+                relative.name,
+                dir_fd=current_parent_descriptor,
+                follow_symlinks=False,
+            )
+        except OSError as exc:
+            raise SecurityScanError(
+                f"candidate path changed while snapshotting: {relative.as_posix()!r}"
+            ) from exc
+        finally:
+            os.close(current_parent_descriptor)
+        if (
+            _stable_file_metadata(before) != _stable_file_metadata(after)
+            or _stable_file_metadata(after) != _stable_file_metadata(visible)
+            or _stable_file_metadata(after) != _stable_file_metadata(current_visible)
+        ):
             raise SecurityScanError(
                 f"candidate path changed while snapshotting: {relative.as_posix()!r}"
             )
+        return copied_bytes
     except SecurityScanError:
         raise
     except OSError as exc:
@@ -442,8 +583,19 @@ def _immutable_candidate_snapshot(
     try:
         with tempfile.TemporaryDirectory(prefix="gnostoa-secret-scan-") as raw_snapshot:
             snapshot = Path(raw_snapshot)
+            deadline = time.monotonic() + _SNAPSHOT_TIMEOUT_SECONDS
+            total_bytes = 0
             for relative in paths:
-                _copy_candidate_to_snapshot(root_descriptor, snapshot, relative)
+                if time.monotonic() >= deadline:
+                    raise SecurityScanError("tracked-tree snapshot timed out")
+                copied_bytes = _copy_candidate_to_snapshot(
+                    root_descriptor,
+                    snapshot,
+                    relative,
+                    deadline=deadline,
+                    remaining_total_bytes=_MAX_SNAPSHOT_TOTAL_BYTES - total_bytes,
+                )
+                total_bytes += copied_bytes
             yield snapshot
     finally:
         os.close(root_descriptor)
@@ -547,6 +699,7 @@ def scan_tracked_tree(
         completed = _run_bounded_scan(
             [
                 sys.executable,
+                "-I",
                 "-m",
                 "detect_secrets",
                 "--cores",
