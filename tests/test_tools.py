@@ -108,11 +108,23 @@ def _invokes_shared_verification_suite(command: str, suite: str) -> bool:
     ):
         return False
 
-    required_mount = "type=bind,source=${GITHUB_WORKSPACE},target=/workspace,readonly"
+    approved_mounts = [
+        "type=bind,source=${GITHUB_WORKSPACE},target=/workspace,readonly"
+    ]
+    approved_environment: list[str] = []
+    approved_user: list[str] = []
+    if suite == "extended":
+        approved_mounts.append(
+            "type=bind,source=${RUNNER_TEMP}/gnostoa-quality-evidence,target=/evidence"
+        )
+        approved_environment = ["HOME=/tmp", "GNOSTOA_QUALITY_OUTPUT=/evidence"]
+        approved_user = ["$(id -u):$(id -g)"]
     return (
         flag_counts["--rm"] == 1
         and option_values["--entrypoint"] in (["sh"], ["/bin/sh"])
-        and required_mount in option_values["--mount"]
+        and option_values["--env"] == approved_environment
+        and option_values["--mount"] == approved_mounts
+        and option_values["--user"] == approved_user
         and option_values["--workdir"] == ["/workspace"]
     )
 
@@ -359,6 +371,24 @@ class PublicationBaselineTests(unittest.TestCase):
                 "fast",
             )
         )
+        for extra_option in (
+            "--mount type=bind,source=/tmp,target=/host ",
+            "--env PATH=/tmp ",
+            "--user 0:0 ",
+        ):
+            with self.subTest(extra_option=extra_option):
+                self.assertFalse(
+                    _invokes_shared_verification_suite(
+                        "docker run --rm --entrypoint sh "
+                        "--mount "
+                        "type=bind,source=${GITHUB_WORKSPACE},"
+                        "target=/workspace,readonly "
+                        f"{extra_option}"
+                        "--workdir /workspace ${GNOSTOA_CI_IMAGE} "
+                        "-ec './ci/verify fast'",
+                        "fast",
+                    )
+                )
         self.assertFalse(
             _invokes_shared_verification_suite("./ci/verify fast-noop", "fast")
         )
