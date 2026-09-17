@@ -372,7 +372,7 @@ def scan_tracked_tree(
 
     root = repository_root.resolve()
     canonical_scan = tracked_paths is None
-    if canonical_scan:
+    if tracked_paths is None:
         try:
             paths = candidate_paths(root)
         except RepositoryScopeError as exc:
