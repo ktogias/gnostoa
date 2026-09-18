@@ -43,9 +43,10 @@ jobs:
             "${GNOSTOA_CI_IMAGE}" \
             -ec './ci/verify policy'
 
-  # This exact-head, exact-lock native job is the inexpensive early gate. For an
+  # This event-subject, exact-lock native job is the inexpensive early gate. For an
   # applicable candidate, extended reruns the shared scan inside the development
-  # image; this native result does not substitute for that containerized evidence.
+  # image on the same provider merge candidate; this native result does not
+  # substitute for that containerized evidence. Smoke separately binds PR head.
   security-fast:
     name: security-fast
     runs-on: ubuntu-latest
@@ -55,7 +56,6 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       # actions/setup-python v6.3.0
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
@@ -383,7 +383,6 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
       - name: Classify extended verification applicability
         id: route
@@ -460,7 +459,6 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Build the candidate development runtime
         run: |
           candidate_ref=$(git rev-parse HEAD)

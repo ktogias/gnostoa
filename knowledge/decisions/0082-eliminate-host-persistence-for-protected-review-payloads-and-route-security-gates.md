@@ -123,9 +123,64 @@ gate. A green PR CodeQL result is not a branch-wide absence claim because
 GitHub's PR attribution is diff-bound; default-branch alert inventory remains a
 separate read-back.
 
+## Owner-admitted staged containment — 2026-09-18
+
+The [deep review of PR #278](https://github.com/ktogias/gnostoa/pull/278#issuecomment-5728138715)
+identified a missing execution boundary: the candidate's outer stdin bridge
+execs the immutable promoted runtime, not this candidate's repaired inner
+implementation. That runtime still materializes delegated input and policy in
+its `/tmp`, which the isolated topology supplies through a host-backed Docker
+volume. Changing the candidate bridge alone does not repair those immutable
+bytes. Earlier whole-path non-persistence claims are withdrawn; the historical
+live result is not evidence that this changed path is safe.
+
+The [owner-admitted behavior map](https://github.com/ktogias/gnostoa/pull/278#issuecomment-5728228063)
+accepts temporary `current_advisory` unavailability. After mandatory protected-main
+acquisition and closed-schema/identity validation, a restriction-only catalog
+compares the canonical JSON of **all nine acquired-consumer fields**. The
+catalog is initially empty: current, historical and unknown transport identities
+return one static canonical `TOOL_ERROR`, exit 2, before outer temporary
+resources, image acquisition, Docker lifecycle effects or payload transfer.
+Authority acquisition's own bounded repository read-back still occurs first;
+containment does not claim that no acquisition I/O occurs.
+
+The catalog cannot choose an authority or image and has no caller/environment
+population path. A future entry needs a separately admitted, materialized and
+promoted transport-compatible runtime, exact identity and live proof. The
+existing image/revision/public-surface checks remain mandatory after that
+restriction. Test-local catalog entries preserve hypothetical lifecycle coverage;
+they do not admit an executable runtime or prove immutable-image safety.
+
+Reuse the existing protected read-back, closed consumer validation, canonical
+error codec and historical candidate/stale-selector probe. A shared tmpfs alone
+still leaves the old prohibited payload bind mount; injecting candidate code
+would replace protected execution authority. Both are rejected. This bounded
+containment adds no dependency, changes no license/NOTICE obligations, publishes
+no image and leaves both protected authority JSON documents byte-for-byte
+unchanged.
+
+`ci/review_outer_containment_smoke.py` exercises the real public refusal after
+real provider authority acquisition, with tripwires on outer effects. Its receipt
+states `containment_result=PASS`, `current_advisory=UNAVAILABLE`,
+`live_evaluation=NOT_RUN` and `outer_docker_effects=NOT_RUN`. Success of this smoke
+is not semantic success. `ci/review_outer_smoke.py` remains historical
+live/restoration evidence and is no longer the active outer smoke. Provider
+runtime restoration, exact live proof and default-branch alert read-back remain
+later prerequisites; **#275 stays open**. No merge, publication, authority
+promotion, alert dismissal or provider required-check change is admitted here.
+
+| ID | Observable requirement | Executable contract | Evidence boundary |
+|---|---|---|---|
+| SEC-1C | Current, historical and unknown transport identities refuse before outer effects | `ReviewOuterContainmentTests` public route and CLI tests | Native RED-to-GREEN; provider containment receipt is separate |
+| SEC-1A | Mandatory authority validation and complete exact identity precede unchanged image proofs | Catalog-field and image-proof tests; inherited read-back/poison tests | Hypothetical test admission is not production admission |
+| SEC-1E | Receipt reports unavailable evaluation, not a live semantic pass | `ContainmentSmokeTests`; active containment smoke | Unit tests do not replace real protected-main read-back |
+| SEC-4M | Security scan, routing and extended inspect the same provider event subject as regression | `MergeSubjectSecurityTests`; exact ordered job contracts | Synthetic divergent merge proves the latent gap, not a defect in the actual starting merge tree |
+
 ## Decision
 
-1. **No host payload persistence.** Canonicalize and bound the caller's outer
+1. **No host payload persistence.** The staged containment above is effective
+   for the presently acquired immutable outer runtime. The restored-execution
+   contract, which that runtime does not yet satisfy, is: canonicalize and bound the caller's outer
    review input before authority acquisition or Docker activity, send it to the
    prior-effective outer container only through stdin, and materialize the
    compatibility input only in an outer-container-only tmpfs. Inside that
@@ -172,7 +227,8 @@ separate read-back.
    requests its known name through the runner's validated identity parameter, so
    launch and fallback cleanup cannot disagree. Calls without input receive a
    closed stdin rather than inheriting the caller's stream.
-3. **Fixed in-container bridges.** Run each authority-bound image with fixed
+3. **Fixed in-container bridges.** For a separately admitted compatible outer
+   runtime, run each authority-bound image with fixed
    Python bridge code. The outer bridge reads bounded stdin, uses restrictive
    exclusive creation in a dedicated outer-only tmpfs, and execs the immutable
    `tools.review_live_entrypoint`. The inner bridge validates the closed envelope
@@ -180,7 +236,8 @@ separate read-back.
    tmpfs, writes the two CLI inputs there, and execs `tools.cli review-check`.
    Neither bridge uses a shell or interpolates payload content. The existing
    network, read-only root, capability, identity, surface and semantic-result
-   checks remain unchanged.
+   checks remain unchanged. The candidate bridge must not be treated as proof
+   that the old immutable outer image contains the repaired inner bridge.
 4. **Narrow public-identity disposition.** Add line-scoped pragmas to the exact
    reviewed YAML/Python public identities. Preserve the bytes of protected
    authority JSON and record only its exact remaining candidate hashes in the
@@ -223,9 +280,10 @@ separate read-back.
    supplied relative baseline to its disposable snapshot.
 6. **Ordinary PR security gate.** Add `security-fast` as a visible provider job
    using the exact development lock and the shared scan command. It intentionally
-   runs natively as an inexpensive independent exact-head gate and may execute
+   runs natively as an inexpensive independent provider-event-subject gate and may execute
    concurrently with image-building jobs. For applicable candidates, `extended`
-   reruns that same implementation inside the development image; the native
+   reruns that same implementation inside the development image on the same
+   provider event/merge candidate; the native
    result does not substitute for containerized evidence. `regression` consumes
    its result with `always()` and fails unless it succeeded, so a failed scan
    cannot become a skipped-green downstream gate.
@@ -276,9 +334,11 @@ separate read-back.
 
 Pre-implementation RED evidence and the final candidate must demonstrate:
 
-- neither the outer nor inner protected consumer invokes a host text/byte/stream
-  payload write or payload bind mount, and a retained controlled host temporary
-  root contains no payload sentinel after the outer route returns;
+- the currently acquired immutable outer consumer refuses before outer
+  temporary resources, Docker or payload transfer; independently simulated
+  compatible-transport and candidate inner-bridge tests reject host payload
+  writes/bind mounts and retain no payload sentinel after return, without
+  claiming safe execution of the old immutable outer runtime;
 - outer and inner input exceeding their bounds is rejected before authority or
   Docker effects;
 - large bounded input and output are multiplexed without deadlock, and early
@@ -301,8 +361,9 @@ Pre-implementation RED evidence and the final candidate must demonstrate:
   child, not argv, environment, output or exceptions;
 - payload-bearing inner/outer containers and the isolated daemon use
   non-persisting Docker logging while attached result stdout remains available;
-- both bridges are fixed, use container-only tmpfs mounts, and preserve the exact
-  authority-bound consumer/judge invocations and result;
+- the candidate bridges are fixed and use container-only input tmpfs mounts;
+  the incompatible immutable outer runtime remains unexecuted, so its historical
+  live result is not counted as this candidate's restored-execution evidence;
 - the reviewed tree has zero unresolved secret candidates, while an injected
   candidate, stale or wrong-line baseline, duplicate scanner/baseline JSON field,
   non-finite or overflowing numeric input, excessive baseline or scanner-output
@@ -327,11 +388,13 @@ Pre-implementation RED evidence and the final candidate must demonstrate:
 - policy, fast, regression, smoke, runtime self-check and applicable extended
   verification pass against the exact candidate.
 
-Provider subjects are deliberately complementary. `security-fast`, routing,
-`extended`, and smoke bind the Pull Request head so the sealed source itself is
-observed. Policy, fast, Python compatibility, and regression use the provider's
-merge candidate to establish integration compatibility. Regression requires the
-results from both subjects; neither set alone is convergence evidence.
+Provider subjects are deliberately aligned for integration safety.
+`security-fast`, routing, `extended`, policy, fast, Python compatibility and
+regression all use the triggering provider event subject (the merge candidate
+for Pull Requests). Smoke separately binds the exact PR head for source/runtime
+provenance. Regression requires successful security evidence for its own merged
+subject, not merely a successful scan of an unmerged head. Neither subject's
+checks alone establish review convergence.
 
 Tests establish the mechanics they execute. Only GitHub provider read-back can
 establish alert closure, exact-head job status and the later effective required
@@ -339,11 +402,11 @@ check.
 
 ## Consequences
 
-- Sensitive protected-review material is no longer persisted on the host by the
-  live outer consumer; the compatibility files exist only in the disposable
-  container tmpfs.
-- This is an application-level host-file, bind-mount and container-log
-  non-persistence claim. Container tmpfs pages remain subject to the Docker
+- The public outer route does not transfer protected-review material into the
+  incompatible runtime: it returns the static unavailable error first. This is
+  containment with a deliberate availability cost, not restored live operation.
+- The candidate transport's intended contract is application-level host-file,
+  bind-mount and container-log non-persistence. Container tmpfs pages remain subject to the Docker
   host's swap policy; environments requiring a physical-RAM-only claim must
   enforce that separate host prerequisite.
 - Reviewed public hashes remain reviewable without weakening entropy detection

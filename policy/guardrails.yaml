@@ -495,6 +495,7 @@ guardrails:
       - ci/review_b15_runtime_smoke.py
       - ci/review_b16_entrypoint_smoke.py
       - ci/review_outer_smoke.py
+      - ci/review_outer_containment_smoke.py
       - tools/review_adapter_file.py
       - tools/review_model.py
       - tools/review_policy.py
@@ -524,12 +525,14 @@ guardrails:
       - tests/test_review_assurance_p2b_b16_entrypoint_red.py
       - tests/test_review_assurance_p2b_b2_activation_red.py
       - tests/test_review_current_payload_transport.py
+      - tests/test_review_outer_containment.py
       - tests/test_r2a_p2b_integrated_materialization.py
       - ci/review_b15_runtime_smoke.py
       - ci/review_b16_entrypoint_smoke.py
       - ci/review_live_smoke.py
       - ci/review_live_timeout_cleanup.py
       - ci/review_outer_smoke.py
+      - ci/review_outer_containment_smoke.py
 
   - id: authoritative-centralized-ci
     title: Centralized CI authoritatively verifies the latest integration candidate
@@ -545,6 +548,7 @@ guardrails:
     tests:
       - tests/test_tools.py::ContinuousIntegrationTests.test_generic_ci_policy_is_authoritative_and_tiered
       - tests/test_tools.py::ContinuousIntegrationTests.test_ci_policy_cannot_weaken_parent
+      - tests/test_review_outer_containment.py::MergeSubjectSecurityTests
 
   - id: declared-tiered-verification
     title: Projects declare capabilities and every active required suite

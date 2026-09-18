@@ -253,7 +253,7 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
             P2B_PUBLIC_SURFACE_DIGEST, consumer.get("public_surface_digest")
         )
 
-    def test_outer_input_uses_bounded_stdin_and_never_a_host_payload_file(
+    def test_hypothetically_admitted_outer_input_uses_bounded_stdin_and_never_a_host_payload_file(
         self,
     ) -> None:
         outer = _load_outer()
@@ -338,7 +338,16 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
                 stderr=b"",
             )
 
+        # Simulated lifecycle coverage only: this test-local admission is not a
+        # production compatibility entry or evidence of a safe immutable image.
         with (
+            mock.patch.object(
+                outer,
+                "_HOST_PERSISTENCE_FREE_CONSUMER_IDENTITIES",
+                frozenset(
+                    {outer.canonical_json(protected.document["acquired_consumer"])}
+                ),
+            ),
             mock.patch.object(
                 outer,
                 "acquire_gnostoa_current_advisory_consumer",
@@ -653,13 +662,24 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
                 ):
                     outer._decode_outer_result(2, raw)
 
-    def test_tmp_setup_failure_returns_canonical_tool_error(self) -> None:
+    def test_hypothetically_admitted_tmp_setup_failure_returns_canonical_tool_error(
+        self,
+    ) -> None:
         outer = _load_outer()
         protected = ProtectedMainDocument(
             protected_main_revision="c" * 40,
             document=_consumer_authority(),
         )
+        # Simulated lifecycle coverage only: this test-local admission is not a
+        # production compatibility entry or evidence of a safe immutable image.
         with (
+            mock.patch.object(
+                outer,
+                "_HOST_PERSISTENCE_FREE_CONSUMER_IDENTITIES",
+                frozenset(
+                    {outer.canonical_json(protected.document["acquired_consumer"])}
+                ),
+            ),
             mock.patch.object(
                 outer,
                 "acquire_gnostoa_current_advisory_consumer",

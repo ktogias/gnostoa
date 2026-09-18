@@ -238,7 +238,7 @@ class ReviewAssuranceP2bExitReadbackRedTests(unittest.TestCase):
             for step in steps
             if isinstance(step, dict)
             and step.get("name")
-            == "Exercise promoted OCI(P2b) and reject candidate/stale selectors"
+            == "Verify protected transport containment with live evaluation NOT_RUN"
         ]
         self.assertEqual(1, len(matches))
         step = matches[0]
@@ -254,7 +254,7 @@ class ReviewAssuranceP2bExitReadbackRedTests(unittest.TestCase):
         self.assertIsInstance(run, str)
         assert isinstance(run, str)
         self.assertIn(
-            "PYTHONPATH=. python ci/review_outer_smoke.py "
+            "PYTHONPATH=. python ci/review_outer_containment_smoke.py "
             '--expected-protected-main "${EXPECTED_PROTECTED_MAIN}"',
             run,
         )

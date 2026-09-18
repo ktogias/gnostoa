@@ -1,0 +1,357 @@
+from __future__ import annotations
+
+import contextlib
+import copy
+import importlib
+import io
+import json
+import os
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+import yaml
+from test_review_assurance_p2b_b2_activation_red import (
+    _consumer_authority,
+    _current_advisory_input,
+)
+
+from ci import review_outer_smoke as historical_smoke
+from tools import review_check, review_outer
+from tools.review_model import canonical_json
+from tools.review_protected import ProtectedMainDocument
+
+ROOT = Path(__file__).resolve().parents[1]
+SECURITY_JOBS = ("security-fast", "extended-route", "extended")
+UNAVAILABLE_DETAIL = (
+    "protected outer-consumer transport is not admitted as host-persistence-free; "
+    "current_advisory is unavailable"
+)
+
+
+def _unavailable_bytes() -> bytes:
+    return (
+        canonical_json(
+            {
+                "error": {
+                    "code": "TOOL_ERROR",
+                    "message": "protected prior-effective outer consumer is unavailable",
+                    "details": {"error": UNAVAILABLE_DETAIL},
+                }
+            }
+        )
+        + "\n"
+    ).encode("utf-8")
+
+
+def _security_checkouts() -> dict[str, dict[str, object]]:
+    workflow = yaml.safe_load(
+        (ROOT / ".github/workflows/verification.yml").read_text(encoding="utf-8")
+    )
+    result = {}
+    for name in SECURITY_JOBS:
+        steps = [
+            step
+            for step in workflow["jobs"][name]["steps"]
+            if str(step.get("uses", "")).startswith("actions/checkout@")
+        ]
+        if len(steps) != 1:
+            raise AssertionError(f"{name} must have exactly one checkout")
+        result[name] = steps[0]["with"]
+    return result
+
+
+class ReviewOuterContainmentTests(unittest.TestCase):
+    def test_production_catalog_admits_no_current_runtime(self) -> None:
+        self.assertEqual(
+            frozenset(), review_outer._HOST_PERSISTENCE_FREE_CONSUMER_IDENTITIES
+        )
+
+    def test_catalog_keys_bind_every_consumer_field(self) -> None:
+        consumer = review_outer._validate_consumer_authority(_consumer_authority())
+        self.assertEqual(9, len(consumer))
+        # Hypothetical admission probes the comparator, not runtime safety.
+        with mock.patch.object(
+            review_outer,
+            "_HOST_PERSISTENCE_FREE_CONSUMER_IDENTITIES",
+            frozenset({canonical_json(consumer)}),
+        ):
+            review_outer._require_transport_compatible_consumer(consumer)
+            for field, value in consumer.items():
+                changed = copy.deepcopy(consumer)
+                changed[field] = (
+                    [*value, "2.0"] if isinstance(value, list) else value + "-changed"
+                )
+                with self.subTest(field=field):
+                    with self.assertRaisesRegex(
+                        review_outer.PriorEffectiveOuterUnavailable,
+                        "transport is not admitted",
+                    ):
+                        review_outer._require_transport_compatible_consumer(changed)
+
+    def test_hypothetical_catalog_entry_does_not_bypass_image_proof(self) -> None:
+        protected = ProtectedMainDocument("c" * 40, _consumer_authority())
+        with (
+            mock.patch.object(
+                review_outer,
+                "_HOST_PERSISTENCE_FREE_CONSUMER_IDENTITIES",
+                frozenset({canonical_json(protected.document["acquired_consumer"])}),
+            ),
+            mock.patch.object(
+                review_outer,
+                "acquire_gnostoa_current_advisory_consumer",
+                return_value=protected,
+            ),
+            mock.patch.object(
+                review_outer,
+                "_verify_outer_image",
+                side_effect=review_outer.ProtectedJudgeUnavailable(
+                    "synthetic image proof failed"
+                ),
+            ) as verify_image,
+            mock.patch.object(review_outer, "_checked_output") as command,
+            mock.patch.object(review_outer, "_run_docker") as docker,
+        ):
+            code, raw = review_outer.run_prior_effective_current_advisory(
+                _current_advisory_input()
+            )
+        self.assertEqual(2, code)
+        self.assertIn(
+            "synthetic image proof failed", json.loads(raw)["error"]["details"]["error"]
+        )
+        verify_image.assert_called_once()
+        command.assert_not_called()
+        docker.assert_not_called()
+
+    def test_current_historical_and_unknown_consumers_are_contained(self) -> None:
+        current = _consumer_authority()
+        unknown = copy.deepcopy(current)
+        for key in ("expected_consumer", "acquired_consumer"):
+            unknown[key]["runtime_image"] = "ghcr.io/ktogias/gnostoa@sha256:" + "1" * 64
+        authorities = {
+            "current": current,
+            "historical": historical_smoke._stale_b16_authority(),
+            "unknown": unknown,
+        }
+        for label, authority in authorities.items():
+            with self.subTest(identity=label):
+                protected = ProtectedMainDocument("c" * 40, authority)
+                with (
+                    mock.patch.object(
+                        review_outer,
+                        "acquire_gnostoa_current_advisory_consumer",
+                        return_value=protected,
+                    ) as acquire,
+                    mock.patch.object(
+                        review_outer.tempfile,
+                        "TemporaryDirectory",
+                        side_effect=AssertionError("outer temporary resource created"),
+                    ) as temporary,
+                    mock.patch.object(
+                        review_outer,
+                        "_verify_outer_image",
+                        side_effect=AssertionError(
+                            "Docker image acquisition attempted"
+                        ),
+                    ) as verify_image,
+                    mock.patch.object(
+                        review_outer,
+                        "_run_docker",
+                        side_effect=AssertionError("Docker execution attempted"),
+                    ) as docker,
+                ):
+                    result = review_outer.run_prior_effective_current_advisory(
+                        _current_advisory_input()
+                    )
+                self.assertEqual((2, _unavailable_bytes()), result)
+                acquire.assert_called_once_with()
+                temporary.assert_not_called()
+                verify_image.assert_not_called()
+                docker.assert_not_called()
+
+    def test_public_cli_does_not_accept_caller_transport_or_image_selectors(
+        self,
+    ) -> None:
+        document = _current_advisory_input()
+        marker = "private caller review content must remain absent"
+        document["transport_compatible"] = True
+        document["acquired_consumer"] = _consumer_authority()["acquired_consumer"]
+        document["caller_review"] = marker
+        protected = ProtectedMainDocument("c" * 40, _consumer_authority())
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "synthetic-input.json"
+            path.write_text(canonical_json(document), encoding="utf-8")
+            stdout = io.StringIO()
+            with (
+                mock.patch.object(
+                    review_outer,
+                    "acquire_gnostoa_current_advisory_consumer",
+                    return_value=protected,
+                ),
+                mock.patch.dict(
+                    os.environ,
+                    {"GNOSTOA_R2A_CANDIDATE_IMAGE": "candidate:untrusted"},
+                ),
+                mock.patch.object(
+                    review_outer.tempfile,
+                    "TemporaryDirectory",
+                    side_effect=AssertionError("outer temporary resource created"),
+                ),
+                contextlib.redirect_stdout(stdout),
+            ):
+                code = review_check.main(["--input", str(path)])
+        self.assertEqual(2, code)
+        self.assertEqual(_unavailable_bytes().decode("utf-8"), stdout.getvalue())
+        self.assertNotIn(marker, stdout.getvalue())
+
+    def test_authority_validation_is_not_replaced_by_containment(self) -> None:
+        malformed = _consumer_authority()
+        malformed["acquired_consumer"]["source_revision"] = "invalid"
+        protected = ProtectedMainDocument("c" * 40, malformed)
+        with mock.patch.object(
+            review_outer,
+            "acquire_gnostoa_current_advisory_consumer",
+            return_value=protected,
+        ):
+            code, raw = review_outer.run_prior_effective_current_advisory({})
+        self.assertEqual(2, code)
+        self.assertNotEqual(_unavailable_bytes(), raw)
+        self.assertIn("closed schema", json.loads(raw)["error"]["details"]["error"])
+
+
+class ContainmentSmokeTests(unittest.TestCase):
+    def test_smoke_input_is_valid_not_a_malformed_failure_fixture(self) -> None:
+        smoke = importlib.import_module("ci.review_outer_containment_smoke")
+        self.assertEqual(
+            [],
+            review_check._schema_errors(
+                smoke._synthetic_input(), "review-check-input.schema.json"
+            ),
+        )
+
+    def test_smoke_exercises_real_public_refusal_and_reports_not_run(self) -> None:
+        smoke = importlib.import_module("ci.review_outer_containment_smoke")
+        protected = ProtectedMainDocument("c" * 40, _consumer_authority())
+        output = io.StringIO()
+        with (
+            mock.patch.object(
+                smoke.historical_smoke,
+                "_acquire_under_candidate_poison",
+                return_value=(protected, protected.document["acquired_consumer"]),
+            ) as acquire,
+            mock.patch.dict(
+                os.environ, {"GNOSTOA_R2A_CANDIDATE_IMAGE": "candidate:test"}
+            ),
+            contextlib.redirect_stdout(output),
+        ):
+            self.assertEqual(0, smoke.main(["--expected-protected-main", "c" * 40]))
+        acquire.assert_called_once_with(
+            expected_protected_main="c" * 40, candidate_image="candidate:test"
+        )
+        receipt = json.loads(output.getvalue())
+        self.assertEqual("PASS", receipt["containment_result"])
+        self.assertEqual("UNAVAILABLE", receipt["current_advisory"])
+        self.assertEqual("NOT_RUN", receipt["live_evaluation"])
+        self.assertEqual("NOT_RUN", receipt["outer_docker_effects"])
+        self.assertEqual(2, receipt["public_exit_code"])
+        self.assertEqual("c" * 40, receipt["protected_main_revision"])
+        self.assertNotIn("semantic_outcome", receipt)
+        self.assertEqual(
+            protected.document["acquired_consumer"], receipt["acquired_consumer"]
+        )
+
+    def test_smoke_rejects_semantic_success_and_unrelated_failure(self) -> None:
+        smoke = importlib.import_module("ci.review_outer_containment_smoke")
+        for code, raw in (
+            (0, b"{}\n"),
+            (3, b'{"semantic_outcome":"INCOMPLETE"}\n'),
+            (2, b'{"error":{"code":"TOOL_ERROR","details":{}}}\n'),
+            (2, _unavailable_bytes() + b" "),
+        ):
+            with self.subTest(code=code, raw=raw):
+                with self.assertRaisesRegex(
+                    RuntimeError, "exact transport containment"
+                ):
+                    smoke._assert_contained_result(code, raw)
+        smoke._assert_contained_result(2, _unavailable_bytes())
+
+    def test_smoke_fails_if_real_route_attempts_outer_execution(self) -> None:
+        smoke = importlib.import_module("ci.review_outer_containment_smoke")
+        protected = ProtectedMainDocument("c" * 40, _consumer_authority())
+        with mock.patch.object(review_outer, "_require_transport_compatible_consumer"):
+            with self.assertRaisesRegex(AssertionError, "outer temporary resource"):
+                smoke._exercise_containment(protected, _current_advisory_input())
+
+
+class MergeSubjectSecurityTests(unittest.TestCase):
+    def test_security_jobs_keep_the_provider_event_checkout(self) -> None:
+        for name, checkout in _security_checkouts().items():
+            with self.subTest(job=name):
+                self.assertNotIn("ref", checkout)
+                self.assertIs(checkout["persist-credentials"], False)
+
+    def test_merge_only_content_reaches_every_security_subject(self) -> None:
+        # A synthetic divergence, not a claim about the live PR's current tree.
+        # The checkout action's default is the triggering event ref; an explicit
+        # pull_request.head.sha instead selects the unmerged topic revision.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            def git(*arguments: str) -> str:
+                return subprocess.check_output(
+                    ["git", "-C", str(root), *arguments],
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                ).strip()
+
+            git("init", "-b", "base")
+            git("config", "user.name", "Synthetic verification")
+            git("config", "user.email", "verification@example.invalid")
+            (root / "readme.txt").write_text("base\n", encoding="utf-8")
+            git("add", ".")
+            git("commit", "-m", "base")
+            git("checkout", "-b", "candidate")
+            (root / "candidate.txt").write_text("topic\n", encoding="utf-8")
+            git("add", ".")
+            git("commit", "-m", "candidate")
+            head = git("rev-parse", "HEAD")
+            git("checkout", "base")
+            (root / "tools").mkdir()
+            (root / "tools/provider_merge_only.py").write_text(
+                "merge_only = True\n", encoding="utf-8"
+            )
+            git("add", ".")
+            git("commit", "-m", "integration-only content")
+            git("merge", "--no-ff", "candidate", "-m", "provider merge candidate")
+            event_sha = git("rev-parse", "HEAD")
+            self.assertNotEqual(head, event_sha)
+            for name, checkout in _security_checkouts().items():
+                with self.subTest(job=name):
+                    ref = checkout.get("ref")
+                    if ref is None:
+                        selected = event_sha
+                    elif (
+                        ref == "${{ github.event.pull_request.head.sha || github.sha }}"
+                    ):
+                        selected = head
+                    else:
+                        self.fail(f"unsupported checkout selector: {ref}")
+                    result = subprocess.run(
+                        [
+                            "git",
+                            "-C",
+                            str(root),
+                            "cat-file",
+                            "-e",
+                            f"{selected}:tools/provider_merge_only.py",
+                        ],
+                        capture_output=True,
+                        check=False,
+                    )
+                    self.assertEqual(0, result.returncode, name)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -46,6 +46,16 @@ _OUTER_RUNTIME_SECONDS = 180
 _CLEANUP_ATTEMPTS = 3
 _CLEANUP_BACKOFF_SECONDS = 0.25
 _FORMAT_CHECKER = FormatChecker()
+# Decision 0082: a restriction, never an alternative authority/image selector.
+# Keys bind the complete closed-schema consumer identity, not just its image.
+# No existing immutable runtime has admitted host-persistence-free transport.
+# A future entry requires separate owner admission, runtime proof and review;
+# neither caller input nor environment can populate this catalog.
+_HOST_PERSISTENCE_FREE_CONSUMER_IDENTITIES: frozenset[str] = frozenset()
+_TRANSPORT_UNAVAILABLE = (
+    "protected outer-consumer transport is not admitted as host-persistence-free; "
+    "current_advisory is unavailable"
+)
 _PUBLIC_ERROR_CODES = {
     "MALFORMED_INVOCATION",
     "UNSUPPORTED_INPUT",
@@ -219,6 +229,12 @@ def _validate_consumer_authority(document: object) -> dict[str, Any]:
             "protected outer consumer does not support input schema 1.0"
         )
     return acquired
+
+
+def _require_transport_compatible_consumer(consumer: dict[str, Any]) -> None:
+    """Restrict the validated protected identity before outer lifecycle effects."""
+    if canonical_json(consumer) not in _HOST_PERSISTENCE_FREE_CONSUMER_IDENTITIES:
+        raise PriorEffectiveOuterUnavailable(_TRANSPORT_UNAVAILABLE)
 
 
 def _new_resource_name(role: str) -> str:
@@ -763,6 +779,8 @@ def run_prior_effective_current_advisory(
     outer runtime. The host Docker daemon owns bounded lifecycle orchestration only;
     it is never mounted into the protected outer runtime. The outer runtime receives
     a Unix socket from an isolated nested daemon and returns the canonical result.
+    Until an exact protected transport identity is separately admitted, return
+    TOOL_ERROR before outer temporary resources, image acquisition or Docker use.
     """
 
     owned_containers: list[str] = []
@@ -778,6 +796,7 @@ def run_prior_effective_current_advisory(
             )
         protected = acquire_gnostoa_current_advisory_consumer()
         consumer = _validate_consumer_authority(protected.document)
+        _require_transport_compatible_consumer(consumer)
     except (
         json.JSONDecodeError,
         OSError,
