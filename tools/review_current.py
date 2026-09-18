@@ -718,6 +718,14 @@ def _run_docker(
             _with_secondary(primary, _joined_details(*close_issues))
         ) from execution_cause
 
+    if returncode is None:
+        # Reaching success without a reaped child would mean the run was never
+        # waited for, so report it as a controlled failure rather than
+        # publishing a result with no child status.
+        raise ProtectedJudgeUnavailable(
+            "protected Docker process finished without a reaped child status"
+        )
+
     return subprocess.CompletedProcess(
         command,
         returncode,
