@@ -30,6 +30,12 @@ _DOCKER_CLEANUP_TIMEOUT_SECONDS = 10
 _DOCKER_CLEANUP_ATTEMPTS = 3
 _MAX_CLEANUP_DIAGNOSTIC_BYTES = 4_096
 _ABSENT_CONTAINER_DIAGNOSTIC = "no such container"
+_CLEANUP_SELECTOR_CLOSE_ISSUE = "protected Docker cleanup selector could not be closed"
+_CLEANUP_STREAM_CLOSE_ISSUE = "protected Docker cleanup stderr pipe could not be closed"
+_CLEANUP_CLOSE_ISSUES = (
+    _CLEANUP_SELECTOR_CLOSE_ISSUE,
+    _CLEANUP_STREAM_CLOSE_ISSUE,
+)
 _PROCESS_REAP_TIMEOUT_SECONDS = 5
 _MAX_RUNTIME_INPUT_BYTES = 4_194_304
 _MAX_RUNTIME_OUTPUT_BYTES = 2_097_152
@@ -356,9 +362,7 @@ def _cleanup_diagnostic(
             try:
                 selector.close()
             except OSError:
-                close_issues.append(
-                    "protected Docker cleanup selector could not be closed"
-                )
+                close_issues.append(_CLEANUP_SELECTOR_CLOSE_ISSUE)
         if process.poll() is None:
             try:
                 process.kill()
@@ -372,9 +376,7 @@ def _cleanup_diagnostic(
             try:
                 stream.close()
             except OSError:
-                close_issues.append(
-                    "protected Docker cleanup stderr pipe could not be closed"
-                )
+                close_issues.append(_CLEANUP_STREAM_CLOSE_ISSUE)
 
     detail = _bounded_diagnostic(bytes(diagnostic))
     if close_issues:
@@ -398,6 +400,21 @@ def _cleanup_diagnostic(
     if returncode is None:
         return None, issue or detail or "protected Docker cleanup did not complete"
     return returncode, detail
+
+
+def _carries_local_finalization_context(detail: str) -> bool:
+    """Report whether a cleanup diagnostic also carries local close context.
+
+    Absence may be concluded only from the removal command's own response.
+    ``_cleanup_diagnostic`` merges local close failures into the same bounded
+    string, so a diagnostic that reports absence *and* a failed close is not
+    evidence of absence: concluding it would discard the close failure and
+    retire the recovery identity with it. The roles are this module's own
+    static strings, so an unexpected match only makes the caller report rather
+    than conclude, which is the safe direction.
+    """
+
+    return any(issue in detail for issue in _CLEANUP_CLOSE_ISSUES)
 
 
 def _cleanup_container(
@@ -441,7 +458,11 @@ def _cleanup_container(
         )
         if returncode == 0:
             return None
-        if returncode is not None and _ABSENT_CONTAINER_DIAGNOSTIC in detail.casefold():
+        if (
+            returncode is not None
+            and _ABSENT_CONTAINER_DIAGNOSTIC in detail.casefold()
+            and not _carries_local_finalization_context(detail)
+        ):
             return None
         if returncode is not None:
             last_issue = detail or f"status {returncode}"

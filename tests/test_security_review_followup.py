@@ -690,6 +690,64 @@ class ReviewFollowupTests(unittest.TestCase):
                         message,
                     )
 
+    def test_absence_cannot_swallow_a_local_finalization_failure(self) -> None:
+        """An absent container plus a failed close must not read as clean."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            config_dir = Path(directory)
+            identity = review_current._ContainerRunIdentity(
+                name="gnostoa-protected-test",
+                cidfile=config_dir / "candidate.cid",
+            )
+            # The removal command reports absence, and local finalization also
+            # failed, so _cleanup_diagnostic merges both into one diagnostic.
+            cleanup = mock.Mock(
+                return_value=(
+                    1,
+                    f"Error response from daemon: No such container: "
+                    f"{identity.name}; "
+                    "protected Docker cleanup stderr pipe could not be closed",
+                )
+            )
+            with (
+                mock.patch.object(
+                    review_current, "_docker_executable", return_value="docker"
+                ),
+                mock.patch.object(review_current, "_cleanup_diagnostic", cleanup),
+            ):
+                issue = review_current._cleanup_container(identity, config_dir)
+
+        self.assertIsNotNone(issue)
+        assert issue is not None
+        self.assertIn("could not be closed", issue)
+        self.assertIn(identity.name, issue)
+
+    def test_a_clean_absence_response_is_still_confirmed(self) -> None:
+        """Absence alone, with no local failure, still confirms cleanup."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            config_dir = Path(directory)
+            identity = review_current._ContainerRunIdentity(
+                name="gnostoa-protected-test",
+                cidfile=config_dir / "candidate.cid",
+            )
+            cleanup = mock.Mock(
+                return_value=(
+                    1,
+                    f"Error response from daemon: No such container: {identity.name}",
+                )
+            )
+            with (
+                mock.patch.object(
+                    review_current, "_docker_executable", return_value="docker"
+                ),
+                mock.patch.object(review_current, "_cleanup_diagnostic", cleanup),
+            ):
+                issue = review_current._cleanup_container(identity, config_dir)
+
+        self.assertIsNone(issue)
+        cleanup.assert_called_once()
+
     def test_an_unexpected_body_failure_still_reports_snapshot_residue(self) -> None:
         """Finalization evidence must survive a body failure of any type."""
 
