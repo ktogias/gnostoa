@@ -16,29 +16,25 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: 03fcf13dd016b811dc84db3e29e200c998e6e315
+          ref: 19f4dab66f35c9e2c3b8c0699ce1af328a228afe
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
-        with:
-          python-version: '3.11'
-      - name: Export exact public source and locked offline dependencies
+      - name: Export exact public source only
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = 03fcf13dd016b811dc84db3e29e200c998e6e315
-          test "$(git rev-parse 'HEAD^{tree}')" = 282e3178a385c1952b26a4dad034dfd062824c2b
+          test "$(git rev-parse HEAD)" = 19f4dab66f35c9e2c3b8c0699ce1af328a228afe
+          test "$(git rev-parse 'HEAD^{tree}')" = f25ba02e6958ac7aed65b7439c68cd933cc36b2f
           output="${RUNNER_TEMP}/pr278-stabilization-source"
-          mkdir -p "${output}/wheels"
+          mkdir -p "${output}"
           git bundle create "${output}/source.bundle" HEAD refs/remotes/origin/main
           git bundle verify "${output}/source.bundle"
           git rev-parse HEAD 'HEAD^{tree}' refs/remotes/origin/main > "${output}/source-identities.txt"
-          python -m pip download --only-binary=:all: --require-hashes -r requirements/development.lock --dest "${output}/wheels"
-          (cd "${output}" && sha256sum source.bundle wheels/* > SHA256SUMS)
+          (cd "${output}" && sha256sum source.bundle > SHA256SUMS)
       - name: Retain development inputs, not review or runtime evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: pr278-stabilization-source-03fcf13
+          name: pr278-stabilization-source-19f4dab
           path: ${{ runner.temp }}/pr278-stabilization-source
           if-no-files-found: error
           retention-days: 1
