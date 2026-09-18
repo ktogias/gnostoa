@@ -1035,17 +1035,16 @@ class ProviderSecurityGateTests(unittest.TestCase):
             workflow,
         )
         self.assertIn(
-            'force_reason="comparison base unavailable"\n'
-            '                git ls-files -z > "${paths_file}"',
-            workflow,
-        )
-        self.assertIn(
             'force_reason="${GITHUB_EVENT_NAME} requires full evidence"',
             workflow,
         )
         self.assertIn('force_reason="extended router changed"', workflow)
         self.assertIn(
             'git show "${BASE_SHA}:tools/extended_route.py" > "${router_file}"',
+            workflow,
+        )
+        self.assertIn(
+            "Restricted native path: execute only comparison-base router bytes",
             workflow,
         )
         self.assertIn('python -I "${router_file}"', workflow)
