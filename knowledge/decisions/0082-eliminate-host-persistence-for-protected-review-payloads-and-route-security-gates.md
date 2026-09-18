@@ -146,7 +146,9 @@ separate read-back.
    CID when available and otherwise by that name. Abort is diagnostically
    subordinate: it never raises, so the triggering timeout, bounded-size or I/O
    failure stays the primary diagnostic and any reap or cleanup problem is
-   appended as bounded secondary context with the predeclared recovery name. A
+   appended as bounded secondary context. The predeclared recovery name is part
+   of that context only when container removal is unconfirmed, because only then
+   is a container left to recover. A
    container the runtime already removed under `--rm` is reconciled as
    successful absence through the bounded case-insensitive `no such container`
    response; every other bounded diagnostic stays fail-closed and retried. The
@@ -156,9 +158,10 @@ separate read-back.
    abort path discards it once cleanup is confirmed and reports any discard
    problem as part of its own secondary context, while an unconfirmed cleanup
    does not proactively unlink it and leaves the recovery identity behind.
-   Cleanup confirmation is reported separately from client reaping: a reap that
-   cannot be confirmed is secondary context only, and never withholds the
-   discard or advertises a recovery identity for an already removed container. Retain the
+   Cleanup confirmation is therefore reported separately from client reaping: a
+   reap that cannot be confirmed is secondary context only, and never withholds
+   the discard or advertises a recovery identity for an already removed
+   container. Retain the
    executable used to launch Docker, treat unreadable or malformed CID content
    as a name fallback, bound child reaping, and attempt container cleanup even
    when client reaping cannot be confirmed. Docker options before the image fail closed against the exact
