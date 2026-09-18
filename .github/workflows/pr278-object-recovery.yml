@@ -1,0 +1,32 @@
+name: PR278 exact source object recovery
+on:
+  push:
+    branches: [support/pr278-chatgpt-source-20260918]
+    paths: [.github/workflows/pr278-object-recovery.yml, '.support/pr278/**']
+permissions:
+  contents: write
+jobs:
+  upload-objects:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          path: helper
+          persist-credentials: false
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: e29b12950612e3696d3d087708cdd9a615d92b04
+          path: source
+          persist-credentials: false
+      - name: Validate exact patch and upload immutable objects only
+        env:
+          GH_OBJECT_TOKEN: ${{ github.token }}
+        shell: bash
+        run: python3 -I helper/.support/pr278/upload_objects.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr278-recovered-candidate
+          path: ${{ runner.temp }}/pr278-object-receipt/
+          retention-days: 7
+          if-no-files-found: error
