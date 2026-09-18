@@ -407,6 +407,11 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
                     process.wait()
 
             self.assertEqual(3, cleanup.call_count)
+            for cleanup_call in cleanup.call_args_list:
+                self.assertEqual(
+                    ["docker", "rm", "-f", "a" * 64],
+                    cleanup_call.args[0],
+                )
             cidfile = observed["cidfile"]
             self.assertIsInstance(cidfile, Path)
             assert isinstance(cidfile, Path)
@@ -482,6 +487,10 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
                     process.wait()
 
         cleanup.assert_called_once()
+        self.assertEqual(
+            ["docker", "rm", "-f", "b" * 64],
+            cleanup.call_args.args[0],
+        )
 
     def test_non_ascii_cid_falls_back_to_the_predeclared_name(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
