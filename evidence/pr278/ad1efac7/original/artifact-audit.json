@@ -1,0 +1,211 @@
+{
+  "head": "ad1efac7b5d62f2252131483066579728012690c",
+  "event_merge_subject": "fb3b19d1b1a01c58d11bc8c88da4e71e5595a1ec",
+  "workflow_run": 35373573729,
+  "artifact_id": 10559267997,
+  "archive_sha256": "aad2f0ae8f4304365f450d5cbda00dd345417e8699f06a591075a217238128ae",
+  "manifest_checks": {
+    "coverage.json": {
+      "sha256": "b3d9a6ee50e2d6ab70b5d9089d2e783bd36c39bfbbbb16691513d9a17e0d6fc2",
+      "size_bytes": 1027058,
+      "matches_manifest": true
+    },
+    "development-artifact-selection.json": {
+      "sha256": "5ad68f49cc38053e562e0ebc77182033c8985e4c09c963134483ea9a0618d56b",
+      "size_bytes": 21600,
+      "matches_manifest": true
+    },
+    "development-dependency-audit.json": {
+      "sha256": "981462de1a9d1721577becebfaebc54f4a05a35304412002a3cdd6e9ab701597",
+      "size_bytes": 3883,
+      "matches_manifest": true
+    },
+    "development-license-inventory.json": {
+      "sha256": "2efdb8f1571ad407b0439d08f7f29b73f465e266d1e22e36ff5cb1c7e9247ec7",
+      "size_bytes": 48571,
+      "matches_manifest": true
+    },
+    "development-sbom.cdx.json": {
+      "sha256": "d55053bcd76b576ce8415719c9dd569e8072c1e367043bbb6c9052dd456fe422",
+      "size_bytes": 62994,
+      "matches_manifest": true
+    },
+    "mypy.jsonl": {
+      "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "size_bytes": 1,
+      "matches_manifest": true
+    },
+    "ruff-format.json": {
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "size_bytes": 2,
+      "matches_manifest": true
+    },
+    "ruff-lint.json": {
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "size_bytes": 2,
+      "matches_manifest": true
+    },
+    "runtime-artifact-selection.json": {
+      "sha256": "427bc43eec6326f774ed44d36a54e95ead513b03b99ccf8a12865e6dde03bec4",
+      "size_bytes": 3422,
+      "matches_manifest": true
+    },
+    "runtime-dependency-audit.json": {
+      "sha256": "cb9b89d318d780ffe1b5ed48e431c8473a4fd57c864f8bf8ebfd20b63a5e90c3",
+      "size_bytes": 452,
+      "matches_manifest": true
+    },
+    "runtime-license-inventory.json": {
+      "sha256": "52ea0ea856304e6471acdec8926bfa2c9a54782c7c26b6ab9db5e41c97e86aed",
+      "size_bytes": 6314,
+      "matches_manifest": true
+    },
+    "runtime-sbom.cdx.json": {
+      "sha256": "f282fe9c533c7188f77b820337f6698a883c2ea150d9a0d4cd4e71c415c7464b",
+      "size_bytes": 7719,
+      "matches_manifest": true
+    },
+    "tracked-tree-secret-scan.json": {
+      "sha256": "d43884a506693d82080ec04c63b18d9c174b2f78e67956f8fc45c3cd9a3cd499",
+      "size_bytes": 88,
+      "matches_manifest": true
+    }
+  },
+  "all_manifest_entries_match": true,
+  "source": {
+    "revision": "fb3b19d1b1a01c58d11bc8c88da4e71e5595a1ec",
+    "tracked_tree_dirty": false
+  },
+  "command_statuses": {
+    "coverage_erase": 0,
+    "coverage_floor": 0,
+    "coverage_json": 0,
+    "coverage_run": 0,
+    "development_artifact_selection": 0,
+    "development_audit": 0,
+    "format": 0,
+    "lint": 0,
+    "runtime_artifact_selection": 0,
+    "runtime_audit": 0,
+    "secret_scan": 0,
+    "typing": 0
+  },
+  "results": {
+    "artifact_identity": {
+      "development": {
+        "packages": 67,
+        "selected_hashes_admitted": 67,
+        "yanked_artifacts": 0
+      },
+      "runtime": {
+        "packages": 7,
+        "selected_hashes_admitted": 7,
+        "yanked_artifacts": 0
+      }
+    },
+    "coverage": {
+      "passes_floor": true,
+      "percent": 76.15721020048844
+    },
+    "development_dependency_audit": {
+      "dependencies": 66,
+      "lock_entries": 67,
+      "reported_dependencies": 66,
+      "unreported_dependencies": [
+        "pip"
+      ],
+      "vulnerabilities": 0,
+      "vulnerability_ids": []
+    },
+    "development_license_inventory": {
+      "artifact_identities": 67,
+      "legacy_declarations": 31,
+      "manual_review": 31,
+      "missing_declarations": 0,
+      "non_spdx_declarations": 3,
+      "packages": 67,
+      "spdx_expressions": 64
+    },
+    "runtime_dependency_audit": {
+      "dependencies": 7,
+      "lock_entries": 7,
+      "reported_dependencies": 7,
+      "unreported_dependencies": [],
+      "vulnerabilities": 0,
+      "vulnerability_ids": []
+    },
+    "runtime_license_inventory": {
+      "artifact_identities": 7,
+      "legacy_declarations": 1,
+      "manual_review": 1,
+      "missing_declarations": 0,
+      "non_spdx_declarations": 0,
+      "packages": 7,
+      "spdx_expressions": 7
+    },
+    "sbom": {
+      "component_hashes": "selected wheel SHA-256",
+      "development_components": 67,
+      "format": "CycloneDX",
+      "runtime_components": 7,
+      "spec_version": "1.6"
+    },
+    "secret_scan": {
+      "candidates": 0,
+      "findings": [],
+      "reviewed_false_positives": 4
+    },
+    "static_quality": {
+      "format_diagnostics": 0,
+      "lint_diagnostics": 0,
+      "typing_diagnostics": 0
+    }
+  },
+  "scope": {
+    "artifact_identity": {
+      "boundary": "exact non-yanked wheel selected for the current Python and platform environment from each committed SHA-256 allow-list",
+      "installer_report": "pip installation report version 1",
+      "locks": [
+        "requirements/runtime.lock",
+        "requirements/development.lock"
+      ]
+    },
+    "coverage": "branch-aware unittest coverage of the tools package",
+    "dependency_audit": [
+      "requirements/runtime.lock",
+      "requirements/development.lock"
+    ],
+    "license_inventory_and_sbom": {
+      "boundary": "exact installed Python distributions and selected wheel identities named by each lock",
+      "locks": [
+        "requirements/runtime.lock",
+        "requirements/development.lock"
+      ],
+      "sbom_format": "CycloneDX 1.6 JSON"
+    },
+    "secret_scan": {
+      "baseline": ".secrets.baseline",
+      "boundary": "current Git-tracked regular-file working tree only",
+      "tracked_files": 571
+    },
+    "static_quality": {
+      "format_and_lint": ".",
+      "strict_typing": [
+        "tools",
+        "ci"
+      ]
+    }
+  },
+  "limits": [
+    "Formatting and lint cover the Git-candidate-aware repository-root Ruff subject with explicit configuration exclusions; static typing remains limited to its declared paths. A clean result is not behavior, security or semantic acceptance evidence.",
+    "Coverage is a regression signal, not acceptance or test-quality proof.",
+    "The dependency audits cover known Python-package advisories available from the configured provider at run time; they do not prove package trustworthiness or cover non-Python components.",
+    "The summary validates every pip-audit row against the exact lock and lists lock entries omitted from the provider's no-finding JSON; an omitted row is not silently counted as package-level evidence.",
+    "License inventories and SBOMs cover exact installed Python distributions and the selected wheel identities admitted by the two locks. Package-declared metadata is not legal advice, compatibility approval or evidence about operating-system, base-image or external components.",
+    "Legacy license fields and classifiers are retained as manual-review evidence. Committed hashes and selected-wheel read-back establish bounded artifact identity, not publisher trust, availability, legal compatibility or release provenance.",
+    "The selected wheel is a fresh resolver read-back for the declared environment; installed metadata does not independently prove the archive origin of every installed file.",
+    "The heuristic secret scan covers the current tracked tree, not Git history, provider metadata, Actions artifacts or logs. Its reviewed baseline is an exact false-positive disposition, not a general secret-pattern or path exclusion.",
+    "These unsigned CI reports are quality evidence, not release provenance."
+  ],
+  "method": "downloaded provider artifact inspection and internal manifest integrity checks, not independent recomputation of provider reports"
+}

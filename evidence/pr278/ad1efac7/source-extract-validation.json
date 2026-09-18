@@ -1,0 +1,50 @@
+[
+  {
+    "source": "tools/security_scan.py",
+    "function": "_os_error_symbol",
+    "ast_equal": true,
+    "method": "static AST comparison, no execution"
+  },
+  {
+    "source": "tools/security_scan.py",
+    "function": "_safe_os_error",
+    "ast_equal": true,
+    "method": "static AST comparison, no execution"
+  },
+  {
+    "source": "tools/security_scan.py",
+    "function": "_close_snapshot_descriptor",
+    "ast_equal": true,
+    "method": "static AST comparison, no execution"
+  },
+  {
+    "source": "tools/security_scan.py",
+    "function": "_check_snapshot_deadline",
+    "ast_equal": true,
+    "method": "static AST comparison, no execution"
+  },
+  {
+    "source": "tools/security_scan.py",
+    "function": "_write_all",
+    "ast_equal": true,
+    "method": "static AST comparison, no execution"
+  },
+  {
+    "source": "tools/security_scan.py",
+    "function": "_immutable_candidate_snapshot",
+    "ast_equal": true,
+    "method": "static AST comparison, no execution"
+  },
+  {
+    "source": "tools/review_current.py",
+    "function": "_kill_and_reap",
+    "ast_equal": true,
+    "method": "static AST comparison, no execution"
+  },
+  {
+    "source": "tools/quality_evidence.py",
+    "function": "main",
+    "ast_equal": true,
+    "method": "static AST comparison, no execution"
+  }
+]

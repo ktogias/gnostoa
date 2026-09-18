@@ -1,0 +1,39 @@
+{
+  "head": "ad1efac7b5d62f2252131483066579728012690c",
+  "method": "isolated source-extract characterization; dependencies outside extracts stubbed",
+  "python": "3.13.5 (main, Jul 15 2026, 20:25:40) [GCC 14.2.0]",
+  "tests_run": 12,
+  "failures": 0,
+  "errors": 0,
+  "observations": {
+    "unexpected_cleanup_exception": {
+      "fault_injected": true,
+      "root_closed": true,
+      "escapes_known_error_protocol": true,
+      "real_content_driven_exploit_proven": false
+    },
+    "kill_before_drain": {
+      "real_subprocess": true,
+      "elapsed_seconds": 0.015615015999969728,
+      "returncode": -9,
+      "stdout_not_drained": true
+    },
+    "late_write": {
+      "deadline_seconds": 0.02,
+      "elapsed_seconds": 0.08034634700004517,
+      "result": "REJECTED_AFTER_RETURN"
+    },
+    "stalled_write": {
+      "fake_operation": true,
+      "cooperative_seconds": 0.02,
+      "still_running_after_seconds": 0.1,
+      "external_kill_reaped": true
+    }
+  },
+  "not_performed": [
+    "full checkout tests",
+    "ci/verify",
+    "Docker execution",
+    "real hostile filesystem test"
+  ]
+}

@@ -1,0 +1,74 @@
+{
+  "README.md": {
+    "size_bytes": 5693,
+    "sha256": "80b70d822bd1720beb20c5f81a733d6b3625369aabbd34405c31b731b3d8f8b8"
+  },
+  "characterization.py": {
+    "size_bytes": 14586,
+    "sha256": "cf2238e25cc9b094627c7b6991238a1c4dbdc6b62d33508b42068ed58e1f6e09"
+  },
+  "characterization-results.json": {
+    "size_bytes": 1103,
+    "sha256": "392f63453e6030281a2300a7e5bb42205daf2a61de5cb1dce8061c6de5c9069f"
+  },
+  "artifact-audit.json": {
+    "size_bytes": 7966,
+    "sha256": "ab61e67715da949c81f4285a39a50d1c11b4e8a999ee7b95bd0f88c802f840e8"
+  },
+  "provider-reports/mypy.jsonl": {
+    "size_bytes": 1,
+    "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+  },
+  "provider-reports/development-artifact-selection.json": {
+    "size_bytes": 21600,
+    "sha256": "5ad68f49cc38053e562e0ebc77182033c8985e4c09c963134483ea9a0618d56b"
+  },
+  "provider-reports/runtime-license-inventory.json": {
+    "size_bytes": 6314,
+    "sha256": "52ea0ea856304e6471acdec8926bfa2c9a54782c7c26b6ab9db5e41c97e86aed"
+  },
+  "provider-reports/coverage.json": {
+    "size_bytes": 1027058,
+    "sha256": "b3d9a6ee50e2d6ab70b5d9089d2e783bd36c39bfbbbb16691513d9a17e0d6fc2"
+  },
+  "provider-reports/runtime-dependency-audit.json": {
+    "size_bytes": 452,
+    "sha256": "cb9b89d318d780ffe1b5ed48e431c8473a4fd57c864f8bf8ebfd20b63a5e90c3"
+  },
+  "provider-reports/ruff-lint.json": {
+    "size_bytes": 2,
+    "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+  },
+  "provider-reports/runtime-sbom.cdx.json": {
+    "size_bytes": 7719,
+    "sha256": "f282fe9c533c7188f77b820337f6698a883c2ea150d9a0d4cd4e71c415c7464b"
+  },
+  "provider-reports/development-license-inventory.json": {
+    "size_bytes": 48571,
+    "sha256": "2efdb8f1571ad407b0439d08f7f29b73f465e266d1e22e36ff5cb1c7e9247ec7"
+  },
+  "provider-reports/tracked-tree-secret-scan.json": {
+    "size_bytes": 88,
+    "sha256": "d43884a506693d82080ec04c63b18d9c174b2f78e67956f8fc45c3cd9a3cd499"
+  },
+  "provider-reports/quality-summary.json": {
+    "size_bytes": 7463,
+    "sha256": "27336db020f14e8f040666d23b19b8023b0e5751e337cc87cd8f31f615cf2a3e"
+  },
+  "provider-reports/runtime-artifact-selection.json": {
+    "size_bytes": 3422,
+    "sha256": "427bc43eec6326f774ed44d36a54e95ead513b03b99ccf8a12865e6dde03bec4"
+  },
+  "provider-reports/development-dependency-audit.json": {
+    "size_bytes": 3883,
+    "sha256": "981462de1a9d1721577becebfaebc54f4a05a35304412002a3cdd6e9ab701597"
+  },
+  "provider-reports/ruff-format.json": {
+    "size_bytes": 2,
+    "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+  },
+  "provider-reports/development-sbom.cdx.json": {
+    "size_bytes": 62994,
+    "sha256": "d55053bcd76b576ce8415719c9dd569e8072c1e367043bbb6c9052dd456fe422"
+  }
+}

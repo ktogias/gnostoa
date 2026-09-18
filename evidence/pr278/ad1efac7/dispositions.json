@@ -1,0 +1,77 @@
+{
+  "reviewed_head": "ad1efac7b5d62f2252131483066579728012690c",
+  "authority": "agent-authored advisory; not owner acceptance or merge authorization",
+  "details": "REPORT.el.md",
+  "items": [
+    {
+      "id": "D01",
+      "topic": "cooperative deadline",
+      "disposition": "ACCEPT_STAGED_LIMITATION"
+    },
+    {
+      "id": "D02",
+      "topic": "CodeAnt abort ordering deadlock claim",
+      "disposition": "NOT_ESTABLISHED_AS_BLOCKER"
+    },
+    {
+      "id": "D03",
+      "topic": "unexpected scanner exception boundary",
+      "disposition": "NONBLOCKING_HARDENING"
+    },
+    {
+      "id": "D04",
+      "topic": "blind tracked_paths forwarding",
+      "disposition": "NOT_ADOPTED"
+    },
+    {
+      "id": "D05",
+      "topic": "cleanup RecursionError/root finalization",
+      "disposition": "ADDRESSED_WITH_LIMITS"
+    },
+    {
+      "id": "D06",
+      "topic": "prior assertion stub formatting typing failures",
+      "disposition": "NO_LONGER_REPORTED_IN_RETAINED_PROVIDER_EVIDENCE"
+    },
+    {
+      "id": "D07",
+      "topic": "known raw repository scope error",
+      "disposition": "ADDRESSED"
+    },
+    {
+      "id": "D08",
+      "topic": "subprocess audit warnings",
+      "disposition": "PER_OPERATION_ADJUDICATION"
+    },
+    {
+      "id": "D09",
+      "topic": "docstring coverage",
+      "disposition": "DOCUMENTATION_NONBLOCKING"
+    },
+    {
+      "id": "D10",
+      "topic": "current_advisory unavailability",
+      "disposition": "CONTAINED_RESTORATION_PENDING"
+    },
+    {
+      "id": "D11",
+      "topic": "stale PR description",
+      "disposition": "RECORD_RECONCILIATION_REQUIRED"
+    },
+    {
+      "id": "D12",
+      "topic": "15 omitted Qodo findings",
+      "disposition": "INDIVIDUAL_STATUS_UNKNOWN"
+    },
+    {
+      "id": "D13",
+      "topic": "pip missing audit row",
+      "disposition": "EXPLICIT_COVERAGE_GAP"
+    },
+    {
+      "id": "D14",
+      "topic": "license manual review and SBOM scope",
+      "disposition": "SEPARATE_OBLIGATION_NOT_DISCHARGED"
+    }
+  ]
+}

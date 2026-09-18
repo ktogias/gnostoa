@@ -1,0 +1,79 @@
+[
+  {
+    "path": "tools/security_scan.py",
+    "blob_sha": "ea1256ce819a331a39094c1e909d2ff8a97ff3ec",
+    "sha256": "7e3eec28c8d232121298799a7efe0ca47f6e01129be41a15747abc3afac31304",
+    "size_bytes": 37682,
+    "url": "https://github.com/ktogias/gnostoa/blob/ad1efac7b5d62f2252131483066579728012690c/tools/security_scan.py"
+  },
+  {
+    "path": "tools/review_current.py",
+    "blob_sha": "b593f2d6312e70f9ce2c127b254509666361cf6c",
+    "sha256": "0f3d8ff9e9c83d97db13bc3845c5af010c6f9c917cf98d609cbef3889aa3816e",
+    "size_bytes": 33879,
+    "url": "https://github.com/ktogias/gnostoa/blob/ad1efac7b5d62f2252131483066579728012690c/tools/review_current.py"
+  },
+  {
+    "path": "tools/quality_evidence.py",
+    "blob_sha": "e7a39775c358cf11c391bb0c3dacd3ce93b45d0b",
+    "sha256": "9ca60c4cb7670170f7a0ed0efe4f904856d57c4f573e952dd65a7620136bf52d",
+    "size_bytes": 50952,
+    "url": "https://github.com/ktogias/gnostoa/blob/ad1efac7b5d62f2252131483066579728012690c/tools/quality_evidence.py"
+  },
+  {
+    "path": "tools/repository_scope.py",
+    "blob_sha": "118ae868005b3bb398498fda6b526d384881a0d9",
+    "sha256": "6ba06dee28e73ea7c3aed58723e81aa064c511422b5ea0b46306ec00386ed201",
+    "size_bytes": 7128,
+    "url": "https://github.com/ktogias/gnostoa/blob/ad1efac7b5d62f2252131483066579728012690c/tools/repository_scope.py"
+  },
+  {
+    "path": "tools/review_outer.py",
+    "blob_sha": "0ba3df389e82d0e8ab8277fb5f7f4c75d60049ab",
+    "sha256": "1e8525a920f27af99a186af657068f6f6d52db2d474c25a5c06edec2475514bd",
+    "size_bytes": 32370,
+    "url": "https://github.com/ktogias/gnostoa/blob/ad1efac7b5d62f2252131483066579728012690c/tools/review_outer.py"
+  },
+  {
+    "path": "tests/test_security_review_followup.py",
+    "blob_sha": "f582d7d6f4256e57428d3013b68eeeeae15b6910",
+    "sha256": "a0a3ba4e019346c37ea48a6156d7279d9cfb0ba0d03cb74a26337993b74a6f69",
+    "size_bytes": 41212,
+    "url": "https://github.com/ktogias/gnostoa/blob/ad1efac7b5d62f2252131483066579728012690c/tests/test_security_review_followup.py"
+  },
+  {
+    "path": "tests/test_quality_evidence.py",
+    "blob_sha": "bf2e1f4f492b5a75c7ad9fbcee23d5434c594c21",
+    "sha256": "3184c8c9bd06d518783da27e5413b86d640a940f45ceca7bc88e1d655d751206",
+    "size_bytes": 31073,
+    "url": "https://github.com/ktogias/gnostoa/blob/ad1efac7b5d62f2252131483066579728012690c/tests/test_quality_evidence.py"
+  },
+  {
+    "path": "tests/test_review_current_payload_transport.py",
+    "blob_sha": "8a29300275702b7832e180dcdfca36bd271aa453",
+    "sha256": "e0b8c5f961cfc87ecc6c55d2b9f7dcb8604455a1baf587fd3721a0b0b8de17c9",
+    "size_bytes": 35667,
+    "url": "https://github.com/ktogias/gnostoa/blob/ad1efac7b5d62f2252131483066579728012690c/tests/test_review_current_payload_transport.py"
+  },
+  {
+    "path": "LICENSE",
+    "blob_sha": "d645695673349e3947e8e5ae42332d0ac3164cd7",
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "size_bytes": 11358,
+    "url": "https://github.com/ktogias/gnostoa/blob/ad1efac7b5d62f2252131483066579728012690c/LICENSE"
+  },
+  {
+    "path": "requirements/runtime.lock",
+    "blob_sha": "3c7eeb066bc166ca8f63d96960200737ee2a49b1",
+    "sha256": "5fa3747b57ca365a1c721f9ca23d513c1b8155724a376961a1003a2f7aeb8343",
+    "size_bytes": 16588,
+    "url": "https://github.com/ktogias/gnostoa/blob/ad1efac7b5d62f2252131483066579728012690c/requirements/runtime.lock"
+  },
+  {
+    "path": "requirements/development.lock",
+    "blob_sha": "d3db946f2f79024045b051b4ff5380cccdf141a7",
+    "sha256": "e3c2f4f5b429fadf903ac9981ebcc8f5d303497dc06468413bcb6373624cba5b",
+    "size_bytes": 78860,
+    "url": "https://github.com/ktogias/gnostoa/blob/ad1efac7b5d62f2252131483066579728012690c/requirements/development.lock"
+  }
+]

@@ -1,0 +1,30 @@
+{
+  "archived_at_utc": "2026-09-18T20:34:03.245391+00:00",
+  "reviewed_head": "ad1efac7b5d62f2252131483066579728012690c",
+  "base": "7c14f9111cb560ea26dd68440812f64b37069706",
+  "provider_event_merge_subject": "fb3b19d1b1a01c58d11bc8c88da4e71e5595a1ec",
+  "archival_readback_head": "efc39c409e696e45b1529e76df101c0d2cbc3968",
+  "archival_bootstrap_commit": "df46e02335efd90d4f195ed662ef6dceb6abcc29",
+  "archival_workflow_run": "35392149686",
+  "archival_python": "3.12.3",
+  "provider_archive_sha256": "aad2f0ae8f4304365f450d5cbda00dd345417e8699f06a591075a217238128ae",
+  "original_review_archive_sha256": "3ded2376771e1e87908cec90343252196d4c5ad05ab07313fbef288fdcb4e660",
+  "original_members_verified": 18,
+  "provider_internal_manifest_entries_verified": 13,
+  "provider_report_count_including_summary": 14,
+  "source_extracts_ast_equal": true,
+  "source_extracts_compared": 8,
+  "original_tests_rerun": false,
+  "candidate_code_executed": false,
+  "full_checkout_tests_run": false,
+  "docker_run": false,
+  "scope": "archival integrity and static binding verification only",
+  "limitations": [
+    "Original execution transcript was not supplied.",
+    "Original raw reviewer snapshot is not in the initial ZIP; separately retained public records were collected at archival time.",
+    "Omitted Qodo portal findings have no complete individual inventory here.",
+    "No actual hostile filesystem or kernel-stall experiment.",
+    "No transfer of old-head review conclusions to the current head.",
+    "Evidence hashes and branch are not signatures or provider-enforced immutable storage."
+  ]
+}
