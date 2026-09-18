@@ -379,6 +379,14 @@ def _read_document(path: Path, label: str) -> dict[str, Any]:
 
 
 def _terminate_and_reap(process: subprocess.Popen[bytes]) -> None:
+    """Kill the scanner child and confirm its reap within the bound.
+
+    Used where an unreaped child is itself the failure to report, so an
+    unconfirmed reap raises. Callers that already hold a primary failure use
+    :func:`_reap_detail` instead, which reports the same problem as bounded
+    secondary context rather than replacing that primary.
+    """
+
     if process.poll() is None:
         try:
             process.kill()
@@ -637,6 +645,17 @@ def _copy_candidate_to_snapshot(
     deadline: float,
     remaining_total_bytes: int,
 ) -> int:
+    """Copy one tracked candidate into the snapshot without following a link.
+
+    Traversal is descriptor-relative with ``O_NOFOLLOW``, so no component can
+    be swapped for a symlink between the check and the open. The file's stable
+    metadata is compared before, after and through an independently traversed
+    parent, so a candidate replaced mid-copy is refused rather than snapshotted
+    in a torn state. Size is bounded per file and against the remaining total,
+    and the deadline is checked around every read and write. Returns the number
+    of bytes copied.
+    """
+
     nofollow = getattr(os, "O_NOFOLLOW", None)
     directory = getattr(os, "O_DIRECTORY", None)
     nonblock = getattr(os, "O_NONBLOCK", None)
@@ -787,6 +806,17 @@ def _immutable_candidate_snapshot(
     root: Path,
     paths: list[Path],
 ) -> Iterator[Path]:
+    """Yield a private copy of the candidates for the scanner to read.
+
+    Scanning a copy rather than the live tree means the scanned bytes cannot
+    change after validation, so the report describes exactly what was checked.
+    On exit the workspace is removed and the root descriptor is closed under a
+    nested ``finally``, so neither a cleanup ``OSError`` nor a ``RecursionError``
+    from recursive removal can escape past finalization. Any finalization
+    problem is reported as sanitized secondary context behind the caller's
+    primary error, and fail-closed on its own when there is none.
+    """
+
     nofollow = getattr(os, "O_NOFOLLOW", None)
     directory = getattr(os, "O_DIRECTORY", None)
     if nofollow is None or directory is None:

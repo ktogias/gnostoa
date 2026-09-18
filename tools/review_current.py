@@ -156,6 +156,14 @@ def _docker_environment(config_dir: Path) -> dict[str, str]:
 
 
 def _kill_and_reap(process: subprocess.Popen[bytes]) -> None:
+    """Kill the Docker client and confirm its reap within the bound.
+
+    The kill precedes the wait so the wait is never spent on a live child,
+    and the wait itself is bounded, so an abort cannot stall the caller
+    regardless of the child's state. An unconfirmed reap is raised, because a
+    client that was never reaped may still hold the run's pipes open.
+    """
+
     if process.poll() is None:
         try:
             process.kill()
