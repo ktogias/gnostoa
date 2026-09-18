@@ -1,43 +1,64 @@
-name: PR278 isolated source support
-
+name: PR278 isolated candidate preparation
 on:
   push:
     branches: [support/pr278-chatgpt-source-20260918]
-
 permissions:
   contents: read
-
 jobs:
-  source-support:
-    name: pr278-source-support-not-a-merge-gate
+  reconstruct-and-verify:
+    name: pr278-source-reconstruction-not-a-merge-gate
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
+          ref: ${{ github.sha }}
+          path: support
+          persist-credentials: false
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
           ref: a744776795a4e083b4df45c49016c25a2aa2071a
+          path: candidate
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
-          python-version: '3.13'
-      - name: Export exact public source and hash-locked offline dependencies
-        shell: bash
+          python-version: '3.12'
+      - name: Reconstruct the exact locally verified source tree
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python -I support/.github/pr278-upload-support.py candidate prepare
+      - name: Verify reconstructed source without write credentials
+        working-directory: candidate
         run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = a744776795a4e083b4df45c49016c25a2aa2071a
-          test "$(git rev-parse 'HEAD^{tree}')" = e52fa6f76c0da7296deac7cab31cdd030c850fcc
-          output="${RUNNER_TEMP}/pr278-source-support"
-          mkdir -p "${output}/wheels"
-          git bundle create "${output}/source.bundle" HEAD refs/remotes/origin/main
-          git bundle verify "${output}/source.bundle"
-          git rev-parse HEAD 'HEAD^{tree}' refs/remotes/origin/main > "${output}/source-identities.txt"
-          python -m pip download --only-binary=:all: --require-hashes -r requirements/development.lock --dest "${output}/wheels"
-          (cd "${output}" && sha256sum source.bundle wheels/* > SHA256SUMS)
-      - name: Retain temporary development input, not candidate evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+          set -eu
+          python -m pip install --only-binary=:all: --require-hashes -r requirements/development.lock
+          ./ci/style --fix
+          git diff --exit-code
+          test "$(git write-tree)" = 5fdde305526b6acf7e305165d2242ede1609b5e3
+          ./ci/verify policy
+          ./ci/verify security-fast
+          ./ci/verify fast
+          python -m mypy
+  upload-exact-objects:
+    name: pr278-object-upload-no-ref-or-publication-effects
+    needs: reconstruct-and-verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          name: pr278-exact-source-support
-          path: ${{ runner.temp }}/pr278-source-support
-          if-no-files-found: error
-          retention-days: 1
+          ref: ${{ github.sha }}
+          path: support
+          persist-credentials: false
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: a744776795a4e083b4df45c49016c25a2aa2071a
+          path: candidate
+          persist-credentials: false
+      - name: Upload verified blobs and tree only
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python -I support/.github/pr278-upload-support.py candidate upload
