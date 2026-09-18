@@ -351,7 +351,7 @@ exit status separately from bounded local close context; local close failure
 alone is not evidence of a container left to recover. Unknown command completion
 still fails closed, with reap attempted before returning its bounded diagnostic.
 Input-only pipe absence is identified as input, not output failure. Fault-injected
-contracts in [the finalizer suite](../../tests/test_protected_finalizer_errors.py)
+contracts in [the finalizer suite](https://github.com/ktogias/gnostoa/blob/8be02a65195039758d8cbb90a681fea796433fc0/tests/test_protected_finalizer_errors.py)
 cover timeout, overflow, I/O and normal completion at every tested closing
 role; they establish these mechanics, not new live runtime availability.
 
@@ -392,9 +392,9 @@ protected authority, dependencies, workflow fingerprints or required checks.
   audited hardening, not proof of a previous injection. The owner accepted the
   six constructor-only audit reports as false positives, not a global waiver.
 
-The [follow-up contracts](../../tests/test_security_review_followup.py),
-[protected-judge binding](../../tests/test_review_current_payload_transport.py)
-and [workflow contracts](../../tests/test_tools.py) verify these boundaries.
+The [follow-up contracts](https://github.com/ktogias/gnostoa/blob/8be02a65195039758d8cbb90a681fea796433fc0/tests/test_security_review_followup.py),
+[protected-judge binding](https://github.com/ktogias/gnostoa/blob/8be02a65195039758d8cbb90a681fea796433fc0/tests/test_review_current_payload_transport.py)
+and [workflow contracts](https://github.com/ktogias/gnostoa/blob/8be02a65195039758d8cbb90a681fea796433fc0/tests/test_tools.py) verify these boundaries.
 Step-modifier tests begin with a valid real job, then use a test-local step-digest
 binding to reach the independent semantic guard. Production fingerprints and
 required gates remain intact. Qodo screenshot statuses are historical portal
