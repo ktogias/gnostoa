@@ -407,11 +407,11 @@ def _carries_local_finalization_context(detail: str) -> bool:
 
     Absence may be concluded only from the removal command's own response.
     ``_cleanup_diagnostic`` merges local close failures into the same bounded
-    string, so a diagnostic that reports absence *and* a failed close is not
-    evidence of absence: concluding it would discard the close failure and
-    retire the recovery identity with it. The roles are this module's own
-    static strings, so an unexpected match only makes the caller report rather
-    than conclude, which is the safe direction.
+    string, so a diagnostic that reports a removed or absent container *and* a
+    failed close is not evidence of clean cleanup: concluding it would discard
+    the close failure and retire the recovery identity with it. The roles are
+    this module's own static strings, so an unexpected match only makes the
+    caller report rather than conclude, which is the safe direction.
     """
 
     return any(issue in detail for issue in _CLEANUP_CLOSE_ISSUES)
@@ -456,13 +456,20 @@ def _cleanup_container(
             [executable, "rm", "-f", cleanup_target],
             config_dir=config_dir,
         )
+        if _carries_local_finalization_context(detail):
+            # Neither a zero exit nor an absence response clears a local
+            # finalization failure, and another removal attempt cannot undo
+            # one: it would only produce a cleaner-looking diagnostic that
+            # discards this observation. Report it now and keep the recovery
+            # identity rather than letting the container outcome speak for it.
+            return (
+                "protected Docker container cleanup observed a local "
+                f"finalization failure: {detail}; "
+                f"recovery identity: {identity.name}"
+            )
         if returncode == 0:
             return None
-        if (
-            returncode is not None
-            and _ABSENT_CONTAINER_DIAGNOSTIC in detail.casefold()
-            and not _carries_local_finalization_context(detail)
-        ):
+        if returncode is not None and _ABSENT_CONTAINER_DIAGNOSTIC in detail.casefold():
             return None
         if returncode is not None:
             last_issue = detail or f"status {returncode}"

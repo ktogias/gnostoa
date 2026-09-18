@@ -722,6 +722,69 @@ class ReviewFollowupTests(unittest.TestCase):
         self.assertIn("could not be closed", issue)
         self.assertIn(identity.name, issue)
 
+    def test_successful_removal_cannot_swallow_a_local_close_failure(self) -> None:
+        """A zero exit does not clear a local finalization failure."""
+
+        for role in (
+            review_current._CLEANUP_SELECTOR_CLOSE_ISSUE,
+            review_current._CLEANUP_STREAM_CLOSE_ISSUE,
+        ):
+            with (
+                self.subTest(role=role),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                config_dir = Path(directory)
+                identity = review_current._ContainerRunIdentity(
+                    name="gnostoa-protected-test",
+                    cidfile=config_dir / "candidate.cid",
+                )
+                # docker rm -f succeeded, but a local close did not.
+                cleanup = mock.Mock(return_value=(0, role))
+                with (
+                    mock.patch.object(
+                        review_current, "_docker_executable", return_value="docker"
+                    ),
+                    mock.patch.object(review_current, "_cleanup_diagnostic", cleanup),
+                ):
+                    issue = review_current._cleanup_container(identity, config_dir)
+
+                self.assertIsNotNone(issue)
+                assert issue is not None
+                self.assertIn(role, issue)
+                self.assertIn(identity.name, issue)
+
+    def test_a_local_close_failure_is_not_retried_away(self) -> None:
+        """A later clean attempt must not erase an observed close failure."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            config_dir = Path(directory)
+            identity = review_current._ContainerRunIdentity(
+                name="gnostoa-protected-test",
+                cidfile=config_dir / "candidate.cid",
+            )
+            absent = f"Error response from daemon: No such container: {identity.name}"
+            cleanup = mock.Mock(
+                side_effect=[
+                    (1, f"{absent}; {review_current._CLEANUP_STREAM_CLOSE_ISSUE}"),
+                    (1, absent),
+                    (1, absent),
+                ]
+            )
+            with (
+                mock.patch.object(
+                    review_current, "_docker_executable", return_value="docker"
+                ),
+                mock.patch.object(review_current, "_cleanup_diagnostic", cleanup),
+            ):
+                issue = review_current._cleanup_container(identity, config_dir)
+
+        self.assertIsNotNone(issue)
+        assert issue is not None
+        self.assertIn("could not be closed", issue)
+        # Retrying cannot undo a local close failure, so the container is not
+        # removed again just to reach a cleaner-looking diagnostic.
+        self.assertEqual(1, cleanup.call_count)
+
     def test_a_clean_absence_response_is_still_confirmed(self) -> None:
         """Absence alone, with no local failure, still confirms cleanup."""
 
