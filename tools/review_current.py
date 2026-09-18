@@ -507,10 +507,24 @@ def _run_docker(
         or (input_bytes is not None and process.stdin is None)
     ):
         cleanup_attempted = True
+        abort_detail = _abort_and_discard(process, identity, config_dir)
+        close_issues: list[str] = []
+        for role, stream in (
+            ("stdout", process.stdout),
+            ("stderr", process.stderr),
+            ("stdin", process.stdin),
+        ):
+            if stream is not None:
+                try:
+                    stream.close()
+                except OSError:
+                    close_issues.append(
+                        f"protected Docker {role} pipe could not be closed"
+                    )
         raise ProtectedJudgeUnavailable(
             _with_secondary(
                 "protected Docker output pipes are unavailable",
-                _abort_and_discard(process, identity, config_dir),
+                _joined_details(abort_detail, *close_issues),
             )
         )
 

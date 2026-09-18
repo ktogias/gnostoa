@@ -391,10 +391,24 @@ def _run_bounded_scan(
         raise SecurityScanError("cannot execute the tracked-tree secret scan") from exc
 
     if process.stdout is None or process.stderr is None:
+        reap_detail = _reap_detail(process)
+        close_issues = [reap_detail] if reap_detail is not None else []
+        for role, stream in (
+            ("stdout", process.stdout),
+            ("stderr", process.stderr),
+            ("stdin", process.stdin),
+        ):
+            if stream is not None:
+                try:
+                    stream.close()
+                except OSError:
+                    close_issues.append(
+                        f"tracked-tree secret scan {role} pipe could not be closed"
+                    )
         raise SecurityScanError(
             _with_secondary(
                 "tracked-tree secret scan pipes are unavailable",
-                _reap_detail(process),
+                "; ".join(close_issues) or None,
             )
         )
 

@@ -227,6 +227,15 @@ promotion, alert dismissal or provider required-check change is admitted here.
    requests its known name through the runner's validated identity parameter, so
    launch and fallback cleanup cannot disagree. Calls without input receive a
    closed stdin rather than inheriting the caller's stream.
+   An incomplete pipe set is also a cleanup boundary. Both the Docker and
+   scanner runners perform their existing bounded reap/reconciliation first,
+   then attempt to close every surviving stream before reporting the original
+   pipe-setup failure. A close error is static, role-only secondary context;
+   it neither leaks exception content nor prevents the remaining closes.
+   The fault-injection contract in `tests/test_protected_pipe_setup_cleanup.py`
+   covers each absent pipe and close failure after uncertain reaping. These
+   cases establish defensive lifecycle behavior, not a claim that normal
+   `Popen(..., PIPE)` produces incomplete pipes or a new payload vulnerability.
 3. **Fixed in-container bridges.** For a separately admitted compatible outer
    runtime, run each authority-bound image with fixed
    Python bridge code. The outer bridge reads bounded stdin, uses restrictive
