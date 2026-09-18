@@ -1,0 +1,37 @@
+name: PR278 verified object transfer
+on:
+  push:
+    branches: [support/pr278-recovery-20260918-1400]
+    paths: ['.support/**', '.github/workflows/pr278-object-transfer.yml']
+permissions:
+  contents: read
+jobs:
+  transfer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          path: support
+          persist-credentials: false
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: e29b12950612e3696d3d087708cdd9a615d92b04
+          path: candidate
+          persist-credentials: false
+      - name: Verify patch and transfer exactly eight public Git blobs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SUPPORT_DIR: ${{ github.workspace }}/support
+          CANDIDATE_DIR: ${{ github.workspace }}/candidate
+          RECEIPT_DIR: ${{ runner.temp }}/pr278-recovery
+        run: python3 -I "$SUPPORT_DIR/.support/transfer.py"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr278-repair-64b1a371
+          path: ${{ runner.temp }}/pr278-recovery/
+          retention-days: 7
+          if-no-files-found: error
