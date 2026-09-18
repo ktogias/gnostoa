@@ -44,6 +44,7 @@ _HIGH_RISK_EXACT = {
     "pyproject.toml",
 }
 _MAX_PATH_INPUT_BYTES = 4_194_304
+_READ_CHUNK_BYTES = 65_536
 
 
 @dataclass(frozen=True)
@@ -108,10 +109,34 @@ def route_extended(
     )
 
 
+def _drained_input() -> bytes:
+    """Read every changed-path byte, or refuse to decide on a partial input.
+
+    A single sized read is not a complete read. It stops early whenever the
+    channel cannot satisfy the count without waiting, and a non-blocking
+    descriptor makes that the normal case rather than the exception. A routing
+    decision taken on a truncated prefix silently drops the paths that follow
+    it, so the reader drains until end of input and refuses any channel that
+    would have it guess.
+    """
+
+    stream = sys.stdin.buffer
+    collected = bytearray()
+    while True:
+        remaining = _MAX_PATH_INPUT_BYTES + 1 - len(collected)
+        chunk = stream.read(min(_READ_CHUNK_BYTES, remaining))
+        if chunk is None:
+            raise ValueError("changed-path input is not readable to completion")
+        if not chunk:
+            break
+        collected.extend(chunk)
+        if len(collected) > _MAX_PATH_INPUT_BYTES:
+            raise ValueError("changed-path input exceeds the bounded size")
+    return bytes(collected)
+
+
 def _changed_paths() -> tuple[str, ...]:
-    raw = sys.stdin.buffer.read(_MAX_PATH_INPUT_BYTES + 1)
-    if len(raw) > _MAX_PATH_INPUT_BYTES:
-        raise ValueError("changed-path input exceeds the bounded size")
+    raw = _drained_input()
     if not raw:
         return ()
     try:

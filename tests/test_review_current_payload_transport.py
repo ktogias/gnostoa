@@ -910,5 +910,57 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
         cleanup.assert_called_once_with(identity, config_dir)
 
 
+class ProtectedRunPipeFailureTests(unittest.TestCase):
+    """An unusable pipe set must leave neither a run nor a descriptor behind."""
+
+    def test_a_partial_pipe_set_is_aborted_and_released(self) -> None:
+        detached: list[object] = []
+        surviving: list[object] = []
+        processes: list[subprocess.Popen] = []
+        real_popen = subprocess.Popen
+
+        def popen_without_stdout(*args: object, **kwargs: object) -> subprocess.Popen:
+            process = real_popen(*args, **kwargs)  # type: ignore[arg-type]
+            processes.append(process)
+            surviving.append(process.stderr)
+            # The test, not the code under test, owns the hidden handle.
+            detached.append(process.stdout)
+            process.stdout = None
+            return process
+
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                with (
+                    mock.patch.object(
+                        review_current,
+                        "_docker_executable",
+                        return_value=sys.executable,
+                    ),
+                    mock.patch.object(
+                        review_current.subprocess, "Popen", popen_without_stdout
+                    ),
+                    mock.patch.object(
+                        review_current, "_cleanup_container", return_value=None
+                    ),
+                ):
+                    with self.assertRaisesRegex(
+                        review_current.ProtectedJudgeUnavailable,
+                        "protected Docker output pipes are unavailable",
+                    ):
+                        review_current._run_docker(
+                            ["-c", "import time; time.sleep(30)"],
+                            config_dir=Path(directory),
+                        )
+
+            self.assertEqual(1, len(processes))
+            self.assertIsNotNone(processes[0].poll())
+            stderr = surviving[0]
+            self.assertIsNotNone(stderr)
+            self.assertTrue(stderr.closed)
+        finally:
+            for handle in detached:
+                handle.close()
+
+
 if __name__ == "__main__":
     unittest.main()

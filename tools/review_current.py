@@ -439,6 +439,23 @@ def _joined_details(*details: str | None) -> str | None:
     return "; ".join(present) if present else None
 
 
+def _close_pipes(process: subprocess.Popen[bytes]) -> None:
+    """Release every pipe the run did open.
+
+    A partial pipe set still holds descriptors, and abandoning them leaks one
+    per failed run. Closing runs after a primary failure is already known, so a
+    close problem is never allowed to surface in its place.
+    """
+
+    for handle in (process.stdin, process.stdout, process.stderr):
+        if handle is None:
+            continue
+        try:
+            handle.close()
+        except OSError:
+            continue
+
+
 def _abort_and_discard(
     process: subprocess.Popen[bytes],
     identity: _ContainerRunIdentity | None,
@@ -507,10 +524,12 @@ def _run_docker(
         or (input_bytes is not None and process.stdin is None)
     ):
         cleanup_attempted = True
+        detail = _abort_and_discard(process, identity, config_dir)
+        _close_pipes(process)
         raise ProtectedJudgeUnavailable(
             _with_secondary(
                 "protected Docker output pipes are unavailable",
-                _abort_and_discard(process, identity, config_dir),
+                detail,
             )
         )
 

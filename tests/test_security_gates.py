@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import fcntl
 import hashlib
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path, PurePosixPath
 from unittest import mock
 
-from tools import security_scan
+from tools import extended_route, security_scan
 from tools.extended_route import route_extended
 from tools.knowledge_common import load_yaml
 from tools.repository_scope import RepositoryScopeError
@@ -1281,6 +1284,189 @@ class ProviderSecurityGateTests(unittest.TestCase):
                     for line in output.read_text(encoding="utf-8").splitlines()
                 ),
             )
+
+
+class ExtendedRouterInputBoundTest(unittest.TestCase):
+    """The router must consume all of stdin before it decides applicability."""
+
+    @staticmethod
+    def _stdin_with(buffer: object) -> mock.Mock:
+        stdin = mock.Mock()
+        stdin.buffer = buffer
+        return stdin
+
+    def test_short_reads_never_truncate_the_changed_path_input(self) -> None:
+        paths = tuple(f"assets/note-{index:05d}.txt" for index in range(64))
+        paths += ("tools/review_current.py",)
+        payload = b"\0".join(path.encode("utf-8") for path in paths)
+
+        class ShortReadStdin:
+            """A stdin that satisfies every read one byte at a time."""
+
+            def __init__(self, data: bytes) -> None:
+                self._stream = io.BytesIO(data)
+
+            def read(self, size: int = -1) -> bytes:
+                if size is None or size < 0:
+                    return self._stream.read()
+                return self._stream.read(1 if size else 0)
+
+        with mock.patch.object(
+            extended_route.sys, "stdin", self._stdin_with(ShortReadStdin(payload))
+        ):
+            self.assertEqual(paths, extended_route._changed_paths())
+
+    def test_a_channel_that_would_block_is_refused_instead_of_truncated(self) -> None:
+        """``None`` means "not readable yet", never "there is nothing left"."""
+
+        class WouldBlockStdin:
+            def __init__(self, data: bytes) -> None:
+                self._stream = io.BytesIO(data)
+
+            def read(self, size: int = -1) -> bytes | None:
+                chunk = self._stream.read(size)
+                return chunk if chunk else None
+
+        stdin = self._stdin_with(WouldBlockStdin(b"assets/note.txt"))
+        with mock.patch.object(extended_route.sys, "stdin", stdin):
+            with self.assertRaisesRegex(
+                ValueError, "changed-path input is not readable to completion"
+            ):
+                extended_route._changed_paths()
+
+    def test_oversized_input_is_refused_even_under_short_reads(self) -> None:
+        oversized = b"a" * (extended_route._MAX_PATH_INPUT_BYTES + 1)
+
+        class ChunkedStdin:
+            def __init__(self, data: bytes) -> None:
+                self._stream = io.BytesIO(data)
+
+            def read(self, size: int = -1) -> bytes:
+                if size is None or size < 0:
+                    return self._stream.read()
+                return self._stream.read(min(size, 8192))
+
+        stdin = self._stdin_with(ChunkedStdin(oversized))
+        with mock.patch.object(extended_route.sys, "stdin", stdin):
+            with self.assertRaisesRegex(
+                ValueError, "changed-path input exceeds the bounded size"
+            ):
+                extended_route._changed_paths()
+
+    def test_a_non_blocking_stdin_never_hides_a_high_risk_path(self) -> None:
+        """A non-blocking descriptor is what shortens reads in practice.
+
+        The router may run extended verification or refuse the input, but it
+        must never answer NOT_APPLICABLE for an input that carries a high-risk
+        path it failed to read.
+        """
+
+        filler = b"\0".join(
+            f"assets/pad-{index:06d}.txt".encode() for index in range(8192)
+        )
+        payload = filler + b"\0tools/review_current.py"
+        # Comfortably beyond the default 64 KiB pipe buffer, so no single
+        # read can carry the trailing high-risk path.
+        self.assertGreater(len(payload), 1 << 17)
+
+        read_fd, write_fd = os.pipe()
+        try:
+            fcntl.fcntl(
+                read_fd,
+                fcntl.F_SETFL,
+                fcntl.fcntl(read_fd, fcntl.F_GETFL) | os.O_NONBLOCK,
+            )
+            with tempfile.TemporaryDirectory() as temporary:
+                output = Path(temporary) / "github-output"
+                process = subprocess.Popen(
+                    [
+                        sys.executable,
+                        "-I",
+                        str(ROOT / "tools" / "extended_route.py"),
+                        "--event",
+                        "pull_request",
+                        "--ref",
+                        "refs/pull/278/head",
+                        "--github-output",
+                        str(output),
+                    ],
+                    stdin=read_fd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    cwd=ROOT,
+                )
+                os.close(read_fd)
+                read_fd = -1
+
+                remaining = memoryview(payload)
+                while remaining:
+                    try:
+                        written = os.write(write_fd, remaining)
+                    except BlockingIOError:
+                        time.sleep(0.001)
+                        continue
+                    except BrokenPipeError:
+                        # A fail-closed refusal ends the read before the whole
+                        # input is consumed; that is the outcome under test.
+                        break
+                    remaining = remaining[written:]
+                os.close(write_fd)
+                write_fd = -1
+
+                stdout, stderr = process.communicate(timeout=60)
+                rendered = stdout.decode("utf-8") + stderr.decode("utf-8")
+                self.assertNotIn("NOT_APPLICABLE", rendered)
+                if process.returncode == 0:
+                    self.assertIn("extended route: RUN", rendered)
+                    self.assertIn(
+                        "run_extended=true", output.read_text(encoding="utf-8")
+                    )
+                else:
+                    self.assertEqual(2, process.returncode, rendered)
+                    self.assertIn("not readable to completion", rendered)
+                    self.assertFalse(output.exists())
+        finally:
+            for descriptor in (read_fd, write_fd):
+                if descriptor >= 0:
+                    os.close(descriptor)
+
+
+class ScannerPipeFailureTest(unittest.TestCase):
+    """An unusable pipe set must leave neither a child nor a descriptor behind."""
+
+    def test_a_partial_pipe_set_is_reaped_and_released(self) -> None:
+        detached: list[object] = []
+        surviving: list[object] = []
+        processes: list[subprocess.Popen] = []
+        real_popen = subprocess.Popen
+
+        def popen_without_stdout(*args: object, **kwargs: object) -> subprocess.Popen:
+            process = real_popen(*args, **kwargs)  # type: ignore[arg-type]
+            processes.append(process)
+            surviving.append(process.stderr)
+            # The test, not the code under test, owns the hidden handle.
+            detached.append(process.stdout)
+            process.stdout = None
+            return process
+
+        command = [sys.executable, "-c", "import time; time.sleep(30)"]
+        try:
+            with mock.patch.object(
+                security_scan.subprocess, "Popen", popen_without_stdout
+            ):
+                with self.assertRaisesRegex(
+                    SecurityScanError, "tracked-tree secret scan pipes are unavailable"
+                ):
+                    security_scan._run_bounded_scan(command, cwd=ROOT, timeout=5)
+
+            self.assertEqual(1, len(processes))
+            self.assertIsNotNone(processes[0].poll())
+            stderr = surviving[0]
+            self.assertIsNotNone(stderr)
+            self.assertTrue(stderr.closed)
+        finally:
+            for handle in detached:
+                handle.close()
 
 
 if __name__ == "__main__":

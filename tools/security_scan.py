@@ -365,6 +365,23 @@ def _reap_detail(process: subprocess.Popen[bytes]) -> str | None:
     return None
 
 
+def _close_pipes(process: subprocess.Popen[bytes]) -> None:
+    """Release every pipe the child did open.
+
+    A partial pipe set still holds descriptors, and abandoning them leaks one
+    per failed launch. Closing runs after a primary failure is already known,
+    so a close problem is never allowed to surface in its place.
+    """
+
+    for handle in (process.stdin, process.stdout, process.stderr):
+        if handle is None:
+            continue
+        try:
+            handle.close()
+        except OSError:
+            continue
+
+
 def _with_secondary(primary: str, secondary: str | None) -> str:
     """Keep the primary failure first and append bounded secondary context."""
 
@@ -391,10 +408,12 @@ def _run_bounded_scan(
         raise SecurityScanError("cannot execute the tracked-tree secret scan") from exc
 
     if process.stdout is None or process.stderr is None:
+        detail = _reap_detail(process)
+        _close_pipes(process)
         raise SecurityScanError(
             _with_secondary(
                 "tracked-tree secret scan pipes are unavailable",
-                _reap_detail(process),
+                detail,
             )
         )
 

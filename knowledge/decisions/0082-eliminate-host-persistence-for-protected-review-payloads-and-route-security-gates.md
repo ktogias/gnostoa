@@ -226,7 +226,10 @@ promotion, alert dismissal or provider required-check change is admitted here.
    container command remain container data. The bounded timeout smoke
    requests its known name through the runner's validated identity parameter, so
    launch and fallback cleanup cannot disagree. Calls without input receive a
-   closed stdin rather than inheriting the caller's stream.
+   closed stdin rather than inheriting the caller's stream. An unusable pipe set
+   is aborted and then released: every handle the run did open is closed before
+   the primary failure is raised, so repeated launch failures leak no
+   descriptor, and a close problem never displaces that failure.
 3. **Fixed in-container bridges.** For a separately admitted compatible outer
    runtime, run each authority-bound image with fixed
    Python bridge code. The outer bridge reads bounded stdin, uses restrictive
@@ -277,7 +280,9 @@ promotion, alert dismissal or provider required-check change is admitted here.
    scanning its candidate hashes would create a recursive, unstable baseline.
    A canonical scan requires that manifest to be part of the enumerated
    candidate set; only an explicit caller-scoped scan may add a separately
-   supplied relative baseline to its disposable snapshot.
+   supplied relative baseline to its disposable snapshot. The scanner runner
+   reaps and releases an unusable pipe set on the same subordinate terms as the
+   protected runner.
 6. **Ordinary PR security gate.** Add `security-fast` as a visible provider job
    using the exact development lock and the shared scan command. It intentionally
    runs natively as an inexpensive independent provider-event-subject gate and may execute
@@ -294,7 +299,13 @@ promotion, alert dismissal or provider required-check change is admitted here.
    authority surfaces, including `.gitlab-ci.yml`, `.secrets.baseline`,
    `LICENSE`, `LICENSING.md`, `NOTICE`, `SUPPORT.md`,
    `THIRD_PARTY_NOTICES`, and the complete `policy/` tree. Otherwise it reports
-   `NOT_APPLICABLE` and a bounded reason. The heavyweight job may remain
+   `NOT_APPLICABLE` and a bounded reason. That answer is only worth the input it
+   read, so the router drains the changed-path input to end of input in bounded
+   chunks rather than trusting one sized read, and refuses outright a channel
+   that reports it would block instead of reading an unfinished read as the
+   whole input. A prefix can otherwise drop the high-risk paths that follow it
+   and route the candidate to `NOT_APPLICABLE`; under this rule such an input
+   fails the gate closed instead. The heavyweight job may remain
    conditionally skipped, but `regression` accepts only a successful applicable
    run or an exact `NOT_APPLICABLE`/skipped pair. Neither the router nor project
    records call that skip a pass.
