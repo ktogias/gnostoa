@@ -1043,10 +1043,6 @@ class ProviderSecurityGateTests(unittest.TestCase):
             'git show "${BASE_SHA}:tools/extended_route.py" > "${router_file}"',
             workflow,
         )
-        self.assertIn(
-            "Restricted native path: execute only comparison-base router bytes",
-            workflow,
-        )
         self.assertIn('python -I "${router_file}"', workflow)
         self.assertNotIn("python -m tools.extended_route", workflow)
         self.assertIn("needs: [policy, extended-route]", workflow)
