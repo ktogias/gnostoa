@@ -49,8 +49,10 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
             config_dir: Path,
             timeout: int = review_current._DOCKER_TIMEOUT_SECONDS,
             input_bytes: bytes | None = None,
+            reject_incomplete_input: bool = False,
         ) -> subprocess.CompletedProcess[bytes]:
             del timeout
+            self.assertTrue(reject_incomplete_input)
             host_files = [
                 path for path in config_dir.parent.rglob("*") if path.is_file()
             ]

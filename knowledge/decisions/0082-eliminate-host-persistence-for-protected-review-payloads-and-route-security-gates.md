@@ -273,8 +273,8 @@ promotion, alert dismissal or provider required-check change is admitted here.
    while reading rather than after buffering. Acquire each candidate through
    descriptor-relative `O_NOFOLLOW` traversal into a private, disposable scan
    snapshot. Open the final candidate non-blocking so a FIFO replacement cannot
-   stall acquisition, enforce per-file, cumulative-byte and acquisition-time
-   bounds, verify stable inode and file metadata across the copy, and re-traverse
+   stall acquisition, enforce per-file and cumulative-byte bounds plus the
+   cooperative acquisition deadline qualified below, verify stable inode and file metadata across the copy, and re-traverse
    the complete path from the retained repository-root descriptor so replacement
    of an ancestor directory cannot validate a detached object. Invoke the pinned
    scanner with isolated Python module resolution so candidate files cannot
@@ -351,8 +351,54 @@ exit status separately from bounded local close context; local close failure
 alone is not evidence of a container left to recover. Unknown command completion
 still fails closed, with reap attempted before returning its bounded diagnostic.
 Input-only pipe absence is identified as input, not output failure. Fault-injected
-contracts cover timeout, overflow, I/O and normal completion at every closing
+contracts in [the finalizer suite](../../tests/test_protected_finalizer_errors.py)
+cover timeout, overflow, I/O and normal completion at every tested closing
 role; they establish these mechanics, not new live runtime availability.
+
+### Owner-admitted bounded review follow-up
+
+The [owner continuation](https://github.com/ktogias/gnostoa/pull/278#issuecomment-5730114348),
+[prospective map and portal reconciliation](https://github.com/ktogias/gnostoa/pull/278#issuecomment-5730174137)
+and [router scope clarification](https://github.com/ktogias/gnostoa/pull/278#issuecomment-5730704792)
+admit the following repairs without restoring the contained runtime or changing
+protected authority, dependencies, workflow fingerprints or required checks.
+
+- Snapshot acquisition uses one **cooperative 60-second deadline**, checked
+  around reads and writes, during every partial write, after source validation
+  and before snapshot handoff. A syscall that returns after the deadline causes
+  refusal, not scanner execution. A blocked filesystem syscall is not interrupted
+  by this mechanism; chunk size and regular-file `O_NONBLOCK` do not bound its
+  latency. The existing provider job timeout is an outer safeguard, not a
+  60-second return guarantee. A hard-interruption worker is not selected.
+- A completed runner must report CID-file discard failure as static subordinate
+  finalization evidence. A leftover non-payload identity file does not imply
+  an unremoved container or authorize a recovery operation.
+- Cleanup diagnostics reserve bytes for the fixed close-failure roles before
+  truncating their primary prefix, preserve bounded valid UTF-8 and retain the
+  observed removal-command exit status independently of local close failures.
+- Scanner OS diagnostics expose only a standard symbolic errno or `UNKNOWN`,
+  never arbitrary exception text, filenames or payload. Length truncation alone
+  is not sanitization.
+- The protected judge opts into complete-envelope **write** validation. Premature
+  stdin closure is a controlled transport failure with existing abort/cleanup;
+  generic early-close behavior is retained. Pipe delivery does not establish
+  consumer processing or semantic acceptance, which require separate validation.
+- Routing rejects a would-block/incomplete input rather than classifying a
+  prefix. Complete regular-file and blocking input, route classifications and
+  the byte bound are unchanged. The current provider already redirects a regular
+  file; this repair closes the separately reproduced nonblocking-input case.
+- Subprocess launches explicitly use `shell=False` while retaining executable,
+  argv, scanner option-termination and Docker-environment boundaries. This is
+  audited hardening, not proof of a previous injection. The owner accepted the
+  six constructor-only audit reports as false positives, not a global waiver.
+
+The [follow-up contracts](../../tests/test_security_review_followup.py),
+[protected-judge binding](../../tests/test_review_current_payload_transport.py)
+and [workflow contracts](../../tests/test_tools.py) verify these boundaries.
+Step-modifier tests begin with a valid real job, then use a test-local step-digest
+binding to reach the independent semantic guard. Production fingerprints and
+required gates remain intact. Qodo screenshot statuses are historical portal
+observations, not fresh code review or evidence of candidate correctness.
 
 ## Verification contract
 

@@ -699,26 +699,41 @@ class PublicationBaselineTests(unittest.TestCase):
         )
         extra_job_workflow["jobs"]["attacker-context"]["name"] = "regression"
         self.assertFalse(_workflow_has_exact_contract(extra_job_workflow))
+        base_job = workflow_jobs["security-fast"]
+        self.assertTrue(_job_has_exact_contract(base_job, "security-fast"))
+        self.assertTrue(_job_has_blocking_verification_suite(base_job, "security-fast"))
         for modifier in (
             {"if": "${{ false }}"},
             {"continue-on-error": True},
             {"shell": "bash {0} || true"},
+            {"working-directory": "/tmp"},
             {"env": {"BASH_ENV": "/tmp/bypass"}},
         ):
             with self.subTest(modifier=modifier):
-                self.assertFalse(
-                    _job_has_blocking_verification_suite(
-                        {
-                            "steps": [
-                                {
-                                    "run": "./ci/verify security-fast",
-                                    **modifier,
-                                }
-                            ]
-                        },
-                        "security-fast",
+                mutated_job = copy.deepcopy(base_job)
+                for step in mutated_job["steps"]:
+                    if step.get("run", "").strip() == "./ci/verify security-fast":
+                        step.update(modifier)
+                digest = hashlib.sha256(
+                    json.dumps(
+                        mutated_job["steps"],
+                        allow_nan=False,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ).encode("utf-8")
+                ).hexdigest()
+                # Bind only this test's mutated steps to reach the independent
+                # semantic guard. The actual workflow fingerprint is unchanged.
+                with patch.dict(_PROTECTED_JOB_STEPS_SHA256, {"security-fast": digest}):
+                    self.assertTrue(
+                        _job_has_exact_contract(mutated_job, "security-fast")
                     )
-                )
+                    self.assertFalse(
+                        _job_has_blocking_verification_suite(
+                            mutated_job, "security-fast"
+                        )
+                    )
         for modifier in (
             {"if": "${{ false }}"},
             {"continue-on-error": True},
@@ -727,14 +742,13 @@ class PublicationBaselineTests(unittest.TestCase):
             {"container": "attacker-controlled:latest"},
         ):
             with self.subTest(job_modifier=modifier):
+                mutated_job = copy.deepcopy(base_job)
+                mutated_job.update(modifier)
+                # These job-key mutations exercise the exact structural contract,
+                # not the later step-modifier semantic guard.
+                self.assertFalse(_job_has_exact_contract(mutated_job, "security-fast"))
                 self.assertFalse(
-                    _job_has_blocking_verification_suite(
-                        {
-                            **modifier,
-                            "steps": [{"run": "./ci/verify security-fast"}],
-                        },
-                        "security-fast",
-                    )
+                    _job_has_blocking_verification_suite(mutated_job, "security-fast")
                 )
         for suite, condition in (
             ("regression", "${{ false }}"),

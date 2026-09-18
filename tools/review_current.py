@@ -239,7 +239,8 @@ def _bounded_diagnostic(raw: bytes | None) -> str:
     if not raw:
         return ""
     decoded = raw[:_MAX_CLEANUP_DIAGNOSTIC_BYTES].decode("utf-8", errors="replace")
-    return " ".join(decoded.split())
+    normalized = " ".join(decoded.split()).encode("utf-8")
+    return normalized[:_MAX_CLEANUP_DIAGNOSTIC_BYTES].decode("utf-8", errors="ignore")
 
 
 def _discard_cidfile(identity: _ContainerRunIdentity | None) -> str | None:
@@ -254,8 +255,8 @@ def _discard_cidfile(identity: _ContainerRunIdentity | None) -> str | None:
         return None
     try:
         identity.cidfile.unlink(missing_ok=True)
-    except OSError as exc:
-        return f"protected Docker cleanup identity file could not be removed: {exc}"
+    except OSError:
+        return "protected Docker cleanup identity file could not be removed"
     return None
 
 
@@ -275,6 +276,7 @@ def _cleanup_diagnostic(
     try:
         process = subprocess.Popen(
             command,
+            shell=False,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
@@ -357,10 +359,16 @@ def _cleanup_diagnostic(
             if returncode is None
             else detail
         )
+        # Reserve room for the fixed close roles before truncating the primary
+        # diagnostic. A known command exit status stays independent of local I/O.
+        suffix = "; ".join(close_issues)
+        prefix_budget = max(
+            0, _MAX_CLEANUP_DIAGNOSTIC_BYTES - len(suffix.encode("utf-8")) - 2
+        )
+        prefix = _bounded_diagnostic(primary.encode("utf-8"))
+        prefix = prefix.encode("utf-8")[:prefix_budget].decode("utf-8", errors="ignore")
         detail = _bounded_diagnostic(
-            "; ".join([part for part in (primary, *close_issues) if part]).encode(
-                "utf-8"
-            )
+            (f"{prefix}; {suffix}" if prefix else suffix).encode("utf-8")
         )
         return returncode, detail
     if returncode is None:
@@ -487,6 +495,7 @@ def _run_docker(
     timeout: int = _DOCKER_TIMEOUT_SECONDS,
     input_bytes: bytes | None = None,
     run_name: str | None = None,
+    reject_incomplete_input: bool = False,
 ) -> subprocess.CompletedProcess[bytes]:
     if input_bytes is not None and len(input_bytes) > _MAX_RUNTIME_INPUT_BYTES:
         raise ProtectedJudgeUnavailable(
@@ -513,6 +522,7 @@ def _run_docker(
     try:
         process = subprocess.Popen(
             command,
+            shell=False,
             stdin=subprocess.PIPE if input_bytes is not None else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -603,6 +613,14 @@ def _run_docker(
                     if written > 0:
                         input_offset += written
                     if written == 0 or input_offset == len(input_view):
+                        if reject_incomplete_input and input_offset != len(input_view):
+                            cleanup_attempted = True
+                            raise ProtectedJudgeUnavailable(
+                                _with_secondary(
+                                    "protected Docker stdin closed before the envelope was delivered",
+                                    _abort_and_discard(process, identity, config_dir),
+                                )
+                            )
                         selector.unregister(key.fileobj)
                         assert process.stdin is not None
                         process.stdin.close()
@@ -660,7 +678,9 @@ def _run_docker(
             input_view.release()
         if identity is not None and not cleanup_attempted:
             # Container reconciliation is independent from local handle closure.
-            _discard_cidfile(identity)
+            discard_detail = _discard_cidfile(identity)
+            if discard_detail is not None:
+                close_issues.append(discard_detail)
 
     if execution_error is not None or close_issues:
         raise ProtectedJudgeUnavailable(
@@ -899,6 +919,7 @@ def run_prior_integrated_judge(
             ],
             config_dir=config_dir,
             input_bytes=envelope,
+            reject_incomplete_input=True,
         )
         payload = _decode_result(result.stdout)
         return result.returncode, payload

@@ -109,7 +109,21 @@ def route_extended(
 
 
 def _changed_paths() -> tuple[str, ...]:
-    raw = sys.stdin.buffer.read(_MAX_PATH_INPUT_BYTES + 1)
+    raw = bytearray()
+    while len(raw) <= _MAX_PATH_INPUT_BYTES:
+        try:
+            chunk = sys.stdin.buffer.read(
+                min(65_536, _MAX_PATH_INPUT_BYTES + 1 - len(raw))
+            )
+        except BlockingIOError as exc:
+            raise ValueError("changed-path input is incomplete") from exc
+        except OSError as exc:
+            raise ValueError("changed-path input could not be read") from exc
+        if chunk is None:
+            raise ValueError("changed-path input is incomplete")
+        if not chunk:
+            break
+        raw.extend(chunk)
     if len(raw) > _MAX_PATH_INPUT_BYTES:
         raise ValueError("changed-path input exceeds the bounded size")
     if not raw:

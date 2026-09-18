@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import math
@@ -371,6 +372,17 @@ def _with_secondary(primary: str, secondary: str | None) -> str:
     return primary if secondary is None else f"{primary}; {secondary}"
 
 
+def _scanner_os_error(exc: OSError) -> str:
+    """Classify OS failures without copying exception text or filenames."""
+
+    code = (
+        errno.errorcode.get(exc.errno, "UNKNOWN")
+        if type(exc.errno) is int
+        else "UNKNOWN"
+    )
+    return f"cannot execute the tracked-tree secret scan (OS error: {code})"
+
+
 def _run_bounded_scan(
     command: list[str],
     *,
@@ -382,13 +394,14 @@ def _run_bounded_scan(
     try:
         process = subprocess.Popen(
             command,
+            shell=False,
             cwd=cwd,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
     except OSError as exc:
-        raise SecurityScanError("cannot execute the tracked-tree secret scan") from exc
+        raise SecurityScanError(_scanner_os_error(exc)) from exc
 
     if process.stdout is None or process.stderr is None:
         reap_detail = _reap_detail(process)
@@ -457,9 +470,7 @@ def _run_bounded_scan(
         )
         execution_cause = exc
     except OSError as exc:
-        execution_error = _with_secondary(
-            "cannot execute the tracked-tree secret scan", _reap_detail(process)
-        )
+        execution_error = _with_secondary(_scanner_os_error(exc), _reap_detail(process))
         execution_cause = exc
     except SecurityScanError as exc:
         execution_error = str(exc)
@@ -559,10 +570,19 @@ def _stable_file_metadata(metadata: os.stat_result) -> tuple[int, ...]:
     )
 
 
-def _write_all(descriptor: int, content: bytes) -> None:
+def _check_snapshot_deadline(deadline: float) -> None:
+    """Check cooperative time; a blocked filesystem syscall is not interrupted."""
+
+    if time.monotonic() >= deadline:
+        raise SecurityScanError("tracked-tree snapshot timed out")
+
+
+def _write_all(descriptor: int, content: bytes, *, deadline: float) -> None:
     offset = 0
     while offset < len(content):
+        _check_snapshot_deadline(deadline)
         written = os.write(descriptor, content[offset:])
+        _check_snapshot_deadline(deadline)
         if written <= 0:
             raise OSError("snapshot write made no progress")
         offset += written
@@ -626,9 +646,9 @@ def _copy_candidate_to_snapshot(
         )
         copied_bytes = 0
         while True:
-            if time.monotonic() >= deadline:
-                raise SecurityScanError("tracked-tree snapshot timed out")
+            _check_snapshot_deadline(deadline)
             chunk = os.read(source_descriptor, _SNAPSHOT_CHUNK_BYTES)
+            _check_snapshot_deadline(deadline)
             if not chunk:
                 break
             copied_bytes += len(chunk)
@@ -640,7 +660,7 @@ def _copy_candidate_to_snapshot(
                 raise SecurityScanError(
                     "tracked-tree snapshot total size exceeds the bound"
                 )
-            _write_all(destination_descriptor, chunk)
+            _write_all(destination_descriptor, chunk, deadline=deadline)
 
         after = os.fstat(source_descriptor)
         visible = os.stat(
@@ -677,6 +697,7 @@ def _copy_candidate_to_snapshot(
             raise SecurityScanError(
                 f"candidate path changed while snapshotting: {relative.as_posix()!r}"
             )
+        _check_snapshot_deadline(deadline)
         return copied_bytes
     except SecurityScanError:
         raise
@@ -715,8 +736,7 @@ def _immutable_candidate_snapshot(
             deadline = time.monotonic() + _SNAPSHOT_TIMEOUT_SECONDS
             total_bytes = 0
             for relative in paths:
-                if time.monotonic() >= deadline:
-                    raise SecurityScanError("tracked-tree snapshot timed out")
+                _check_snapshot_deadline(deadline)
                 copied_bytes = _copy_candidate_to_snapshot(
                     root_descriptor,
                     snapshot,
@@ -725,6 +745,8 @@ def _immutable_candidate_snapshot(
                     remaining_total_bytes=_MAX_SNAPSHOT_TOTAL_BYTES - total_bytes,
                 )
                 total_bytes += copied_bytes
+                _check_snapshot_deadline(deadline)
+            _check_snapshot_deadline(deadline)
             yield snapshot
     finally:
         os.close(root_descriptor)
