@@ -629,6 +629,67 @@ class ReviewFollowupTests(unittest.TestCase):
                         message,
                     )
 
+    def test_unexpected_cleanup_failure_cannot_mask_the_primary(self) -> None:
+        """An exception from the finally must not replace the caller's error."""
+
+        for primary in (False, True):
+            with (
+                self.subTest(primary=primary),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                real_cleanup = tempfile.TemporaryDirectory.cleanup
+                closed: list[int] = []
+                real_close = os.close
+
+                def surprising_cleanup(
+                    workspace: tempfile.TemporaryDirectory[str],
+                    *,
+                    real_cleanup: object = real_cleanup,
+                ) -> None:
+                    real_cleanup(workspace)
+                    raise RuntimeError(PRIVATE)
+
+                def record_close(
+                    descriptor: int | None,
+                    role: str,
+                    *,
+                    closed: list[int] = closed,
+                    real_close: object = real_close,
+                ) -> str | None:
+                    if descriptor is not None:
+                        closed.append(descriptor)
+                        real_close(descriptor)
+                    return None
+
+                with (
+                    mock.patch.object(
+                        tempfile.TemporaryDirectory,
+                        "cleanup",
+                        surprising_cleanup,
+                    ),
+                    mock.patch.object(
+                        security_scan,
+                        "_close_snapshot_descriptor",
+                        side_effect=record_close,
+                    ),
+                    self.assertRaises(security_scan.SecurityScanError) as raised,
+                ):
+                    with security_scan._immutable_candidate_snapshot(root, []):
+                        if primary:
+                            raise security_scan.SecurityScanError(
+                                "synthetic workspace primary"
+                            )
+                message = str(raised.exception)
+                self.assertIn("unexpected RuntimeError", message)
+                self.assertNotIn(PRIVATE, message)
+                self.assertEqual(1, len(closed))
+                if primary:
+                    self.assertTrue(
+                        message.startswith("synthetic workspace primary"),
+                        message,
+                    )
+
     def test_candidate_paths_are_bounded_in_depth(self) -> None:
         """A path deep enough to break recursive removal is refused up front."""
 

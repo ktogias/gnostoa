@@ -879,6 +879,17 @@ def _immutable_candidate_snapshot(
                         "tracked-tree snapshot workspace could not be removed "
                         "(recursion limit)"
                     )
+                except Exception as exc:
+                    # An unexpected exception raised out of this finally would
+                    # replace the caller's primary error and publish its own
+                    # text. Neither is acceptable here, so the failure is
+                    # reported by exception type only and the primary survives.
+                    # This never converts a failure into success: the issue is
+                    # appended and the scan still fails closed.
+                    finalization_issues.append(
+                        "tracked-tree snapshot workspace could not be removed "
+                        f"(unexpected {type(exc).__name__})"
+                    )
         finally:
             close_issue = _close_snapshot_descriptor(root_descriptor, "root")
             if close_issue is not None:
