@@ -80,6 +80,36 @@ class ReviewFollowupTests(unittest.TestCase):
                 cleanup.assert_not_called()
                 self.assertTrue(process.stdout.closed and process.stderr.closed)
 
+    def test_run_without_a_reaped_child_status_fails_closed(self) -> None:
+        """A result is never published when the child was never reaped."""
+
+        process = mock.Mock(stdout=_Stream(), stderr=_Stream(), stdin=None)
+        process.wait.return_value = None
+        process.poll.return_value = 0
+        selector = mock.Mock()
+        selector.get_map.return_value = {}
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch("subprocess.Popen", return_value=process),
+            mock.patch("selectors.DefaultSelector", return_value=selector),
+            mock.patch.object(
+                review_current,
+                "_docker_executable",
+                return_value="/usr/bin/docker",
+            ),
+            mock.patch.object(review_current, "_discard_cidfile", return_value=None),
+            self.assertRaises(review_current.ProtectedJudgeUnavailable) as raised,
+        ):
+            review_current._run_docker(
+                ["run", "--rm", "fixture"], config_dir=Path(directory)
+            )
+        message = str(raised.exception)
+        self.assertEqual(
+            "protected Docker process finished without a reaped child status",
+            message,
+        )
+        self.assertTrue(process.stdout.closed and process.stderr.closed)
+
     def test_full_cleanup_prefix_keeps_close_roles_and_command_status(self) -> None:
         for prefix in (b"x" * 4096, b"\xce\xb1" * 2048, b"x" * 4095 + b"\xce"):
             for child_code in (0, 1):
