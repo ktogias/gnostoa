@@ -436,6 +436,11 @@ def _run_bounded_scan(
     """Run the scanner while bounding both captured streams in memory."""
 
     try:
+        # Audited for command injection: no shell is involved. The program is
+        # sys.executable run with -I, the argv is a list, "--" terminates option
+        # parsing, and every path has passed _validated_candidate_paths()
+        # against the immutable snapshot that is also the working directory.
+        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
         process = subprocess.Popen(
             command,
             shell=False,

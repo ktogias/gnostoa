@@ -544,6 +544,11 @@ def _run_docker(
         ]
     command = [docker_executable, *docker_arguments]
     try:
+        # Audited for command injection: no shell is involved. The program is
+        # resolved by shutil.which() from os.defpath, the argv is a list, and
+        # every option has passed _validate_docker_run_options(). shlex.quote
+        # would insert literal quotes into argv elements and corrupt the call.
+        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
         process = subprocess.Popen(
             command,
             shell=False,
