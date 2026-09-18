@@ -216,19 +216,30 @@ class ReviewFollowupTests(unittest.TestCase):
             self.assertIn("EACCES", str(inspect_error.exception))
             self.assertNotIn(PRIVATE, str(inspect_error.exception))
 
-        with (
-            mock.patch.object(
-                security_scan,
-                "candidate_paths",
-                side_effect=security_scan.RepositoryScopeError(PRIVATE),
-            ),
-            self.assertRaises(security_scan.SecurityScanError) as scope_error,
-        ):
-            security_scan.scan_tracked_tree(Path("."))
-        self.assertEqual(
-            "cannot enumerate tracked-tree candidates", str(scope_error.exception)
+        for category in sorted(security_scan.REPOSITORY_SCOPE_ERROR_CATEGORIES):
+            with (
+                self.subTest(scope_category=category),
+                mock.patch.object(
+                    security_scan,
+                    "candidate_paths",
+                    side_effect=security_scan.RepositoryScopeError(
+                        PRIVATE, category=category
+                    ),
+                ),
+                self.assertRaises(security_scan.SecurityScanError) as scope_error,
+            ):
+                security_scan.scan_tracked_tree(Path("."))
+            self.assertEqual(
+                "cannot enumerate tracked-tree candidates "
+                f"(scope error: {category})",
+                str(scope_error.exception),
+            )
+            self.assertNotIn(PRIVATE, str(scope_error.exception))
+
+        unknown_scope = security_scan.RepositoryScopeError(
+            PRIVATE, category="PRIVATE_CATEGORY"
         )
-        self.assertNotIn(PRIVATE, str(scope_error.exception))
+        self.assertEqual("UNKNOWN", unknown_scope.category)
 
     def test_completed_child_status_is_primary_for_close_failures(self) -> None:
         for child_code in (3, -9):

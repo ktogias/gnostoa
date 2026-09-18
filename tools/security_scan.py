@@ -21,7 +21,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, NoReturn
 
-from tools.repository_scope import RepositoryScopeError, candidate_paths
+from tools.repository_scope import (
+    REPOSITORY_SCOPE_ERROR_CATEGORIES,
+    RepositoryScopeError,
+    candidate_paths,
+)
 
 DEFAULT_BASELINE = Path(".secrets.baseline")
 _MAX_REPORT_BYTES = 8_388_608
@@ -883,7 +887,15 @@ def scan_tracked_tree(
         try:
             paths = candidate_paths(root)
         except RepositoryScopeError as exc:
-            raise SecurityScanError("cannot enumerate tracked-tree candidates") from exc
+            category = (
+                exc.category
+                if exc.category in REPOSITORY_SCOPE_ERROR_CATEGORIES
+                else "UNKNOWN"
+            )
+            raise SecurityScanError(
+                "cannot enumerate tracked-tree candidates "
+                f"(scope error: {category})"
+            ) from exc
     else:
         paths = list(tracked_paths)
     if not paths:
