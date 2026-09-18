@@ -206,6 +206,30 @@ class ReviewFollowupTests(unittest.TestCase):
         self.assertIn("EACCES", str(snapshot_error.exception))
         self.assertNotIn(PRIVATE, str(snapshot_error.exception))
 
+        for relative in (Path("tracked.txt"), Path("parent/tracked.txt")):
+            with (
+                self.subTest(relative=relative),
+                mock.patch.object(Path, "lstat", side_effect=error),
+                self.assertRaises(security_scan.SecurityScanError) as inspect_error,
+            ):
+                security_scan._validated_candidate_paths(Path("."), [relative])
+            self.assertIn("EACCES", str(inspect_error.exception))
+            self.assertNotIn(PRIVATE, str(inspect_error.exception))
+
+        with (
+            mock.patch.object(
+                security_scan,
+                "candidate_paths",
+                side_effect=security_scan.RepositoryScopeError(PRIVATE),
+            ),
+            self.assertRaises(security_scan.SecurityScanError) as scope_error,
+        ):
+            security_scan.scan_tracked_tree(Path("."))
+        self.assertEqual(
+            "cannot enumerate tracked-tree candidates", str(scope_error.exception)
+        )
+        self.assertNotIn(PRIVATE, str(scope_error.exception))
+
     def test_completed_child_status_is_primary_for_close_failures(self) -> None:
         for child_code in (3, -9):
             for finalizer in ("stdout", "selector"):

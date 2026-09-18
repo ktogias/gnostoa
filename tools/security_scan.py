@@ -541,7 +541,7 @@ def _validated_candidate_paths(root: Path, paths: list[Path]) -> list[Path]:
                 mode = current.lstat().st_mode
             except OSError as exc:
                 raise SecurityScanError(
-                    f"cannot inspect candidate path {rendered!r}: {exc}"
+                    _safe_os_error(f"cannot inspect candidate path {rendered!r}", exc)
                 ) from exc
             if stat.S_ISLNK(mode):
                 raise SecurityScanError(
@@ -556,7 +556,7 @@ def _validated_candidate_paths(root: Path, paths: list[Path]) -> list[Path]:
             mode = (root / relative).lstat().st_mode
         except OSError as exc:
             raise SecurityScanError(
-                f"cannot inspect candidate path {rendered!r}: {exc}"
+                _safe_os_error(f"cannot inspect candidate path {rendered!r}", exc)
             ) from exc
         if stat.S_ISLNK(mode):
             raise SecurityScanError(
@@ -821,9 +821,7 @@ def scan_tracked_tree(
         try:
             paths = candidate_paths(root)
         except RepositoryScopeError as exc:
-            raise SecurityScanError(
-                f"cannot enumerate tracked-tree candidates: {exc}"
-            ) from exc
+            raise SecurityScanError("cannot enumerate tracked-tree candidates") from exc
     else:
         paths = list(tracked_paths)
     if not paths:
