@@ -1,0 +1,70 @@
+name: PR278 finalizer object transfer
+on:
+  push:
+    branches: [support/pr278-chatgpt-source-20260918]
+permissions:
+  contents: write
+jobs:
+  transfer:
+    name: pr278-finalizer-objects-only-not-a-merge-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: d6bcb7e608d7df594eed4f304c38de450597c7ad
+          persist-credentials: false
+      - name: Validate patch and store only exact Git objects
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 -I - <<'PY'
+          import base64, gzip, hashlib, json, os, pathlib, subprocess, urllib.request
+          BASE='d6bcb7e608d7df594eed4f304c38de450597c7ad'
+          BASE_TREE='fed022acb6ad85e3c478c6e5011d71bc4abaa5b5'
+          TREE='e0cf8dc7600802a40c324ffda395b976bbc578c1'
+          BLOB='54265025b092c7d937839d57a89c174ce284f410'
+          PATCH_HASH='0eb41914e6e2dec1c1ff2c69e6349c9076f2ce893b972e6fdc03c272496bb084'
+          GZIP_HASH='0c8169de73378b3564864b4cb57165edc07e510183f976ee781dd627cf95e720'
+          files={
+            'knowledge/decisions/0082-eliminate-host-persistence-for-protected-review-payloads-and-route-security-gates.md':'3ba5c0fe1363420072e6a263402b1c157915de61',
+            'policy/guardrails.yaml':'30e062dd8ed5f4aa50cba5fdac5973be5fb68c28',
+            'tests/test_protected_finalizer_errors.py':'bb106963234db3190fe51f8335b383a3f2571ce6',
+            'tools/review_current.py':'9bf038282e566acfa3f07e9f50c824a3f417e060',
+            'tools/security_scan.py':'84a9fb212a331c7e066cf86f4f8c1faaa32a1431',
+          }
+          def git(*args,data=None):
+              return subprocess.check_output(['git','-c','core.hooksPath=/dev/null',*args],input=data).decode().strip()
+          def api(method,path,payload=None):
+              req=urllib.request.Request('https://api.github.com/repos/ktogias/gnostoa/'+path,method=method,
+                data=None if payload is None else json.dumps(payload).encode(),headers={
+                  'Authorization':'Bearer '+os.environ['GITHUB_TOKEN'],
+                  'Accept':'application/vnd.github+json','Content-Type':'application/json','X-GitHub-Api-Version':'2022-11-28'})
+              with urllib.request.urlopen(req,timeout=30) as stream:
+                  raw=stream.read(2000001)
+              if len(raw)>2000000: raise RuntimeError('bounded response overflow')
+              return json.loads(raw)
+          assert git('rev-parse','HEAD')==BASE and git('rev-parse','HEAD^{tree}')==BASE_TREE
+          assert not git('status','--porcelain')
+          blob=api('GET','git/blobs/'+BLOB)
+          assert blob['sha']==BLOB and blob['encoding']=='base64'
+          compressed=base64.b64decode(''.join(blob['content'].split()),validate=True)
+          assert hashlib.sha256(compressed).hexdigest()==GZIP_HASH
+          patch=gzip.decompress(compressed)
+          assert len(patch)==23213 and hashlib.sha256(patch).hexdigest()==PATCH_HASH
+          git('apply','--index','--whitespace=error-all','-',data=patch)
+          assert git('diff','--cached','--name-only').splitlines()==sorted(files)
+          assert git('write-tree')==TREE
+          entries=[]
+          for path,sha in files.items():
+              assert git('ls-files','--stage','--',path).startswith('100644 '+sha+' 0\t')
+              raw=pathlib.Path(path).read_bytes()
+              assert len(raw)<250000
+              assert hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()==sha
+              result=api('POST','git/blobs',{'encoding':'utf-8','content':raw.decode('utf-8')})
+              assert result['sha']==sha
+              entries.append({'path':path,'mode':'100644','type':'blob','sha':sha})
+          result=api('POST','git/trees',{'base_tree':BASE_TREE,'tree':entries})
+          assert result['sha']==TREE
+          print(json.dumps({'base':BASE,'tree':TREE,'blobs':files,'candidate_execution':'NOT_RUN','ref_effects':'NONE'},sort_keys=True))
+          PY
