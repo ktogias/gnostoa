@@ -149,7 +149,7 @@ _PROTECTED_JOB_STEPS_SHA256 = {
     "python-compatibility": "73c95ccf140298e0752c7362d6fa6b3165146789e0a9286342ba10bb95c3a121",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "regression": "bd3442b7343c7b6f478e9f1a02f6febad5f80f3e3ccc05c937ccd926d92a1da0",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "smoke": "c6cb64c9fc709f338ba12ae4d129826d1e44645d97e825988405acffc43b8f0b",  # pragma: allowlist secret -- reviewed workflow-structure digest
-    "extended-route": "df5150f32cb10f3fa30d863048c015a5b0e5bfacb285d0641e817d9bedcc060a",  # pragma: allowlist secret -- reviewed workflow-structure digest
+    "extended-route": "c05e16a02a2e05153ddde0ed1bd53e120e1bc40c7c62a19e8108732249a39a51",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "extended": "0f56e849d2376c23fa3782bd31e42668310e70c6a4eedaae95377c3645503d7f",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "branch-advisory-policy": (
         "1170a691c764b464a5342fbe6aab5361fc3a07bda1d1e00685c00e85831195cf"  # pragma: allowlist secret -- reviewed workflow-structure digest
