@@ -22,9 +22,9 @@ from pathlib import Path
 from typing import Any, NoReturn
 
 from tools.repository_scope import (
-    REPOSITORY_SCOPE_ERROR_CATEGORIES,
     RepositoryScopeError,
     candidate_paths,
+    scope_error_detail,
 )
 
 DEFAULT_BASELINE = Path(".secrets.baseline")
@@ -34,6 +34,7 @@ _SNAPSHOT_CHUNK_BYTES = 65_536
 _MAX_SNAPSHOT_FILE_BYTES = 16_777_216
 _MAX_SNAPSHOT_TOTAL_BYTES = 67_108_864
 _SNAPSHOT_TIMEOUT_SECONDS = 60
+_MAX_CANDIDATE_PATH_DEPTH = 64
 _SCAN_TIMEOUT_SECONDS = 300
 _PROCESS_REAP_TIMEOUT_SECONDS = 5
 _BASELINE_EXCLUDE_PATTERN = r"^\.secrets\.baseline$"
@@ -551,6 +552,11 @@ def _validated_candidate_paths(root: Path, paths: list[Path]) -> list[Path]:
             raise SecurityScanError(
                 f"tracked-tree secret scan has an unsafe candidate path: {rendered!r}"
             )
+        if len(relative.parts) > _MAX_CANDIDATE_PATH_DEPTH:
+            raise SecurityScanError(
+                "tracked-tree secret scan candidate path exceeds the depth bound: "
+                f"{rendered!r}"
+            )
 
         current = root
         for part in relative.parts[:-1]:
@@ -817,18 +823,30 @@ def _immutable_candidate_snapshot(
         )
         primary_cause = exc
     finally:
-        if workspace is not None:
-            try:
-                workspace.cleanup()
-            except OSError as exc:
-                finalization_issues.append(
-                    _safe_os_error(
-                        "tracked-tree snapshot workspace could not be removed", exc
+        try:
+            if workspace is not None:
+                try:
+                    workspace.cleanup()
+                except OSError as exc:
+                    finalization_issues.append(
+                        _safe_os_error(
+                            "tracked-tree snapshot workspace could not be removed", exc
+                        )
                     )
-                )
-        close_issue = _close_snapshot_descriptor(root_descriptor, "root")
-        if close_issue is not None:
-            finalization_issues.append(close_issue)
+                except RecursionError:
+                    # Recursive removal can exhaust the interpreter stack on a
+                    # deep tree. The candidate depth bound makes that
+                    # unreachable through tracked paths, so this stays a
+                    # sanitized fail-closed report rather than an escaping
+                    # traceback that would skip the root descriptor.
+                    finalization_issues.append(
+                        "tracked-tree snapshot workspace could not be removed "
+                        "(recursion limit)"
+                    )
+        finally:
+            close_issue = _close_snapshot_descriptor(root_descriptor, "root")
+            if close_issue is not None:
+                finalization_issues.append(close_issue)
 
     secondary = "; ".join(finalization_issues) or None
     if primary_error is not None:
@@ -901,14 +919,8 @@ def scan_tracked_tree(
         try:
             paths = candidate_paths(root)
         except RepositoryScopeError as exc:
-            category = (
-                exc.category
-                if exc.category in REPOSITORY_SCOPE_ERROR_CATEGORIES
-                else "UNKNOWN"
-            )
             raise SecurityScanError(
-                "cannot enumerate tracked-tree candidates "
-                f"(scope error: {category})"
+                scope_error_detail("cannot enumerate tracked-tree candidates", exc)
             ) from exc
     else:
         paths = list(tracked_paths)

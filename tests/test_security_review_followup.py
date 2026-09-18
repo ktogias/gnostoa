@@ -15,7 +15,7 @@ from unittest import mock
 
 from test_security_gates import _report
 
-from tools import review_current, security_scan
+from tools import quality_evidence, repository_scope, review_current, security_scan
 
 ROOT = Path(__file__).resolve().parents[1]
 PRIVATE = "private exception body must never be published"
@@ -216,7 +216,7 @@ class ReviewFollowupTests(unittest.TestCase):
             self.assertIn("EACCES", str(inspect_error.exception))
             self.assertNotIn(PRIVATE, str(inspect_error.exception))
 
-        for category in sorted(security_scan.REPOSITORY_SCOPE_ERROR_CATEGORIES):
+        for category in sorted(repository_scope.REPOSITORY_SCOPE_ERROR_CATEGORIES):
             with (
                 self.subTest(scope_category=category),
                 mock.patch.object(
@@ -230,8 +230,7 @@ class ReviewFollowupTests(unittest.TestCase):
             ):
                 security_scan.scan_tracked_tree(Path("."))
             self.assertEqual(
-                "cannot enumerate tracked-tree candidates "
-                f"(scope error: {category})",
+                f"cannot enumerate tracked-tree candidates (scope error: {category})",
                 str(scope_error.exception),
             )
             self.assertNotIn(PRIVATE, str(scope_error.exception))
@@ -301,8 +300,15 @@ class ReviewFollowupTests(unittest.TestCase):
                     real_close = os.close
                     deadline_checks = 0
 
-                    def close_descriptor(descriptor: int, role: str) -> str | None:
-                        real_close(descriptor)
+                    def close_descriptor(
+                        descriptor: int | None,
+                        role: str,
+                        *,
+                        real_close: object = real_close,
+                        failed_role: str = failed_role,
+                    ) -> str | None:
+                        if descriptor is not None:
+                            real_close(descriptor)
                         if role == failed_role:
                             return (
                                 f"tracked-tree snapshot {role} descriptor could not "
@@ -310,7 +316,9 @@ class ReviewFollowupTests(unittest.TestCase):
                             )
                         return None
 
-                    def check_deadline(_deadline: float) -> None:
+                    def check_deadline(
+                        _deadline: float, *, primary: bool = primary
+                    ) -> None:
                         nonlocal deadline_checks
                         deadline_checks += 1
                         if primary and deadline_checks == 3:
@@ -384,10 +392,18 @@ class ReviewFollowupTests(unittest.TestCase):
                 observed_roles: list[str] = []
                 failed = False
 
-                def close_descriptor(descriptor: int, role: str) -> str | None:
+                def close_descriptor(
+                    descriptor: int | None,
+                    role: str,
+                    *,
+                    observed_roles: list[str] = observed_roles,
+                    real_close: object = real_close,
+                    failed_role: str = failed_role,
+                ) -> str | None:
                     nonlocal failed
                     observed_roles.append(role)
-                    real_close(descriptor)
+                    if descriptor is not None:
+                        real_close(descriptor)
                     if role == failed_role and not failed:
                         failed = True
                         return (
@@ -403,9 +419,7 @@ class ReviewFollowupTests(unittest.TestCase):
                             "_close_snapshot_descriptor",
                             side_effect=close_descriptor,
                         ),
-                        self.assertRaises(
-                            security_scan.SecurityScanError
-                        ) as raised,
+                        self.assertRaises(security_scan.SecurityScanError) as raised,
                     ):
                         security_scan._copy_candidate_to_snapshot(
                             root_descriptor,
@@ -415,7 +429,9 @@ class ReviewFollowupTests(unittest.TestCase):
                             remaining_total_bytes=1024,
                         )
                     message = str(raised.exception)
-                    self.assertTrue(message.startswith(f"tracked-tree snapshot {failed_role}"))
+                    self.assertTrue(
+                        message.startswith(f"tracked-tree snapshot {failed_role}")
+                    )
                     self.assertNotIn(PRIVATE, message)
                     failure_index = observed_roles.index(failed_role)
                     self.assertTrue(
@@ -427,12 +443,21 @@ class ReviewFollowupTests(unittest.TestCase):
 
     def test_snapshot_root_close_failure_preserves_primary(self) -> None:
         for primary in (False, True):
-            with self.subTest(primary=primary), tempfile.TemporaryDirectory() as directory:
+            with (
+                self.subTest(primary=primary),
+                tempfile.TemporaryDirectory() as directory,
+            ):
                 root = Path(directory)
                 real_close = os.close
 
-                def close_descriptor(descriptor: int, role: str) -> str | None:
-                    real_close(descriptor)
+                def close_descriptor(
+                    descriptor: int | None,
+                    role: str,
+                    *,
+                    real_close: object = real_close,
+                ) -> str | None:
+                    if descriptor is not None:
+                        real_close(descriptor)
                     if role == "root":
                         return (
                             "tracked-tree snapshot root descriptor could not be closed "
@@ -476,7 +501,11 @@ class ReviewFollowupTests(unittest.TestCase):
                 root = Path(directory)
                 real_cleanup = tempfile.TemporaryDirectory.cleanup
 
-                def failing_cleanup(workspace: tempfile.TemporaryDirectory[str]) -> None:
+                def failing_cleanup(
+                    workspace: tempfile.TemporaryDirectory[str],
+                    *,
+                    real_cleanup: object = real_cleanup,
+                ) -> None:
                     real_cleanup(workspace)
                     raise OSError(errno.EIO, PRIVATE, PRIVATE)
 
@@ -507,6 +536,112 @@ class ReviewFollowupTests(unittest.TestCase):
                         message.startswith("tracked-tree snapshot finalization failed"),
                         message,
                     )
+
+    def test_snapshot_recursion_error_still_closes_the_root_descriptor(self) -> None:
+        """Recursive removal must not escape past root-descriptor finalization."""
+
+        for primary in (False, True):
+            with (
+                self.subTest(primary=primary),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                real_cleanup = tempfile.TemporaryDirectory.cleanup
+                closed: list[int] = []
+                real_close = os.close
+
+                def recursing_cleanup(
+                    workspace: tempfile.TemporaryDirectory[str],
+                    *,
+                    real_cleanup: object = real_cleanup,
+                ) -> None:
+                    real_cleanup(workspace)
+                    raise RecursionError(PRIVATE)
+
+                def record_close(
+                    descriptor: int | None,
+                    role: str,
+                    *,
+                    closed: list[int] = closed,
+                    real_close: object = real_close,
+                ) -> str | None:
+                    if descriptor is not None:
+                        closed.append(descriptor)
+                        real_close(descriptor)
+                    return None
+
+                with (
+                    mock.patch.object(
+                        tempfile.TemporaryDirectory,
+                        "cleanup",
+                        recursing_cleanup,
+                    ),
+                    mock.patch.object(
+                        security_scan,
+                        "_close_snapshot_descriptor",
+                        side_effect=record_close,
+                    ),
+                    self.assertRaises(security_scan.SecurityScanError) as raised,
+                ):
+                    with security_scan._immutable_candidate_snapshot(root, []):
+                        if primary:
+                            raise security_scan.SecurityScanError(
+                                "synthetic workspace primary"
+                            )
+                message = str(raised.exception)
+                self.assertIn("workspace could not be removed", message)
+                self.assertIn("recursion limit", message)
+                self.assertNotIn(PRIVATE, message)
+                self.assertEqual(1, len(closed))
+                if primary:
+                    self.assertTrue(
+                        message.startswith("synthetic workspace primary"),
+                        message,
+                    )
+
+    def test_candidate_paths_are_bounded_in_depth(self) -> None:
+        """A path deep enough to break recursive removal is refused up front."""
+
+        depth = security_scan._MAX_CANDIDATE_PATH_DEPTH
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            accepted = Path(*(["d"] * (depth - 1)), "tracked.txt")
+            (root / accepted).parent.mkdir(parents=True)
+            (root / accepted).write_bytes(b"")
+            self.assertEqual(
+                [accepted],
+                security_scan._validated_candidate_paths(root, [accepted]),
+            )
+
+            refused = Path(*(["d"] * depth), "tracked.txt")
+            with self.assertRaises(security_scan.SecurityScanError) as raised:
+                security_scan._validated_candidate_paths(root, [refused])
+            self.assertIn("depth bound", str(raised.exception))
+
+    def test_quality_evidence_sanitizes_repository_scope_failures(self) -> None:
+        """The second scope consumer must not republish raw scope text either."""
+
+        for category in sorted(repository_scope.REPOSITORY_SCOPE_ERROR_CATEGORIES):
+            with (
+                self.subTest(scope_category=category),
+                tempfile.TemporaryDirectory() as directory,
+                mock.patch.object(
+                    quality_evidence,
+                    "candidate_paths",
+                    side_effect=quality_evidence.RepositoryScopeError(
+                        PRIVATE, category=category
+                    ),
+                ),
+                self.assertRaises(quality_evidence.QualityEvidenceError) as raised,
+            ):
+                quality_evidence.collect_quality_evidence(
+                    Path(directory), Path(directory) / "out"
+                )
+            self.assertEqual(
+                f"cannot enumerate tracked-tree candidates (scope error: {category})",
+                str(raised.exception),
+            )
+            self.assertNotIn(PRIVATE, str(raised.exception))
 
     def test_snapshot_checks_deadline_between_partial_writes(self) -> None:
         now = [0.0]

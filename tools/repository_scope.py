@@ -33,6 +33,21 @@ class RepositoryScopeError(RuntimeError):
         )
 
 
+def scope_error_detail(prefix: str, exc: RepositoryScopeError) -> str:
+    """Describe one scope failure without publishing its exception text.
+
+    Scope failures carry the repository root, manifest paths, unsafe candidate
+    paths and raw Git or OSError text, so every consumer must report the
+    classified category instead of the message. Reporting goes through this
+    one helper so a new consumer cannot silently reintroduce the leak.
+    """
+
+    category = (
+        exc.category if exc.category in REPOSITORY_SCOPE_ERROR_CATEGORIES else "UNKNOWN"
+    )
+    return f"{prefix} (scope error: {category})"
+
+
 def _decode_paths(encoded_paths: bytes, source: str) -> list[Path]:
     paths: list[Path] = []
     for encoded in encoded_paths.split(b"\0"):

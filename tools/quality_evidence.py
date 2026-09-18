@@ -17,7 +17,11 @@ from pathlib import Path
 from typing import Any, TextIO
 from urllib.parse import quote, unquote, urlparse
 
-from tools.repository_scope import candidate_paths
+from tools.repository_scope import (
+    RepositoryScopeError,
+    candidate_paths,
+    scope_error_detail,
+)
 from tools.requirements_lock import (
     LockedRequirement,
     LockFormatError,
@@ -896,7 +900,12 @@ def collect_quality_evidence(
     output = output_directory.resolve()
     output.mkdir(parents=True, exist_ok=True)
 
-    tracked_paths = candidate_paths(root)
+    try:
+        tracked_paths = candidate_paths(root)
+    except RepositoryScopeError as exc:
+        raise QualityEvidenceError(
+            scope_error_detail("cannot enumerate tracked-tree candidates", exc)
+        ) from exc
     if not tracked_paths:
         raise QualityEvidenceError("tracked-tree secret scan has no candidate files")
     tracked_symlinks = [

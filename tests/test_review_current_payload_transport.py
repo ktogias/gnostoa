@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 import subprocess
 import sys
@@ -9,6 +10,8 @@ from pathlib import Path
 from unittest import mock
 
 from tools import review_current
+
+PRIVATE_STDIN_DETAIL = "private-stdin-configuration-detail"
 
 
 class ProtectedPayloadTransportTests(unittest.TestCase):
@@ -295,7 +298,7 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
                     mock.patch.object(
                         review_current.os,
                         "set_blocking",
-                        side_effect=OSError("cannot configure stdin"),
+                        side_effect=OSError(errno.EIO, PRIVATE_STDIN_DETAIL),
                     ),
                     mock.patch.object(
                         review_current,
@@ -303,10 +306,9 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
                         cleanup,
                     ),
                 ):
-                    with self.assertRaisesRegex(
-                        review_current.ProtectedJudgeUnavailable,
-                        "cannot configure stdin",
-                    ):
+                    with self.assertRaises(
+                        review_current.ProtectedJudgeUnavailable
+                    ) as raised:
                         review_current._run_docker(
                             ["run", "--rm", "example-image"],
                             config_dir=Path(directory),
@@ -319,6 +321,11 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
                 if isinstance(process, subprocess.Popen) and process.poll() is None:
                     process.kill()
                     process.wait()
+
+            message = str(raised.exception)
+            self.assertIn("protected Docker execution failed", message)
+            self.assertIn("OS error: EIO", message)
+            self.assertNotIn(PRIVATE_STDIN_DETAIL, message)
 
             command = observed["command"]
             self.assertIsInstance(command, list)
