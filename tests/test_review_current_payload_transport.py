@@ -768,6 +768,70 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
             )
             self.assertNotEqual(0, returncode)
 
+    def test_timeout_failure_reports_a_failed_cleanup_identity_removal(
+        self,
+    ) -> None:
+        """A failed identity discard is reported, not silently dropped."""
+
+        real_popen = subprocess.Popen
+        observed: dict[str, object] = {}
+
+        def start_process(
+            command: list[str],
+            **kwargs: object,
+        ) -> subprocess.Popen[bytes]:
+            cidfile = Path(command[command.index("--cidfile") + 1])
+            cidfile.write_text("e" * 64, encoding="ascii")
+            process = real_popen(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+                **kwargs,
+            )
+            observed["process"] = process
+            return process
+
+        cleanup = mock.Mock(return_value=(0, ""))
+        with tempfile.TemporaryDirectory() as directory:
+            try:
+                with (
+                    mock.patch.object(
+                        review_current,
+                        "_docker_executable",
+                        return_value="docker",
+                    ),
+                    mock.patch.object(
+                        review_current.subprocess,
+                        "Popen",
+                        side_effect=start_process,
+                    ),
+                    mock.patch.object(
+                        review_current,
+                        "_cleanup_diagnostic",
+                        cleanup,
+                    ),
+                    mock.patch.object(
+                        Path,
+                        "unlink",
+                        side_effect=OSError("cannot remove cleanup identity"),
+                    ),
+                ):
+                    with self.assertRaises(
+                        review_current.ProtectedJudgeUnavailable
+                    ) as raised:
+                        review_current._run_docker(
+                            ["run", "--rm", "example-image"],
+                            config_dir=Path(directory),
+                            timeout=1,
+                        )
+            finally:
+                process = observed.get("process")
+                if isinstance(process, subprocess.Popen) and process.poll() is None:
+                    process.kill()
+                    process.wait()
+
+        message = str(raised.exception)
+        self.assertIn("timed out", message)
+        self.assertIn("cleanup identity", message)
+
     def test_abort_reap_is_bounded_and_cleanup_runs_after_reap_timeout(
         self,
     ) -> None:

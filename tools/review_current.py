@@ -419,6 +419,31 @@ def _with_secondary(primary: str, secondary: str | None) -> str:
     return primary if secondary is None else f"{primary}; {secondary}"
 
 
+def _joined_details(*details: str | None) -> str | None:
+    """Join bounded secondary details, or return ``None`` when there are none."""
+
+    present = [detail for detail in details if detail]
+    return "; ".join(present) if present else None
+
+
+def _abort_and_discard(
+    process: subprocess.Popen[bytes],
+    identity: _ContainerRunIdentity | None,
+    config_dir: Path,
+) -> str | None:
+    """Abort one run and discard its cleanup identity, reporting both problems.
+
+    The identity file is discarded only once container cleanup is confirmed, so
+    an unconfirmed cleanup still leaves the recovery identity behind. Every
+    problem observed here is bounded secondary context for the caller's primary
+    failure and is never raised.
+    """
+
+    abort_detail = _abort_docker_run(process, identity, config_dir)
+    discard_detail = _discard_cidfile(identity) if abort_detail is None else None
+    return _joined_details(abort_detail, discard_detail)
+
+
 def _run_docker(
     arguments: list[str],
     *,
@@ -463,23 +488,16 @@ def _run_docker(
         ) from exc
 
     cleanup_attempted = False
-    cleanup_confirmed = False
     if (
         process.stdout is None
         or process.stderr is None
         or (input_bytes is not None and process.stdin is None)
     ):
         cleanup_attempted = True
-        abort_detail = _abort_docker_run(process, identity, config_dir)
-        cleanup_confirmed = abort_detail is None
-        discard_detail = _discard_cidfile(identity) if cleanup_confirmed else None
         raise ProtectedJudgeUnavailable(
             _with_secondary(
-                _with_secondary(
-                    "protected Docker output pipes are unavailable",
-                    abort_detail,
-                ),
-                discard_detail,
+                "protected Docker output pipes are unavailable",
+                _abort_and_discard(process, identity, config_dir),
             )
         )
 
@@ -541,12 +559,10 @@ def _run_docker(
                 buffer.extend(chunk)
                 if len(buffer) > _MAX_RUNTIME_OUTPUT_BYTES:
                     cleanup_attempted = True
-                    abort_detail = _abort_docker_run(process, identity, config_dir)
-                    cleanup_confirmed = abort_detail is None
                     raise ProtectedJudgeUnavailable(
                         _with_secondary(
                             f"protected Docker {label} exceeds the bounded size",
-                            abort_detail,
+                            _abort_and_discard(process, identity, config_dir),
                         )
                     )
 
@@ -556,17 +572,19 @@ def _run_docker(
         returncode = process.wait(timeout=remaining)
     except subprocess.TimeoutExpired as exc:
         cleanup_attempted = True
-        abort_detail = _abort_docker_run(process, identity, config_dir)
-        cleanup_confirmed = abort_detail is None
         raise ProtectedJudgeUnavailable(
-            _with_secondary(f"protected Docker execution failed: {exc}", abort_detail)
+            _with_secondary(
+                f"protected Docker execution failed: {exc}",
+                _abort_and_discard(process, identity, config_dir),
+            )
         ) from exc
     except OSError as exc:
         cleanup_attempted = True
-        abort_detail = _abort_docker_run(process, identity, config_dir)
-        cleanup_confirmed = abort_detail is None
         raise ProtectedJudgeUnavailable(
-            _with_secondary(f"protected Docker execution failed: {exc}", abort_detail)
+            _with_secondary(
+                f"protected Docker execution failed: {exc}",
+                _abort_and_discard(process, identity, config_dir),
+            )
         ) from exc
     finally:
         if selector is not None:
@@ -577,7 +595,9 @@ def _run_docker(
             process.stdin.close()
         if input_view is not None:
             input_view.release()
-        if identity is not None and (not cleanup_attempted or cleanup_confirmed):
+        if identity is not None and not cleanup_attempted:
+            # The run completed, so there is no primary failure to attach a
+            # discard problem to; every abort path reports its own.
             _discard_cidfile(identity)
 
     return subprocess.CompletedProcess(
