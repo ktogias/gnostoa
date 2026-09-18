@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 import math
 import os
@@ -243,6 +244,17 @@ def _bounded_diagnostic(raw: bytes | None) -> str:
     return normalized[:_MAX_CLEANUP_DIAGNOSTIC_BYTES].decode("utf-8", errors="ignore")
 
 
+def _os_error_detail(prefix: str, exc: OSError) -> str:
+    """Classify OS failures without copying exception text or filenames."""
+
+    code = (
+        errno.errorcode.get(exc.errno, "UNKNOWN")
+        if type(exc.errno) is int
+        else "UNKNOWN"
+    )
+    return f"{prefix} (OS error: {code})"
+
+
 def _discard_cidfile(identity: _ContainerRunIdentity | None) -> str | None:
     """Remove the predeclared cleanup identity file without ever raising.
 
@@ -283,7 +295,9 @@ def _cleanup_diagnostic(
             env=_docker_environment(config_dir),
         )
     except OSError as exc:
-        return None, str(exc) or exc.__class__.__name__
+        return None, _os_error_detail(
+            "protected Docker cleanup could not be started", exc
+        )
 
     diagnostic = bytearray()
     overflowed = False
@@ -325,8 +339,10 @@ def _cleanup_diagnostic(
                     _DOCKER_CLEANUP_TIMEOUT_SECONDS,
                 )
             returncode = process.wait(timeout=remaining)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        issue = str(exc) or exc.__class__.__name__
+    except subprocess.TimeoutExpired:
+        issue = "protected Docker cleanup timed out"
+    except OSError as exc:
+        issue = _os_error_detail("protected Docker cleanup failed", exc)
     finally:
         if selector is not None:
             try:
@@ -530,7 +546,7 @@ def _run_docker(
         )
     except OSError as exc:
         raise ProtectedJudgeUnavailable(
-            f"protected Docker execution failed: {exc}"
+            _os_error_detail("protected Docker execution failed", exc)
         ) from exc
 
     cleanup_attempted = False
@@ -577,6 +593,7 @@ def _run_docker(
     execution_error: str | None = None
     execution_cause: Exception | None = None
     close_issues = []
+    returncode: int | None = None
 
     try:
         selector = selectors.DefaultSelector()
@@ -646,10 +663,17 @@ def _run_docker(
         if remaining <= 0:
             raise subprocess.TimeoutExpired(command, timeout)
         returncode = process.wait(timeout=remaining)
-    except (subprocess.TimeoutExpired, OSError) as exc:
+    except subprocess.TimeoutExpired as exc:
         cleanup_attempted = True
         execution_error = _with_secondary(
-            f"protected Docker execution failed: {exc}",
+            f"protected Docker execution timed out after {timeout} seconds",
+            _abort_and_discard(process, identity, config_dir),
+        )
+        execution_cause = exc
+    except OSError as exc:
+        cleanup_attempted = True
+        execution_error = _with_secondary(
+            _os_error_detail("protected Docker execution failed", exc),
             _abort_and_discard(process, identity, config_dir),
         )
         execution_cause = exc
@@ -683,11 +707,15 @@ def _run_docker(
                 close_issues.append(discard_detail)
 
     if execution_error is not None or close_issues:
-        raise ProtectedJudgeUnavailable(
-            _with_secondary(
-                execution_error or "protected Docker process finalization failed",
-                _joined_details(*close_issues),
+        primary = execution_error
+        if primary is None:
+            primary = (
+                f"protected Docker process exited with status {returncode}"
+                if returncode not in (None, 0)
+                else "protected Docker process finalization failed"
             )
+        raise ProtectedJudgeUnavailable(
+            _with_secondary(primary, _joined_details(*close_issues))
         ) from execution_cause
 
     return subprocess.CompletedProcess(

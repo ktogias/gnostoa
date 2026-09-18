@@ -59,6 +59,20 @@ class SecurityScanError(RuntimeError):
     """The tracked-tree scan or its reviewed baseline is unusable."""
 
 
+def _os_error_symbol(exc: OSError) -> str:
+    """Return a closed-set symbolic errno without exception-controlled text."""
+
+    return (
+        errno.errorcode.get(exc.errno, "UNKNOWN")
+        if type(exc.errno) is int
+        else "UNKNOWN"
+    )
+
+
+def _safe_os_error(prefix: str, exc: OSError) -> str:
+    return f"{prefix} (OS error: {_os_error_symbol(exc)})"
+
+
 @dataclass(frozen=True)
 class SecretScanResult:
     """Sanitized result containing no candidate or candidate-derived hash."""
@@ -330,8 +344,10 @@ def _read_document(path: Path, label: str) -> dict[str, Any]:
         if len(raw) > _MAX_REPORT_BYTES:
             raise SecurityScanError(f"{label} exceeds the bounded size")
         document = _strict_json_loads(raw)
-    except (OSError, UnicodeDecodeError, ValueError, RecursionError) as exc:
-        raise SecurityScanError(f"cannot read {label}: {exc}") from exc
+    except OSError as exc:
+        raise SecurityScanError(_safe_os_error(f"cannot read {label}", exc)) from exc
+    except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+        raise SecurityScanError(f"cannot read {label}: invalid document") from exc
     if not isinstance(document, dict):
         raise SecurityScanError(f"{label} is not a JSON object")
     return document
@@ -375,12 +391,7 @@ def _with_secondary(primary: str, secondary: str | None) -> str:
 def _scanner_os_error(exc: OSError) -> str:
     """Classify OS failures without copying exception text or filenames."""
 
-    code = (
-        errno.errorcode.get(exc.errno, "UNKNOWN")
-        if type(exc.errno) is int
-        else "UNKNOWN"
-    )
-    return f"cannot execute the tracked-tree secret scan (OS error: {code})"
+    return _safe_os_error("cannot execute the tracked-tree secret scan", exc)
 
 
 def _run_bounded_scan(
@@ -703,7 +714,9 @@ def _copy_candidate_to_snapshot(
         raise
     except OSError as exc:
         raise SecurityScanError(
-            f"cannot snapshot candidate path {relative.as_posix()!r}: {exc}"
+            _safe_os_error(
+                f"cannot snapshot candidate path {relative.as_posix()!r}", exc
+            )
         ) from exc
     finally:
         if destination_descriptor is not None:

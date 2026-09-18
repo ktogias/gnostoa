@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -65,8 +66,15 @@ class ReviewFollowupTests(unittest.TestCase):
                     review_current._run_docker(
                         ["run", "--rm", "fixture"], config_dir=Path(directory)
                     )
-                self.assertIn("cleanup identity file", str(raised.exception))
-                self.assertNotIn(PRIVATE, str(raised.exception))
+                message = str(raised.exception)
+                self.assertIn("cleanup identity file", message)
+                if child_code:
+                    self.assertTrue(
+                        message.startswith(
+                            f"protected Docker process exited with status {child_code}"
+                        )
+                    )
+                self.assertNotIn(PRIVATE, message)
                 self.assertNotIn("recovery identity", str(raised.exception))
                 unlink.assert_called_once()
                 cleanup.assert_not_called()
@@ -136,6 +144,112 @@ class ReviewFollowupTests(unittest.TestCase):
                     self.assertIn(symbol, str(raised.exception))
                     self.assertNotIn(PRIVATE, str(raised.exception))
                     self.assertLess(len(str(raised.exception)), 256)
+
+    def test_docker_os_errors_expose_only_safe_errno(self) -> None:
+        for number, symbol in (
+            (errno.EIO, "EIO"),
+            (errno.EBADF, "EBADF"),
+            (999999, "UNKNOWN"),
+            (None, "UNKNOWN"),
+        ):
+            error = OSError(number, PRIVATE, PRIVATE)
+            with (
+                self.subTest(number=number, phase="launch"),
+                tempfile.TemporaryDirectory() as directory,
+                mock.patch.object(
+                    review_current, "_docker_executable", return_value="/usr/bin/docker"
+                ),
+                mock.patch("subprocess.Popen", side_effect=error),
+                self.assertRaises(review_current.ProtectedJudgeUnavailable) as raised,
+            ):
+                review_current._run_docker(
+                    ["run", "--rm", "fixture"], config_dir=Path(directory)
+                )
+            self.assertIn(symbol, str(raised.exception))
+            self.assertNotIn(PRIVATE, str(raised.exception))
+
+            with (
+                self.subTest(number=number, phase="cleanup"),
+                tempfile.TemporaryDirectory() as directory,
+                mock.patch("subprocess.Popen", side_effect=error),
+            ):
+                code, detail = review_current._cleanup_diagnostic(
+                    ["docker", "rm", "fixture"], config_dir=Path(directory)
+                )
+            self.assertIsNone(code)
+            self.assertIn(symbol, detail)
+            self.assertNotIn(PRIVATE, detail)
+
+    def test_security_gate_filesystem_errors_expose_only_safe_errno(self) -> None:
+        error = OSError(errno.EACCES, PRIVATE, PRIVATE)
+        with (
+            mock.patch.object(Path, "open", side_effect=error),
+            self.assertRaises(security_scan.SecurityScanError) as read_error,
+        ):
+            security_scan._read_document(
+                Path("private-baseline"), "detect-secrets baseline"
+            )
+        self.assertIn("EACCES", str(read_error.exception))
+        self.assertNotIn(PRIVATE, str(read_error.exception))
+
+        with (
+            mock.patch.object(security_scan.os, "dup", side_effect=error),
+            self.assertRaises(security_scan.SecurityScanError) as snapshot_error,
+        ):
+            security_scan._copy_candidate_to_snapshot(
+                10,
+                Path("."),
+                Path("tracked.txt"),
+                deadline=time.monotonic() + 10,
+                remaining_total_bytes=1024,
+            )
+        self.assertIn("EACCES", str(snapshot_error.exception))
+        self.assertNotIn(PRIVATE, str(snapshot_error.exception))
+
+    def test_completed_child_status_is_primary_for_close_failures(self) -> None:
+        for child_code in (3, -9):
+            for finalizer in ("stdout", "selector"):
+                with self.subTest(child_code=child_code, finalizer=finalizer):
+                    stdout = _Stream(fails=finalizer == "stdout")
+                    stderr = _Stream()
+                    process = mock.Mock(stdout=stdout, stderr=stderr, stdin=None)
+                    process.wait.return_value = child_code
+                    process.poll.return_value = child_code
+                    selector = mock.Mock()
+                    selector.get_map.return_value = {}
+                    if finalizer == "selector":
+                        selector.close.side_effect = OSError(PRIVATE)
+                    try:
+                        with (
+                            tempfile.TemporaryDirectory() as directory,
+                            mock.patch("subprocess.Popen", return_value=process),
+                            mock.patch(
+                                "selectors.DefaultSelector", return_value=selector
+                            ),
+                            mock.patch.object(
+                                review_current,
+                                "_docker_executable",
+                                return_value="/usr/bin/docker",
+                            ),
+                            self.assertRaises(
+                                review_current.ProtectedJudgeUnavailable
+                            ) as raised,
+                        ):
+                            review_current._run_docker(
+                                ["version"], config_dir=Path(directory)
+                            )
+                        message = str(raised.exception)
+                        self.assertTrue(
+                            message.startswith(
+                                f"protected Docker process exited with status {child_code}"
+                            ),
+                            message,
+                        )
+                        self.assertIn(finalizer, message)
+                        self.assertNotIn(PRIVATE, message)
+                    finally:
+                        io.BytesIO.close(stdout)
+                        io.BytesIO.close(stderr)
 
     def test_snapshot_checks_deadline_between_partial_writes(self) -> None:
         now = [0.0]

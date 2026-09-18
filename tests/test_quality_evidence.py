@@ -508,7 +508,11 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                 baseline_path=None,
                 tracked_paths=None,
             ):
-                del repository_root, baseline_path
+                self.assertEqual(root.resolve(), repository_root.resolve())
+                self.assertIn(
+                    baseline_path,
+                    (None, Path(".secrets.baseline")),
+                )
                 self.assertIsNone(tracked_paths)
                 assert report_path is not None
                 report_path.write_text('{"results": {}}\n', encoding="utf-8")
@@ -658,7 +662,11 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                 baseline_path=None,
                 tracked_paths=None,
             ):
-                del repository_root, baseline_path
+                self.assertEqual(root.resolve(), repository_root.resolve())
+                self.assertIn(
+                    baseline_path,
+                    (None, Path(".secrets.baseline")),
+                )
                 self.assertIsNone(tracked_paths)
                 assert report_path is not None
                 report_path.write_text(

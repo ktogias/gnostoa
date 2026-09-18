@@ -185,7 +185,8 @@ class FinalizerErrorTests(unittest.TestCase):
                         if failure == "timeout":
                             self.assertIn("timed out", detail.split(";")[0])
                         elif failure == "io":
-                            self.assertIn("synthetic primary I/O", detail.split(";")[0])
+                            self.assertIn("OS error: UNKNOWN", detail.split(";")[0])
+                            self.assertNotIn("synthetic primary I/O", detail)
                         elif failure == "overflow":
                             self.assertIn("bounded size", detail.split(";")[0])
                         selector.close.assert_called_once_with()
