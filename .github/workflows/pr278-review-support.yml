@@ -1,0 +1,40 @@
+name: PR278 read-only review support
+on:
+  push:
+    branches: [support/pr278-chatgpt-source-20260918]
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: e29b12950612e3696d3d087708cdd9a615d92b04
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Export exact public source and review records without executing candidate code
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = e29b12950612e3696d3d087708cdd9a615d92b04
+          test "$(git rev-parse 'HEAD^{tree}')" = e0cf8dc7600802a40c324ffda395b976bbc578c1
+          output="${RUNNER_TEMP}/pr278-review-support"
+          mkdir -p "${output}"
+          git bundle create "${output}/source.bundle" HEAD refs/remotes/origin/main
+          gh api --paginate --slurp 'repos/ktogias/gnostoa/pulls/278/reviews?per_page=100' > "${output}/reviews.json"
+          gh api --paginate --slurp 'repos/ktogias/gnostoa/pulls/278/comments?per_page=100' > "${output}/inline-comments.json"
+          gh api --paginate --slurp 'repos/ktogias/gnostoa/issues/278/comments?per_page=100' > "${output}/comments.json"
+          gh api repos/ktogias/gnostoa/pulls/278 > "${output}/pr.json"
+          (cd "${output}" && sha256sum source.bundle *.json > SHA256SUMS)
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr278-e29-review-inputs
+          path: ${{ runner.temp }}/pr278-review-support
+          if-no-files-found: error
+          retention-days: 1
