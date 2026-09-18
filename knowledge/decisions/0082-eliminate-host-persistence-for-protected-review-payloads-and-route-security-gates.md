@@ -241,7 +241,7 @@ separate read-back.
    name, job key, ordered complete step sequence, strategy/output map and exact
    dependency list. They reject any inserted, removed or changed step, extra job,
    workflow default or privilege, job/step environment override, renamed or
-   duplicated context, or suite job that is disabled, non-blocking, containerized,
+   duplicated context, or suite job that is disabled, non-blocking, wrongly native,
    dependency-skipped or wrapped by alternate shell/default behavior, while
    allowing only the exact declared `regression` and `extended` predicates.
 8. **Provider CodeQL effect remains sequenced.** After this Decision and the
