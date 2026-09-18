@@ -690,6 +690,66 @@ class ReviewFollowupTests(unittest.TestCase):
                         message,
                     )
 
+    def test_an_unexpected_body_failure_still_reports_snapshot_residue(self) -> None:
+        """Finalization evidence must survive a body failure of any type."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            real_cleanup = tempfile.TemporaryDirectory.cleanup
+
+            def failing_cleanup(
+                workspace: tempfile.TemporaryDirectory[str],
+                *,
+                real_cleanup: object = real_cleanup,
+            ) -> None:
+                real_cleanup(workspace)
+                raise RuntimeError(PRIVATE)
+
+            with (
+                mock.patch.object(
+                    tempfile.TemporaryDirectory, "cleanup", failing_cleanup
+                ),
+                self.assertRaises(security_scan.SecurityScanError) as raised,
+            ):
+                with security_scan._immutable_candidate_snapshot(root, []):
+                    raise ValueError(PRIVATE)
+
+            message = str(raised.exception)
+            self.assertIn("unexpected ValueError", message)
+            self.assertIn("unexpected RuntimeError", message)
+            self.assertNotIn(PRIVATE, message)
+            self.assertIsInstance(raised.exception.__cause__, ValueError)
+
+    def test_the_scanned_count_excludes_the_baseline_the_scan_skips(self) -> None:
+        """Evidence must not count the baseline the scan command excludes."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "tracked.txt").write_text("candidate\n", encoding="utf-8")
+            (root / ".secrets.baseline").write_text(
+                json.dumps(_report({})), encoding="utf-8"
+            )
+            completed = subprocess.CompletedProcess(
+                ["detect-secrets"],
+                0,
+                json.dumps(_report({})).encode("utf-8"),
+                b"",
+            )
+            with mock.patch.object(
+                security_scan, "_run_bounded_scan", return_value=completed
+            ) as run:
+                result = security_scan.scan_tracked_tree(
+                    root,
+                    tracked_paths=[Path(".secrets.baseline"), Path("tracked.txt")],
+                )
+
+            command = run.call_args.args[0]
+            self.assertIn("--exclude-files", command)
+            self.assertIn(".secrets.baseline", command)
+            # Both paths are operands, but the scanner is told to skip the
+            # baseline, so only one candidate is actually inspected.
+            self.assertEqual(1, result.scanned_files)
+
     def test_candidate_paths_are_bounded_in_depth(self) -> None:
         """A path deep enough to break recursive removal is refused up front."""
 

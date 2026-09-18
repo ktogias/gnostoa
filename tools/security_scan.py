@@ -38,6 +38,7 @@ _MAX_CANDIDATE_PATH_DEPTH = 64
 _SCAN_TIMEOUT_SECONDS = 300
 _PROCESS_REAP_TIMEOUT_SECONDS = 5
 _BASELINE_EXCLUDE_PATTERN = r"^\.secrets\.baseline$"
+_BASELINE_EXCLUDE = re.compile(_BASELINE_EXCLUDE_PATTERN)
 _PROTECTED_BASELINE_FILE_SHA256 = {
     "tasks/issue-11-r2a-current-advisory-consumer.json": (
         "c55f9b9d0d564c3e617f7cee5de050b321f3ca60a1d094dc36720ccb6c1394ee"  # pragma: allowlist secret -- reviewed protected-authority content digest
@@ -99,10 +100,12 @@ class SecretScanResult:
     reviewed_false_positives: int
     unresolved_findings: list[dict[str, int | str]]
     scanned_files: int = 0
-    """Candidates this scan actually covered.
+    """Candidates this scan actually inspected.
 
     Reporting this instead of a separately enumerated count keeps a summary
-    describing the same repository scope the findings came from.
+    describing the same repository scope the findings came from. The baseline
+    the scan command excludes is a candidate the scanner never reads, so it is
+    not counted here.
     """
 
 
@@ -793,9 +796,12 @@ def _copy_candidate_to_snapshot(
     secondary = "; ".join(close_issues) or None
     if primary_error is not None:
         if secondary is not None:
+            # Chain the failure that actually occurred, not the sanitized
+            # wrapper built for it, so the origin stays reachable once
+            # finalization context is appended.
             raise SecurityScanError(
                 _with_secondary(str(primary_error), secondary)
-            ) from primary_error
+            ) from (primary_cause if primary_cause is not None else primary_error)
         if primary_cause is not None:
             raise primary_error from primary_cause
         raise primary_error
@@ -863,6 +869,16 @@ def _immutable_candidate_snapshot(
             _safe_os_error("tracked-tree snapshot workspace failed", exc)
         )
         primary_cause = exc
+    except Exception as exc:
+        # Any other failure from acquisition or from the caller's body would
+        # leave the generator by unwinding, skipping the aggregation below and
+        # discarding every finalization issue the finally collected. Snapshot
+        # residue would then go unreported. The original failure is preserved
+        # as the cause and named by type only, never by its own text.
+        primary_error = SecurityScanError(
+            f"tracked-tree snapshot failed (unexpected {type(exc).__name__})"
+        )
+        primary_cause = exc
     finally:
         try:
             if workspace is not None:
@@ -903,9 +919,12 @@ def _immutable_candidate_snapshot(
     secondary = "; ".join(finalization_issues) or None
     if primary_error is not None:
         if secondary is not None:
+            # Chain the failure that actually occurred, not the sanitized
+            # wrapper built for it, so the origin stays reachable once
+            # finalization context is appended.
             raise SecurityScanError(
                 _with_secondary(str(primary_error), secondary)
-            ) from primary_error
+            ) from (primary_cause if primary_cause is not None else primary_error)
         if primary_cause is not None:
             raise primary_error from primary_cause
         raise primary_error
@@ -1042,9 +1061,12 @@ def scan_tracked_tree(
         raise SecurityScanError("tracked-tree secret scan report is not an object")
     if baseline_document is None:
         raise SecurityScanError("detect-secrets baseline was not acquired")
+    inspected_paths = [
+        path for path in scan_paths if _BASELINE_EXCLUDE.search(path.as_posix()) is None
+    ]
     result = replace(
         evaluate_secret_report(scan_document, baseline_document),
-        scanned_files=len(paths),
+        scanned_files=len(inspected_paths),
     )
     if report_path is not None:
         sanitized_report = {

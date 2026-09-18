@@ -350,8 +350,12 @@ error, not success. The cleanup diagnostic preserves a known removal-command
 exit status separately from bounded local close context; local close failure
 alone is not evidence of a container left to recover. Unknown command completion
 still fails closed, with reap attempted before returning its bounded diagnostic.
-Input-only pipe absence is identified as input, not output failure. Fault-injected
-contracts in [the finalizer suite](https://github.com/ktogias/gnostoa/blob/8be02a65195039758d8cbb90a681fea796433fc0/tests/test_protected_finalizer_errors.py)
+Input-only pipe absence is identified as input, not output failure. Snapshot
+finalization reports its collected issues behind a failure of any type: a body or
+acquisition exception the snapshot does not otherwise classify is named by type,
+retained as the chained cause and reported ahead of that context, so a cleanup
+failure and the snapshot residue it implies are never discarded by unwinding.
+Fault-injected contracts in [the finalizer suite](https://github.com/ktogias/gnostoa/blob/8be02a65195039758d8cbb90a681fea796433fc0/tests/test_protected_finalizer_errors.py)
 cover timeout, overflow, I/O and normal completion at every tested closing
 role; they establish these mechanics, not new live runtime availability.
 
