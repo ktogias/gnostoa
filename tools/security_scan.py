@@ -789,24 +789,26 @@ def _immutable_candidate_snapshot(
 
     primary_error: SecurityScanError | None = None
     primary_cause: Exception | None = None
+    workspace: tempfile.TemporaryDirectory[str] | None = None
+    finalization_issues: list[str] = []
     try:
-        with tempfile.TemporaryDirectory(prefix="gnostoa-secret-scan-") as raw_snapshot:
-            snapshot = Path(raw_snapshot)
-            deadline = time.monotonic() + _SNAPSHOT_TIMEOUT_SECONDS
-            total_bytes = 0
-            for relative in paths:
-                _check_snapshot_deadline(deadline)
-                copied_bytes = _copy_candidate_to_snapshot(
-                    root_descriptor,
-                    snapshot,
-                    relative,
-                    deadline=deadline,
-                    remaining_total_bytes=_MAX_SNAPSHOT_TOTAL_BYTES - total_bytes,
-                )
-                total_bytes += copied_bytes
-                _check_snapshot_deadline(deadline)
+        workspace = tempfile.TemporaryDirectory(prefix="gnostoa-secret-scan-")
+        snapshot = Path(workspace.name)
+        deadline = time.monotonic() + _SNAPSHOT_TIMEOUT_SECONDS
+        total_bytes = 0
+        for relative in paths:
             _check_snapshot_deadline(deadline)
-            yield snapshot
+            copied_bytes = _copy_candidate_to_snapshot(
+                root_descriptor,
+                snapshot,
+                relative,
+                deadline=deadline,
+                remaining_total_bytes=_MAX_SNAPSHOT_TOTAL_BYTES - total_bytes,
+            )
+            total_bytes += copied_bytes
+            _check_snapshot_deadline(deadline)
+        _check_snapshot_deadline(deadline)
+        yield snapshot
     except SecurityScanError as exc:
         primary_error = exc
     except OSError as exc:
@@ -815,19 +817,31 @@ def _immutable_candidate_snapshot(
         )
         primary_cause = exc
     finally:
+        if workspace is not None:
+            try:
+                workspace.cleanup()
+            except OSError as exc:
+                finalization_issues.append(
+                    _safe_os_error(
+                        "tracked-tree snapshot workspace could not be removed", exc
+                    )
+                )
         close_issue = _close_snapshot_descriptor(root_descriptor, "root")
-
-    if primary_error is not None:
         if close_issue is not None:
+            finalization_issues.append(close_issue)
+
+    secondary = "; ".join(finalization_issues) or None
+    if primary_error is not None:
+        if secondary is not None:
             raise SecurityScanError(
-                _with_secondary(str(primary_error), close_issue)
+                _with_secondary(str(primary_error), secondary)
             ) from primary_error
         if primary_cause is not None:
             raise primary_error from primary_cause
         raise primary_error
-    if close_issue is not None:
+    if secondary is not None:
         raise SecurityScanError(
-            _with_secondary("tracked-tree snapshot finalization failed", close_issue)
+            _with_secondary("tracked-tree snapshot finalization failed", secondary)
         )
 
 

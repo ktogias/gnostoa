@@ -359,6 +359,72 @@ class ReviewFollowupTests(unittest.TestCase):
                     finally:
                         real_close(root_descriptor)
 
+    def test_snapshot_traversal_close_failures_are_covered(self) -> None:
+        expected_finalizers = {
+            "parent traversal": {"parent"},
+            "current-parent traversal": {
+                "current-parent",
+                "destination",
+                "source",
+                "parent",
+            },
+        }
+        for failed_role, expected_after_failure in expected_finalizers.items():
+            with (
+                self.subTest(role=failed_role),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                snapshot = root / "snapshot"
+                snapshot.mkdir()
+                (root / "nested").mkdir()
+                (root / "nested" / "tracked.txt").write_bytes(b"")
+                root_descriptor = os.open(root, os.O_RDONLY)
+                real_close = os.close
+                observed_roles: list[str] = []
+                failed = False
+
+                def close_descriptor(descriptor: int, role: str) -> str | None:
+                    nonlocal failed
+                    observed_roles.append(role)
+                    real_close(descriptor)
+                    if role == failed_role and not failed:
+                        failed = True
+                        return (
+                            f"tracked-tree snapshot {role} descriptor could not "
+                            "be closed (OS error: EIO)"
+                        )
+                    return None
+
+                try:
+                    with (
+                        mock.patch.object(
+                            security_scan,
+                            "_close_snapshot_descriptor",
+                            side_effect=close_descriptor,
+                        ),
+                        self.assertRaises(
+                            security_scan.SecurityScanError
+                        ) as raised,
+                    ):
+                        security_scan._copy_candidate_to_snapshot(
+                            root_descriptor,
+                            snapshot,
+                            Path("nested/tracked.txt"),
+                            deadline=time.monotonic() + 10,
+                            remaining_total_bytes=1024,
+                        )
+                    message = str(raised.exception)
+                    self.assertTrue(message.startswith(f"tracked-tree snapshot {failed_role}"))
+                    self.assertNotIn(PRIVATE, message)
+                    failure_index = observed_roles.index(failed_role)
+                    self.assertTrue(
+                        expected_after_failure
+                        <= set(observed_roles[failure_index + 1 :])
+                    )
+                finally:
+                    real_close(root_descriptor)
+
     def test_snapshot_root_close_failure_preserves_primary(self) -> None:
         for primary in (False, True):
             with self.subTest(primary=primary), tempfile.TemporaryDirectory() as directory:
@@ -393,6 +459,47 @@ class ReviewFollowupTests(unittest.TestCase):
                 if primary:
                     self.assertTrue(
                         message.startswith("synthetic root snapshot primary"),
+                        message,
+                    )
+                else:
+                    self.assertTrue(
+                        message.startswith("tracked-tree snapshot finalization failed"),
+                        message,
+                    )
+
+    def test_snapshot_workspace_cleanup_preserves_primary(self) -> None:
+        for primary in (False, True):
+            with (
+                self.subTest(primary=primary),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                real_cleanup = tempfile.TemporaryDirectory.cleanup
+
+                def failing_cleanup(workspace: tempfile.TemporaryDirectory[str]) -> None:
+                    real_cleanup(workspace)
+                    raise OSError(errno.EIO, PRIVATE, PRIVATE)
+
+                with (
+                    mock.patch.object(
+                        tempfile.TemporaryDirectory,
+                        "cleanup",
+                        failing_cleanup,
+                    ),
+                    self.assertRaises(security_scan.SecurityScanError) as raised,
+                ):
+                    with security_scan._immutable_candidate_snapshot(root, []):
+                        if primary:
+                            raise security_scan.SecurityScanError(
+                                "synthetic workspace primary"
+                            )
+                message = str(raised.exception)
+                self.assertIn("workspace could not be removed", message)
+                self.assertIn("EIO", message)
+                self.assertNotIn(PRIVATE, message)
+                if primary:
+                    self.assertTrue(
+                        message.startswith("synthetic workspace primary"),
                         message,
                     )
                 else:
