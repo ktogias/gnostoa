@@ -155,7 +155,10 @@ separate read-back.
    stream. Discarding the CID file is itself subordinate and never raises; every
    abort path discards it once cleanup is confirmed and reports any discard
    problem as part of its own secondary context, while an unconfirmed cleanup
-   does not proactively unlink it and leaves the recovery identity behind. Retain the
+   does not proactively unlink it and leaves the recovery identity behind.
+   Cleanup confirmation is reported separately from client reaping: a reap that
+   cannot be confirmed is secondary context only, and never withholds the
+   discard or advertises a recovery identity for an already removed container. Retain the
    executable used to launch Docker, treat unreadable or malformed CID content
    as a name fallback, bound child reaping, and attempt container cleanup even
    when client reaping cannot be confirmed. Docker options before the image fail closed against the exact

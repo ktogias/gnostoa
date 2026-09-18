@@ -121,6 +121,20 @@ class _ContainerRunIdentity:
     executable: str | None = None
 
 
+@dataclass(frozen=True)
+class _AbortOutcome:
+    """Bounded secondary context for one abort, plus its cleanup verdict.
+
+    ``cleanup_confirmed`` reports container removal only. A client reap failure
+    is reported in ``detail`` without withdrawing that confirmation, so a reaped
+    identity is still discarded and no recovery identity is advertised for an
+    already removed container.
+    """
+
+    detail: str | None
+    cleanup_confirmed: bool
+
+
 def _docker_executable() -> str:
     executable = shutil.which("docker", path=os.defpath)
     if executable is None:
@@ -388,12 +402,14 @@ def _abort_docker_run(
     process: subprocess.Popen[bytes],
     identity: _ContainerRunIdentity | None,
     config_dir: Path,
-) -> str | None:
+) -> _AbortOutcome:
     """Abort one protected Docker run and report bounded secondary context.
 
     The abort itself never raises: reap and cleanup problems are returned so the
     caller can keep the triggering timeout, bounded-size or I/O failure as the
-    primary diagnostic and attach this detail as secondary context.
+    primary diagnostic and attach this detail as secondary context. Container
+    cleanup is reported separately from reaping, because only an unconfirmed
+    removal leaves a container behind to recover.
     """
 
     issues: list[str] = []
@@ -404,13 +420,10 @@ def _abort_docker_run(
     cleanup_issue = _cleanup_container(identity, config_dir)
     if cleanup_issue is not None:
         issues.append(cleanup_issue)
-    if not issues:
-        return None
-    if identity is not None and not any(
-        "recovery identity" in issue for issue in issues
-    ):
-        issues.append(f"recovery identity: {identity.name}")
-    return "; ".join(issues)
+    return _AbortOutcome(
+        detail="; ".join(issues) if issues else None,
+        cleanup_confirmed=cleanup_issue is None,
+    )
 
 
 def _with_secondary(primary: str, secondary: str | None) -> str:
@@ -439,9 +452,9 @@ def _abort_and_discard(
     failure and is never raised.
     """
 
-    abort_detail = _abort_docker_run(process, identity, config_dir)
-    discard_detail = _discard_cidfile(identity) if abort_detail is None else None
-    return _joined_details(abort_detail, discard_detail)
+    outcome = _abort_docker_run(process, identity, config_dir)
+    discard_detail = _discard_cidfile(identity) if outcome.cleanup_confirmed else None
+    return _joined_details(outcome.detail, discard_detail)
 
 
 def _run_docker(

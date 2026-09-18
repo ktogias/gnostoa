@@ -832,6 +832,46 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
         self.assertIn("timed out", message)
         self.assertIn("cleanup identity", message)
 
+    def test_reap_failure_still_discards_a_confirmed_cleanup_identity(self) -> None:
+        """A reap failure is not evidence that container cleanup is unconfirmed."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            config_dir = Path(directory)
+            identity = review_current._ContainerRunIdentity(
+                name="gnostoa-protected-test",
+                cidfile=config_dir / "candidate.cid",
+            )
+            process = mock.Mock(spec=subprocess.Popen)
+            process.poll.return_value = None
+            process.wait.side_effect = subprocess.TimeoutExpired(
+                ["docker", "run"],
+                1,
+            )
+            with (
+                mock.patch.object(
+                    review_current,
+                    "_cleanup_container",
+                    return_value=None,
+                ),
+                mock.patch.object(
+                    Path,
+                    "unlink",
+                    side_effect=OSError("cannot remove cleanup identity"),
+                ) as unlink,
+            ):
+                detail = review_current._abort_and_discard(
+                    process,
+                    identity,
+                    config_dir,
+                )
+
+        unlink.assert_called_once()
+        self.assertIsNotNone(detail)
+        assert detail is not None
+        self.assertIn("reap", detail)
+        self.assertIn("cleanup identity", detail)
+        self.assertNotIn("recovery identity", detail)
+
     def test_abort_reap_is_bounded_and_cleanup_runs_after_reap_timeout(
         self,
     ) -> None:
@@ -852,15 +892,17 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
                 "_cleanup_container",
                 return_value=None,
             ) as cleanup:
-                detail = review_current._abort_docker_run(
+                outcome = review_current._abort_docker_run(
                     process,
                     identity,
                     config_dir,
                 )
 
-        self.assertIsNotNone(detail)
-        assert detail is not None
-        self.assertRegex(detail, "reap.*recovery identity")
+        self.assertTrue(outcome.cleanup_confirmed)
+        self.assertIsNotNone(outcome.detail)
+        assert outcome.detail is not None
+        self.assertIn("reap", outcome.detail)
+        self.assertNotIn("recovery identity", outcome.detail)
 
         process.wait.assert_called_once_with(
             timeout=review_current._PROCESS_REAP_TIMEOUT_SECONDS
