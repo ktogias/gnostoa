@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -110,17 +111,20 @@ def route_extended(
 
 def _changed_paths() -> tuple[str, ...]:
     raw = bytearray()
+    try:
+        descriptor = sys.stdin.buffer.fileno()
+    except (AttributeError, OSError, ValueError) as exc:
+        raise ValueError("changed-path input could not be read") from exc
     while len(raw) <= _MAX_PATH_INPUT_BYTES:
         try:
-            chunk = sys.stdin.buffer.read(
-                min(65_536, _MAX_PATH_INPUT_BYTES + 1 - len(raw))
+            chunk = os.read(
+                descriptor,
+                min(65_536, _MAX_PATH_INPUT_BYTES + 1 - len(raw)),
             )
         except BlockingIOError as exc:
             raise ValueError("changed-path input is incomplete") from exc
         except OSError as exc:
             raise ValueError("changed-path input could not be read") from exc
-        if chunk is None:
-            raise ValueError("changed-path input is incomplete")
         if not chunk:
             break
         raw.extend(chunk)
