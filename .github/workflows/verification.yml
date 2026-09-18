@@ -438,9 +438,6 @@ jobs:
             } >> "${GITHUB_OUTPUT}"
             echo "extended route: RUN — ${force_reason}"
           else
-            # Restricted native path: execute only comparison-base router bytes
-            # under isolated Python; a candidate-built image would restore a
-            # candidate-controlled startup surface at this trust boundary.
             python -I "${router_file}" \
               --event "${GITHUB_EVENT_NAME}" \
               --ref "${GITHUB_REF}" \
