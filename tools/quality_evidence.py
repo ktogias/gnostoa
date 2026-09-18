@@ -1232,7 +1232,7 @@ def collect_quality_evidence(
             },
             "secret_scan": {
                 "boundary": "current Git-tracked regular-file working tree only",
-                "tracked_files": len(tracked_paths),
+                "tracked_files": secret_result.scanned_files,
                 "baseline": ".secrets.baseline",
             },
         },

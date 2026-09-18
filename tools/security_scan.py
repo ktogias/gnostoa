@@ -16,7 +16,7 @@ import tempfile
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, NoReturn
@@ -98,6 +98,12 @@ class SecretScanResult:
 
     reviewed_false_positives: int
     unresolved_findings: list[dict[str, int | str]]
+    scanned_files: int = 0
+    """Candidates this scan actually covered.
+
+    Reporting this instead of a separately enumerated count keeps a summary
+    describing the same repository scope the findings came from.
+    """
 
 
 SecretIdentity = tuple[str, str, str, int]
@@ -990,7 +996,10 @@ def scan_tracked_tree(
         raise SecurityScanError("tracked-tree secret scan report is not an object")
     if baseline_document is None:
         raise SecurityScanError("detect-secrets baseline was not acquired")
-    result = evaluate_secret_report(scan_document, baseline_document)
+    result = replace(
+        evaluate_secret_report(scan_document, baseline_document),
+        scanned_files=len(paths),
+    )
     if report_path is not None:
         sanitized_report = {
             "schema_version": 1,

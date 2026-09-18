@@ -519,6 +519,11 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                 return SecretScanResult(
                     reviewed_false_positives=4,
                     unresolved_findings=[],
+                    # Deliberately different from the collector's own
+                    # candidate_paths() result below: the summary must report
+                    # the scope the scan actually covered, not a second
+                    # enumeration that may describe a different tree state.
+                    scanned_files=7,
                 )
 
             with (
@@ -584,7 +589,7 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                 {
                     "baseline": ".secrets.baseline",
                     "boundary": "current Git-tracked regular-file working tree only",
-                    "tracked_files": 1,
+                    "tracked_files": 7,
                 },
                 summary["scope"]["secret_scan"],
             )
