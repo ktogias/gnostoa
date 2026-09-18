@@ -149,8 +149,11 @@ separate read-back.
    appended as bounded secondary context with the predeclared recovery name. A
    container the runtime already removed under `--rm` is reconciled as
    successful absence through the bounded case-insensitive `no such container`
-   response; every other bounded diagnostic stays fail-closed and retried. An
-   unconfirmed cleanup does not proactively unlink the CID file. Retain the
+   response; every other bounded diagnostic stays fail-closed and retried. The
+   cleanup diagnostic is read incrementally and the cleanup client is stopped as
+   soon as the bound is reached, so a noisy client cannot buffer an unbounded
+   stream. Discarding the CID file is itself subordinate and never raises; an
+   unconfirmed cleanup does not proactively unlink it. Retain the
    executable used to launch Docker, treat unreadable or malformed CID content
    as a name fallback, bound child reaping, and attempt container cleanup even
    when client reaping cannot be confirmed. Docker options before the image fail closed against the exact
@@ -279,6 +282,9 @@ Pre-implementation RED evidence and the final candidate must demonstrate:
 - timeout and output-overflow failures survive a failed cleanup as the primary
   diagnostic, an already-absent container reconciles as successful cleanup, and
   every other bounded cleanup diagnostic is retried and reported;
+- a failure to remove the CID file is reported as secondary context rather than
+  replacing the primary failure, and the cleanup diagnostic bound limits what is
+  read rather than only what is retained;
 - the tracked-tree scanner applies the same rule: a failed child reap is
   secondary context and never replaces the pipe, bounded-size, timeout or I/O
   failure that triggered it;

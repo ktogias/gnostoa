@@ -228,6 +228,109 @@ def _bounded_diagnostic(raw: bytes | None) -> str:
     return " ".join(decoded.split())
 
 
+def _discard_cidfile(identity: _ContainerRunIdentity | None) -> str | None:
+    """Remove the predeclared cleanup identity file without ever raising.
+
+    Discarding the identity file is subordinate to whatever failure is being
+    reported, so a filesystem problem here is returned as bounded secondary
+    context instead of replacing the caller's primary diagnostic.
+    """
+
+    if identity is None:
+        return None
+    try:
+        identity.cidfile.unlink(missing_ok=True)
+    except OSError as exc:
+        return f"protected Docker cleanup identity file could not be removed: {exc}"
+    return None
+
+
+def _cleanup_diagnostic(
+    command: list[str],
+    *,
+    config_dir: Path,
+) -> tuple[int | None, str]:
+    """Run one cleanup command, reading only a bounded stderr prefix.
+
+    The child is stopped as soon as the diagnostic bound is reached, so a noisy
+    or malfunctioning cleanup client cannot buffer an unbounded stream. Returns
+    the exit status, or ``None`` when the command could not be run or did not
+    complete, together with the bounded diagnostic.
+    """
+
+    try:
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            env=_docker_environment(config_dir),
+        )
+    except OSError as exc:
+        return None, str(exc) or exc.__class__.__name__
+
+    diagnostic = bytearray()
+    overflowed = False
+    issue = ""
+    returncode: int | None = None
+    stream = process.stderr
+    selector: selectors.BaseSelector | None = None
+    deadline = time.monotonic() + _DOCKER_CLEANUP_TIMEOUT_SECONDS
+    try:
+        if stream is None:
+            raise OSError("protected Docker cleanup stderr is unavailable")
+        selector = selectors.DefaultSelector()
+        selector.register(stream, selectors.EVENT_READ)
+        while selector.get_map() and not overflowed:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not selector.select(remaining):
+                raise subprocess.TimeoutExpired(
+                    command,
+                    _DOCKER_CLEANUP_TIMEOUT_SECONDS,
+                )
+            wanted = _MAX_CLEANUP_DIAGNOSTIC_BYTES + 1 - len(diagnostic)
+            chunk = os.read(
+                stream.fileno(),
+                max(1, min(_READ_CHUNK_BYTES, wanted)),
+            )
+            if not chunk:
+                selector.unregister(stream)
+                continue
+            diagnostic.extend(chunk)
+            overflowed = len(diagnostic) > _MAX_CLEANUP_DIAGNOSTIC_BYTES
+        if overflowed:
+            issue = "protected Docker cleanup diagnostic exceeds the bounded size"
+        else:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(
+                    command,
+                    _DOCKER_CLEANUP_TIMEOUT_SECONDS,
+                )
+            returncode = process.wait(timeout=remaining)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        issue = str(exc) or exc.__class__.__name__
+    finally:
+        if selector is not None:
+            selector.close()
+        if process.poll() is None:
+            try:
+                process.kill()
+            except OSError:
+                pass
+        try:
+            process.wait(timeout=_PROCESS_REAP_TIMEOUT_SECONDS)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        if stream is not None:
+            stream.close()
+
+    detail = _bounded_diagnostic(bytes(diagnostic))
+    if returncode is None:
+        return None, issue or detail or "protected Docker cleanup did not complete"
+    return returncode, detail
+
+
 def _cleanup_container(
     identity: _ContainerRunIdentity | None,
     config_dir: Path,
@@ -263,25 +366,18 @@ def _cleanup_container(
 
     last_issue = "no cleanup attempt completed"
     for _attempt in range(_DOCKER_CLEANUP_ATTEMPTS):
-        try:
-            completed = subprocess.run(
-                [executable, "rm", "-f", cleanup_target],
-                check=False,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-                timeout=_DOCKER_CLEANUP_TIMEOUT_SECONDS,
-                env=_docker_environment(config_dir),
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            last_issue = str(exc) or exc.__class__.__name__
-            continue
-        if completed.returncode == 0:
+        returncode, detail = _cleanup_diagnostic(
+            [executable, "rm", "-f", cleanup_target],
+            config_dir=config_dir,
+        )
+        if returncode == 0:
             return None
-        detail = _bounded_diagnostic(completed.stderr)
-        if _ABSENT_CONTAINER_DIAGNOSTIC in detail.casefold():
+        if returncode is not None and _ABSENT_CONTAINER_DIAGNOSTIC in detail.casefold():
             return None
-        last_issue = detail or f"status {completed.returncode}"
+        if returncode is not None:
+            last_issue = detail or f"status {returncode}"
+        else:
+            last_issue = detail or "protected Docker cleanup did not complete"
     return (
         f"protected Docker container cleanup failed after retries: {last_issue}; "
         f"recovery identity: {identity.name}"
@@ -376,12 +472,14 @@ def _run_docker(
         cleanup_attempted = True
         abort_detail = _abort_docker_run(process, identity, config_dir)
         cleanup_confirmed = abort_detail is None
-        if identity is not None and cleanup_confirmed:
-            identity.cidfile.unlink(missing_ok=True)
+        discard_detail = _discard_cidfile(identity) if cleanup_confirmed else None
         raise ProtectedJudgeUnavailable(
             _with_secondary(
-                "protected Docker output pipes are unavailable",
-                abort_detail,
+                _with_secondary(
+                    "protected Docker output pipes are unavailable",
+                    abort_detail,
+                ),
+                discard_detail,
             )
         )
 
@@ -480,7 +578,7 @@ def _run_docker(
         if input_view is not None:
             input_view.release()
         if identity is not None and (not cleanup_attempted or cleanup_confirmed):
-            identity.cidfile.unlink(missing_ok=True)
+            _discard_cidfile(identity)
 
     return subprocess.CompletedProcess(
         command,

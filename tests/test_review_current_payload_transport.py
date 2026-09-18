@@ -275,12 +275,7 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
             observed["process"] = process
             return process
 
-        cleanup = mock.Mock(
-            return_value=subprocess.CompletedProcess(
-                ["docker", "rm", "-f", "candidate"],
-                0,
-            )
-        )
+        cleanup = mock.Mock(return_value=(0, ""))
         requested_name = "gnostoa-protected-explicit-test"
         with tempfile.TemporaryDirectory() as directory:
             try:
@@ -301,8 +296,8 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
                         side_effect=OSError("cannot configure stdin"),
                     ),
                     mock.patch.object(
-                        review_current.subprocess,
-                        "run",
+                        review_current,
+                        "_cleanup_diagnostic",
                         cleanup,
                     ),
                 ):
@@ -360,12 +355,7 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
             observed["process"] = process
             return process
 
-        cleanup = mock.Mock(
-            return_value=subprocess.CompletedProcess(
-                ["docker", "rm", "-f", "candidate"],
-                1,
-            )
-        )
+        cleanup = mock.Mock(return_value=(1, ""))
         with tempfile.TemporaryDirectory() as directory:
             try:
                 with (
@@ -385,8 +375,8 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
                         side_effect=OSError("cannot configure stdin"),
                     ),
                     mock.patch.object(
-                        review_current.subprocess,
-                        "run",
+                        review_current,
+                        "_cleanup_diagnostic",
                         cleanup,
                     ),
                 ):
@@ -441,12 +431,7 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
             observed["process"] = process
             return process
 
-        cleanup = mock.Mock(
-            return_value=subprocess.CompletedProcess(
-                ["docker", "rm", "-f", "candidate"],
-                0,
-            )
-        )
+        cleanup = mock.Mock(return_value=(0, ""))
         with tempfile.TemporaryDirectory() as directory:
             try:
                 with (
@@ -466,8 +451,8 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
                         side_effect=start_process,
                     ),
                     mock.patch.object(
-                        review_current.subprocess,
-                        "run",
+                        review_current,
+                        "_cleanup_diagnostic",
                         cleanup,
                     ),
                 ):
@@ -501,19 +486,14 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
                 name="gnostoa-protected-test",
                 cidfile=cidfile,
             )
-            cleanup = mock.Mock(
-                return_value=subprocess.CompletedProcess(
-                    ["docker", "rm", "-f", identity.name],
-                    0,
-                )
-            )
+            cleanup = mock.Mock(return_value=(0, ""))
             with (
                 mock.patch.object(
                     review_current,
                     "_docker_executable",
                     return_value="docker",
                 ),
-                mock.patch.object(review_current.subprocess, "run", cleanup),
+                mock.patch.object(review_current, "_cleanup_diagnostic", cleanup),
             ):
                 review_current._cleanup_container(identity, config_dir)
 
@@ -542,12 +522,7 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
             return process
 
         cleanup = mock.Mock(
-            return_value=subprocess.CompletedProcess(
-                ["docker", "rm", "-f", "candidate"],
-                1,
-                b"",
-                b"Error response from daemon: cannot connect to the daemon",
-            )
+            return_value=(1, "Error response from daemon: cannot connect to the daemon")
         )
         with tempfile.TemporaryDirectory() as directory:
             try:
@@ -563,8 +538,8 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
                         side_effect=start_process,
                     ),
                     mock.patch.object(
-                        review_current.subprocess,
-                        "run",
+                        review_current,
+                        "_cleanup_diagnostic",
                         cleanup,
                     ),
                 ):
@@ -614,12 +589,7 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
             return process
 
         cleanup = mock.Mock(
-            return_value=subprocess.CompletedProcess(
-                ["docker", "rm", "-f", "candidate"],
-                1,
-                b"",
-                b"Error response from daemon: device or resource busy",
-            )
+            return_value=(1, "Error response from daemon: device or resource busy")
         )
         with tempfile.TemporaryDirectory() as directory:
             try:
@@ -640,8 +610,8 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
                         side_effect=start_process,
                     ),
                     mock.patch.object(
-                        review_current.subprocess,
-                        "run",
+                        review_current,
+                        "_cleanup_diagnostic",
                         cleanup,
                     ),
                 ):
@@ -674,12 +644,9 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
                 cidfile=config_dir / "candidate.cid",
             )
             cleanup = mock.Mock(
-                return_value=subprocess.CompletedProcess(
-                    ["docker", "rm", "-f", identity.name],
+                return_value=(
                     1,
-                    b"",
-                    "Error response from daemon: No such container: "
-                    f"{identity.name}".encode(),
+                    f"Error response from daemon: No such container: {identity.name}",
                 )
             )
             with (
@@ -688,7 +655,7 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
                     "_docker_executable",
                     return_value="docker",
                 ),
-                mock.patch.object(review_current.subprocess, "run", cleanup),
+                mock.patch.object(review_current, "_cleanup_diagnostic", cleanup),
             ):
                 issue = review_current._cleanup_container(identity, config_dir)
 
@@ -705,11 +672,9 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
                 cidfile=config_dir / "candidate.cid",
             )
             cleanup = mock.Mock(
-                return_value=subprocess.CompletedProcess(
-                    ["docker", "rm", "-f", identity.name],
+                return_value=(
                     1,
-                    b"",
-                    b"Error response from daemon: container is marked for removal",
+                    "Error response from daemon: container is marked for removal",
                 )
             )
             with (
@@ -718,7 +683,7 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
                     "_docker_executable",
                     return_value="docker",
                 ),
-                mock.patch.object(review_current.subprocess, "run", cleanup),
+                mock.patch.object(review_current, "_cleanup_diagnostic", cleanup),
             ):
                 issue = review_current._cleanup_container(identity, config_dir)
 
@@ -727,6 +692,81 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
         self.assertIn("cleanup", issue)
         self.assertIn("marked for removal", issue)
         self.assertEqual(3, cleanup.call_count)
+
+    def test_cidfile_removal_failure_does_not_replace_the_primary_failure(
+        self,
+    ) -> None:
+        """Discarding the cleanup identity is subordinate to the real failure."""
+
+        process = mock.Mock(spec=subprocess.Popen)
+        process.stdout = None
+        process.stderr = None
+        process.stdin = None
+        process.poll.return_value = 0
+
+        with tempfile.TemporaryDirectory() as directory:
+            with (
+                mock.patch.object(
+                    review_current,
+                    "_docker_executable",
+                    return_value="docker",
+                ),
+                mock.patch.object(
+                    review_current.subprocess,
+                    "Popen",
+                    return_value=process,
+                ),
+                mock.patch.object(
+                    review_current,
+                    "_cleanup_container",
+                    return_value=None,
+                ),
+                mock.patch.object(
+                    Path,
+                    "unlink",
+                    side_effect=OSError("cannot remove cleanup identity"),
+                ),
+            ):
+                with self.assertRaises(
+                    review_current.ProtectedJudgeUnavailable
+                ) as raised:
+                    review_current._run_docker(
+                        ["run", "--rm", "example-image"],
+                        config_dir=Path(directory),
+                    )
+
+        message = str(raised.exception)
+        self.assertIn("output pipes are unavailable", message)
+        self.assertIn("cleanup identity", message)
+
+    def test_cleanup_diagnostic_is_bounded_while_it_is_read(self) -> None:
+        """The cleanup stderr bound limits what is read, not only what is kept."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            config_dir = Path(directory)
+            sentinel = config_dir / "child-completed"
+            script = (
+                "import sys, pathlib\n"
+                "sys.stderr.buffer.write(b'x' * 1048576)\n"
+                "sys.stderr.buffer.flush()\n"
+                f"pathlib.Path({str(sentinel)!r}).write_text('done')\n"
+            )
+            with mock.patch.object(
+                review_current,
+                "_MAX_CLEANUP_DIAGNOSTIC_BYTES",
+                64,
+            ):
+                returncode, detail = review_current._cleanup_diagnostic(
+                    [sys.executable, "-c", script],
+                    config_dir=config_dir,
+                )
+
+            self.assertLessEqual(len(detail), 64)
+            self.assertFalse(
+                sentinel.exists(),
+                "cleanup child ran to completion, so its stderr was fully buffered",
+            )
+            self.assertNotEqual(0, returncode)
 
     def test_abort_reap_is_bounded_and_cleanup_runs_after_reap_timeout(
         self,
