@@ -73,6 +73,20 @@ def _safe_os_error(prefix: str, exc: OSError) -> str:
     return f"{prefix} (OS error: {_os_error_symbol(exc)})"
 
 
+def _close_snapshot_descriptor(descriptor: int | None, role: str) -> str | None:
+    """Close one snapshot descriptor without publishing exception-controlled text."""
+
+    if descriptor is None:
+        return None
+    try:
+        os.close(descriptor)
+    except OSError as exc:
+        return _safe_os_error(
+            f"tracked-tree snapshot {role} descriptor could not be closed", exc
+        )
+    return None
+
+
 @dataclass(frozen=True)
 class SecretScanResult:
     """Sanitized result containing no candidate or candidate-derived hash."""
@@ -618,6 +632,11 @@ def _copy_candidate_to_snapshot(
     parent_descriptor: int | None = None
     source_descriptor: int | None = None
     destination_descriptor: int | None = None
+    current_parent_descriptor: int | None = None
+    copied_bytes = 0
+    primary_error: SecurityScanError | None = None
+    primary_cause: Exception | None = None
+    close_issues: list[str] = []
     try:
         parent_descriptor = os.dup(root_descriptor)
         for part in relative.parts[:-1]:
@@ -626,8 +645,13 @@ def _copy_candidate_to_snapshot(
                 os.O_RDONLY | directory | nofollow,
                 dir_fd=parent_descriptor,
             )
-            os.close(parent_descriptor)
+            previous_descriptor = parent_descriptor
             parent_descriptor = next_descriptor
+            close_issue = _close_snapshot_descriptor(
+                previous_descriptor, "parent traversal"
+            )
+            if close_issue is not None:
+                raise SecurityScanError(close_issue)
 
         source_descriptor = os.open(
             relative.name,
@@ -655,7 +679,6 @@ def _copy_candidate_to_snapshot(
             os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow,
             0o600,
         )
-        copied_bytes = 0
         while True:
             _check_snapshot_deadline(deadline)
             chunk = os.read(source_descriptor, _SNAPSHOT_CHUNK_BYTES)
@@ -680,26 +703,24 @@ def _copy_candidate_to_snapshot(
             follow_symlinks=False,
         )
         current_parent_descriptor = os.dup(root_descriptor)
-        try:
-            for part in relative.parts[:-1]:
-                next_descriptor = os.open(
-                    part,
-                    os.O_RDONLY | directory | nofollow,
-                    dir_fd=current_parent_descriptor,
-                )
-                os.close(current_parent_descriptor)
-                current_parent_descriptor = next_descriptor
-            current_visible = os.stat(
-                relative.name,
+        for part in relative.parts[:-1]:
+            next_descriptor = os.open(
+                part,
+                os.O_RDONLY | directory | nofollow,
                 dir_fd=current_parent_descriptor,
-                follow_symlinks=False,
             )
-        except OSError as exc:
-            raise SecurityScanError(
-                f"candidate path changed while snapshotting: {relative.as_posix()!r}"
-            ) from exc
-        finally:
-            os.close(current_parent_descriptor)
+            previous_descriptor = current_parent_descriptor
+            current_parent_descriptor = next_descriptor
+            close_issue = _close_snapshot_descriptor(
+                previous_descriptor, "current-parent traversal"
+            )
+            if close_issue is not None:
+                raise SecurityScanError(close_issue)
+        current_visible = os.stat(
+            relative.name,
+            dir_fd=current_parent_descriptor,
+            follow_symlinks=False,
+        )
         if (
             _stable_file_metadata(before) != _stable_file_metadata(after)
             or _stable_file_metadata(after) != _stable_file_metadata(visible)
@@ -709,22 +730,40 @@ def _copy_candidate_to_snapshot(
                 f"candidate path changed while snapshotting: {relative.as_posix()!r}"
             )
         _check_snapshot_deadline(deadline)
-        return copied_bytes
-    except SecurityScanError:
-        raise
+    except SecurityScanError as exc:
+        primary_error = exc
     except OSError as exc:
-        raise SecurityScanError(
+        primary_error = SecurityScanError(
             _safe_os_error(
                 f"cannot snapshot candidate path {relative.as_posix()!r}", exc
             )
-        ) from exc
+        )
+        primary_cause = exc
     finally:
-        if destination_descriptor is not None:
-            os.close(destination_descriptor)
-        if source_descriptor is not None:
-            os.close(source_descriptor)
-        if parent_descriptor is not None:
-            os.close(parent_descriptor)
+        for role, descriptor in (
+            ("current-parent", current_parent_descriptor),
+            ("destination", destination_descriptor),
+            ("source", source_descriptor),
+            ("parent", parent_descriptor),
+        ):
+            close_issue = _close_snapshot_descriptor(descriptor, role)
+            if close_issue is not None:
+                close_issues.append(close_issue)
+
+    secondary = "; ".join(close_issues) or None
+    if primary_error is not None:
+        if secondary is not None:
+            raise SecurityScanError(
+                _with_secondary(str(primary_error), secondary)
+            ) from primary_error
+        if primary_cause is not None:
+            raise primary_error from primary_cause
+        raise primary_error
+    if secondary is not None:
+        raise SecurityScanError(
+            _with_secondary("tracked-tree snapshot finalization failed", secondary)
+        )
+    return copied_bytes
 
 
 @contextmanager
@@ -743,6 +782,9 @@ def _immutable_candidate_snapshot(
         root_descriptor = os.open(root, os.O_RDONLY | directory | nofollow)
     except OSError as exc:
         raise SecurityScanError("cannot open the tracked-tree root safely") from exc
+
+    primary_error: SecurityScanError | None = None
+    primary_cause: Exception | None = None
     try:
         with tempfile.TemporaryDirectory(prefix="gnostoa-secret-scan-") as raw_snapshot:
             snapshot = Path(raw_snapshot)
@@ -761,8 +803,28 @@ def _immutable_candidate_snapshot(
                 _check_snapshot_deadline(deadline)
             _check_snapshot_deadline(deadline)
             yield snapshot
+    except SecurityScanError as exc:
+        primary_error = exc
+    except OSError as exc:
+        primary_error = SecurityScanError(
+            _safe_os_error("tracked-tree snapshot workspace failed", exc)
+        )
+        primary_cause = exc
     finally:
-        os.close(root_descriptor)
+        close_issue = _close_snapshot_descriptor(root_descriptor, "root")
+
+    if primary_error is not None:
+        if close_issue is not None:
+            raise SecurityScanError(
+                _with_secondary(str(primary_error), close_issue)
+            ) from primary_error
+        if primary_cause is not None:
+            raise primary_error from primary_cause
+        raise primary_error
+    if close_issue is not None:
+        raise SecurityScanError(
+            _with_secondary("tracked-tree snapshot finalization failed", close_issue)
+        )
 
 
 def _file_sha256(root: Path, relative: Path) -> str:

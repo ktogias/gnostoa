@@ -275,6 +275,121 @@ class ReviewFollowupTests(unittest.TestCase):
                         io.BytesIO.close(stdout)
                         io.BytesIO.close(stderr)
 
+    def test_snapshot_descriptor_close_failures_preserve_primary(self) -> None:
+        for failed_role in ("current-parent", "destination", "source", "parent"):
+            for primary in (False, True):
+                with (
+                    self.subTest(role=failed_role, primary=primary),
+                    tempfile.TemporaryDirectory() as directory,
+                ):
+                    root = Path(directory)
+                    snapshot = root / "snapshot"
+                    snapshot.mkdir()
+                    (root / "tracked.txt").write_bytes(b"")
+                    root_descriptor = os.open(root, os.O_RDONLY)
+                    real_close = os.close
+                    deadline_checks = 0
+
+                    def close_descriptor(descriptor: int, role: str) -> str | None:
+                        real_close(descriptor)
+                        if role == failed_role:
+                            return (
+                                f"tracked-tree snapshot {role} descriptor could not "
+                                "be closed (OS error: EIO)"
+                            )
+                        return None
+
+                    def check_deadline(_deadline: float) -> None:
+                        nonlocal deadline_checks
+                        deadline_checks += 1
+                        if primary and deadline_checks == 3:
+                            raise security_scan.SecurityScanError(
+                                "synthetic snapshot primary"
+                            )
+
+                    try:
+                        with (
+                            mock.patch.object(
+                                security_scan,
+                                "_close_snapshot_descriptor",
+                                side_effect=close_descriptor,
+                            ),
+                            mock.patch.object(
+                                security_scan,
+                                "_check_snapshot_deadline",
+                                side_effect=check_deadline,
+                            ),
+                            self.assertRaises(
+                                security_scan.SecurityScanError
+                            ) as raised,
+                        ):
+                            security_scan._copy_candidate_to_snapshot(
+                                root_descriptor,
+                                snapshot,
+                                Path("tracked.txt"),
+                                deadline=time.monotonic() + 10,
+                                remaining_total_bytes=1024,
+                            )
+                        message = str(raised.exception)
+                        self.assertIn(failed_role, message)
+                        self.assertNotIn(PRIVATE, message)
+                        if primary:
+                            self.assertTrue(
+                                message.startswith("synthetic snapshot primary"),
+                                message,
+                            )
+                        else:
+                            self.assertTrue(
+                                message.startswith(
+                                    "tracked-tree snapshot finalization failed"
+                                ),
+                                message,
+                            )
+                    finally:
+                        real_close(root_descriptor)
+
+    def test_snapshot_root_close_failure_preserves_primary(self) -> None:
+        for primary in (False, True):
+            with self.subTest(primary=primary), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                real_close = os.close
+
+                def close_descriptor(descriptor: int, role: str) -> str | None:
+                    real_close(descriptor)
+                    if role == "root":
+                        return (
+                            "tracked-tree snapshot root descriptor could not be closed "
+                            "(OS error: EIO)"
+                        )
+                    return None
+
+                with (
+                    mock.patch.object(
+                        security_scan,
+                        "_close_snapshot_descriptor",
+                        side_effect=close_descriptor,
+                    ),
+                    self.assertRaises(security_scan.SecurityScanError) as raised,
+                ):
+                    with security_scan._immutable_candidate_snapshot(root, []):
+                        if primary:
+                            raise security_scan.SecurityScanError(
+                                "synthetic root snapshot primary"
+                            )
+                message = str(raised.exception)
+                self.assertIn("root descriptor", message)
+                self.assertNotIn(PRIVATE, message)
+                if primary:
+                    self.assertTrue(
+                        message.startswith("synthetic root snapshot primary"),
+                        message,
+                    )
+                else:
+                    self.assertTrue(
+                        message.startswith("tracked-tree snapshot finalization failed"),
+                        message,
+                    )
+
     def test_snapshot_checks_deadline_between_partial_writes(self) -> None:
         now = [0.0]
         writes = []
