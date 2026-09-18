@@ -1,0 +1,44 @@
+name: PR278 stabilization source support
+
+on:
+  push:
+    branches: [support/pr278-chatgpt-source-20260918]
+    paths: [.github/workflows/pr278-stabilize-source-support.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  source-support:
+    name: pr278-source-input-only-not-a-merge-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 03fcf13dd016b811dc84db3e29e200c998e6e315
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.11'
+      - name: Export exact public source and locked offline dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 03fcf13dd016b811dc84db3e29e200c998e6e315
+          test "$(git rev-parse 'HEAD^{tree}')" = 282e3178a385c1952b26a4dad034dfd062824c2b
+          output="${RUNNER_TEMP}/pr278-stabilization-source"
+          mkdir -p "${output}/wheels"
+          git bundle create "${output}/source.bundle" HEAD refs/remotes/origin/main
+          git bundle verify "${output}/source.bundle"
+          git rev-parse HEAD 'HEAD^{tree}' refs/remotes/origin/main > "${output}/source-identities.txt"
+          python -m pip download --only-binary=:all: --require-hashes -r requirements/development.lock --dest "${output}/wheels"
+          (cd "${output}" && sha256sum source.bundle wheels/* > SHA256SUMS)
+      - name: Retain development inputs, not review or runtime evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr278-stabilization-source-03fcf13
+          path: ${{ runner.temp }}/pr278-stabilization-source
+          if-no-files-found: error
+          retention-days: 1
