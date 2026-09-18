@@ -339,6 +339,21 @@ promotion, alert dismissal or provider required-check change is admitted here.
    `extended` result before returning `roadmap:now` to #262. No alert dismissal
    substitutes for those observations.
 
+### Finalizer error containment
+
+The same primary-first rule also applies after normal pipe setup: each final
+selector and stream close is attempted even when an earlier close raises an
+`OSError`. Docker and scanner failures retain their original timeout, overflow
+or I/O diagnostic, with static role-only close context. Otherwise successful
+runner execution with failed local finalization is reported as a controlled
+error, not success. The cleanup diagnostic preserves a known removal-command
+exit status separately from bounded local close context; local close failure
+alone is not evidence of a container left to recover. Unknown command completion
+still fails closed, with reap attempted before returning its bounded diagnostic.
+Input-only pipe absence is identified as input, not output failure. Fault-injected
+contracts cover timeout, overflow, I/O and normal completion at every closing
+role; they establish these mechanics, not new live runtime availability.
+
 ## Verification contract
 
 Pre-implementation RED evidence and the final candidate must demonstrate:

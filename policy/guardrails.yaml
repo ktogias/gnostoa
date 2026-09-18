@@ -527,6 +527,7 @@ guardrails:
       - tests/test_review_assurance_p2b_b2_activation_red.py
       - tests/test_review_current_payload_transport.py
       - tests/test_protected_pipe_setup_cleanup.py
+      - tests/test_protected_finalizer_errors.py
       - tests/test_review_outer_containment.py
       - tests/test_r2a_p2b_integrated_materialization.py
       - ci/review_b15_runtime_smoke.py
@@ -616,6 +617,7 @@ guardrails:
       - tests/test_tools.py::PublicationBaselineTests.test_github_provider_surface_is_active_and_owned
       - tests/test_security_gates.py
       - tests/test_protected_pipe_setup_cleanup.py
+      - tests/test_protected_finalizer_errors.py
       - tests/test_tools.py::PublicationBaselineTests.test_ghcr_publication_workflow_is_exact_and_write_once
       - tests/test_r2a_p2b_bootstrap_publication.py::R2AP2bBootstrapPublicationTests.test_bootstrap_publication_has_decision_and_guardrail_ownership
       - tests/test_r2a_p2b_b1_publication.py::R2AP2bB1PublicationTests.test_b1_materialization_is_governed_and_declared

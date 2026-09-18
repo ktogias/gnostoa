@@ -288,6 +288,7 @@ def _cleanup_diagnostic(
     issue = ""
     returncode: int | None = None
     stream = process.stderr
+    close_issues: list[str] = []
     selector: selectors.BaseSelector | None = None
     deadline = time.monotonic() + _DOCKER_CLEANUP_TIMEOUT_SECONDS
     try:
@@ -326,7 +327,12 @@ def _cleanup_diagnostic(
         issue = str(exc) or exc.__class__.__name__
     finally:
         if selector is not None:
-            selector.close()
+            try:
+                selector.close()
+            except OSError:
+                close_issues.append(
+                    "protected Docker cleanup selector could not be closed"
+                )
         if process.poll() is None:
             try:
                 process.kill()
@@ -337,9 +343,26 @@ def _cleanup_diagnostic(
         except (OSError, subprocess.TimeoutExpired):
             pass
         if stream is not None:
-            stream.close()
+            try:
+                stream.close()
+            except OSError:
+                close_issues.append(
+                    "protected Docker cleanup stderr pipe could not be closed"
+                )
 
     detail = _bounded_diagnostic(bytes(diagnostic))
+    if close_issues:
+        primary = (
+            (issue or detail or "protected Docker cleanup did not complete")
+            if returncode is None
+            else detail
+        )
+        detail = _bounded_diagnostic(
+            "; ".join([part for part in (primary, *close_issues) if part]).encode(
+                "utf-8"
+            )
+        )
+        return returncode, detail
     if returncode is None:
         return None, issue or detail or "protected Docker cleanup did not complete"
     return returncode, detail
@@ -507,6 +530,11 @@ def _run_docker(
         or (input_bytes is not None and process.stdin is None)
     ):
         cleanup_attempted = True
+        pipe_role = (
+            "input"
+            if process.stdout is not None and process.stderr is not None
+            else "output"
+        )
         abort_detail = _abort_and_discard(process, identity, config_dir)
         close_issues: list[str] = []
         for role, stream in (
@@ -523,7 +551,7 @@ def _run_docker(
                     )
         raise ProtectedJudgeUnavailable(
             _with_secondary(
-                "protected Docker output pipes are unavailable",
+                f"protected Docker {pipe_role} pipes are unavailable",
                 _joined_details(abort_detail, *close_issues),
             )
         )
@@ -536,6 +564,9 @@ def _run_docker(
     input_view: memoryview | None = None
     input_offset = 0
     deadline = time.monotonic() + timeout
+    execution_error: str | None = None
+    execution_cause: Exception | None = None
+    close_issues = []
 
     try:
         selector = selectors.DefaultSelector()
@@ -597,35 +628,47 @@ def _run_docker(
         if remaining <= 0:
             raise subprocess.TimeoutExpired(command, timeout)
         returncode = process.wait(timeout=remaining)
-    except subprocess.TimeoutExpired as exc:
+    except (subprocess.TimeoutExpired, OSError) as exc:
         cleanup_attempted = True
-        raise ProtectedJudgeUnavailable(
-            _with_secondary(
-                f"protected Docker execution failed: {exc}",
-                _abort_and_discard(process, identity, config_dir),
-            )
-        ) from exc
-    except OSError as exc:
-        cleanup_attempted = True
-        raise ProtectedJudgeUnavailable(
-            _with_secondary(
-                f"protected Docker execution failed: {exc}",
-                _abort_and_discard(process, identity, config_dir),
-            )
-        ) from exc
+        execution_error = _with_secondary(
+            f"protected Docker execution failed: {exc}",
+            _abort_and_discard(process, identity, config_dir),
+        )
+        execution_cause = exc
+    except ProtectedJudgeUnavailable as exc:
+        execution_error = str(exc)
+        execution_cause = exc
     finally:
         if selector is not None:
-            selector.close()
-        process.stdout.close()
-        process.stderr.close()
-        if process.stdin is not None and not process.stdin.closed:
-            process.stdin.close()
+            try:
+                selector.close()
+            except OSError:
+                close_issues.append("protected Docker selector could not be closed")
+        for role, stream in (
+            ("stdout", process.stdout),
+            ("stderr", process.stderr),
+            ("stdin", process.stdin),
+        ):
+            if stream is not None and not stream.closed:
+                try:
+                    stream.close()
+                except OSError:
+                    close_issues.append(
+                        f"protected Docker {role} pipe could not be closed"
+                    )
         if input_view is not None:
             input_view.release()
         if identity is not None and not cleanup_attempted:
-            # The run completed, so there is no primary failure to attach a
-            # discard problem to; every abort path reports its own.
+            # Container reconciliation is independent from local handle closure.
             _discard_cidfile(identity)
+
+    if execution_error is not None or close_issues:
+        raise ProtectedJudgeUnavailable(
+            _with_secondary(
+                execution_error or "protected Docker process finalization failed",
+                _joined_details(*close_issues),
+            )
+        ) from execution_cause
 
     return subprocess.CompletedProcess(
         command,

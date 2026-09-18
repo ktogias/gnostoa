@@ -415,6 +415,9 @@ def _run_bounded_scan(
     outputs = {"report": bytearray(), "diagnostics": bytearray()}
     selector: selectors.BaseSelector | None = None
     deadline = time.monotonic() + timeout
+    execution_error: str | None = None
+    execution_cause: Exception | None = None
+    close_issues = []
     try:
         selector = selectors.DefaultSelector()
         selector.register(process.stdout, selectors.EVENT_READ, "report")
@@ -449,24 +452,43 @@ def _run_bounded_scan(
             raise subprocess.TimeoutExpired(command, timeout)
         returncode = process.wait(timeout=remaining)
     except subprocess.TimeoutExpired as exc:
-        raise SecurityScanError(
-            _with_secondary(
-                "tracked-tree secret scan timed out",
-                _reap_detail(process),
-            )
-        ) from exc
+        execution_error = _with_secondary(
+            "tracked-tree secret scan timed out", _reap_detail(process)
+        )
+        execution_cause = exc
     except OSError as exc:
-        raise SecurityScanError(
-            _with_secondary(
-                "cannot execute the tracked-tree secret scan",
-                _reap_detail(process),
-            )
-        ) from exc
+        execution_error = _with_secondary(
+            "cannot execute the tracked-tree secret scan", _reap_detail(process)
+        )
+        execution_cause = exc
+    except SecurityScanError as exc:
+        execution_error = str(exc)
+        execution_cause = exc
     finally:
         if selector is not None:
-            selector.close()
-        process.stdout.close()
-        process.stderr.close()
+            try:
+                selector.close()
+            except OSError:
+                close_issues.append(
+                    "tracked-tree secret scan selector could not be closed"
+                )
+        for role, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
+            if not stream.closed:
+                try:
+                    stream.close()
+                except OSError:
+                    close_issues.append(
+                        f"tracked-tree secret scan {role} pipe could not be closed"
+                    )
+
+    if execution_error is not None or close_issues:
+        raise SecurityScanError(
+            _with_secondary(
+                execution_error
+                or "tracked-tree secret scan process finalization failed",
+                "; ".join(close_issues) or None,
+            )
+        ) from execution_cause
 
     return subprocess.CompletedProcess(
         command,
