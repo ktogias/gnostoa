@@ -143,12 +143,17 @@ separate read-back.
    after the final byte, and preserve the single deadline, output limits,
    kill/reap and container cleanup semantics. Every started `docker run` has a
    predeclared non-payload name as well as a CID file; abort cleanup retries by
-   CID when available and otherwise by that name. An unconfirmed cleanup does
-   not proactively unlink the CID file before propagating and reports the
-   predeclared recovery name. Retain the executable used to launch Docker,
-   treat unreadable or malformed CID content as a name fallback, bound child
-   reaping, and attempt container cleanup even when client reaping cannot be
-   confirmed. Docker options before the image fail closed against the exact
+   CID when available and otherwise by that name. Abort is diagnostically
+   subordinate: it never raises, so the triggering timeout, bounded-size or I/O
+   failure stays the primary diagnostic and any reap or cleanup problem is
+   appended as bounded secondary context with the predeclared recovery name. A
+   container the runtime already removed under `--rm` is reconciled as
+   successful absence through the bounded case-insensitive `no such container`
+   response; every other bounded diagnostic stays fail-closed and retried. An
+   unconfirmed cleanup does not proactively unlink the CID file. Retain the
+   executable used to launch Docker, treat unreadable or malformed CID content
+   as a name fallback, bound child reaping, and attempt container cleanup even
+   when client reaping cannot be confirmed. Docker options before the image fail closed against the exact
    repository-used allowlist, including the `--mount` value option required by
    the B1.6 smoke. Caller-owned Docker `--name` and `--cidfile` options are
    rejected only in that option region; identically named arguments in the
@@ -271,6 +276,12 @@ Pre-implementation RED evidence and the final candidate must demonstrate:
   failed cleanup is retried and leaves a reported recovery identity; malformed
   CID bytes fall back to the retained name/executable; and reaping is bounded
   without preventing the container-cleanup attempt;
+- timeout and output-overflow failures survive a failed cleanup as the primary
+  diagnostic, an already-absent container reconciles as successful cleanup, and
+  every other bounded cleanup diagnostic is retried and reported;
+- the tracked-tree scanner applies the same rule: a failed child reap is
+  secondary context and never replaces the pipe, bounded-size, timeout or I/O
+  failure that triggered it;
 - payload sentinels occur only in the stdin bytes supplied to the mocked/fake
   child, not argv, environment, output or exceptions;
 - payload-bearing inner/outer containers and the isolated daemon use

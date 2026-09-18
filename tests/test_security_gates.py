@@ -313,6 +313,59 @@ class SecretBaselineTests(unittest.TestCase):
             timeout=security_scan._PROCESS_REAP_TIMEOUT_SECONDS
         )
 
+    def test_scanner_timeout_survives_a_failed_reap(self) -> None:
+        """A failed reap must not replace the primary scanner timeout."""
+
+        real_popen = subprocess.Popen
+        started: dict[str, subprocess.Popen[bytes]] = {}
+
+        def start_process(
+            command: list[str],
+            **kwargs: object,
+        ) -> subprocess.Popen[bytes]:
+            process = real_popen(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+                **{
+                    key: value
+                    for key, value in kwargs.items()
+                    if key in {"stdin", "stdout", "stderr"}
+                },
+            )
+            started["process"] = process
+            return process
+
+        try:
+            with (
+                mock.patch.object(
+                    security_scan.subprocess,
+                    "Popen",
+                    side_effect=start_process,
+                ),
+                mock.patch.object(
+                    security_scan,
+                    "_terminate_and_reap",
+                    side_effect=SecurityScanError(
+                        "tracked-tree secret scan child could not be reaped "
+                        "within the bound"
+                    ),
+                ),
+            ):
+                with self.assertRaises(SecurityScanError) as raised:
+                    security_scan._run_bounded_scan(
+                        ["scanner"],
+                        cwd=Path("."),
+                        timeout=1,
+                    )
+        finally:
+            process = started.get("process")
+            if process is not None and process.poll() is None:
+                process.kill()
+                process.wait()
+
+        message = str(raised.exception)
+        self.assertIn("timed out", message)
+        self.assertIn("could not be reaped", message)
+
     def test_tracked_scan_excludes_only_its_manifest_and_writes_sanitized_evidence(
         self,
     ) -> None:

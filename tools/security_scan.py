@@ -350,6 +350,27 @@ def _terminate_and_reap(process: subprocess.Popen[bytes]) -> None:
         ) from exc
 
 
+def _reap_detail(process: subprocess.Popen[bytes]) -> str | None:
+    """Reap the scanner child and report a bounded problem instead of raising.
+
+    Reaping runs while a primary failure is already known, so a reap problem is
+    secondary context and must never replace the pipe, bounded-size, timeout or
+    I/O failure that triggered the abort.
+    """
+
+    try:
+        _terminate_and_reap(process)
+    except SecurityScanError as exc:
+        return str(exc)
+    return None
+
+
+def _with_secondary(primary: str, secondary: str | None) -> str:
+    """Keep the primary failure first and append bounded secondary context."""
+
+    return primary if secondary is None else f"{primary}; {secondary}"
+
+
 def _run_bounded_scan(
     command: list[str],
     *,
@@ -370,8 +391,12 @@ def _run_bounded_scan(
         raise SecurityScanError("cannot execute the tracked-tree secret scan") from exc
 
     if process.stdout is None or process.stderr is None:
-        _terminate_and_reap(process)
-        raise SecurityScanError("tracked-tree secret scan pipes are unavailable")
+        raise SecurityScanError(
+            _with_secondary(
+                "tracked-tree secret scan pipes are unavailable",
+                _reap_detail(process),
+            )
+        )
 
     outputs = {"report": bytearray(), "diagnostics": bytearray()}
     selector: selectors.BaseSelector | None = None
@@ -398,9 +423,11 @@ def _run_bounded_scan(
                     continue
                 buffer.extend(chunk)
                 if len(buffer) > _MAX_REPORT_BYTES:
-                    _terminate_and_reap(process)
                     raise SecurityScanError(
-                        f"tracked-tree secret scan {label} exceeds the bound"
+                        _with_secondary(
+                            f"tracked-tree secret scan {label} exceeds the bound",
+                            _reap_detail(process),
+                        )
                     )
 
         remaining = deadline - time.monotonic()
@@ -408,11 +435,19 @@ def _run_bounded_scan(
             raise subprocess.TimeoutExpired(command, timeout)
         returncode = process.wait(timeout=remaining)
     except subprocess.TimeoutExpired as exc:
-        _terminate_and_reap(process)
-        raise SecurityScanError("tracked-tree secret scan timed out") from exc
+        raise SecurityScanError(
+            _with_secondary(
+                "tracked-tree secret scan timed out",
+                _reap_detail(process),
+            )
+        ) from exc
     except OSError as exc:
-        _terminate_and_reap(process)
-        raise SecurityScanError("cannot execute the tracked-tree secret scan") from exc
+        raise SecurityScanError(
+            _with_secondary(
+                "cannot execute the tracked-tree secret scan",
+                _reap_detail(process),
+            )
+        ) from exc
     finally:
         if selector is not None:
             selector.close()

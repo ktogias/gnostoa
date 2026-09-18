@@ -522,6 +522,212 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
             cleanup.call_args.args[0],
         )
 
+    def test_timeout_failure_survives_a_failed_cleanup(self) -> None:
+        """A failed cleanup must not replace the primary timeout diagnostic."""
+
+        real_popen = subprocess.Popen
+        observed: dict[str, object] = {}
+
+        def start_process(
+            command: list[str],
+            **kwargs: object,
+        ) -> subprocess.Popen[bytes]:
+            cidfile = Path(command[command.index("--cidfile") + 1])
+            cidfile.write_text("c" * 64, encoding="ascii")
+            process = real_popen(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+                **kwargs,
+            )
+            observed["process"] = process
+            return process
+
+        cleanup = mock.Mock(
+            return_value=subprocess.CompletedProcess(
+                ["docker", "rm", "-f", "candidate"],
+                1,
+                b"",
+                b"Error response from daemon: cannot connect to the daemon",
+            )
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            try:
+                with (
+                    mock.patch.object(
+                        review_current,
+                        "_docker_executable",
+                        return_value="docker",
+                    ),
+                    mock.patch.object(
+                        review_current.subprocess,
+                        "Popen",
+                        side_effect=start_process,
+                    ),
+                    mock.patch.object(
+                        review_current.subprocess,
+                        "run",
+                        cleanup,
+                    ),
+                ):
+                    with self.assertRaises(
+                        review_current.ProtectedJudgeUnavailable
+                    ) as raised:
+                        review_current._run_docker(
+                            ["run", "--rm", "example-image"],
+                            config_dir=Path(directory),
+                            timeout=1,
+                        )
+            finally:
+                process = observed.get("process")
+                if isinstance(process, subprocess.Popen) and process.poll() is None:
+                    process.kill()
+                    process.wait()
+
+        message = str(raised.exception)
+        self.assertIn("timed out", message)
+        self.assertIn("cleanup", message)
+        self.assertIn("recovery identity", message)
+        self.assertEqual(3, cleanup.call_count)
+
+    def test_output_overflow_failure_survives_a_failed_cleanup(self) -> None:
+        """A failed cleanup must not replace the primary bounded-size failure."""
+
+        real_popen = subprocess.Popen
+        observed: dict[str, object] = {}
+
+        def start_process(
+            command: list[str],
+            **kwargs: object,
+        ) -> subprocess.Popen[bytes]:
+            cidfile = Path(command[command.index("--cidfile") + 1])
+            cidfile.write_text("d" * 64, encoding="ascii")
+            process = real_popen(
+                [
+                    sys.executable,
+                    "-c",
+                    "import sys, time; "
+                    "sys.stdout.buffer.write(b'x' * 65); "
+                    "sys.stdout.buffer.flush(); time.sleep(30)",
+                ],
+                **kwargs,
+            )
+            observed["process"] = process
+            return process
+
+        cleanup = mock.Mock(
+            return_value=subprocess.CompletedProcess(
+                ["docker", "rm", "-f", "candidate"],
+                1,
+                b"",
+                b"Error response from daemon: device or resource busy",
+            )
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            try:
+                with (
+                    mock.patch.object(
+                        review_current,
+                        "_docker_executable",
+                        return_value="docker",
+                    ),
+                    mock.patch.object(
+                        review_current,
+                        "_MAX_RUNTIME_OUTPUT_BYTES",
+                        64,
+                    ),
+                    mock.patch.object(
+                        review_current.subprocess,
+                        "Popen",
+                        side_effect=start_process,
+                    ),
+                    mock.patch.object(
+                        review_current.subprocess,
+                        "run",
+                        cleanup,
+                    ),
+                ):
+                    with self.assertRaises(
+                        review_current.ProtectedJudgeUnavailable
+                    ) as raised:
+                        review_current._run_docker(
+                            ["run", "--rm", "example-image"],
+                            config_dir=Path(directory),
+                            timeout=5,
+                        )
+            finally:
+                process = observed.get("process")
+                if isinstance(process, subprocess.Popen) and process.poll() is None:
+                    process.kill()
+                    process.wait()
+
+        message = str(raised.exception)
+        self.assertIn("stdout exceeds the bounded size", message)
+        self.assertIn("cleanup", message)
+        self.assertIn("recovery identity", message)
+
+    def test_absent_container_reconciles_as_successful_cleanup(self) -> None:
+        """An already-removed container is absence, not a cleanup failure."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            config_dir = Path(directory)
+            identity = review_current._ContainerRunIdentity(
+                name="gnostoa-protected-test",
+                cidfile=config_dir / "candidate.cid",
+            )
+            cleanup = mock.Mock(
+                return_value=subprocess.CompletedProcess(
+                    ["docker", "rm", "-f", identity.name],
+                    1,
+                    b"",
+                    "Error response from daemon: No such container: "
+                    f"{identity.name}".encode(),
+                )
+            )
+            with (
+                mock.patch.object(
+                    review_current,
+                    "_docker_executable",
+                    return_value="docker",
+                ),
+                mock.patch.object(review_current.subprocess, "run", cleanup),
+            ):
+                issue = review_current._cleanup_container(identity, config_dir)
+
+        self.assertIsNone(issue)
+        cleanup.assert_called_once()
+
+    def test_non_absence_cleanup_failure_is_retried_and_reported(self) -> None:
+        """Every other bounded cleanup diagnostic stays fail-closed."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            config_dir = Path(directory)
+            identity = review_current._ContainerRunIdentity(
+                name="gnostoa-protected-test",
+                cidfile=config_dir / "candidate.cid",
+            )
+            cleanup = mock.Mock(
+                return_value=subprocess.CompletedProcess(
+                    ["docker", "rm", "-f", identity.name],
+                    1,
+                    b"",
+                    b"Error response from daemon: container is marked for removal",
+                )
+            )
+            with (
+                mock.patch.object(
+                    review_current,
+                    "_docker_executable",
+                    return_value="docker",
+                ),
+                mock.patch.object(review_current.subprocess, "run", cleanup),
+            ):
+                issue = review_current._cleanup_container(identity, config_dir)
+
+        self.assertIsNotNone(issue)
+        assert issue is not None
+        self.assertIn("cleanup", issue)
+        self.assertIn("marked for removal", issue)
+        self.assertEqual(3, cleanup.call_count)
+
     def test_abort_reap_is_bounded_and_cleanup_runs_after_reap_timeout(
         self,
     ) -> None:
@@ -540,16 +746,17 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
             with mock.patch.object(
                 review_current,
                 "_cleanup_container",
+                return_value=None,
             ) as cleanup:
-                with self.assertRaisesRegex(
-                    review_current.ProtectedJudgeUnavailable,
-                    "reap.*recovery identity",
-                ):
-                    review_current._abort_docker_run(
-                        process,
-                        identity,
-                        config_dir,
-                    )
+                detail = review_current._abort_docker_run(
+                    process,
+                    identity,
+                    config_dir,
+                )
+
+        self.assertIsNotNone(detail)
+        assert detail is not None
+        self.assertRegex(detail, "reap.*recovery identity")
 
         process.wait.assert_called_once_with(
             timeout=review_current._PROCESS_REAP_TIMEOUT_SECONDS
