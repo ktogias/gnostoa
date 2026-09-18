@@ -148,9 +148,11 @@ separate read-back.
    predeclared recovery name. Retain the executable used to launch Docker,
    treat unreadable or malformed CID content as a name fallback, bound child
    reaping, and attempt container cleanup even when client reaping cannot be
-   confirmed. Caller-owned Docker `--name` and `--cidfile` options are rejected
-   only in the Docker option region before the image; identically named arguments
-   in the container command remain container data. The bounded timeout smoke
+   confirmed. Docker options before the image fail closed against the exact
+   repository-used allowlist, including the `--mount` value option required by
+   the B1.6 smoke. Caller-owned Docker `--name` and `--cidfile` options are
+   rejected only in that option region; identically named arguments in the
+   container command remain container data. The bounded timeout smoke
    requests its known name through the runner's validated identity parameter, so
    launch and fallback cleanup cannot disagree. Calls without input receive a
    closed stdin rather than inheriting the caller's stream.
@@ -224,19 +226,24 @@ separate read-back.
    records call that skip a pass.
    Schedule/manual events, an unavailable or unverifiable comparison base, and a
    candidate change to `tools/extended_route.py` independently force `RUN` in
-   shell before the candidate-owned router is consulted. The Python router runs
-   only for a verifiable base against which it is unchanged. The required-context
+   shell before a router is consulted. For the remaining valid-base route, the
+   workflow materializes `tools/extended_route.py` from the exact comparison-base
+   Git object outside the checkout and executes it as an isolated script. It does
+   not import the candidate `tools` package or another candidate-controlled
+   Python startup surface. The required-context
    workflow's `push` event is restricted to protected `main`. A separate
    topic-push advisory workflow preserves the inherited always-on branch-revision
    `policy` and `fast` suites under distinct `branch-advisory-*` names, so those
    runs cannot publish skipped jobs under Pull Request required-context names.
-   Structural contracts bind the exact event maps, root image environment,
-   required-context names, job keys, ordered complete step sequences and exact
-   dependency lists. They reject any inserted, removed or changed step, workflow
-   defaults, protected job/step environment overrides, renamed contexts, or
-   suite jobs that are disabled, non-blocking, containerized, dependency-skipped,
-   or wrapped by alternate shell/default behavior, while allowing only the exact
-   declared `regression` and `extended` job predicates.
+   Structural contracts bind the complete root key set, exact event maps,
+   read-only permissions, concurrency and image environment, the exact eight-job
+   required workflow inventory and two-job advisory inventory, every display
+   name, job key, ordered complete step sequence, strategy/output map and exact
+   dependency list. They reject any inserted, removed or changed step, extra job,
+   workflow default or privilege, job/step environment override, renamed or
+   duplicated context, or suite job that is disabled, non-blocking, containerized,
+   dependency-skipped or wrapped by alternate shell/default behavior, while
+   allowing only the exact declared `regression` and `extended` predicates.
 8. **Provider CodeQL effect remains sequenced.** After this Decision and the
    implementation are integrated and provider read-back confirms clean
    exact-head/default-branch results, require the stable GitHub CodeQL result for
@@ -253,8 +260,9 @@ separate read-back.
 
 Pre-implementation RED evidence and the final candidate must demonstrate:
 
-- neither the outer nor inner protected consumer invokes a host text/byte payload
-  write or payload bind mount;
+- neither the outer nor inner protected consumer invokes a host text/byte/stream
+  payload write or payload bind mount, and a retained controlled host temporary
+  root contains no payload sentinel after the outer route returns;
 - outer and inner input exceeding their bounds is rejected before authority or
   Docker effects;
 - large bounded input and output are multiplexed without deadlock, and early
@@ -271,7 +279,8 @@ Pre-implementation RED evidence and the final candidate must demonstrate:
   authority-bound consumer/judge invocations and result;
 - the reviewed tree has zero unresolved secret candidates, while an injected
   candidate, stale or wrong-line baseline, duplicate scanner/baseline JSON field,
-  non-finite or overflowing numeric input, excessive JSON nesting, unknown or
+  non-finite or overflowing numeric input, excessive baseline or scanner-output
+  JSON nesting, unknown or
   unchecked report value, unauthorized baseline entry and candidate
   scanner-module shadow fail;
 - snapshot acquisition rejects per-file/cumulative overflow and timeout; an
@@ -285,8 +294,10 @@ Pre-implementation RED evidence and the final candidate must demonstrate:
   separately named advisory `policy`/`fast` evidence, and the structural oracle
   rejects disabled, non-blocking, shell-wrapped or wrongly native suite jobs
   and steps, inherited defaults/environment overrides, or suppressing event
-  filters, inserted steps, altered dependency lists, renamed contexts, or an
-  unavailable-base route that would consult the candidate router;
+  filters, inserted steps in any of the eight jobs, altered dependency lists,
+  expanded permissions, extra/renamed/duplicated contexts, an unavailable-base
+  route that would consult Python, or a valid-base route that imports the
+  candidate package instead of the isolated comparison-base router;
 - policy, fast, regression, smoke, runtime self-check and applicable extended
   verification pass against the exact candidate.
 
@@ -305,6 +316,10 @@ check.
 - Sensitive protected-review material is no longer persisted on the host by the
   live outer consumer; the compatibility files exist only in the disposable
   container tmpfs.
+- This is an application-level host-file, bind-mount and container-log
+  non-persistence claim. Container tmpfs pages remain subject to the Docker
+  host's swap policy; environments requiring a physical-RAM-only claim must
+  enforce that separate host prerequisite.
 - Reviewed public hashes remain reviewable without weakening entropy detection
   for new values.
 - Ordinary PRs gain a fast secret-regression gate, while costly evidence remains

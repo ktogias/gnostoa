@@ -154,6 +154,36 @@ class ProtectedPayloadTransportTests(unittest.TestCase):
                     identity = review_current._run_identity(arguments, config_dir)
                     self.assertIsNotNone(identity)
 
+    def test_docker_run_accepts_the_b16_smoke_mount_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config_dir = Path(directory)
+            identity = review_current._run_identity(
+                [
+                    "run",
+                    "--rm",
+                    "--pull=never",
+                    "--network",
+                    "none",
+                    "--read-only",
+                    "--cap-drop",
+                    "ALL",
+                    "--security-opt",
+                    "no-new-privileges",
+                    "--tmpfs",
+                    "/tmp:rw,noexec,nosuid,nodev,size=32m",
+                    "--mount",
+                    "type=bind,src=/input,dst=/gnostoa-input,readonly",
+                    "--entrypoint",
+                    "python",
+                    "example-image",
+                    "-m",
+                    "tools.review_live_entrypoint",
+                ],
+                config_dir,
+            )
+
+        self.assertIsNotNone(identity)
+
     def test_oversized_envelope_is_rejected_before_any_docker_operation(self) -> None:
         image = "ghcr.io/example/gnostoa@sha256:" + "a" * 64
         with (

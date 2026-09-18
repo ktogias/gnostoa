@@ -38,6 +38,7 @@ _DOCKER_RUN_VALUE_OPTIONS = frozenset(
         "--cap-drop",
         "--entrypoint",
         "--log-driver",
+        "--mount",
         "--network",
         "--pull",
         "--security-opt",

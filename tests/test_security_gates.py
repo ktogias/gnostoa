@@ -467,6 +467,9 @@ class SecretBaselineTests(unittest.TestCase):
         )
         unknown_field_report = _report({})
         unknown_field_report["candidate_owned"] = "ignored"
+        excessive_nesting = (
+            '{"results":' + "[" * 10_000 + "0" + "]" * 10_000 + "}"
+        ).encode("utf-8")
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -483,6 +486,7 @@ class SecretBaselineTests(unittest.TestCase):
                     "non-finite",
                 ),
                 ("overflowing float", overflowing_float, "non-finite"),
+                ("excessive nesting", excessive_nesting, "invalid JSON"),
                 (
                     "unknown field",
                     json.dumps(unknown_field_report).encode("utf-8"),
@@ -1040,7 +1044,12 @@ class ProviderSecurityGateTests(unittest.TestCase):
             workflow,
         )
         self.assertIn('force_reason="extended router changed"', workflow)
-        self.assertIn("python -m tools.extended_route", workflow)
+        self.assertIn(
+            'git show "${BASE_SHA}:tools/extended_route.py" > "${router_file}"',
+            workflow,
+        )
+        self.assertIn('python -I "${router_file}"', workflow)
+        self.assertNotIn("python -m tools.extended_route", workflow)
         self.assertIn("needs: [policy, extended-route]", workflow)
         self.assertIn(
             "needs.extended-route.outputs.run_extended == 'true'",
@@ -1093,6 +1102,17 @@ class ProviderSecurityGateTests(unittest.TestCase):
                         encoding="utf-8",
                     )
                     fake_python.chmod(0o700)
+                    fake_git = fake_bin / "git"
+                    fake_git.write_text(
+                        "#!/bin/sh\n"
+                        'case "${1:-}" in\n'
+                        "  cat-file) exit 1 ;;\n"
+                        "  ls-files) exit 0 ;;\n"
+                        "  *) exit 98 ;;\n"
+                        "esac\n",
+                        encoding="utf-8",
+                    )
+                    fake_git.chmod(0o700)
                     output = temporary / "github-output"
                     environment = os.environ.copy()
                     environment.update(
@@ -1129,6 +1149,90 @@ class ProviderSecurityGateTests(unittest.TestCase):
                             for line in output.read_text(encoding="utf-8").splitlines()
                         ),
                     )
+
+    def test_valid_base_uses_isolated_trusted_router_source(self) -> None:
+        workflow = load_yaml(ROOT / ".github" / "workflows" / "verification.yml")
+        route_steps = workflow["jobs"]["extended-route"]["steps"]
+        route_script = next(
+            step["run"]
+            for step in route_steps
+            if step.get("name") == "Classify extended verification applicability"
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory)
+            fake_bin = temporary / "bin"
+            fake_bin.mkdir()
+            fake_git = fake_bin / "git"
+            fake_git.write_text(
+                "#!/bin/sh\n"
+                'case "${1:-}" in\n'
+                "  cat-file) exit 0 ;;\n"
+                "  diff)\n"
+                '    if test "${2:-}" = "--no-renames"; then\n'
+                "      printf 'notes.txt\\0'\n"
+                "      exit 0\n"
+                "    fi\n"
+                '    test "${2:-}" = "--quiet" && exit 0\n'
+                "    exit 98\n"
+                "    ;;\n"
+                '  show) cat "${TRUSTED_ROUTER_SOURCE}" ;;\n'
+                "  *) exit 98 ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            fake_git.chmod(0o700)
+            candidate_package = temporary / "tools"
+            candidate_package.mkdir()
+            package_marker = temporary / "candidate-package-imported"
+            (candidate_package / "__init__.py").write_text(
+                "from pathlib import Path\n"
+                f"Path({str(package_marker)!r}).write_text('imported')\n",
+                encoding="utf-8",
+            )
+            startup_marker = temporary / "candidate-startup-imported"
+            (temporary / "sitecustomize.py").write_text(
+                "from pathlib import Path\n"
+                f"Path({str(startup_marker)!r}).write_text('imported')\n",
+                encoding="utf-8",
+            )
+            output = temporary / "github-output"
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "BASE_SHA": "b" * 40,
+                    "GITHUB_EVENT_NAME": "pull_request",
+                    "GITHUB_OUTPUT": str(output),
+                    "GITHUB_REF": "refs/pull/278/head",
+                    "PATH": f"{fake_bin}{os.pathsep}{environment['PATH']}",
+                    "RUNNER_TEMP": str(temporary),
+                    "TRUSTED_ROUTER_SOURCE": str(ROOT / "tools" / "extended_route.py"),
+                }
+            )
+
+            completed = subprocess.run(
+                ["bash", "-c", route_script],
+                cwd=temporary,
+                env=environment,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(0, completed.returncode, completed.stderr)
+            self.assertFalse(package_marker.exists())
+            self.assertFalse(startup_marker.exists())
+            self.assertEqual(
+                {
+                    "decision": "NOT_APPLICABLE",
+                    "run_extended": "false",
+                    "reason": "candidate changes no declared extended-evidence surface",
+                },
+                dict(
+                    line.split("=", maxsplit=1)
+                    for line in output.read_text(encoding="utf-8").splitlines()
+                ),
+            )
 
 
 if __name__ == "__main__":

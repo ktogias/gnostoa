@@ -61,12 +61,42 @@ _PROTECTED_JOB_SUITES = {
     "branch-advisory-policy": "policy",
     "branch-advisory-fast": "fast",
 }
+_VERIFICATION_JOB_PROFILES = frozenset(
+    {
+        "policy",
+        "security-fast",
+        "fast",
+        "python-compatibility",
+        "regression",
+        "smoke",
+        "extended-route",
+        "extended",
+    }
+)
+_BRANCH_ADVISORY_JOB_PROFILES = frozenset(
+    {"branch-advisory-policy", "branch-advisory-fast"}
+)
+_WORKFLOW_JOB_PROFILES = {
+    "Gnostoa verification": _VERIFICATION_JOB_PROFILES,
+    "Gnostoa branch advisory": _BRANCH_ADVISORY_JOB_PROFILES,
+}
+_PROTECTED_JOB_NAMES = {
+    **{
+        profile: profile
+        for profile in _VERIFICATION_JOB_PROFILES | _BRANCH_ADVISORY_JOB_PROFILES
+    },
+    "python-compatibility": "python-compatibility (${{ matrix.python-version }})",
+}
 _PROTECTED_JOB_KEYS = {
     "policy": frozenset({"name", "runs-on", "steps"}),
     "security-fast": frozenset({"name", "runs-on", "timeout-minutes", "steps"}),
     "fast": frozenset({"name", "runs-on", "steps"}),
+    "python-compatibility": frozenset({"name", "runs-on", "strategy", "steps"}),
     "regression": frozenset({"name", "needs", "if", "runs-on", "steps"}),
     "smoke": frozenset({"name", "needs", "runs-on", "steps"}),
+    "extended-route": frozenset(
+        {"name", "runs-on", "timeout-minutes", "outputs", "steps"}
+    ),
     "extended": frozenset(
         {"name", "needs", "if", "runs-on", "timeout-minutes", "steps"}
     ),
@@ -77,6 +107,7 @@ _PROTECTED_JOB_NEEDS = {
     "policy": (),
     "security-fast": (),
     "fast": (),
+    "python-compatibility": (),
     "regression": (
         "policy",
         "security-fast",
@@ -86,13 +117,28 @@ _PROTECTED_JOB_NEEDS = {
         "extended",
     ),
     "smoke": ("regression",),
+    "extended-route": (),
     "extended": ("policy", "extended-route"),
     "branch-advisory-policy": (),
     "branch-advisory-fast": (),
 }
 _PROTECTED_JOB_TIMEOUTS = {
     "security-fast": 10,
+    "extended-route": 5,
     "extended": 45,
+}
+_PROTECTED_JOB_STRATEGIES = {
+    "python-compatibility": {
+        "fail-fast": False,
+        "matrix": {"python-version": ["3.11", "3.12"]},
+    }
+}
+_PROTECTED_JOB_OUTPUTS = {
+    "extended-route": {
+        "decision": "${{ steps.route.outputs.decision }}",
+        "run_extended": "${{ steps.route.outputs.run_extended }}",
+        "reason": "${{ steps.route.outputs.reason }}",
+    }
 }
 # These digests deliberately bind every ordered step, including action pins,
 # setup/build commands, environment writers, and the verification invocation.
@@ -100,8 +146,10 @@ _PROTECTED_JOB_STEPS_SHA256 = {
     "policy": "b594196b030bf1cffa5b705a687d1a1887473ebc38812880ca1a4bbd0a7d5712",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "security-fast": "5735155238d350b8413ddd2e9b28d5b95a819e58ca0adc2a84862b437c5bc9e0",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "fast": "04d8ee084f1640ddf6fa495ab7cfae88384615eee7b3e90d7e4831972b82bf78",  # pragma: allowlist secret -- reviewed workflow-structure digest
+    "python-compatibility": "73c95ccf140298e0752c7362d6fa6b3165146789e0a9286342ba10bb95c3a121",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "regression": "bd3442b7343c7b6f478e9f1a02f6febad5f80f3e3ccc05c937ccd926d92a1da0",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "smoke": "c6cb64c9fc709f338ba12ae4d129826d1e44645d97e825988405acffc43b8f0b",  # pragma: allowlist secret -- reviewed workflow-structure digest
+    "extended-route": "df5150f32cb10f3fa30d863048c015a5b0e5bfacb285d0641e817d9bedcc060a",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "extended": "0f56e849d2376c23fa3782bd31e42668310e70c6a4eedaae95377c3645503d7f",  # pragma: allowlist secret -- reviewed workflow-structure digest
     "branch-advisory-policy": (
         "1170a691c764b464a5342fbe6aab5361fc3a07bda1d1e00685c00e85831195cf"  # pragma: allowlist secret -- reviewed workflow-structure digest
@@ -190,23 +238,18 @@ def _invokes_shared_verification_suite(command: str, suite: str) -> bool:
     )
 
 
-def _job_has_blocking_verification_suite(
-    job: object,
-    suite: str,
-    *,
-    job_name: str | None = None,
-) -> bool:
+def _job_has_exact_contract(job: object, profile: str) -> bool:
     if not isinstance(job, dict):
         return False
-    profile = job_name or suite
     expected_keys = _PROTECTED_JOB_KEYS.get(profile)
     if (
         expected_keys is None
-        or _PROTECTED_JOB_SUITES.get(profile) != suite
         or frozenset(job) != expected_keys
-        or job.get("name") != profile
+        or job.get("name") != _PROTECTED_JOB_NAMES.get(profile)
         or job.get("runs-on") != "ubuntu-latest"
         or job.get("timeout-minutes") != _PROTECTED_JOB_TIMEOUTS.get(profile)
+        or job.get("strategy") != _PROTECTED_JOB_STRATEGIES.get(profile)
+        or job.get("outputs") != _PROTECTED_JOB_OUTPUTS.get(profile)
     ):
         return False
     raw_needs = job.get("needs", [])
@@ -228,7 +271,7 @@ def _job_has_blocking_verification_suite(
             "needs.extended-route.outputs.run_extended == 'true'"
         ),
     }
-    expected_condition = expected_conditions.get(suite)
+    expected_condition = expected_conditions.get(profile)
     if expected_condition is None:
         if "if" in job:
             return False
@@ -259,11 +302,26 @@ def _job_has_blocking_verification_suite(
         ).encode("utf-8")
     except (TypeError, ValueError):
         return False
-    if (
+    return (
         hashlib.sha256(canonical_steps).hexdigest()
-        != _PROTECTED_JOB_STEPS_SHA256[profile]
+        == _PROTECTED_JOB_STEPS_SHA256[profile]
+    )
+
+
+def _job_has_blocking_verification_suite(
+    job: object,
+    suite: str,
+    *,
+    job_name: str | None = None,
+) -> bool:
+    profile = job_name or suite
+    if _PROTECTED_JOB_SUITES.get(profile) != suite or not _job_has_exact_contract(
+        job, profile
     ):
         return False
+    assert isinstance(job, dict)
+    steps = job["steps"]
+    assert isinstance(steps, list)
     suite_steps = 0
     for step in steps:
         if not isinstance(step, dict) or "run" not in step:
@@ -285,20 +343,67 @@ def _job_has_blocking_verification_suite(
     return suite_steps == 1
 
 
+def _workflow_has_exact_contract(workflow: object) -> bool:
+    if not isinstance(workflow, dict) or frozenset(workflow) != frozenset(
+        {"name", True, "permissions", "concurrency", "env", "jobs"}
+    ):
+        return False
+    workflow_name = workflow.get("name")
+    if not isinstance(workflow_name, str):
+        return False
+    profiles = _WORKFLOW_JOB_PROFILES.get(workflow_name)
+    expected_events = {
+        "Gnostoa verification": {
+            "pull_request": None,
+            "merge_group": {"types": ["checks_requested"]},
+            "push": {"branches": ["main"]},
+            "schedule": [{"cron": "17 3 * * *"}],
+            "workflow_dispatch": None,
+        },
+        "Gnostoa branch advisory": {
+            "push": {"branches-ignore": ["main"]},
+        },
+    }
+    expected_concurrency = {
+        "Gnostoa verification": {
+            "group": "verification-${{ github.workflow }}-${{ "
+            "github.event.pull_request.number || github.ref }}",
+            "cancel-in-progress": "${{ github.event_name == 'pull_request' || "
+            "(github.event_name == 'push' && github.ref != 'refs/heads/main') }}",
+        },
+        "Gnostoa branch advisory": {
+            "group": "branch-advisory-${{ github.ref }}",
+            "cancel-in-progress": True,
+        },
+    }
+    jobs = workflow.get("jobs")
+    if (
+        profiles is None
+        or workflow.get(True) != expected_events[workflow_name]
+        or workflow.get("permissions") != {"contents": "read"}
+        or workflow.get("concurrency") != expected_concurrency[workflow_name]
+        or workflow.get("env") != {"GNOSTOA_CI_IMAGE": "gnostoa-ci:${{ github.sha }}"}
+        or not isinstance(jobs, dict)
+        or frozenset(jobs) != profiles
+        or not all(
+            _job_has_exact_contract(jobs.get(profile), profile) for profile in profiles
+        )
+    ):
+        return False
+    names = [jobs[profile].get("name") for profile in profiles]
+    return len(names) == len(set(names))
+
+
 def _workflow_has_blocking_verification_suite(
     workflow: object,
     job_name: str,
     suite: str,
 ) -> bool:
-    if not isinstance(workflow, dict):
+    if not _workflow_has_exact_contract(workflow):
         return False
-    if "defaults" in workflow or workflow.get("env") != {
-        "GNOSTOA_CI_IMAGE": "gnostoa-ci:${{ github.sha }}"
-    }:
-        return False
+    assert isinstance(workflow, dict)
     jobs = workflow.get("jobs")
-    if not isinstance(jobs, dict):
-        return False
+    assert isinstance(jobs, dict)
     return _job_has_blocking_verification_suite(
         jobs.get(job_name),
         suite,
@@ -464,6 +569,38 @@ class PublicationBaselineTests(unittest.TestCase):
             workflow_document[True],
         )
         workflow_jobs = workflow_document["jobs"]
+        self.assertTrue(_workflow_has_exact_contract(workflow_document))
+        self.assertEqual(_VERIFICATION_JOB_PROFILES, frozenset(workflow_jobs))
+        self.assertEqual(
+            {
+                profile: _PROTECTED_JOB_NAMES[profile]
+                for profile in _VERIFICATION_JOB_PROFILES
+            },
+            {profile: workflow_jobs[profile]["name"] for profile in workflow_jobs},
+        )
+        for profile in _VERIFICATION_JOB_PROFILES:
+            self.assertTrue(
+                _job_has_exact_contract(workflow_jobs[profile], profile),
+                profile,
+            )
+            with self.subTest(profile=profile, mutation="preceding path poison"):
+                mutated_workflow = copy.deepcopy(workflow_document)
+                mutated_workflow["jobs"][profile]["steps"].insert(
+                    0,
+                    {
+                        "name": "Poison command resolution",
+                        "run": 'echo "/tmp/attacker" >> "${GITHUB_PATH}"',
+                    },
+                )
+                self.assertFalse(_workflow_has_exact_contract(mutated_workflow))
+            with self.subTest(profile=profile, mutation="continue on error"):
+                mutated_workflow = copy.deepcopy(workflow_document)
+                mutated_workflow["jobs"][profile]["continue-on-error"] = True
+                self.assertFalse(_workflow_has_exact_contract(mutated_workflow))
+            with self.subTest(profile=profile, mutation="renamed context"):
+                mutated_workflow = copy.deepcopy(workflow_document)
+                mutated_workflow["jobs"][profile]["name"] = "spoofed-context"
+                self.assertFalse(_workflow_has_exact_contract(mutated_workflow))
         for event in (
             "pull_request:",
             "merge_group:",
@@ -538,6 +675,7 @@ class PublicationBaselineTests(unittest.TestCase):
         )
         for root_modifier in (
             {"defaults": {"run": {"shell": "bash {0} || true"}}},
+            {"permissions": {"contents": "read", "actions": "write"}},
             {
                 "env": {
                     "GNOSTOA_CI_IMAGE": "attacker-controlled:latest",
@@ -555,6 +693,12 @@ class PublicationBaselineTests(unittest.TestCase):
                         "security-fast",
                     )
                 )
+        extra_job_workflow = copy.deepcopy(workflow_document)
+        extra_job_workflow["jobs"]["attacker-context"] = copy.deepcopy(
+            workflow_jobs["policy"]
+        )
+        extra_job_workflow["jobs"]["attacker-context"]["name"] = "regression"
+        self.assertFalse(_workflow_has_exact_contract(extra_job_workflow))
         for modifier in (
             {"if": "${{ false }}"},
             {"continue-on-error": True},
@@ -702,8 +846,7 @@ class PublicationBaselineTests(unittest.TestCase):
         self.assertFalse(
             _invokes_shared_verification_suite("./ci/verify fast-noop", "fast")
         )
-        self.assertIn("permissions:", workflow)
-        self.assertIn("contents: read", workflow)
+        self.assertEqual({"contents": "read"}, workflow_document["permissions"])
         self.assertIn(
             "github.event.pull_request.number || github.ref",
             workflow,
@@ -731,6 +874,13 @@ class PublicationBaselineTests(unittest.TestCase):
         )
         self.assertNotIn("pull_request:", advisory_text)
         advisory_jobs = advisory["jobs"]
+        self.assertTrue(_workflow_has_exact_contract(advisory))
+        self.assertEqual({"contents": "read"}, advisory["permissions"])
+        self.assertTrue(
+            {job["name"] for job in workflow_jobs.values()}.isdisjoint(
+                {job["name"] for job in advisory_jobs.values()}
+            )
+        )
         self.assertEqual(
             {"branch-advisory-policy", "branch-advisory-fast"},
             set(advisory_jobs),

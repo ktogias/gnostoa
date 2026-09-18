@@ -269,6 +269,21 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         run_calls: list[tuple[list[str], dict[str, object]]] = []
         original_write_text = Path.write_text
         original_write_bytes = Path.write_bytes
+        retained_temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(retained_temporary.cleanup)
+        retained_host_root = Path(retained_temporary.name)
+
+        class RetainedOuterTemporaryDirectory:
+            def __init__(self, *, prefix: str, dir: str) -> None:
+                self.path = retained_host_root / "outer-runtime"
+                self.path.mkdir(mode=0o700)
+                self.asserted_contract = (prefix, dir)
+
+            def __enter__(self) -> str:
+                return str(self.path)
+
+            def __exit__(self, *args: object) -> None:
+                del args
 
         def observe_write_text(
             path: Path,
@@ -331,6 +346,11 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
             ),
             mock.patch.object(Path, "write_text", observe_write_text),
             mock.patch.object(Path, "write_bytes", observe_write_bytes),
+            mock.patch.object(
+                outer.tempfile,
+                "TemporaryDirectory",
+                RetainedOuterTemporaryDirectory,
+            ),
             mock.patch.object(outer, "_verify_outer_image"),
             mock.patch.object(outer, "_checked_output"),
             mock.patch.object(outer, "_volume_create", side_effect=create_volume),
@@ -351,6 +371,13 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
 
         self.assertEqual((0, b"{}\n"), (code, raw))
         self.assertEqual([], host_payload_writes)
+        for retained_path in retained_host_root.rglob("*"):
+            if retained_path.is_file():
+                self.assertNotIn(
+                    marker.encode("utf-8"),
+                    retained_path.read_bytes(),
+                    retained_path,
+                )
         attached = [
             (arguments, kwargs)
             for arguments, kwargs in run_calls
