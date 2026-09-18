@@ -466,7 +466,7 @@ guardrails:
       - tests/test_supplied_agent_review_capture.py::SuppliedAgentReviewCaptureTests.test_router_runbook_and_decision_bind_the_capture_anchor
 
   - id: semantic-review-assurance
-    title: Gnostoa self-review assurance is evaluated from bound retained evidence without merge authority
+    title: Gnostoa self-review assurance uses bound retained evidence without merge authority; current_advisory is contained and unavailable
     applies_to: [kit]
     enforcement: hybrid
     owner: team:gnostoa-maintainers
@@ -492,6 +492,7 @@ guardrails:
       - knowledge/decisions/0078-materialize-integrated-r2a-p2b-runtime-by-digest.md
       - knowledge/decisions/0079-promote-r2a-p2b-outer-consumer-authority.md
       - knowledge/decisions/0080-complete-r2a-p2b-rolling-trust-exit-by-negative-readback.md
+      - knowledge/decisions/0082-eliminate-host-persistence-for-protected-review-payloads-and-route-security-gates.md
       - ci/review_b15_runtime_smoke.py
       - ci/review_b16_entrypoint_smoke.py
       - ci/review_outer_smoke.py

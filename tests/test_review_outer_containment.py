@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import contextlib
 import copy
-import importlib
+import importlib.util
 import io
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import ModuleType
 from unittest import mock
 
 import yaml
@@ -18,7 +20,6 @@ from test_review_assurance_p2b_b2_activation_red import (
     _current_advisory_input,
 )
 
-from ci import review_outer_smoke as historical_smoke
 from tools import review_check, review_outer
 from tools.review_model import canonical_json
 from tools.review_protected import ProtectedMainDocument
@@ -29,6 +30,22 @@ UNAVAILABLE_DETAIL = (
     "protected outer-consumer transport is not admitted as host-persistence-free; "
     "current_advisory is unavailable"
 )
+
+
+def _load_ci_smoke(filename: str) -> ModuleType:
+    # CI scripts are shipped as files, not installed as the ci package.
+    path = ROOT / "ci" / filename
+    spec = importlib.util.spec_from_file_location(
+        "gnostoa_containment_test_" + path.stem, path
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load containment smoke module from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+historical_smoke = _load_ci_smoke("review_outer_smoke.py")
 
 
 def _unavailable_bytes() -> bytes:
@@ -63,10 +80,68 @@ def _security_checkouts() -> dict[str, dict[str, object]]:
     return result
 
 
+class ContainmentImportIsolationTests(unittest.TestCase):
+    def test_contracts_run_without_source_root_on_import_path(self) -> None:
+        # The installed runtime exposes tools, not ci as an importable package.
+        # Load tools from its exact path to simulate that boundary without
+        # requiring an editable installation in native/source-only checks.
+        script = """
+import importlib.util
+import sys
+import unittest
+from pathlib import Path
+root = Path(sys.argv[1]).resolve()
+assert str(root) not in sys.path
+spec = importlib.util.spec_from_file_location(
+    "tools", root / "tools" / "__init__.py",
+    submodule_search_locations=[str(root / "tools")],
+)
+assert spec is not None and spec.loader is not None
+module = importlib.util.module_from_spec(spec)
+sys.modules["tools"] = module
+spec.loader.exec_module(module)
+sys.path.insert(0, str(root / "tests"))
+import test_review_outer_containment as contracts
+suite = unittest.TestSuite(
+    unittest.defaultTestLoader.loadTestsFromTestCase(case)
+    for case in (contracts.ReviewOuterContainmentTests, contracts.ContainmentSmokeTests)
+)
+raise SystemExit(not unittest.TextTestRunner().run(suite).wasSuccessful())
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run(
+                [sys.executable, "-I", "-c", script, str(ROOT)],
+                cwd=directory,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+
 class ReviewOuterContainmentTests(unittest.TestCase):
     def test_production_catalog_admits_no_current_runtime(self) -> None:
         self.assertEqual(
             frozenset(), review_outer._HOST_PERSISTENCE_FREE_CONSUMER_IDENTITIES
+        )
+
+    def test_guardrail_records_current_unavailability_without_merge_authority(
+        self,
+    ) -> None:
+        guardrails = yaml.safe_load(
+            (ROOT / "policy/guardrails.yaml").read_text(encoding="utf-8")
+        )["guardrails"]
+        guardrail = next(
+            entry for entry in guardrails if entry["id"] == "semantic-review-assurance"
+        )
+        self.assertIn("without merge authority", guardrail["title"])
+        self.assertIn(
+            "current_advisory is contained and unavailable", guardrail["title"]
+        )
+        self.assertIn(
+            "knowledge/decisions/0082-eliminate-host-persistence-for-protected-review-payloads-and-route-security-gates.md",
+            guardrail["implementation"],
         )
 
     def test_catalog_keys_bind_every_consumer_field(self) -> None:
@@ -223,7 +298,7 @@ class ReviewOuterContainmentTests(unittest.TestCase):
 
 class ContainmentSmokeTests(unittest.TestCase):
     def test_smoke_input_is_valid_not_a_malformed_failure_fixture(self) -> None:
-        smoke = importlib.import_module("ci.review_outer_containment_smoke")
+        smoke = _load_ci_smoke("review_outer_containment_smoke.py")
         self.assertEqual(
             [],
             review_check._schema_errors(
@@ -232,7 +307,7 @@ class ContainmentSmokeTests(unittest.TestCase):
         )
 
     def test_smoke_exercises_real_public_refusal_and_reports_not_run(self) -> None:
-        smoke = importlib.import_module("ci.review_outer_containment_smoke")
+        smoke = _load_ci_smoke("review_outer_containment_smoke.py")
         protected = ProtectedMainDocument("c" * 40, _consumer_authority())
         output = io.StringIO()
         with (
@@ -263,7 +338,7 @@ class ContainmentSmokeTests(unittest.TestCase):
         )
 
     def test_smoke_rejects_semantic_success_and_unrelated_failure(self) -> None:
-        smoke = importlib.import_module("ci.review_outer_containment_smoke")
+        smoke = _load_ci_smoke("review_outer_containment_smoke.py")
         for code, raw in (
             (0, b"{}\n"),
             (3, b'{"semantic_outcome":"INCOMPLETE"}\n'),
@@ -278,7 +353,7 @@ class ContainmentSmokeTests(unittest.TestCase):
         smoke._assert_contained_result(2, _unavailable_bytes())
 
     def test_smoke_fails_if_real_route_attempts_outer_execution(self) -> None:
-        smoke = importlib.import_module("ci.review_outer_containment_smoke")
+        smoke = _load_ci_smoke("review_outer_containment_smoke.py")
         protected = ProtectedMainDocument("c" * 40, _consumer_authority())
         with mock.patch.object(review_outer, "_require_transport_compatible_consumer"):
             with self.assertRaisesRegex(AssertionError, "outer temporary resource"):
