@@ -621,9 +621,7 @@ def _workflow_run_pull_numbers(raw: str) -> list[int]:
     try:
         loaded = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise ProviderReadError(
-            "workflow_run.pull_requests is invalid JSON"
-        ) from exc
+        raise ProviderReadError("workflow_run.pull_requests is invalid JSON") from exc
     if loaded is None:
         return []
     if not isinstance(loaded, list):
@@ -632,9 +630,7 @@ def _workflow_run_pull_numbers(raw: str) -> list[int]:
     numbers: list[int] = []
     for item in loaded:
         if not isinstance(item, dict):
-            raise ProviderReadError(
-                "workflow_run.pull_requests items must be objects"
-            )
+            raise ProviderReadError("workflow_run.pull_requests items must be objects")
         number = item.get("number")
         if type(number) is not int or number <= 0:
             raise ProviderReadError(
