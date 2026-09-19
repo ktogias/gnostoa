@@ -186,6 +186,43 @@ class CurrentAdvisoryRestorationPromotionTests(unittest.TestCase):
         self.assertIn(FOCUSED_TEST_RELATIVE_PATH, semantic["tests"])
 
         workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+        workflow_doc = yaml.load(workflow, Loader=yaml.BaseLoader)
+        self.assertIsInstance(workflow_doc, dict)
+        assert isinstance(workflow_doc, dict)
+        jobs = workflow_doc.get("jobs")
+        self.assertIsInstance(jobs, dict)
+        assert isinstance(jobs, dict)
+        protected_job = jobs.get("protected-current-advisory-consumer")
+        self.assertIsInstance(protected_job, dict)
+        assert isinstance(protected_job, dict)
+        steps = protected_job.get("steps")
+        self.assertIsInstance(steps, list)
+        assert isinstance(steps, list)
+        guards = [
+            step
+            for step in steps
+            if isinstance(step, dict)
+            and step.get("name")
+            == "Require protected main for manual R2A verification"
+        ]
+        self.assertEqual(1, len(guards))
+        guard = guards[0]
+        self.assertEqual(
+            "github.event_name == 'workflow_dispatch'",
+            guard.get("if"),
+        )
+        guard_run = guard.get("run")
+        self.assertIsInstance(guard_run, str)
+        assert isinstance(guard_run, str)
+        self.assertIn(
+            'test "${GITHUB_REF}" = "refs/heads/main"',
+            guard_run,
+        )
+        self.assertIn(
+            "manual protected-route verification must run from refs/heads/main",
+            guard_run,
+        )
+
         for path in (
             DECISION_RELATIVE_PATH,
             PROMOTION_SMOKE_RELATIVE_PATH,

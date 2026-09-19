@@ -83,6 +83,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
+      - name: Require protected main for manual R2A verification
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF}" = "refs/heads/main" || {
+            echo "manual protected-route verification must run from refs/heads/main" >&2
+            exit 1
+          }
+
       - name: Check out the exact candidate
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
