@@ -60,9 +60,9 @@ jobs:
           test "$(git -C restoration-source rev-parse HEAD)" = "${SOURCE_COMMIT}"
           test "$(git -C restoration-source rev-parse 'HEAD^{tree}')" = "${SOURCE_TREE}"
           test -z "$(git -C restoration-source status --porcelain)"
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            test "${{ github.event.pull_request.base.sha }}" = "${SOURCE_COMMIT}"
-          fi
+          # SOURCE_COMMIT is the immutable runtime subject, not the moving PR base.
+          # Later restoration/trust PRs deliberately run on descendants of that
+          # source while requalifying the same exact runtime bytes.
 
       - name: Install exact development dependencies
         shell: bash
@@ -128,7 +128,7 @@ jobs:
           GNOSTOA_R2_EXPECTED_SOURCE_TREE: ${{ env.SOURCE_TREE }}
           GNOSTOA_R2_EXPECTED_IMAGE_ID: ${{ steps.identity.outputs.image_id }}
           GNOSTOA_R2_EXPECTED_PUBLIC_SURFACE_DIGEST: ${{ steps.identity.outputs.public_surface_digest }}
-          GNOSTOA_R2_EXPECTED_PROTECTED_MAIN: ${{ env.SOURCE_COMMIT }}
+          GNOSTOA_R2_EXPECTED_PROTECTED_MAIN: ${{ github.event.pull_request.base.sha || env.SOURCE_COMMIT }}
         run: |
           set -euo pipefail
           python ci/review_current_advisory_restoration_smoke.py
