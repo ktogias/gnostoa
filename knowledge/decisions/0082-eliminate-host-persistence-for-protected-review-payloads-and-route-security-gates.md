@@ -404,6 +404,40 @@ binding to reach the independent semantic guard. Production fingerprints and
 required gates remain intact. Qodo screenshot statuses are historical portal
 observations, not fresh code review or evidence of candidate correctness.
 
+### Owner-accepted residual — cooperative snapshot deadline
+
+The [owner disposition](https://github.com/ktogias/gnostoa/pull/278#issuecomment-5739914653)
+accepts the cooperative snapshot deadline as staged scope and does not admit a
+hard-interruption mechanism in this candidate.
+
+`_SNAPSHOT_TIMEOUT_SECONDS` is 60 and `_check_snapshot_deadline` is polled around
+reads and writes, during every partial write, after source validation and before
+snapshot handoff. The accepted residual is exact: a filesystem syscall that blocks
+indefinitely is not preempted, and 60 seconds is a refusal threshold observed
+between operations, not a guaranteed return time. Chunk size does not bound that
+latency and regular-file `O_NONBLOCK` does not apply to it. A syscall returning
+after the deadline refuses instead of executing the scanner, so the failure
+direction stays closed.
+
+A hard bound is not selected here because `SIGALRM` is process-global and
+`tools/security_scan.py` is imported by `ci/security_scan.py` and
+`tools/quality_evidence.py`, so an in-library alarm would reach every caller's
+signal state. A process-level kill around the whole snapshot changes how the gate
+executes and needs its own Decision and evidence rather than an amendment to this
+candidate.
+
+`security-fast` is bounded at `timeout-minutes: 10` and `extended` at `45`, so a
+stalled snapshot fails the provider job. That is job containment, not a
+60-second return guarantee from the library, and it does not substitute for one.
+
+Admission condition: an observed stalled-acquisition occurrence in the gate, or a
+change that runs the scan against storage where indefinite blocking is expected,
+such as a network or fuse-backed tracked tree. Either admits a hard-interruption
+mechanism with its own RED regression for a stalled operation exceeding the bound.
+Until then this stays knowledge-only. The acceptance changes no code, contract,
+workflow fingerprint, dependency, protected authority identity or required check,
+does not close #275 and admits no merge.
+
 ## Verification contract
 
 Pre-implementation RED evidence and the final candidate must demonstrate:
