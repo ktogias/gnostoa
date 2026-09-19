@@ -96,7 +96,7 @@ inherited, copied or loaded by adopting projects.
 - [Qualify the integrated transport-safe current-advisory runtime before publication](decisions/0083-qualify-integrated-current-advisory-restoration-runtime.md)
 - [Publish the qualified current-advisory restoration runtime as a digest-only OCI identity](decisions/0084-publish-current-advisory-restoration-runtime-by-digest.md)
 - [Promote the exact restoration runtime into protected current-advisory transport authority](decisions/0085-promote-current-advisory-restoration-runtime.md)
-- [Implement useful L1 as a protected-source GitHub current-state reconciler](decisions/0086-implement-useful-l1-as-protected-source-github-current-state-reconciler.md)
+- [Implement useful L1 as provider-neutral current-state reconciliation with a GitHub adapter](decisions/0086-implement-useful-l1-as-protected-source-github-current-state-reconciler.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Require explicit admission for retrospective findings](requirements/retrospective-findings-require-explicit-admission.md)
