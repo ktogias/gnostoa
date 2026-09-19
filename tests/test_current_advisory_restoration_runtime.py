@@ -80,6 +80,26 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
         )
         self.assertEqual({"contents": "read"}, workflow["permissions"])
 
+        triggers = workflow.get("on")
+        self.assertIsInstance(triggers, dict)
+        assert isinstance(triggers, dict)
+        pull_request = triggers.get("pull_request")
+        self.assertIsInstance(pull_request, dict)
+        assert isinstance(pull_request, dict)
+        paths = pull_request.get("paths")
+        self.assertIsInstance(paths, list)
+        assert isinstance(paths, list)
+        for required_path in (
+            "tools/review_*.py",
+            "tools/knowledge_common.py",
+            "tools/cli.py",
+            "schemas/review-*.json",
+            "policy/review-policy.yaml",
+            "Dockerfile",
+            "ci/build-runtime",
+        ):
+            self.assertIn(required_path, paths)
+
         env = workflow.get("env")
         self.assertIsInstance(env, dict)
         assert isinstance(env, dict)
@@ -94,6 +114,8 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
         self.assertIsInstance(qualify, dict)
         assert isinstance(qualify, dict)
         self.assertNotIn("permissions", qualify)
+        self.assertNotIn("if", qualify)
+        self.assertNotIn("continue-on-error", qualify)
         steps = _job_steps(qualify)
 
         checkout_steps = [step for step in steps if step.get("uses") == CHECKOUT_ACTION]
@@ -156,7 +178,8 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
             self.assertIn(required, identity_run)
 
         _, contracts = _named_step(
-            steps, "Run exact-source transport regression contracts"
+            steps,
+            "Run exact-source transport regression contracts via native orchestration fallback",
         )
         contracts_run = _step_run(contracts, "transport contracts")
         for required in (
@@ -202,6 +225,8 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
         self.assertIn("set -euo pipefail", receipt_run)
         self.assertIn("printf -- '- source revision: `%s`", receipt_run)
         self.assertIn("printf -- '- source tree: `%s`", receipt_run)
+        self.assertIn(r"`%s`\n", receipt_run)
+        self.assertNotIn(r"`%s`\\n", receipt_run)
         self.assertNotIn('echo "- source revision: `', receipt_run)
         self.assertNotIn('echo "- source tree: `', receipt_run)
         self.assertIn("registry publication: **NOT PERFORMED**", receipt_run)
@@ -209,6 +234,10 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
             "protected authority/catalog promotion: **NOT PERFORMED**",
             receipt_run,
         )
+
+        for required_step in (bind, build, identity, contracts, smoke_step, receipt):
+            self.assertNotIn("if", required_step)
+            self.assertNotIn("continue-on-error", required_step)
 
         _, cleanup = _named_step(steps, "Remove local candidate image")
         self.assertEqual("always()", cleanup.get("if"))
@@ -253,14 +282,55 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
         self.assertIn("R3 requires separate owner authorization", decision)
 
     def test_r2_surface_is_owned_by_security_and_semantic_guardrails(self) -> None:
-        guardrails = (ROOT / "policy" / "guardrails.yaml").read_text(encoding="utf-8")
+        document = yaml.load(
+            (ROOT / "policy" / "guardrails.yaml").read_text(encoding="utf-8"),
+            Loader=yaml.BaseLoader,
+        )
+        self.assertIsInstance(document, dict)
+        assert isinstance(document, dict)
+        entries = document.get("guardrails")
+        self.assertIsInstance(entries, list)
+        assert isinstance(entries, list)
+        by_id = {
+            entry.get("id"): entry
+            for entry in entries
+            if isinstance(entry, dict) and isinstance(entry.get("id"), str)
+        }
+
+        semantic = by_id.get("semantic-review-assurance")
+        self.assertIsInstance(semantic, dict)
+        assert isinstance(semantic, dict)
+        semantic_implementation = semantic.get("implementation")
+        semantic_tests = semantic.get("tests")
+        self.assertIsInstance(semantic_implementation, list)
+        self.assertIsInstance(semantic_tests, list)
+        assert isinstance(semantic_implementation, list)
+        assert isinstance(semantic_tests, list)
         for required in (
             WORKFLOW_RELATIVE_PATH,
             SMOKE_RELATIVE_PATH,
             DECISION_RELATIVE_PATH,
-            "tests/test_current_advisory_restoration_runtime.py",
         ):
-            self.assertIn(required, guardrails)
+            self.assertIn(required, semantic_implementation)
+        self.assertIn(
+            "tests/test_current_advisory_restoration_runtime.py",
+            semantic_tests,
+        )
+
+        provider = by_id.get("immutable-provider-ci-adapters")
+        self.assertIsInstance(provider, dict)
+        assert isinstance(provider, dict)
+        provider_implementation = provider.get("implementation")
+        provider_tests = provider.get("tests")
+        self.assertIsInstance(provider_implementation, list)
+        self.assertIsInstance(provider_tests, list)
+        assert isinstance(provider_implementation, list)
+        assert isinstance(provider_tests, list)
+        self.assertIn(WORKFLOW_RELATIVE_PATH, provider_implementation)
+        self.assertIn(
+            "tests/test_current_advisory_restoration_runtime.py",
+            provider_tests,
+        )
 
 
 if __name__ == "__main__":
