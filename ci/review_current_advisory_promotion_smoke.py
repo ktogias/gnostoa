@@ -5,6 +5,7 @@ import copy
 import json
 from pathlib import Path
 from typing import Any
+
 from tools import review_outer, review_protected
 from tools.knowledge_common import toolkit_root
 from tools.review_model import canonical_json

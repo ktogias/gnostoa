@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 import math
 import re
-from collections.abc import Callable
 import tempfile
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, NoReturn
 

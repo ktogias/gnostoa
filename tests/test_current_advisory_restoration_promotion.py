@@ -3,10 +3,10 @@ from __future__ import annotations
 import copy
 import hashlib
 import importlib.util
-from collections.abc import Callable
 import io
 import json
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
 from unittest import mock
