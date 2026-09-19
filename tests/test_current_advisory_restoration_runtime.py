@@ -60,6 +60,8 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
         self.assertNotIn("docker login", text)
         self.assertNotIn("--push-by-digest", text)
         self.assertNotIn("actions/attest", text)
+        smoke = SMOKE_PATH.read_text(encoding="utf-8")
+        self.assertIn("host_backed_shared_tmp_sentinel_absent", smoke)
 
     def test_decision_keeps_publication_and_promotion_outside_r2(self) -> None:
         decision = DECISION_PATH.read_text(encoding="utf-8")
@@ -68,6 +70,18 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
         self.assertIn("does **not** authorize GHCR", decision)
         self.assertIn("human semantic review", decision)
         self.assertIn("R3 requires separate owner authorization", decision)
+
+    def test_r2_surface_is_owned_by_security_and_semantic_guardrails(self) -> None:
+        guardrails = (ROOT / "policy" / "guardrails.yaml").read_text(
+            encoding="utf-8"
+        )
+        for required in (
+            WORKFLOW_RELATIVE_PATH,
+            SMOKE_RELATIVE_PATH,
+            DECISION_RELATIVE_PATH,
+            "tests/test_current_advisory_restoration_runtime.py",
+        ):
+            self.assertIn(required, guardrails)
 
 
 if __name__ == "__main__":
