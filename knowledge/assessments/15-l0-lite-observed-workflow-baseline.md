@@ -263,10 +263,9 @@ specimens, so that metric is **UNKNOWN** rather than zero.
 
 PR #272 records a dated provider-capability failure: a further Cubic exact-head
 review could not start after the workspace reached its monthly
-**40,000-line** allowance (**40,037 used**). An earlier attempted “Fix with
-Cubic” request also received a plan/capability response rather than an edit.
+**40,000-line** allowance (**40,037 used**).
 
-These are provider observations, not core workflow contracts. L0 therefore
+This is a provider observation, not a core workflow contract. L0 therefore
 records the failure and preserves the work; it does not infer unlimited quota,
 require a paid fallback, weaken review requirements or convert provider
 unavailability into a clean result.
