@@ -271,8 +271,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
                 "binding": False,
             },
             execution={
-                "run_id": 250,
-                "run_attempt": 1,
+                "execution_id": "synthetic-execution::250",
                 "observed_at": cut,
             },
         )
@@ -285,6 +284,167 @@ class UsefulL1FollowupTests(unittest.TestCase):
             adapter._MAX_OPEN_PULLS * 32_768 + 20_000,
             adapter._MAX_PUBLICATION_PAYLOAD_BYTES,
         )
+
+    def test_materially_different_native_translator_reuses_core_unchanged(self) -> None:
+        fixtures = _fixtures()
+        reducer = fixtures._reducer()
+        native = {
+            "engine": "nebula-review",
+            "project_key": "opaque-project::7",
+            "proposal": {
+                "token": "proposal::alpha/42",
+                "phase": "active",
+                "tip": "a" * 40,
+                "parent": "b" * 40,
+                "fork_point": "c" * 40,
+                "locator": "urn:nebula:proposal:alpha-42",
+            },
+            "decisions": [
+                {
+                    "token": "decision::opaque-Z9",
+                    "actor": "reviewer::opaque-A",
+                    "verdict": "APPROVED",
+                    "when": "2026-09-19T16:40:30Z",
+                    "revision": "a" * 40,
+                }
+            ],
+            "threads": [],
+        }
+
+        def translate(document: dict[str, Any]) -> dict[str, Any]:
+            proposal = document["proposal"]
+            return {
+                "schema_version": reducer.PROVIDER_STATE_SCHEMA_VERSION,
+                "provider": {
+                    "id": document["engine"],
+                    "adapter": "test.nebula-native/v1",
+                },
+                "observed_at": "2026-09-19T16:41:00Z",
+                "subject": {
+                    "repository": f"urn:nebula:project:{document['project_key']}",
+                    "change_request": {
+                        "kind": "proposal",
+                        "id": proposal["token"],
+                    },
+                    "state": "open" if proposal["phase"] == "active" else "closed",
+                    "head_commit": proposal["tip"],
+                    "base_commit": proposal["parent"],
+                    "comparison": {
+                        "kind": "merge_base",
+                        "commit_sha": proposal["fork_point"],
+                    },
+                    "source_url": proposal["locator"],
+                    "title": "Opaque native proposal",
+                },
+                "coverage": {
+                    "subject": {"status": "COMPLETE", "pages": 1, "count": 1},
+                    "conversation": {"status": "COMPLETE", "pages": 1, "count": 0},
+                    "reviews": {"status": "COMPLETE", "pages": 1, "count": 1},
+                    "review_threads": {"status": "COMPLETE", "pages": 1, "count": 0},
+                    "checks": {"status": "UNAVAILABLE", "pages": 0, "count": 0},
+                },
+                "conversation": [],
+                "reviews": [
+                    {
+                        "observation_id": item["token"],
+                        "reviewer_id": item["actor"],
+                        "recommendation_state": item["verdict"],
+                        "observed_at": item["when"],
+                        "head_commit": item["revision"],
+                        "source_url": f"urn:nebula:{item['token']}",
+                    }
+                    for item in document["decisions"]
+                ],
+                "review_threads": [],
+                "checks": [],
+            }
+
+        snapshot = translate(native)
+        review_input = reducer.build_review_input(snapshot, fixtures._bundle())
+        projection = reducer.build_projection(
+            snapshot,
+            protected_main_revision="e" * 40,
+            outer_consumer={
+                "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
+                "runtime_revision": "9" * 40,
+            },
+            r2a_result={
+                "outcome": "PASS",
+                "reason": "QUORUM_SATISFIED",
+                "binding": False,
+            },
+            execution={
+                "execution_id": "pipeline-token::sha256:opaque-7f",
+                "observed_at": "2026-09-19T16:41:10Z",
+            },
+        )
+
+        self.assertEqual("proposal", review_input["subject"]["change_request"]["kind"])
+        self.assertEqual(
+            "proposal::alpha/42",
+            review_input["subject"]["change_request"]["id"],
+        )
+        self.assertEqual(
+            "pipeline-token::sha256:opaque-7f",
+            projection["observation"]["execution_id"],
+        )
+        self.assertNotIn("run_id", projection["observation"])
+        self.assertNotIn("run_attempt", projection["observation"])
+        self.assertEqual("INCOMPLETE_AT_OBSERVATION", projection["currentness"])
+        self.assertEqual("UNAVAILABLE", projection["r2a"]["outcome"])
+        self.assertEqual(
+            "WAIT_OR_RECONCILE_REQUIRED_EVIDENCE",
+            projection["next_permitted_action"],
+        )
+
+    def test_native_id_ordering_mutant_is_rejected_by_ambiguity_semantics(self) -> None:
+        fixtures = _fixtures()
+        reducer = fixtures._reducer()
+        base = fixtures._snapshot(provider_id="nebula-review")
+        signals = [
+            {
+                "id": "opaque-Z-success",
+                "name": "native-signal",
+                "head_commit": "a" * 40,
+                "observed_at": "2026-09-19T16:41:00Z",
+                "status": "completed",
+                "conclusion": "success",
+            },
+            {
+                "id": "opaque-A-failure",
+                "name": "native-signal",
+                "head_commit": "a" * 40,
+                "observed_at": "2026-09-19T16:41:00Z",
+                "status": "completed",
+                "conclusion": "failure",
+            },
+        ]
+
+        for ordered in (signals, list(reversed(signals))):
+            snapshot = copy.deepcopy(base)
+            snapshot["checks"] = ordered
+            projection = reducer.build_projection(
+                snapshot,
+                protected_main_revision="e" * 40,
+                outer_consumer={
+                    "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
+                    "runtime_revision": "9" * 40,
+                },
+                r2a_result={
+                    "outcome": "PASS",
+                    "reason": "QUORUM_SATISFIED",
+                    "binding": False,
+                },
+                execution={
+                    "execution_id": "opaque-exec::same-time-replay",
+                    "observed_at": "2026-09-19T16:41:10Z",
+                },
+            )
+            self.assertEqual(["native-signal"], projection["checks"]["ambiguous"])
+            self.assertEqual(
+                "RECONCILE_PROVIDER_CHECKS",
+                projection["next_permitted_action"],
+            )
 
 
 if __name__ == "__main__":
