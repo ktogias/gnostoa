@@ -53,7 +53,7 @@ sources:
     resource: https://github.com/ktogias/gnostoa/pull/272#issuecomment-5713992293
     title: Cubic exact-head review follow-up
   - id: retained-provider-receipts
-    resource: https://github.com/ktogias/gnostoa/blob/df0c21fe19f4ebcba8b03036d72dc536c5f05eab/knowledge/assessments/15-l0-lite-observed-workflow-baseline-receipts.json
+    resource: https://github.com/ktogias/gnostoa/blob/f4535ba0cd72b5c3ff688a6bbb94fa42ec648f69/knowledge/assessments/15-l0-lite-observed-workflow-baseline-receipts.json
     title: Immutable normalized provider-receipt snapshot for L0-lite measurements
   - id: convergence-receipt
     resource: https://github.com/ktogias/gnostoa/pull/272#issuecomment-5714172963
@@ -86,7 +86,10 @@ provider mutation, paid inference, a new semantic result, or execution
 authority.
 
 The observation cut is protected `main`
-`e2b29e820117b9780a9168ab8709026b40975105` on 2026-09-19. The principal
+`e2b29e820117b9780a9168ab8709026b40975105` on 2026-09-19. The retained
+receipt snapshot includes the provider branch read-back that observed
+`main`, `protected:true`, that exact head, and required checks
+`policy`, `fast`, `regression`, and `smoke`. The principal
 assurance-cost specimen is PR #257. Issue #262 and PR #272 are the bounded
 mechanical-normalization specimen. Decision 0081's post-integration
 effectiveness assessment remains a separate parallel evidence lane and is not a
@@ -100,7 +103,7 @@ and unrecorded waiting are **UNKNOWN** rather than estimated.
 
 The numeric provider baseline is reproduced from the immutable normalized
 snapshot
-[`15-l0-lite-observed-workflow-baseline-receipts.json`](https://github.com/ktogias/gnostoa/blob/df0c21fe19f4ebcba8b03036d72dc536c5f05eab/knowledge/assessments/15-l0-lite-observed-workflow-baseline-receipts.json).
+[`15-l0-lite-observed-workflow-baseline-receipts.json`](https://github.com/ktogias/gnostoa/blob/f4535ba0cd72b5c3ff688a6bbb94fa42ec648f69/knowledge/assessments/15-l0-lite-observed-workflow-baseline-receipts.json).
 It retains every provider record field used by the published metrics: PR
 timestamps and size fields, all 119 selected branch commits with SHA/date/title,
 all 147 formal review records with review ID/author/state/submitted time/head,
