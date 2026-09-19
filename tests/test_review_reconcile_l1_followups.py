@@ -22,6 +22,79 @@ def _fixtures() -> Any:
 
 
 class UsefulL1FollowupTests(unittest.TestCase):
+    def test_malformed_native_commit_bindings_make_source_incomplete(self) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+
+        cases = (
+            (
+                "reviews",
+                f"{root}/pulls/300/reviews?per_page=100",
+                False,
+                "commit_id",
+            ),
+            (
+                "review_threads",
+                f"{root}/pulls/300/comments?per_page=100",
+                False,
+                "commit_id",
+            ),
+        )
+        for source, url, wrapped, field in cases:
+            with self.subTest(source=source):
+                replies = copy.deepcopy(fixtures._complete_replies(root))
+                payload = replies[url][0]
+                items = payload["check_runs"] if wrapped else payload
+                items[0][field] = "not-an-exact-git-commit"
+                snapshot = adapter.collect_snapshot(
+                    fixtures._PagedFake(replies),
+                    repository="ktogias/gnostoa",
+                    pull_number=300,
+                    observed_at="2026-09-19T16:41:00Z",
+                )
+                self.assertNotEqual(
+                    "COMPLETE",
+                    snapshot["coverage"][source]["status"],
+                )
+                self.assertEqual([], snapshot[source])
+
+    def test_hourly_recovery_rotates_bounded_open_pull_batches(self) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+        pulls = [
+            {
+                "number": number,
+                "state": "open",
+                "html_url": f"https://github.com/ktogias/gnostoa/pull/{number}",
+                "head": {"sha": f"{number:040x}"[-40:]},
+                "base": {"sha": "b" * 40},
+            }
+            for number in range(1, 12)
+        ]
+        reader = fixtures._PagedFake(
+            {
+                f"{root}/pulls?state=open&per_page=100": (pulls, {}),
+            }
+        )
+
+        enumerated = adapter._open_pull_numbers(reader, "ktogias/gnostoa")
+        first = adapter._select_scheduled_pull_batch(
+            enumerated,
+            "2026-09-19T22:00:00Z",
+        )
+        second = adapter._select_scheduled_pull_batch(
+            enumerated,
+            "2026-09-19T23:00:00Z",
+        )
+
+        self.assertEqual(list(range(1, 12)), enumerated)
+        self.assertLessEqual(len(first), adapter._MAX_OPEN_PULLS)
+        self.assertLessEqual(len(second), adapter._MAX_OPEN_PULLS)
+        self.assertEqual(set(enumerated), set(first) | set(second))
+        self.assertNotEqual(first, second)
+
     def test_invalid_provider_timestamps_are_source_errors(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures._adapter()
