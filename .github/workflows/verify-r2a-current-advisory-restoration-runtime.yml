@@ -130,13 +130,14 @@ jobs:
       - name: Record bounded qualification receipt
         shell: bash
         run: |
+          set -euo pipefail
           {
             echo "### R2 restoration runtime qualification"
             echo
-            echo "- source revision: `${SOURCE_COMMIT}`"
-            echo "- source tree: `${SOURCE_TREE}`"
-            echo "- local image id: `${{ steps.identity.outputs.image_id }}`"
-            echo "- public surface: `${{ steps.identity.outputs.public_surface_digest }}`"
+            printf -- '- source revision: `%s`\\n' "${SOURCE_COMMIT}"
+            printf -- '- source tree: `%s`\\n' "${SOURCE_TREE}"
+            printf -- '- local image id: `%s`\\n' "${{ steps.identity.outputs.image_id }}"
+            printf -- '- public surface: `%s`\\n' "${{ steps.identity.outputs.public_surface_digest }}"
             echo "- registry publication: **NOT PERFORMED**"
             echo "- protected authority/catalog promotion: **NOT PERFORMED**"
           } >> "${GITHUB_STEP_SUMMARY}"
