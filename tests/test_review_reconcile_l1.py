@@ -43,71 +43,86 @@ def _bundle() -> dict[str, Any]:
     return loaded
 
 
-def _snapshot() -> dict[str, Any]:
+def _snapshot(
+    *,
+    provider_id: str = "github",
+    repository: str = "https://github.com/ktogias/gnostoa",
+    change_kind: str = "github-pull-request",
+    change_id: str = "300",
+    source_url: str = "https://github.com/ktogias/gnostoa/pull/300",
+) -> dict[str, Any]:
     return {
-        "schema_version": 1,
-        "provider": "github",
-        "repository": "ktogias/gnostoa",
-        "pull_number": 300,
+        "schema_version": "gnostoa-review-provider-state/v1",
+        "provider": {
+            "id": provider_id,
+            "adapter": f"{provider_id}-fixture/v1",
+        },
         "observed_at": "2026-09-19T16:41:00Z",
         "subject": {
+            "repository": repository,
+            "change_request": {
+                "kind": change_kind,
+                "id": change_id,
+            },
             "state": "open",
-            "head_sha": "a" * 40,
-            "base_sha": "b" * 40,
-            "merge_base_sha": "c" * 40,
-            "html_url": "https://github.com/ktogias/gnostoa/pull/300",
+            "head_commit": "a" * 40,
+            "base_commit": "b" * 40,
+            "comparison": {
+                "kind": "merge_base",
+                "commit_sha": "c" * 40,
+            },
+            "source_url": source_url,
+            "title": "Useful L1 fixture",
         },
         "coverage": {
-            "pull": {"status": "COMPLETE", "pages": 1},
-            "issue_comments": {"status": "COMPLETE", "pages": 2},
-            "reviews": {"status": "COMPLETE", "pages": 2},
-            "review_comments": {"status": "COMPLETE", "pages": 1},
-            "check_runs": {"status": "COMPLETE", "pages": 1},
+            "subject": {"status": "COMPLETE", "pages": 1, "count": 1},
+            "conversation": {"status": "COMPLETE", "pages": 2, "count": 1},
+            "reviews": {"status": "COMPLETE", "pages": 2, "count": 2},
+            "review_threads": {"status": "COMPLETE", "pages": 1, "count": 1},
+            "checks": {"status": "COMPLETE", "pages": 1, "count": 1},
         },
-        "issue_comments": [
+        "conversation": [
             {
-                "id": 1,
+                "id": "conversation-1",
                 "author": "review-bot",
-                "created_at": "2026-09-19T16:40:20Z",
-                "updated_at": "2026-09-19T16:40:20Z",
+                "observed_at": "2026-09-19T16:40:20Z",
                 "body": "raw provider text that must not be rendered",
             }
         ],
         "reviews": [
             {
-                "id": 10,
-                "author": "qodo-code-review[bot]",
-                "state": "APPROVED",
-                "submitted_at": "2026-09-19T16:40:30Z",
-                "commit_id": "a" * 40,
-                "html_url": "https://github.com/ktogias/gnostoa/pull/300#pullrequestreview-10",
+                "observation_id": "provider-review-10",
+                "reviewer_id": "qodo-code-review[bot]",
+                "recommendation_state": "APPROVED",
+                "observed_at": "2026-09-19T16:40:30Z",
+                "head_commit": "a" * 40,
+                "source_url": source_url + "#review-10",
             },
             {
-                "id": 11,
-                "author": "older-reviewer",
-                "state": "COMMENTED",
-                "submitted_at": "2026-09-19T16:39:30Z",
-                "commit_id": "d" * 40,
-                "html_url": "https://github.com/ktogias/gnostoa/pull/300#pullrequestreview-11",
+                "observation_id": "provider-review-11",
+                "reviewer_id": "older-reviewer",
+                "recommendation_state": "COMMENTED",
+                "observed_at": "2026-09-19T16:39:30Z",
+                "head_commit": "d" * 40,
+                "source_url": source_url + "#review-11",
             },
         ],
-        "review_comments": [
+        "review_threads": [
             {
-                "id": 20,
-                "pull_request_review_id": 10,
-                "author": "qodo-code-review[bot]",
-                "created_at": "2026-09-19T16:40:31Z",
-                "updated_at": "2026-09-19T16:40:31Z",
-                "commit_id": "a" * 40,
+                "id": "provider-thread-20",
+                "review_observation_id": "provider-review-10",
+                "reviewer_id": "qodo-code-review[bot]",
+                "observed_at": "2026-09-19T16:40:31Z",
+                "head_commit": "a" * 40,
                 "body": "inline raw finding",
-                "html_url": "https://github.com/ktogias/gnostoa/pull/300#discussion_r20",
+                "source_url": source_url + "#thread-20",
             }
         ],
-        "check_runs": [
+        "checks": [
             {
-                "id": 30,
+                "id": "provider-check-00000000000000000030",
                 "name": "fast",
-                "head_sha": "a" * 40,
+                "head_commit": "a" * 40,
                 "status": "completed",
                 "conclusion": "success",
             }
@@ -277,15 +292,62 @@ class UsefulL1RedContractTests(unittest.TestCase):
         self.assertEqual(2, len(observations))
         by_id = {item["observation_id"]: item for item in observations}
         self.assertEqual(
-            "exact", by_id["github-review-10"]["subject_binding"]["status"]
+            "exact", by_id["provider-review-10"]["subject_binding"]["status"]
         )
         self.assertEqual(
-            "partial", by_id["github-review-11"]["subject_binding"]["status"]
+            "partial", by_id["provider-review-11"]["subject_binding"]["status"]
         )
         self.assertEqual(
             "APPROVED",
-            by_id["github-review-10"]["native"]["recommendation_state"],
+            by_id["provider-review-10"]["native"]["recommendation_state"],
         )
+
+    def test_reducer_core_is_provider_neutral_and_accepts_second_adapter_shape(
+        self,
+    ) -> None:
+        reducer = _reducer()
+        gitlab_snapshot = _snapshot(
+            provider_id="gitlab",
+            repository="https://gitlab.example/acme/widget",
+            change_kind="merge-request",
+            change_id="42",
+            source_url="https://gitlab.example/acme/widget/-/merge_requests/42",
+        )
+
+        review_input = reducer.build_review_input(gitlab_snapshot, _bundle())
+        projection = reducer.build_projection(
+            gitlab_snapshot,
+            protected_main_revision="e" * 40,
+            outer_consumer={
+                "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
+                "runtime_revision": "9" * 40,
+            },
+            r2a_result={
+                "outcome": "INCOMPLETE",
+                "reason": "QUORUM_UNMET",
+                "binding": False,
+            },
+            execution={
+                "run_id": 124,
+                "run_attempt": 1,
+                "observed_at": "2026-09-19T16:41:11Z",
+            },
+        )
+
+        self.assertEqual(
+            "https://gitlab.example/acme/widget",
+            review_input["subject"]["repository"],
+        )
+        self.assertEqual(
+            {"kind": "merge-request", "id": "42"},
+            review_input["subject"]["change_request"],
+        )
+        self.assertEqual("gitlab", projection["subject"]["provider_id"])
+
+        reducer_source = (
+            ROOT / "tools" / "review_reconcile.py"
+        ).read_text(encoding="utf-8").lower()
+        self.assertNotIn("github", reducer_source)
 
     def test_projection_is_bounded_and_does_not_copy_raw_provider_bodies(self) -> None:
         reducer = _reducer()
@@ -330,10 +392,10 @@ class UsefulL1RedContractTests(unittest.TestCase):
         )
 
         for source, payload_key in (
-            ("issue_comments", "issue_comments"),
+            ("conversation", "conversation"),
             ("reviews", "reviews"),
-            ("review_comments", "review_comments"),
-            ("check_runs", "check_runs"),
+            ("review_threads", "review_threads"),
+            ("checks", "checks"),
         ):
             with self.subTest(source=source):
                 self.assertEqual(2, len(snapshot[payload_key]))
@@ -347,10 +409,10 @@ class UsefulL1RedContractTests(unittest.TestCase):
         adapter = _adapter()
         root = "https://api.github.com/repos/ktogias/gnostoa"
         cases = {
-            "issue_comments": "https://api.github.com/page2/issues",
+            "conversation": "https://api.github.com/page2/issues",
             "reviews": "https://api.github.com/page2/reviews",
-            "review_comments": "https://api.github.com/page2/review-comments",
-            "check_runs": "https://api.github.com/page2/check-runs",
+            "review_threads": "https://api.github.com/page2/review-comments",
+            "checks": "https://api.github.com/page2/check-runs",
         }
 
         for source, fail_url in cases.items():
@@ -379,7 +441,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
     ) -> None:
         adapter = _adapter()
         candidate = {
-            "subject": {"head_sha": "a" * 40, "state": "open"},
+            "subject": {"head_commit": "a" * 40, "state": "open"},
             "observation": {
                 "observed_at": "2026-09-19T16:41:00Z",
                 "run_id": 100,
@@ -396,7 +458,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
         self.assertEqual("STALE_HEAD", reason)
 
         existing = {
-            "subject": {"head_sha": "a" * 40},
+            "subject": {"head_commit": "a" * 40},
             "observation": {
                 "observed_at": "2026-09-19T16:42:00Z",
                 "run_id": 101,
@@ -411,6 +473,31 @@ class UsefulL1RedContractTests(unittest.TestCase):
         )
         self.assertFalse(allowed)
         self.assertEqual("SUPERSEDED_PROJECTION", reason)
+
+    def test_scheduled_population_refuses_silent_open_pr_truncation(self) -> None:
+        adapter = _adapter()
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+        pulls = [
+            {
+                "number": number,
+                "state": "open",
+                "html_url": f"https://github.com/ktogias/gnostoa/pull/{number}",
+                "head": {"sha": f"{number:040x}"[-40:]},
+                "base": {"sha": "b" * 40},
+            }
+            for number in range(1, 12)
+        ]
+        fake = _PagedFake(
+            {
+                f"{root}/pulls?state=open&per_page=100": (pulls, {}),
+            }
+        )
+
+        with self.assertRaisesRegex(
+            adapter.ProviderReadError,
+            "exceeds the bounded reconciliation capacity",
+        ):
+            adapter._open_pull_numbers(fake, "ktogias/gnostoa")
 
     def test_workflow_is_protected_source_and_least_privilege(self) -> None:
         self.assertTrue(WORKFLOW_PATH.is_file(), "L1_WORKFLOW_UNAVAILABLE")
@@ -466,7 +553,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
             self.assertEqual("main", checkout_with.get("ref"))
             self.assertIs(False, checkout_with.get("persist-credentials"))
 
-        self.assertIn("tools/review_github_current_state.py", text)
+        self.assertIn("ci/review_github_current_state.py", text)
 
 
 if __name__ == "__main__":
