@@ -87,6 +87,11 @@ adapter may translate its native merge-request/review/check objects into the
 same internal shape and reuse the reducer, R2A composition and projection core
 unchanged.
 
+The internal adapter contract also requires explicit observation timestamps for
+check state; opaque provider IDs never define freshness. Duplicate marker-owned
+projection comments are an explicit fail-closed provider-write condition rather
+than an invitation to guess which comment owns the projection.
+
 ## RED evidence
 
 Before adding production files, focused tests must fail for at least these
