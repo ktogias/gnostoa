@@ -404,14 +404,10 @@ def build_projection(
         else "UNAVAILABLE"
     )
 
-    run_id = execution.get("run_id")
-    run_attempt = execution.get("run_attempt")
-    if type(run_id) is not int or run_id <= 0:
-        raise ReconciliationInputError("execution.run_id must be a positive integer")
-    if type(run_attempt) is not int or run_attempt <= 0:
-        raise ReconciliationInputError(
-            "execution.run_attempt must be a positive integer"
-        )
+    execution_id = _string(
+        execution.get("execution_id"),
+        "execution.execution_id",
+    )
     execution_observed_at = _timestamp(
         execution.get("observed_at"),
         "execution.observed_at",
@@ -491,8 +487,7 @@ def build_projection(
         "observation": {
             "observed_at": snapshot["observed_at"],
             "execution_observed_at": execution_observed_at,
-            "run_id": run_id,
-            "run_attempt": run_attempt,
+            "execution_id": execution_id,
         },
     }
 
@@ -566,10 +561,7 @@ def render_projection(projection: dict[str, Any]) -> str:
             f"- R2A: **{r2a['outcome']} / {r2a['reason']}**, binding: false",
             f"- Currentness: **{projection['currentness']}**",
             f"- Next permitted action: `{projection['next_permitted_action']}`",
-            (
-                f"- Execution generation: run `{observation['run_id']}`, "
-                f"attempt `{observation['run_attempt']}`"
-            ),
+            f"- Execution generation: `{observation['execution_id']}`",
             "",
         ]
     )
