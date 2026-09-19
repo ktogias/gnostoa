@@ -527,6 +527,17 @@ def _run_bounded_scan(
     except SecurityScanError as exc:
         execution_error = str(exc)
         execution_cause = exc
+    except Exception as exc:
+        # A type this runner does not classify would otherwise leave the try
+        # without reaching the aggregation below, discarding every close issue
+        # the finally collected and leaving the child unreaped. Reap it here as
+        # the classified arms do, name the failure by type only, and keep the
+        # original as the cause.
+        execution_error = _with_secondary(
+            f"tracked-tree secret scan failed (unexpected {type(exc).__name__})",
+            _reap_detail(process),
+        )
+        execution_cause = exc
     finally:
         if selector is not None:
             try:

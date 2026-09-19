@@ -184,7 +184,17 @@ def _kill_and_reap(process: subprocess.Popen[bytes]) -> None:
 
 
 def _validate_docker_run_options(arguments: list[str]) -> None:
+    """Accept only the run shapes whose container this module can reconcile.
+
+    A run receives a predeclared cleanup identity, and the success path retires
+    that identity without reconciling the container, so the run must remove its
+    own container. Requiring ``--rm`` here keeps that precondition stated rather
+    than assumed by every caller.
+    """
+
     index = 1
+    removes_container = False
+    image_found = False
     while index < len(arguments):
         token = arguments[index]
         if token == "--":
@@ -192,13 +202,15 @@ def _validate_docker_run_options(arguments: list[str]) -> None:
                 raise ProtectedJudgeUnavailable(
                     "protected Docker run has no image argument"
                 )
-            return
+            image_found = True
+            break
         option, separator, value = token.partition("=")
         if option in _DOCKER_RUN_IDENTITY_OPTIONS:
             raise ProtectedJudgeUnavailable(
                 "protected Docker run contains a caller-owned cleanup identity option"
             )
         if token in _DOCKER_RUN_FLAG_OPTIONS:
+            removes_container = removes_container or token == "--rm"
             index += 1
             continue
         if option in _DOCKER_RUN_VALUE_OPTIONS:
@@ -219,8 +231,14 @@ def _validate_docker_run_options(arguments: list[str]) -> None:
             raise ProtectedJudgeUnavailable(
                 "protected Docker run contains an unsupported option"
             )
-        return
-    raise ProtectedJudgeUnavailable("protected Docker run has no image argument")
+        image_found = True
+        break
+    if not image_found:
+        raise ProtectedJudgeUnavailable("protected Docker run has no image argument")
+    if not removes_container:
+        raise ProtectedJudgeUnavailable(
+            "protected Docker run does not remove its container with --rm"
+        )
 
 
 def _run_identity(
@@ -720,6 +738,18 @@ def _run_docker(
         execution_cause = exc
     except ProtectedJudgeUnavailable as exc:
         execution_error = str(exc)
+        execution_cause = exc
+    except Exception as exc:
+        # A type this runner does not classify would otherwise leave the try
+        # without reaching the aggregation below, discarding every close issue
+        # the finally collected and leaving the container and its child behind.
+        # Abort as the classified arms do, name the failure by type only, and
+        # keep the original as the cause.
+        cleanup_attempted = True
+        execution_error = _with_secondary(
+            f"protected Docker execution failed (unexpected {type(exc).__name__})",
+            _abort_and_discard(process, identity, config_dir),
+        )
         execution_cause = exc
     finally:
         if selector is not None:

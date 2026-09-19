@@ -811,6 +811,91 @@ class ReviewFollowupTests(unittest.TestCase):
         self.assertIsNone(issue)
         cleanup.assert_called_once()
 
+    def test_an_unclassified_runner_failure_still_reports_finalization(self) -> None:
+        """A failure neither runner classifies must not discard close context."""
+
+        for runner in ("docker", "scanner"):
+            roles = (
+                ("stdout", "stderr", "stdin")
+                if runner == "docker"
+                else (
+                    "stdout",
+                    "stderr",
+                )
+            )
+            with (
+                self.subTest(runner=runner),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                streams = {role: _Stream(fails=role == "stderr") for role in roles}
+                process = mock.Mock(**streams)
+                if runner != "docker":
+                    process.stdin = None
+                process.wait.return_value = 0
+                process.poll.return_value = None
+
+                selector = mock.Mock()
+                selector.get_map.return_value = {10: True}
+                # A type neither runner names in its except clauses, raised
+                # inside the try where the finally still collects close issues.
+                selector.select.side_effect = MemoryError(PRIVATE)
+
+                error_type = (
+                    review_current.ProtectedJudgeUnavailable
+                    if runner == "docker"
+                    else security_scan.SecurityScanError
+                )
+                with (
+                    mock.patch("subprocess.Popen", return_value=process),
+                    mock.patch("selectors.DefaultSelector", return_value=selector),
+                    mock.patch.object(
+                        review_current,
+                        "_docker_executable",
+                        return_value="/usr/bin/docker",
+                    ),
+                    mock.patch.object(
+                        review_current, "_cleanup_container", return_value=None
+                    ),
+                    mock.patch("os.set_blocking"),
+                    self.assertRaises(error_type) as raised,
+                ):
+                    if runner == "docker":
+                        review_current._run_docker(
+                            ["run", "--rm", "fixture"],
+                            config_dir=Path(directory),
+                            input_bytes=b"payload",
+                        )
+                    else:
+                        security_scan._run_bounded_scan(
+                            ["fixture"], cwd=Path(directory), timeout=10
+                        )
+
+                message = str(raised.exception)
+                self.assertIn("unexpected MemoryError", message)
+                self.assertNotIn(PRIVATE, message)
+                self.assertIn("could not be closed", message)
+                process.kill.assert_called()
+
+    def test_a_run_that_keeps_its_container_is_refused(self) -> None:
+        """A run given a cleanup identity must remove its own container."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(review_current.ProtectedJudgeUnavailable) as raised:
+                review_current._run_identity(
+                    ["run", "--pull=never", "example-image"], Path(directory)
+                )
+            self.assertIn("--rm", str(raised.exception))
+
+            # The accepted shape is unchanged, and a non-run command still
+            # takes no identity at all.
+            identity = review_current._run_identity(
+                ["run", "--rm", "example-image"], Path(directory)
+            )
+            self.assertIsNotNone(identity)
+            self.assertIsNone(
+                review_current._run_identity(["image", "inspect"], Path(directory))
+            )
+
     def test_an_unexpected_body_failure_still_reports_snapshot_residue(self) -> None:
         """Finalization evidence must survive a body failure of any type."""
 
