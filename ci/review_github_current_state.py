@@ -601,8 +601,7 @@ def publication_decision(
         return False, "CANDIDATE_SUBJECT_MISMATCH"
     if (
         current_pr.get("base_sha") != candidate_subject["base_commit"]
-        or current_pr.get("merge_base_sha")
-        != candidate_subject["merge_base_commit"]
+        or current_pr.get("merge_base_sha") != candidate_subject["merge_base_commit"]
     ):
         return False, "STALE_COMPARISON"
     if existing_projection is not None:
