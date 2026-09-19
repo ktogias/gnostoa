@@ -25,6 +25,18 @@ sources:
   - id: deterministic-normalization-implementation
     resource: https://github.com/ktogias/gnostoa/pull/272
     title: Make Ruff scope authoritative before candidate sealing
+  - id: ruff-candidate-churn-rca
+    resource: https://github.com/ktogias/gnostoa/issues/262#issuecomment-5696790428
+    title: Empirical Ruff RCA — candidate normalization is happening after candidate creation
+  - id: review-overlap-disposition
+    resource: https://github.com/ktogias/gnostoa/pull/272#issuecomment-5713775569
+    title: Fresh-review finding disposition — shell-wrapper bypass
+  - id: liveness-wakeup
+    resource: https://github.com/ktogias/gnostoa/pull/272#issuecomment-5713992293
+    title: Cubic exact-head review follow-up
+  - id: convergence-receipt
+    resource: https://github.com/ktogias/gnostoa/pull/272#issuecomment-5714172963
+    title: Final exact-head convergence
 x-project-knowledge:
   id: kit.assessment.wi-det-01-l0-lite-observed-workflow-baseline
   owners:
@@ -98,6 +110,12 @@ Review-provider multiplicity is descriptive only. It does not establish Issue
 | Token/context consumption | **UNKNOWN** | **UNKNOWN** | No trustworthy durable accounting in the selected receipts |
 | Monetary inference/provider cost | **UNKNOWN** | **UNKNOWN** | No trustworthy durable accounting in the selected receipts |
 | Mobile-only end-to-end recovery | **UNKNOWN** | **UNKNOWN** | Durable state supports reconstruction, but the selected receipts do not prove a mobile-only run |
+
+The two specimens differ materially in scope, risk, implementation shape and
+review history. Their elapsed spans, commit counts and reviewed-head counts are
+**not a before/after effectiveness estimate** and do not establish that PR #272
+was faster or cheaper because of the #262 fix. They are separate observed
+baselines for future, protocol-declared comparison.
 
 ### Directly measured deterministic-normalization churn
 
