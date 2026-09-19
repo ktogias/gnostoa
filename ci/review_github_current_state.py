@@ -698,7 +698,18 @@ def publish_entry(
     if candidate_projection is None:
         raise ProviderWriteError("publication payload has no valid L1 projection")
 
-    current = _current_pr(client, repository, pull_number)
+    initial_current = _current_pr(client, repository, pull_number)
+    allowed, reason = publication_decision(
+        repository=repository,
+        pull_number=pull_number,
+        current_pr=initial_current,
+        collected_head=collected_head,
+        existing_projection=None,
+        candidate_projection=candidate_projection,
+    )
+    if not allowed:
+        return {"pull_number": pull_number, "published": False, "reason": reason}
+
     comments, coverage = _collect_pages(
         client,
         f"{_API_ROOT}/repos/{repository}/issues/{pull_number}/comments?per_page=100",
@@ -713,10 +724,11 @@ def publish_entry(
         repository=repository,
         pull_number=pull_number,
     )
+    final_current = _current_pr(client, repository, pull_number)
     allowed, reason = publication_decision(
         repository=repository,
         pull_number=pull_number,
-        current_pr=current,
+        current_pr=final_current,
         collected_head=collected_head,
         existing_projection=existing[1] if existing else None,
         candidate_projection=candidate_projection,
