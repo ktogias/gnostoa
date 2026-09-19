@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import re
+from collections.abc import Callable
 import tempfile
 import time
 import uuid
@@ -23,6 +24,7 @@ from .review_model import (
 )
 from .review_protected import (
     ProtectedAcquisitionUnavailable,
+    ProtectedMainDocument,
     acquire_gnostoa_current_advisory_consumer,
 )
 
@@ -774,8 +776,10 @@ def _operational_error(message: str) -> tuple[int, bytes]:
     return ERROR_EXIT_CODE, (canonical_json(payload) + "\n").encode("utf-8")
 
 
-def run_prior_effective_current_advisory(
+def _run_prior_effective_current_advisory_with_acquisition(
     input_document: object,
+    *,
+    acquire_consumer: Callable[[], ProtectedMainDocument],
 ) -> tuple[int, bytes]:
     """Run current-advisory through the protected outer runtime and an isolated daemon.
 
@@ -798,7 +802,7 @@ def run_prior_effective_current_advisory(
             raise PriorEffectiveOuterUnavailable(
                 "protected outer input exceeds the bounded size"
             )
-        protected = acquire_gnostoa_current_advisory_consumer()
+        protected = acquire_consumer()
         consumer = _validate_consumer_authority(protected.document)
         _require_transport_compatible_consumer(consumer)
     except (
@@ -929,3 +933,14 @@ def run_prior_effective_current_advisory(
     if result is None:
         return _operational_error("prior-effective outer runtime produced no result")
     return result
+
+
+def run_prior_effective_current_advisory(
+    input_document: object,
+) -> tuple[int, bytes]:
+    """Run current-advisory using the fixed protected-main consumer acquisition."""
+
+    return _run_prior_effective_current_advisory_with_acquisition(
+        input_document,
+        acquire_consumer=acquire_gnostoa_current_advisory_consumer,
+    )

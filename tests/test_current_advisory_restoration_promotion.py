@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import importlib.util
+from collections.abc import Callable
 import io
 import json
 import unittest
@@ -203,12 +204,14 @@ class CurrentAdvisoryRestorationPromotionTests(unittest.TestCase):
 
         second_acquisition = mock.Mock(return_value=advanced_consumer)
 
-        def execute(_: object) -> tuple[int, bytes]:
-            observed = review_outer.acquire_gnostoa_current_advisory_consumer()
-            if observed.protected_main_revision != expected_main:
-                raise RuntimeError(
-                    "protected consumer authority changed during R4 promotion proof"
-                )
+        def execute(
+            _: object,
+            *,
+            acquire_consumer: Callable[[], ProtectedMainDocument],
+        ) -> tuple[int, bytes]:
+            observed = acquire_consumer()
+            self.assertEqual(expected_main, observed.protected_main_revision)
+            self.assertEqual(checked_consumer, observed)
             return 3, semantic
 
         with (
@@ -229,9 +232,9 @@ class CurrentAdvisoryRestorationPromotionTests(unittest.TestCase):
             ),
             mock.patch.object(
                 review_outer,
-                "run_prior_effective_current_advisory",
+                "_run_prior_effective_current_advisory_with_acquisition",
                 side_effect=execute,
-            ),
+            ) as bound_runner,
             mock.patch("sys.stdout", new_callable=io.StringIO) as output,
         ):
             code = promotion_smoke.main(
@@ -245,6 +248,7 @@ class CurrentAdvisoryRestorationPromotionTests(unittest.TestCase):
 
         self.assertEqual(0, code)
         checked_acquisition.assert_called_once_with()
+        bound_runner.assert_called_once()
         second_acquisition.assert_not_called()
         receipt = json.loads(output.getvalue())
         self.assertEqual(expected_main, receipt["protected_main_revision"])
@@ -252,6 +256,21 @@ class CurrentAdvisoryRestorationPromotionTests(unittest.TestCase):
         self.assertEqual(
             canonical_json(EXPECTED_CONSUMER),
             receipt["consumer_identity"],
+        )
+
+    def test_public_outer_route_uses_the_protected_acquisition_supplier(self) -> None:
+        expected = (3, b"{}\n")
+        with mock.patch.object(
+            review_outer,
+            "_run_prior_effective_current_advisory_with_acquisition",
+            return_value=expected,
+        ) as bound_runner:
+            observed = review_outer.run_prior_effective_current_advisory({})
+
+        self.assertEqual(expected, observed)
+        bound_runner.assert_called_once_with(
+            {},
+            acquire_consumer=review_outer.acquire_gnostoa_current_advisory_consumer,
         )
 
     def test_r4_decision_governance_and_live_smoke_are_routed(self) -> None:

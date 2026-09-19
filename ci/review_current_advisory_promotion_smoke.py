@@ -5,8 +5,6 @@ import copy
 import json
 from pathlib import Path
 from typing import Any
-from unittest import mock
-
 from tools import review_outer, review_protected
 from tools.knowledge_common import toolkit_root
 from tools.review_model import canonical_json
@@ -107,14 +105,10 @@ def main(argv: list[str] | None = None) -> int:
             protected_main_revision=args.expected_protected_main,
             document=authority,
         )
-        with mock.patch.object(
-            review_outer,
-            "acquire_gnostoa_current_advisory_consumer",
-            return_value=protected_consumer,
-        ):
-            code, raw = review_outer.run_prior_effective_current_advisory(
-                _synthetic_input(inner)
-            )
+        code, raw = review_outer._run_prior_effective_current_advisory_with_acquisition(
+            _synthetic_input(inner),
+            acquire_consumer=lambda: protected_consumer,
+        )
         authority_source = "candidate-test-local"
         acquired = authority.get("acquired_consumer")
     else:
@@ -125,14 +119,10 @@ def main(argv: list[str] | None = None) -> int:
             raise RuntimeError(
                 "protected consumer authority changed before R5 public-route proof"
             )
-        with mock.patch.object(
-            review_outer,
-            "acquire_gnostoa_current_advisory_consumer",
-            return_value=protected_consumer,
-        ):
-            code, raw = review_outer.run_prior_effective_current_advisory(
-                _synthetic_input(inner)
-            )
+        code, raw = review_outer._run_prior_effective_current_advisory_with_acquisition(
+            _synthetic_input(inner),
+            acquire_consumer=lambda: protected_consumer,
+        )
         authority_source = "protected-main"
         acquired = protected_consumer.document.get("acquired_consumer")
 
