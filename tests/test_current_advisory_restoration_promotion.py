@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import unittest
 from pathlib import Path
@@ -9,7 +10,7 @@ from unittest import mock
 import yaml
 from jsonschema import Draft202012Validator
 
-from tools import review_outer
+from tools import review_outer, security_scan
 from tools.review_check import FORMAT_CHECKER
 from tools.review_model import canonical_json
 from tools.review_protected import ProtectedMainDocument
@@ -82,6 +83,19 @@ class CurrentAdvisoryRestorationPromotionTests(unittest.TestCase):
                 "receipt": RECEIPT,
             },
             authority.get("materialization"),
+        )
+
+    def test_r4_security_baseline_pin_binds_exact_authority_bytes(self) -> None:
+        expected = hashlib.sha256(AUTHORITY_PATH.read_bytes()).hexdigest()
+        self.assertEqual(
+            expected,
+            security_scan._PROTECTED_BASELINE_FILE_SHA256[
+                "tasks/issue-11-r2a-current-advisory-consumer.json"
+            ],
+        )
+        self.assertEqual(
+            "5c51c34e3a591c43707a108674eed3a6b77b0ce82516c18ed95bf4470db2eebf",
+            expected,
         )
 
     def test_r4_catalog_admits_only_complete_exact_consumer_identity(self) -> None:
@@ -161,9 +175,7 @@ class CurrentAdvisoryRestorationPromotionTests(unittest.TestCase):
         guardrails = yaml.safe_load(GUARDRAILS_PATH.read_text(encoding="utf-8"))
         entries = guardrails["guardrails"]
         semantic = next(
-            entry
-            for entry in entries
-            if entry.get("id") == "semantic-review-assurance"
+            entry for entry in entries if entry.get("id") == "semantic-review-assurance"
         )
         self.assertIn(DECISION_RELATIVE_PATH, semantic["implementation"])
         self.assertIn("tools/review_outer.py", semantic["implementation"])
