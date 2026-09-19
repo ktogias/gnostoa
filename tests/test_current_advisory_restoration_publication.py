@@ -44,8 +44,14 @@ def _steps(job: dict[str, object]) -> list[dict[str, object]]:
     return value
 
 
-def _named(steps: list[dict[str, object]], name: str) -> dict[str, object]:
-    found = [step for step in steps if step.get("name") == name]
+def _named(
+    steps: list[dict[str, object]], name: str
+) -> tuple[int, dict[str, object]]:
+    found = [
+        (index, step)
+        for index, step in enumerate(steps)
+        if step.get("name") == name
+    ]
     if len(found) != 1:
         raise AssertionError(f"expected one step named {name!r}, found {len(found)}")
     return found[0]
@@ -114,11 +120,10 @@ class CurrentAdvisoryRestorationPublicationTests(unittest.TestCase):
         asteps = _steps(authorize)
         psteps = _steps(publish)
 
-        guard = _run(
-            _named(
-                asteps, "Refuse any context outside the admitted one-shot R3 boundary"
-            )
+        _, guard_step = _named(
+            asteps, "Refuse any context outside the admitted one-shot R3 boundary"
         )
+        guard = _run(guard_step)
         for token in (
             'test "${GITHUB_REPOSITORY}" = "ktogias/gnostoa"',
             'test "${GITHUB_EVENT_NAME}" = "push"',
@@ -131,7 +136,8 @@ class CurrentAdvisoryRestorationPublicationTests(unittest.TestCase):
         ):
             self.assertIn(token, guard)
 
-        binding = _run(_named(asteps, "Bind the pushed commit to merged PR 281"))
+        _, binding_step = _named(asteps, "Bind the pushed commit to merged PR 281")
+        binding = _run(binding_step)
         for token in (
             "pulls/${AUTHORIZED_PR_NUMBER}",
             "merge_commit_sha",
@@ -140,9 +146,10 @@ class CurrentAdvisoryRestorationPublicationTests(unittest.TestCase):
         ):
             self.assertIn(token, binding)
 
-        effect_guard = _run(
-            _named(psteps, "Refuse rerun at the effect-capable R3 publication job")
+        effect_guard_index, effect_guard_step = _named(
+            psteps, "Refuse rerun at the effect-capable R3 publication job"
         )
+        effect_guard = _run(effect_guard_step)
         self.assertIn('test "${GITHUB_RUN_ATTEMPT}" = "1"', effect_guard)
         self.assertIn(
             'test "${EVENT_BEFORE}" = "${AUTHORIZED_BEFORE_COMMIT}"', effect_guard
@@ -156,12 +163,11 @@ class CurrentAdvisoryRestorationPublicationTests(unittest.TestCase):
         self.assertEqual("${{ env.SOURCE_COMMIT }}", source_with["ref"])
         self.assertEqual("restoration-source", source_with["path"])
 
-        local = _run(
-            _named(
-                psteps,
-                "Build and verify exact qualified runtime before any registry effect",
-            )
+        local_index, local_step = _named(
+            psteps,
+            "Build and verify exact qualified runtime before any registry effect",
         )
+        local = _run(local_step)
         for token in (
             "./ci/build-runtime",
             "surface-digest --root /opt/gnostoa",
@@ -174,26 +180,51 @@ class CurrentAdvisoryRestorationPublicationTests(unittest.TestCase):
         ):
             self.assertIn(token, local)
 
-        publication = _run(
-            _named(
-                psteps,
-                "Publish exact qualified runtime without a remote tag and read back digest",
-            )
+        authenticate_index, authenticate_step = _named(
+            psteps, "Authenticate to GHCR for the single R3 digest-only effect"
         )
+        self.assertLess(effect_guard_index, local_index)
+        self.assertLess(local_index, authenticate_index)
+        self.assertNotIn("if", authenticate_step)
+        self.assertNotIn("continue-on-error", authenticate_step)
+
+        publication_index, publication_step = _named(
+            psteps,
+            "Publish exact qualified runtime without a remote tag and read back digest",
+        )
+        publication = _run(publication_step)
         self.assertIn('--push-by-digest "${IMAGE_NAME}"', publication)
         self.assertIn("containerimage.digest", publication)
         self.assertIn("docker buildx imagetools inspect", publication)
+        self.assertIn(
+            'surface-digest --root /opt/gnostoa)" = "${EXPECTED_PUBLIC_SURFACE_DIGEST}"',
+            publication,
+        )
         self.assertNotIn("docker push ", publication)
+        self.assertLess(authenticate_index, publication_index)
 
         attest = [step for step in psteps if step.get("uses") == ATTEST]
         self.assertEqual(1, len(attest))
-
-        reacquire = _run(
-            _named(
-                psteps,
-                "Verify attestation, anonymously reacquire, and replay restoration smoke",
-            )
+        attest_step = attest[0]
+        attest_index = psteps.index(attest_step)
+        attest_with = attest_step.get("with")
+        self.assertIsInstance(attest_with, dict)
+        assert isinstance(attest_with, dict)
+        self.assertEqual("${{ env.IMAGE_NAME }}", attest_with.get("subject-name"))
+        self.assertEqual(
+            "${{ steps.publish.outputs.registry_digest }}",
+            attest_with.get("subject-digest"),
         )
+        self.assertEqual("true", attest_with.get("push-to-registry"))
+        self.assertNotIn("if", attest_step)
+        self.assertNotIn("continue-on-error", attest_step)
+        self.assertLess(publication_index, attest_index)
+
+        reacquire_index, reacquire_step = _named(
+            psteps,
+            "Verify attestation, anonymously reacquire, and replay restoration smoke",
+        )
+        reacquire = _run(reacquire_step)
         for token in (
             "gh attestation verify",
             "docker logout ghcr.io",
@@ -201,17 +232,40 @@ class CurrentAdvisoryRestorationPublicationTests(unittest.TestCase):
             "review_current_advisory_restoration_smoke.py",
             'GNOSTOA_R2A_CANDIDATE_IMAGE="${digest_ref}"',
             'GNOSTOA_R2_EXPECTED_PROTECTED_MAIN="${GITHUB_SHA}"',
+            'surface-digest --root /opt/gnostoa)" = "${EXPECTED_PUBLIC_SURFACE_DIGEST}"',
             "authority promotion: **NOT PERFORMED**",
         ):
             self.assertIn(token, reacquire)
+        self.assertNotIn("if", reacquire_step)
+        self.assertNotIn("continue-on-error", reacquire_step)
+        self.assertLess(attest_index, reacquire_index)
 
-        reconcile = _run(_named(psteps, "Reconcile and clean post-publication state"))
+        _, reconcile_step = _named(
+            psteps, "Reconcile and clean post-publication state"
+        )
+        reconcile = _run(reconcile_step)
         self.assertIn(
             "post-write outcome is ambiguous and no exact digest is available; do not rerun blindly",
             reconcile,
         )
         self.assertIn("gh attestation verify", reconcile)
         self.assertIn('DOCKER_CONFIG="${reconcile_config}"', reconcile)
+        self.assertIn(
+            'surface-digest --root /opt/gnostoa)" = "${EXPECTED_PUBLIC_SURFACE_DIGEST}"',
+            reconcile,
+        )
+
+        for required_step in (
+            guard_step,
+            binding_step,
+            effect_guard_step,
+            local_step,
+            publication_step,
+            attest_step,
+            reacquire_step,
+        ):
+            self.assertNotIn("if", required_step)
+            self.assertNotIn("continue-on-error", required_step)
 
         all_run = "\n".join(_run(step) for step in asteps + psteps if "run" in step)
         for forbidden in (
