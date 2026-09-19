@@ -95,7 +95,9 @@ provider-neutral internal snapshot with these normalized concepts:
 Provider-native IDs are opaque identities, not ordering primitives. Adapters must
 normalize freshness/order evidence explicitly; the core chooses current check
 state by observation time rather than assuming GitHub-, GitLab- or other
-provider-specific ID ordering.
+provider-specific ID ordering. If multiple latest observations for the same
+check share an observation timestamp but disagree on status/conclusion, the
+state is explicitly ambiguous and cannot be tie-broken by opaque IDs.
 
 Each provider adapter owns translation from its native API into that internal
 shape and owns any provider-specific projection write. Adding another provider
@@ -156,7 +158,11 @@ The deterministic reducer:
 
 The reducer may describe collection/currentness and the next mechanically
 permitted action. It cannot create qualification, quorum, semantic
-sufficiency, owner approval or merge eligibility.
+sufficiency, owner approval or merge eligibility. A positive next action is
+available only when the change request is open, every required provider source
+is COMPLETE, protected capability is AVAILABLE, and exact-head check state is
+non-ambiguous. Any weaker prerequisite state remains wait/reconcile-only even if
+the consumed R2A result itself is PASS.
 
 ### Projection
 
@@ -178,8 +184,13 @@ the prior provider projection. Refuse publication when:
 - the head changed since collection;
 - the change request is closed/merged when the projection expects open work;
 - a retained projection names a later observation cut/execution generation; or
-- more than one valid marker-owned projection exists, because the single-comment
-  ownership invariant is then ambiguous.
+- more than one valid **workflow-owned** marker projection exists, because the
+  single-comment ownership invariant is then ambiguous.
+
+For the GitHub adapter, workflow ownership means the provider comment author is
+`github-actions[bot]` and the decoded projection names the exact GitHub
+repository and Pull Request identity being reconciled. Marker text alone is not
+ownership evidence and must not make an arbitrary participant comment writable.
 
 This rejects stale writes that are already observable at the pre-write
 read-back. It does **not** claim an atomic or exactly-once publication fence:
