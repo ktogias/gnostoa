@@ -118,6 +118,24 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
         self.assertNotIn("continue-on-error", qualify)
         steps = _job_steps(qualify)
 
+        self.assertIn("workflow_dispatch", triggers)
+        _, dispatch_guard = _named_step(
+            steps, "Require protected main for manual qualification"
+        )
+        self.assertEqual(
+            "github.event_name == 'workflow_dispatch'",
+            dispatch_guard.get("if"),
+        )
+        dispatch_run = _step_run(dispatch_guard, "manual dispatch guard")
+        self.assertIn(
+            'test "${GITHUB_REF}" = "refs/heads/main"',
+            dispatch_run,
+        )
+        self.assertIn(
+            "manual R2 qualification must run from refs/heads/main",
+            dispatch_run,
+        )
+
         checkout_steps = [step for step in steps if step.get("uses") == CHECKOUT_ACTION]
         self.assertEqual(2, len(checkout_steps))
         candidate_with = checkout_steps[0].get("with")
@@ -220,7 +238,7 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
             smoke_env.get("GNOSTOA_R2_EXPECTED_PUBLIC_SURFACE_DIGEST"),
         )
         self.assertEqual(
-            "${{ github.event.pull_request.base.sha || env.SOURCE_COMMIT }}",
+            "${{ github.event.pull_request.base.sha || github.sha }}",
             smoke_env.get("GNOSTOA_R2_EXPECTED_PROTECTED_MAIN"),
         )
         self.assertNotIn(

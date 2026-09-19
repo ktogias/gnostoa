@@ -33,6 +33,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
+      - name: Require protected main for manual qualification
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF}" = "refs/heads/main" || {
+            echo "manual R2 qualification must run from refs/heads/main" >&2
+            exit 1
+          }
+
       - name: Check out qualification candidate
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
@@ -128,7 +138,7 @@ jobs:
           GNOSTOA_R2_EXPECTED_SOURCE_TREE: ${{ env.SOURCE_TREE }}
           GNOSTOA_R2_EXPECTED_IMAGE_ID: ${{ steps.identity.outputs.image_id }}
           GNOSTOA_R2_EXPECTED_PUBLIC_SURFACE_DIGEST: ${{ steps.identity.outputs.public_surface_digest }}
-          GNOSTOA_R2_EXPECTED_PROTECTED_MAIN: ${{ github.event.pull_request.base.sha || env.SOURCE_COMMIT }}
+          GNOSTOA_R2_EXPECTED_PROTECTED_MAIN: ${{ github.event.pull_request.base.sha || github.sha }}
         run: |
           set -euo pipefail
           python ci/review_current_advisory_restoration_smoke.py
