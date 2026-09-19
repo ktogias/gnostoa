@@ -313,7 +313,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
                     "verdict": "COMMENTED",
                     "when": "2026-09-19T16:39:30Z",
                     "revision": "d" * 40,
-                }
+                },
             ],
             "threads": [],
         }
