@@ -44,13 +44,9 @@ def _steps(job: dict[str, object]) -> list[dict[str, object]]:
     return value
 
 
-def _named(
-    steps: list[dict[str, object]], name: str
-) -> tuple[int, dict[str, object]]:
+def _named(steps: list[dict[str, object]], name: str) -> tuple[int, dict[str, object]]:
     found = [
-        (index, step)
-        for index, step in enumerate(steps)
-        if step.get("name") == name
+        (index, step) for index, step in enumerate(steps) if step.get("name") == name
     ]
     if len(found) != 1:
         raise AssertionError(f"expected one step named {name!r}, found {len(found)}")
@@ -240,9 +236,7 @@ class CurrentAdvisoryRestorationPublicationTests(unittest.TestCase):
         self.assertNotIn("continue-on-error", reacquire_step)
         self.assertLess(attest_index, reacquire_index)
 
-        _, reconcile_step = _named(
-            psteps, "Reconcile and clean post-publication state"
-        )
+        _, reconcile_step = _named(psteps, "Reconcile and clean post-publication state")
         reconcile = _run(reconcile_step)
         self.assertIn(
             "post-write outcome is ambiguous and no exact digest is available; do not rerun blindly",
