@@ -236,6 +236,8 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
         self.assertIn('"--interactive"', smoke)
         self.assertIn('"--mount"', smoke)
         self.assertNotIn('"--volume"', smoke)
+        self.assertIn('"source_id": "retained-review-evidence"', smoke)
+        self.assertIn('"candidate_claims": {"marker": _SENTINEL}', smoke)
 
     def test_decision_keeps_publication_and_promotion_outside_r2(self) -> None:
         decision = DECISION_PATH.read_text(encoding="utf-8")
