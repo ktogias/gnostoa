@@ -41,7 +41,7 @@ _BASELINE_EXCLUDE_PATTERN = r"^\.secrets\.baseline$"
 _BASELINE_EXCLUDE = re.compile(_BASELINE_EXCLUDE_PATTERN)
 _PROTECTED_BASELINE_FILE_SHA256 = {
     "tasks/issue-11-r2a-current-advisory-consumer.json": (
-        "c55f9b9d0d564c3e617f7cee5de050b321f3ca60a1d094dc36720ccb6c1394ee"  # pragma: allowlist secret -- reviewed protected-authority content digest
+        "5c51c34e3a591c43707a108674eed3a6b77b0ce82516c18ed95bf4470db2eebf"  # pragma: allowlist secret -- reviewed protected-authority content digest
     ),
     "tasks/issue-11-r2a-current-advisory.json": (
         "d6d07e104213a9e18cba909ca1727a5c276e87c9dcaa2e38023053161a3335fb"  # pragma: allowlist secret -- reviewed protected-authority content digest

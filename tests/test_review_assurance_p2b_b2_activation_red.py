@@ -36,6 +36,7 @@ B16_OCI_IMAGE = (
     "sha256:d4cc72b0ed7342f533dd3bcf32ddf9888203f85408154f4066883ba9d33fe867"  # pragma: allowlist secret -- public OCI digest
 )
 P2B_SOURCE_REVISION = "2aa1ed3217c42819155b8ff36385b000720ba4f8"  # pragma: allowlist secret -- public source revision
+P2B_SOURCE_TREE = "4cda4e4a704cb518f56201423e313d4dd9db5e24"  # pragma: allowlist secret -- public source tree
 P2B_PUBLIC_SURFACE_DIGEST = "sha256:b69f11e1efe181f959a14310fed0a35d3533114d734de584790a85cba7bdb565"  # pragma: allowlist secret -- public surface digest
 P2B_OCI_IMAGE = (
     "ghcr.io/ktogias/gnostoa@"
@@ -52,6 +53,20 @@ def _consumer_authority() -> dict[str, object]:
     if not isinstance(document, dict):
         raise AssertionError("protected outer-consumer authority must be an object")
     return document
+
+
+def _historical_p2b_consumer() -> dict[str, object]:
+    return {
+        "role": "current_advisory_outer_consumer",
+        "acquisition": "oci",
+        "source_revision": P2B_SOURCE_REVISION,
+        "source_tree": P2B_SOURCE_TREE,
+        "public_surface_digest": P2B_PUBLIC_SURFACE_DIGEST,
+        "runtime_image": P2B_OCI_IMAGE,
+        "runtime_revision": P2B_SOURCE_REVISION,
+        "supported_input_schema_versions": ["1.0"],
+        "status": "accepted",
+    }
 
 
 def _current_advisory_input() -> dict[str, object]:
@@ -172,10 +187,10 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         if not callable(build_plan):
             return
 
-        authority = _consumer_authority()
-        consumer = authority["acquired_consumer"]
-        self.assertIsInstance(consumer, dict)
-        assert isinstance(consumer, dict)
+        # Decision 0077's plan proof is historical. Freeze it to the
+        # then-current P2b identity instead of reading today's promoted R4
+        # authority record.
+        consumer = _historical_p2b_consumer()
         socket_volume = "gnostoa-r2a-socket-test"
         tmp_volume = "gnostoa-r2a-tmp-test"
         daemon_name = "gnostoa-r2a-daemon-test"

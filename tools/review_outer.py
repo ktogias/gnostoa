@@ -6,6 +6,7 @@ import re
 import tempfile
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -23,6 +24,7 @@ from .review_model import (
 )
 from .review_protected import (
     ProtectedAcquisitionUnavailable,
+    ProtectedMainDocument,
     acquire_gnostoa_current_advisory_consumer,
 )
 
@@ -46,12 +48,16 @@ _OUTER_RUNTIME_SECONDS = 180
 _CLEANUP_ATTEMPTS = 3
 _CLEANUP_BACKOFF_SECONDS = 0.25
 _FORMAT_CHECKER = FormatChecker()
-# Decision 0082: a restriction, never an alternative authority/image selector.
-# Keys bind the complete closed-schema consumer identity, not just its image.
-# No existing immutable runtime has admitted host-persistence-free transport.
-# A future entry requires separate owner admission, runtime proof and review;
-# neither caller input nor environment can populate this catalog.
-_HOST_PERSISTENCE_FREE_CONSUMER_IDENTITIES: frozenset[str] = frozenset()
+# Decisions 0082 and 0085: a restriction, never an alternative
+# authority/image selector. Keys bind the complete closed-schema consumer
+# identity, not merely an image, revision or digest. Only the independently
+# qualified, published, attested and anonymously reacquired R3 identity is
+# admitted. Neither caller input nor environment can populate this catalog.
+_HOST_PERSISTENCE_FREE_CONSUMER_IDENTITIES: frozenset[str] = frozenset(
+    {
+        '{"acquisition":"oci","public_surface_digest":"sha256:45bc59ce177ab53ddb5925279166b5ede91bbb6c43ef31fb056de56b6ddabca2","role":"current_advisory_outer_consumer","runtime_image":"ghcr.io/ktogias/gnostoa@sha256:6bf4b876987fa4a5db8e3ae6bcc420e306666d8ee81ca40b934a6570a45b2b0f","runtime_revision":"315487e7a67635ebf3ec3f70f666ef41646102e1","source_revision":"315487e7a67635ebf3ec3f70f666ef41646102e1","source_tree":"ea3fdebc6afa9bf5a4c2d0691199beca4dcece81","status":"accepted","supported_input_schema_versions":["1.0"]}'  # pragma: allowlist secret -- reviewed public R4 consumer identity
+    }
+)
 _TRANSPORT_UNAVAILABLE = (
     "protected outer-consumer transport is not admitted as host-persistence-free; "
     "current_advisory is unavailable"
@@ -770,8 +776,10 @@ def _operational_error(message: str) -> tuple[int, bytes]:
     return ERROR_EXIT_CODE, (canonical_json(payload) + "\n").encode("utf-8")
 
 
-def run_prior_effective_current_advisory(
+def _run_prior_effective_current_advisory_with_acquisition(
     input_document: object,
+    *,
+    acquire_consumer: Callable[[], ProtectedMainDocument],
 ) -> tuple[int, bytes]:
     """Run current-advisory through the protected outer runtime and an isolated daemon.
 
@@ -794,7 +802,7 @@ def run_prior_effective_current_advisory(
             raise PriorEffectiveOuterUnavailable(
                 "protected outer input exceeds the bounded size"
             )
-        protected = acquire_gnostoa_current_advisory_consumer()
+        protected = acquire_consumer()
         consumer = _validate_consumer_authority(protected.document)
         _require_transport_compatible_consumer(consumer)
     except (
@@ -925,3 +933,14 @@ def run_prior_effective_current_advisory(
     if result is None:
         return _operational_error("prior-effective outer runtime produced no result")
     return result
+
+
+def run_prior_effective_current_advisory(
+    input_document: object,
+) -> tuple[int, bytes]:
+    """Run current-advisory using the fixed protected-main consumer acquisition."""
+
+    return _run_prior_effective_current_advisory_with_acquisition(
+        input_document,
+        acquire_consumer=acquire_gnostoa_current_advisory_consumer,
+    )

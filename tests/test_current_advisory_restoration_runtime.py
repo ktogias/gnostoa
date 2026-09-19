@@ -118,6 +118,24 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
         self.assertNotIn("continue-on-error", qualify)
         steps = _job_steps(qualify)
 
+        self.assertIn("workflow_dispatch", triggers)
+        _, dispatch_guard = _named_step(
+            steps, "Require protected main for manual qualification"
+        )
+        self.assertEqual(
+            "github.event_name == 'workflow_dispatch'",
+            dispatch_guard.get("if"),
+        )
+        dispatch_run = _step_run(dispatch_guard, "manual dispatch guard")
+        self.assertIn(
+            'test "${GITHUB_REF}" = "refs/heads/main"',
+            dispatch_run,
+        )
+        self.assertIn(
+            "manual R2 qualification must run from refs/heads/main",
+            dispatch_run,
+        )
+
         checkout_steps = [step for step in steps if step.get("uses") == CHECKOUT_ACTION]
         self.assertEqual(2, len(checkout_steps))
         candidate_with = checkout_steps[0].get("with")
@@ -131,6 +149,7 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
             "${{ github.event.pull_request.head.sha || github.sha }}",
             candidate_with.get("ref"),
         )
+        self.assertEqual("0", candidate_with.get("fetch-depth"))
         self.assertEqual("false", source_with.get("persist-credentials"))
         self.assertEqual("${{ env.SOURCE_COMMIT }}", source_with.get("ref"))
         self.assertEqual("restoration-source", source_with.get("path"))
@@ -142,11 +161,18 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
 
         _, bind = _named_step(steps, "Bind exact integrated source")
         bind_run = _step_run(bind, "source binding")
+        self.assertNotIn(
+            "git -C restoration-source merge-base",
+            bind_run,
+        )
         for required in (
             "git -C restoration-source rev-parse HEAD",
             "git -C restoration-source rev-parse 'HEAD^{tree}'",
-            'test "${{ github.event.pull_request.base.sha }}" = "${SOURCE_COMMIT}"',
             "git -C restoration-source status --porcelain",
+            'protected_main="${{ github.event.pull_request.base.sha || github.sha }}"',
+            'git merge-base --is-ancestor "${SOURCE_COMMIT}" "${protected_main}"',
+            "restoration source is not an ancestor of protected main",
+            "SOURCE_COMMIT is the immutable runtime subject",
         ):
             self.assertIn(required, bind_run)
 
@@ -218,6 +244,14 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
         self.assertEqual(
             "${{ steps.identity.outputs.public_surface_digest }}",
             smoke_env.get("GNOSTOA_R2_EXPECTED_PUBLIC_SURFACE_DIGEST"),
+        )
+        self.assertEqual(
+            "${{ github.event.pull_request.base.sha || github.sha }}",
+            smoke_env.get("GNOSTOA_R2_EXPECTED_PROTECTED_MAIN"),
+        )
+        self.assertNotIn(
+            'test "${{ github.event.pull_request.base.sha }}" = "${SOURCE_COMMIT}"',
+            bind_run,
         )
 
         _, receipt = _named_step(steps, "Record bounded qualification receipt")

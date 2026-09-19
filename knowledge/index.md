@@ -95,6 +95,7 @@ inherited, copied or loaded by adopting projects.
 - [Eliminate host persistence for protected review payloads and route bounded security gates](decisions/0082-eliminate-host-persistence-for-protected-review-payloads-and-route-security-gates.md)
 - [Qualify the integrated transport-safe current-advisory runtime before publication](decisions/0083-qualify-integrated-current-advisory-restoration-runtime.md)
 - [Publish the qualified current-advisory restoration runtime as a digest-only OCI identity](decisions/0084-publish-current-advisory-restoration-runtime-by-digest.md)
+- [Promote the exact restoration runtime into protected current-advisory transport authority](decisions/0085-promote-current-advisory-restoration-runtime.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Require explicit admission for retrospective findings](requirements/retrospective-findings-require-explicit-admission.md)
