@@ -97,7 +97,7 @@ def _live_input(protected: ProtectedMainDocument) -> dict[str, Any]:
             "observed_at": now,
             "sources": [
                 {
-                    "source_id": _SENTINEL,
+                    "source_id": "retained-review-evidence",
                     "status": "COMPLETE",
                     "observed_at": now,
                 }
@@ -105,6 +105,7 @@ def _live_input(protected: ProtectedMainDocument) -> dict[str, Any]:
             "observations": [],
         },
         "qualification_snapshot": copy.deepcopy(bundle["qualification_snapshot"]),
+        "candidate_claims": {"marker": _SENTINEL},
     }
 
 
