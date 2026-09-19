@@ -175,6 +175,7 @@ def _collect_pages(
     url: str | None = first_url
     items: list[dict[str, Any]] = []
     pages = 0
+    omitted_total = 0
     while url is not None:
         if pages >= _MAX_PAGES:
             return items, {
@@ -187,11 +188,10 @@ def _collect_pages(
             payload, headers = client.get(url)
             raw_items = page_items(payload)
             normalized: list[dict[str, Any]] = []
-            omitted = 0
             for item in raw_items:
                 value = normalize(item)
                 if value is None:
-                    omitted += 1
+                    omitted_total += 1
                     continue
                 normalized.append(value)
         except ProviderReadError as exc:
@@ -213,14 +213,14 @@ def _collect_pages(
         items.extend(normalized)
         pages += 1
         url = _next_url(headers)
-        if omitted:
-            return items, {
-                "status": "PARTIAL",
-                "pages": pages,
-                "count": len(items),
-                "omitted": omitted,
-                "reason": "unsubmitted_provider_items",
-            }
+    if omitted_total:
+        return items, {
+            "status": "PARTIAL",
+            "pages": pages,
+            "count": len(items),
+            "omitted": omitted_total,
+            "reason": "unsubmitted_provider_items",
+        }
     return items, {"status": "COMPLETE", "pages": pages, "count": len(items)}
 
 
@@ -258,6 +258,15 @@ def _login(value: Any, label: str) -> str:
     return _text(user.get("login"), f"{label}.login")
 
 
+def _comment_author(value: Any) -> str:
+    if value is None:
+        return "UNAVAILABLE"
+    if not isinstance(value, dict):
+        return "UNAVAILABLE"
+    login = value.get("login")
+    return login if isinstance(login, str) and login else "UNAVAILABLE"
+
+
 def _bounded_body(value: Any) -> tuple[str, bool]:
     if not isinstance(value, str):
         return "", False
@@ -273,7 +282,7 @@ def _normalize_issue_comment(value: Any) -> dict[str, Any]:
     body, truncated = _bounded_body(item.get("body"))
     return {
         "id": _integer(item.get("id"), "issue_comment.id"),
-        "author": _login(item.get("user"), "issue_comment.user"),
+        "author": _comment_author(item.get("user")),
         "created_at": _text(item.get("created_at"), "issue_comment.created_at"),
         "updated_at": _text(item.get("updated_at"), "issue_comment.updated_at"),
         "body": body,
@@ -358,11 +367,12 @@ def collect_snapshot(
     *,
     repository: str,
     pull_number: int,
-    observed_at: str,
+    observed_at: str | None,
 ) -> dict[str, Any]:
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
         raise ProviderReadError("repository must be owner/name")
-    parse_rfc3339(observed_at)
+    if observed_at is not None:
+        parse_rfc3339(observed_at)
     root = f"{_API_ROOT}/repos/{repository}"
     pull_payload, _ = client.get(f"{root}/pulls/{pull_number}")
     pull = _normalize_pull(pull_payload)
@@ -398,13 +408,36 @@ def collect_snapshot(
         normalize=_normalize_check,
     )
 
+    cut_candidates = [observed_at or _now()]
+    cut_candidates.extend(
+        item["updated_at"]
+        for item in issue_comments
+        if isinstance(item.get("updated_at"), str)
+    )
+    cut_candidates.extend(
+        item["observed_at"]
+        for item in reviews
+        if isinstance(item.get("observed_at"), str)
+    )
+    cut_candidates.extend(
+        item["observed_at"]
+        for item in review_comments
+        if isinstance(item.get("observed_at"), str)
+    )
+    cut_candidates.extend(
+        item["observed_at"]
+        for item in check_runs
+        if isinstance(item.get("observed_at"), str)
+    )
+    effective_observed_at = max(cut_candidates, key=parse_rfc3339)
+
     return {
         "schema_version": PROVIDER_STATE_SCHEMA_VERSION,
         "provider": {
             "id": "github",
             "adapter": "gnostoa.github-rest-current-state/v1",
         },
-        "observed_at": observed_at,
+        "observed_at": effective_observed_at,
         "subject": {
             "repository": f"https://github.com/{repository}",
             "change_request": {
@@ -675,19 +708,18 @@ def _collect_entry(
     run_id: int,
     run_attempt: int,
 ) -> dict[str, Any]:
-    from tools.review_outer import run_prior_effective_current_advisory
+    from tools import review_outer
     from tools.review_reconcile import (
         build_projection,
         build_review_input,
         render_projection,
     )
 
-    observed_at = _now()
     snapshot = collect_snapshot(
         client,
         repository=repository,
         pull_number=pull_number,
-        observed_at=observed_at,
+        observed_at=None,
     )
     protected_revision: str | None = None
     outer: dict[str, Any] | None = None
@@ -695,7 +727,10 @@ def _collect_entry(
         bundle, consumer = _protected_state()
         protected_revision = bundle.protected_main_revision
         review_input = build_review_input(snapshot, bundle.document)
-        code, raw = run_prior_effective_current_advisory(review_input)
+        code, raw = review_outer._run_prior_effective_current_advisory_with_acquisition(
+            review_input,
+            acquire_consumer=lambda: consumer,
+        )
         semantic = _semantic_result(code, raw)
         acquired = consumer.document.get("acquired_consumer")
         if not isinstance(acquired, dict):
