@@ -199,6 +199,11 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
 
         _, receipt = _named_step(steps, "Record bounded qualification receipt")
         receipt_run = _step_run(receipt, "qualification receipt")
+        self.assertIn("set -euo pipefail", receipt_run)
+        self.assertIn("printf -- '- source revision: `%s`", receipt_run)
+        self.assertIn("printf -- '- source tree: `%s`", receipt_run)
+        self.assertNotIn('echo "- source revision: `', receipt_run)
+        self.assertNotIn('echo "- source tree: `', receipt_run)
         self.assertIn("registry publication: **NOT PERFORMED**", receipt_run)
         self.assertIn(
             "protected authority/catalog promotion: **NOT PERFORMED**",
