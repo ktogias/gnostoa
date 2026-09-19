@@ -42,12 +42,6 @@ P2B_OCI_IMAGE = (
     "ghcr.io/ktogias/gnostoa@"
     "sha256:a657bb69c2cd1c117831558bf9794aa07caa74ac8adaff8d05b5650165b0d281"  # pragma: allowlist secret -- public OCI digest
 )
-RESTORED_SOURCE_REVISION = "315487e7a67635ebf3ec3f70f666ef41646102e1"  # pragma: allowlist secret -- public promoted source revision
-RESTORED_PUBLIC_SURFACE_DIGEST = "sha256:45bc59ce177ab53ddb5925279166b5ede91bbb6c43ef31fb056de56b6ddabca2"  # pragma: allowlist secret -- public promoted surface digest
-RESTORED_OCI_IMAGE = (
-    "ghcr.io/ktogias/gnostoa@"
-    "sha256:6bf4b876987fa4a5db8e3ae6bcc420e306666d8ee81ca40b934a6570a45b2b0f"  # pragma: allowlist secret -- public promoted OCI digest
-)
 _DIGEST_IMAGE = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9._:-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)+"
     r"@sha256:[0-9a-f]{64}$"
@@ -240,9 +234,8 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         self.assertNotIn("tcp://0.0.0.0:2375", " ".join(daemon_args))
         self.assertNotIn("tcp://0.0.0.0:2376", " ".join(daemon_args))
 
-        self.assertIn(RESTORED_OCI_IMAGE, outer_args)
-        self.assertNotIn(P2B_OCI_IMAGE, outer_args)
-        outer_image_index = outer_args.index(RESTORED_OCI_IMAGE)
+        self.assertIn(P2B_OCI_IMAGE, outer_args)
+        outer_image_index = outer_args.index(P2B_OCI_IMAGE)
         outer_log_driver_index = outer_args.index("--log-driver")
         self.assertLess(outer_log_driver_index, outer_image_index)
         self.assertEqual("none", outer_args[outer_log_driver_index + 1])
@@ -270,9 +263,9 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         self.assertNotIn("/usr/bin/docker", joined)
         self.assertNotIn("GNOSTOA_R2A_CANDIDATE_IMAGE", joined)
         self.assertNotIn(str(ROOT), joined)
-        self.assertEqual(RESTORED_SOURCE_REVISION, consumer.get("runtime_revision"))
+        self.assertEqual(P2B_SOURCE_REVISION, consumer.get("runtime_revision"))
         self.assertEqual(
-            RESTORED_PUBLIC_SURFACE_DIGEST, consumer.get("public_surface_digest")
+            P2B_PUBLIC_SURFACE_DIGEST, consumer.get("public_surface_digest")
         )
 
     def test_hypothetically_admitted_outer_input_uses_bounded_stdin_and_never_a_host_payload_file(
