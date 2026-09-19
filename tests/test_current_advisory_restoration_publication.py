@@ -6,17 +6,23 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKFLOW_RELATIVE_PATH = ".github/workflows/publish-current-advisory-restoration-runtime.yml"
+WORKFLOW_RELATIVE_PATH = (
+    ".github/workflows/publish-current-advisory-restoration-runtime.yml"
+)
 WORKFLOW_PATH = ROOT / WORKFLOW_RELATIVE_PATH
 R2A_WORKFLOW_PATH = ROOT / ".github/workflows/r2a-protected-current-advisory.yml"
-DECISION_RELATIVE_PATH = "knowledge/decisions/0084-publish-current-advisory-restoration-runtime-by-digest.md"
+DECISION_RELATIVE_PATH = (
+    "knowledge/decisions/0084-publish-current-advisory-restoration-runtime-by-digest.md"
+)
 DECISION_PATH = ROOT / DECISION_RELATIVE_PATH
 INDEX_PATH = ROOT / "knowledge/index.md"
 GUARDRAILS_PATH = ROOT / "policy/guardrails.yaml"
 
 SOURCE_COMMIT = "315487e7a67635ebf3ec3f70f666ef41646102e1"  # pragma: allowlist secret -- public source revision
 SOURCE_TREE = "ea3fdebc6afa9bf5a4c2d0691199beca4dcece81"  # pragma: allowlist secret -- public source tree
-PUBLIC_SURFACE = "sha256:45bc59ce177ab53ddb5925279166b5ede91bbb6c43ef31fb056de56b6ddabca2"
+PUBLIC_SURFACE = (
+    "sha256:45bc59ce177ab53ddb5925279166b5ede91bbb6c43ef31fb056de56b6ddabca2"
+)
 BEFORE = "b80a4d8246e48d1e922c1732c37201e3e2b92c47"  # pragma: allowlist secret -- public predecessor
 PR_NUMBER = "281"
 HEAD_REF = "restoration/275-publish-current-advisory-runtime"
@@ -108,7 +114,11 @@ class CurrentAdvisoryRestorationPublicationTests(unittest.TestCase):
         asteps = _steps(authorize)
         psteps = _steps(publish)
 
-        guard = _run(_named(asteps, "Refuse any context outside the admitted one-shot R3 boundary"))
+        guard = _run(
+            _named(
+                asteps, "Refuse any context outside the admitted one-shot R3 boundary"
+            )
+        )
         for token in (
             'test "${GITHUB_REPOSITORY}" = "ktogias/gnostoa"',
             'test "${GITHUB_EVENT_NAME}" = "push"',
@@ -130,9 +140,13 @@ class CurrentAdvisoryRestorationPublicationTests(unittest.TestCase):
         ):
             self.assertIn(token, binding)
 
-        effect_guard = _run(_named(psteps, "Refuse rerun at the effect-capable R3 publication job"))
+        effect_guard = _run(
+            _named(psteps, "Refuse rerun at the effect-capable R3 publication job")
+        )
         self.assertIn('test "${GITHUB_RUN_ATTEMPT}" = "1"', effect_guard)
-        self.assertIn('test "${EVENT_BEFORE}" = "${AUTHORIZED_BEFORE_COMMIT}"', effect_guard)
+        self.assertIn(
+            'test "${EVENT_BEFORE}" = "${AUTHORIZED_BEFORE_COMMIT}"', effect_guard
+        )
 
         checkouts = [step for step in psteps if step.get("uses") == CHECKOUT]
         self.assertEqual(2, len(checkouts))
@@ -142,7 +156,12 @@ class CurrentAdvisoryRestorationPublicationTests(unittest.TestCase):
         self.assertEqual("${{ env.SOURCE_COMMIT }}", source_with["ref"])
         self.assertEqual("restoration-source", source_with["path"])
 
-        local = _run(_named(psteps, "Build and verify exact qualified runtime before any registry effect"))
+        local = _run(
+            _named(
+                psteps,
+                "Build and verify exact qualified runtime before any registry effect",
+            )
+        )
         for token in (
             "./ci/build-runtime",
             "surface-digest --root /opt/gnostoa",
@@ -155,7 +174,12 @@ class CurrentAdvisoryRestorationPublicationTests(unittest.TestCase):
         ):
             self.assertIn(token, local)
 
-        publication = _run(_named(psteps, "Publish exact qualified runtime without a remote tag and read back digest"))
+        publication = _run(
+            _named(
+                psteps,
+                "Publish exact qualified runtime without a remote tag and read back digest",
+            )
+        )
         self.assertIn('--push-by-digest "${IMAGE_NAME}"', publication)
         self.assertIn("containerimage.digest", publication)
         self.assertIn("docker buildx imagetools inspect", publication)
@@ -164,7 +188,12 @@ class CurrentAdvisoryRestorationPublicationTests(unittest.TestCase):
         attest = [step for step in psteps if step.get("uses") == ATTEST]
         self.assertEqual(1, len(attest))
 
-        reacquire = _run(_named(psteps, "Verify attestation, anonymously reacquire, and replay restoration smoke"))
+        reacquire = _run(
+            _named(
+                psteps,
+                "Verify attestation, anonymously reacquire, and replay restoration smoke",
+            )
+        )
         for token in (
             "gh attestation verify",
             "docker logout ghcr.io",
@@ -222,7 +251,10 @@ class CurrentAdvisoryRestorationPublicationTests(unittest.TestCase):
             for entry in entries
             if isinstance(entry, dict) and isinstance(entry.get("id"), str)
         }
-        for guardrail_id in ("semantic-review-assurance", "immutable-provider-ci-adapters"):
+        for guardrail_id in (
+            "semantic-review-assurance",
+            "immutable-provider-ci-adapters",
+        ):
             entry = by_id[guardrail_id]
             self.assertIn(WORKFLOW_RELATIVE_PATH, entry["implementation"])
             self.assertIn(
