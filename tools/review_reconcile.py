@@ -9,7 +9,7 @@ from typing import Any
 from .review_model import canonical_json, parse_rfc3339
 
 _INTERNAL_SCHEMA_VERSION = "gnostoa-l1-current-state/v1"
-_PROVIDER_SNAPSHOT_VERSION = "gnostoa-review-provider-state/v1"
+PROVIDER_STATE_SCHEMA_VERSION = "gnostoa-review-provider-state/v1"
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
 _ALLOWED_COVERAGE = {"COMPLETE", "PARTIAL", "RATE_LIMITED", "UNAVAILABLE", "ERROR"}
 _SEMANTIC_OUTCOMES = {"PASS", "BLOCKED", "INCOMPLETE", "CONFLICTING"}
@@ -31,6 +31,15 @@ def _string(value: object, label: str) -> str:
     if not isinstance(value, str) or not value:
         raise ReconciliationInputError(f"{label} must be a non-empty string")
     return value
+
+
+def _optional_summary(value: object, *, limit: int = 512) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = " ".join(value.split())
+    if not normalized:
+        return None
+    return normalized[:limit]
 
 
 def _timestamp(value: object, label: str) -> str:
@@ -58,7 +67,7 @@ def _change_request(value: object, label: str) -> dict[str, str]:
 
 
 def _subject(snapshot: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-    if snapshot.get("schema_version") != _PROVIDER_SNAPSHOT_VERSION:
+    if snapshot.get("schema_version") != PROVIDER_STATE_SCHEMA_VERSION:
         raise ReconciliationInputError(
             "provider snapshot schema_version is unsupported"
         )
@@ -105,8 +114,8 @@ def _subject(snapshot: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
             "merge_base_commit": merge_base,
             "source_url": source_url,
             **(
-                {"title": subject["title"]}
-                if isinstance(subject.get("title"), str) and subject["title"]
+                {"title": title}
+                if (title := _optional_summary(subject.get("title"))) is not None
                 else {}
             ),
         },
@@ -312,12 +321,16 @@ def _check_summary(snapshot: dict[str, Any], target_head: str) -> dict[str, Any]
             continue
         if not isinstance(status, str) or not status:
             continue
+        observed_at = _timestamp(check.get("observed_at"), "check.observed_at")
+        sort_key = (parse_rfc3339(observed_at), check_id)
         previous = latest.get(name)
-        if previous is None or check_id > previous["id"]:
+        if previous is None or sort_key > previous["sort_key"]:
             latest[name] = {
                 "id": check_id,
+                "observed_at": observed_at,
                 "status": status,
                 "conclusion": check.get("conclusion"),
+                "sort_key": sort_key,
             }
 
     pending = sorted(
@@ -460,15 +473,20 @@ def render_projection(projection: dict[str, Any]) -> str:
         f"{name}={_mapping(value, f'coverage.{name}').get('status')}"
         for name, value in sorted(coverage.items())
     )
-    rendered = "\n".join(
+    lines = [
+        f"<!-- gnostoa:l1-current-state:v1:{_encode_projection(projection)} -->",
+        "## Gnostoa current-state advisory",
+        "",
+        "**Non-canonical diagnostic projection. It grants no approval or merge authority.**",
+        "",
+        f"- Provider: `{subject['provider_id']}`",
+        f"- Repository: `{subject['repository']}`",
+    ]
+    title = _optional_summary(subject.get("title"))
+    if title is not None:
+        lines.append(f"- Intent summary: {title}")
+    lines.extend(
         [
-            f"<!-- gnostoa:l1-current-state:v1:{_encode_projection(projection)} -->",
-            "## Gnostoa current-state advisory",
-            "",
-            "**Non-canonical diagnostic projection. It grants no approval or merge authority.**",
-            "",
-            f"- Provider: `{subject['provider_id']}`",
-            f"- Repository: `{subject['repository']}`",
             (
                 f"- Subject: {change_request['kind']} "
                 f"`{change_request['id']}` at `{subject['head_commit']}`"
@@ -496,6 +514,7 @@ def render_projection(projection: dict[str, Any]) -> str:
             "",
         ]
     )
+    rendered = "\n".join(lines)
     if len(rendered.encode("utf-8")) > _MAX_RENDER_BYTES:
         raise ReconciliationInputError("projection exceeds the bounded comment size")
     return rendered
