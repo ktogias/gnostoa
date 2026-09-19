@@ -1,7 +1,7 @@
 ---
 type: Source
 title: Issue 15 useful L1 current-state reconciliation execution plan
-description: Bounded critical-change plan for a protected-source GitHub current-state reconciler that collects live Pull Request evidence, consumes existing R2A semantics and publishes one stale-safe non-canonical projection.
+description: Bounded critical-change plan for provider-neutral current-state reconciliation with a first protected-source GitHub adapter, consuming existing R2A semantics and publishing one stale-safe non-canonical projection.
 status: draft
 generated:
   by: openai/gpt-5.6-sol
@@ -52,15 +52,16 @@ code or inventing semantic authority.
 ## Planned implementation surface
 
 1. `tools/review_reconcile.py`
-   - strict normalized provider snapshot validation;
+   - **provider-neutral** internal snapshot validation;
+   - normalized provider/repository/change-request/review/thread/check vocabulary;
    - exact subject and source-coverage reduction;
    - R2A input assembly using the protected authority bundle;
-   - protected current-advisory invocation;
-   - bounded projection model/rendering;
-   - no provider network or write effects.
+   - bounded provider-neutral projection model/rendering;
+   - no provider endpoint, network, credential or write effects.
 
 2. `ci/review_github_current_state.py`
-   - GitHub REST adapter;
+   - first concrete GitHub REST adapter;
+   - translation from GitHub-native Pull Request/review/comment/check objects into the provider-neutral internal snapshot;
    - complete Link-header pagination;
    - normalized provider snapshot;
    - immediate pre-write head/currentness re-read;
@@ -76,6 +77,15 @@ code or inventing semantic authority.
 4. Focused tests and workflow-policy contracts only. Do not introduce a public
    schema unless implementation evidence proves an existing internal typed
    structure is insufficient.
+
+## Provider portability contract
+
+The implementation is accepted only if the pure reducer can consume a second
+synthetic provider using different repository URL and change-request
+vocabulary, without any GitHub branch in the reducer. A future GitLab or other
+adapter may translate its native merge-request/review/check objects into the
+same internal shape and reuse the reducer, R2A composition and projection core
+unchanged.
 
 ## RED evidence
 
