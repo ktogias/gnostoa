@@ -434,6 +434,23 @@ class UsefulL1RedContractTests(unittest.TestCase):
                     "WAIT_OR_RECONCILE_REQUIRED_EVIDENCE",
                     projection["next_permitted_action"],
                 )
+                self.assertEqual("NON_CURRENT", projection["r2a"]["status"])
+                self.assertEqual("UNAVAILABLE", projection["r2a"]["outcome"])
+                self.assertEqual(
+                    "PROVIDER_STATE_INCOMPLETE",
+                    projection["r2a"]["reason"],
+                )
+                self.assertEqual(
+                    {
+                        "status": "SEMANTIC_RESULT",
+                        "outcome": "PASS",
+                        "reason": "QUORUM_SATISFIED",
+                        "binding": False,
+                    },
+                    projection["r2a"]["observed"],
+                )
+                rendered = reducer.render_projection(projection)
+                self.assertNotIn("R2A: **PASS", rendered)
 
     def test_pass_cannot_continue_with_partial_protected_capability(self) -> None:
         reducer = _reducer()
@@ -706,7 +723,13 @@ class UsefulL1RedContractTests(unittest.TestCase):
     ) -> None:
         adapter = _adapter()
         candidate = {
-            "subject": {"head_commit": "a" * 40, "state": "open"},
+            "subject": {
+                "provider_id": "github",
+                "repository": "https://github.com/ktogias/gnostoa",
+                "change_request": {"kind": "github-pull-request", "id": "300"},
+                "head_commit": "a" * 40,
+                "state": "open",
+            },
             "observation": {
                 "observed_at": "2026-09-19T16:41:00Z",
                 "run_id": 100,
@@ -714,6 +737,8 @@ class UsefulL1RedContractTests(unittest.TestCase):
             },
         }
         allowed, reason = adapter.publication_decision(
+            repository="ktogias/gnostoa",
+            pull_number=300,
             current_pr={"state": "open", "head_sha": "b" * 40},
             collected_head="a" * 40,
             existing_projection=None,
@@ -723,7 +748,12 @@ class UsefulL1RedContractTests(unittest.TestCase):
         self.assertEqual("STALE_HEAD", reason)
 
         existing = {
-            "subject": {"head_commit": "a" * 40},
+            "subject": {
+                "provider_id": "github",
+                "repository": "https://github.com/ktogias/gnostoa",
+                "change_request": {"kind": "github-pull-request", "id": "300"},
+                "head_commit": "a" * 40,
+            },
             "observation": {
                 "observed_at": "2026-09-19T16:42:00Z",
                 "run_id": 101,
@@ -731,6 +761,8 @@ class UsefulL1RedContractTests(unittest.TestCase):
             },
         }
         allowed, reason = adapter.publication_decision(
+            repository="ktogias/gnostoa",
+            pull_number=300,
             current_pr={"state": "open", "head_sha": "a" * 40},
             collected_head="a" * 40,
             existing_projection=existing,
@@ -738,6 +770,46 @@ class UsefulL1RedContractTests(unittest.TestCase):
         )
         self.assertFalse(allowed)
         self.assertEqual("SUPERSEDED_PROJECTION", reason)
+
+    def test_publication_refuses_same_head_projection_for_wrong_subject(
+        self,
+    ) -> None:
+        adapter = _adapter()
+        base_subject = {
+            "provider_id": "github",
+            "repository": "https://github.com/ktogias/gnostoa",
+            "change_request": {"kind": "github-pull-request", "id": "300"},
+            "head_commit": "a" * 40,
+            "state": "open",
+        }
+        for mutation in ("provider", "repository", "pull"):
+            subject = dict(base_subject)
+            subject["change_request"] = dict(base_subject["change_request"])
+            if mutation == "provider":
+                subject["provider_id"] = "gitlab"
+            elif mutation == "repository":
+                subject["repository"] = "https://github.com/ktogias/other"
+            else:
+                subject["change_request"]["id"] = "301"
+            candidate = {
+                "subject": subject,
+                "observation": {
+                    "observed_at": "2026-09-19T16:41:00Z",
+                    "run_id": 102,
+                    "run_attempt": 1,
+                },
+            }
+            allowed, reason = adapter.publication_decision(
+                repository="ktogias/gnostoa",
+                pull_number=300,
+                current_pr={"state": "open", "head_sha": "a" * 40},
+                collected_head="a" * 40,
+                existing_projection=None,
+                candidate_projection=candidate,
+            )
+            with self.subTest(mutation=mutation):
+                self.assertFalse(allowed)
+                self.assertEqual("CANDIDATE_SUBJECT_MISMATCH", reason)
 
     def test_scheduled_population_refuses_silent_open_pr_truncation(self) -> None:
         adapter = _adapter()
