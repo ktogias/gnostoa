@@ -6,7 +6,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
 from unittest import mock
 
@@ -385,6 +385,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
 
         self.assertIn("INCOMPLETE", rendered)
         self.assertIn("QUORUM_UNMET", rendered)
+        self.assertEqual("draft", projection["status"])
         self.assertIn("binding: false", rendered)
         self.assertIn("Intent summary: Useful L1 fixture", rendered)
         self.assertNotIn("raw provider text", rendered)
@@ -549,6 +550,45 @@ class UsefulL1RedContractTests(unittest.TestCase):
 
         self.assertEqual([], projection["checks"]["pending"])
         self.assertEqual([], projection["checks"]["non_success"])
+
+    def test_provider_observation_cut_cannot_precede_collected_evidence(self) -> None:
+        adapter = _adapter()
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+        snapshot = adapter.collect_snapshot(
+            _PagedFake(_complete_replies(root)),
+            repository="ktogias/gnostoa",
+            pull_number=300,
+            observed_at="2026-09-19T16:40:00Z",
+        )
+
+        self.assertEqual("2026-09-19T16:40:09Z", snapshot["observed_at"])
+
+    def test_deleted_commenter_is_unavailable_not_provider_failure(self) -> None:
+        adapter = _adapter()
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+        replies = _complete_replies(root)
+        replies[f"{root}/issues/300/comments?per_page=100"] = (
+            [
+                {
+                    "id": 1,
+                    "user": None,
+                    "created_at": "2026-09-19T16:40:00Z",
+                    "updated_at": "2026-09-19T16:40:00Z",
+                    "body": "historical comment",
+                }
+            ],
+            {},
+        )
+
+        snapshot = adapter.collect_snapshot(
+            _PagedFake(replies),
+            repository="ktogias/gnostoa",
+            pull_number=300,
+            observed_at="2026-09-19T16:41:00Z",
+        )
+
+        self.assertEqual("COMPLETE", snapshot["coverage"]["conversation"]["status"])
+        self.assertEqual("UNAVAILABLE", snapshot["conversation"][0]["author"])
 
     def test_adapter_follows_pagination_and_marks_each_source_complete(self) -> None:
         adapter = _adapter()
@@ -873,6 +913,61 @@ class UsefulL1RedContractTests(unittest.TestCase):
         self.assertIsNotNone(existing)
         self.assertEqual(1, existing[0])
 
+    def test_semantic_execution_uses_same_acquired_protected_consumer(self) -> None:
+        adapter = _adapter()
+        reducer = _reducer()
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+        bundle = SimpleNamespace(
+            protected_main_revision="e" * 40,
+            document=_bundle(),
+        )
+        consumer = SimpleNamespace(
+            protected_main_revision="e" * 40,
+            document={
+                "acquired_consumer": {
+                    "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
+                    "runtime_revision": "9" * 40,
+                }
+            },
+        )
+
+        def run_bound(
+            input_document: object,
+            *,
+            acquire_consumer: Any,
+        ) -> tuple[int, bytes]:
+            self.assertIs(consumer, acquire_consumer())
+            self.assertIsInstance(input_document, dict)
+            return (
+                0,
+                b'{"binding":false,"outcome":"INCOMPLETE","reason":"QUORUM_UNMET"}',
+            )
+
+        with (
+            mock.patch.object(
+                adapter,
+                "_protected_state",
+                return_value=(bundle, consumer),
+            ),
+            mock.patch(
+                "tools.review_outer._run_prior_effective_current_advisory_with_acquisition",
+                side_effect=run_bound,
+            ) as runner,
+        ):
+            entry = adapter._collect_entry(
+                _PagedFake(_complete_replies(root)),
+                "ktogias/gnostoa",
+                300,
+                run_id=139,
+                run_attempt=1,
+            )
+
+        runner.assert_called_once()
+        projection = reducer.parse_projection_comment(entry["body"])
+        self.assertIsInstance(projection, dict)
+        self.assertEqual("e" * 40, projection["protected"]["main_revision"])
+        self.assertEqual("INCOMPLETE", projection["r2a"]["outcome"])
+
     def test_protected_capability_unavailability_is_projected_not_fabricated(
         self,
     ) -> None:
@@ -948,6 +1043,9 @@ class UsefulL1RedContractTests(unittest.TestCase):
         self.assertIn("repository_dispatch:", text)
         self.assertNotIn("workflow_dispatch:", text)
         self.assertIn("schedule:", text)
+        self.assertNotIn("workflow_run.pull_requests[0]", text)
+        self.assertNotIn("WORKFLOW_RUN_PULL", text)
+        self.assertIn("github.event.client_payload.pull_number || 'all'", text)
         self.assertNotIn("pull_request_target:", text)
         self.assertIn("300_000", text)
         self.assertNotIn("600_000", text)
