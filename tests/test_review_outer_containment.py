@@ -133,9 +133,9 @@ class ReviewOuterContainmentTests(unittest.TestCase):
         self,
     ) -> None:
         authority = json.loads(
-            (
-                ROOT / "tasks" / "issue-11-r2a-current-advisory-consumer.json"
-            ).read_text(encoding="utf-8")
+            (ROOT / "tasks" / "issue-11-r2a-current-advisory-consumer.json").read_text(
+                encoding="utf-8"
+            )
         )
         acquired = authority["acquired_consumer"]
         self.assertEqual(
