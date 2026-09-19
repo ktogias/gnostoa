@@ -123,6 +123,7 @@ def _snapshot(
                 "id": "provider-check-00000000000000000030",
                 "name": "fast",
                 "head_commit": "a" * 40,
+                "observed_at": "2026-09-19T16:40:40Z",
                 "status": "completed",
                 "conclusion": "success",
             }
@@ -245,6 +246,8 @@ def _complete_replies(root: str) -> dict[str, tuple[Any, dict[str, str]]]:
                         "id": 30,
                         "name": "fast",
                         "head_sha": "a" * 40,
+                        "started_at": "2026-09-19T16:40:06Z",
+                        "completed_at": "2026-09-19T16:40:07Z",
                         "status": "completed",
                         "conclusion": "success",
                     }
@@ -259,6 +262,8 @@ def _complete_replies(root: str) -> dict[str, tuple[Any, dict[str, str]]]:
                         "id": 31,
                         "name": "policy",
                         "head_sha": "a" * 40,
+                        "started_at": "2026-09-19T16:40:08Z",
+                        "completed_at": "2026-09-19T16:40:09Z",
                         "status": "completed",
                         "conclusion": "success",
                     }
@@ -343,6 +348,10 @@ class UsefulL1RedContractTests(unittest.TestCase):
             review_input["subject"]["change_request"],
         )
         self.assertEqual("gitlab", projection["subject"]["provider_id"])
+        self.assertEqual(
+            reducer.PROVIDER_STATE_SCHEMA_VERSION,
+            gitlab_snapshot["schema_version"],
+        )
 
         reducer_source = (
             (ROOT / "tools" / "review_reconcile.py").read_text(encoding="utf-8").lower()
@@ -375,9 +384,56 @@ class UsefulL1RedContractTests(unittest.TestCase):
         self.assertIn("INCOMPLETE", rendered)
         self.assertIn("QUORUM_UNMET", rendered)
         self.assertIn("binding: false", rendered)
+        self.assertIn("Intent summary: Useful L1 fixture", rendered)
         self.assertNotIn("raw provider text", rendered)
         self.assertNotIn("inline raw finding", rendered)
         self.assertLess(len(rendered.encode("utf-8")), 32_768)
+
+    def test_check_projection_orders_by_observed_at_not_provider_native_id(
+        self,
+    ) -> None:
+        reducer = _reducer()
+        snapshot = _snapshot()
+        snapshot["checks"] = [
+            {
+                "id": "z-earlier-provider-id",
+                "name": "fast",
+                "head_commit": "a" * 40,
+                "observed_at": "2026-09-19T16:40:00Z",
+                "status": "completed",
+                "conclusion": "failure",
+            },
+            {
+                "id": "a-later-provider-id",
+                "name": "fast",
+                "head_commit": "a" * 40,
+                "observed_at": "2026-09-19T16:41:00Z",
+                "status": "completed",
+                "conclusion": "success",
+            },
+        ]
+
+        projection = reducer.build_projection(
+            snapshot,
+            protected_main_revision="e" * 40,
+            outer_consumer={
+                "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
+                "runtime_revision": "9" * 40,
+            },
+            r2a_result={
+                "outcome": "INCOMPLETE",
+                "reason": "QUORUM_UNMET",
+                "binding": False,
+            },
+            execution={
+                "run_id": 125,
+                "run_attempt": 1,
+                "observed_at": "2026-09-19T16:41:10Z",
+            },
+        )
+
+        self.assertEqual([], projection["checks"]["pending"])
+        self.assertEqual([], projection["checks"]["non_success"])
 
     def test_adapter_follows_pagination_and_marks_each_source_complete(self) -> None:
         adapter = _adapter()
@@ -504,6 +560,58 @@ class UsefulL1RedContractTests(unittest.TestCase):
             "exceeds the bounded reconciliation capacity",
         ):
             adapter._open_pull_numbers(fake, "ktogias/gnostoa")
+
+    def test_duplicate_projection_comments_fail_closed(self) -> None:
+        adapter = _adapter()
+        reducer = _reducer()
+        snapshot = _snapshot()
+
+        first = reducer.build_projection(
+            snapshot,
+            protected_main_revision="e" * 40,
+            outer_consumer={
+                "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
+                "runtime_revision": "9" * 40,
+            },
+            r2a_result={
+                "outcome": "INCOMPLETE",
+                "reason": "QUORUM_UNMET",
+                "binding": False,
+            },
+            execution={
+                "run_id": 130,
+                "run_attempt": 1,
+                "observed_at": "2026-09-19T16:41:10Z",
+            },
+        )
+        second = reducer.build_projection(
+            snapshot,
+            protected_main_revision="e" * 40,
+            outer_consumer={
+                "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
+                "runtime_revision": "9" * 40,
+            },
+            r2a_result={
+                "outcome": "INCOMPLETE",
+                "reason": "QUORUM_UNMET",
+                "binding": False,
+            },
+            execution={
+                "run_id": 131,
+                "run_attempt": 1,
+                "observed_at": "2026-09-19T16:42:10Z",
+            },
+        )
+
+        comments = [
+            {"id": 1, "body": reducer.render_projection(first)},
+            {"id": 2, "body": reducer.render_projection(second)},
+        ]
+        with self.assertRaisesRegex(
+            adapter.ProviderWriteError,
+            "multiple valid L1 projection comments",
+        ):
+            adapter._existing_projection(comments)
 
     def test_workflow_is_protected_source_and_least_privilege(self) -> None:
         self.assertTrue(WORKFLOW_PATH.is_file(), "L1_WORKFLOW_UNAVAILABLE")
