@@ -249,7 +249,7 @@ def build_review_input(
     snapshot: dict[str, Any],
     protected_bundle: dict[str, Any],
 ) -> dict[str, Any]:
-    """Translate normalized GitHub state into the existing R2A input contract."""
+    """Translate normalized provider state into the existing R2A input contract."""
 
     subject, provider_subject = _subject(snapshot)
     coverage = _coverage(snapshot)
