@@ -457,6 +457,7 @@ def build_projection(
 
     return {
         "schema_version": _INTERNAL_SCHEMA_VERSION,
+        "status": "draft",
         "non_canonical": True,
         "subject": provider_subject,
         "coverage": coverage,
@@ -577,5 +578,7 @@ def parse_projection_comment(body: object) -> dict[str, Any] | None:
     if not isinstance(document, dict):
         return None
     if document.get("schema_version") != _INTERNAL_SCHEMA_VERSION:
+        return None
+    if document.get("status") != "draft":
         return None
     return document
