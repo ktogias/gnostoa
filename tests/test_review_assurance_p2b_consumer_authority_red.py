@@ -100,6 +100,28 @@ EXPECTED_CONSUMER = {
 }
 
 
+def _historical_p2b_authority() -> dict[str, object]:
+    return {
+        "schema_version": "1.0",
+        "subject": {
+            "kind": "gnostoa-protected-main-consumer-record",
+            "value": "tasks/issue-11-r2a-current-advisory-consumer.json:v1",
+        },
+        "expected_consumer": copy.deepcopy(EXPECTED_CONSUMER),
+        "acquired_consumer": copy.deepcopy(EXPECTED_CONSUMER),
+        "materialization": {
+            "protected_main_revision": MATERIALIZATION_MAIN_REVISION,
+            "workflow_run": MATERIALIZATION_RUN,
+            "attestation_id": ATTESTATION_ID,
+            "rekor_log_index": REKOR_LOG_INDEX,
+            "receipt": (
+                "https://github.com/ktogias/gnostoa/issues/11#issuecomment-"
+                + RECEIPT_COMMENT
+            ),
+        },
+    }
+
+
 def _load(path: Path) -> dict[str, object]:
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
@@ -127,16 +149,16 @@ class ReviewAssuranceP2bConsumerAuthorityRedTests(unittest.TestCase):
         unknown["candidate_claim"] = True
         self.assertNotEqual([], list(validator.iter_errors(unknown)))
 
-    def test_outer_consumer_authority_binds_exact_materialized_p2b(self) -> None:
-        authority = _load(CONSUMER_AUTHORITY_PATH)
-        self.assertEqual("1.0", authority.get("schema_version"))
-        self.assertEqual(
-            {
-                "kind": "gnostoa-protected-main-consumer-record",
-                "value": "tasks/issue-11-r2a-current-advisory-consumer.json:v1",
-            },
-            authority.get("subject"),
-        )
+    def test_historical_p2b_materialization_remains_durable_but_not_current(
+        self,
+    ) -> None:
+        current = _load(CONSUMER_AUTHORITY_PATH)
+        authority = _historical_p2b_authority()
+        schema = _load(CONSUMER_SCHEMA_PATH)
+        validator = Draft202012Validator(schema, format_checker=FORMAT_CHECKER)
+        self.assertEqual([], list(validator.iter_errors(authority)))
+        self.assertNotEqual(EXPECTED_CONSUMER, current.get("expected_consumer"))
+        self.assertNotEqual(EXPECTED_CONSUMER, current.get("acquired_consumer"))
         self.assertEqual(EXPECTED_CONSUMER, authority.get("expected_consumer"))
         self.assertEqual(EXPECTED_CONSUMER, authority.get("acquired_consumer"))
 
