@@ -9,8 +9,7 @@ from typing import Any
 from .review_model import canonical_json, parse_rfc3339
 
 _INTERNAL_SCHEMA_VERSION = "gnostoa-l1-current-state/v1"
-_PROVIDER_SNAPSHOT_VERSION = 1
-_REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+_PROVIDER_SNAPSHOT_VERSION = "gnostoa-review-provider-state/v1"
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
 _ALLOWED_COVERAGE = {"COMPLETE", "PARTIAL", "RATE_LIMITED", "UNAVAILABLE", "ERROR"}
 _SEMANTIC_OUTCOMES = {"PASS", "BLOCKED", "INCOMPLETE", "CONFLICTING"}
@@ -52,43 +51,63 @@ def _sha(value: object, label: str) -> str:
     return rendered
 
 
+def _change_request(value: object, label: str) -> dict[str, str]:
+    item = _mapping(value, label)
+    return {
+        "kind": _string(item.get("kind"), f"{label}.kind"),
+        "id": _string(item.get("id"), f"{label}.id"),
+    }
+
+
 def _subject(snapshot: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     if snapshot.get("schema_version") != _PROVIDER_SNAPSHOT_VERSION:
-        raise ReconciliationInputError("provider snapshot schema_version is unsupported")
-    if snapshot.get("provider") != "github":
-        raise ReconciliationInputError("provider snapshot must be GitHub")
-    repository = _string(snapshot.get("repository"), "repository")
-    if _REPOSITORY.fullmatch(repository) is None:
-        raise ReconciliationInputError("repository must be owner/name")
-    pull_number = snapshot.get("pull_number")
-    if type(pull_number) is not int or pull_number <= 0:
-        raise ReconciliationInputError("pull_number must be a positive integer")
+        raise ReconciliationInputError(
+            "provider snapshot schema_version is unsupported"
+        )
+    provider = _mapping(snapshot.get("provider"), "provider")
+    provider_id = _string(provider.get("id"), "provider.id")
     observed_at = _timestamp(snapshot.get("observed_at"), "observed_at")
+
     subject = _mapping(snapshot.get("subject"), "subject")
-    head = _sha(subject.get("head_sha"), "subject.head_sha")
-    base = _sha(subject.get("base_sha"), "subject.base_sha")
-    merge_base = _sha(subject.get("merge_base_sha"), "subject.merge_base_sha")
+    repository = _string(subject.get("repository"), "subject.repository")
+    change_request = _change_request(
+        subject.get("change_request"),
+        "subject.change_request",
+    )
     state = _string(subject.get("state"), "subject.state")
-    html_url = _string(subject.get("html_url"), "subject.html_url")
+    head = _sha(subject.get("head_commit"), "subject.head_commit")
+    base = _sha(subject.get("base_commit"), "subject.base_commit")
+    comparison = _mapping(subject.get("comparison"), "subject.comparison")
+    if comparison.get("kind") != "merge_base":
+        raise ReconciliationInputError(
+            "subject.comparison.kind must be merge_base"
+        )
+    merge_base = _sha(
+        comparison.get("commit_sha"),
+        "subject.comparison.commit_sha",
+    )
+    source_url = _string(subject.get("source_url"), "subject.source_url")
+
     return (
         {
-            "repository": f"https://github.com/{repository}",
-            "change_request": {
-                "kind": "github-pull-request",
-                "id": str(pull_number),
-            },
+            "repository": repository,
+            "change_request": copy.deepcopy(change_request),
             "head_commit": head,
-            "comparison": {"kind": "merge_base", "commit_sha": merge_base},
+            "comparison": {
+                "kind": "merge_base",
+                "commit_sha": merge_base,
+            },
             "observed_at": observed_at,
         },
         {
+            "provider_id": provider_id,
             "repository": repository,
-            "pull_number": pull_number,
+            "change_request": copy.deepcopy(change_request),
             "state": state,
-            "head_sha": head,
-            "base_sha": base,
-            "merge_base_sha": merge_base,
-            "html_url": html_url,
+            "head_commit": head,
+            "base_commit": base,
+            "merge_base_commit": merge_base,
+            "source_url": source_url,
             **(
                 {"title": subject["title"]}
                 if isinstance(subject.get("title"), str) and subject["title"]
@@ -102,11 +121,11 @@ def _coverage(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
     coverage = _mapping(snapshot.get("coverage"), "coverage")
     result: dict[str, dict[str, Any]] = {}
     for source in (
-        "pull",
-        "issue_comments",
+        "subject",
+        "conversation",
         "reviews",
-        "review_comments",
-        "check_runs",
+        "review_threads",
+        "checks",
     ):
         item = _mapping(coverage.get(source), f"coverage.{source}")
         status = _string(item.get("status"), f"coverage.{source}.status")
@@ -135,7 +154,7 @@ def _coverage(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
 def _review_source_status(coverage: dict[str, dict[str, Any]]) -> str:
     statuses = {
         coverage["reviews"]["status"],
-        coverage["review_comments"]["status"],
+        coverage["review_threads"]["status"],
     }
     for status in ("ERROR", "UNAVAILABLE", "RATE_LIMITED", "PARTIAL"):
         if status in statuses:
@@ -146,47 +165,54 @@ def _review_source_status(coverage: dict[str, dict[str, Any]]) -> str:
 def _observations(
     snapshot: dict[str, Any],
     subject: dict[str, Any],
+    provider_id: str,
 ) -> list[dict[str, Any]]:
     reviews = snapshot.get("reviews")
-    review_comments = snapshot.get("review_comments")
-    if not isinstance(reviews, list) or not isinstance(review_comments, list):
+    review_threads = snapshot.get("review_threads")
+    if not isinstance(reviews, list) or not isinstance(review_threads, list):
         raise ReconciliationInputError(
-            "reviews and review_comments must be arrays"
+            "reviews and review_threads must be arrays"
         )
 
-    comments_by_review: dict[int, list[dict[str, Any]]] = {}
-    for raw_comment in review_comments:
-        comment = _mapping(raw_comment, "review_comment")
-        review_id = comment.get("pull_request_review_id")
-        comment_id = comment.get("id")
-        if type(review_id) is not int or type(comment_id) is not int:
+    threads_by_review: dict[str, list[dict[str, Any]]] = {}
+    for raw_thread in review_threads:
+        thread = _mapping(raw_thread, "review_thread")
+        review_observation_id = thread.get("review_observation_id")
+        thread_id = thread.get("id")
+        if not isinstance(review_observation_id, str) or not review_observation_id:
             continue
-        comments_by_review.setdefault(review_id, []).append(comment)
+        if not isinstance(thread_id, str) or not thread_id:
+            continue
+        threads_by_review.setdefault(review_observation_id, []).append(thread)
 
     target_head = subject["head_commit"]
     observations: list[dict[str, Any]] = []
     for raw_review in reviews:
         review = _mapping(raw_review, "review")
-        review_id = review.get("id")
-        if type(review_id) is not int:
-            raise ReconciliationInputError("review.id must be an integer")
-        author = _string(review.get("author"), "review.author")
-        state = _string(review.get("state"), "review.state")
-        observed_at = _timestamp(review.get("submitted_at"), "review.submitted_at")
-        commit_id = review.get("commit_id")
+        observation_id = _string(
+            review.get("observation_id"),
+            "review.observation_id",
+        )
+        reviewer_id = _string(review.get("reviewer_id"), "review.reviewer_id")
+        state = _string(
+            review.get("recommendation_state"),
+            "review.recommendation_state",
+        )
+        observed_at = _timestamp(review.get("observed_at"), "review.observed_at")
+        review_head = review.get("head_commit")
 
-        if isinstance(commit_id, str) and _SHA40.fullmatch(commit_id):
-            bound_head = commit_id
-            binding_status = "exact" if commit_id == target_head else "partial"
+        if isinstance(review_head, str) and _SHA40.fullmatch(review_head):
+            bound_head = review_head
+            binding_status = "exact" if review_head == target_head else "partial"
         else:
             bound_head = target_head
             binding_status = "unestablished"
 
-        thread_records = comments_by_review.get(review_id, [])
+        thread_records = threads_by_review.get(observation_id, [])
         observations.append(
             {
-                "observation_id": f"github-review-{review_id}",
-                "reviewer_id": author,
+                "observation_id": observation_id,
+                "reviewer_id": reviewer_id,
                 "source_id": "retained-review-evidence",
                 "observed_at": observed_at,
                 "subject_binding": {
@@ -197,21 +223,21 @@ def _observations(
                     "comparison": copy.deepcopy(subject["comparison"]),
                 },
                 "native": {
-                    "object_id": f"github-pull-review-{review_id}",
+                    "object_id": observation_id,
                     "revision": 1,
-                    "provider": "github",
-                    "source_url": review.get("html_url"),
-                    "review_commit_id": commit_id,
+                    "provider": provider_id,
+                    "source_url": review.get("source_url"),
+                    "review_commit_id": review_head,
                     "recommendation_state": state,
                 },
                 "findings": [],
                 "threads": {
                     "state": "observed",
                     "count": len(thread_records),
-                    "comment_ids": sorted(
+                    "thread_ids": sorted(
                         item["id"]
                         for item in thread_records
-                        if type(item.get("id")) is int
+                        if isinstance(item.get("id"), str)
                     ),
                 },
             }
@@ -225,7 +251,7 @@ def build_review_input(
 ) -> dict[str, Any]:
     """Translate normalized GitHub state into the existing R2A input contract."""
 
-    subject, _ = _subject(snapshot)
+    subject, provider_subject = _subject(snapshot)
     coverage = _coverage(snapshot)
     bundle = _mapping(protected_bundle, "protected_bundle")
     authority = _mapping(bundle.get("authority"), "protected_bundle.authority")
@@ -257,11 +283,15 @@ def build_review_input(
                     "observed_at": observed_at,
                     "snapshot": {
                         "review_pages": coverage["reviews"]["pages"],
-                        "review_comment_pages": coverage["review_comments"]["pages"],
+                        "review_thread_pages": coverage["review_threads"]["pages"],
                     },
                 }
             ],
-            "observations": _observations(snapshot, subject),
+            "observations": _observations(
+                snapshot,
+                subject,
+                provider_subject["provider_id"],
+            ),
         },
         "qualification_snapshot": copy.deepcopy(qualification),
     }
@@ -272,19 +302,21 @@ def _projection_coverage(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 def _check_summary(snapshot: dict[str, Any], target_head: str) -> dict[str, Any]:
-    raw_checks = snapshot.get("check_runs")
+    raw_checks = snapshot.get("checks")
     if not isinstance(raw_checks, list):
-        raise ReconciliationInputError("check_runs must be an array")
+        raise ReconciliationInputError("checks must be an array")
 
     latest: dict[str, dict[str, Any]] = {}
     for raw in raw_checks:
-        check = _mapping(raw, "check_run")
-        if check.get("head_sha") != target_head:
+        check = _mapping(raw, "check")
+        if check.get("head_commit") != target_head:
             continue
         check_id = check.get("id")
         name = check.get("name")
         status = check.get("status")
-        if type(check_id) is not int or not isinstance(name, str) or not name:
+        if not isinstance(check_id, str) or not check_id:
+            continue
+        if not isinstance(name, str) or not name:
             continue
         if not isinstance(status, str) or not status:
             continue
@@ -369,7 +401,7 @@ def build_projection(
         if provider_subject["state"] == "open" and complete
         else "INCOMPLETE_AT_OBSERVATION"
     )
-    checks = _check_summary(snapshot, provider_subject["head_sha"])
+    checks = _check_summary(snapshot, provider_subject["head_commit"])
     if checks["pending"]:
         next_action = "WAIT_FOR_PROVIDER_CHECKS"
     elif checks["non_success"]:
@@ -417,9 +449,13 @@ def _encode_projection(projection: dict[str, Any]) -> str:
 
 
 def render_projection(projection: dict[str, Any]) -> str:
-    """Render one bounded replaceable PR comment without raw provider bodies."""
+    """Render one bounded replaceable provider-neutral status projection."""
 
     subject = _mapping(projection.get("subject"), "projection.subject")
+    change_request = _mapping(
+        subject.get("change_request"),
+        "projection.subject.change_request",
+    )
     r2a = _mapping(projection.get("r2a"), "projection.r2a")
     protected = _mapping(projection.get("protected"), "projection.protected")
     observation = _mapping(projection.get("observation"), "projection.observation")
@@ -437,16 +473,32 @@ def render_projection(projection: dict[str, Any]) -> str:
             "",
             "**Non-canonical diagnostic projection. It grants no approval or merge authority.**",
             "",
-            f"- Subject: PR #{subject['pull_number']} at \`{subject['head_sha']}\`",
-            f"- Base / merge-base: \`{subject['base_sha']}\` / \`{subject['merge_base_sha']}\`",
-            f"- Observation cut: \`{observation['observed_at']}\`",
+            f"- Provider: `{subject['provider_id']}`",
+            f"- Repository: `{subject['repository']}`",
+            (
+                f"- Subject: {change_request['kind']} "
+                f"`{change_request['id']}` at `{subject['head_commit']}`"
+            ),
+            (
+                f"- Base / merge-base: `{subject['base_commit']}` / "
+                f"`{subject['merge_base_commit']}`"
+            ),
+            f"- Observation cut: `{observation['observed_at']}`",
             f"- Coverage: {coverage_text}",
-            f"- Protected main: \`{protected['main_revision']}\`",
-            f"- Protected outer runtime: \`{protected['outer_runtime_image']}\`",
+            (
+                f"- Checks: observed={checks['observed_names']}, "
+                f"pending={len(checks['pending'])}, "
+                f"non-success={len(checks['non_success'])}"
+            ),
+            f"- Protected main: `{protected['main_revision']}`",
+            f"- Protected outer runtime: `{protected['outer_runtime_image']}`",
             f"- R2A: **{r2a['outcome']} / {r2a['reason']}**, binding: false",
             f"- Currentness: **{projection['currentness']}**",
-            f"- Next permitted action: \`{projection['next_permitted_action']}\`",
-            f"- Execution generation: run \`{observation['run_id']}\`, attempt \`{observation['run_attempt']}\`",
+            f"- Next permitted action: `{projection['next_permitted_action']}`",
+            (
+                f"- Execution generation: run `{observation['run_id']}`, "
+                f"attempt `{observation['run_attempt']}`"
+            ),
             "",
         ]
     )
