@@ -93,6 +93,7 @@ inherited, copied or loaded by adopting projects.
 - [Complete the R2A P2b rolling-trust exit through a subsequent-candidate negative read-back](decisions/0080-complete-r2a-p2b-rolling-trust-exit-by-negative-readback.md)
 - [Make repository-root Ruff scope authoritative before candidate sealing](decisions/0081-make-repository-root-ruff-scope-authoritative-before-candidate-sealing.md)
 - [Eliminate host persistence for protected review payloads and route bounded security gates](decisions/0082-eliminate-host-persistence-for-protected-review-payloads-and-route-security-gates.md)
+- [Qualify the integrated transport-safe current-advisory runtime before publication](decisions/0083-qualify-integrated-current-advisory-restoration-runtime.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Require explicit admission for retrospective findings](requirements/retrospective-findings-require-explicit-admission.md)

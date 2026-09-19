@@ -1,0 +1,162 @@
+name: Verify current-advisory restoration runtime
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/verify-r2a-current-advisory-restoration-runtime.yml"
+      - "ci/review_current_advisory_restoration_smoke.py"
+      - "knowledge/decisions/0083-qualify-integrated-current-advisory-restoration-runtime.md"
+      - "tests/test_current_advisory_restoration_runtime.py"
+      - "tools/review_*.py"
+      - "tools/knowledge_common.py"
+      - "tools/cli.py"
+      - "schemas/review-*.json"
+      - "policy/review-policy.yaml"
+      - "Dockerfile"
+      - "ci/build-runtime"
+      - "tasks/issue-11-r2a-current-advisory.json"
+      - "tasks/issue-11-r2a-current-advisory-consumer.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_COMMIT: 315487e7a67635ebf3ec3f70f666ef41646102e1 # pragma: allowlist secret -- public integrated source revision
+  SOURCE_TREE: ea3fdebc6afa9bf5a4c2d0691199beca4dcece81 # pragma: allowlist secret -- public integrated source tree
+  GNOSTOA_R2_CANDIDATE_IMAGE: gnostoa-r2-restoration:${{ github.run_id }}-${{ github.run_attempt }}
+
+jobs:
+  qualify:
+    name: qualify exact integrated restoration runtime
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out qualification candidate
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Check out exact integrated runtime source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          ref: ${{ env.SOURCE_COMMIT }}
+          path: restoration-source
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: restoration-source/requirements/development.lock
+
+      - name: Bind exact integrated source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C restoration-source rev-parse HEAD)" = "${SOURCE_COMMIT}"
+          test "$(git -C restoration-source rev-parse 'HEAD^{tree}')" = "${SOURCE_TREE}"
+          test -z "$(git -C restoration-source status --porcelain)"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            test "${{ github.event.pull_request.base.sha }}" = "${SOURCE_COMMIT}"
+          fi
+
+      - name: Install exact development dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --only-binary=:all: --require-hashes             -r restoration-source/requirements/development.lock
+
+      - name: Build exact integrated runtime locally
+        shell: bash
+        run: |
+          set -euo pipefail
+          (
+            cd restoration-source
+            GNOSTOA_CANDIDATE_REF="${SOURCE_COMMIT}"               ./ci/build-runtime                 --tag "${GNOSTOA_R2_CANDIDATE_IMAGE}"                 --platform linux/amd64                 --pull                 --no-cache
+          )
+          docker run --rm "${GNOSTOA_R2_CANDIDATE_IMAGE}" self-check
+
+      - name: Measure candidate runtime identity
+        id: identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_id="$(docker image inspect --format '{{.Id}}' "${GNOSTOA_R2_CANDIDATE_IMAGE}")"
+          [[ "${image_id}" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "candidate image did not expose an exact sha256 image id" >&2
+            exit 1
+          }
+          observed="$(docker image inspect             --format '{{.Os}}|{{.Architecture}}|{{.Config.User}}|{{index .Config.Labels "org.opencontainers.image.revision"}}'             "${GNOSTOA_R2_CANDIDATE_IMAGE}")"
+          test "${observed}" = "linux|amd64|kit|${SOURCE_COMMIT}"
+          public_surface_digest="$(
+            docker run --rm               --network none               --read-only               --cap-drop ALL               --security-opt no-new-privileges               --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m               --entrypoint python               "${GNOSTOA_R2_CANDIDATE_IMAGE}"               -m tools.cli surface-digest --root /opt/gnostoa
+          )"
+          [[ "${public_surface_digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "candidate public surface digest is malformed" >&2
+            exit 1
+          }
+          {
+            echo "image_id=${image_id}"
+            echo "public_surface_digest=${public_surface_digest}"
+          } >> "${GITHUB_OUTPUT}"
+
+      # The runtime image under qualification intentionally excludes development
+      # dependencies. Host Python is therefore the orchestration fallback for
+      # exact-source regression contracts, while Docker still executes the
+      # runtime/container behavior being qualified.
+      - name: Run exact-source transport regression contracts via native orchestration fallback
+        shell: bash
+        env:
+          PYTHONPATH: restoration-source
+        run: |
+          set -euo pipefail
+          python restoration-source/tests/test_review_current_payload_transport.py
+          python restoration-source/tests/test_review_outer_containment.py
+          python restoration-source/tests/test_security_review_followup.py
+          python tests/test_current_advisory_restoration_runtime.py
+
+      - name: Exercise layered candidate transport
+        shell: bash
+        env:
+          PYTHONPATH: restoration-source
+          GNOSTOA_R2A_CANDIDATE_IMAGE: ${{ env.GNOSTOA_R2_CANDIDATE_IMAGE }}
+          GNOSTOA_R2_EXPECTED_SOURCE_REVISION: ${{ env.SOURCE_COMMIT }}
+          GNOSTOA_R2_EXPECTED_SOURCE_TREE: ${{ env.SOURCE_TREE }}
+          GNOSTOA_R2_EXPECTED_IMAGE_ID: ${{ steps.identity.outputs.image_id }}
+          GNOSTOA_R2_EXPECTED_PUBLIC_SURFACE_DIGEST: ${{ steps.identity.outputs.public_surface_digest }}
+          GNOSTOA_R2_EXPECTED_PROTECTED_MAIN: ${{ env.SOURCE_COMMIT }}
+        run: |
+          set -euo pipefail
+          python ci/review_current_advisory_restoration_smoke.py
+
+      - name: Record bounded qualification receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "### R2 restoration runtime qualification"
+            echo
+            printf -- '- source revision: `%s`\n' "${SOURCE_COMMIT}"
+            printf -- '- source tree: `%s`\n' "${SOURCE_TREE}"
+            printf -- '- local image id: `%s`\n' "${{ steps.identity.outputs.image_id }}"
+            printf -- '- public surface: `%s`\n' "${{ steps.identity.outputs.public_surface_digest }}"
+            echo "- registry publication: **NOT PERFORMED**"
+            echo "- protected authority/catalog promotion: **NOT PERFORMED**"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Remove local candidate image
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if docker image inspect "${GNOSTOA_R2_CANDIDATE_IMAGE}" >/dev/null 2>&1; then
+            docker image rm "${GNOSTOA_R2_CANDIDATE_IMAGE}" >/dev/null
+          fi
+          if docker image inspect "${GNOSTOA_R2_CANDIDATE_IMAGE}" >/dev/null 2>&1; then
+            echo "R2 local candidate image cleanup failed" >&2
+            exit 1
+          fi

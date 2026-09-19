@@ -493,6 +493,7 @@ guardrails:
       - knowledge/decisions/0079-promote-r2a-p2b-outer-consumer-authority.md
       - knowledge/decisions/0080-complete-r2a-p2b-rolling-trust-exit-by-negative-readback.md
       - knowledge/decisions/0082-eliminate-host-persistence-for-protected-review-payloads-and-route-security-gates.md
+      - knowledge/decisions/0083-qualify-integrated-current-advisory-restoration-runtime.md
       - ci/review_b15_runtime_smoke.py
       - ci/review_b16_entrypoint_smoke.py
       - ci/review_outer_smoke.py
@@ -509,6 +510,8 @@ guardrails:
       - tools/review_outer.py
       - tools/cli.py
       - .github/workflows/r2a-protected-current-advisory.yml
+      - .github/workflows/verify-r2a-current-advisory-restoration-runtime.yml
+      - ci/review_current_advisory_restoration_smoke.py
       - .github/workflows/publish-r2a-p2b-oci.yml
     tests:
       - tests/test_review_assurance.py
@@ -531,6 +534,7 @@ guardrails:
       - tests/test_security_review_followup.py
       - tests/test_review_outer_containment.py
       - tests/test_r2a_p2b_integrated_materialization.py
+      - tests/test_current_advisory_restoration_runtime.py
       - ci/review_b15_runtime_smoke.py
       - ci/review_b16_entrypoint_smoke.py
       - ci/review_live_smoke.py
@@ -603,6 +607,7 @@ guardrails:
       - .github/workflows/publish-r2a-p2b-b15-oci.yml
       - .github/workflows/publish-r2a-p2b-b16-oci.yml
       - .github/workflows/publish-r2a-p2b-oci.yml
+      - .github/workflows/verify-r2a-current-advisory-restoration-runtime.yml
       - ci/github-actions.yml
       - ci/gitlab-ci.yml
       - ci/security_scan.py
@@ -627,6 +632,7 @@ guardrails:
       - tests/test_r2a_p2b_b15_publication.py::R2AP2bB15PublicationTests.test_b15_materialization_is_governed_and_declared
       - tests/test_r2a_p2b_b16_publication.py::R2AP2bB16PublicationTests.test_b16_materialization_is_governed_and_declared
       - tests/test_r2a_p2b_integrated_materialization.py::R2AP2bIntegratedMaterializationTests.test_materialization_is_governed_and_routed
+      - tests/test_current_advisory_restoration_runtime.py
 
   - id: conditional-artifact-promotion
     title: Delivery activates for deployable artifacts and promotes the verified artifact
