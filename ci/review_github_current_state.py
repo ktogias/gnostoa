@@ -21,6 +21,7 @@ _MAX_BODY_BYTES = 65_536
 _MAX_PAGES = 20
 _MAX_ITEMS = 5_000
 _MAX_OPEN_PULLS = 10
+_MAX_PUBLICATION_PAYLOAD_BYTES = 300_000
 _TIMEOUT_SECONDS = 30
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
 _NEXT_LINK = re.compile(r'<([^>]+)>;\s*rel="next"')
@@ -607,16 +608,24 @@ def _collect_entry(
         pull_number=pull_number,
         observed_at=observed_at,
     )
-    bundle, consumer = _protected_state()
-    review_input = build_review_input(snapshot, bundle.document)
-    code, raw = run_prior_effective_current_advisory(review_input)
-    semantic = _semantic_result(code, raw)
-    outer = consumer.document.get("acquired_consumer")
-    if not isinstance(outer, dict):
-        raise ProviderReadError("protected outer-consumer authority is malformed")
+    protected_revision: str | None = None
+    outer: dict[str, Any] | None = None
+    try:
+        bundle, consumer = _protected_state()
+        protected_revision = bundle.protected_main_revision
+        review_input = build_review_input(snapshot, bundle.document)
+        code, raw = run_prior_effective_current_advisory(review_input)
+        semantic = _semantic_result(code, raw)
+        acquired = consumer.document.get("acquired_consumer")
+        if not isinstance(acquired, dict):
+            raise ProviderReadError("protected outer-consumer authority is malformed")
+        outer = acquired
+    except (OSError, RuntimeError, ValueError) as exc:
+        semantic = {"reason": type(exc).__name__}
+
     projection = build_projection(
         snapshot,
-        protected_main_revision=bundle.protected_main_revision,
+        protected_main_revision=protected_revision,
         outer_consumer=outer,
         r2a_result=semantic,
         execution={
@@ -640,11 +649,16 @@ def _write_payload(path: Path, entries: list[dict[str, Any]]) -> None:
         ensure_ascii=True,
         allow_nan=False,
     ).encode("utf-8")
+    if len(encoded) > _MAX_PUBLICATION_PAYLOAD_BYTES:
+        raise ValueError("publication payload exceeds bounded size")
     path.write_bytes(encoded)
 
 
 def _load_payload(path: Path) -> list[dict[str, Any]]:
-    loaded = json.loads(path.read_text(encoding="utf-8"))
+    raw = path.read_bytes()
+    if len(raw) > _MAX_PUBLICATION_PAYLOAD_BYTES:
+        raise ValueError("publication payload exceeds bounded size")
+    loaded = json.loads(raw.decode("utf-8"))
     if not isinstance(loaded, list):
         raise ValueError("publication payload must be an array")
     entries = [item for item in loaded if isinstance(item, dict)]
