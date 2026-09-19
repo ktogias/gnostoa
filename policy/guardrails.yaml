@@ -466,7 +466,7 @@ guardrails:
       - tests/test_supplied_agent_review_capture.py::SuppliedAgentReviewCaptureTests.test_router_runbook_and_decision_bind_the_capture_anchor
 
   - id: semantic-review-assurance
-    title: Gnostoa self-review assurance uses bound retained evidence without merge authority; current_advisory is contained and unavailable
+    title: Gnostoa self-review assurance uses bound retained evidence without merge authority; current_advisory transport admits only the exact restored runtime
     applies_to: [kit]
     enforcement: hybrid
     owner: team:gnostoa-maintainers
@@ -495,6 +495,7 @@ guardrails:
       - knowledge/decisions/0082-eliminate-host-persistence-for-protected-review-payloads-and-route-security-gates.md
       - knowledge/decisions/0083-qualify-integrated-current-advisory-restoration-runtime.md
       - knowledge/decisions/0084-publish-current-advisory-restoration-runtime-by-digest.md
+      - knowledge/decisions/0085-promote-current-advisory-restoration-runtime.md
       - ci/review_b15_runtime_smoke.py
       - ci/review_b16_entrypoint_smoke.py
       - ci/review_outer_smoke.py
@@ -514,6 +515,7 @@ guardrails:
       - .github/workflows/verify-r2a-current-advisory-restoration-runtime.yml
       - .github/workflows/publish-current-advisory-restoration-runtime.yml
       - ci/review_current_advisory_restoration_smoke.py
+      - ci/review_current_advisory_promotion_smoke.py
       - .github/workflows/publish-r2a-p2b-oci.yml
     tests:
       - tests/test_review_assurance.py
@@ -538,6 +540,7 @@ guardrails:
       - tests/test_r2a_p2b_integrated_materialization.py
       - tests/test_current_advisory_restoration_runtime.py
       - tests/test_current_advisory_restoration_publication.py
+      - tests/test_current_advisory_restoration_promotion.py
       - ci/review_b15_runtime_smoke.py
       - ci/review_b16_entrypoint_smoke.py
       - ci/review_live_smoke.py
