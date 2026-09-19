@@ -1220,8 +1220,19 @@ class UsefulL1RedContractTests(unittest.TestCase):
         self.assertNotIn("workflow_run.pull_requests[0]", text)
         self.assertNotIn("workflow_run.pull_requests[0]", text)
         self.assertNotIn("pull_request_target:", text)
-        self.assertIn("300_000", text)
-        self.assertNotIn("600_000", text)
+        self.assertNotIn("PAYLOAD_B64", text)
+        self.assertNotIn("needs.collect.outputs.payload", text)
+        self.assertNotIn("base64", text)
+        self.assertNotIn("GITHUB_OUTPUT", text)
+        self.assertIn(
+            "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+            text,
+        )
+        self.assertIn(
+            "actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0",
+            text,
+        )
+        self.assertIn("retention-days: 1", text)
         self.assertEqual({}, workflow.get("permissions"))
 
         concurrency = workflow.get("concurrency")
@@ -1241,6 +1252,33 @@ class UsefulL1RedContractTests(unittest.TestCase):
         publish = jobs.get("publish")
         self.assertIsInstance(collect, dict)
         self.assertIsInstance(publish, dict)
+        self.assertNotIn("outputs", collect)
+
+        collect_steps = collect.get("steps")
+        publish_steps = publish.get("steps")
+        self.assertIsInstance(collect_steps, list)
+        self.assertIsInstance(publish_steps, list)
+        upload = next(
+            item
+            for item in collect_steps
+            if isinstance(item, dict)
+            and str(item.get("uses", "")).startswith("actions/upload-artifact@")
+        )
+        download = next(
+            item
+            for item in publish_steps
+            if isinstance(item, dict)
+            and str(item.get("uses", "")).startswith("actions/download-artifact@")
+        )
+        self.assertEqual(1, upload.get("with", {}).get("retention-days"))
+        self.assertEqual(
+            "gnostoa-l1-publication",
+            upload.get("with", {}).get("name"),
+        )
+        self.assertEqual(
+            "gnostoa-l1-publication",
+            download.get("with", {}).get("name"),
+        )
 
         self.assertEqual(
             {
