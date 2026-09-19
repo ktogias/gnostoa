@@ -112,9 +112,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
                             run_attempt=1,
                         )
                     self.assertEqual("UNAVAILABLE", entry["collection_status"])
-                    self.assertEqual(
-                        "ERROR", entry["coverage"]["subject"]["status"]
-                    )
+                    self.assertEqual("ERROR", entry["coverage"]["subject"]["status"])
                     self.assertNotIn("head_sha", entry)
                     self.assertNotIn("body", entry)
                     protected.assert_not_called()
