@@ -84,19 +84,19 @@ jobs:
         run: |
           set -euo pipefail
           image_id="$(docker image inspect --format '{{.Id}}' "${GNOSTOA_R2_CANDIDATE_IMAGE}")"
-          case "${image_id}" in
-            sha256:[0-9a-f][0-9a-f]*) ;;
-            *) echo "candidate image did not expose a content-addressed image id" >&2; exit 1 ;;
-          esac
+          [[ "${image_id}" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "candidate image did not expose an exact sha256 image id" >&2
+            exit 1
+          }
           observed="$(docker image inspect             --format '{{.Os}}|{{.Architecture}}|{{.Config.User}}|{{index .Config.Labels "org.opencontainers.image.revision"}}'             "${GNOSTOA_R2_CANDIDATE_IMAGE}")"
           test "${observed}" = "linux|amd64|kit|${SOURCE_COMMIT}"
           public_surface_digest="$(
             docker run --rm               --network none               --read-only               --cap-drop ALL               --security-opt no-new-privileges               --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m               --entrypoint python               "${GNOSTOA_R2_CANDIDATE_IMAGE}"               -m tools.cli surface-digest --root /opt/gnostoa
           )"
-          case "${public_surface_digest}" in
-            sha256:[0-9a-f][0-9a-f]*) ;;
-            *) echo "candidate public surface digest is malformed" >&2; exit 1 ;;
-          esac
+          [[ "${public_surface_digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "candidate public surface digest is malformed" >&2
+            exit 1
+          }
           {
             echo "image_id=${image_id}"
             echo "public_surface_digest=${public_surface_digest}"
@@ -144,4 +144,12 @@ jobs:
       - name: Remove local candidate image
         if: always()
         shell: bash
-        run: docker image rm "${GNOSTOA_R2_CANDIDATE_IMAGE}" >/dev/null 2>&1 || true
+        run: |
+          set -euo pipefail
+          if docker image inspect "${GNOSTOA_R2_CANDIDATE_IMAGE}" >/dev/null 2>&1; then
+            docker image rm "${GNOSTOA_R2_CANDIDATE_IMAGE}" >/dev/null
+          fi
+          if docker image inspect "${GNOSTOA_R2_CANDIDATE_IMAGE}" >/dev/null 2>&1; then
+            echo "R2 local candidate image cleanup failed" >&2
+            exit 1
+          fi
