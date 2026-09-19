@@ -382,9 +382,37 @@ historical timing or turn later tests into pre-implementation evidence.
    source, permissions, R2A semantics and merge authority retain their existing
    owners and controls.
 
-Items 3-6 are requested verification/remediation, not completed execution claims
-in this retrospective. Their actual results and independent dispositions belong
-to the subsequent exact-candidate review record.
+At retrospective creation, items 3-6 were requested
+verification/remediation rather than completed execution claims. Subsequent
+source-level corrective evidence is retained below; final execution and
+independent disposition still belong to the later exact-candidate review record.
+
+## 7. Post-retrospective corrective evidence for ARCH-01 / ARCH-03
+
+This section records later corrective source changes without rewriting the
+historical findings above.
+
+After the retained `0743998c0de025f7b92f5b519390481c388cdc41`
+inspection, architecture review on #285 required stronger evidence for native
+translation and explicit ownership of execution identity/order.
+
+- `7bb62ad36a4031e243553edecb32e53f8650705a` migrates projection tests away
+  from integer `run_id/run_attempt` assumptions.
+- `59ebc8432170091af995b895bcb578c47dd7922d` adds a materially different
+  test-only native translator with different field vocabulary, opaque
+  repository/change/review identities, a missing checks capability, and a
+  same-timestamp opaque-ID permutation replay.
+- `400c0a117c2779a45d85dc8294b0999e1892e40c` changes the shared projection
+  contract to carry only an opaque `execution_id`; the core no longer parses
+  or orders provider/runtime execution identity.
+- `788605982f216aab5913e8c4de2873aedfabd028` keeps GitHub Actions
+  run/attempt ordering inside the GitHub adapter's publication comparator.
+
+These commits address the source-level ARCH-01 and ARCH-03 gaps without adding a
+second production provider, public schema, L2 sequence service or effect fence.
+They are **not yet proof of final-candidate correctness or architectural
+acceptance**. Exact-head execution and fresh independent review must rebind this
+evidence before convergence.
 
 ### Reuse #263 for broader assurance-method changes
 
