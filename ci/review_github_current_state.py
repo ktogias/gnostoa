@@ -12,7 +12,10 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from tools.review_model import parse_rfc3339
-from tools.review_reconcile import PROVIDER_STATE_SCHEMA_VERSION, parse_projection_comment
+from tools.review_reconcile import (
+    PROVIDER_STATE_SCHEMA_VERSION,
+    parse_projection_comment,
+)
 
 _API_ROOT = "https://api.github.com"
 _API_VERSION = "2022-11-28"
