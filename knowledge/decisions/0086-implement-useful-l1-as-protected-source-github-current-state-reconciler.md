@@ -116,6 +116,16 @@ not refactoring R2A, the reducer, projection semantics or current-state logic.
 The GitHub adapter remains self-only and implementation-private in this slice.
 No GitHub vocabulary is promoted into R2A or a generic public Gnostoa schema.
 
+Execution identity follows the same boundary. The shared projection core carries
+one opaque, non-empty `execution_id`; it does not parse, order or coerce that
+identity. Any provider/runtime-specific freshness ordering belongs to the
+adapter that owns publication. The GitHub adapter therefore encodes its native
+generation as `github-actions:<run-id>:<attempt>` and interprets that value only
+inside its stale/supersession comparator. A future adapter may use a completely
+different opaque execution token and ordering rule without changing the core.
+This is diagnostic generation identity only; it is not an L2 WorkLease,
+sequence service or exactly-once effect fence.
+
 ### Trusted execution/source boundary
 
 Use a dedicated GitHub Actions workflow whose executable implementation is
@@ -215,7 +225,7 @@ The projection is non-canonical and must visibly declare:
 - R2A outcome, reason and `binding:false`;
 - currentness/freshness;
 - next permitted action or explicit wait/block;
-- workflow execution generation.
+- opaque workflow execution identity.
 
 Before any comment create/update, reacquire the change-request head and re-read
 the prior provider projection. The candidate projection must also name the exact
@@ -225,7 +235,7 @@ publication when:
 
 - the head changed since collection;
 - the change request is closed/merged when the projection expects open work;
-- a retained projection names a later observation cut/execution generation; or
+- the provider adapter establishes that a retained projection names a later observation cut/native execution generation; or
 - more than one valid **workflow-owned** marker projection exists, because the
   single-comment ownership invariant is then ambiguous.
 
