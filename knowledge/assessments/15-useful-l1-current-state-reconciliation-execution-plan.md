@@ -1,0 +1,178 @@
+---
+type: Source
+title: Issue 15 useful L1 current-state reconciliation execution plan
+description: Bounded critical-change plan for a protected-source GitHub current-state reconciler that collects live Pull Request evidence, consumes existing R2A semantics and publishes one stale-safe non-canonical projection.
+status: draft
+generated:
+  by: openai/gpt-5.6-sol
+  at: "2026-09-19T16:36:00Z"
+sources:
+  - id: work-item
+    resource: https://github.com/ktogias/gnostoa/issues/15
+    title: Automate deterministic knowledge-workflow mechanics without weakening assurance
+  - id: owner-admission
+    resource: https://github.com/ktogias/gnostoa/issues/15#issuecomment-5743533633
+    title: Owner admission — bounded useful L1 slice
+  - id: decision
+    resource: /decisions/0086-implement-useful-l1-as-protected-source-github-current-state-reconciler.md
+    title: Implement useful L1 as a protected-source GitHub current-state reconciler
+x-project-knowledge:
+  id: kit.assessment.15-useful-l1-current-state-reconciliation-execution-plan
+  owners:
+    - team:gnostoa-maintainers
+  scope:
+    - gnostoa
+  relations:
+    - kind: governed-by
+      target: /decisions/0086-implement-useful-l1-as-protected-source-github-current-state-reconciler.md
+    - kind: derived-from
+      target: /assessments/15-l0-lite-observed-workflow-baseline.md
+---
+
+# Issue 15 useful L1 current-state reconciliation execution plan
+
+## Bound subject
+
+- Work Item: #15 / WI-DET-01.
+- Owner admission: issue comment `5743533633`.
+- Starting protected main:
+  `0129244780a56bfbb6736dc96343c782f68861a3`.
+- Change class: **critical**.
+- Semantic kernel: existing #11/R2A only.
+- Implementation surface is Gnostoa-self; no public adopter contract changes.
+
+## Smallest outcome
+
+A trusted default-branch workflow can inspect one real open Pull Request,
+collect the declared provider evidence completely or explicitly partially,
+invoke the protected current-advisory path with the resulting existing R2A
+input, and update one non-canonical PR projection without mutating candidate
+code or inventing semantic authority.
+
+## Planned implementation surface
+
+1. `tools/review_reconcile.py`
+   - strict normalized provider snapshot validation;
+   - exact subject and source-coverage reduction;
+   - R2A input assembly using the protected authority bundle;
+   - protected current-advisory invocation;
+   - bounded projection model/rendering;
+   - no provider network or write effects.
+
+2. `ci/review_github_current_state.py`
+   - GitHub REST adapter;
+   - complete Link-header pagination;
+   - normalized provider snapshot;
+   - immediate pre-write head/currentness re-read;
+   - one marker-owned issue-comment create/update path;
+   - no candidate checkout or source mutation.
+
+3. `.github/workflows/review-current-state.yml`
+   - protected-source `workflow_run`, hourly schedule and manual recovery;
+   - minimum token permissions;
+   - per-PR concurrency for liveness only;
+   - Actions summary plus bounded projection publication.
+
+4. Focused tests and workflow-policy contracts only. Do not introduce a public
+   schema unless implementation evidence proves an existing internal typed
+   structure is insufficient.
+
+## RED evidence
+
+Before adding production files, focused tests must fail for at least these
+missing capabilities:
+
+- complete multi-page provider collection;
+- source-by-source coverage and explicit partial/error status;
+- exact head/base/merge-base binding;
+- protected authority/R2A pass-through with `binding:false`;
+- stale-head publication refusal;
+- later-projection overwrite refusal on unchanged SHA;
+- candidate-controlled workflow execution/write credential rejection;
+- bounded rendering that excludes raw review payload bodies from the projection.
+
+Characterization evidence may additionally pin existing R2A and protected-main
+behavior, but it does not replace the required RED cases.
+
+## Implementation sequence
+
+### L1-A — pure reducer
+
+Implement snapshot normalization/reduction and R2A envelope construction with
+network/write effects injected or absent. Keep provider vocabulary internal.
+
+Exit: focused pure tests green; R2A outcomes/reasons are unchanged.
+
+### L1-B — GitHub read adapter
+
+Add bounded REST acquisition with explicit pagination/coverage and size/page
+limits. The adapter preserves IDs, timestamps and exact head association needed
+for currentness without copying unnecessary raw payloads into the projection.
+
+Exit: complete/partial/error fixtures green; no provider writes.
+
+### L1-C — stale-safe projection effect
+
+Add exactly one marker-owned conversation comment effect with read-before-write
+currentness. Re-read the current PR and existing projection immediately before
+the effect. No other write endpoint is permitted.
+
+Exit: old-head and later-generation negative tests green.
+
+### L1-D — trusted workflow
+
+Add the default-branch workflow. It must:
+
+- never use `pull_request_target` to execute candidate source;
+- check out protected/default branch source only;
+- declare minimal token permissions;
+- pass the PR identity to the integrated adapter;
+- keep workflow success distinct from R2A semantic outcome.
+
+Exit: workflow contract tests plus normal CI green.
+
+## Verification
+
+Focused:
+- reducer unit/property-style permutations;
+- provider pagination/currentness tests;
+- projection effect tests with mocked provider transport;
+- workflow YAML structural/security tests;
+- existing R2A current-advisory regressions.
+
+Repository:
+- `./ci/style --check`;
+- policy, security-fast, fast;
+- Python 3.11/3.12;
+- extended;
+- regression;
+- smoke;
+- CodeQL/provider security checks.
+
+Review:
+- exact candidate sealing under Decision 0081 operating rule;
+- fresh external review;
+- all actionable findings reconciled;
+- merge remains a separate owner event.
+
+## Rollback and compatibility
+
+Rollback is removal/disabling of the new self-only workflow and helper surface.
+No canonical project state, schema version, provider rule, release identity or
+R2A semantic policy depends on the projection.
+
+Existing comments remain non-canonical evidence and may be deleted manually
+without corrupting canonical state.
+
+## Stop conditions
+
+Stop and return to the owner only if:
+
+- the bounded design needs broader provider-write authority;
+- provider semantics require a custom App/service or credential expansion;
+- a material conflict requires changing #10/#11/#12/R2A semantics;
+- implementation needs L2 execution-generation/effect fencing to be safe;
+- paid inference or a worker becomes necessary;
+- merge/integration authority is due after convergence.
+
+Ordinary queued/running checks or reviewer latency are not stop conditions.
