@@ -1,0 +1,125 @@
+name: Gnostoa current-state reconciliation
+
+on:
+  workflow_run:
+    workflows: ["Gnostoa verification"]
+    types: [completed]
+  schedule:
+    - cron: "23 * * * *"
+  repository_dispatch:
+    types: [gnostoa-review-current-state]
+
+permissions: {}
+
+concurrency:
+  group: gnostoa-review-current-state
+  cancel-in-progress: true
+
+jobs:
+  collect:
+    name: collect
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: read
+      pull-requests: read
+      issues: read
+    outputs:
+      payload: ${{ steps.collect.outputs.payload }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: main
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/runtime.lock
+      - name: Install exact runtime dependencies
+        run: |
+          python -m pip install \
+            --only-binary=:all: \
+            --require-hashes \
+            -r requirements/runtime.lock
+      - name: Reconcile current Pull Request state
+        id: collect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_RUN_PULL: ${{ github.event.workflow_run.pull_requests[0].number }}
+          DISPATCH_PULL: ${{ github.event.client_payload.pull_number }}
+        run: |
+          set -euo pipefail
+          args=(
+            --mode collect
+            --repository "${GITHUB_REPOSITORY}"
+            --output "${RUNNER_TEMP}/gnostoa-l1-publication.json"
+            --run-id "${GITHUB_RUN_ID}"
+            --run-attempt "${GITHUB_RUN_ATTEMPT}"
+          )
+          if [[ -n "${WORKFLOW_RUN_PULL:-}" ]]; then
+            args+=(--pull-number "${WORKFLOW_RUN_PULL}")
+          fi
+          if [[ -n "${DISPATCH_PULL:-}" ]]; then
+            args+=(--pull-number "${DISPATCH_PULL}")
+          fi
+
+          python ci/review_github_current_state.py "${args[@]}"
+
+          python - "${RUNNER_TEMP}/gnostoa-l1-publication.json" "${GITHUB_OUTPUT}" <<'PY'
+          import base64
+          import sys
+          from pathlib import Path
+
+          payload_path = Path(sys.argv[1])
+          output_path = Path(sys.argv[2])
+          raw = payload_path.read_bytes()
+          if len(raw) > 600_000:
+              raise SystemExit("L1 publication payload exceeds workflow-output bound")
+          encoded = base64.urlsafe_b64encode(raw).decode("ascii")
+          with output_path.open("a", encoding="utf-8") as handle:
+              handle.write(f"payload={encoded}\n")
+          PY
+
+  publish:
+    name: publish
+    needs: collect
+    if: github.ref == 'refs/heads/main' && needs.collect.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: main
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Decode bounded publication payload
+        env:
+          PAYLOAD_B64: ${{ needs.collect.outputs.payload }}
+        run: |
+          set -euo pipefail
+          python - "${RUNNER_TEMP}/gnostoa-l1-publication.json" <<'PY'
+          import base64
+          import os
+          import sys
+          from pathlib import Path
+
+          encoded = os.environ.get("PAYLOAD_B64", "")
+          raw = base64.urlsafe_b64decode(encoded.encode("ascii")) if encoded else b"[]"
+          if len(raw) > 600_000:
+              raise SystemExit("L1 publication payload exceeds workflow-output bound")
+          Path(sys.argv[1]).write_bytes(raw)
+          PY
+      - name: Publish stale-safe non-canonical projection
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python ci/review_github_current_state.py \
+            --mode publish \
+            --repository "${GITHUB_REPOSITORY}" \
+            --payload "${RUNNER_TEMP}/gnostoa-l1-publication.json"
