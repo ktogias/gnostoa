@@ -354,8 +354,8 @@ def _check_summary(snapshot: dict[str, Any], target_head: str) -> dict[str, Any]
 def build_projection(
     snapshot: dict[str, Any],
     *,
-    protected_main_revision: str,
-    outer_consumer: dict[str, Any],
+    protected_main_revision: str | None,
+    outer_consumer: dict[str, Any] | None,
     r2a_result: dict[str, Any],
     execution: dict[str, Any],
 ) -> dict[str, Any]:
@@ -363,17 +363,33 @@ def build_projection(
 
     _, provider_subject = _subject(snapshot)
     coverage = _projection_coverage(snapshot)
-    protected_revision = _sha(
-        protected_main_revision,
-        "protected_main_revision",
+    protected_revision = (
+        _sha(protected_main_revision, "protected_main_revision")
+        if protected_main_revision is not None
+        else None
     )
-    consumer = _mapping(outer_consumer, "outer_consumer")
-    runtime_image = _string(
-        consumer.get("runtime_image"), "outer_consumer.runtime_image"
+    consumer = outer_consumer if isinstance(outer_consumer, dict) else None
+    runtime_image = (
+        _string(consumer.get("runtime_image"), "outer_consumer.runtime_image")
+        if consumer is not None
+        else None
     )
-    runtime_revision = _sha(
-        consumer.get("runtime_revision"),
-        "outer_consumer.runtime_revision",
+    runtime_revision = (
+        _sha(consumer.get("runtime_revision"), "outer_consumer.runtime_revision")
+        if consumer is not None
+        else None
+    )
+    protected_status = (
+        "AVAILABLE"
+        if protected_revision is not None
+        and runtime_image is not None
+        and runtime_revision is not None
+        else "PARTIAL"
+        if any(
+            item is not None
+            for item in (protected_revision, runtime_image, runtime_revision)
+        )
+        else "UNAVAILABLE"
     )
 
     run_id = execution.get("run_id")
@@ -429,6 +445,7 @@ def build_projection(
         "coverage": coverage,
         "checks": checks,
         "protected": {
+            "status": protected_status,
             "main_revision": protected_revision,
             "outer_runtime_image": runtime_image,
             "outer_runtime_revision": runtime_revision,
@@ -502,8 +519,14 @@ def render_projection(projection: dict[str, Any]) -> str:
                 f"pending={len(checks['pending'])}, "
                 f"non-success={len(checks['non_success'])}"
             ),
-            f"- Protected main: `{protected['main_revision']}`",
-            f"- Protected outer runtime: `{protected['outer_runtime_image']}`",
+            (
+                f"- Protected authority: **{protected['status']}**; "
+                f"main=`{protected.get('main_revision') or 'UNAVAILABLE'}`"
+            ),
+            (
+                "- Protected outer runtime: "
+                f"`{protected.get('outer_runtime_image') or 'UNAVAILABLE'}`"
+            ),
             f"- R2A: **{r2a['outcome']} / {r2a['reason']}**, binding: false",
             f"- Currentness: **{projection['currentness']}**",
             f"- Next permitted action: `{projection['next_permitted_action']}`",
