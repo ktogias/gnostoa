@@ -247,11 +247,27 @@ class UsefulL1RedContractTests(unittest.TestCase):
                     {},
                 ),
                 f"{root}/issues/300/comments?per_page=100": (
-                    [{"id": 1, "user": {"login": "one"}, "created_at": "2026-09-19T16:40:00Z", "updated_at": "2026-09-19T16:40:00Z", "body": "one"}],
+                    [
+                        {
+                            "id": 1,
+                            "user": {"login": "one"},
+                            "created_at": "2026-09-19T16:40:00Z",
+                            "updated_at": "2026-09-19T16:40:00Z",
+                            "body": "one",
+                        }
+                    ],
                     {"link": '<https://api.github.com/page2/issues>; rel="next"'},
                 ),
                 "https://api.github.com/page2/issues": (
-                    [{"id": 2, "user": {"login": "two"}, "created_at": "2026-09-19T16:40:01Z", "updated_at": "2026-09-19T16:40:01Z", "body": "two"}],
+                    [
+                        {
+                            "id": 2,
+                            "user": {"login": "two"},
+                            "created_at": "2026-09-19T16:40:01Z",
+                            "updated_at": "2026-09-19T16:40:01Z",
+                            "body": "two",
+                        }
+                    ],
                     {},
                 ),
                 f"{root}/pulls/300/reviews?per_page=100": ([], {}),
@@ -272,9 +288,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
 
         self.assertEqual(2, len(snapshot["issue_comments"]))
         self.assertEqual(2, snapshot["coverage"]["issue_comments"]["pages"])
-        self.assertEqual(
-            "COMPLETE", snapshot["coverage"]["issue_comments"]["status"]
-        )
+        self.assertEqual("COMPLETE", snapshot["coverage"]["issue_comments"]["status"])
         self.assertIn("https://api.github.com/page2/issues", fake.calls)
 
     def test_adapter_reports_partial_collection_instead_of_clean_on_page_error(
@@ -307,7 +321,16 @@ class UsefulL1RedContractTests(unittest.TestCase):
                 ),
                 f"{root}/issues/300/comments?per_page=100": ([], {}),
                 f"{root}/pulls/300/reviews?per_page=100": (
-                    [{"id": 10, "user": {"login": "one"}, "state": "APPROVED", "submitted_at": "2026-09-19T16:40:00Z", "commit_id": "a" * 40, "html_url": "https://example.invalid/review/10"}],
+                    [
+                        {
+                            "id": 10,
+                            "user": {"login": "one"},
+                            "state": "APPROVED",
+                            "submitted_at": "2026-09-19T16:40:00Z",
+                            "commit_id": "a" * 40,
+                            "html_url": "https://example.invalid/review/10",
+                        }
+                    ],
                     {"link": '<https://api.github.com/page2/reviews>; rel="next"'},
                 ),
                 f"{root}/pulls/300/comments?per_page=100": ([], {}),
@@ -328,7 +351,9 @@ class UsefulL1RedContractTests(unittest.TestCase):
         self.assertEqual(1, snapshot["coverage"]["reviews"]["pages"])
         self.assertEqual(1, len(snapshot["reviews"]))
 
-    def test_publication_refuses_stale_head_and_later_same_head_projection(self) -> None:
+    def test_publication_refuses_stale_head_and_later_same_head_projection(
+        self,
+    ) -> None:
         adapter = _adapter()
         candidate = {
             "subject": {"head_sha": "a" * 40, "state": "open"},
