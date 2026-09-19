@@ -285,6 +285,74 @@ class UsefulL1FollowupTests(unittest.TestCase):
             adapter._MAX_PUBLICATION_PAYLOAD_BYTES,
         )
 
+    def test_publication_rechecks_exact_subject_after_comment_readback(self) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        reducer = fixtures._reducer()
+        snapshot = fixtures._snapshot()
+        projection = reducer.build_projection(
+            snapshot,
+            protected_main_revision="e" * 40,
+            outer_consumer={
+                "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
+                "runtime_revision": "9" * 40,
+            },
+            r2a_result={
+                "outcome": "INCOMPLETE",
+                "reason": "QUORUM_UNMET",
+                "binding": False,
+            },
+            execution={
+                "execution_id": "github-actions:260:1",
+                "observed_at": "2026-09-19T16:41:10Z",
+            },
+        )
+        entry = {
+            "pull_number": 300,
+            "head_sha": "a" * 40,
+            "body": reducer.render_projection(projection),
+        }
+        initial = {
+            "state": "open",
+            "head_sha": "a" * 40,
+            "base_sha": "b" * 40,
+            "merge_base_sha": "c" * 40,
+        }
+        drifted = {
+            "state": "open",
+            "head_sha": "a" * 40,
+            "base_sha": "d" * 40,
+            "merge_base_sha": "e" * 40,
+        }
+        client = mock.Mock()
+
+        with (
+            mock.patch.object(
+                adapter,
+                "_current_pr",
+                side_effect=[initial, drifted],
+            ) as current,
+            mock.patch.object(
+                adapter,
+                "_collect_pages",
+                return_value=(
+                    [],
+                    {"status": "COMPLETE", "pages": 1, "count": 0},
+                ),
+            ),
+        ):
+            result = adapter.publish_entry(
+                client,
+                repository="ktogias/gnostoa",
+                entry=entry,
+            )
+
+        self.assertEqual(2, current.call_count)
+        self.assertIs(False, result["published"])
+        self.assertEqual("STALE_COMPARISON", result["reason"])
+        client.post.assert_not_called()
+        client.patch.assert_not_called()
+
     def test_materially_different_native_translator_reuses_core_unchanged(self) -> None:
         fixtures = _fixtures()
         reducer = fixtures._reducer()
