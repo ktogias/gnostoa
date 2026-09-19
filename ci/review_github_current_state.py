@@ -549,6 +549,8 @@ def _projection_key(projection: dict[str, Any]) -> tuple[Any, int, int]:
 
 def publication_decision(
     *,
+    repository: str,
+    pull_number: int,
     current_pr: dict[str, Any],
     collected_head: str,
     existing_projection: dict[str, Any] | None,
@@ -560,8 +562,16 @@ def publication_decision(
     if current_head != collected_head:
         return False, "STALE_HEAD"
     candidate_subject = candidate_projection.get("subject")
+    expected_repository = f"https://github.com/{repository}"
+    expected_change_request = {
+        "kind": "github-pull-request",
+        "id": str(pull_number),
+    }
     if (
         not isinstance(candidate_subject, dict)
+        or candidate_subject.get("provider_id") != "github"
+        or candidate_subject.get("repository") != expected_repository
+        or candidate_subject.get("change_request") != expected_change_request
         or candidate_subject.get("head_commit") != collected_head
     ):
         return False, "CANDIDATE_SUBJECT_MISMATCH"
@@ -663,6 +673,8 @@ def publish_entry(
         pull_number=pull_number,
     )
     allowed, reason = publication_decision(
+        repository=repository,
+        pull_number=pull_number,
         current_pr=current,
         collected_head=collected_head,
         existing_projection=existing[1] if existing else None,
