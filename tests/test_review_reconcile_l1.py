@@ -722,6 +722,8 @@ class UsefulL1RedContractTests(unittest.TestCase):
                 "repository": "https://github.com/ktogias/gnostoa",
                 "change_request": {"kind": "github-pull-request", "id": "300"},
                 "head_commit": "a" * 40,
+                "base_commit": "b" * 40,
+                "merge_base_commit": "c" * 40,
                 "state": "open",
             },
             "observation": {
@@ -732,7 +734,12 @@ class UsefulL1RedContractTests(unittest.TestCase):
         allowed, reason = adapter.publication_decision(
             repository="ktogias/gnostoa",
             pull_number=300,
-            current_pr={"state": "open", "head_sha": "b" * 40},
+            current_pr={
+                "state": "open",
+                "head_sha": "b" * 40,
+                "base_sha": "b" * 40,
+                "merge_base_sha": "c" * 40,
+            },
             collected_head="a" * 40,
             existing_projection=None,
             candidate_projection=candidate,
@@ -755,7 +762,12 @@ class UsefulL1RedContractTests(unittest.TestCase):
         allowed, reason = adapter.publication_decision(
             repository="ktogias/gnostoa",
             pull_number=300,
-            current_pr={"state": "open", "head_sha": "a" * 40},
+            current_pr={
+                "state": "open",
+                "head_sha": "a" * 40,
+                "base_sha": "b" * 40,
+                "merge_base_sha": "c" * 40,
+            },
             collected_head="a" * 40,
             existing_projection=existing,
             candidate_projection=candidate,
@@ -772,6 +784,8 @@ class UsefulL1RedContractTests(unittest.TestCase):
             "repository": "https://github.com/ktogias/gnostoa",
             "change_request": {"kind": "github-pull-request", "id": "300"},
             "head_commit": "a" * 40,
+            "base_commit": "b" * 40,
+            "merge_base_commit": "c" * 40,
             "state": "open",
         }
         for mutation in ("provider", "repository", "pull"):
@@ -801,6 +815,71 @@ class UsefulL1RedContractTests(unittest.TestCase):
             with self.subTest(mutation=mutation):
                 self.assertFalse(allowed)
                 self.assertEqual("CANDIDATE_SUBJECT_MISMATCH", reason)
+
+    def test_publication_refuses_same_head_when_base_or_merge_base_changes(
+        self,
+    ) -> None:
+        adapter = _adapter()
+        candidate = {
+            "subject": {
+                "provider_id": "github",
+                "repository": "https://github.com/ktogias/gnostoa",
+                "change_request": {"kind": "github-pull-request", "id": "300"},
+                "head_commit": "a" * 40,
+                "base_commit": "b" * 40,
+                "merge_base_commit": "c" * 40,
+                "state": "open",
+            },
+            "observation": {
+                "observed_at": "2026-09-19T16:41:00Z",
+                "execution_id": "github-actions:103:1",
+            },
+        }
+
+        for mutation in ("base", "merge_base"):
+            current = {
+                "state": "open",
+                "head_sha": "a" * 40,
+                "base_sha": "b" * 40,
+                "merge_base_sha": "c" * 40,
+            }
+            if mutation == "base":
+                current["base_sha"] = "d" * 40
+            else:
+                current["merge_base_sha"] = "e" * 40
+
+            allowed, reason = adapter.publication_decision(
+                repository="ktogias/gnostoa",
+                pull_number=300,
+                current_pr=current,
+                collected_head="a" * 40,
+                existing_projection=None,
+                candidate_projection=candidate,
+            )
+            with self.subTest(mutation=mutation):
+                self.assertFalse(allowed)
+                self.assertEqual("STALE_COMPARISON", reason)
+
+    def test_current_pr_recomputes_merge_base_for_prewrite_subject(self) -> None:
+        adapter = _adapter()
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+        fake = _PagedFake(_complete_replies(root))
+
+        current = adapter._current_pr(fake, "ktogias/gnostoa", 300)
+
+        self.assertEqual(
+            {
+                "state": "open",
+                "head_sha": "a" * 40,
+                "base_sha": "b" * 40,
+                "merge_base_sha": "c" * 40,
+            },
+            current,
+        )
+        self.assertIn(
+            f"{root}/compare/{'b' * 40}...{'a' * 40}",
+            fake.calls,
+        )
 
     def test_scheduled_population_refuses_silent_open_pr_truncation(self) -> None:
         adapter = _adapter()
