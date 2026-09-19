@@ -141,3 +141,25 @@ remains required before this critical slice can integrate. Once R2 is integrated
 and read back, R3 requires separate owner authorization for the exact immutable
 OCI publication/attestation effect. No preparation result silently grants that
 authority.
+
+
+## Consequences
+
+- R2 gains a falsifiable exact-integrated runtime qualification without creating
+  a remote artifact or changing production trust.
+- The local Docker image ID is candidate evidence only; it is not the immutable
+  registry identity that R3 must create and read back.
+- A passing candidate smoke reduces uncertainty about the repaired layered
+  transport but does not restore the public route. Production remains contained
+  until the separately authorized R3 publication and R4 promotion complete.
+- Qualification failures remain ordinary evidence and leave the existing
+  protected runtime and authority untouched.
+
+## Non-goals
+
+- No GHCR publication, attestation, source Release or tag.
+- No protected consumer-authority or compatibility-catalog mutation.
+- No inner semantic-judge replacement.
+- No provider ruleset/required-check change.
+- No claim that R2 qualification alone makes `current_advisory` available.
+- No closure of #275.
