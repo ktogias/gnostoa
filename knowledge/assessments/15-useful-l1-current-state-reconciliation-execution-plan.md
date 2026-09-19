@@ -99,10 +99,13 @@ unchanged.
 The internal adapter contract also requires explicit observation timestamps for
 check state; opaque provider IDs never define freshness, and same-timestamp
 conflicts are explicit ambiguity. Positive next actions require complete/open
-provider state plus AVAILABLE protected capability. Duplicate workflow-owned
-projection comments are an explicit fail-closed provider-write condition rather
-than an invitation to guess which comment owns the projection; marker text from
-an arbitrary participant does not establish ownership.
+provider state plus AVAILABLE protected capability. When provider state is not
+current, the exact consumed R2A result is retained only as observed diagnostic
+evidence; the current projection state is non-current/unavailable and does not
+render an incomplete-evidence `PASS` as its present result. Duplicate
+workflow-owned projection comments are an explicit fail-closed provider-write
+condition rather than an invitation to guess which comment owns the projection;
+marker text from an arbitrary participant does not establish ownership.
 
 Bounded stable read-back is not atomic provider history or an L2 effect fence.
 The confirming pass starts after the retained cut and repeats all required
@@ -147,7 +150,9 @@ Exit: complete/partial/error fixtures green; no provider writes.
 
 Add exactly one marker-owned conversation comment effect with read-before-write
 currentness. Re-read the current PR and existing projection immediately before
-the effect. No other write endpoint is permitted.
+the effect, and require the candidate projection to match the exact GitHub
+provider/repository/PR/head target before any create/update. No other write
+endpoint is permitted.
 
 Exit: old-head and later-generation negative tests green.
 
