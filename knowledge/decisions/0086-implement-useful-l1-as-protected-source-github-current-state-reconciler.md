@@ -196,6 +196,17 @@ only the minimum issue/Pull Request write permission required for the single
 projection comment; it gets no contents write, workflow write, package write,
 review-approval or branch mutation authority.
 
+### Verification routing boundary
+
+Useful L1 consumes protected R2A outputs but does not mutate the R2A trust kernel,
+protected consumer authority, transport compatibility catalog or historical
+promotion path. Therefore this slice is verified as a critical current-state
+reconciliation change through the normal policy/security/fast/extended/regression/
+smoke suites plus its focused L1 contracts. It must not expand the historical
+`semantic-review-assurance` promotion guardrail merely to gain coverage; doing
+so would route unrelated provider-reconciliation changes through P2b/R4 promotion
+smokes and blur the trust-domain boundary.
+
 ## Change classification
 
 `critical`.
