@@ -87,7 +87,10 @@ candidate code.
 The primary automatic wake-up is completion of the existing
 `Gnostoa verification` workflow through `workflow_run`. Add a bounded hourly
 reconciliation wake-up for open Pull Requests and an explicit
-`workflow_dispatch` recovery path.
+`repository_dispatch` recovery path. Do not use a write-capable
+`workflow_dispatch` route: a manual dispatch may target a non-default ref, so
+this slice keeps effect-capable recovery bound to default-branch workflow
+source.
 
 The workflow must not use `pull_request_target` to execute candidate code. It
 must never check out an untrusted PR head into a job holding write-capable
