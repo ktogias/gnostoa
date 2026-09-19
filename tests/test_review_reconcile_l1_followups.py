@@ -303,14 +303,14 @@ class UsefulL1FollowupTests(unittest.TestCase):
                 {
                     "token": "decision::opaque-Z9",
                     "actor": "reviewer::opaque-A",
-                    "verdict": "APPROVED",
+                    "verdict": "accept",
                     "when": "2026-09-19T16:40:30Z",
                     "revision": "a" * 40,
                 },
                 {
                     "token": "decision::opaque-Q2",
                     "actor": "reviewer::opaque-B",
-                    "verdict": "COMMENTED",
+                    "verdict": "note",
                     "when": "2026-09-19T16:39:30Z",
                     "revision": "d" * 40,
                 },
@@ -320,6 +320,10 @@ class UsefulL1FollowupTests(unittest.TestCase):
 
         def translate(document: dict[str, Any]) -> dict[str, Any]:
             proposal = document["proposal"]
+            verdict_map = {
+                "accept": "APPROVED",
+                "note": "COMMENTED",
+            }
             signals = document.get("signals")
             checks_available = isinstance(signals, list)
             native_checks = signals if checks_available else []
@@ -366,7 +370,10 @@ class UsefulL1FollowupTests(unittest.TestCase):
                     {
                         "observation_id": item["token"],
                         "reviewer_id": item["actor"],
-                        "recommendation_state": item["verdict"],
+                        "recommendation_state": verdict_map.get(
+                            item["verdict"],
+                            "UNKNOWN",
+                        ),
                         "observed_at": item["when"],
                         "head_commit": item["revision"],
                         "source_url": f"urn:nebula:{item['token']}",
@@ -466,6 +473,30 @@ class UsefulL1FollowupTests(unittest.TestCase):
         self.assertEqual(
             binding_semantics(reference_input),
             binding_semantics(native_input),
+        )
+        self.assertEqual(
+            {"accept", "note"},
+            {item["verdict"] for item in full_native["decisions"]},
+        )
+        self.assertEqual(
+            {"APPROVED", "COMMENTED"},
+            {
+                item["native"]["recommendation_state"]
+                for item in native_input["evidence_set"]["observations"]
+            },
+        )
+
+        from tools.review_adapter_file import normalize_observation
+
+        self.assertEqual(
+            sorted(
+                normalize_observation(item)[0]["normalized_recommendation"]
+                for item in reference_input["evidence_set"]["observations"]
+            ),
+            sorted(
+                normalize_observation(item)[0]["normalized_recommendation"]
+                for item in native_input["evidence_set"]["observations"]
+            ),
         )
 
         common_result = {
