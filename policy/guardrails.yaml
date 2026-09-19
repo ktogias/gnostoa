@@ -607,6 +607,7 @@ guardrails:
       - .github/workflows/publish-r2a-p2b-b15-oci.yml
       - .github/workflows/publish-r2a-p2b-b16-oci.yml
       - .github/workflows/publish-r2a-p2b-oci.yml
+      - .github/workflows/verify-r2a-current-advisory-restoration-runtime.yml
       - ci/github-actions.yml
       - ci/gitlab-ci.yml
       - ci/security_scan.py
