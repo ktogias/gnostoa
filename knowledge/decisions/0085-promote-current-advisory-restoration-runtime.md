@@ -124,7 +124,7 @@ Both the protected authority and restriction-only catalog shall bind exactly:
 
 Its exact canonical JSON string is:
 
-`{"acquisition":"oci","public_surface_digest":"sha256:45bc59ce177ab53ddb5925279166b5ede91bbb6c43ef31fb056de56b6ddabca2","role":"current_advisory_outer_consumer","runtime_image":"ghcr.io/ktogias/gnostoa@sha256:6bf4b876987fa4a5db8e3ae6bcc420e306666d8ee81ca40b934a6570a45b2b0f","runtime_revision":"315487e7a67635ebf3ec3f70f666ef41646102e1","source_revision":"315487e7a67635ebf3ec3f70f666ef41646102e1","source_tree":"ea3fdebc6afa9bf5a4c2d0691199beca4dcece81","status":"accepted","supported_input_schema_versions":["1.0"]}`
+`{"acquisition":"oci","public_surface_digest":"sha256:45bc59ce177ab53ddb5925279166b5ede91bbb6c43ef31fb056de56b6ddabca2","role":"current_advisory_outer_consumer","runtime_image":"ghcr.io/ktogias/gnostoa@sha256:6bf4b876987fa4a5db8e3ae6bcc420e306666d8ee81ca40b934a6570a45b2b0f","runtime_revision":"315487e7a67635ebf3ec3f70f666ef41646102e1","source_revision":"315487e7a67635ebf3ec3f70f666ef41646102e1","source_tree":"ea3fdebc6afa9bf5a4c2d0691199beca4dcece81","status":"accepted","supported_input_schema_versions":["1.0"]}` <!-- pragma: allowlist secret -- reviewed public R4 consumer identity -->
 
 ## Decision
 
