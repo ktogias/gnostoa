@@ -89,6 +89,11 @@ def _subject(snapshot: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
             "base_sha": base,
             "merge_base_sha": merge_base,
             "html_url": html_url,
+            **(
+                {"title": subject["title"]}
+                if isinstance(subject.get("title"), str) and subject["title"]
+                else {}
+            ),
         },
     )
 
@@ -266,6 +271,49 @@ def _projection_coverage(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return _coverage(snapshot)
 
 
+def _check_summary(snapshot: dict[str, Any], target_head: str) -> dict[str, Any]:
+    raw_checks = snapshot.get("check_runs")
+    if not isinstance(raw_checks, list):
+        raise ReconciliationInputError("check_runs must be an array")
+
+    latest: dict[str, dict[str, Any]] = {}
+    for raw in raw_checks:
+        check = _mapping(raw, "check_run")
+        if check.get("head_sha") != target_head:
+            continue
+        check_id = check.get("id")
+        name = check.get("name")
+        status = check.get("status")
+        if type(check_id) is not int or not isinstance(name, str) or not name:
+            continue
+        if not isinstance(status, str) or not status:
+            continue
+        previous = latest.get(name)
+        if previous is None or check_id > previous["id"]:
+            latest[name] = {
+                "id": check_id,
+                "status": status,
+                "conclusion": check.get("conclusion"),
+            }
+
+    pending = sorted(
+        name for name, item in latest.items() if item["status"] != "completed"
+    )
+    non_success = sorted(
+        name
+        for name, item in latest.items()
+        if item["status"] == "completed"
+        and item["conclusion"] not in {"success", "neutral", "skipped"}
+    )
+    return {
+        "observed_names": len(latest),
+        "pending": pending[:32],
+        "non_success": non_success[:32],
+        "omitted_pending": max(0, len(pending) - 32),
+        "omitted_non_success": max(0, len(non_success) - 32),
+    }
+
+
 def build_projection(
     snapshot: dict[str, Any],
     *,
@@ -321,19 +369,26 @@ def build_projection(
         if provider_subject["state"] == "open" and complete
         else "INCOMPLETE_AT_OBSERVATION"
     )
-    next_action = {
-        "PASS": "CONTINUE_EXISTING_WORKFLOW",
-        "BLOCKED": "RECONCILE_REVIEW_EVIDENCE",
-        "CONFLICTING": "RECONCILE_REVIEW_EVIDENCE",
-        "INCOMPLETE": "WAIT_OR_RECONCILE_REQUIRED_EVIDENCE",
-        "UNAVAILABLE": "WAIT_FOR_PROTECTED_CAPABILITY",
-    }[semantic_outcome]
+    checks = _check_summary(snapshot, provider_subject["head_sha"])
+    if checks["pending"]:
+        next_action = "WAIT_FOR_PROVIDER_CHECKS"
+    elif checks["non_success"]:
+        next_action = "RECONCILE_PROVIDER_CHECKS"
+    else:
+        next_action = {
+            "PASS": "CONTINUE_EXISTING_WORKFLOW",
+            "BLOCKED": "RECONCILE_REVIEW_EVIDENCE",
+            "CONFLICTING": "RECONCILE_REVIEW_EVIDENCE",
+            "INCOMPLETE": "WAIT_OR_RECONCILE_REQUIRED_EVIDENCE",
+            "UNAVAILABLE": "WAIT_FOR_PROTECTED_CAPABILITY",
+        }[semantic_outcome]
 
     return {
         "schema_version": _INTERNAL_SCHEMA_VERSION,
         "non_canonical": True,
         "subject": provider_subject,
         "coverage": coverage,
+        "checks": checks,
         "protected": {
             "main_revision": protected_revision,
             "outer_runtime_image": runtime_image,
@@ -369,6 +424,7 @@ def render_projection(projection: dict[str, Any]) -> str:
     protected = _mapping(projection.get("protected"), "projection.protected")
     observation = _mapping(projection.get("observation"), "projection.observation")
     coverage = _mapping(projection.get("coverage"), "projection.coverage")
+    checks = _mapping(projection.get("checks"), "projection.checks")
 
     coverage_text = ", ".join(
         f"{name}={_mapping(value, f'coverage.{name}').get('status')}"
