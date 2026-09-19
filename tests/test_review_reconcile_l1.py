@@ -419,7 +419,8 @@ class UsefulL1RedContractTests(unittest.TestCase):
 
         self.assertIsInstance(workflow, dict)
         self.assertIn("workflow_run:", text)
-        self.assertIn("workflow_dispatch:", text)
+        self.assertIn("repository_dispatch:", text)
+        self.assertNotIn("workflow_dispatch:", text)
         self.assertIn("schedule:", text)
         self.assertNotIn("pull_request_target:", text)
         self.assertEqual({}, workflow.get("permissions"))
@@ -452,7 +453,6 @@ class UsefulL1RedContractTests(unittest.TestCase):
 
         for job in (collect, publish):
             condition = str(job.get("if", ""))
-            self.assertIn("github.event_name != 'workflow_dispatch'", condition)
             self.assertIn("github.ref == 'refs/heads/main'", condition)
             steps = job.get("steps")
             self.assertIsInstance(steps, list)
