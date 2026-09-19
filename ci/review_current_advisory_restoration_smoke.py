@@ -24,12 +24,7 @@ def _required_environment(name: str) -> str:
 
 
 def _now() -> str:
-    return (
-        datetime.now(UTC)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _candidate_consumer(
@@ -144,7 +139,7 @@ def _verify_local_candidate(
                 "inspect",
                 "--format",
                 (
-                    '{{.Os}}|{{.Architecture}}|{{.Config.User}}|'
+                    "{{.Os}}|{{.Architecture}}|{{.Config.User}}|"
                     '{{index .Config.Labels "org.opencontainers.image.revision"}}'
                 ),
                 candidate_image,
@@ -337,8 +332,7 @@ def main() -> int:
                 )
             except Exception as exc:
                 probe_issue = (
-                    "R2 shared tmp residue inspection failed "
-                    f"({type(exc).__name__})"
+                    f"R2 shared tmp residue inspection failed ({type(exc).__name__})"
                 )
             else:
                 if probe.returncode == 0:
@@ -349,9 +343,7 @@ def main() -> int:
                         "shared tmp storage"
                     )
                 else:
-                    probe_issue = (
-                        "R2 shared tmp residue inspection did not complete"
-                    )
+                    probe_issue = "R2 shared tmp residue inspection did not complete"
 
         cleanup_issue = original_remove_volume(volume_name, config_dir)
         issues = [issue for issue in (probe_issue, cleanup_issue) if issue]
@@ -384,9 +376,7 @@ def main() -> int:
             side_effect=inspect_then_remove,
         ),
     ):
-        code, raw = review_outer.run_prior_effective_current_advisory(
-            input_document
-        )
+        code, raw = review_outer.run_prior_effective_current_advisory(input_document)
 
     try:
         payload = json.loads(raw.decode("utf-8", errors="strict"))
