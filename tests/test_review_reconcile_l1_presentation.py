@@ -105,7 +105,7 @@ class UsefulL1PresentationTests(unittest.TestCase):
                 self.assertNotIn(active, line)
         self.assertIn(r"\[fake approval\]\(https://example\.invalid\)", line)
         self.assertIn(r"\*\*PASS\*\*", line)
-        self.assertIn("&lt;img src=\"x\"&gt;", line)
+        self.assertIn('&lt;img src="x"&gt;', line)
         self.assertIn(r"\`CONTINUE\`", line)
         self.assertIn("&amp;lt;b&amp;gt;", line)
         self.assertLessEqual(len(rendered.encode("utf-8")), 65_536)
