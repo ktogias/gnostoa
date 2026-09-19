@@ -72,7 +72,7 @@ code or inventing semantic authority.
    - protected-source `workflow_run`, hourly schedule and default-branch `repository_dispatch` recovery;
    - minimum token permissions;
    - bounded collect→publish transfer sized below the provider job-output limit after encoding;
-   - per-PR concurrency for liveness only;
+   - repository-scoped non-canceling serialization for liveness without cross-PR cancellation;
    - Actions summary plus bounded projection publication.
 
 4. Focused tests and workflow-policy contracts only. Do not introduce a public
