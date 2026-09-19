@@ -52,6 +52,9 @@ sources:
   - id: liveness-wakeup
     resource: https://github.com/ktogias/gnostoa/pull/272#issuecomment-5713992293
     title: Cubic exact-head review follow-up
+  - id: retained-provider-receipts
+    resource: https://github.com/ktogias/gnostoa/blob/df0c21fe19f4ebcba8b03036d72dc536c5f05eab/knowledge/assessments/15-l0-lite-observed-workflow-baseline-receipts.json
+    title: Immutable normalized provider-receipt snapshot for L0-lite measurements
   - id: convergence-receipt
     resource: https://github.com/ktogias/gnostoa/pull/272#issuecomment-5714172963
     title: Final exact-head convergence
@@ -93,9 +96,27 @@ Only facts recoverable from durable GitHub/provider receipts are reported as
 measurements. Historical owner effort, token/context consumption, monetary cost
 and unrecorded waiting are **UNKNOWN** rather than estimated.
 
+### Retained reproducibility snapshot
+
+The numeric provider baseline is reproduced from the immutable normalized
+snapshot
+[`15-l0-lite-observed-workflow-baseline-receipts.json`](https://github.com/ktogias/gnostoa/blob/df0c21fe19f4ebcba8b03036d72dc536c5f05eab/knowledge/assessments/15-l0-lite-observed-workflow-baseline-receipts.json).
+It retains every provider record field used by the published metrics: PR
+timestamps and size fields, all 119 selected branch commits with SHA/date/title,
+all 147 formal review records with review ID/author/state/submitted time/head,
+the exact derivation rules, and the selected non-formal comments used for the
+overlap/liveness observations. The live GitHub API URLs remain provenance and
+audit routes only; they are not the frozen measurement input.
+
+This is a normalized measurement receipt, not a byte-for-byte archive of every
+provider response. The claim here is reproducibility of the published L0
+metrics and classifications from the retained fields, not preservation of
+GitHub's complete historical JSON representation.
+
 ## Measurement method
 
-The provider-observable measurements use:
+The provider-observable measurements use the retained normalized snapshot as
+their frozen input and the live provider as a cross-check:
 
 - PR creation and merge timestamps for wall-clock span;
 - formal PR-review timestamps for the first and last recorded review;
@@ -122,7 +143,7 @@ Review-provider multiplicity is descriptive only. It does not establish Issue
 | Recorded review submissions | **92** | **55** | Includes repeat submissions and owner/provider records |
 | Distinct heads carrying recorded review submissions | **28** | **17** | Reviewed-head generations, not canonical-seal count |
 | Earlier reviewed heads superseded by a later reviewed head | **27** | **16** | Churn lower bound; not all supersession is avoidable |
-| External automated reviewer families visible in formal review records | **4** | **4** | Cubic, Sourcery, Qodo and CodeRabbit; not Issue #10-qualified domains |
+| External automated reviewer families visible in formal review records | **4** | **4** | Cubic, Sourcery, Qodo and CodeRabbit. CodeAnt appears in the separate issue-comment overlap disposition, not in the retained formal-review collection, so it is excluded from this metric; none are Issue #10-qualified domains |
 | Known post-clean/merge escaped structural finding | **≥1** | **not concluded** | #262 was discovered after #257; Decision 0081 effectiveness remains open separately |
 | Human active effort | **UNKNOWN** | **UNKNOWN** | Provider receipts do not encode active time |
 | Token/context consumption | **UNKNOWN** | **UNKNOWN** | No trustworthy durable accounting in the selected receipts |
@@ -171,6 +192,10 @@ One bounded overlap cluster is directly evidenced in PR #272. The owner
 disposition records that **CodeRabbit, Qodo and CodeAnt independently reported
 the same shell-wrapper bypass** on head
 `183b5948426bf8e074156a50c6b20ce05dec6c54`.
+
+CodeAnt's evidence for this cluster is retained as an issue-comment
+disposition, not a formal GitHub PR-review record; this is why CodeAnt does not
+increase the formal-review-family count in the table above.
 
 For that one cluster only:
 
