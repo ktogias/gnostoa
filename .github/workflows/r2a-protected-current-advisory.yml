@@ -235,11 +235,11 @@ jobs:
       - name: Verify timed-out protected Docker run cleanup
         run: PYTHONPATH=. python ci/review_live_timeout_cleanup.py
 
-      # Decision 0082 contains the incompatible immutable runtime. This proves
-      # public refusal before Docker, not restored current-advisory evaluation.
-      # ci/review_outer_smoke.py remains historical live/restoration evidence.
+      # Historical Decision 0080/0082 live proof is bound to the exact protected
+      # main on which P2b was promoted. Later protected-main revisions use the
+      # current-advisory promotion smoke below instead of replaying stale identity.
       - name: Verify protected transport containment with live evaluation NOT_RUN
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && github.event.pull_request.base.sha == '21e4ada5e849b70d5349029f1fa3424fe9fa2fd0'
         env:
           EXPECTED_PROTECTED_MAIN: ${{ github.event.pull_request.base.sha }}
         run: |
