@@ -203,8 +203,7 @@ The workflow SHALL:
 The registry write is not retry-safe by assumption.
 
 If attempt 1 reaches authentication or package-write territory and later fails,
-times out, disconnects or returns ambiguous metadata, the workflow must not
-create automatic rerun authority. Recovery starts with **read-only** provider,
+times out, disconnects or returns ambiguous metadata, the workflow must create **no rerun authority**. Recovery starts with **read-only** provider,
 registry and attestation reconciliation. If the exact digest and attestation can
 be established, they are recorded as the effect result. If they cannot, the
 slice returns to an explicit owner decision with the ambiguity preserved.
