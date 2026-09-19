@@ -249,7 +249,12 @@ class ReviewAssuranceP2bExitReadbackRedTests(unittest.TestCase):
         ]
         self.assertEqual(1, len(matches))
         step = matches[0]
-        self.assertEqual("github.event_name == 'pull_request'", step.get("if"))
+        self.assertEqual(
+            "github.event_name == 'pull_request' && "
+            "github.event.pull_request.base.sha == "
+            f"'{PROMOTION_MAIN_REVISION}'",
+            step.get("if"),
+        )
         env = step.get("env")
         self.assertIsInstance(env, dict)
         assert isinstance(env, dict)
