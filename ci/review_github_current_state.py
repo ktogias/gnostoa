@@ -23,7 +23,7 @@ _MAX_RESPONSE_BYTES = 4_194_304
 _MAX_BODY_BYTES = 65_536
 _MAX_PAGES = 20
 _MAX_ITEMS = 5_000
-_MAX_OPEN_PULLS = 10
+_MAX_OPEN_PULLS = 8
 _MAX_PUBLICATION_PAYLOAD_BYTES = 300_000
 _MAX_COLLECTION_PASSES = 3
 _PROJECTION_AUTHOR = "github-actions[bot]"
@@ -344,7 +344,11 @@ def _normalize_review_comment(value: Any) -> dict[str, Any]:
     }
 
 
-def _normalize_check(value: Any) -> dict[str, Any]:
+def _normalize_check(
+    value: Any,
+    *,
+    fallback_observed_at: str | None = None,
+) -> dict[str, Any]:
     item = _mapping(value, "check run")
     check_id = _integer(item.get("id"), "check_run.id")
     started_at = _optional_timestamp(item.get("started_at"), "check_run.started_at")
@@ -353,7 +357,12 @@ def _normalize_check(value: Any) -> dict[str, Any]:
     )
     observed_at = completed_at or started_at
     if observed_at is None:
-        raise ProviderReadError("check run has no observation timestamp")
+        if fallback_observed_at is None:
+            raise ProviderReadError("check run has no observation timestamp")
+        observed_at = _timestamp(
+            fallback_observed_at,
+            "check_run.collection_observed_at",
+        )
     return {
         "id": f"github-check-{check_id}",
         "name": _text(item.get("name"), "check_run.name"),
@@ -389,8 +398,13 @@ def _collect_snapshot_once(
 ) -> dict[str, Any]:
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
         raise ProviderReadError("repository must be owner/name")
-    if observed_at is not None:
-        parse_rfc3339(observed_at)
+    collection_cut = observed_at or _now()
+    try:
+        parse_rfc3339(collection_cut)
+    except ValueError as exc:
+        raise ProviderReadError(
+            "collection observation cut must be a valid RFC3339 timestamp"
+        ) from exc
     root = f"{_API_ROOT}/repos/{repository}"
     pull_payload, _ = client.get(f"{root}/pulls/{pull_number}")
     pull = _normalize_pull(pull_payload)
@@ -423,10 +437,13 @@ def _collect_snapshot_once(
         client,
         f"{root}/commits/{pull['head_sha']}/check-runs?per_page=100",
         page_items=_check_page,
-        normalize=_normalize_check,
+        normalize=lambda item: _normalize_check(
+            item,
+            fallback_observed_at=collection_cut,
+        ),
     )
 
-    cut_candidates = [observed_at or _now()]
+    cut_candidates = [collection_cut]
     cut_candidates.extend(
         item["updated_at"]
         for item in issue_comments
