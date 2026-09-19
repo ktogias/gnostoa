@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import importlib.util
 import io
 import json
 import unittest
 from pathlib import Path
+from types import ModuleType
 from unittest import mock
 
 import yaml
 from jsonschema import Draft202012Validator
 
-from ci import review_current_advisory_promotion_smoke as promotion_smoke
 from tools import review_outer, review_protected, security_scan
 from tools.review_check import FORMAT_CHECKER
 from tools.review_model import canonical_json
@@ -65,6 +66,21 @@ def _load_json(path: Path) -> dict[str, object]:
     if not isinstance(value, dict):
         raise AssertionError(f"{path} must contain a JSON object")
     return value
+
+
+def _load_promotion_smoke() -> ModuleType:
+    spec = importlib.util.spec_from_file_location(
+        "gnostoa_current_advisory_promotion_smoke",
+        PROMOTION_SMOKE_PATH,
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load promotion smoke module from {PROMOTION_SMOKE_PATH}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+promotion_smoke = _load_promotion_smoke()
 
 
 class CurrentAdvisoryRestorationPromotionTests(unittest.TestCase):
@@ -183,9 +199,7 @@ class CurrentAdvisoryRestorationPromotionTests(unittest.TestCase):
                 "qualification_snapshot": {},
             },
         )
-        semantic = (
-            b'{"binding":false,"outcome":"INCOMPLETE","reason":"QUORUM_UNMET"}\n'
-        )
+        semantic = b'{"binding":false,"outcome":"INCOMPLETE","reason":"QUORUM_UNMET"}\n'
 
         second_acquisition = mock.Mock(return_value=advanced_consumer)
 
