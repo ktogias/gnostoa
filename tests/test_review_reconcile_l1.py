@@ -15,6 +15,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 ADAPTER_PATH = ROOT / "ci" / "review_github_current_state.py"
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "review-current-state.yml"
+GUARDRAILS_PATH = ROOT / "policy" / "guardrails.yaml"
 
 
 def _reducer() -> ModuleType:
@@ -1032,6 +1033,43 @@ class UsefulL1RedContractTests(unittest.TestCase):
             "workflow_run.pull_requests",
         ):
             adapter._workflow_run_pull_numbers(json.dumps([{"number": 0}]))
+
+    def test_l1_has_separate_guardrail_from_historical_r2a_promotion(self) -> None:
+        loaded = yaml.safe_load(GUARDRAILS_PATH.read_text(encoding="utf-8"))
+        self.assertIsInstance(loaded, dict)
+        entries = loaded.get("guardrails")
+        self.assertIsInstance(entries, list)
+        l1 = next(
+            item
+            for item in entries
+            if isinstance(item, dict)
+            and item.get("id") == "useful-l1-current-state-reconciliation"
+        )
+        self.assertIn("tools/review_reconcile.py", l1.get("implementation", []))
+        self.assertIn(
+            "ci/review_github_current_state.py",
+            l1.get("implementation", []),
+        )
+        self.assertIn(
+            ".github/workflows/review-current-state.yml",
+            l1.get("implementation", []),
+        )
+        self.assertIn("tests/test_review_reconcile_l1.py", l1.get("tests", []))
+
+        semantic = next(
+            item
+            for item in entries
+            if isinstance(item, dict)
+            and item.get("id") == "semantic-review-assurance"
+        )
+        self.assertNotIn(
+            "ci/review_github_current_state.py",
+            semantic.get("implementation", []),
+        )
+        self.assertNotIn(
+            ".github/workflows/review-current-state.yml",
+            semantic.get("implementation", []),
+        )
 
     def test_workflow_is_protected_source_and_least_privilege(self) -> None:
         self.assertTrue(WORKFLOW_PATH.is_file(), "L1_WORKFLOW_UNAVAILABLE")
