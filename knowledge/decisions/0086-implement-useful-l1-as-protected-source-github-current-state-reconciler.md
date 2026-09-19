@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Implement useful L1 as provider-neutral current-state reconciliation with a GitHub adapter
-description: Use one Gnostoa-self GitHub Actions adapter plus a deterministic reducer to reacquire live Pull Request state, assemble existing R2A evidence and publish a non-canonical read-only current-state projection without acquiring semantic or candidate-mutation authority.
+description: Define a provider-neutral deterministic current-state reconciliation core with a first protected-source GitHub adapter, consuming existing R2A evidence without acquiring semantic or candidate-mutation authority.
 status: draft
 generated:
   by: openai/gpt-5.6-sol
@@ -257,7 +257,10 @@ This Decision does not:
 
 Provider incompleteness, current-head drift, missing protected authority,
 unavailable protected runtime or R2A incompleteness must produce truthful
-diagnostic state and no positive-permission claim.
+diagnostic state and no positive-permission claim. When the provider subject is
+known but protected authority/runtime acquisition is unavailable, the projection
+retains that subject and explicitly reports protected status `UNAVAILABLE`
+rather than aborting the whole reconciliation or inventing identities.
 
 A workflow can complete successfully while the semantic result is
 `INCOMPLETE`, `BLOCKED`, `CONFLICTING` or a clearly labelled
