@@ -1,0 +1,1795 @@
+{
+  "schema_version": 1,
+  "kind": "gnostoa-l0-lite-provider-receipt-snapshot",
+  "capture_date": "2026-09-19",
+  "repository": "ktogias/gnostoa",
+  "observation_cut": {
+    "protected_main_sha": "e2b29e820117b9780a9168ab8709026b40975105",
+    "note": "This retained normalized snapshot is the reproducibility source for provider-derived L0-lite counts. Live GitHub URLs remain provenance/audit routes, not frozen measurement inputs."
+  },
+  "extraction_rules": {
+    "commits": "All entries returned by the PR commits endpoint with per_page=100. Both selected PRs have fewer than 100 commits.",
+    "formal_reviews": "All entries returned by the PR reviews endpoint with per_page=100. Both selected PRs have fewer than 100 formal reviews.",
+    "reviewed_heads": "Distinct non-null commit_id values across formal review records.",
+    "superseded_reviewed_heads": "distinct_reviewed_head_count - 1; this is a churn lower-bound proxy, not a count of avoidable or canonical sealed candidates.",
+    "reviewer_families": "Distinct formal review author logins excluding repository owner ktogias. Issue comments are not formal review records.",
+    "timing": "PR created_at/merged_at and formal review submitted_at timestamps are retained exactly; human-active time is not derived."
+  },
+  "specimens": {
+    "pr_257": {
+      "metadata": {
+        "number": 257,
+        "title": "Materialize integrated R2A B1.6 outer consumer by digest",
+        "created_at": "2026-09-15T08:29:08Z",
+        "merged_at": "2026-09-16T05:15:13Z",
+        "closed_at": "2026-09-16T05:15:13Z",
+        "base_sha": "f29499286bac9859364d45da0f6c59396518b749",
+        "final_head_sha": "4950cc05fe60e7586a9ec064e85d0696b4c9fd06",
+        "merge_commit_sha": "f8aac5159c36a0ff8cb9a22dcc933285c6b52b81",
+        "changed_files": 8,
+        "additions": 2224,
+        "deletions": 0
+      },
+      "commits": [
+        {
+          "sha": "dbb64827ca8d452250d2c4b1751080e5b364c91b",
+          "committed_at": "2026-09-15T08:28:49Z",
+          "subject": "test: define B1.6 OCI materialization contract"
+        },
+        {
+          "sha": "933b695fc664fd825640d060202bee201bffec87",
+          "committed_at": "2026-09-15T08:34:21Z",
+          "subject": "feat: add one-shot B1.6 OCI materializer"
+        },
+        {
+          "sha": "2f1e8502f40e0e1d3fb95432c5461604e8383788",
+          "committed_at": "2026-09-15T08:34:54Z",
+          "subject": "docs: decide B1.6 digest-only materialization"
+        },
+        {
+          "sha": "57f4838df004f48d130ecefa61a4916ecfab95e0",
+          "committed_at": "2026-09-15T08:37:29Z",
+          "subject": "docs: index B1.6 materialization decision"
+        },
+        {
+          "sha": "c50ed52fa1161fb829c881bd5cc6c97b551e04f4",
+          "committed_at": "2026-09-15T08:38:57Z",
+          "subject": "policy: govern B1.6 OCI materializer"
+        },
+        {
+          "sha": "37544c6d31ded32eac2383da6a0be2d15b17cb06",
+          "committed_at": "2026-09-15T08:40:32Z",
+          "subject": "fix: preserve existing knowledge index path"
+        },
+        {
+          "sha": "36efcfab46b4c3c90cbcdfb5a74c38b8cd9fd821",
+          "committed_at": "2026-09-15T08:41:41Z",
+          "subject": "fix: preserve existing schema guardrail guidance"
+        },
+        {
+          "sha": "d34b722068d53a3b36ac919acb97959fb2e3acc2",
+          "committed_at": "2026-09-15T09:52:00Z",
+          "subject": "test: require strict B1.6 anonymous reacquisition"
+        },
+        {
+          "sha": "d94ff9166b369c8c6a58e84a2981a603662f1076",
+          "committed_at": "2026-09-15T09:57:01Z",
+          "subject": "style: format B1.6 publication regression"
+        },
+        {
+          "sha": "ea24156539a482de67a53fa01676ddef2ab862e6",
+          "committed_at": "2026-09-15T09:57:49Z",
+          "subject": "fix: prove strict B1.6 digest reacquisition"
+        },
+        {
+          "sha": "ad4e1ddfb5ed1eaba3bf9a399f1ca112b42ff11e",
+          "committed_at": "2026-09-15T10:10:24Z",
+          "subject": "test: require B1.6 smoke source import root"
+        },
+        {
+          "sha": "18d661d939cb4144e3337d9eecff92492518a21b",
+          "committed_at": "2026-09-15T10:13:16Z",
+          "subject": "fix: bind B1.6 smoke to source checkout"
+        },
+        {
+          "sha": "bb2e3ad92f259c4f54414e5ca998e18879adda79",
+          "committed_at": "2026-09-15T10:25:31Z",
+          "subject": "test: require exact B1.6 host smoke dependencies"
+        },
+        {
+          "sha": "69721b2027778143a2a102c5e43d813d1b3ec7a5",
+          "committed_at": "2026-09-15T10:31:10Z",
+          "subject": "fix: install exact B1.6 smoke runtime dependencies"
+        },
+        {
+          "sha": "b5739f892b53835ee0b8c4092e9b6a16f4ab0836",
+          "committed_at": "2026-09-15T11:03:35Z",
+          "subject": "test: require complete B1.6 governance wiring"
+        },
+        {
+          "sha": "51902043d87b523fa68cfdd501578bdd694a87e3",
+          "committed_at": "2026-09-15T11:18:27Z",
+          "subject": "ci: converge B1.6 materialization verification wiring"
+        },
+        {
+          "sha": "e06882c30a4ac61bb6dd919caa57d0b9a2ed0d2c",
+          "committed_at": "2026-09-15T11:20:13Z",
+          "subject": "docs: explain restricted native B1.6 smoke path"
+        },
+        {
+          "sha": "1160107e626c1dab1c68f3829a0dafb1e8fbc40c",
+          "committed_at": "2026-09-15T11:44:10Z",
+          "subject": "test: harden B1.6 protected-path and smoke-rationale contracts"
+        },
+        {
+          "sha": "41083382a8621c1a96471eb321fc6468f140eea2",
+          "committed_at": "2026-09-15T11:46:58Z",
+          "subject": "style: format B1.6 contract hardening"
+        },
+        {
+          "sha": "47196f1382fb8f347da20cfdf64b650a0dfc794b",
+          "committed_at": "2026-09-15T11:49:52Z",
+          "subject": "test: bind B1.6 authorization contract to authorize job"
+        },
+        {
+          "sha": "2a932f81b001fad66ec09e452f1a6a906b6f8440",
+          "committed_at": "2026-09-15T12:07:51Z",
+          "subject": "test: bind digest identity checks to each readback cut"
+        },
+        {
+          "sha": "162aebb4f7d42ad1e04766f3455e5728660d2265",
+          "committed_at": "2026-09-15T12:20:19Z",
+          "subject": "test: enforce executable B1.6 shell contracts"
+        },
+        {
+          "sha": "43baeb4ce1bed751455d1d1463f7707a0f1e18b6",
+          "committed_at": "2026-09-15T12:22:29Z",
+          "subject": "style: format B1.6 shell contract test"
+        },
+        {
+          "sha": "0cc7580a9c48a3d6b9bd177f16d6c3312f230374",
+          "committed_at": "2026-09-15T12:52:39Z",
+          "subject": "test: capture B1.6 ready-review gaps"
+        },
+        {
+          "sha": "f3221d66cd43b4f43698bdf28ee3da7a683af45d",
+          "committed_at": "2026-09-15T12:53:33Z",
+          "subject": "style: format ready-review RED contract"
+        },
+        {
+          "sha": "23a7759d9b64c869a1f2995d4fc66e892c02cf7b",
+          "committed_at": "2026-09-15T13:05:44Z",
+          "subject": "fix: close B1.6 ready-review trust gaps"
+        },
+        {
+          "sha": "77fdd971ffd74abd8d24fc2e1ed1245ac2fab685",
+          "committed_at": "2026-09-15T13:09:07Z",
+          "subject": "style: format B1.6 ready-review fixes"
+        },
+        {
+          "sha": "53fca0c16b8be388d6b9976719cf3c74ec822e3a",
+          "committed_at": "2026-09-15T13:29:00Z",
+          "subject": "test: scope anonymous pull failure cleanup contract"
+        },
+        {
+          "sha": "e6ad0240572867eb94465259a3427bf6dc3e15c4",
+          "committed_at": "2026-09-15T13:51:54Z",
+          "subject": "test: preserve prior R2A decision coverage"
+        },
+        {
+          "sha": "8e6ef5898911a347cfe1a894f661987af5938784",
+          "committed_at": "2026-09-15T14:26:24Z",
+          "subject": "test: require B1.6 post-write reconciliation cleanup"
+        },
+        {
+          "sha": "a00e8ec56b8dce6bb31e7f45e7cbda07a2ca4474",
+          "committed_at": "2026-09-15T14:31:25Z",
+          "subject": "style: format B1.6 reconciliation RED contract"
+        },
+        {
+          "sha": "3cbce6d1324fd40a3eb52b48c258e186bb6a14f8",
+          "committed_at": "2026-09-15T14:39:10Z",
+          "subject": "fix: reconcile B1.6 post-publication state"
+        },
+        {
+          "sha": "69f0e677de2a4d0b121e023d28358226735a6b3b",
+          "committed_at": "2026-09-15T15:18:30Z",
+          "subject": "test: cover ambiguous B1.6 post-write reconciliation"
+        },
+        {
+          "sha": "b8cc434acb6d18ccdddbdd43801f1060a6a31204",
+          "committed_at": "2026-09-15T15:20:09Z",
+          "subject": "test: require exact B1.6 reconciliation identity"
+        },
+        {
+          "sha": "11b74c3596fbc05f7a64e27fb2c3995abcc2c2fb",
+          "committed_at": "2026-09-15T15:23:29Z",
+          "subject": "test: bound B1.6 ambiguous publication RED contract"
+        },
+        {
+          "sha": "9df90ee67e4947351d3ea6340d59b649e06277a0",
+          "committed_at": "2026-09-15T15:26:33Z",
+          "subject": "style: format complete B1.6 fail-closed RED contract"
+        },
+        {
+          "sha": "ef9fa33379eca38e79a9a94dd0aaedaadd51624c",
+          "committed_at": "2026-09-15T15:39:25Z",
+          "subject": "fix: fail closed across B1.6 publication reconciliation"
+        },
+        {
+          "sha": "36f2e28880a3c9da08fbb744e9acb7d8b58fcb3d",
+          "committed_at": "2026-09-15T16:26:22Z",
+          "subject": "test: expose unbounded B1.6 attestation verification"
+        },
+        {
+          "sha": "9a31b94932ebc643fcbd2b0ae7015de6729e6e0f",
+          "committed_at": "2026-09-15T16:28:16Z",
+          "subject": "test: harden B1.6 teardown ordering diagnostics"
+        },
+        {
+          "sha": "57845de5debe04b2147ae30f2c1fb5c0d476a5f4",
+          "committed_at": "2026-09-15T16:29:37Z",
+          "subject": "test: bind cleanup probe to current fail-closed shape"
+        },
+        {
+          "sha": "4a7c1c6e0727fcf1193933c351b9a43e6604c3bb",
+          "committed_at": "2026-09-15T16:38:14Z",
+          "subject": "fix: bound B1.6 attestation verification"
+        },
+        {
+          "sha": "6a10b9dc86f79c4cae51cfb5a21f85c9f48e5b34",
+          "committed_at": "2026-09-15T16:41:55Z",
+          "subject": "test: bind B1.6 reconciliation digest guards"
+        },
+        {
+          "sha": "4a372fea9f64efa86fd46c798604d7f40752601b",
+          "committed_at": "2026-09-15T17:06:11Z",
+          "subject": "test: require bounded B1.6 attestation write"
+        },
+        {
+          "sha": "b9dc38dcbba09706cad843e51219bae7ff4b6b98",
+          "committed_at": "2026-09-15T17:07:38Z",
+          "subject": "test: format bounded attestation RED contract"
+        },
+        {
+          "sha": "bacf2ba2cb9259c2a2028640fdd551888f1e69c1",
+          "committed_at": "2026-09-15T17:13:50Z",
+          "subject": "fix: bound B1.6 attestation and credential operations"
+        },
+        {
+          "sha": "1c98f4644dcfc80d6c1fc50829747665e51cec56",
+          "committed_at": "2026-09-15T17:54:39Z",
+          "subject": "test: prove B1.6 final review gaps"
+        },
+        {
+          "sha": "ef3e3cfcb41dad6f34d5a07f4bc8b227b7152643",
+          "committed_at": "2026-09-15T17:55:51Z",
+          "subject": "test: clean B1.6 final RED contract"
+        },
+        {
+          "sha": "b30813b9334b78d9827159df6cd18e14fa185680",
+          "committed_at": "2026-09-15T18:02:26Z",
+          "subject": "test: align B1.6 authorization contract"
+        },
+        {
+          "sha": "fdae96e12cfe841421b254fc8fea008dc08ead6a",
+          "committed_at": "2026-09-15T18:03:33Z",
+          "subject": "fix: rely on exact merged PR landing binding"
+        },
+        {
+          "sha": "e4c5ebe4c4f65baea3b72f630945b11bb9b929eb",
+          "committed_at": "2026-09-15T18:27:19Z",
+          "subject": "test: require bounded B1.6 builder setup"
+        },
+        {
+          "sha": "7ed662ea43b76ad2360d22b7bffa334b0dcb9ebe",
+          "committed_at": "2026-09-15T18:28:09Z",
+          "subject": "test: fix bounded builder cleanup expectation"
+        },
+        {
+          "sha": "be99b99d8260beb2ec6dbc836a8cbb000e2f670c",
+          "committed_at": "2026-09-15T18:34:45Z",
+          "subject": "fix: bound B1.6 BuildKit builder setup"
+        },
+        {
+          "sha": "9b82a2935d58d01dcb13c56885f0ba07fc57526e",
+          "committed_at": "2026-09-15T18:58:03Z",
+          "subject": "test: require finite B1.6 verification step bounds"
+        },
+        {
+          "sha": "3d74f3ad94049d7168eecd0410ddb5bb0ff4067a",
+          "committed_at": "2026-09-15T19:02:39Z",
+          "subject": "fix: bound B1.6 runtime verification cuts"
+        },
+        {
+          "sha": "8ffc4e79cef98923bee27dd63d31cc888e4fde23",
+          "committed_at": "2026-09-15T19:37:21Z",
+          "subject": "test: reject unused B1.6 publish job outputs"
+        },
+        {
+          "sha": "e677c92d64506c418b759571009b209b0e13dfe4",
+          "committed_at": "2026-09-15T19:45:25Z",
+          "subject": "fix: remove unused B1.6 publish job outputs"
+        },
+        {
+          "sha": "a53e1456d8926193dc45b59f19ae9e76135d8beb",
+          "committed_at": "2026-09-15T20:05:14Z",
+          "subject": "test: require fail-closed auth and builder cleanup"
+        },
+        {
+          "sha": "6bf1fb57c3ec9ddb7a668d0aba389d7b524b557e",
+          "committed_at": "2026-09-15T20:06:39Z",
+          "subject": "test: format fail-closed auth and builder RED"
+        },
+        {
+          "sha": "8c1e066c9e1c067f6d129490bedd15859a7c1651",
+          "committed_at": "2026-09-15T20:19:20Z",
+          "subject": "fix: fail closed on B1.6 auth and builder cleanup"
+        },
+        {
+          "sha": "2010c0ad6a7f93991c537434b838ad028e030669",
+          "committed_at": "2026-09-15T20:53:02Z",
+          "subject": "test: cover final B1.6 Qodo review gaps"
+        },
+        {
+          "sha": "1ec4039bc2df8774270eaad960736e38b2aacad0",
+          "committed_at": "2026-09-15T20:58:06Z",
+          "subject": "fix: protect B1.6 follow-up contract in dedicated R2A CI"
+        },
+        {
+          "sha": "154d260645876305a73b9d4d6ffc269345b02eab",
+          "committed_at": "2026-09-15T21:00:00Z",
+          "subject": "fix: rely on provider-backed B1.6 predecessor binding"
+        },
+        {
+          "sha": "46beaae52eb3982e55ee6301c6c812f5c2569dd0",
+          "committed_at": "2026-09-15T21:05:25Z",
+          "subject": "test: align B1.6 publication binding contract"
+        },
+        {
+          "sha": "c4af21fa1091351acd8a5097cade941ef504123a",
+          "committed_at": "2026-09-15T21:36:02Z",
+          "subject": "fix: preserve BuildKit create failure status"
+        },
+        {
+          "sha": "88506046d151c2c33128ed41cbbf28127a50ce4e",
+          "committed_at": "2026-09-15T21:52:03Z",
+          "subject": "test: require fail-closed local B1.6 image cleanup"
+        },
+        {
+          "sha": "12962bb7236d1da65cea009eb85721eb63370d47",
+          "committed_at": "2026-09-15T21:54:11Z",
+          "subject": "style: format local cleanup regression guard"
+        },
+        {
+          "sha": "ec62dcc3d9c788799fda3b53606a5b3e73df6688",
+          "committed_at": "2026-09-15T22:00:26Z",
+          "subject": "fix: fail closed on local B1.6 image cleanup"
+        },
+        {
+          "sha": "a5e5a44a24d9e7296b11ce38823ea286c7f1422b",
+          "committed_at": "2026-09-15T22:03:11Z",
+          "subject": "test: bind follow-up guard to both Ruff commands"
+        },
+        {
+          "sha": "3843bc55f6adfa64edc62f879da87da109020eeb",
+          "committed_at": "2026-09-15T22:04:26Z",
+          "subject": "test: align local cleanup contract with fail-closed path"
+        },
+        {
+          "sha": "fc5b6a4dda740d4039d3d8d591200713f0f59f48",
+          "committed_at": "2026-09-15T22:06:29Z",
+          "subject": "style: format follow-up Ruff scope guard"
+        },
+        {
+          "sha": "4950cc05fe60e7586a9ec064e85d0696b4c9fd06",
+          "committed_at": "2026-09-16T04:57:17Z",
+          "subject": "test: reject ambiguous multiple heredocs in smoke contract"
+        }
+      ],
+      "formal_reviews": [
+        {
+          "id": 5207853773,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T09:00:43Z",
+          "commit_id": "36efcfab46b4c3c90cbcdfb5a74c38b8cd9fd821"
+        },
+        {
+          "id": 5208403208,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T09:58:38Z",
+          "commit_id": "ea24156539a482de67a53fa01676ddef2ab862e6"
+        },
+        {
+          "id": 5208404817,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T09:58:49Z",
+          "commit_id": "ea24156539a482de67a53fa01676ddef2ab862e6"
+        },
+        {
+          "id": 5208468091,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T10:05:33Z",
+          "commit_id": "ea24156539a482de67a53fa01676ddef2ab862e6"
+        },
+        {
+          "id": 5208543260,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T10:13:52Z",
+          "commit_id": "18d661d939cb4144e3337d9eecff92492518a21b"
+        },
+        {
+          "id": 5208609700,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T10:20:53Z",
+          "commit_id": "18d661d939cb4144e3337d9eecff92492518a21b"
+        },
+        {
+          "id": 5208732970,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T10:31:51Z",
+          "commit_id": "69721b2027778143a2a102c5e43d813d1b3ec7a5"
+        },
+        {
+          "id": 5208882387,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T10:44:14Z",
+          "commit_id": "69721b2027778143a2a102c5e43d813d1b3ec7a5"
+        },
+        {
+          "id": 5208911284,
+          "author": "sourcery-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T10:46:24Z",
+          "commit_id": "69721b2027778143a2a102c5e43d813d1b3ec7a5"
+        },
+        {
+          "id": 5208929820,
+          "author": "qodo-code-review[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T10:47:59Z",
+          "commit_id": "69721b2027778143a2a102c5e43d813d1b3ec7a5"
+        },
+        {
+          "id": 5209069723,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T11:00:17Z",
+          "commit_id": "69721b2027778143a2a102c5e43d813d1b3ec7a5"
+        },
+        {
+          "id": 5209299657,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T11:21:44Z",
+          "commit_id": "e06882c30a4ac61bb6dd919caa57d0b9a2ed0d2c"
+        },
+        {
+          "id": 5209301020,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T11:21:54Z",
+          "commit_id": "e06882c30a4ac61bb6dd919caa57d0b9a2ed0d2c"
+        },
+        {
+          "id": 5209345988,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T11:27:16Z",
+          "commit_id": "e06882c30a4ac61bb6dd919caa57d0b9a2ed0d2c"
+        },
+        {
+          "id": 5209399793,
+          "author": "sourcery-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T11:32:39Z",
+          "commit_id": "e06882c30a4ac61bb6dd919caa57d0b9a2ed0d2c"
+        },
+        {
+          "id": 5209405919,
+          "author": "qodo-code-review[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T11:33:21Z",
+          "commit_id": "e06882c30a4ac61bb6dd919caa57d0b9a2ed0d2c"
+        },
+        {
+          "id": 5209476092,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T11:41:20Z",
+          "commit_id": "e06882c30a4ac61bb6dd919caa57d0b9a2ed0d2c"
+        },
+        {
+          "id": 5209476808,
+          "author": "coderabbitai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T11:41:25Z",
+          "commit_id": "e06882c30a4ac61bb6dd919caa57d0b9a2ed0d2c"
+        },
+        {
+          "id": 5209505741,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T11:44:47Z",
+          "commit_id": "1160107e626c1dab1c68f3829a0dafb1e8fbc40c"
+        },
+        {
+          "id": 5209507473,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T11:44:59Z",
+          "commit_id": "1160107e626c1dab1c68f3829a0dafb1e8fbc40c"
+        },
+        {
+          "id": 5209508960,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T11:45:09Z",
+          "commit_id": "1160107e626c1dab1c68f3829a0dafb1e8fbc40c"
+        },
+        {
+          "id": 5209510755,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T11:45:21Z",
+          "commit_id": "1160107e626c1dab1c68f3829a0dafb1e8fbc40c"
+        },
+        {
+          "id": 5209609776,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T11:55:38Z",
+          "commit_id": "47196f1382fb8f347da20cfdf64b650a0dfc794b"
+        },
+        {
+          "id": 5209656360,
+          "author": "sourcery-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T12:00:38Z",
+          "commit_id": "47196f1382fb8f347da20cfdf64b650a0dfc794b"
+        },
+        {
+          "id": 5209657511,
+          "author": "qodo-code-review[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T12:00:46Z",
+          "commit_id": "47196f1382fb8f347da20cfdf64b650a0dfc794b"
+        },
+        {
+          "id": 5209699158,
+          "author": "coderabbitai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T12:05:17Z",
+          "commit_id": "47196f1382fb8f347da20cfdf64b650a0dfc794b"
+        },
+        {
+          "id": 5209728869,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T12:08:09Z",
+          "commit_id": "2a932f81b001fad66ec09e452f1a6a906b6f8440"
+        },
+        {
+          "id": 5209981415,
+          "author": "sourcery-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T12:33:14Z",
+          "commit_id": "43baeb4ce1bed751455d1d1463f7707a0f1e18b6"
+        },
+        {
+          "id": 5209987526,
+          "author": "qodo-code-review[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T12:33:53Z",
+          "commit_id": "43baeb4ce1bed751455d1d1463f7707a0f1e18b6"
+        },
+        {
+          "id": 5210031195,
+          "author": "coderabbitai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T12:38:25Z",
+          "commit_id": "43baeb4ce1bed751455d1d1463f7707a0f1e18b6"
+        },
+        {
+          "id": 5210084308,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T12:43:42Z",
+          "commit_id": "43baeb4ce1bed751455d1d1463f7707a0f1e18b6"
+        },
+        {
+          "id": 5210792156,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T13:46:43Z",
+          "commit_id": "53fca0c16b8be388d6b9976719cf3c74ec822e3a"
+        },
+        {
+          "id": 5210798360,
+          "author": "sourcery-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T13:47:10Z",
+          "commit_id": "53fca0c16b8be388d6b9976719cf3c74ec822e3a"
+        },
+        {
+          "id": 5211238506,
+          "author": "sourcery-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T14:19:03Z",
+          "commit_id": "e6ad0240572867eb94465259a3427bf6dc3e15c4"
+        },
+        {
+          "id": 5211258966,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T14:20:36Z",
+          "commit_id": "e6ad0240572867eb94465259a3427bf6dc3e15c4"
+        },
+        {
+          "id": 5211927810,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T15:13:54Z",
+          "commit_id": "3cbce6d1324fd40a3eb52b48c258e186bb6a14f8"
+        },
+        {
+          "id": 5211929301,
+          "author": "sourcery-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T15:14:01Z",
+          "commit_id": "3cbce6d1324fd40a3eb52b48c258e186bb6a14f8"
+        },
+        {
+          "id": 5211938833,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T15:14:53Z",
+          "commit_id": "3cbce6d1324fd40a3eb52b48c258e186bb6a14f8"
+        },
+        {
+          "id": 5211940473,
+          "author": "sourcery-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T15:15:02Z",
+          "commit_id": "3cbce6d1324fd40a3eb52b48c258e186bb6a14f8"
+        },
+        {
+          "id": 5211945689,
+          "author": "sourcery-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T15:15:31Z",
+          "commit_id": "3cbce6d1324fd40a3eb52b48c258e186bb6a14f8"
+        },
+        {
+          "id": 5211946134,
+          "author": "sourcery-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T15:15:34Z",
+          "commit_id": "3cbce6d1324fd40a3eb52b48c258e186bb6a14f8"
+        },
+        {
+          "id": 5211959605,
+          "author": "sourcery-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T15:16:49Z",
+          "commit_id": "3cbce6d1324fd40a3eb52b48c258e186bb6a14f8"
+        },
+        {
+          "id": 5211960173,
+          "author": "sourcery-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T15:16:52Z",
+          "commit_id": "3cbce6d1324fd40a3eb52b48c258e186bb6a14f8"
+        },
+        {
+          "id": 5212009723,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T15:20:37Z",
+          "commit_id": "b8cc434acb6d18ccdddbdd43801f1060a6a31204"
+        },
+        {
+          "id": 5212654616,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T16:12:45Z",
+          "commit_id": "ef9fa33379eca38e79a9a94dd0aaedaadd51624c"
+        },
+        {
+          "id": 5213221627,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T17:00:33Z",
+          "commit_id": "6a10b9dc86f79c4cae51cfb5a21f85c9f48e5b34"
+        },
+        {
+          "id": 5213223562,
+          "author": "sourcery-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T17:00:43Z",
+          "commit_id": "6a10b9dc86f79c4cae51cfb5a21f85c9f48e5b34"
+        },
+        {
+          "id": 5213242128,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T17:02:13Z",
+          "commit_id": "6a10b9dc86f79c4cae51cfb5a21f85c9f48e5b34"
+        },
+        {
+          "id": 5213242251,
+          "author": "sourcery-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T17:02:14Z",
+          "commit_id": "6a10b9dc86f79c4cae51cfb5a21f85c9f48e5b34"
+        },
+        {
+          "id": 5213242607,
+          "author": "sourcery-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T17:02:16Z",
+          "commit_id": "6a10b9dc86f79c4cae51cfb5a21f85c9f48e5b34"
+        },
+        {
+          "id": 5213675404,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T17:41:05Z",
+          "commit_id": "bacf2ba2cb9259c2a2028640fdd551888f1e69c1"
+        },
+        {
+          "id": 5213677035,
+          "author": "sourcery-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T17:41:14Z",
+          "commit_id": "bacf2ba2cb9259c2a2028640fdd551888f1e69c1"
+        },
+        {
+          "id": 5213690260,
+          "author": "sourcery-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T17:42:33Z",
+          "commit_id": "bacf2ba2cb9259c2a2028640fdd551888f1e69c1"
+        },
+        {
+          "id": 5213690746,
+          "author": "sourcery-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T17:42:37Z",
+          "commit_id": "bacf2ba2cb9259c2a2028640fdd551888f1e69c1"
+        },
+        {
+          "id": 5213780402,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T17:51:01Z",
+          "commit_id": "bacf2ba2cb9259c2a2028640fdd551888f1e69c1"
+        },
+        {
+          "id": 5214174564,
+          "author": "sourcery-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T18:25:51Z",
+          "commit_id": "fdae96e12cfe841421b254fc8fea008dc08ead6a"
+        },
+        {
+          "id": 5214484067,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T18:51:48Z",
+          "commit_id": "be99b99d8260beb2ec6dbc836a8cbb000e2f670c"
+        },
+        {
+          "id": 5214487520,
+          "author": "sourcery-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T18:52:08Z",
+          "commit_id": "be99b99d8260beb2ec6dbc836a8cbb000e2f670c"
+        },
+        {
+          "id": 5214511744,
+          "author": "sourcery-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T18:54:28Z",
+          "commit_id": "be99b99d8260beb2ec6dbc836a8cbb000e2f670c"
+        },
+        {
+          "id": 5214512172,
+          "author": "sourcery-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T18:54:31Z",
+          "commit_id": "be99b99d8260beb2ec6dbc836a8cbb000e2f670c"
+        },
+        {
+          "id": 5214617402,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T19:04:42Z",
+          "commit_id": "3d74f3ad94049d7168eecd0410ddb5bb0ff4067a"
+        },
+        {
+          "id": 5214797974,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T19:22:18Z",
+          "commit_id": "3d74f3ad94049d7168eecd0410ddb5bb0ff4067a"
+        },
+        {
+          "id": 5215155047,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T20:00:20Z",
+          "commit_id": "e677c92d64506c418b759571009b209b0e13dfe4"
+        },
+        {
+          "id": 5215156309,
+          "author": "sourcery-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T20:00:28Z",
+          "commit_id": "e677c92d64506c418b759571009b209b0e13dfe4"
+        },
+        {
+          "id": 5215161571,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T20:00:55Z",
+          "commit_id": "e677c92d64506c418b759571009b209b0e13dfe4"
+        },
+        {
+          "id": 5215163567,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T20:01:06Z",
+          "commit_id": "e677c92d64506c418b759571009b209b0e13dfe4"
+        },
+        {
+          "id": 5215172145,
+          "author": "sourcery-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T20:02:07Z",
+          "commit_id": "e677c92d64506c418b759571009b209b0e13dfe4"
+        },
+        {
+          "id": 5215172573,
+          "author": "sourcery-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T20:02:10Z",
+          "commit_id": "e677c92d64506c418b759571009b209b0e13dfe4"
+        },
+        {
+          "id": 5215274854,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T20:13:53Z",
+          "commit_id": "6bf1fb57c3ec9ddb7a668d0aba389d7b524b557e"
+        },
+        {
+          "id": 5215418350,
+          "author": "sourcery-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T20:30:00Z",
+          "commit_id": "8c1e066c9e1c067f6d129490bedd15859a7c1651"
+        },
+        {
+          "id": 5215441199,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T20:32:29Z",
+          "commit_id": "8c1e066c9e1c067f6d129490bedd15859a7c1651"
+        },
+        {
+          "id": 5215446360,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T20:33:02Z",
+          "commit_id": "8c1e066c9e1c067f6d129490bedd15859a7c1651"
+        },
+        {
+          "id": 5215447197,
+          "author": "sourcery-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T20:33:08Z",
+          "commit_id": "8c1e066c9e1c067f6d129490bedd15859a7c1651"
+        },
+        {
+          "id": 5215448927,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T20:33:21Z",
+          "commit_id": "8c1e066c9e1c067f6d129490bedd15859a7c1651"
+        },
+        {
+          "id": 5215457341,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T20:34:19Z",
+          "commit_id": "8c1e066c9e1c067f6d129490bedd15859a7c1651"
+        },
+        {
+          "id": 5215580968,
+          "author": "qodo-code-review[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T20:47:58Z",
+          "commit_id": "8c1e066c9e1c067f6d129490bedd15859a7c1651"
+        },
+        {
+          "id": 5215623270,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T20:52:53Z",
+          "commit_id": "8c1e066c9e1c067f6d129490bedd15859a7c1651"
+        },
+        {
+          "id": 5215856031,
+          "author": "sourcery-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T21:17:19Z",
+          "commit_id": "46beaae52eb3982e55ee6301c6c812f5c2569dd0"
+        },
+        {
+          "id": 5215970191,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T21:32:21Z",
+          "commit_id": "46beaae52eb3982e55ee6301c6c812f5c2569dd0"
+        },
+        {
+          "id": 5216001551,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T21:36:16Z",
+          "commit_id": "c4af21fa1091351acd8a5097cade941ef504123a"
+        },
+        {
+          "id": 5216003406,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T21:36:29Z",
+          "commit_id": "c4af21fa1091351acd8a5097cade941ef504123a"
+        },
+        {
+          "id": 5216092875,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T21:46:23Z",
+          "commit_id": "c4af21fa1091351acd8a5097cade941ef504123a"
+        },
+        {
+          "id": 5216123979,
+          "author": "sourcery-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T21:49:39Z",
+          "commit_id": "c4af21fa1091351acd8a5097cade941ef504123a"
+        },
+        {
+          "id": 5216170286,
+          "author": "qodo-code-review[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T21:54:28Z",
+          "commit_id": "c4af21fa1091351acd8a5097cade941ef504123a"
+        },
+        {
+          "id": 5216178618,
+          "author": "coderabbitai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T21:55:19Z",
+          "commit_id": "c4af21fa1091351acd8a5097cade941ef504123a"
+        },
+        {
+          "id": 5216274713,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T22:05:15Z",
+          "commit_id": "3843bc55f6adfa64edc62f879da87da109020eeb"
+        },
+        {
+          "id": 5216275383,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T22:05:21Z",
+          "commit_id": "3843bc55f6adfa64edc62f879da87da109020eeb"
+        },
+        {
+          "id": 5216296841,
+          "author": "coderabbitai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T22:07:42Z",
+          "commit_id": "ec62dcc3d9c788799fda3b53606a5b3e73df6688"
+        },
+        {
+          "id": 5216317466,
+          "author": "coderabbitai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T22:10:02Z",
+          "commit_id": "fc5b6a4dda740d4039d3d8d591200713f0f59f48"
+        },
+        {
+          "id": 5216353063,
+          "author": "qodo-code-review[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T22:14:31Z",
+          "commit_id": "fc5b6a4dda740d4039d3d8d591200713f0f59f48"
+        },
+        {
+          "id": 5216368319,
+          "author": "coderabbitai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-15T22:16:48Z",
+          "commit_id": "fc5b6a4dda740d4039d3d8d591200713f0f59f48"
+        },
+        {
+          "id": 5218737405,
+          "author": "coderabbitai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-16T05:12:43Z",
+          "commit_id": "4950cc05fe60e7586a9ec064e85d0696b4c9fd06"
+        }
+      ],
+      "derived": {
+        "commit_count": 71,
+        "formal_review_count": 92,
+        "first_formal_review_at": "2026-09-15T09:00:43Z",
+        "last_formal_review_at": "2026-09-16T05:12:43Z",
+        "distinct_reviewed_head_count": 28,
+        "distinct_reviewed_heads": [
+          "36efcfab46b4c3c90cbcdfb5a74c38b8cd9fd821",
+          "ea24156539a482de67a53fa01676ddef2ab862e6",
+          "18d661d939cb4144e3337d9eecff92492518a21b",
+          "69721b2027778143a2a102c5e43d813d1b3ec7a5",
+          "e06882c30a4ac61bb6dd919caa57d0b9a2ed0d2c",
+          "1160107e626c1dab1c68f3829a0dafb1e8fbc40c",
+          "47196f1382fb8f347da20cfdf64b650a0dfc794b",
+          "2a932f81b001fad66ec09e452f1a6a906b6f8440",
+          "43baeb4ce1bed751455d1d1463f7707a0f1e18b6",
+          "53fca0c16b8be388d6b9976719cf3c74ec822e3a",
+          "e6ad0240572867eb94465259a3427bf6dc3e15c4",
+          "3cbce6d1324fd40a3eb52b48c258e186bb6a14f8",
+          "b8cc434acb6d18ccdddbdd43801f1060a6a31204",
+          "ef9fa33379eca38e79a9a94dd0aaedaadd51624c",
+          "6a10b9dc86f79c4cae51cfb5a21f85c9f48e5b34",
+          "bacf2ba2cb9259c2a2028640fdd551888f1e69c1",
+          "fdae96e12cfe841421b254fc8fea008dc08ead6a",
+          "be99b99d8260beb2ec6dbc836a8cbb000e2f670c",
+          "3d74f3ad94049d7168eecd0410ddb5bb0ff4067a",
+          "e677c92d64506c418b759571009b209b0e13dfe4",
+          "6bf1fb57c3ec9ddb7a668d0aba389d7b524b557e",
+          "8c1e066c9e1c067f6d129490bedd15859a7c1651",
+          "46beaae52eb3982e55ee6301c6c812f5c2569dd0",
+          "c4af21fa1091351acd8a5097cade941ef504123a",
+          "3843bc55f6adfa64edc62f879da87da109020eeb",
+          "ec62dcc3d9c788799fda3b53606a5b3e73df6688",
+          "fc5b6a4dda740d4039d3d8d591200713f0f59f48",
+          "4950cc05fe60e7586a9ec064e85d0696b4c9fd06"
+        ],
+        "earlier_reviewed_heads_superseded_count": 27,
+        "external_formal_review_families": [
+          "coderabbitai[bot]",
+          "cubic-dev-ai[bot]",
+          "qodo-code-review[bot]",
+          "sourcery-ai[bot]"
+        ],
+        "external_formal_review_family_count": 4
+      }
+    },
+    "pr_272": {
+      "metadata": {
+        "number": 272,
+        "title": "Make Ruff scope authoritative before candidate sealing",
+        "created_at": "2026-09-17T06:11:17Z",
+        "merged_at": "2026-09-17T14:32:41Z",
+        "closed_at": "2026-09-17T14:32:41Z",
+        "base_sha": "e071ab60a418eddda5bf008004ee96faafbf1e7c",
+        "final_head_sha": "8c7a918a1852261b958b28865b468064af248794",
+        "merge_commit_sha": "850b6842077ac4eb4069174cf132663ff9acb9d6",
+        "changed_files": 15,
+        "additions": 1392,
+        "deletions": 34
+      },
+      "commits": [
+        {
+          "sha": "609512122024fe058c68faeb7298b58a25126292",
+          "committed_at": "2026-09-17T06:08:21Z",
+          "subject": "Record authoritative Ruff scope decision for #262"
+        },
+        {
+          "sha": "11cf5af2e080c90a42dd1d955e5bef29a8177e86",
+          "committed_at": "2026-09-17T06:08:55Z",
+          "subject": "Add RED contract for authoritative Ruff scope"
+        },
+        {
+          "sha": "cf5790031eabe6b3c64029b27af81bbccb274b3a",
+          "committed_at": "2026-09-17T06:09:42Z",
+          "subject": "noop"
+        },
+        {
+          "sha": "057ea4201f9883a256f858f1f474541029b7ff41",
+          "committed_at": "2026-09-17T06:09:54Z",
+          "subject": "Remove accidental temporary index file"
+        },
+        {
+          "sha": "eed59d58fd59c3c7784357f4dcd9c0a4565240b7",
+          "committed_at": "2026-09-17T06:10:05Z",
+          "subject": "noop2"
+        },
+        {
+          "sha": "b6d2160e13080c77a5d176ef52ee0a2ec5970811",
+          "committed_at": "2026-09-17T06:10:23Z",
+          "subject": "Remove accidental placeholder file"
+        },
+        {
+          "sha": "9b5fcda2aef34761b09c08cbb17e1b04765aa06f",
+          "committed_at": "2026-09-17T06:10:29Z",
+          "subject": "noop3"
+        },
+        {
+          "sha": "2f372aabe9f9aeb03cfa1e45760bd713be765ec9",
+          "committed_at": "2026-09-17T06:10:40Z",
+          "subject": "Remove accidental placeholder file"
+        },
+        {
+          "sha": "6c74b042822873e6b95e64a07a92780d0a9cb899",
+          "committed_at": "2026-09-17T06:10:48Z",
+          "subject": "noop4"
+        },
+        {
+          "sha": "a9c27a95b53fa982f9b957ab5b4c737c89505810",
+          "committed_at": "2026-09-17T06:11:00Z",
+          "subject": "Remove accidental placeholder file"
+        },
+        {
+          "sha": "61384e87758c336952837159165051ca6c10f0d5",
+          "committed_at": "2026-09-17T06:13:15Z",
+          "subject": "Apply canonical Ruff format to #262 RED contract"
+        },
+        {
+          "sha": "f65db6a7be588c3b771ba5e433743e78815e1f7d",
+          "committed_at": "2026-09-17T06:15:35Z",
+          "subject": "Normalize #262 RED import block"
+        },
+        {
+          "sha": "38262e110c5fdcd6f5995816df34c2d3c1ba84d6",
+          "committed_at": "2026-09-17T06:23:19Z",
+          "subject": "Declare repository-root Ruff exclusions"
+        },
+        {
+          "sha": "5094eb1c1ddaf033406006394ba0686b0aa71fa8",
+          "committed_at": "2026-09-17T06:23:47Z",
+          "subject": "Add canonical repository-root style surface"
+        },
+        {
+          "sha": "310ed5b44eaa9e99b58e629404838c04b8f05dad",
+          "committed_at": "2026-09-17T06:24:32Z",
+          "subject": "Route PR Ruff verification through ci/style"
+        },
+        {
+          "sha": "5e65f83bc6d41f2ad90a8efefe0532b1aeca984b",
+          "committed_at": "2026-09-17T06:24:41Z",
+          "subject": "Run shared style check before pre-push verification"
+        },
+        {
+          "sha": "afdc27e4b45ca5f33a1994e64fc38f9a7902bdd7",
+          "committed_at": "2026-09-17T06:25:13Z",
+          "subject": "Normalize Python candidates before review sealing"
+        },
+        {
+          "sha": "5757c2c2ade04f4403fe352d64eed83a3c90c75f",
+          "committed_at": "2026-09-17T06:26:21Z",
+          "subject": "Index Decision 0081"
+        },
+        {
+          "sha": "fb52b1c0b08b38c820df9f4a1809fecd46d5ae6d",
+          "committed_at": "2026-09-17T06:29:00Z",
+          "subject": "Normalize retained orientation task under root Ruff scope"
+        },
+        {
+          "sha": "20581bb761f77405dd9481bf819282a048cfb01a",
+          "committed_at": "2026-09-17T06:34:27Z",
+          "subject": "Scope #262 fix-order assertion to fix branch"
+        },
+        {
+          "sha": "660c30f8de902fc37e01764248b609962e4aa61d",
+          "committed_at": "2026-09-17T07:02:16Z",
+          "subject": "Align extended Ruff evidence with repository-root scope"
+        },
+        {
+          "sha": "16c665f2e17413ab5525ae7bce674e68b3f5407d",
+          "committed_at": "2026-09-17T07:49:54Z",
+          "subject": "Temporarily stage one-shot #272 test repair"
+        },
+        {
+          "sha": "3d2a12e72a66e75827b11b947ae8e7c6fc3aa4b7",
+          "committed_at": "2026-09-17T07:57:14Z",
+          "subject": "Trigger bounded #272 stale-contract repair"
+        },
+        {
+          "sha": "021e772b80ffc2c4c6f123fe3d8ef026c26c9c1a",
+          "committed_at": "2026-09-17T08:01:56Z",
+          "subject": "Make one-shot #272 stale-test repair robust"
+        },
+        {
+          "sha": "c798e9bade3597d9c0903ac5e7d9f033d846a788",
+          "committed_at": "2026-09-17T08:03:43Z",
+          "subject": "Let authoritative CI verify one-shot #272 repair"
+        },
+        {
+          "sha": "dda95f0aa393a8a1ed2e62c2cd1867300e25a450",
+          "committed_at": "2026-09-17T08:03:53Z",
+          "subject": "Align CI contract test with shared style gate"
+        },
+        {
+          "sha": "f5d7ad6ec69383e335a9edf6da2dd6ba270ca593",
+          "committed_at": "2026-09-17T08:05:47Z",
+          "subject": "Remove completed #272 one-shot repair"
+        },
+        {
+          "sha": "afdf2991054207adaad59cb9ae39212d2b876e11",
+          "committed_at": "2026-09-17T08:31:17Z",
+          "subject": "Anchor Ruff exclusions to repository outputs"
+        },
+        {
+          "sha": "cc168110f78720fe0b228fab36b7b4e4d20719e5",
+          "committed_at": "2026-09-17T08:31:44Z",
+          "subject": "Prove Ruff root-only exclusions behaviorally"
+        },
+        {
+          "sha": "a32f146473bf0ecd8c19369a00f7cffc52fee486",
+          "committed_at": "2026-09-17T08:33:54Z",
+          "subject": "Complete #262 prior-art and scope authority record"
+        },
+        {
+          "sha": "179fd59d2d96175ea25909d1b1522c837d887e74",
+          "committed_at": "2026-09-17T08:35:36Z",
+          "subject": "Add one-shot README scope alignment"
+        },
+        {
+          "sha": "1298ce55bd73d6835cfca5a6f53ee3c4d7e9c980",
+          "committed_at": "2026-09-17T08:35:45Z",
+          "subject": "Align README with repository-root Ruff scope"
+        },
+        {
+          "sha": "5215ad42b14db696a6cbabee6b4b660bf5792500",
+          "committed_at": "2026-09-17T08:39:07Z",
+          "subject": "Retrigger #272 checks as owner"
+        },
+        {
+          "sha": "1e0ae78105686c2200bad82541583fa741148940",
+          "committed_at": "2026-09-17T08:39:25Z",
+          "subject": "Remove #272 review retrigger marker"
+        },
+        {
+          "sha": "919a41d64a8972c9510c4b9e80d1a6c1be007a49",
+          "committed_at": "2026-09-17T09:03:11Z",
+          "subject": "Keep Ruff behavior contract development-only"
+        },
+        {
+          "sha": "fef944bcb19856edbe70e363a790fdc4e4cc6176",
+          "committed_at": "2026-09-17T10:08:23Z",
+          "subject": "Align Ruff checks with Git candidate scope"
+        },
+        {
+          "sha": "d25d9d74e73789eefb54f90b3e600709bed0c210",
+          "committed_at": "2026-09-17T10:17:25Z",
+          "subject": "Handle Git safe-directory in Ruff scope guard"
+        },
+        {
+          "sha": "1159858f6b8be09ec99faab8faf96c81570d74c4",
+          "committed_at": "2026-09-17T10:31:32Z",
+          "subject": "Complete Ruff candidate-scope boundary"
+        },
+        {
+          "sha": "7f10cc3e7f6dcdd35665141b1512aed399b3a1b7",
+          "committed_at": "2026-09-17T11:29:45Z",
+          "subject": "Close Ruff non-Git ignore boundary"
+        },
+        {
+          "sha": "183b5948426bf8e074156a50c6b20ce05dec6c54",
+          "committed_at": "2026-09-17T11:40:42Z",
+          "subject": "Close direct Ruff CI contract gap"
+        },
+        {
+          "sha": "b564827d9ff664c49ce2491794a742dd17ef33c7",
+          "committed_at": "2026-09-17T11:49:54Z",
+          "subject": "Make Ruff CI contract wrapper-independent"
+        },
+        {
+          "sha": "7acd687eff9ce34c2db67ebbf1c997f5bad6d1b7",
+          "committed_at": "2026-09-17T12:32:28Z",
+          "subject": "Document Ruff gate value assessment"
+        },
+        {
+          "sha": "3c7747c5398a4b6e9792a70502b5dc2ddbf10559",
+          "committed_at": "2026-09-17T12:45:04Z",
+          "subject": "Make Ruff value assessment reproducible"
+        },
+        {
+          "sha": "860f4012b2631739c6e5a87eae96bff6edb9ec2f",
+          "committed_at": "2026-09-17T13:02:29Z",
+          "subject": "Complete Ruff value assessment contract"
+        },
+        {
+          "sha": "364252796920f071183d560488e2299418d152a9",
+          "committed_at": "2026-09-17T13:25:06Z",
+          "subject": "Harden Ruff failure propagation contracts"
+        },
+        {
+          "sha": "d60456424a7c0949f4ccd256a5cef2c7637fa63f",
+          "committed_at": "2026-09-17T13:32:28Z",
+          "subject": "Preserve final Ruff failure precedence"
+        },
+        {
+          "sha": "74a5abf685802424842e70512d46867532c11fa2",
+          "committed_at": "2026-09-17T13:40:39Z",
+          "subject": "Cover final Ruff lint execution failure"
+        },
+        {
+          "sha": "8c7a918a1852261b958b28865b468064af248794",
+          "committed_at": "2026-09-17T13:47:57Z",
+          "subject": "Prove final Ruff format check execution"
+        }
+      ],
+      "formal_reviews": [
+        {
+          "id": 5232981096,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T08:22:11Z",
+          "commit_id": "f5d7ad6ec69383e335a9edf6da2dd6ba270ca593"
+        },
+        {
+          "id": 5232982584,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T08:22:20Z",
+          "commit_id": "f5d7ad6ec69383e335a9edf6da2dd6ba270ca593"
+        },
+        {
+          "id": 5232984004,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T08:22:27Z",
+          "commit_id": "f5d7ad6ec69383e335a9edf6da2dd6ba270ca593"
+        },
+        {
+          "id": 5232985330,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T08:22:35Z",
+          "commit_id": "f5d7ad6ec69383e335a9edf6da2dd6ba270ca593"
+        },
+        {
+          "id": 5232986714,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T08:22:42Z",
+          "commit_id": "f5d7ad6ec69383e335a9edf6da2dd6ba270ca593"
+        },
+        {
+          "id": 5232989552,
+          "author": "sourcery-ai[bot]",
+          "state": "DISMISSED",
+          "submitted_at": "2026-09-17T08:22:57Z",
+          "commit_id": "f5d7ad6ec69383e335a9edf6da2dd6ba270ca593"
+        },
+        {
+          "id": 5233001420,
+          "author": "qodo-code-review[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T08:23:52Z",
+          "commit_id": "f5d7ad6ec69383e335a9edf6da2dd6ba270ca593"
+        },
+        {
+          "id": 5233073588,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T08:31:07Z",
+          "commit_id": "f5d7ad6ec69383e335a9edf6da2dd6ba270ca593"
+        },
+        {
+          "id": 5233099443,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T08:34:07Z",
+          "commit_id": "a32f146473bf0ecd8c19369a00f7cffc52fee486"
+        },
+        {
+          "id": 5233100440,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T08:34:14Z",
+          "commit_id": "a32f146473bf0ecd8c19369a00f7cffc52fee486"
+        },
+        {
+          "id": 5233101796,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T08:34:23Z",
+          "commit_id": "a32f146473bf0ecd8c19369a00f7cffc52fee486"
+        },
+        {
+          "id": 5233103537,
+          "author": "qodo-code-review[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T08:34:33Z",
+          "commit_id": "a32f146473bf0ecd8c19369a00f7cffc52fee486"
+        },
+        {
+          "id": 5233103797,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T08:34:35Z",
+          "commit_id": "a32f146473bf0ecd8c19369a00f7cffc52fee486"
+        },
+        {
+          "id": 5233103984,
+          "author": "qodo-code-review[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T08:34:36Z",
+          "commit_id": "a32f146473bf0ecd8c19369a00f7cffc52fee486"
+        },
+        {
+          "id": 5233137642,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T08:37:31Z",
+          "commit_id": "1298ce55bd73d6835cfca5a6f53ee3c4d7e9c980"
+        },
+        {
+          "id": 5233139013,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T08:37:40Z",
+          "commit_id": "1298ce55bd73d6835cfca5a6f53ee3c4d7e9c980"
+        },
+        {
+          "id": 5233268772,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T08:48:34Z",
+          "commit_id": "1e0ae78105686c2200bad82541583fa741148940"
+        },
+        {
+          "id": 5233420847,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T09:03:43Z",
+          "commit_id": "919a41d64a8972c9510c4b9e80d1a6c1be007a49"
+        },
+        {
+          "id": 5234178814,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T10:16:43Z",
+          "commit_id": "fef944bcb19856edbe70e363a790fdc4e4cc6176"
+        },
+        {
+          "id": 5234212782,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T10:19:32Z",
+          "commit_id": "d25d9d74e73789eefb54f90b3e600709bed0c210"
+        },
+        {
+          "id": 5234256356,
+          "author": "coderabbitai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T10:23:32Z",
+          "commit_id": "d25d9d74e73789eefb54f90b3e600709bed0c210"
+        },
+        {
+          "id": 5234269941,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T10:24:42Z",
+          "commit_id": "d25d9d74e73789eefb54f90b3e600709bed0c210"
+        },
+        {
+          "id": 5234272481,
+          "author": "coderabbitai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T10:24:56Z",
+          "commit_id": "d25d9d74e73789eefb54f90b3e600709bed0c210"
+        },
+        {
+          "id": 5234823487,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T11:12:39Z",
+          "commit_id": "1159858f6b8be09ec99faab8faf96c81570d74c4"
+        },
+        {
+          "id": 5234883254,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T11:17:36Z",
+          "commit_id": "1159858f6b8be09ec99faab8faf96c81570d74c4"
+        },
+        {
+          "id": 5235022767,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T11:30:29Z",
+          "commit_id": "7f10cc3e7f6dcdd35665141b1512aed399b3a1b7"
+        },
+        {
+          "id": 5235390627,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T12:07:51Z",
+          "commit_id": "b564827d9ff664c49ce2491794a742dd17ef33c7"
+        },
+        {
+          "id": 5235435237,
+          "author": "sourcery-ai[bot]",
+          "state": "APPROVED",
+          "submitted_at": "2026-09-17T12:12:41Z",
+          "commit_id": "b564827d9ff664c49ce2491794a742dd17ef33c7"
+        },
+        {
+          "id": 5235441295,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T12:13:20Z",
+          "commit_id": "b564827d9ff664c49ce2491794a742dd17ef33c7"
+        },
+        {
+          "id": 5235678828,
+          "author": "sourcery-ai[bot]",
+          "state": "APPROVED",
+          "submitted_at": "2026-09-17T12:35:43Z",
+          "commit_id": "7acd687eff9ce34c2db67ebbf1c997f5bad6d1b7"
+        },
+        {
+          "id": 5235759929,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T12:42:53Z",
+          "commit_id": "7acd687eff9ce34c2db67ebbf1c997f5bad6d1b7"
+        },
+        {
+          "id": 5235802211,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T12:46:14Z",
+          "commit_id": "3c7747c5398a4b6e9792a70502b5dc2ddbf10559"
+        },
+        {
+          "id": 5235802463,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T12:46:15Z",
+          "commit_id": "3c7747c5398a4b6e9792a70502b5dc2ddbf10559"
+        },
+        {
+          "id": 5235802685,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T12:46:16Z",
+          "commit_id": "3c7747c5398a4b6e9792a70502b5dc2ddbf10559"
+        },
+        {
+          "id": 5235802891,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T12:46:17Z",
+          "commit_id": "3c7747c5398a4b6e9792a70502b5dc2ddbf10559"
+        },
+        {
+          "id": 5235803093,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T12:46:18Z",
+          "commit_id": "3c7747c5398a4b6e9792a70502b5dc2ddbf10559"
+        },
+        {
+          "id": 5235803314,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T12:46:19Z",
+          "commit_id": "3c7747c5398a4b6e9792a70502b5dc2ddbf10559"
+        },
+        {
+          "id": 5235813108,
+          "author": "sourcery-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T12:47:07Z",
+          "commit_id": "3c7747c5398a4b6e9792a70502b5dc2ddbf10559"
+        },
+        {
+          "id": 5235886662,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T12:54:21Z",
+          "commit_id": "3c7747c5398a4b6e9792a70502b5dc2ddbf10559"
+        },
+        {
+          "id": 5236000045,
+          "author": "sourcery-ai[bot]",
+          "state": "APPROVED",
+          "submitted_at": "2026-09-17T13:05:17Z",
+          "commit_id": "860f4012b2631739c6e5a87eae96bff6edb9ec2f"
+        },
+        {
+          "id": 5236000820,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T13:05:22Z",
+          "commit_id": "860f4012b2631739c6e5a87eae96bff6edb9ec2f"
+        },
+        {
+          "id": 5236001042,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T13:05:23Z",
+          "commit_id": "860f4012b2631739c6e5a87eae96bff6edb9ec2f"
+        },
+        {
+          "id": 5236166356,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T13:18:40Z",
+          "commit_id": "860f4012b2631739c6e5a87eae96bff6edb9ec2f"
+        },
+        {
+          "id": 5236213823,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T13:22:39Z",
+          "commit_id": "860f4012b2631739c6e5a87eae96bff6edb9ec2f"
+        },
+        {
+          "id": 5236248090,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T13:25:41Z",
+          "commit_id": "364252796920f071183d560488e2299418d152a9"
+        },
+        {
+          "id": 5236248310,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T13:25:42Z",
+          "commit_id": "364252796920f071183d560488e2299418d152a9"
+        },
+        {
+          "id": 5236273427,
+          "author": "sourcery-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T13:27:55Z",
+          "commit_id": "364252796920f071183d560488e2299418d152a9"
+        },
+        {
+          "id": 5236305900,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T13:30:49Z",
+          "commit_id": "364252796920f071183d560488e2299418d152a9"
+        },
+        {
+          "id": 5236313338,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T13:31:24Z",
+          "commit_id": "364252796920f071183d560488e2299418d152a9"
+        },
+        {
+          "id": 5236334032,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T13:33:05Z",
+          "commit_id": "d60456424a7c0949f4ccd256a5cef2c7637fa63f"
+        },
+        {
+          "id": 5236386373,
+          "author": "sourcery-ai[bot]",
+          "state": "APPROVED",
+          "submitted_at": "2026-09-17T13:37:03Z",
+          "commit_id": "d60456424a7c0949f4ccd256a5cef2c7637fa63f"
+        },
+        {
+          "id": 5236452066,
+          "author": "sourcery-ai[bot]",
+          "state": "APPROVED",
+          "submitted_at": "2026-09-17T13:42:36Z",
+          "commit_id": "74a5abf685802424842e70512d46867532c11fa2"
+        },
+        {
+          "id": 5236480853,
+          "author": "cubic-dev-ai[bot]",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T13:45:08Z",
+          "commit_id": "74a5abf685802424842e70512d46867532c11fa2"
+        },
+        {
+          "id": 5236522283,
+          "author": "ktogias",
+          "state": "COMMENTED",
+          "submitted_at": "2026-09-17T13:48:22Z",
+          "commit_id": "8c7a918a1852261b958b28865b468064af248794"
+        },
+        {
+          "id": 5236552520,
+          "author": "sourcery-ai[bot]",
+          "state": "APPROVED",
+          "submitted_at": "2026-09-17T13:50:40Z",
+          "commit_id": "8c7a918a1852261b958b28865b468064af248794"
+        }
+      ],
+      "derived": {
+        "commit_count": 48,
+        "formal_review_count": 55,
+        "first_formal_review_at": "2026-09-17T08:22:11Z",
+        "last_formal_review_at": "2026-09-17T13:50:40Z",
+        "distinct_reviewed_head_count": 17,
+        "distinct_reviewed_heads": [
+          "f5d7ad6ec69383e335a9edf6da2dd6ba270ca593",
+          "a32f146473bf0ecd8c19369a00f7cffc52fee486",
+          "1298ce55bd73d6835cfca5a6f53ee3c4d7e9c980",
+          "1e0ae78105686c2200bad82541583fa741148940",
+          "919a41d64a8972c9510c4b9e80d1a6c1be007a49",
+          "fef944bcb19856edbe70e363a790fdc4e4cc6176",
+          "d25d9d74e73789eefb54f90b3e600709bed0c210",
+          "1159858f6b8be09ec99faab8faf96c81570d74c4",
+          "7f10cc3e7f6dcdd35665141b1512aed399b3a1b7",
+          "b564827d9ff664c49ce2491794a742dd17ef33c7",
+          "7acd687eff9ce34c2db67ebbf1c997f5bad6d1b7",
+          "3c7747c5398a4b6e9792a70502b5dc2ddbf10559",
+          "860f4012b2631739c6e5a87eae96bff6edb9ec2f",
+          "364252796920f071183d560488e2299418d152a9",
+          "d60456424a7c0949f4ccd256a5cef2c7637fa63f",
+          "74a5abf685802424842e70512d46867532c11fa2",
+          "8c7a918a1852261b958b28865b468064af248794"
+        ],
+        "earlier_reviewed_heads_superseded_count": 16,
+        "external_formal_review_families": [
+          "coderabbitai[bot]",
+          "cubic-dev-ai[bot]",
+          "qodo-code-review[bot]",
+          "sourcery-ai[bot]"
+        ],
+        "external_formal_review_family_count": 4
+      }
+    }
+  },
+  "bounded_nonformal_evidence": {
+    "pr_272_selected_issue_comments": [
+      {
+        "id": 5713775569,
+        "url": "https://github.com/ktogias/gnostoa/pull/272#issuecomment-5713775569",
+        "author": "ktogias",
+        "created_at": null,
+        "body": "### Fresh-review finding disposition — shell-wrapper bypass\n\n**Finding:** valid. CodeRabbit, Qodo, and CodeAnt independently identified the same gap on exact head `183b5948426bf8e074156a50c6b20ce05dec6c54`: the direct-Ruff regex recognizes a command only at line start or after `;`, `&`, or `|`, and the scan is limited to the compatibility job.\n\n**Evidence:** the exact expression returns true for `python -m ruff check .`, but false for each of `if python -m ruff check .; then …`, `! ruff format --check .`, `command ruff check .`, and `env FOO=bar python -m ruff check .`. Those differently named steps would leave the contract green.\n\n**Proposed fix:** remove the shell-shape heuristic. Keep the exact compatibility shared-gate assertions, then inspect every `run` block in every job of the ordinary verification workflow and fail if its text contains `ruff` case-insensitively. The authorized `./ci/style --check` command contains no Ruff literal, so this establishes an intentionally strict, shell-wrapper-independent single entry point. Add explicit synthetic wrapper cases demonstrating the marker catches the reported forms. Then rerun exact-head local verification, provider CI, and all fresh reviewers. No merge will be performed."
+      },
+      {
+        "id": 5713992293,
+        "url": "https://github.com/ktogias/gnostoa/pull/272#issuecomment-5713992293",
+        "author": "ktogias",
+        "created_at": null,
+        "body": "@cubic-dev-ai review\n\nFollow-up for the already-started review of exact head `b564827d9ff664c49ce2491794a742dd17ef33c7`: provider verification `35217772014` and protected R2A `35217772194` are now both SUCCESS, CodeRabbit/Qodo/CodeAnt have clean final dispositions, and there are zero unresolved threads. Please complete the exact-head review or explicitly report if the reviewer is unavailable; do not infer from earlier SHAs."
+      },
+      {
+        "id": 5714172963,
+        "url": "https://github.com/ktogias/gnostoa/pull/272#issuecomment-5714172963",
+        "author": "ktogias",
+        "created_at": null,
+        "body": "### Final exact-head convergence — `b564827d9ff664c49ce2491794a742dd17ef33c7`\n\nThe earlier external-review blocker is cleared.\n\n- **Gnostoa verification `35217772014`: SUCCESS**\n- **Protected R2A `35217772194`: SUCCESS**\n- **CodeRabbit:** fresh exact-head clean; status SUCCESS\n- **Qodo:** fresh concern re-evaluated and explicitly withdrawn as non-actionable\n- **CodeAnt:** valid parent-head gaps fixed; final-head concern explicitly re-evaluated as non-actionable\n- **Cubic:** fresh exact-head review completed; its sole P3 assumed an unsupported unactivated Python environment. Evidence showed the documented exact-lock virtualenv supplies `python`, and a style-only `python3` fallback would still fail at `ci/verify fast` while risking the wrong Ruff environment. No change warranted; thread resolved.\n- **Sourcery:** the standalone `@sourcery-ai review` command correctly reset the counter; fresh exact-head review **APPROVED**\n- **Review threads:** 13 total, 0 unresolved\n- **PR:** open, mergeable, unmerged\n\nFull review convergence is now established. No merge was performed."
+      }
+    ],
+    "pr_272_quota_observation_from_retained_pr_body": {
+      "source_pr": 272,
+      "observed_text": "- Cubic: its valid parent-head marker finding was fixed and the thread resolved; a further exact-head review could not start because the workspace reached its monthly 40,000-line review limit (40,037 used). This is recorded as optional provider unavailability, not a convergence blocker.",
+      "note": "Retained here because PR body text is provider-mutable even after merge."
+    },
+    "codeant_formal_review_status": {
+      "included_in_formal_review_family_count": false,
+      "reason": "CodeAnt evidence used by the overlap example was recorded as an issue-comment disposition, not as an entry in GitHub's formal PR reviews collection at this observation cut."
+    }
+  }
+}
