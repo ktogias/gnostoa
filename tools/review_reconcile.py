@@ -13,9 +13,7 @@ _PROVIDER_SNAPSHOT_VERSION = "gnostoa-review-provider-state/v1"
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
 _ALLOWED_COVERAGE = {"COMPLETE", "PARTIAL", "RATE_LIMITED", "UNAVAILABLE", "ERROR"}
 _SEMANTIC_OUTCOMES = {"PASS", "BLOCKED", "INCOMPLETE", "CONFLICTING"}
-_MARKER = re.compile(
-    r"<!-- gnostoa:l1-current-state:v1:([A-Za-z0-9_-]+) -->"
-)
+_MARKER = re.compile(r"<!-- gnostoa:l1-current-state:v1:([A-Za-z0-9_-]+) -->")
 _MAX_RENDER_BYTES = 32_768
 
 
@@ -79,9 +77,7 @@ def _subject(snapshot: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     base = _sha(subject.get("base_commit"), "subject.base_commit")
     comparison = _mapping(subject.get("comparison"), "subject.comparison")
     if comparison.get("kind") != "merge_base":
-        raise ReconciliationInputError(
-            "subject.comparison.kind must be merge_base"
-        )
+        raise ReconciliationInputError("subject.comparison.kind must be merge_base")
     merge_base = _sha(
         comparison.get("commit_sha"),
         "subject.comparison.commit_sha",
@@ -130,9 +126,7 @@ def _coverage(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
         item = _mapping(coverage.get(source), f"coverage.{source}")
         status = _string(item.get("status"), f"coverage.{source}.status")
         if status not in _ALLOWED_COVERAGE:
-            raise ReconciliationInputError(
-                f"coverage.{source}.status is unsupported"
-            )
+            raise ReconciliationInputError(f"coverage.{source}.status is unsupported")
         pages = item.get("pages")
         if type(pages) is not int or pages < 0:
             raise ReconciliationInputError(
@@ -170,9 +164,7 @@ def _observations(
     reviews = snapshot.get("reviews")
     review_threads = snapshot.get("review_threads")
     if not isinstance(reviews, list) or not isinstance(review_threads, list):
-        raise ReconciliationInputError(
-            "reviews and review_threads must be arrays"
-        )
+        raise ReconciliationInputError("reviews and review_threads must be arrays")
 
     threads_by_review: dict[str, list[dict[str, Any]]] = {}
     for raw_thread in review_threads:
@@ -363,7 +355,9 @@ def build_projection(
         "protected_main_revision",
     )
     consumer = _mapping(outer_consumer, "outer_consumer")
-    runtime_image = _string(consumer.get("runtime_image"), "outer_consumer.runtime_image")
+    runtime_image = _string(
+        consumer.get("runtime_image"), "outer_consumer.runtime_image"
+    )
     runtime_revision = _sha(
         consumer.get("runtime_revision"),
         "outer_consumer.runtime_revision",
