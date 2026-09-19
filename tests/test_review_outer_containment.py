@@ -48,6 +48,14 @@ def _load_ci_smoke(filename: str) -> ModuleType:
 historical_smoke = _load_ci_smoke("review_outer_smoke.py")
 
 
+def _historical_p2b_authority() -> dict[str, object]:
+    authority = copy.deepcopy(_consumer_authority())
+    historical = copy.deepcopy(historical_smoke.EXPECTED_CONSUMER)
+    authority["expected_consumer"] = historical
+    authority["acquired_consumer"] = copy.deepcopy(historical)
+    return authority
+
+
 def _unavailable_bytes() -> bytes:
     return (
         canonical_json(
@@ -211,7 +219,7 @@ class ReviewOuterContainmentTests(unittest.TestCase):
         docker.assert_not_called()
 
     def test_historical_stale_and_unknown_consumers_are_contained(self) -> None:
-        historical_p2b = _consumer_authority()
+        historical_p2b = _historical_p2b_authority()
         unknown = copy.deepcopy(historical_p2b)
         for key in ("expected_consumer", "acquired_consumer"):
             unknown[key]["runtime_image"] = "ghcr.io/ktogias/gnostoa@sha256:" + "1" * 64
@@ -264,7 +272,7 @@ class ReviewOuterContainmentTests(unittest.TestCase):
         document["transport_compatible"] = True
         document["acquired_consumer"] = _consumer_authority()["acquired_consumer"]
         document["caller_review"] = marker
-        protected = ProtectedMainDocument("c" * 40, _consumer_authority())
+        protected = ProtectedMainDocument("c" * 40, _historical_p2b_authority())
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "synthetic-input.json"
             path.write_text(canonical_json(document), encoding="utf-8")
@@ -318,7 +326,7 @@ class ContainmentSmokeTests(unittest.TestCase):
 
     def test_smoke_exercises_real_public_refusal_and_reports_not_run(self) -> None:
         smoke = _load_ci_smoke("review_outer_containment_smoke.py")
-        protected = ProtectedMainDocument("c" * 40, _consumer_authority())
+        protected = ProtectedMainDocument("c" * 40, _historical_p2b_authority())
         output = io.StringIO()
         with (
             mock.patch.object(
@@ -364,7 +372,7 @@ class ContainmentSmokeTests(unittest.TestCase):
 
     def test_smoke_fails_if_real_route_attempts_outer_execution(self) -> None:
         smoke = _load_ci_smoke("review_outer_containment_smoke.py")
-        protected = ProtectedMainDocument("c" * 40, _consumer_authority())
+        protected = ProtectedMainDocument("c" * 40, _historical_p2b_authority())
         with mock.patch.object(review_outer, "_require_transport_compatible_consumer"):
             with self.assertRaisesRegex(AssertionError, "outer temporary resource"):
                 smoke._exercise_containment(protected, _current_advisory_input())
