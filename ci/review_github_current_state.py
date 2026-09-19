@@ -100,7 +100,9 @@ class GitHubRestClient:
                 raw = response.read(_MAX_RESPONSE_BYTES + 1)
                 if len(raw) > _MAX_RESPONSE_BYTES:
                     raise ProviderReadError("GitHub API response exceeds bounded size")
-                headers = {key.lower(): value for key, value in response.headers.items()}
+                headers = {
+                    key.lower(): value for key, value in response.headers.items()
+                }
                 return _decode_json(raw, "GitHub API"), headers
         except urllib.error.HTTPError as exc:
             detail = exc.read(4_096).decode("utf-8", errors="replace")
@@ -436,9 +438,8 @@ def publication_decision(
         if (
             isinstance(existing_subject, dict)
             and existing_subject.get("head_commit") == collected_head
-            and _projection_key(existing_projection) >= _projection_key(
-                candidate_projection
-            )
+            and _projection_key(existing_projection)
+            >= _projection_key(candidate_projection)
         ):
             return False, "SUPERSEDED_PROJECTION"
     return True, "PUBLISH"
@@ -464,7 +465,9 @@ def _existing_projection(
     return comment_id, projection
 
 
-def _current_pr(client: JsonReader, repository: str, pull_number: int) -> dict[str, Any]:
+def _current_pr(
+    client: JsonReader, repository: str, pull_number: int
+) -> dict[str, Any]:
     payload, _ = client.get(f"{_API_ROOT}/repos/{repository}/pulls/{pull_number}")
     pull = _normalize_pull(payload)
     return {"state": pull["state"], "head_sha": pull["head_sha"]}
@@ -568,7 +571,9 @@ def _protected_state() -> tuple[Any, Any]:
         consumer = acquire_gnostoa_current_advisory_consumer()
         if bundle.protected_main_revision == consumer.protected_main_revision:
             return bundle, consumer
-    raise ProviderReadError("protected-main authority changed during bounded acquisition")
+    raise ProviderReadError(
+        "protected-main authority changed during bounded acquisition"
+    )
 
 
 def _collect_entry(
@@ -708,10 +713,7 @@ def main(argv: list[str] | None = None) -> int:
         [
             "## Gnostoa useful L1 publication",
             "",
-            *[
-                f"- PR #{item['pull_number']}: {item['reason']}"
-                for item in results
-            ],
+            *[f"- PR #{item['pull_number']}: {item['reason']}" for item in results],
         ]
     )
     return 0
