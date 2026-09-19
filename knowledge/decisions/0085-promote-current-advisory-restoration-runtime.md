@@ -20,7 +20,7 @@ sources:
     resource: ./0084-publish-current-advisory-restoration-runtime-by-digest.md
     title: Decision 0084
   - id: r3-receipt
-    resource: https://github.com/ktogias/gnostoa/issues/275#issuecomment-5740935145
+    resource: https://github.com/ktogias/gnostoa/issues/11#issuecomment-5741025232
     title: Successful immutable R3 restoration materialization receipt
 x-project-knowledge:
   id: kit.decision.0085.promote-current-advisory-restoration-runtime
@@ -69,7 +69,7 @@ publisher landing `d097f166a2a6a43e7c963b27aeadd91217e19ac7`, workflow run
   `ghcr.io/ktogias/gnostoa@sha256:6bf4b876987fa4a5db8e3ae6bcc420e306666d8ee81ca40b934a6570a45b2b0f`;
 - GitHub attestation `48625673`;
 - Rekor transparency-log index `2892075330`; and
-- durable R3 receipt #275 comment `5740935145`.
+- durable R3 authority-compatible receipt issue #11 comment `5741025232`.
 
 The R3 job verified the exact digest before and after authentication-state
 removal, reacquired it anonymously, replayed the layered restoration smoke and
@@ -143,7 +143,7 @@ main transition.
    - GitHub attestation `48625673`;
    - Rekor log index `2892075330`; and
    - receipt
-     `https://github.com/ktogias/gnostoa/issues/275#issuecomment-5740935145`.
+     `https://github.com/ktogias/gnostoa/issues/11#issuecomment-5741025232`.
 3. Add **only** the exact canonical nine-field identity above to
    `_HOST_PERSISTENCE_FREE_CONSUMER_IDENTITIES`. Keep the catalog static,
    private and caller/environment independent.
