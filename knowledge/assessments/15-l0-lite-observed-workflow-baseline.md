@@ -19,12 +19,30 @@ sources:
   - id: assurance-cost-specimen
     resource: https://github.com/ktogias/gnostoa/pull/257
     title: Materialize integrated R2A B1.6 outer consumer by digest
+  - id: assurance-cost-pr-metadata
+    resource: "https://api.github.com/repos/ktogias/gnostoa/pulls/257"
+    title: PR 257 provider metadata at the observation cut
+  - id: assurance-cost-pr-commits
+    resource: "https://api.github.com/repos/ktogias/gnostoa/pulls/257/commits?per_page=100"
+    title: PR 257 branch commits at the observation cut
+  - id: assurance-cost-pr-reviews
+    resource: "https://api.github.com/repos/ktogias/gnostoa/pulls/257/reviews?per_page=100"
+    title: PR 257 formal reviews at the observation cut
   - id: deterministic-normalization-specimen
     resource: https://github.com/ktogias/gnostoa/issues/262
     title: Align Ruff configured scope with enforced CI coverage
   - id: deterministic-normalization-implementation
     resource: https://github.com/ktogias/gnostoa/pull/272
     title: Make Ruff scope authoritative before candidate sealing
+  - id: normalization-pr-metadata
+    resource: "https://api.github.com/repos/ktogias/gnostoa/pulls/272"
+    title: PR 272 provider metadata at the observation cut
+  - id: normalization-pr-commits
+    resource: "https://api.github.com/repos/ktogias/gnostoa/pulls/272/commits?per_page=100"
+    title: PR 272 branch commits at the observation cut
+  - id: normalization-pr-reviews
+    resource: "https://api.github.com/repos/ktogias/gnostoa/pulls/272/reviews?per_page=100"
+    title: PR 272 formal reviews at the observation cut
   - id: ruff-candidate-churn-rca
     resource: https://github.com/ktogias/gnostoa/issues/262#issuecomment-5696790428
     title: Empirical Ruff RCA — candidate normalization is happening after candidate creation
@@ -119,9 +137,11 @@ baselines for future, protocol-declared comparison.
 
 ### Directly measured deterministic-normalization churn
 
-The frozen #262 RCA examined 49 commits from its declared measurement window and
-found **7 distinct candidate SHAs with directly proven Ruff failures
-(14.3%)**:
+The frozen #262 RCA examined **49 total commits** from its declared measurement
+window and found **7 distinct candidate SHAs with directly proven Ruff
+failures**. Against that total-commit denominator, the directly evidenced
+incidence is **7 / 49 = 14.3%**. This is not a candidate-generation denominator:
+the RCA does not establish that all 49 commits were candidate generations.
 
 - 6 formatter failures;
 - 1 lint failure;
@@ -130,9 +150,10 @@ found **7 distinct candidate SHAs with directly proven Ruff failures
 
 The same RCA records 10 explicit `Format`/`Normalize` commits (20.4%) and 11
 style/lint housekeeping commits (22.4%), while explicitly refusing to attribute
-the broader 20–22% figures wholly to Ruff. The 14.3% rate is therefore the
-conservative directly evidenced mechanical-preflight escape rate for that
-frozen window.
+the broader 20–22% figures wholly to Ruff. The 14.3% figure is therefore only
+the conservative directly evidenced Ruff-failure incidence against the frozen
+49-commit denominator. It must not be relabeled as the percentage of candidate
+generations that failed Ruff.
 
 This is the clearest L0 evidence that deterministic work was crossing the
 candidate boundary too late: a review repair could create a new SHA, wait for
@@ -310,9 +331,9 @@ telemetry.”
 It supports three bounded conclusions:
 
 - exact-head review churn is large enough to measure rather than hand-wave;
-- deterministic preflight escapes have already consumed measurable candidate
-  generations, with a conservative frozen Ruff-failure rate of 14.3% in #262's
-  window; and
+- deterministic preflight escapes are directly evidenced in #262's frozen
+  window: 7 distinct Ruff-failing candidate SHAs among 49 total commits
+  (14.3% against that commit denominator, not a candidate-generation rate); and
 - liveness/provider friction is visible in durable receipts, but historical
   human attention, context and cost cannot be reconstructed honestly.
 
