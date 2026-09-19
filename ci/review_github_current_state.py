@@ -582,6 +582,36 @@ def publish_entry(
     return {"pull_number": pull_number, "published": True, "reason": action}
 
 
+def _workflow_run_pull_numbers(raw: str) -> list[int]:
+    if not raw:
+        return []
+    try:
+        loaded = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ProviderReadError(
+            "workflow_run.pull_requests is invalid JSON"
+        ) from exc
+    if loaded is None:
+        return []
+    if not isinstance(loaded, list):
+        raise ProviderReadError("workflow_run.pull_requests must be an array")
+
+    numbers: list[int] = []
+    for item in loaded:
+        if not isinstance(item, dict):
+            raise ProviderReadError(
+                "workflow_run.pull_requests items must be objects"
+            )
+        number = item.get("number")
+        if type(number) is not int or number <= 0:
+            raise ProviderReadError(
+                "workflow_run.pull_requests contains an invalid Pull Request number"
+            )
+        if number not in numbers:
+            numbers.append(number)
+    return numbers
+
+
 def _open_pull_numbers(
     client: JsonReader,
     repository: str,
@@ -733,6 +763,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--mode", choices=("collect", "publish"), required=True)
     parser.add_argument("--repository", required=True)
     parser.add_argument("--pull-number", type=int, action="append", default=[])
+    parser.add_argument("--workflow-run-pulls-json", default="")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--payload", type=Path)
     parser.add_argument("--run-id", type=int, default=0)
@@ -748,7 +779,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.mode == "collect":
         if args.output is None:
             raise SystemExit("--output is required for collect")
-        pulls = list(dict.fromkeys(args.pull_number))
+        pulls = list(
+            dict.fromkeys(
+                [
+                    *args.pull_number,
+                    *_workflow_run_pull_numbers(args.workflow_run_pulls_json),
+                ]
+            )
+        )
         if not pulls:
             pulls = _open_pull_numbers(client, args.repository)
         if len(pulls) > _MAX_OPEN_PULLS:
