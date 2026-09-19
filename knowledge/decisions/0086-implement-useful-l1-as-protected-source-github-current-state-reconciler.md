@@ -183,6 +183,25 @@ Reuse:
 Do not add a database, event bus, queue service, generic DAG, custom GitHub App,
 provider simulator or new semantic policy.
 
+## Consequences
+
+- Gnostoa gains one self-only current-state reconciliation surface that can reduce
+  manual provider reconstruction without moving semantic authority out of R2A.
+- The owner-facing projection remains disposable and non-canonical; deleting it
+  cannot corrupt repository truth.
+- A write-capable workflow is introduced, so least-privilege permissions,
+  protected-source execution and stale-write refusal become part of the
+  verification boundary.
+- GitHub is the first concrete provider adapter; provider-neutrality is preserved
+  by keeping provider observations separate from the deterministic reducer and
+  by avoiding GitHub-specific semantics in R2A itself.
+- A truthful incomplete or unavailable result may become more visible and more
+  frequent than an optimistic green status; this is intentional fail-closed
+  behavior.
+- After integration, the first useful end-to-end dogfood must be a naturally
+  occurring subsequent Pull Request. This candidate cannot establish its own
+  operational value.
+
 ## Non-goals
 
 This Decision does not:
