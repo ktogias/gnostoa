@@ -595,8 +595,16 @@ def publication_decision(
         or candidate_subject.get("repository") != expected_repository
         or candidate_subject.get("change_request") != expected_change_request
         or candidate_subject.get("head_commit") != collected_head
+        or not isinstance(candidate_subject.get("base_commit"), str)
+        or not isinstance(candidate_subject.get("merge_base_commit"), str)
     ):
         return False, "CANDIDATE_SUBJECT_MISMATCH"
+    if (
+        current_pr.get("base_sha") != candidate_subject["base_commit"]
+        or current_pr.get("merge_base_sha")
+        != candidate_subject["merge_base_commit"]
+    ):
+        return False, "STALE_COMPARISON"
     if existing_projection is not None:
         existing_subject = existing_projection.get("subject")
         if (
@@ -655,9 +663,21 @@ def _existing_projection(
 def _current_pr(
     client: JsonReader, repository: str, pull_number: int
 ) -> dict[str, Any]:
-    payload, _ = client.get(f"{_API_ROOT}/repos/{repository}/pulls/{pull_number}")
+    root = f"{_API_ROOT}/repos/{repository}"
+    payload, _ = client.get(f"{root}/pulls/{pull_number}")
     pull = _normalize_pull(payload)
-    return {"state": pull["state"], "head_sha": pull["head_sha"]}
+    compare_payload, _ = client.get(
+        f"{root}/compare/{pull['base_sha']}...{pull['head_sha']}"
+    )
+    compare = _mapping(compare_payload, "compare")
+    merge_base = _mapping(compare.get("merge_base_commit"), "compare.merge_base")
+    merge_base_sha = _sha(merge_base.get("sha"), "compare.merge_base.sha")
+    return {
+        "state": pull["state"],
+        "head_sha": pull["head_sha"],
+        "base_sha": pull["base_sha"],
+        "merge_base_sha": merge_base_sha,
+    }
 
 
 def publish_entry(
