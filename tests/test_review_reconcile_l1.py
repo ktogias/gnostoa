@@ -8,6 +8,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
 ADAPTER_PATH = ROOT / "ci" / "review_github_current_state.py"
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "review-current-state.yml"
@@ -125,6 +127,133 @@ class _PagedFake:
         return self.replies[url]
 
 
+def _complete_replies(root: str) -> dict[str, tuple[Any, dict[str, str]]]:
+    return {
+        f"{root}/pulls/300": (
+            {
+                "number": 300,
+                "state": "open",
+                "html_url": "https://github.com/ktogias/gnostoa/pull/300",
+                "head": {"sha": "a" * 40},
+                "base": {"sha": "b" * 40},
+            },
+            {},
+        ),
+        f"{root}/compare/{'b' * 40}...{'a' * 40}": (
+            {"merge_base_commit": {"sha": "c" * 40}},
+            {},
+        ),
+        f"{root}/issues/300/comments?per_page=100": (
+            [
+                {
+                    "id": 1,
+                    "user": {"login": "one"},
+                    "created_at": "2026-09-19T16:40:00Z",
+                    "updated_at": "2026-09-19T16:40:00Z",
+                    "body": "one",
+                }
+            ],
+            {"link": '<https://api.github.com/page2/issues>; rel="next"'},
+        ),
+        "https://api.github.com/page2/issues": (
+            [
+                {
+                    "id": 2,
+                    "user": {"login": "two"},
+                    "created_at": "2026-09-19T16:40:01Z",
+                    "updated_at": "2026-09-19T16:40:01Z",
+                    "body": "two",
+                }
+            ],
+            {},
+        ),
+        f"{root}/pulls/300/reviews?per_page=100": (
+            [
+                {
+                    "id": 10,
+                    "user": {"login": "one"},
+                    "state": "APPROVED",
+                    "submitted_at": "2026-09-19T16:40:02Z",
+                    "commit_id": "a" * 40,
+                    "html_url": "https://example.invalid/review/10",
+                }
+            ],
+            {"link": '<https://api.github.com/page2/reviews>; rel="next"'},
+        ),
+        "https://api.github.com/page2/reviews": (
+            [
+                {
+                    "id": 11,
+                    "user": {"login": "two"},
+                    "state": "COMMENTED",
+                    "submitted_at": "2026-09-19T16:40:03Z",
+                    "commit_id": "a" * 40,
+                    "html_url": "https://example.invalid/review/11",
+                }
+            ],
+            {},
+        ),
+        f"{root}/pulls/300/comments?per_page=100": (
+            [
+                {
+                    "id": 20,
+                    "pull_request_review_id": 10,
+                    "user": {"login": "one"},
+                    "created_at": "2026-09-19T16:40:04Z",
+                    "updated_at": "2026-09-19T16:40:04Z",
+                    "commit_id": "a" * 40,
+                    "body": "inline one",
+                    "html_url": "https://example.invalid/comment/20",
+                }
+            ],
+            {"link": '<https://api.github.com/page2/review-comments>; rel="next"'},
+        ),
+        "https://api.github.com/page2/review-comments": (
+            [
+                {
+                    "id": 21,
+                    "pull_request_review_id": 11,
+                    "user": {"login": "two"},
+                    "created_at": "2026-09-19T16:40:05Z",
+                    "updated_at": "2026-09-19T16:40:05Z",
+                    "commit_id": "a" * 40,
+                    "body": "inline two",
+                    "html_url": "https://example.invalid/comment/21",
+                }
+            ],
+            {},
+        ),
+        f"{root}/commits/{'a' * 40}/check-runs?per_page=100": (
+            {
+                "check_runs": [
+                    {
+                        "id": 30,
+                        "name": "fast",
+                        "head_sha": "a" * 40,
+                        "status": "completed",
+                        "conclusion": "success",
+                    }
+                ]
+            },
+            {"link": '<https://api.github.com/page2/check-runs>; rel="next"'},
+        ),
+        "https://api.github.com/page2/check-runs": (
+            {
+                "check_runs": [
+                    {
+                        "id": 31,
+                        "name": "policy",
+                        "head_sha": "a" * 40,
+                        "status": "completed",
+                        "conclusion": "success",
+                    }
+                ]
+            },
+            {},
+        ),
+    }
+
+
 class UsefulL1RedContractTests(unittest.TestCase):
     def test_reducer_binds_exact_subject_and_preserves_existing_r2a_semantics(
         self,
@@ -191,54 +320,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
     def test_adapter_follows_pagination_and_marks_each_source_complete(self) -> None:
         adapter = _adapter()
         root = "https://api.github.com/repos/ktogias/gnostoa"
-        fake = _PagedFake(
-            {
-                f"{root}/pulls/300": (
-                    {
-                        "number": 300,
-                        "state": "open",
-                        "html_url": "https://github.com/ktogias/gnostoa/pull/300",
-                        "head": {"sha": "a" * 40},
-                        "base": {"sha": "b" * 40},
-                    },
-                    {},
-                ),
-                f"{root}/compare/{'b' * 40}...{'a' * 40}": (
-                    {"merge_base_commit": {"sha": "c" * 40}},
-                    {},
-                ),
-                f"{root}/issues/300/comments?per_page=100": (
-                    [
-                        {
-                            "id": 1,
-                            "user": {"login": "one"},
-                            "created_at": "2026-09-19T16:40:00Z",
-                            "updated_at": "2026-09-19T16:40:00Z",
-                            "body": "one",
-                        }
-                    ],
-                    {"link": '<https://api.github.com/page2/issues>; rel="next"'},
-                ),
-                "https://api.github.com/page2/issues": (
-                    [
-                        {
-                            "id": 2,
-                            "user": {"login": "two"},
-                            "created_at": "2026-09-19T16:40:01Z",
-                            "updated_at": "2026-09-19T16:40:01Z",
-                            "body": "two",
-                        }
-                    ],
-                    {},
-                ),
-                f"{root}/pulls/300/reviews?per_page=100": ([], {}),
-                f"{root}/pulls/300/comments?per_page=100": ([], {}),
-                f"{root}/commits/{'a' * 40}/check-runs?per_page=100": (
-                    {"check_runs": []},
-                    {},
-                ),
-            }
-        )
+        fake = _PagedFake(_complete_replies(root))
 
         snapshot = adapter.collect_snapshot(
             fake,
@@ -247,70 +329,50 @@ class UsefulL1RedContractTests(unittest.TestCase):
             observed_at="2026-09-19T16:41:00Z",
         )
 
-        self.assertEqual(2, len(snapshot["issue_comments"]))
-        self.assertEqual(2, snapshot["coverage"]["issue_comments"]["pages"])
-        self.assertEqual("COMPLETE", snapshot["coverage"]["issue_comments"]["status"])
-        self.assertIn("https://api.github.com/page2/issues", fake.calls)
+        for source, payload_key in (
+            ("issue_comments", "issue_comments"),
+            ("reviews", "reviews"),
+            ("review_comments", "review_comments"),
+            ("check_runs", "check_runs"),
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(2, len(snapshot[payload_key]))
+                self.assertEqual(2, snapshot["coverage"][source]["pages"])
+                self.assertEqual(2, snapshot["coverage"][source]["count"])
+                self.assertEqual("COMPLETE", snapshot["coverage"][source]["status"])
 
-    def test_adapter_reports_partial_collection_instead_of_clean_on_page_error(
+    def test_adapter_reports_partial_collection_for_each_source_page_error(
         self,
     ) -> None:
         adapter = _adapter()
         root = "https://api.github.com/repos/ktogias/gnostoa"
+        cases = {
+            "issue_comments": "https://api.github.com/page2/issues",
+            "reviews": "https://api.github.com/page2/reviews",
+            "review_comments": "https://api.github.com/page2/review-comments",
+            "check_runs": "https://api.github.com/page2/check-runs",
+        }
 
-        class PartialFake(_PagedFake):
-            def get(self, url: str) -> tuple[Any, dict[str, str]]:
-                if url == "https://api.github.com/page2/reviews":
-                    raise adapter.ProviderReadError("simulated second-page failure")
-                return super().get(url)
+        for source, fail_url in cases.items():
+            class PartialFake(_PagedFake):
+                def get(self, url: str) -> tuple[Any, dict[str, str]]:
+                    if url == fail_url:
+                        raise adapter.ProviderReadError(
+                            "simulated second-page failure"
+                        )
+                    return super().get(url)
 
-        fake = PartialFake(
-            {
-                f"{root}/pulls/300": (
-                    {
-                        "number": 300,
-                        "state": "open",
-                        "html_url": "https://github.com/ktogias/gnostoa/pull/300",
-                        "head": {"sha": "a" * 40},
-                        "base": {"sha": "b" * 40},
-                    },
-                    {},
-                ),
-                f"{root}/compare/{'b' * 40}...{'a' * 40}": (
-                    {"merge_base_commit": {"sha": "c" * 40}},
-                    {},
-                ),
-                f"{root}/issues/300/comments?per_page=100": ([], {}),
-                f"{root}/pulls/300/reviews?per_page=100": (
-                    [
-                        {
-                            "id": 10,
-                            "user": {"login": "one"},
-                            "state": "APPROVED",
-                            "submitted_at": "2026-09-19T16:40:00Z",
-                            "commit_id": "a" * 40,
-                            "html_url": "https://example.invalid/review/10",
-                        }
-                    ],
-                    {"link": '<https://api.github.com/page2/reviews>; rel="next"'},
-                ),
-                f"{root}/pulls/300/comments?per_page=100": ([], {}),
-                f"{root}/commits/{'a' * 40}/check-runs?per_page=100": (
-                    {"check_runs": []},
-                    {},
-                ),
-            }
-        )
-
-        snapshot = adapter.collect_snapshot(
-            fake,
-            repository="ktogias/gnostoa",
-            pull_number=300,
-            observed_at="2026-09-19T16:41:00Z",
-        )
-        self.assertEqual("PARTIAL", snapshot["coverage"]["reviews"]["status"])
-        self.assertEqual(1, snapshot["coverage"]["reviews"]["pages"])
-        self.assertEqual(1, len(snapshot["reviews"]))
+            snapshot = adapter.collect_snapshot(
+                PartialFake(_complete_replies(root)),
+                repository="ktogias/gnostoa",
+                pull_number=300,
+                observed_at="2026-09-19T16:41:00Z",
+            )
+            with self.subTest(source=source):
+                self.assertEqual("PARTIAL", snapshot["coverage"][source]["status"])
+                self.assertEqual(1, snapshot["coverage"][source]["pages"])
+                self.assertEqual(1, snapshot["coverage"][source]["count"])
+                self.assertEqual(1, len(snapshot[source]))
 
     def test_publication_refuses_stale_head_and_later_same_head_projection(
         self,
@@ -353,20 +415,58 @@ class UsefulL1RedContractTests(unittest.TestCase):
     def test_workflow_is_protected_source_and_least_privilege(self) -> None:
         self.assertTrue(WORKFLOW_PATH.is_file(), "L1_WORKFLOW_UNAVAILABLE")
         text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        workflow = yaml.safe_load(text)
 
+        self.assertIsInstance(workflow, dict)
         self.assertIn("workflow_run:", text)
         self.assertIn("workflow_dispatch:", text)
         self.assertIn("schedule:", text)
         self.assertNotIn("pull_request_target:", text)
-        self.assertIn("contents: read", text)
-        self.assertIn("actions: read", text)
-        self.assertIn("checks: read", text)
-        self.assertIn("pull-requests: read", text)
-        self.assertIn("issues: write", text)
-        self.assertNotIn("contents: write", text)
-        self.assertNotIn("pull-requests: write", text)
-        self.assertIn("ref: main", text)
-        self.assertIn("persist-credentials: false", text)
+        self.assertEqual({}, workflow.get("permissions"))
+
+        jobs = workflow.get("jobs")
+        self.assertIsInstance(jobs, dict)
+        collect = jobs.get("collect")
+        publish = jobs.get("publish")
+        self.assertIsInstance(collect, dict)
+        self.assertIsInstance(publish, dict)
+
+        self.assertEqual(
+            {
+                "contents": "read",
+                "actions": "read",
+                "checks": "read",
+                "pull-requests": "read",
+                "issues": "read",
+            },
+            collect.get("permissions"),
+        )
+        self.assertEqual(
+            {
+                "contents": "read",
+                "pull-requests": "read",
+                "issues": "write",
+            },
+            publish.get("permissions"),
+        )
+
+        for job in (collect, publish):
+            condition = str(job.get("if", ""))
+            self.assertIn("github.event_name != 'workflow_dispatch'", condition)
+            self.assertIn("github.ref == 'refs/heads/main'", condition)
+            steps = job.get("steps")
+            self.assertIsInstance(steps, list)
+            checkout = next(
+                item
+                for item in steps
+                if isinstance(item, dict)
+                and str(item.get("uses", "")).startswith("actions/checkout@")
+            )
+            checkout_with = checkout.get("with")
+            self.assertIsInstance(checkout_with, dict)
+            self.assertEqual("main", checkout_with.get("ref"))
+            self.assertIs(False, checkout_with.get("persist-credentials"))
+
         self.assertIn("tools/review_github_current_state.py", text)
 
 
