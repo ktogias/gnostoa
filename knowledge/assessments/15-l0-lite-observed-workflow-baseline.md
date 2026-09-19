@@ -53,7 +53,7 @@ sources:
     resource: https://github.com/ktogias/gnostoa/pull/272#issuecomment-5713992293
     title: Cubic exact-head review follow-up
   - id: retained-provider-receipts
-    resource: https://github.com/ktogias/gnostoa/blob/f4535ba0cd72b5c3ff688a6bbb94fa42ec648f69/knowledge/assessments/15-l0-lite-observed-workflow-baseline-receipts.json
+    resource: https://github.com/ktogias/gnostoa/blob/41d5dba0b797c03b062e6084812ebcd5ae5ec59e/knowledge/assessments/15-l0-lite-observed-workflow-baseline-receipts.json
     title: Immutable normalized provider-receipt snapshot for L0-lite measurements
   - id: convergence-receipt
     resource: https://github.com/ktogias/gnostoa/pull/272#issuecomment-5714172963
@@ -103,12 +103,14 @@ and unrecorded waiting are **UNKNOWN** rather than estimated.
 
 The numeric provider baseline is reproduced from the immutable normalized
 snapshot
-[`15-l0-lite-observed-workflow-baseline-receipts.json`](https://github.com/ktogias/gnostoa/blob/f4535ba0cd72b5c3ff688a6bbb94fa42ec648f69/knowledge/assessments/15-l0-lite-observed-workflow-baseline-receipts.json).
+[`15-l0-lite-observed-workflow-baseline-receipts.json`](https://github.com/ktogias/gnostoa/blob/41d5dba0b797c03b062e6084812ebcd5ae5ec59e/knowledge/assessments/15-l0-lite-observed-workflow-baseline-receipts.json).
 It retains every provider record field used by the published metrics: PR
 timestamps and size fields, all 119 selected branch commits with SHA/date/title,
 all 147 formal review records with review ID/author/state/submitted time/head,
-the exact derivation rules, and the selected non-formal comments used for the
-overlap/liveness observations. The live GitHub API URLs remain provenance and
+the exact derivation rules, the selected non-formal comments used for the
+overlap/liveness observations, and the exact retained #262 Ruff-RCA comment
+body supporting the 49-commit / 7 directly proven Ruff-failing-candidate
+measurement. The live GitHub API URLs remain provenance and
 audit routes only; they are not the frozen measurement input.
 
 This is a normalized measurement receipt, not a byte-for-byte archive of every
