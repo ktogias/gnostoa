@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from tools.review_model import parse_rfc3339
-from tools.review_reconcile import parse_projection_comment
+from tools.review_reconcile import PROVIDER_STATE_SCHEMA_VERSION, parse_projection_comment
 
 _API_ROOT = "https://api.github.com"
 _API_VERSION = "2022-11-28"
@@ -294,10 +294,15 @@ def _normalize_review_comment(value: Any) -> dict[str, Any]:
 def _normalize_check(value: Any) -> dict[str, Any]:
     item = _mapping(value, "check run")
     check_id = _integer(item.get("id"), "check_run.id")
+    observed_at = _optional_text(item.get("completed_at")) or _text(
+        item.get("started_at"),
+        "check_run.started_at",
+    )
     return {
-        "id": f"github-check-{check_id:020d}",
+        "id": f"github-check-{check_id}",
         "name": _text(item.get("name"), "check_run.name"),
         "head_commit": _sha(item.get("head_sha"), "check_run.head_sha"),
+        "observed_at": observed_at,
         "status": _text(item.get("status"), "check_run.status"),
         "conclusion": _optional_text(item.get("conclusion")),
         "source_url": _optional_text(item.get("details_url")),
@@ -365,7 +370,7 @@ def collect_snapshot(
     )
 
     return {
-        "schema_version": "gnostoa-review-provider-state/v1",
+        "schema_version": PROVIDER_STATE_SCHEMA_VERSION,
         "provider": {
             "id": "github",
             "adapter": "gnostoa.github-rest-current-state/v1",
@@ -461,7 +466,11 @@ def _existing_projection(
         candidates.append((key, comment_id, projection))
     if not candidates:
         return None
-    _, comment_id, projection = max(candidates, key=lambda item: (item[0], item[1]))
+    if len(candidates) > 1:
+        raise ProviderWriteError(
+            "multiple valid L1 projection comments exist; refusing ambiguous write"
+        )
+    _, comment_id, projection = candidates[0]
     return comment_id, projection
 
 
