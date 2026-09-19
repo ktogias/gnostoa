@@ -125,9 +125,14 @@ def main(argv: list[str] | None = None) -> int:
             raise RuntimeError(
                 "protected consumer authority changed before R5 public-route proof"
             )
-        code, raw = review_outer.run_prior_effective_current_advisory(
-            _synthetic_input(inner)
-        )
+        with mock.patch.object(
+            review_outer,
+            "acquire_gnostoa_current_advisory_consumer",
+            return_value=protected_consumer,
+        ):
+            code, raw = review_outer.run_prior_effective_current_advisory(
+                _synthetic_input(inner)
+            )
         authority_source = "protected-main"
         acquired = protected_consumer.document.get("acquired_consumer")
 

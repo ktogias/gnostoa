@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import io
 import json
 import unittest
 from pathlib import Path
@@ -10,7 +11,8 @@ from unittest import mock
 import yaml
 from jsonschema import Draft202012Validator
 
-from tools import review_outer, security_scan
+from ci import review_current_advisory_promotion_smoke as promotion_smoke
+from tools import review_outer, review_protected, security_scan
 from tools.review_check import FORMAT_CHECKER
 from tools.review_model import canonical_json
 from tools.review_protected import ProtectedMainDocument
@@ -160,6 +162,83 @@ class CurrentAdvisoryRestorationPromotionTests(unittest.TestCase):
         verify_image.assert_called_once()
         command.assert_not_called()
         docker.assert_not_called()
+
+    def test_r4_protected_smoke_executes_the_revision_checked_authority(self) -> None:
+        expected_main = "a" * 40
+        advanced_main = "b" * 40
+        authority = _load_json(AUTHORITY_PATH)
+        checked_consumer = ProtectedMainDocument(
+            protected_main_revision=expected_main,
+            document=copy.deepcopy(authority),
+        )
+        advanced_consumer = ProtectedMainDocument(
+            protected_main_revision=advanced_main,
+            document=copy.deepcopy(authority),
+        )
+        inner = ProtectedMainDocument(
+            protected_main_revision=expected_main,
+            document={
+                "authority": {},
+                "acquired_judge": {},
+                "qualification_snapshot": {},
+            },
+        )
+        semantic = (
+            b'{"binding":false,"outcome":"INCOMPLETE","reason":"QUORUM_UNMET"}\n'
+        )
+
+        second_acquisition = mock.Mock(return_value=advanced_consumer)
+
+        def execute(_: object) -> tuple[int, bytes]:
+            observed = review_outer.acquire_gnostoa_current_advisory_consumer()
+            if observed.protected_main_revision != expected_main:
+                raise RuntimeError(
+                    "protected consumer authority changed during R4 promotion proof"
+                )
+            return 3, semantic
+
+        with (
+            mock.patch.object(
+                review_protected,
+                "acquire_gnostoa_current_advisory_bundle",
+                return_value=inner,
+            ),
+            mock.patch.object(
+                review_protected,
+                "acquire_gnostoa_current_advisory_consumer",
+                return_value=checked_consumer,
+            ) as checked_acquisition,
+            mock.patch.object(
+                review_outer,
+                "acquire_gnostoa_current_advisory_consumer",
+                second_acquisition,
+            ),
+            mock.patch.object(
+                review_outer,
+                "run_prior_effective_current_advisory",
+                side_effect=execute,
+            ),
+            mock.patch("sys.stdout", new_callable=io.StringIO) as output,
+        ):
+            code = promotion_smoke.main(
+                [
+                    "--mode",
+                    "protected",
+                    "--expected-protected-main",
+                    expected_main,
+                ]
+            )
+
+        self.assertEqual(0, code)
+        checked_acquisition.assert_called_once_with()
+        second_acquisition.assert_not_called()
+        receipt = json.loads(output.getvalue())
+        self.assertEqual(expected_main, receipt["protected_main_revision"])
+        self.assertEqual("protected-main", receipt["authority_source"])
+        self.assertEqual(
+            canonical_json(EXPECTED_CONSUMER),
+            receipt["consumer_identity"],
+        )
 
     def test_r4_decision_governance_and_live_smoke_are_routed(self) -> None:
         self.assertTrue(DECISION_PATH.is_file())
