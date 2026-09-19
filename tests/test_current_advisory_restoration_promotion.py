@@ -185,6 +185,17 @@ class CurrentAdvisoryRestorationPromotionTests(unittest.TestCase):
             "PYTHONPATH=. python ci/review_current_advisory_promotion_smoke.py",
             workflow,
         )
+        self.assertIn(
+            "Exercise candidate-side exact R4 promoted current-advisory path",
+            workflow,
+        )
+        self.assertIn("--mode candidate", workflow)
+        self.assertIn(
+            "Exercise protected-main promoted current-advisory route",
+            workflow,
+        )
+        self.assertIn("--mode protected", workflow)
+        self.assertIn("workflow_dispatch:", workflow)
 
 
 if __name__ == "__main__":
