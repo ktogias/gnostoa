@@ -68,7 +68,7 @@ code or inventing semantic authority.
    - no candidate checkout or source mutation.
 
 3. `.github/workflows/review-current-state.yml`
-   - protected-source `workflow_run`, hourly schedule and manual recovery;
+   - protected-source `workflow_run`, hourly schedule and default-branch `repository_dispatch` recovery;
    - minimum token permissions;
    - per-PR concurrency for liveness only;
    - Actions summary plus bounded projection publication.
