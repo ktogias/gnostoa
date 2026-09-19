@@ -336,8 +336,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
                 "binding": False,
             },
             execution={
-                "run_id": 124,
-                "run_attempt": 1,
+                "execution_id": "github-actions:124:1",
                 "observed_at": "2026-09-19T16:41:11Z",
             },
         )
@@ -377,8 +376,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
             },
             r2a_result=result,
             execution={
-                "run_id": 123,
-                "run_attempt": 1,
+                "execution_id": "github-actions:123:1",
                 "observed_at": "2026-09-19T16:41:10Z",
             },
         )
@@ -419,8 +417,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
                     "binding": False,
                 },
                 execution={
-                    "run_id": 126,
-                    "run_attempt": 1,
+                    "execution_id": "github-actions:126:1",
                     "observed_at": "2026-09-19T16:41:12Z",
                 },
             )
@@ -464,8 +461,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
                 "binding": False,
             },
             execution={
-                "run_id": 127,
-                "run_attempt": 1,
+                "execution_id": "github-actions:127:1",
                 "observed_at": "2026-09-19T16:41:13Z",
             },
         )
@@ -511,8 +507,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
                 "binding": False,
             },
             execution={
-                "run_id": 128,
-                "run_attempt": 1,
+                "execution_id": "github-actions:128:1",
                 "observed_at": "2026-09-19T16:41:14Z",
             },
         )
@@ -560,8 +555,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
                 "binding": False,
             },
             execution={
-                "run_id": 125,
-                "run_attempt": 1,
+                "execution_id": "github-actions:125:1",
                 "observed_at": "2026-09-19T16:41:10Z",
             },
         )
@@ -732,8 +726,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
             },
             "observation": {
                 "observed_at": "2026-09-19T16:41:00Z",
-                "run_id": 100,
-                "run_attempt": 1,
+                "execution_id": "github-actions:100:1",
             },
         }
         allowed, reason = adapter.publication_decision(
@@ -756,8 +749,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
             },
             "observation": {
                 "observed_at": "2026-09-19T16:42:00Z",
-                "run_id": 101,
-                "run_attempt": 1,
+                "execution_id": "github-actions:101:1",
             },
         }
         allowed, reason = adapter.publication_decision(
@@ -795,8 +787,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
                 "subject": subject,
                 "observation": {
                     "observed_at": "2026-09-19T16:41:00Z",
-                    "run_id": 102,
-                    "run_attempt": 1,
+                    "execution_id": "github-actions:102:1",
                 },
             }
             allowed, reason = adapter.publication_decision(
@@ -854,8 +845,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
                 "binding": False,
             },
             execution={
-                "run_id": 130,
-                "run_attempt": 1,
+                "execution_id": "github-actions:130:1",
                 "observed_at": "2026-09-19T16:41:10Z",
             },
         )
@@ -872,8 +862,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
                 "binding": False,
             },
             execution={
-                "run_id": 131,
-                "run_attempt": 1,
+                "execution_id": "github-actions:131:1",
                 "observed_at": "2026-09-19T16:42:10Z",
             },
         )
@@ -919,8 +908,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
                 "binding": False,
             },
             execution={
-                "run_id": 135,
-                "run_attempt": 1,
+                "execution_id": "github-actions:135:1",
                 "observed_at": "2026-09-19T16:41:10Z",
             },
         )
@@ -937,8 +925,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
                 "binding": False,
             },
             execution={
-                "run_id": 136,
-                "run_attempt": 1,
+                "execution_id": "github-actions:136:1",
                 "observed_at": "2026-09-19T16:42:10Z",
             },
         )
@@ -955,8 +942,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
                 "binding": False,
             },
             execution={
-                "run_id": 137,
-                "run_attempt": 1,
+                "execution_id": "github-actions:137:1",
                 "observed_at": "2026-09-19T16:43:10Z",
             },
         )
