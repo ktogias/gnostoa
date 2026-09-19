@@ -8,11 +8,13 @@ on:
       - "ci/review_current_advisory_restoration_smoke.py"
       - "knowledge/decisions/0083-qualify-integrated-current-advisory-restoration-runtime.md"
       - "tests/test_current_advisory_restoration_runtime.py"
-      - "tools/review_current.py"
-      - "tools/review_live.py"
-      - "tools/review_live_entrypoint.py"
-      - "tools/review_outer.py"
-      - "tools/review_protected.py"
+      - "tools/review_*.py"
+      - "tools/knowledge_common.py"
+      - "tools/cli.py"
+      - "schemas/review-*.json"
+      - "policy/review-policy.yaml"
+      - "Dockerfile"
+      - "ci/build-runtime"
       - "tasks/issue-11-r2a-current-advisory.json"
       - "tasks/issue-11-r2a-current-advisory-consumer.json"
   workflow_dispatch:
@@ -102,7 +104,11 @@ jobs:
             echo "public_surface_digest=${public_surface_digest}"
           } >> "${GITHUB_OUTPUT}"
 
-      - name: Run exact-source transport regression contracts
+      # The runtime image under qualification intentionally excludes development
+      # dependencies. Host Python is therefore the orchestration fallback for
+      # exact-source regression contracts, while Docker still executes the
+      # runtime/container behavior being qualified.
+      - name: Run exact-source transport regression contracts via native orchestration fallback
         shell: bash
         env:
           PYTHONPATH: restoration-source
@@ -134,10 +140,10 @@ jobs:
           {
             echo "### R2 restoration runtime qualification"
             echo
-            printf -- '- source revision: `%s`\\n' "${SOURCE_COMMIT}"
-            printf -- '- source tree: `%s`\\n' "${SOURCE_TREE}"
-            printf -- '- local image id: `%s`\\n' "${{ steps.identity.outputs.image_id }}"
-            printf -- '- public surface: `%s`\\n' "${{ steps.identity.outputs.public_surface_digest }}"
+            printf -- '- source revision: `%s`\n' "${SOURCE_COMMIT}"
+            printf -- '- source tree: `%s`\n' "${SOURCE_TREE}"
+            printf -- '- local image id: `%s`\n' "${{ steps.identity.outputs.image_id }}"
+            printf -- '- public surface: `%s`\n' "${{ steps.identity.outputs.public_surface_digest }}"
             echo "- registry publication: **NOT PERFORMED**"
             echo "- protected authority/catalog promotion: **NOT PERFORMED**"
           } >> "${GITHUB_STEP_SUMMARY}"
