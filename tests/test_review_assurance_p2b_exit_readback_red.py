@@ -76,8 +76,15 @@ def _load_smoke() -> ModuleType:
     return smoke
 
 
-def _stale_b16_authority() -> dict[str, object]:
+def _historical_p2b_authority() -> dict[str, object]:
     authority = copy.deepcopy(_load_json(AUTHORITY_PATH))
+    authority["expected_consumer"] = copy.deepcopy(EXPECTED_CONSUMER)
+    authority["acquired_consumer"] = copy.deepcopy(EXPECTED_CONSUMER)
+    return authority
+
+
+def _stale_b16_authority() -> dict[str, object]:
+    authority = _historical_p2b_authority()
     stale = copy.deepcopy(EXPECTED_CONSUMER)
     stale.update(
         {
@@ -104,7 +111,7 @@ class ReviewAssuranceP2bExitReadbackRedTests(unittest.TestCase):
         if not callable(assert_readback):
             return
 
-        authority = _load_json(AUTHORITY_PATH)
+        authority = _historical_p2b_authority()
         protected = ProtectedMainDocument(
             protected_main_revision=PROMOTION_MAIN_REVISION,
             document=authority,
@@ -136,7 +143,7 @@ class ReviewAssuranceP2bExitReadbackRedTests(unittest.TestCase):
 
         protected = ProtectedMainDocument(
             protected_main_revision=PROMOTION_MAIN_REVISION,
-            document=_load_json(AUTHORITY_PATH),
+            document=_historical_p2b_authority(),
         )
 
         def observe_candidate_poison(
