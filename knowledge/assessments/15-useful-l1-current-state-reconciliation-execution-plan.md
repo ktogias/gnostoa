@@ -89,9 +89,12 @@ same internal shape and reuse the reducer, R2A composition and projection core
 unchanged.
 
 The internal adapter contract also requires explicit observation timestamps for
-check state; opaque provider IDs never define freshness. Duplicate marker-owned
+check state; opaque provider IDs never define freshness, and same-timestamp
+conflicts are explicit ambiguity. Positive next actions require complete/open
+provider state plus AVAILABLE protected capability. Duplicate workflow-owned
 projection comments are an explicit fail-closed provider-write condition rather
-than an invitation to guess which comment owns the projection.
+than an invitation to guess which comment owns the projection; marker text from
+an arbitrary participant does not establish ownership.
 
 ## RED evidence
 
