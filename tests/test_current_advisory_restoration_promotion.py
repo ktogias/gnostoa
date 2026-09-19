@@ -202,8 +202,7 @@ class CurrentAdvisoryRestorationPromotionTests(unittest.TestCase):
             step
             for step in steps
             if isinstance(step, dict)
-            and step.get("name")
-            == "Require protected main for manual R2A verification"
+            and step.get("name") == "Require protected main for manual R2A verification"
         ]
         self.assertEqual(1, len(guards))
         guard = guards[0]
