@@ -243,3 +243,12 @@ jobs:
           PYTHONPATH=. python ci/review_current_advisory_promotion_smoke.py \
             --mode candidate \
             --expected-protected-main "${EXPECTED_PROTECTED_MAIN}"
+
+      - name: Exercise protected-main promoted current-advisory route
+        if: github.event_name != 'pull_request'
+        env:
+          EXPECTED_PROTECTED_MAIN: ${{ github.sha }}
+        run: |
+          PYTHONPATH=. python ci/review_current_advisory_promotion_smoke.py \
+            --mode protected \
+            --expected-protected-main "${EXPECTED_PROTECTED_MAIN}"
