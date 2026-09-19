@@ -156,9 +156,12 @@ def _list_page(payload: Any) -> list[Any]:
 
 
 def _check_page(payload: Any) -> list[Any]:
-    if not isinstance(payload, dict) or not isinstance(payload.get("check_runs"), list):
+    if not isinstance(payload, dict):
         raise ProviderReadError("GitHub check-runs source has invalid shape")
-    return payload["check_runs"]
+    checks = payload.get("check_runs")
+    if not isinstance(checks, list):
+        raise ProviderReadError("GitHub check-runs source has invalid shape")
+    return checks
 
 
 def _collect_pages(
