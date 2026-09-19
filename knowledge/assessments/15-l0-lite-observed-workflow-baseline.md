@@ -53,7 +53,7 @@ sources:
     resource: https://github.com/ktogias/gnostoa/pull/272#issuecomment-5713992293
     title: Cubic exact-head review follow-up
   - id: retained-provider-receipts
-    resource: https://github.com/ktogias/gnostoa/blob/5cb457016f0c6fc00e340f64c23fea0a8fc5920a/knowledge/assessments/15-l0-lite-observed-workflow-baseline-receipts.json
+    resource: https://github.com/ktogias/gnostoa/blob/1c82ad3ccc36d6f07579ce0fe6cb6519d0a733d2/knowledge/assessments/15-l0-lite-observed-workflow-baseline-receipts.json
     title: Immutable normalized provider-receipt snapshot for L0-lite measurements
   - id: convergence-receipt
     resource: https://github.com/ktogias/gnostoa/pull/272#issuecomment-5714172963
@@ -103,7 +103,7 @@ and unrecorded waiting are **UNKNOWN** rather than estimated.
 
 The numeric provider baseline is reproduced from the immutable normalized
 snapshot
-[`15-l0-lite-observed-workflow-baseline-receipts.json`](https://github.com/ktogias/gnostoa/blob/5cb457016f0c6fc00e340f64c23fea0a8fc5920a/knowledge/assessments/15-l0-lite-observed-workflow-baseline-receipts.json).
+[`15-l0-lite-observed-workflow-baseline-receipts.json`](https://github.com/ktogias/gnostoa/blob/1c82ad3ccc36d6f07579ce0fe6cb6519d0a733d2/knowledge/assessments/15-l0-lite-observed-workflow-baseline-receipts.json).
 It retains every provider record field used by the published metrics: PR
 timestamps and size fields, all 119 selected branch commits with SHA/date/title,
 all 147 formal review records with review ID/author/state/submitted time/head,
