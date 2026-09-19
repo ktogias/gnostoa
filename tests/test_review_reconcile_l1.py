@@ -1059,8 +1059,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
         semantic = next(
             item
             for item in entries
-            if isinstance(item, dict)
-            and item.get("id") == "semantic-review-assurance"
+            if isinstance(item, dict) and item.get("id") == "semantic-review-assurance"
         )
         self.assertNotIn(
             "ci/review_github_current_state.py",
