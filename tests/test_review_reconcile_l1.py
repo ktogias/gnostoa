@@ -3,10 +3,12 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import json
+import tempfile
 import unittest
 from pathlib import Path
 from types import ModuleType
 from typing import Any
+from unittest import mock
 
 import yaml
 
@@ -613,6 +615,50 @@ class UsefulL1RedContractTests(unittest.TestCase):
         ):
             adapter._existing_projection(comments)
 
+    def test_protected_capability_unavailability_is_projected_not_fabricated(
+        self,
+    ) -> None:
+        adapter = _adapter()
+        reducer = _reducer()
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+        fake = _PagedFake(_complete_replies(root))
+
+        with mock.patch.object(
+            adapter,
+            "_protected_state",
+            side_effect=adapter.ProviderReadError("protected state unavailable"),
+        ):
+            entry = adapter._collect_entry(
+                fake,
+                "ktogias/gnostoa",
+                300,
+                run_id=140,
+                run_attempt=1,
+            )
+
+        projection = reducer.parse_projection_comment(entry["body"])
+        self.assertIsInstance(projection, dict)
+        self.assertEqual("UNAVAILABLE", projection["protected"]["status"])
+        self.assertIsNone(projection["protected"]["main_revision"])
+        self.assertIsNone(projection["protected"]["outer_runtime_image"])
+        self.assertEqual("UNAVAILABLE", projection["r2a"]["outcome"])
+        self.assertIs(projection["r2a"]["binding"], False)
+        self.assertEqual(
+            "WAIT_FOR_PROTECTED_CAPABILITY",
+            projection["next_permitted_action"],
+        )
+
+    def test_publication_payload_read_is_bounded_before_json_decode(self) -> None:
+        adapter = _adapter()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "payload.json"
+            path.write_bytes(b"x" * (adapter._MAX_PUBLICATION_PAYLOAD_BYTES + 1))
+            with self.assertRaisesRegex(
+                ValueError,
+                "publication payload exceeds bounded size",
+            ):
+                adapter._load_payload(path)
+
     def test_workflow_is_protected_source_and_least_privilege(self) -> None:
         self.assertTrue(WORKFLOW_PATH.is_file(), "L1_WORKFLOW_UNAVAILABLE")
         text = WORKFLOW_PATH.read_text(encoding="utf-8")
@@ -624,6 +670,8 @@ class UsefulL1RedContractTests(unittest.TestCase):
         self.assertNotIn("workflow_dispatch:", text)
         self.assertIn("schedule:", text)
         self.assertNotIn("pull_request_target:", text)
+        self.assertIn("300_000", text)
+        self.assertNotIn("600_000", text)
         self.assertEqual({}, workflow.get("permissions"))
 
         jobs = workflow.get("jobs")
