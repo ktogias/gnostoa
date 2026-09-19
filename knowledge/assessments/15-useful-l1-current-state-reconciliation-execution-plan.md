@@ -65,6 +65,7 @@ code or inventing semantic authority.
    - translation from GitHub-native Pull Request/review/comment/check objects into the provider-neutral internal snapshot;
    - complete Link-header pagination;
    - RFC3339 timestamp validation and explicit per-source errors;
+   - queued checks without provider start/completion timestamps use the stable collection cut and remain pending;
    - at most three bounded passes to confirm the retained observation cut;
    - continued change or a future cut remains explicitly PARTIAL, not clean;
    - subject acquisition failures produce non-publishable per-PR diagnostics without aborting other selected PRs;
@@ -78,6 +79,7 @@ code or inventing semantic authority.
    - minimum token permissions;
    - repository-root imports configured for both collect and publish entrypoints;
    - bounded collect→publish transfer sized below the provider job-output limit after encoding;
+   - at most 8 Pull Requests per execution so 8 × 32,768-byte projections plus envelope overhead remain below the 300,000-byte raw transfer bound;
    - repository-scoped serialization with `cancel-in-progress: false` and `queue: max`;
    - finite queue of at most 100 pending runs, with possible overflow and scheduling delay;
    - hourly open-PR recovery, not an immediate or lossless wake-up guarantee;
