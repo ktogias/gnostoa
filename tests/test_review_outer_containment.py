@@ -121,12 +121,21 @@ raise SystemExit(not unittest.TextTestRunner().run(suite).wasSuccessful())
 
 
 class ReviewOuterContainmentTests(unittest.TestCase):
-    def test_production_catalog_admits_no_current_runtime(self) -> None:
+    def test_production_catalog_admits_only_the_protected_restored_runtime(
+        self,
+    ) -> None:
+        authority = json.loads(
+            (
+                ROOT / "tasks" / "issue-11-r2a-current-advisory-consumer.json"
+            ).read_text(encoding="utf-8")
+        )
+        acquired = authority["acquired_consumer"]
         self.assertEqual(
-            frozenset(), review_outer._HOST_PERSISTENCE_FREE_CONSUMER_IDENTITIES
+            frozenset({canonical_json(acquired)}),
+            review_outer._HOST_PERSISTENCE_FREE_CONSUMER_IDENTITIES,
         )
 
-    def test_guardrail_records_current_unavailability_without_merge_authority(
+    def test_guardrail_records_exact_restored_transport_without_merge_authority(
         self,
     ) -> None:
         guardrails = yaml.safe_load(
@@ -137,7 +146,8 @@ class ReviewOuterContainmentTests(unittest.TestCase):
         )
         self.assertIn("without merge authority", guardrail["title"])
         self.assertIn(
-            "current_advisory is contained and unavailable", guardrail["title"]
+            "current_advisory transport admits only the exact restored runtime",
+            guardrail["title"],
         )
         self.assertIn(
             "knowledge/decisions/0082-eliminate-host-persistence-for-protected-review-payloads-and-route-security-gates.md",
@@ -200,14 +210,14 @@ class ReviewOuterContainmentTests(unittest.TestCase):
         command.assert_not_called()
         docker.assert_not_called()
 
-    def test_current_historical_and_unknown_consumers_are_contained(self) -> None:
-        current = _consumer_authority()
-        unknown = copy.deepcopy(current)
+    def test_historical_stale_and_unknown_consumers_are_contained(self) -> None:
+        historical_p2b = _consumer_authority()
+        unknown = copy.deepcopy(historical_p2b)
         for key in ("expected_consumer", "acquired_consumer"):
             unknown[key]["runtime_image"] = "ghcr.io/ktogias/gnostoa@sha256:" + "1" * 64
         authorities = {
-            "current": current,
-            "historical": historical_smoke._stale_b16_authority(),
+            "historical-p2b": historical_p2b,
+            "historical-b16": historical_smoke._stale_b16_authority(),
             "unknown": unknown,
         }
         for label, authority in authorities.items():
