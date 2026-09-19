@@ -25,6 +25,7 @@ _MAX_PAGES = 20
 _MAX_ITEMS = 5_000
 _MAX_OPEN_PULLS = 10
 _MAX_PUBLICATION_PAYLOAD_BYTES = 300_000
+_MAX_COLLECTION_PASSES = 3
 _PROJECTION_AUTHOR = "github-actions[bot]"
 _TIMEOUT_SECONDS = 30
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
@@ -246,6 +247,19 @@ def _optional_text(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def _timestamp(value: Any, label: str) -> str:
+    rendered = _text(value, label)
+    try:
+        parse_rfc3339(rendered)
+    except ValueError as exc:
+        raise ProviderReadError(f"{label} must be a valid RFC3339 timestamp") from exc
+    return rendered
+
+
+def _optional_timestamp(value: Any, label: str) -> str | None:
+    return None if value is None else _timestamp(value, label)
+
+
 def _sha(value: Any, label: str) -> str:
     rendered = _text(value, label)
     if _SHA40.fullmatch(rendered) is None:
@@ -283,8 +297,8 @@ def _normalize_issue_comment(value: Any) -> dict[str, Any]:
     return {
         "id": _integer(item.get("id"), "issue_comment.id"),
         "author": _comment_author(item.get("user")),
-        "created_at": _text(item.get("created_at"), "issue_comment.created_at"),
-        "updated_at": _text(item.get("updated_at"), "issue_comment.updated_at"),
+        "created_at": _timestamp(item.get("created_at"), "issue_comment.created_at"),
+        "updated_at": _timestamp(item.get("updated_at"), "issue_comment.updated_at"),
         "body": body,
         "body_truncated": truncated,
     }
@@ -294,7 +308,7 @@ def _normalize_review(value: Any) -> dict[str, Any] | None:
     item = _mapping(value, "review")
     review_id = _integer(item.get("id"), "review.id")
     state = _text(item.get("state"), "review.state")
-    submitted_at = _optional_text(item.get("submitted_at"))
+    submitted_at = _optional_timestamp(item.get("submitted_at"), "review.submitted_at")
     if state.upper() == "PENDING" and submitted_at is None:
         return None
     if submitted_at is None:
@@ -316,12 +330,13 @@ def _normalize_review_comment(value: Any) -> dict[str, Any]:
         item.get("pull_request_review_id"),
         "review_comment.pull_request_review_id",
     )
+    _timestamp(item.get("created_at"), "review_comment.created_at")
     body, truncated = _bounded_body(item.get("body"))
     return {
         "id": f"github-review-comment-{comment_id}",
         "review_observation_id": f"github-review-{review_id}",
         "reviewer_id": _login(item.get("user"), "review_comment.user"),
-        "observed_at": _text(item.get("updated_at"), "review_comment.updated_at"),
+        "observed_at": _timestamp(item.get("updated_at"), "review_comment.updated_at"),
         "head_commit": _optional_text(item.get("commit_id")),
         "body": body,
         "body_truncated": truncated,
@@ -332,10 +347,11 @@ def _normalize_review_comment(value: Any) -> dict[str, Any]:
 def _normalize_check(value: Any) -> dict[str, Any]:
     item = _mapping(value, "check run")
     check_id = _integer(item.get("id"), "check_run.id")
-    observed_at = _optional_text(item.get("completed_at")) or _text(
-        item.get("started_at"),
-        "check_run.started_at",
-    )
+    started_at = _optional_timestamp(item.get("started_at"), "check_run.started_at")
+    completed_at = _optional_timestamp(item.get("completed_at"), "check_run.completed_at")
+    observed_at = completed_at or started_at
+    if observed_at is None:
+        raise ProviderReadError("check run has no observation timestamp")
     return {
         "id": f"github-check-{check_id}",
         "name": _text(item.get("name"), "check_run.name"),
@@ -362,7 +378,7 @@ def _normalize_pull(value: Any) -> dict[str, Any]:
     }
 
 
-def collect_snapshot(
+def _collect_snapshot_once(
     client: JsonReader,
     *,
     repository: str,
@@ -468,6 +484,54 @@ def collect_snapshot(
     }
 
 
+def collect_snapshot(
+    client: JsonReader,
+    *,
+    repository: str,
+    pull_number: int,
+    observed_at: str | None,
+) -> dict[str, Any]:
+    """Confirm a fixed observation cut with bounded, repeated provider reads.
+
+    This is a current-state read-back, not an atomic historical snapshot or an
+    effect fence. Every source is reread after the cut before claiming complete
+    coverage. Continued change, or a cut ahead of the local clock, fails closed.
+    """
+    previous: dict[str, Any] | None = None
+    for attempt in range(1, _MAX_COLLECTION_PASSES + 1):
+        read_started_at = _now()
+        snapshot = _collect_snapshot_once(
+            client,
+            repository=repository,
+            pull_number=pull_number,
+            observed_at=observed_at,
+        )
+        if (
+            previous is not None
+            and snapshot == previous
+            and parse_rfc3339(read_started_at)
+            >= parse_rfc3339(snapshot["observed_at"])
+        ):
+            snapshot["collection"] = {
+                "status": "STABLE_READBACK",
+                "passes": attempt,
+                "confirming_read_started_at": read_started_at,
+            }
+            return snapshot
+        previous = snapshot
+        observed_at = snapshot["observed_at"]
+
+    for coverage in snapshot["coverage"].values():
+        if coverage["status"] == "COMPLETE":
+            coverage["status"] = "PARTIAL"
+            coverage["reason"] = "unstable_observation_cut"
+    snapshot["collection"] = {
+        "status": "UNSTABLE_READBACK",
+        "passes": _MAX_COLLECTION_PASSES,
+    }
+    return snapshot
+
+
 def _projection_key(projection: dict[str, Any]) -> tuple[Any, int, int]:
     observation = projection.get("observation")
     if not isinstance(observation, dict):
@@ -570,6 +634,12 @@ def publish_entry(
     entry: dict[str, Any],
 ) -> dict[str, Any]:
     pull_number = _integer(entry.get("pull_number"), "entry.pull_number")
+    if entry.get("collection_status") == "UNAVAILABLE":
+        return {
+            "pull_number": pull_number,
+            "published": False,
+            "reason": "PROVIDER_SUBJECT_UNAVAILABLE",
+        }
     collected_head = _sha(entry.get("head_sha"), "entry.head_sha")
     body = _text(entry.get("body"), "entry.body")
     candidate_projection = parse_projection_comment(body)
@@ -711,12 +781,26 @@ def _collect_entry(
         render_projection,
     )
 
-    snapshot = collect_snapshot(
-        client,
-        repository=repository,
-        pull_number=pull_number,
-        observed_at=None,
-    )
+    try:
+        snapshot = collect_snapshot(
+            client,
+            repository=repository,
+            pull_number=pull_number,
+            observed_at=None,
+        )
+    except ProviderReadError as exc:
+        return {
+            "pull_number": pull_number,
+            "collection_status": "UNAVAILABLE",
+            "reason": "PROVIDER_SUBJECT_UNAVAILABLE",
+            "coverage": {
+                "subject": {
+                    "status": _error_status(exc, 0),
+                    "pages": 0,
+                    "count": 0,
+                }
+            },
+        }
     protected_revision: str | None = None
     outer: dict[str, Any] | None = None
     try:
@@ -839,7 +923,16 @@ def main(argv: list[str] | None = None) -> int:
             [
                 "## Gnostoa useful L1 collection",
                 "",
-                f"- Pull Requests reconciled: {len(entries)}",
+                f"- Pull Requests attempted: {len(entries)}",
+                *[
+                    f"- PR #{item['pull_number']}: "
+                    + (
+                        "UNAVAILABLE (PROVIDER_SUBJECT_UNAVAILABLE); no projection"
+                        if item.get("collection_status") == "UNAVAILABLE"
+                        else "projection collected; inspect its coverage and R2A state"
+                    )
+                    for item in entries
+                ],
                 "- Projection is non-canonical and binding remains false.",
             ]
         )
