@@ -345,8 +345,8 @@ class UsefulL1RedContractTests(unittest.TestCase):
         self.assertEqual("gitlab", projection["subject"]["provider_id"])
 
         reducer_source = (
-            ROOT / "tools" / "review_reconcile.py"
-        ).read_text(encoding="utf-8").lower()
+            (ROOT / "tools" / "review_reconcile.py").read_text(encoding="utf-8").lower()
+        )
         self.assertNotIn("github", reducer_source)
 
     def test_projection_is_bounded_and_does_not_copy_raw_provider_bodies(self) -> None:
@@ -416,12 +416,11 @@ class UsefulL1RedContractTests(unittest.TestCase):
         }
 
         for source, fail_url in cases.items():
+
             class PartialFake(_PagedFake):
                 def get(self, url: str) -> tuple[Any, dict[str, str]]:
                     if url == fail_url:
-                        raise adapter.ProviderReadError(
-                            "simulated second-page failure"
-                        )
+                        raise adapter.ProviderReadError("simulated second-page failure")
                     return super().get(url)
 
             snapshot = adapter.collect_snapshot(
