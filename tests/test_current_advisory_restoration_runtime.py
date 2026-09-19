@@ -45,9 +45,7 @@ def _named_step(
     steps: list[dict[str, object]], name: str
 ) -> tuple[int, dict[str, object]]:
     matches = [
-        (index, step)
-        for index, step in enumerate(steps)
-        if step.get("name") == name
+        (index, step) for index, step in enumerate(steps) if step.get("name") == name
     ]
     if len(matches) != 1:
         raise AssertionError(f"expected one step named {name!r}, found {len(matches)}")
@@ -98,9 +96,7 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
         self.assertNotIn("permissions", qualify)
         steps = _job_steps(qualify)
 
-        checkout_steps = [
-            step for step in steps if step.get("uses") == CHECKOUT_ACTION
-        ]
+        checkout_steps = [step for step in steps if step.get("uses") == CHECKOUT_ACTION]
         self.assertEqual(2, len(checkout_steps))
         candidate_with = checkout_steps[0].get("with")
         source_with = checkout_steps[1].get("with")
@@ -125,7 +121,7 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
         _, bind = _named_step(steps, "Bind exact integrated source")
         bind_run = _step_run(bind, "source binding")
         for required in (
-            'git -C restoration-source rev-parse HEAD',
+            "git -C restoration-source rev-parse HEAD",
             "git -C restoration-source rev-parse 'HEAD^{tree}'",
             'test "${{ github.event.pull_request.base.sha }}" = "${SOURCE_COMMIT}"',
             "git -C restoration-source status --porcelain",
@@ -248,9 +244,7 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
         self.assertIn("R3 requires separate owner authorization", decision)
 
     def test_r2_surface_is_owned_by_security_and_semantic_guardrails(self) -> None:
-        guardrails = (ROOT / "policy" / "guardrails.yaml").read_text(
-            encoding="utf-8"
-        )
+        guardrails = (ROOT / "policy" / "guardrails.yaml").read_text(encoding="utf-8")
         for required in (
             WORKFLOW_RELATIVE_PATH,
             SMOKE_RELATIVE_PATH,
