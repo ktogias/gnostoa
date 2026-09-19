@@ -561,6 +561,8 @@ guardrails:
       - .github/workflows/review-current-state.yml
     tests:
       - tests/test_review_reconcile_l1.py
+      - tests/test_review_reconcile_l1_followups.py
+      - tests/test_review_reconcile_l1_presentation.py
 
   - id: authoritative-centralized-ci
     title: Centralized CI authoritatively verifies the latest integration candidate
