@@ -306,6 +306,13 @@ class UsefulL1FollowupTests(unittest.TestCase):
                     "verdict": "APPROVED",
                     "when": "2026-09-19T16:40:30Z",
                     "revision": "a" * 40,
+                },
+                {
+                    "token": "decision::opaque-Q2",
+                    "actor": "reviewer::opaque-B",
+                    "verdict": "COMMENTED",
+                    "when": "2026-09-19T16:39:30Z",
+                    "revision": "d" * 40,
                 }
             ],
             "threads": [],
@@ -313,6 +320,9 @@ class UsefulL1FollowupTests(unittest.TestCase):
 
         def translate(document: dict[str, Any]) -> dict[str, Any]:
             proposal = document["proposal"]
+            signals = document.get("signals")
+            checks_available = isinstance(signals, list)
+            native_checks = signals if checks_available else []
             return {
                 "schema_version": reducer.PROVIDER_STATE_SCHEMA_VERSION,
                 "provider": {
@@ -339,9 +349,17 @@ class UsefulL1FollowupTests(unittest.TestCase):
                 "coverage": {
                     "subject": {"status": "COMPLETE", "pages": 1, "count": 1},
                     "conversation": {"status": "COMPLETE", "pages": 1, "count": 0},
-                    "reviews": {"status": "COMPLETE", "pages": 1, "count": 1},
+                    "reviews": {
+                        "status": "COMPLETE",
+                        "pages": 1,
+                        "count": len(document["decisions"]),
+                    },
                     "review_threads": {"status": "COMPLETE", "pages": 1, "count": 0},
-                    "checks": {"status": "UNAVAILABLE", "pages": 0, "count": 0},
+                    "checks": {
+                        "status": "COMPLETE" if checks_available else "UNAVAILABLE",
+                        "pages": 1 if checks_available else 0,
+                        "count": len(native_checks),
+                    },
                 },
                 "conversation": [],
                 "reviews": [
@@ -356,7 +374,24 @@ class UsefulL1FollowupTests(unittest.TestCase):
                     for item in document["decisions"]
                 ],
                 "review_threads": [],
-                "checks": [],
+                "checks": [
+                    {
+                        "id": item["token"],
+                        "name": item["label"],
+                        "head_commit": item["revision"],
+                        "observed_at": item["when"],
+                        "status": "completed" if item["phase"] == "done" else "queued",
+                        "conclusion": (
+                            "success"
+                            if item["result"] == "ok"
+                            else "failure"
+                            if item["result"] == "error"
+                            else None
+                        ),
+                        "source_url": f"urn:nebula:{item['token']}",
+                    }
+                    for item in native_checks
+                ],
             }
 
         snapshot = translate(native)
@@ -396,6 +431,91 @@ class UsefulL1FollowupTests(unittest.TestCase):
             "WAIT_OR_RECONCILE_REQUIRED_EVIDENCE",
             projection["next_permitted_action"],
         )
+
+        full_native = copy.deepcopy(native)
+        full_native["signals"] = [
+            {
+                "token": "signal::opaque-91",
+                "label": "fast",
+                "revision": "a" * 40,
+                "when": "2026-09-19T16:40:40Z",
+                "phase": "done",
+                "result": "ok",
+            }
+        ]
+        native_full = translate(full_native)
+        reference = fixtures._snapshot(
+            provider_id="reference-provider",
+            repository="urn:reference:project:7",
+            change_kind="proposal",
+            change_id="reference::42",
+            source_url="urn:reference:proposal:42",
+        )
+        native_input = reducer.build_review_input(native_full, fixtures._bundle())
+        reference_input = reducer.build_review_input(reference, fixtures._bundle())
+
+        def binding_semantics(document: dict[str, Any]) -> list[tuple[str, str]]:
+            return sorted(
+                (
+                    item["native"]["recommendation_state"],
+                    item["subject_binding"]["status"],
+                )
+                for item in document["evidence_set"]["observations"]
+            )
+
+        self.assertEqual(
+            binding_semantics(reference_input),
+            binding_semantics(native_input),
+        )
+
+        common_result = {
+            "outcome": "PASS",
+            "reason": "QUORUM_SATISFIED",
+            "binding": False,
+        }
+        native_projection = reducer.build_projection(
+            native_full,
+            protected_main_revision="e" * 40,
+            outer_consumer={
+                "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
+                "runtime_revision": "9" * 40,
+            },
+            r2a_result=common_result,
+            execution={
+                "execution_id": "nebula-pipeline::opaque-generation",
+                "observed_at": "2026-09-19T16:41:10Z",
+            },
+        )
+        reference_projection = reducer.build_projection(
+            reference,
+            protected_main_revision="e" * 40,
+            outer_consumer={
+                "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
+                "runtime_revision": "9" * 40,
+            },
+            r2a_result=common_result,
+            execution={
+                "execution_id": "reference-exec::different-native-token",
+                "observed_at": "2026-09-19T16:41:10Z",
+            },
+        )
+        self.assertEqual(
+            reference_projection["currentness"],
+            native_projection["currentness"],
+        )
+        self.assertEqual(
+            reference_projection["next_permitted_action"],
+            native_projection["next_permitted_action"],
+        )
+        self.assertEqual(
+            reference_projection["r2a"],
+            native_projection["r2a"],
+        )
+        for key in ("ambiguous", "pending", "non_success"):
+            self.assertEqual(
+                reference_projection["checks"][key],
+                native_projection["checks"][key],
+            )
 
     def test_native_id_ordering_mutant_is_rejected_by_ambiguity_semantics(self) -> None:
         fixtures = _fixtures()
