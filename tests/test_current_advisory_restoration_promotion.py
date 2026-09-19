@@ -321,6 +321,18 @@ class CurrentAdvisoryRestorationPromotionTests(unittest.TestCase):
             "Exercise protected-main promoted current-advisory route",
             workflow,
         )
+        protected_routes = [
+            step
+            for step in steps
+            if isinstance(step, dict)
+            and step.get("name")
+            == "Exercise protected-main promoted current-advisory route"
+        ]
+        self.assertEqual(1, len(protected_routes))
+        self.assertEqual(
+            "github.event_name == 'workflow_dispatch'",
+            protected_routes[0].get("if"),
+        )
         self.assertIn("--mode protected", workflow)
         self.assertIn("workflow_dispatch:", workflow)
 

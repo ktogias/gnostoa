@@ -48,6 +48,7 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
 
       - name: Check out exact integrated runtime source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -70,6 +71,11 @@ jobs:
           test "$(git -C restoration-source rev-parse HEAD)" = "${SOURCE_COMMIT}"
           test "$(git -C restoration-source rev-parse 'HEAD^{tree}')" = "${SOURCE_TREE}"
           test -z "$(git -C restoration-source status --porcelain)"
+          protected_main="${{ github.event.pull_request.base.sha || github.sha }}"
+          git merge-base --is-ancestor "${SOURCE_COMMIT}" "${protected_main}" || {
+            echo "restoration source is not an ancestor of protected main" >&2
+            exit 1
+          }
           # SOURCE_COMMIT is the immutable runtime subject, not the moving PR base.
           # Later restoration/trust PRs deliberately run on descendants of that
           # source while requalifying the same exact runtime bytes.

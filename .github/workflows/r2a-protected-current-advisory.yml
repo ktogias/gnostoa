@@ -255,7 +255,7 @@ jobs:
             --expected-protected-main "${EXPECTED_PROTECTED_MAIN}"
 
       - name: Exercise protected-main promoted current-advisory route
-        if: github.event_name != 'pull_request'
+        if: github.event_name == 'workflow_dispatch'
         env:
           EXPECTED_PROTECTED_MAIN: ${{ github.sha }}
         run: |

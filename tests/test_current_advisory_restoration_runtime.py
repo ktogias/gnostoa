@@ -149,6 +149,7 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
             "${{ github.event.pull_request.head.sha || github.sha }}",
             candidate_with.get("ref"),
         )
+        self.assertEqual("0", candidate_with.get("fetch-depth"))
         self.assertEqual("false", source_with.get("persist-credentials"))
         self.assertEqual("${{ env.SOURCE_COMMIT }}", source_with.get("ref"))
         self.assertEqual("restoration-source", source_with.get("path"))
@@ -164,6 +165,9 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
             "git -C restoration-source rev-parse HEAD",
             "git -C restoration-source rev-parse 'HEAD^{tree}'",
             "git -C restoration-source status --porcelain",
+            'protected_main="${{ github.event.pull_request.base.sha || github.sha }}"',
+            'git merge-base --is-ancestor "${SOURCE_COMMIT}" "${protected_main}"',
+            "restoration source is not an ancestor of protected main",
             "SOURCE_COMMIT is the immutable runtime subject",
         ):
             self.assertIn(required, bind_run)
