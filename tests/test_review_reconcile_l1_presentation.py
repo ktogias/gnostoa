@@ -87,8 +87,7 @@ class UsefulL1PresentationTests(unittest.TestCase):
             outer_consumer=None,
             r2a_result={"reason": "TEST_UNAVAILABLE"},
             execution={
-                "run_id": 200,
-                "run_attempt": 1,
+                "execution_id": "presentation-test::opaque-execution",
                 "observed_at": "2026-09-19T16:41:00Z",
             },
         )
