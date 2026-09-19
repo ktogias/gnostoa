@@ -90,7 +90,12 @@ provider-neutral internal snapshot with these normalized concepts:
 - conversation coverage;
 - semantic-review observations;
 - review-thread observations;
-- exact-head check observations.
+- exact-head check observations with explicit observation timestamps.
+
+Provider-native IDs are opaque identities, not ordering primitives. Adapters must
+normalize freshness/order evidence explicitly; the core chooses current check
+state by observation time rather than assuming GitHub-, GitLab- or other
+provider-specific ID ordering.
 
 Each provider adapter owns translation from its native API into that internal
 shape and owns any provider-specific projection write. Adding another provider
@@ -167,12 +172,14 @@ The projection is non-canonical and must visibly declare:
 - next permitted action or explicit wait/block;
 - workflow execution generation.
 
-Before any comment create/update, reacquire the Pull Request head and re-read
-the prior projection. Refuse publication when:
+Before any comment create/update, reacquire the change-request head and re-read
+the prior provider projection. Refuse publication when:
 
-- the PR head changed since collection;
-- the PR is closed/merged when the projection expects open work;
-- a retained projection names a later observation cut/execution generation.
+- the head changed since collection;
+- the change request is closed/merged when the projection expects open work;
+- a retained projection names a later observation cut/execution generation; or
+- more than one valid marker-owned projection exists, because the single-comment
+  ownership invariant is then ambiguous.
 
 This rejects stale writes that are already observable at the pre-write
 read-back. It does **not** claim an atomic or exactly-once publication fence:
