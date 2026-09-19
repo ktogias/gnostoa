@@ -415,16 +415,23 @@ class UsefulL1RedContractTests(unittest.TestCase):
             "checks": "https://api.github.com/page2/check-runs",
         }
 
+        class PartialFake(_PagedFake):
+            def __init__(
+                self,
+                replies: dict[str, tuple[Any, dict[str, str]]],
+                failing_url: str,
+            ) -> None:
+                super().__init__(replies)
+                self.failing_url = failing_url
+
+            def get(self, url: str) -> tuple[Any, dict[str, str]]:
+                if url == self.failing_url:
+                    raise adapter.ProviderReadError("simulated second-page failure")
+                return super().get(url)
+
         for source, fail_url in cases.items():
-
-            class PartialFake(_PagedFake):
-                def get(self, url: str) -> tuple[Any, dict[str, str]]:
-                    if url == fail_url:
-                        raise adapter.ProviderReadError("simulated second-page failure")
-                    return super().get(url)
-
             snapshot = adapter.collect_snapshot(
-                PartialFake(_complete_replies(root)),
+                PartialFake(_complete_replies(root), fail_url),
                 repository="ktogias/gnostoa",
                 pull_number=300,
                 observed_at="2026-09-19T16:41:00Z",
