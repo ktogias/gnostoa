@@ -15,7 +15,7 @@ sources:
     title: Owner admission — bounded useful L1 slice
   - id: decision
     resource: /decisions/0086-implement-useful-l1-as-protected-source-github-current-state-reconciler.md
-    title: Implement useful L1 as a protected-source GitHub current-state reconciler
+    title: Implement useful L1 as provider-neutral current-state reconciliation with a GitHub adapter
 x-project-knowledge:
   id: kit.assessment.15-useful-l1-current-state-reconciliation-execution-plan
   owners:
@@ -71,6 +71,7 @@ code or inventing semantic authority.
 3. `.github/workflows/review-current-state.yml`
    - protected-source `workflow_run`, hourly schedule and default-branch `repository_dispatch` recovery;
    - minimum token permissions;
+   - bounded collect→publish transfer sized below the provider job-output limit after encoding;
    - per-PR concurrency for liveness only;
    - Actions summary plus bounded projection publication.
 
