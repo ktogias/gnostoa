@@ -182,6 +182,24 @@ class CurrentAdvisoryRestorationPromotionTests(unittest.TestCase):
         command.assert_not_called()
         docker.assert_not_called()
 
+    def test_r4_promotion_smoke_uses_a_fresh_observation_cut(self) -> None:
+        cut = "2026-09-19T11:45:00Z"
+        inner = ProtectedMainDocument(
+            protected_main_revision="a" * 40,
+            document={
+                "authority": {},
+                "acquired_judge": {},
+                "qualification_snapshot": {},
+            },
+        )
+        with mock.patch.object(promotion_smoke, "_now", return_value=cut):
+            document = promotion_smoke._synthetic_input(inner)
+
+        self.assertEqual(cut, document["subject"]["observed_at"])
+        evidence = document["evidence_set"]
+        self.assertEqual(cut, evidence["observed_at"])
+        self.assertEqual(cut, evidence["sources"][0]["observed_at"])
+
     def test_r4_protected_smoke_executes_the_revision_checked_authority(self) -> None:
         expected_main = "a" * 40
         advanced_main = "b" * 40

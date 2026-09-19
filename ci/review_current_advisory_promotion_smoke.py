@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -19,8 +20,13 @@ def _load_json(path: Path) -> dict[str, Any]:
     return value
 
 
+def _now() -> str:
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 def _synthetic_input(protected_bundle: ProtectedMainDocument) -> dict[str, Any]:
     bundle = protected_bundle.document
+    observed_at = _now()
     return {
         "schema_version": "1.0",
         "subject": {
@@ -31,7 +37,7 @@ def _synthetic_input(protected_bundle: ProtectedMainDocument) -> dict[str, Any]:
             },
             "head_commit": "c" * 40,
             "comparison": {"kind": "merge_base", "commit_sha": "d" * 40},
-            "observed_at": "2026-09-19T00:00:00Z",
+            "observed_at": observed_at,
         },
         "evaluation_context": {
             "mode": "current_advisory",
@@ -42,12 +48,12 @@ def _synthetic_input(protected_bundle: ProtectedMainDocument) -> dict[str, Any]:
         "authority": copy.deepcopy(bundle["authority"]),
         "acquired_judge": copy.deepcopy(bundle["acquired_judge"]),
         "evidence_set": {
-            "observed_at": "2026-09-19T00:00:00Z",
+            "observed_at": observed_at,
             "sources": [
                 {
                     "source_id": "retained-review-evidence",
                     "status": "COMPLETE",
-                    "observed_at": "2026-09-19T00:00:00Z",
+                    "observed_at": observed_at,
                 }
             ],
             "observations": [],
