@@ -208,7 +208,10 @@ The projection is non-canonical and must visibly declare:
 - workflow execution generation.
 
 Before any comment create/update, reacquire the change-request head and re-read
-the prior provider projection. Refuse publication when:
+the prior provider projection. The candidate projection must also name the exact
+target provider, repository, change-request kind/id and collected head; a
+same-head projection for another change request is not publishable. Refuse
+publication when:
 
 - the head changed since collection;
 - the change request is closed/merged when the projection expects open work;
@@ -341,10 +344,18 @@ This Decision does not:
 
 Provider incompleteness, current-head drift, missing protected authority,
 unavailable protected runtime or R2A incompleteness must produce truthful
-diagnostic state and no positive-permission claim. When the provider subject is
-known but protected authority/runtime acquisition is unavailable, the projection
-retains that subject and explicitly reports protected status `UNAVAILABLE`
-rather than aborting the whole reconciliation or inventing identities.
+diagnostic state and no positive-permission claim. A consumed R2A semantic result
+is retained as **observed evidence**, but it is not presented as the current
+projection result when the provider subject is closed or any required provider
+coverage is incomplete. In that state the current projection reports
+`NON_CURRENT / UNAVAILABLE / PROVIDER_STATE_INCOMPLETE`; an observed
+`PASS|BLOCKED|INCOMPLETE|CONFLICTING` remains nested diagnostic provenance,
+not a present semantic verdict.
+
+When the provider subject is known but protected authority/runtime acquisition is
+unavailable, the projection retains that subject and explicitly reports
+protected status `UNAVAILABLE` rather than aborting the whole reconciliation
+or inventing identities.
 
 When PR metadata or comparison acquisition cannot establish the exact subject,
 retain an explicit per-PR `UNAVAILABLE / PROVIDER_SUBJECT_UNAVAILABLE` diagnostic
