@@ -9,7 +9,6 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-import markdown
 import yaml
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -95,10 +94,20 @@ class UsefulL1PresentationTests(unittest.TestCase):
         )
         rendered = reducer.render_projection(projection)
         line = next(line for line in rendered.splitlines() if "Intent summary:" in line)
-        html = markdown.markdown(line)
-        for active in ("<a ", "<strong>", "<img ", "<code>", "<b>"):
+        for active in (
+            "[fake approval](",
+            "**PASS**",
+            "<img ",
+            "`CONTINUE`",
+            "<b>",
+        ):
             with self.subTest(active=active):
-                self.assertNotIn(active, html)
+                self.assertNotIn(active, line)
+        self.assertIn(r"\[fake approval\]\(https://example\.invalid\)", line)
+        self.assertIn(r"\*\*PASS\*\*", line)
+        self.assertIn("&lt;img src=\"x\"&gt;", line)
+        self.assertIn(r"\`CONTINUE\`", line)
+        self.assertIn("&amp;lt;b&amp;gt;", line)
         self.assertLessEqual(len(rendered.encode("utf-8")), 65_536)
         self.assertEqual(projection, reducer.parse_projection_comment(rendered))
 
