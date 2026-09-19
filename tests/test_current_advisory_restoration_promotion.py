@@ -41,7 +41,7 @@ PUBLISHER_MAIN = "d097f166a2a6a43e7c963b27aeadd91217e19ac7"  # pragma: allowlist
 WORKFLOW_RUN = "35436003854"
 ATTESTATION_ID = "48625673"
 REKOR_LOG_INDEX = "2892075330"
-RECEIPT = "https://github.com/ktogias/gnostoa/issues/275#issuecomment-5740935145"
+RECEIPT = "https://github.com/ktogias/gnostoa/issues/11#issuecomment-5741025232"
 
 EXPECTED_CONSUMER = {
     "role": "current_advisory_outer_consumer",
