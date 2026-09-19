@@ -307,6 +307,7 @@ def main() -> int:
                     [
                         "run",
                         "--rm",
+                        "--interactive",
                         "--pull=never",
                         "--network",
                         "none",
