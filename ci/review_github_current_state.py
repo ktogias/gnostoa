@@ -268,6 +268,12 @@ def _sha(value: Any, label: str) -> str:
     return rendered
 
 
+def _optional_sha(value: Any, label: str) -> str | None:
+    if value is None:
+        return None
+    return _sha(value, label)
+
+
 def _login(value: Any, label: str) -> str:
     user = _mapping(value, label)
     return _text(user.get("login"), f"{label}.login")
@@ -319,7 +325,7 @@ def _normalize_review(value: Any) -> dict[str, Any] | None:
         "reviewer_id": _login(item.get("user"), "review.user"),
         "recommendation_state": state,
         "observed_at": submitted_at,
-        "head_commit": _optional_text(item.get("commit_id")),
+        "head_commit": _optional_sha(item.get("commit_id"), "review.commit_id"),
         "source_url": _optional_text(item.get("html_url")),
     }
 
@@ -338,7 +344,10 @@ def _normalize_review_comment(value: Any) -> dict[str, Any]:
         "review_observation_id": f"github-review-{review_id}",
         "reviewer_id": _login(item.get("user"), "review_comment.user"),
         "observed_at": _timestamp(item.get("updated_at"), "review_comment.updated_at"),
-        "head_commit": _optional_text(item.get("commit_id")),
+        "head_commit": _optional_sha(
+            item.get("commit_id"),
+            "review_comment.commit_id",
+        ),
         "body": body,
         "body_truncated": truncated,
         "source_url": _optional_text(item.get("html_url")),
@@ -789,12 +798,32 @@ def _open_pull_numbers(
     )
     if coverage["status"] != "COMPLETE":
         raise ProviderReadError("open Pull Request enumeration is incomplete")
-    numbers = [item["number"] for item in pulls]
-    if len(numbers) > _MAX_OPEN_PULLS:
+    return sorted({item["number"] for item in pulls})
+
+
+def _select_scheduled_pull_batch(
+    pull_numbers: list[int],
+    observed_at: str,
+) -> list[int]:
+    try:
+        observed = parse_rfc3339(observed_at)
+    except ValueError as exc:
         raise ProviderReadError(
-            "open Pull Request population exceeds the bounded reconciliation capacity"
-        )
-    return numbers
+            "scheduled reconciliation time must be valid RFC3339"
+        ) from exc
+
+    numbers = sorted(set(pull_numbers))
+    if not numbers:
+        return []
+    if any(type(number) is not int or number <= 0 for number in numbers):
+        raise ProviderReadError("scheduled Pull Request population is invalid")
+    if len(numbers) <= _MAX_OPEN_PULLS:
+        return numbers
+
+    batch_count = (len(numbers) + _MAX_OPEN_PULLS - 1) // _MAX_OPEN_PULLS
+    batch_index = int(observed.timestamp() // 3600) % batch_count
+    start = batch_index * _MAX_OPEN_PULLS
+    return numbers[start : start + _MAX_OPEN_PULLS]
 
 
 def _now() -> str:
@@ -968,7 +997,10 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         if not pulls:
-            pulls = _open_pull_numbers(client, args.repository)
+            pulls = _select_scheduled_pull_batch(
+                _open_pull_numbers(client, args.repository),
+                _now(),
+            )
         if len(pulls) > _MAX_OPEN_PULLS:
             raise SystemExit(
                 "selected Pull Request population exceeds bounded reconciliation capacity"
