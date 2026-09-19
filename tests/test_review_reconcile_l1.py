@@ -917,6 +917,27 @@ class UsefulL1RedContractTests(unittest.TestCase):
             ):
                 adapter._load_payload(path)
 
+    def test_workflow_run_preserves_all_associated_pull_requests(self) -> None:
+        adapter = _adapter()
+        payload = json.dumps(
+            [
+                {"number": 301},
+                {"number": 302},
+                {"number": 301},
+            ]
+        )
+        self.assertEqual(
+            [301, 302],
+            adapter._workflow_run_pull_numbers(payload),
+        )
+        self.assertEqual([], adapter._workflow_run_pull_numbers(""))
+        self.assertEqual([], adapter._workflow_run_pull_numbers("null"))
+        with self.assertRaisesRegex(
+            adapter.ProviderReadError,
+            "workflow_run.pull_requests",
+        ):
+            adapter._workflow_run_pull_numbers(json.dumps([{"number": 0}]))
+
     def test_workflow_is_protected_source_and_least_privilege(self) -> None:
         self.assertTrue(WORKFLOW_PATH.is_file(), "L1_WORKFLOW_UNAVAILABLE")
         text = WORKFLOW_PATH.read_text(encoding="utf-8")
@@ -931,6 +952,16 @@ class UsefulL1RedContractTests(unittest.TestCase):
         self.assertIn("300_000", text)
         self.assertNotIn("600_000", text)
         self.assertEqual({}, workflow.get("permissions"))
+
+        concurrency = workflow.get("concurrency")
+        self.assertIsInstance(concurrency, dict)
+        self.assertIs(False, concurrency.get("cancel-in-progress"))
+        self.assertNotIn("pull_requests[0]", text)
+        self.assertIn(
+            "toJSON(github.event.workflow_run.pull_requests)",
+            text,
+        )
+        self.assertIn("--workflow-run-pulls-json", text)
 
         jobs = workflow.get("jobs")
         self.assertIsInstance(jobs, dict)
