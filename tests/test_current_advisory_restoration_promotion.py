@@ -94,7 +94,7 @@ class CurrentAdvisoryRestorationPromotionTests(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            "5c51c34e3a591c43707a108674eed3a6b77b0ce82516c18ed95bf4470db2eebf",
+            "5c51c34e3a591c43707a108674eed3a6b77b0ce82516c18ed95bf4470db2eebf",  # pragma: allowlist secret -- reviewed protected-authority content digest
             expected,
         )
 
