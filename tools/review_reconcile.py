@@ -430,11 +430,29 @@ def build_projection(
         raw_reason = r2a_result.get("reason")
         reason = raw_reason if isinstance(raw_reason, str) and raw_reason else "NOT_RUN"
 
+    observed_r2a = {
+        "status": r2a_status,
+        "outcome": semantic_outcome,
+        "reason": reason,
+        "binding": False,
+    }
     complete = all(item["status"] == "COMPLETE" for item in coverage.values())
+    provider_current = provider_subject["state"] == "open" and complete
     currentness = (
         "CURRENT_AT_OBSERVATION"
-        if provider_subject["state"] == "open" and complete
+        if provider_current
         else "INCOMPLETE_AT_OBSERVATION"
+    )
+    projection_r2a = (
+        observed_r2a
+        if provider_current
+        else {
+            "status": "NON_CURRENT",
+            "outcome": "UNAVAILABLE",
+            "reason": "PROVIDER_STATE_INCOMPLETE",
+            "binding": False,
+            "observed": observed_r2a,
+        }
     )
     checks = _check_summary(snapshot, provider_subject["head_commit"])
     if provider_subject["state"] != "open" or not complete:
@@ -469,12 +487,7 @@ def build_projection(
             "outer_runtime_image": runtime_image,
             "outer_runtime_revision": runtime_revision,
         },
-        "r2a": {
-            "status": r2a_status,
-            "outcome": semantic_outcome,
-            "reason": reason,
-            "binding": False,
-        },
+        "r2a": projection_r2a,
         "currentness": currentness,
         "next_permitted_action": next_action,
         "observation": {
