@@ -5,7 +5,20 @@
   "repository": "ktogias/gnostoa",
   "observation_cut": {
     "protected_main_sha": "e2b29e820117b9780a9168ab8709026b40975105",
-    "note": "This retained normalized snapshot is the reproducibility source for provider-derived L0-lite counts. Live GitHub URLs remain provenance/audit routes, not frozen measurement inputs."
+    "note": "This retained normalized snapshot is the reproducibility source for provider-derived L0-lite counts. Live GitHub URLs remain provenance/audit routes, not frozen measurement inputs.",
+    "protected_main_readback": {
+      "source_url": "https://api.github.com/repos/ktogias/gnostoa/branches/main",
+      "branch_name": "main",
+      "observed_head_sha": "e2b29e820117b9780a9168ab8709026b40975105",
+      "protected": true,
+      "required_status_check_contexts": [
+        "policy",
+        "fast",
+        "regression",
+        "smoke"
+      ],
+      "note": "Normalized provider branch read-back retained in this immutable candidate artifact; the live endpoint is provenance only."
+    }
   },
   "extraction_rules": {
     "commits": "All entries returned by the PR commits endpoint with per_page=100. Both selected PRs have fewer than 100 commits.",
