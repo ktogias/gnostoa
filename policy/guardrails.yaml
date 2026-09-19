@@ -1,4 +1,4 @@
-version: "0.16.0"
+version: "0.17.0"
 guardrails:
   - id: prior-art-before-self-change
     title: Gnostoa self-changes reuse applicable alternatives and license research before custom work
@@ -496,6 +496,7 @@ guardrails:
       - knowledge/decisions/0083-qualify-integrated-current-advisory-restoration-runtime.md
       - knowledge/decisions/0084-publish-current-advisory-restoration-runtime-by-digest.md
       - knowledge/decisions/0085-promote-current-advisory-restoration-runtime.md
+      - knowledge/decisions/0086-implement-useful-l1-as-protected-source-github-current-state-reconciler.md
       - ci/review_b15_runtime_smoke.py
       - ci/review_b16_entrypoint_smoke.py
       - ci/review_outer_smoke.py
@@ -510,10 +511,13 @@ guardrails:
       - tools/review_live.py
       - tools/review_live_entrypoint.py
       - tools/review_outer.py
+      - tools/review_reconcile.py
+      - ci/review_github_current_state.py
       - tools/cli.py
       - .github/workflows/r2a-protected-current-advisory.yml
       - .github/workflows/verify-r2a-current-advisory-restoration-runtime.yml
       - .github/workflows/publish-current-advisory-restoration-runtime.yml
+      - .github/workflows/review-current-state.yml
       - ci/review_current_advisory_restoration_smoke.py
       - ci/review_current_advisory_promotion_smoke.py
       - .github/workflows/publish-r2a-p2b-oci.yml
@@ -541,6 +545,7 @@ guardrails:
       - tests/test_current_advisory_restoration_runtime.py
       - tests/test_current_advisory_restoration_publication.py
       - tests/test_current_advisory_restoration_promotion.py
+      - tests/test_review_reconcile_l1.py
       - ci/review_b15_runtime_smoke.py
       - ci/review_b16_entrypoint_smoke.py
       - ci/review_live_smoke.py
@@ -615,9 +620,11 @@ guardrails:
       - .github/workflows/publish-r2a-p2b-oci.yml
       - .github/workflows/verify-r2a-current-advisory-restoration-runtime.yml
       - .github/workflows/publish-current-advisory-restoration-runtime.yml
+      - .github/workflows/review-current-state.yml
       - ci/github-actions.yml
       - ci/gitlab-ci.yml
       - ci/security_scan.py
+      - ci/review_github_current_state.py
       - ci/verify
       - .gitlab-ci.yml
       - guidance/reference/continuous-integration-contract.md
@@ -632,6 +639,7 @@ guardrails:
       - tests/test_protected_pipe_setup_cleanup.py
       - tests/test_protected_finalizer_errors.py
       - tests/test_security_review_followup.py
+      - tests/test_review_reconcile_l1.py
       - tests/test_tools.py::PublicationBaselineTests.test_ghcr_publication_workflow_is_exact_and_write_once
       - tests/test_r2a_p2b_bootstrap_publication.py::R2AP2bBootstrapPublicationTests.test_bootstrap_publication_has_decision_and_guardrail_ownership
       - tests/test_r2a_p2b_b1_publication.py::R2AP2bB1PublicationTests.test_b1_materialization_is_governed_and_declared
