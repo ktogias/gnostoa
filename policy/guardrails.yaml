@@ -513,9 +513,6 @@ guardrails:
       - .github/workflows/verify-r2a-current-advisory-restoration-runtime.yml
       - ci/review_current_advisory_restoration_smoke.py
       - .github/workflows/publish-r2a-p2b-oci.yml
-      - .github/workflows/verify-r2a-current-advisory-restoration-runtime.yml
-      - knowledge/decisions/0083-qualify-integrated-current-advisory-restoration-runtime.md
-      - ci/review_current_advisory_restoration_smoke.py
     tests:
       - tests/test_review_assurance.py
       - tests/test_review_assurance_integration.py
