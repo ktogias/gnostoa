@@ -151,8 +151,11 @@ Missing pages, API failures or ambiguous currentness remain explicit
 
 Timestamp fields are validated as RFC3339 during provider normalization. A
 malformed timestamp yields source ERROR on the first page or PARTIAL after
-retained pages; it cannot escape as an uncaught date parser error or silently
-fall back to another timestamp.
+retained pages; it cannot escape as an uncaught date parser error. A valid
+queued/waiting check that has not yet received provider `started_at` or
+`completed_at` uses the retained collection cut as its observation timestamp
+and remains an explicit pending check rather than turning the whole check source
+into ERROR.
 
 A single sequential sweep cannot prove that early sources cover a later
 observation cut. The adapter therefore performs at most three complete bounded
@@ -166,6 +169,13 @@ This bounded stable read-back is not an atomic historical snapshot: provider
 history, transient changes between reads, and changes after the retained cut are
 not reconstructed. It does not create a transactional provider or L2 effect
 fence. Repeated reads may cost up to three times a single bounded sweep.
+
+The scheduled open-PR sweep admits at most **8** Pull Requests per execution.
+Combined with the 32,768-byte per-projection renderer cap, this keeps the
+worst-case JSON transfer below the 300,000-byte raw collect→publish bound and
+therefore below the GitHub job-output limit after base64 encoding. A larger
+population fails closed and is retried through later bounded wake-ups; it is not
+silently truncated.
 
 ### Reducer and R2A composition
 
