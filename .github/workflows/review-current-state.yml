@@ -76,7 +76,7 @@ jobs:
           payload_path = Path(sys.argv[1])
           output_path = Path(sys.argv[2])
           raw = payload_path.read_bytes()
-          if len(raw) > 600_000:
+          if len(raw) > 300_000:
               raise SystemExit("L1 publication payload exceeds workflow-output bound")
           encoded = base64.urlsafe_b64encode(raw).decode("ascii")
           with output_path.open("a", encoding="utf-8") as handle:
@@ -111,7 +111,7 @@ jobs:
 
           encoded = os.environ.get("PAYLOAD_B64", "")
           raw = base64.urlsafe_b64decode(encoded.encode("ascii")) if encoded else b"[]"
-          if len(raw) > 600_000:
+          if len(raw) > 300_000:
               raise SystemExit("L1 publication payload exceeds workflow-output bound")
           Path(sys.argv[1]).write_bytes(raw)
           PY
