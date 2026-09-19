@@ -258,44 +258,47 @@ def _normalize_issue_comment(value: Any) -> dict[str, Any]:
 
 def _normalize_review(value: Any) -> dict[str, Any]:
     item = _mapping(value, "review")
+    review_id = _integer(item.get("id"), "review.id")
     return {
-        "id": _integer(item.get("id"), "review.id"),
-        "author": _login(item.get("user"), "review.user"),
-        "state": _text(item.get("state"), "review.state"),
-        "submitted_at": _text(item.get("submitted_at"), "review.submitted_at"),
-        "commit_id": _optional_text(item.get("commit_id")),
-        "html_url": _optional_text(item.get("html_url")),
+        "observation_id": f"github-review-{review_id}",
+        "reviewer_id": _login(item.get("user"), "review.user"),
+        "recommendation_state": _text(item.get("state"), "review.state"),
+        "observed_at": _text(item.get("submitted_at"), "review.submitted_at"),
+        "head_commit": _optional_text(item.get("commit_id")),
+        "source_url": _optional_text(item.get("html_url")),
     }
 
 
 def _normalize_review_comment(value: Any) -> dict[str, Any]:
     item = _mapping(value, "review comment")
+    comment_id = _integer(item.get("id"), "review_comment.id")
+    review_id = _integer(
+        item.get("pull_request_review_id"),
+        "review_comment.pull_request_review_id",
+    )
     body, truncated = _bounded_body(item.get("body"))
     return {
-        "id": _integer(item.get("id"), "review_comment.id"),
-        "pull_request_review_id": _integer(
-            item.get("pull_request_review_id"),
-            "review_comment.pull_request_review_id",
-        ),
-        "author": _login(item.get("user"), "review_comment.user"),
-        "created_at": _text(item.get("created_at"), "review_comment.created_at"),
-        "updated_at": _text(item.get("updated_at"), "review_comment.updated_at"),
-        "commit_id": _optional_text(item.get("commit_id")),
+        "id": f"github-review-comment-{comment_id}",
+        "review_observation_id": f"github-review-{review_id}",
+        "reviewer_id": _login(item.get("user"), "review_comment.user"),
+        "observed_at": _text(item.get("updated_at"), "review_comment.updated_at"),
+        "head_commit": _optional_text(item.get("commit_id")),
         "body": body,
         "body_truncated": truncated,
-        "html_url": _optional_text(item.get("html_url")),
+        "source_url": _optional_text(item.get("html_url")),
     }
 
 
 def _normalize_check(value: Any) -> dict[str, Any]:
     item = _mapping(value, "check run")
+    check_id = _integer(item.get("id"), "check_run.id")
     return {
-        "id": _integer(item.get("id"), "check_run.id"),
+        "id": f"github-check-{check_id:020d}",
         "name": _text(item.get("name"), "check_run.name"),
-        "head_sha": _sha(item.get("head_sha"), "check_run.head_sha"),
+        "head_commit": _sha(item.get("head_sha"), "check_run.head_sha"),
         "status": _text(item.get("status"), "check_run.status"),
         "conclusion": _optional_text(item.get("conclusion")),
-        "details_url": _optional_text(item.get("details_url")),
+        "source_url": _optional_text(item.get("details_url")),
     }
 
 
@@ -360,30 +363,39 @@ def collect_snapshot(
     )
 
     return {
-        "schema_version": 1,
-        "provider": "github",
-        "repository": repository,
-        "pull_number": pull_number,
+        "schema_version": "gnostoa-review-provider-state/v1",
+        "provider": {
+            "id": "github",
+            "adapter": "gnostoa.github-rest-current-state/v1",
+        },
         "observed_at": observed_at,
         "subject": {
+            "repository": f"https://github.com/{repository}",
+            "change_request": {
+                "kind": "github-pull-request",
+                "id": str(pull_number),
+            },
             "state": pull["state"],
-            "head_sha": pull["head_sha"],
-            "base_sha": pull["base_sha"],
-            "merge_base_sha": merge_base_sha,
-            "html_url": pull["html_url"],
+            "head_commit": pull["head_sha"],
+            "base_commit": pull["base_sha"],
+            "comparison": {
+                "kind": "merge_base",
+                "commit_sha": merge_base_sha,
+            },
+            "source_url": pull["html_url"],
             "title": pull["title"],
         },
         "coverage": {
-            "pull": {"status": "COMPLETE", "pages": 1, "count": 1},
-            "issue_comments": issue_coverage,
+            "subject": {"status": "COMPLETE", "pages": 1, "count": 1},
+            "conversation": issue_coverage,
             "reviews": review_coverage,
-            "review_comments": review_comment_coverage,
-            "check_runs": check_coverage,
+            "review_threads": review_comment_coverage,
+            "checks": check_coverage,
         },
-        "issue_comments": issue_comments,
+        "conversation": issue_comments,
         "reviews": reviews,
-        "review_comments": review_comments,
-        "check_runs": check_runs,
+        "review_threads": review_comments,
+        "checks": check_runs,
     }
 
 
@@ -416,14 +428,14 @@ def publication_decision(
     candidate_subject = candidate_projection.get("subject")
     if (
         not isinstance(candidate_subject, dict)
-        or candidate_subject.get("head_sha") != collected_head
+        or candidate_subject.get("head_commit") != collected_head
     ):
         return False, "CANDIDATE_SUBJECT_MISMATCH"
     if existing_projection is not None:
         existing_subject = existing_projection.get("subject")
         if (
             isinstance(existing_subject, dict)
-            and existing_subject.get("head_sha") == collected_head
+            and existing_subject.get("head_commit") == collected_head
             and _projection_key(existing_projection) >= _projection_key(
                 candidate_projection
             )
@@ -518,7 +530,12 @@ def _open_pull_numbers(
     )
     if coverage["status"] != "COMPLETE":
         raise ProviderReadError("open Pull Request enumeration is incomplete")
-    return [item["number"] for item in pulls[:_MAX_OPEN_PULLS]]
+    numbers = [item["number"] for item in pulls]
+    if len(numbers) > _MAX_OPEN_PULLS:
+        raise ProviderReadError(
+            "open Pull Request population exceeds the bounded reconciliation capacity"
+        )
+    return numbers
 
 
 def _now() -> str:
@@ -596,7 +613,7 @@ def _collect_entry(
     )
     return {
         "pull_number": pull_number,
-        "head_sha": snapshot["subject"]["head_sha"],
+        "head_sha": snapshot["subject"]["head_commit"],
         "body": render_projection(projection),
     }
 
@@ -655,6 +672,10 @@ def main(argv: list[str] | None = None) -> int:
         pulls = list(dict.fromkeys(args.pull_number))
         if not pulls:
             pulls = _open_pull_numbers(client, args.repository)
+        if len(pulls) > _MAX_OPEN_PULLS:
+            raise SystemExit(
+                "selected Pull Request population exceeds bounded reconciliation capacity"
+            )
         entries = [
             _collect_entry(
                 client,
@@ -663,7 +684,7 @@ def main(argv: list[str] | None = None) -> int:
                 run_id=args.run_id,
                 run_attempt=args.run_attempt,
             )
-            for number in pulls[:_MAX_OPEN_PULLS]
+            for number in pulls
         ]
         _write_payload(args.output, entries)
         _summary(
