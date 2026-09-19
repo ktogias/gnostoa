@@ -235,6 +235,23 @@ Before asking the owner to authorize the merge/effect:
 - the exact PR head, exact predecessor and exact provider effect are shown to the
   owner before merge.
 
+## Consequences
+
+- The exact transport-safe runtime source obtains a path to one independently
+  reacquirable, digest-pinned OCI identity without changing production trust in
+  the same transition.
+- Publication evidence becomes separable from R4 authority/compatibility
+  promotion, preserving the prior-effective trust boundary and making rollback
+  and audit attribution explicit.
+- The one-shot authorization fence deliberately trades convenience for safety:
+  an ambiguous provider write cannot be converted into blind rerun authority.
+- R2 local qualification remains valid historical evidence for the qualified
+  source, while R3 adds registry-manifest, attestation and anonymous
+  reacquisition evidence for that same source.
+- Production `current_advisory` remains unavailable after R3 alone; availability
+  changes only after a separately admitted R4 promotion and subsequent R5
+  public-route proof.
+
 ## Stop and successor
 
 **Stop before merge/publication for a separate owner authorization.**
