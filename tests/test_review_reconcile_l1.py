@@ -435,7 +435,6 @@ class UsefulL1RedContractTests(unittest.TestCase):
         self.assertEqual(
             {
                 "contents": "read",
-                "actions": "read",
                 "checks": "read",
                 "pull-requests": "read",
                 "issues": "read",
