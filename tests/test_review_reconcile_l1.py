@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import json
 import unittest
 from pathlib import Path
 from types import ModuleType
@@ -33,49 +34,11 @@ def _adapter() -> ModuleType:
 
 
 def _bundle() -> dict[str, Any]:
-    judge = {
-        "acquisition": "oci",
-        "source_revision": "1" * 40,
-        "public_surface_digest": "sha256:" + "2" * 64,
-        "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "3" * 64,
-        "runtime_revision": "1" * 40,
-        "supported_input_schema_versions": ["1.0"],
-        "status": "accepted",
-    }
-    qualification = {
-        "snapshot_id": "q0-empty",
-        "revision": "1",
-        "qualifying_authority": "issue-10",
-        "observed_at": "2026-09-19T16:40:00Z",
-        "entries": [],
-    }
-    return {
-        "authority": {
-            "subject": {
-                "kind": "gnostoa-protected-main-record",
-                "value": "tasks/issue-11-r2a-current-advisory.json:v1",
-            },
-            "policy_digest": "sha256:" + "4" * 64,
-            "qualification_snapshot_digest": "sha256:" + "5" * 64,
-            "expected_judge": judge,
-        },
-        "policy": {
-            "schema_version": "1.0",
-            "id": "gnostoa-self",
-            "version": "1",
-            "abstract": False,
-            "change_class": "normal",
-            "review_requirement": "required",
-            "review_sources": [],
-            "qualification": {},
-            "quorum": {},
-            "blockers": {},
-            "conflicts": {},
-            "normalization": {},
-        },
-        "qualification_snapshot": qualification,
-        "acquired_judge": judge,
-    }
+    path = ROOT / "tasks" / "issue-11-r2a-current-advisory.json"
+    loaded = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(loaded, dict):
+        raise AssertionError("protected authority fixture must be an object")
+    return loaded
 
 
 def _snapshot() -> dict[str, Any]:
