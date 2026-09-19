@@ -391,6 +391,119 @@ class UsefulL1RedContractTests(unittest.TestCase):
         self.assertNotIn("inline raw finding", rendered)
         self.assertLess(len(rendered.encode("utf-8")), 32_768)
 
+    def test_pass_cannot_continue_with_incomplete_or_closed_provider_state(
+        self,
+    ) -> None:
+        reducer = _reducer()
+        for mutate in ("partial_reviews", "partial_checks", "closed"):
+            snapshot = _snapshot()
+            if mutate == "partial_reviews":
+                snapshot["coverage"]["reviews"]["status"] = "PARTIAL"
+            elif mutate == "partial_checks":
+                snapshot["coverage"]["checks"]["status"] = "PARTIAL"
+            else:
+                snapshot["subject"]["state"] = "closed"
+
+            projection = reducer.build_projection(
+                snapshot,
+                protected_main_revision="e" * 40,
+                outer_consumer={
+                    "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
+                    "runtime_revision": "9" * 40,
+                },
+                r2a_result={
+                    "outcome": "PASS",
+                    "reason": "QUORUM_SATISFIED",
+                    "binding": False,
+                },
+                execution={
+                    "run_id": 126,
+                    "run_attempt": 1,
+                    "observed_at": "2026-09-19T16:41:12Z",
+                },
+            )
+
+            with self.subTest(mutate=mutate):
+                self.assertEqual(
+                    "INCOMPLETE_AT_OBSERVATION",
+                    projection["currentness"],
+                )
+                self.assertEqual(
+                    "WAIT_OR_RECONCILE_REQUIRED_EVIDENCE",
+                    projection["next_permitted_action"],
+                )
+
+    def test_pass_cannot_continue_with_partial_protected_capability(self) -> None:
+        reducer = _reducer()
+        projection = reducer.build_projection(
+            _snapshot(),
+            protected_main_revision="e" * 40,
+            outer_consumer=None,
+            r2a_result={
+                "outcome": "PASS",
+                "reason": "QUORUM_SATISFIED",
+                "binding": False,
+            },
+            execution={
+                "run_id": 127,
+                "run_attempt": 1,
+                "observed_at": "2026-09-19T16:41:13Z",
+            },
+        )
+
+        self.assertEqual("PARTIAL", projection["protected"]["status"])
+        self.assertEqual(
+            "WAIT_FOR_PROTECTED_CAPABILITY",
+            projection["next_permitted_action"],
+        )
+
+    def test_equal_timestamp_conflicting_checks_are_ambiguous(self) -> None:
+        reducer = _reducer()
+        snapshot = _snapshot()
+        snapshot["checks"] = [
+            {
+                "id": "provider-a",
+                "name": "fast",
+                "head_commit": "a" * 40,
+                "observed_at": "2026-09-19T16:41:00Z",
+                "status": "completed",
+                "conclusion": "success",
+            },
+            {
+                "id": "provider-z",
+                "name": "fast",
+                "head_commit": "a" * 40,
+                "observed_at": "2026-09-19T16:41:00Z",
+                "status": "completed",
+                "conclusion": "failure",
+            },
+        ]
+
+        projection = reducer.build_projection(
+            snapshot,
+            protected_main_revision="e" * 40,
+            outer_consumer={
+                "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
+                "runtime_revision": "9" * 40,
+            },
+            r2a_result={
+                "outcome": "PASS",
+                "reason": "QUORUM_SATISFIED",
+                "binding": False,
+            },
+            execution={
+                "run_id": 128,
+                "run_attempt": 1,
+                "observed_at": "2026-09-19T16:41:14Z",
+            },
+        )
+
+        self.assertEqual(["fast"], projection["checks"]["ambiguous"])
+        self.assertEqual(
+            "RECONCILE_PROVIDER_CHECKS",
+            projection["next_permitted_action"],
+        )
+
     def test_check_projection_orders_by_observed_at_not_provider_native_id(
         self,
     ) -> None:
@@ -460,6 +573,53 @@ class UsefulL1RedContractTests(unittest.TestCase):
                 self.assertEqual(2, snapshot["coverage"][source]["pages"])
                 self.assertEqual(2, snapshot["coverage"][source]["count"])
                 self.assertEqual("COMPLETE", snapshot["coverage"][source]["status"])
+
+    def test_pending_github_review_is_omitted_and_marks_coverage_partial(
+        self,
+    ) -> None:
+        adapter = _adapter()
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+        replies = _complete_replies(root)
+        replies[f"{root}/pulls/300/reviews?per_page=100"] = (
+            [
+                {
+                    "id": 10,
+                    "user": {"login": "submitted"},
+                    "state": "APPROVED",
+                    "submitted_at": "2026-09-19T16:40:02Z",
+                    "commit_id": "a" * 40,
+                    "html_url": "https://example.invalid/review/10",
+                },
+                {
+                    "id": 12,
+                    "user": {"login": "pending"},
+                    "state": "PENDING",
+                    "submitted_at": None,
+                    "commit_id": "a" * 40,
+                    "html_url": "https://example.invalid/review/12",
+                },
+            ],
+            {},
+        )
+
+        snapshot = adapter.collect_snapshot(
+            _PagedFake(replies),
+            repository="ktogias/gnostoa",
+            pull_number=300,
+            observed_at="2026-09-19T16:41:00Z",
+        )
+
+        self.assertEqual(1, len(snapshot["reviews"]))
+        self.assertEqual(
+            "github-review-10",
+            snapshot["reviews"][0]["observation_id"],
+        )
+        self.assertEqual("PARTIAL", snapshot["coverage"]["reviews"]["status"])
+        self.assertEqual(1, snapshot["coverage"]["reviews"]["omitted"])
+        self.assertEqual(
+            "unsubmitted_provider_items",
+            snapshot["coverage"]["reviews"]["reason"],
+        )
 
     def test_adapter_reports_partial_collection_for_each_source_page_error(
         self,
@@ -606,14 +766,112 @@ class UsefulL1RedContractTests(unittest.TestCase):
         )
 
         comments = [
-            {"id": 1, "body": reducer.render_projection(first)},
-            {"id": 2, "body": reducer.render_projection(second)},
+            {
+                "id": 1,
+                "author": "github-actions[bot]",
+                "body": reducer.render_projection(first),
+            },
+            {
+                "id": 2,
+                "author": "github-actions[bot]",
+                "body": reducer.render_projection(second),
+            },
         ]
         with self.assertRaisesRegex(
             adapter.ProviderWriteError,
-            "multiple valid L1 projection comments",
+            "multiple valid owned L1 projection comments",
         ):
-            adapter._existing_projection(comments)
+            adapter._existing_projection(
+                comments,
+                repository="ktogias/gnostoa",
+                pull_number=300,
+            )
+
+    def test_projection_ownership_ignores_forged_or_wrong_subject_comments(
+        self,
+    ) -> None:
+        adapter = _adapter()
+        reducer = _reducer()
+
+        legitimate = reducer.build_projection(
+            _snapshot(),
+            protected_main_revision="e" * 40,
+            outer_consumer={
+                "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
+                "runtime_revision": "9" * 40,
+            },
+            r2a_result={
+                "outcome": "INCOMPLETE",
+                "reason": "QUORUM_UNMET",
+                "binding": False,
+            },
+            execution={
+                "run_id": 135,
+                "run_attempt": 1,
+                "observed_at": "2026-09-19T16:41:10Z",
+            },
+        )
+        forged_later = reducer.build_projection(
+            _snapshot(),
+            protected_main_revision="e" * 40,
+            outer_consumer={
+                "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
+                "runtime_revision": "9" * 40,
+            },
+            r2a_result={
+                "outcome": "PASS",
+                "reason": "QUORUM_SATISFIED",
+                "binding": False,
+            },
+            execution={
+                "run_id": 136,
+                "run_attempt": 1,
+                "observed_at": "2026-09-19T16:42:10Z",
+            },
+        )
+        wrong_subject = reducer.build_projection(
+            _snapshot(change_id="999"),
+            protected_main_revision="e" * 40,
+            outer_consumer={
+                "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
+                "runtime_revision": "9" * 40,
+            },
+            r2a_result={
+                "outcome": "INCOMPLETE",
+                "reason": "QUORUM_UNMET",
+                "binding": False,
+            },
+            execution={
+                "run_id": 137,
+                "run_attempt": 1,
+                "observed_at": "2026-09-19T16:43:10Z",
+            },
+        )
+
+        existing = adapter._existing_projection(
+            [
+                {
+                    "id": 1,
+                    "author": "github-actions[bot]",
+                    "body": reducer.render_projection(legitimate),
+                },
+                {
+                    "id": 2,
+                    "author": "mallory",
+                    "body": reducer.render_projection(forged_later),
+                },
+                {
+                    "id": 3,
+                    "author": "github-actions[bot]",
+                    "body": reducer.render_projection(wrong_subject),
+                },
+            ],
+            repository="ktogias/gnostoa",
+            pull_number=300,
+        )
+
+        self.assertIsNotNone(existing)
+        self.assertEqual(1, existing[0])
 
     def test_protected_capability_unavailability_is_projected_not_fabricated(
         self,
