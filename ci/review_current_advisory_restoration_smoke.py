@@ -9,6 +9,7 @@ from typing import Any
 from unittest import mock
 
 from tools import review_outer, review_protected
+from tools.review_current import _checked_output, _run_docker
 from tools.review_model import canonical_json
 from tools.review_protected import ProtectedMainDocument
 
@@ -121,7 +122,7 @@ def _verify_local_candidate(
     if consumer["runtime_revision"] != expected_revision:
         raise RuntimeError("synthetic candidate identity changed revision")
     observed_id = (
-        review_outer._checked_output(
+        _checked_output(
             ["image", "inspect", "--format", "{{.Id}}", candidate_image],
             config_dir=config_dir,
             description="cannot inspect local R2 candidate image id",
@@ -134,7 +135,7 @@ def _verify_local_candidate(
         raise RuntimeError("local R2 candidate image id changed")
 
     observed = (
-        review_outer._checked_output(
+        _checked_output(
             [
                 "image",
                 "inspect",
@@ -156,7 +157,7 @@ def _verify_local_candidate(
         raise RuntimeError("local R2 candidate runtime identity changed")
 
     ids = (
-        review_outer._checked_output(
+        _checked_output(
             [
                 "run",
                 "--rm",
@@ -185,7 +186,7 @@ def _verify_local_candidate(
         raise RuntimeError("local R2 candidate uid/gid changed")
 
     surface = (
-        review_outer._checked_output(
+        _checked_output(
             [
                 "run",
                 "--rm",
@@ -299,7 +300,7 @@ def main() -> int:
         if "-tmp-" in volume_name:
             tmp_volume_checked = True
             try:
-                probe = review_outer._run_docker(
+                probe = _run_docker(
                     [
                         "run",
                         "--rm",
