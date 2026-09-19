@@ -15,6 +15,7 @@ on:
       - "ci/review_live_smoke.py"
       - "ci/review_live_timeout_cleanup.py"
       - "ci/review_outer_smoke.py"
+      - "ci/review_outer_containment_smoke.py"
       - "knowledge/decisions/0070-protect-r2a-b1-outer-consumer-authority-separately.md"
       - "knowledge/decisions/0071-add-docker-client-to-r2a-b1-runtime.md"
       - "knowledge/decisions/0072-materialize-integrated-r2a-p2b-b15-consumer-by-digest.md"
@@ -46,6 +47,7 @@ on:
       - "tests/test_review_assurance_p2b_consumer_authority_red.py"
       - "tests/test_review_assurance_p2b_exit_readback_red.py"
       - "tests/test_review_outer_socket_table_red.py"
+      - "tests/test_review_outer_containment.py"
       - "tools/cli.py"
       - "tools/knowledge_common.py"
       - "tools/review_check.py"
@@ -119,6 +121,7 @@ jobs:
             ci/review_live_smoke.py \
             ci/review_live_timeout_cleanup.py \
             ci/review_outer_smoke.py \
+            ci/review_outer_containment_smoke.py \
             tests/test_r2a_p2b_b16_cubic_followup_red.py \
             tests/test_r2a_p2b_b16_publication.py \
             tests/test_r2a_p2b_b16_reconciliation_fail_closed.py \
@@ -131,7 +134,8 @@ jobs:
             tests/test_review_assurance_p2b_b1_error_paths_red.py \
             tests/test_review_assurance_p2b_consumer_authority_red.py \
             tests/test_review_assurance_p2b_exit_readback_red.py \
-            tests/test_review_outer_socket_table_red.py
+            tests/test_review_outer_socket_table_red.py \
+            tests/test_review_outer_containment.py
           python -m ruff check \
             tools/review_check.py \
             tools/review_current.py \
@@ -143,6 +147,7 @@ jobs:
             ci/review_live_smoke.py \
             ci/review_live_timeout_cleanup.py \
             ci/review_outer_smoke.py \
+            ci/review_outer_containment_smoke.py \
             tests/test_r2a_p2b_b16_cubic_followup_red.py \
             tests/test_r2a_p2b_b16_publication.py \
             tests/test_r2a_p2b_b16_reconciliation_fail_closed.py \
@@ -155,7 +160,8 @@ jobs:
             tests/test_review_assurance_p2b_b1_error_paths_red.py \
             tests/test_review_assurance_p2b_consumer_authority_red.py \
             tests/test_review_assurance_p2b_exit_readback_red.py \
-            tests/test_review_outer_socket_table_red.py
+            tests/test_review_outer_socket_table_red.py \
+            tests/test_review_outer_containment.py
           python -m mypy \
             tools/review_check.py \
             tools/review_current.py \
@@ -167,7 +173,8 @@ jobs:
             tools/review_protected.py \
             ci/review_b15_runtime_smoke.py \
             ci/review_b16_entrypoint_smoke.py \
-            ci/review_outer_smoke.py
+            ci/review_outer_smoke.py \
+            ci/review_outer_containment_smoke.py
 
       # Native execution is an explicit fallback because these tests exercise the
       # host-side lifecycle orchestrator. Candidate bytes may create and clean the
@@ -189,6 +196,7 @@ jobs:
           PYTHONPATH=. python tests/test_review_assurance_p2b_consumer_authority_red.py
           PYTHONPATH=. python tests/test_review_assurance_p2b_exit_readback_red.py
           PYTHONPATH=. python tests/test_review_outer_socket_table_red.py
+          PYTHONPATH=. python tests/test_review_outer_containment.py
 
       - name: Verify inherited pinned Docker client in exact candidate runtime
         run: PYTHONPATH=. python ci/review_b15_runtime_smoke.py
@@ -202,9 +210,12 @@ jobs:
       - name: Verify timed-out protected Docker run cleanup
         run: PYTHONPATH=. python ci/review_live_timeout_cleanup.py
 
-      - name: Exercise promoted OCI(P2b) and reject candidate/stale selectors
+      # Decision 0082 contains the incompatible immutable runtime. This proves
+      # public refusal before Docker, not restored current-advisory evaluation.
+      # ci/review_outer_smoke.py remains historical live/restoration evidence.
+      - name: Verify protected transport containment with live evaluation NOT_RUN
         if: github.event_name == 'pull_request'
         env:
           EXPECTED_PROTECTED_MAIN: ${{ github.event.pull_request.base.sha }}
         run: |
-          PYTHONPATH=. python ci/review_outer_smoke.py --expected-protected-main "${EXPECTED_PROTECTED_MAIN}"
+          PYTHONPATH=. python ci/review_outer_containment_smoke.py --expected-protected-main "${EXPECTED_PROTECTED_MAIN}"

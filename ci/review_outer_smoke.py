@@ -228,7 +228,6 @@ def main(argv: list[str] | None = None) -> int:
         def capture_plan(
             *,
             consumer: dict[str, Any],
-            input_dir: Path,
             socket_volume: str,
             tmp_volume: str,
             daemon_name: str,
@@ -236,7 +235,6 @@ def main(argv: list[str] | None = None) -> int:
         ) -> dict[str, object]:
             plan = original_build_plan(
                 consumer=consumer,
-                input_dir=input_dir,
                 socket_volume=socket_volume,
                 tmp_volume=tmp_volume,
                 daemon_name=daemon_name,

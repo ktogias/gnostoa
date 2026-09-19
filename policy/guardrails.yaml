@@ -466,7 +466,7 @@ guardrails:
       - tests/test_supplied_agent_review_capture.py::SuppliedAgentReviewCaptureTests.test_router_runbook_and_decision_bind_the_capture_anchor
 
   - id: semantic-review-assurance
-    title: Gnostoa self-review assurance is evaluated from bound retained evidence without merge authority
+    title: Gnostoa self-review assurance uses bound retained evidence without merge authority; current_advisory is contained and unavailable
     applies_to: [kit]
     enforcement: hybrid
     owner: team:gnostoa-maintainers
@@ -492,9 +492,11 @@ guardrails:
       - knowledge/decisions/0078-materialize-integrated-r2a-p2b-runtime-by-digest.md
       - knowledge/decisions/0079-promote-r2a-p2b-outer-consumer-authority.md
       - knowledge/decisions/0080-complete-r2a-p2b-rolling-trust-exit-by-negative-readback.md
+      - knowledge/decisions/0082-eliminate-host-persistence-for-protected-review-payloads-and-route-security-gates.md
       - ci/review_b15_runtime_smoke.py
       - ci/review_b16_entrypoint_smoke.py
       - ci/review_outer_smoke.py
+      - ci/review_outer_containment_smoke.py
       - tools/review_adapter_file.py
       - tools/review_model.py
       - tools/review_policy.py
@@ -523,12 +525,18 @@ guardrails:
       - tests/test_review_assurance_p2b_b15_runtime_red.py
       - tests/test_review_assurance_p2b_b16_entrypoint_red.py
       - tests/test_review_assurance_p2b_b2_activation_red.py
+      - tests/test_review_current_payload_transport.py
+      - tests/test_protected_pipe_setup_cleanup.py
+      - tests/test_protected_finalizer_errors.py
+      - tests/test_security_review_followup.py
+      - tests/test_review_outer_containment.py
       - tests/test_r2a_p2b_integrated_materialization.py
       - ci/review_b15_runtime_smoke.py
       - ci/review_b16_entrypoint_smoke.py
       - ci/review_live_smoke.py
       - ci/review_live_timeout_cleanup.py
       - ci/review_outer_smoke.py
+      - ci/review_outer_containment_smoke.py
 
   - id: authoritative-centralized-ci
     title: Centralized CI authoritatively verifies the latest integration candidate
@@ -544,6 +552,7 @@ guardrails:
     tests:
       - tests/test_tools.py::ContinuousIntegrationTests.test_generic_ci_policy_is_authoritative_and_tiered
       - tests/test_tools.py::ContinuousIntegrationTests.test_ci_policy_cannot_weaken_parent
+      - tests/test_review_outer_containment.py::MergeSubjectSecurityTests
 
   - id: declared-tiered-verification
     title: Projects declare capabilities and every active required suite
@@ -586,6 +595,8 @@ guardrails:
     guidance: guidance/workflows/configure-continuous-integration.md#procedure
     implementation:
       - .github/workflows/verification.yml
+      - .github/workflows/branch-advisory.yml
+      - .secrets.baseline
       - .github/workflows/publish-oci.yml
       - .github/workflows/publish-r2a-p2a-bootstrap-oci.yml
       - .github/workflows/publish-r2a-p2b-b1-oci.yml
@@ -594,11 +605,21 @@ guardrails:
       - .github/workflows/publish-r2a-p2b-oci.yml
       - ci/github-actions.yml
       - ci/gitlab-ci.yml
+      - ci/security_scan.py
+      - ci/verify
       - .gitlab-ci.yml
       - guidance/reference/continuous-integration-contract.md
+      - knowledge/assessments/0082-secret-scan-triage-evidence.json
+      - knowledge/decisions/0082-eliminate-host-persistence-for-protected-review-payloads-and-route-security-gates.md
+      - tools/extended_route.py
+      - tools/security_scan.py
     tests:
       - tests/test_tools.py::ContinuousIntegrationTests.test_provider_adapters_cover_candidate_and_integration_events
       - tests/test_tools.py::PublicationBaselineTests.test_github_provider_surface_is_active_and_owned
+      - tests/test_security_gates.py
+      - tests/test_protected_pipe_setup_cleanup.py
+      - tests/test_protected_finalizer_errors.py
+      - tests/test_security_review_followup.py
       - tests/test_tools.py::PublicationBaselineTests.test_ghcr_publication_workflow_is_exact_and_write_once
       - tests/test_r2a_p2b_bootstrap_publication.py::R2AP2bBootstrapPublicationTests.test_bootstrap_publication_has_decision_and_guardrail_ownership
       - tests/test_r2a_p2b_b1_publication.py::R2AP2bB1PublicationTests.test_b1_materialization_is_governed_and_declared

@@ -1,0 +1,60 @@
+name: Gnostoa branch advisory
+
+on:
+  push:
+    branches-ignore: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: branch-advisory-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GNOSTOA_CI_IMAGE: gnostoa-ci:${{ github.sha }}
+
+jobs:
+  branch-advisory-policy:
+    name: branch-advisory-policy
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Build the candidate runtime
+        run: |
+          GNOSTOA_CANDIDATE_REF="${GITHUB_SHA}" \
+          GNOSTOA_KIT_VERSION=0.2.0 \
+            ./ci/build-runtime --tag "${GNOSTOA_CI_IMAGE}"
+      - name: Run advisory policy verification
+        run: |
+          docker run --rm \
+            --entrypoint sh \
+            --mount type=bind,source="${GITHUB_WORKSPACE}",target=/workspace,readonly \
+            --workdir /workspace \
+            "${GNOSTOA_CI_IMAGE}" \
+            -ec './ci/verify policy'
+
+  branch-advisory-fast:
+    name: branch-advisory-fast
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Build the candidate runtime
+        run: |
+          GNOSTOA_CANDIDATE_REF="${GITHUB_SHA}" \
+          GNOSTOA_KIT_VERSION=0.2.0 \
+            ./ci/build-runtime --tag "${GNOSTOA_CI_IMAGE}"
+      - name: Run advisory fast verification
+        run: |
+          docker run --rm \
+            --entrypoint sh \
+            --mount type=bind,source="${GITHUB_WORKSPACE}",target=/workspace,readonly \
+            --workdir /workspace \
+            "${GNOSTOA_CI_IMAGE}" \
+            -ec './ci/verify fast'

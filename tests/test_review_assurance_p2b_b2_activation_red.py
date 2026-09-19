@@ -6,6 +6,7 @@ import inspect
 import io
 import json
 import re
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -179,10 +180,8 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         tmp_volume = "gnostoa-r2a-tmp-test"
         daemon_name = "gnostoa-r2a-daemon-test"
         outer_name = "gnostoa-r2a-outer-test"
-        input_dir = Path("/tmp/gnostoa-r2a-untrusted-input-test")
         plan = build_plan(
             consumer=consumer,
-            input_dir=input_dir,
             socket_volume=socket_volume,
             tmp_volume=tmp_volume,
             daemon_name=daemon_name,
@@ -208,7 +207,11 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         self.assertNotIn(f"{socket_volume}:/var/run", daemon_args)
         self.assertIn(f"{tmp_volume}:/tmp", daemon_args)
         daemon_image_index = daemon_args.index(daemon_image)
+        daemon_log_driver_index = daemon_args.index("--log-driver")
+        self.assertLess(daemon_log_driver_index, daemon_image_index)
+        self.assertEqual("none", daemon_args[daemon_log_driver_index + 1])
         self.assertEqual("dockerd", daemon_args[daemon_image_index + 1])
+        self.assertIn("--log-driver=none", daemon_args[daemon_image_index + 2 :])
         self.assertEqual(
             1, daemon_args.count("--host=unix:///gnostoa-docker/docker.sock")
         )
@@ -217,6 +220,10 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         self.assertNotIn("tcp://0.0.0.0:2376", " ".join(daemon_args))
 
         self.assertIn(P2B_OCI_IMAGE, outer_args)
+        outer_image_index = outer_args.index(P2B_OCI_IMAGE)
+        outer_log_driver_index = outer_args.index("--log-driver")
+        self.assertLess(outer_log_driver_index, outer_image_index)
+        self.assertEqual("none", outer_args[outer_log_driver_index + 1])
         self.assertIn("--read-only", outer_args)
         self.assertIn("--cap-drop", outer_args)
         self.assertIn("ALL", outer_args)
@@ -224,10 +231,17 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         self.assertIn(f"{socket_volume}:/var/run", outer_args)
         self.assertNotIn("/gnostoa-docker", " ".join(outer_args))
         self.assertIn(f"{tmp_volume}:/tmp", outer_args)
-        self.assertIn(
-            f"type=bind,src={input_dir},dst=/gnostoa-input,readonly",
-            outer_args,
+        self.assertNotIn("--mount", outer_args)
+        self.assertIn("--interactive", outer_args)
+        self.assertNotIn("--stdin-once", outer_args)
+        outer_tmpfs_index = outer_args.index("--tmpfs")
+        self.assertEqual(
+            "/gnostoa-input:rw,noexec,nosuid,nodev,size=8m,"
+            "mode=0700,uid=10001,gid=10001",
+            outer_args[outer_tmpfs_index + 1],
         )
+        self.assertEqual("-c", outer_args[outer_image_index + 1])
+        self.assertIn("/gnostoa-input/input.json", outer_args[outer_image_index + 2])
         self.assertNotIn("--privileged", outer_args)
         joined = " ".join(outer_args)
         self.assertNotIn("src=/var/run/docker.sock", joined)
@@ -238,6 +252,198 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
         self.assertEqual(
             P2B_PUBLIC_SURFACE_DIGEST, consumer.get("public_surface_digest")
         )
+
+    def test_hypothetically_admitted_outer_input_uses_bounded_stdin_and_never_a_host_payload_file(
+        self,
+    ) -> None:
+        outer = _load_outer()
+        marker = "OUTER_HOST_PERSISTENCE_SENTINEL_71f4d3"
+        input_document = _current_advisory_input()
+        input_document["candidate_claims"] = {"marker": marker}
+        expected_input = (outer.canonical_json(input_document) + "\n").encode("utf-8")
+        protected = ProtectedMainDocument(
+            protected_main_revision="c" * 40,
+            document=_consumer_authority(),
+        )
+        host_payload_writes: list[Path] = []
+        run_calls: list[tuple[list[str], dict[str, object]]] = []
+        original_write_text = Path.write_text
+        original_write_bytes = Path.write_bytes
+        retained_temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(retained_temporary.cleanup)
+        retained_host_root = Path(retained_temporary.name)
+
+        class RetainedOuterTemporaryDirectory:
+            def __init__(self, *, prefix: str, dir: str) -> None:
+                self.path = retained_host_root / "outer-runtime"
+                self.path.mkdir(mode=0o700)
+                self.asserted_contract = (prefix, dir)
+
+            def __enter__(self) -> str:
+                return str(self.path)
+
+            def __exit__(self, *args: object) -> None:
+                del args
+
+        def observe_write_text(
+            path: Path,
+            data: str,
+            *args: object,
+            **kwargs: object,
+        ) -> int:
+            if marker in data:
+                host_payload_writes.append(path)
+                raise AssertionError("outer review payload reached a host text write")
+            return original_write_text(path, data, *args, **kwargs)
+
+        def observe_write_bytes(
+            path: Path,
+            data: bytes,
+            *args: object,
+            **kwargs: object,
+        ) -> int:
+            if marker.encode("utf-8") in data:
+                host_payload_writes.append(path)
+                raise AssertionError("outer review payload reached a host byte write")
+            return original_write_bytes(path, data, *args, **kwargs)
+
+        def create_volume(
+            name: str,
+            config_dir: Path,
+            owned_volumes: list[str],
+        ) -> str:
+            del config_dir
+            owned_volumes.append(name)
+            return name
+
+        def create_container(
+            arguments: list[str],
+            name: str,
+            config_dir: Path,
+            owned_containers: list[str],
+        ) -> str:
+            del arguments, config_dir
+            owned_containers.append(name)
+            return name
+
+        def run_docker(
+            arguments: list[str],
+            **kwargs: object,
+        ) -> subprocess.CompletedProcess[bytes]:
+            run_calls.append((arguments, kwargs))
+            return subprocess.CompletedProcess(
+                arguments,
+                0,
+                stdout=b"{}\n",
+                stderr=b"",
+            )
+
+        # Simulated lifecycle coverage only: this test-local admission is not a
+        # production compatibility entry or evidence of a safe immutable image.
+        with (
+            mock.patch.object(
+                outer,
+                "_HOST_PERSISTENCE_FREE_CONSUMER_IDENTITIES",
+                frozenset(
+                    {outer.canonical_json(protected.document["acquired_consumer"])}
+                ),
+            ),
+            mock.patch.object(
+                outer,
+                "acquire_gnostoa_current_advisory_consumer",
+                return_value=protected,
+            ),
+            mock.patch.object(Path, "write_text", observe_write_text),
+            mock.patch.object(Path, "write_bytes", observe_write_bytes),
+            mock.patch.object(
+                outer.tempfile,
+                "TemporaryDirectory",
+                RetainedOuterTemporaryDirectory,
+            ),
+            mock.patch.object(outer, "_verify_outer_image"),
+            mock.patch.object(outer, "_checked_output"),
+            mock.patch.object(outer, "_volume_create", side_effect=create_volume),
+            mock.patch.object(outer, "_initialize_tmp_volume"),
+            mock.patch.object(
+                outer,
+                "_container_create",
+                side_effect=create_container,
+            ),
+            mock.patch.object(outer, "_wait_for_daemon"),
+            mock.patch.object(outer, "_verify_daemon_control_plane"),
+            mock.patch.object(outer, "_run_docker", side_effect=run_docker),
+            mock.patch.object(outer, "_decode_outer_result"),
+            mock.patch.object(outer, "_remove_container", return_value=None),
+            mock.patch.object(outer, "_remove_volume", return_value=None),
+        ):
+            code, raw = outer.run_prior_effective_current_advisory(input_document)
+
+        self.assertEqual((0, b"{}\n"), (code, raw))
+        self.assertEqual([], host_payload_writes)
+        for retained_path in retained_host_root.rglob("*"):
+            if retained_path.is_file():
+                self.assertNotIn(
+                    marker.encode("utf-8"),
+                    retained_path.read_bytes(),
+                    retained_path,
+                )
+        attached = [
+            (arguments, kwargs)
+            for arguments, kwargs in run_calls
+            if arguments[:3] == ["start", "--attach", "--interactive"]
+        ]
+        self.assertEqual(1, len(attached))
+        self.assertEqual(expected_input, attached[0][1].get("input_bytes"))
+        self.assertNotIn(
+            marker,
+            " ".join(item for arguments, _ in run_calls for item in arguments),
+        )
+
+    def test_outer_input_bound_precedes_every_docker_or_authority_effect(self) -> None:
+        outer = _load_outer()
+        oversized = {"payload": "x" * 4_194_304}
+        with (
+            mock.patch.object(
+                outer,
+                "acquire_gnostoa_current_advisory_consumer",
+            ) as acquire,
+            mock.patch.object(outer, "_run_docker") as run_docker,
+        ):
+            code, raw = outer.run_prior_effective_current_advisory(oversized)
+
+        payload = json.loads(raw.decode("utf-8"))
+        self.assertEqual(2, code)
+        self.assertEqual("TOOL_ERROR", payload["error"]["code"])
+        self.assertIn("bounded size", payload["error"]["details"]["error"])
+        acquire.assert_not_called()
+        run_docker.assert_not_called()
+
+    def test_recursive_outer_input_failure_precedes_authority_and_docker(self) -> None:
+        outer = _load_outer()
+        input_document: dict[str, object] = {}
+        real_canonical_json = outer.canonical_json
+
+        def canonical_json(document: object) -> str:
+            if document is input_document:
+                raise RecursionError("candidate nesting exceeds the JSON bound")
+            return real_canonical_json(document)
+
+        with (
+            mock.patch.object(outer, "canonical_json", side_effect=canonical_json),
+            mock.patch.object(
+                outer,
+                "acquire_gnostoa_current_advisory_consumer",
+            ) as acquire,
+            mock.patch.object(outer, "_run_docker") as run_docker,
+        ):
+            code, raw = outer.run_prior_effective_current_advisory(input_document)
+
+        payload = json.loads(raw.decode("utf-8"))
+        self.assertEqual(2, code)
+        self.assertEqual("TOOL_ERROR", payload["error"]["code"])
+        self.assertIn("nesting", payload["error"]["details"]["error"])
+        acquire.assert_not_called()
+        run_docker.assert_not_called()
 
     def test_daemon_control_plane_rejects_listening_tcp_ports(self) -> None:
         outer = _load_outer()
@@ -456,13 +662,24 @@ class ReviewAssuranceP2bB2ActivationRedTests(unittest.TestCase):
                 ):
                     outer._decode_outer_result(2, raw)
 
-    def test_tmp_setup_failure_returns_canonical_tool_error(self) -> None:
+    def test_hypothetically_admitted_tmp_setup_failure_returns_canonical_tool_error(
+        self,
+    ) -> None:
         outer = _load_outer()
         protected = ProtectedMainDocument(
             protected_main_revision="c" * 40,
             document=_consumer_authority(),
         )
+        # Simulated lifecycle coverage only: this test-local admission is not a
+        # production compatibility entry or evidence of a safe immutable image.
         with (
+            mock.patch.object(
+                outer,
+                "_HOST_PERSISTENCE_FREE_CONSUMER_IDENTITIES",
+                frozenset(
+                    {outer.canonical_json(protected.document["acquired_consumer"])}
+                ),
+            ),
             mock.patch.object(
                 outer,
                 "acquire_gnostoa_current_advisory_consumer",

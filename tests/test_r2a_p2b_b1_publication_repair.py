@@ -14,7 +14,7 @@ DECISION_PATH = (
     / "0069-materialize-integrated-r2a-p2b-b1-consumer-by-digest.md"
 )
 GUARDRAILS_PATH = ROOT / "policy" / "guardrails.yaml"
-FAILED_PUBLISHER_COMMIT = "8d1ac1812509a2f6beb220b4989ec9b472ff441b"
+FAILED_PUBLISHER_COMMIT = "8d1ac1812509a2f6beb220b4989ec9b472ff441b"  # pragma: allowlist secret -- public failed-publisher commit
 FAILED_RUN_ID = "34842626132"
 FAILURE_RECORD_COMMENT = "5663773822"
 REPAIR_CONTRACT = (

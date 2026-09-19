@@ -21,6 +21,9 @@ case "${suite}" in
     knowledge_cli validate --profile guidance/profile.yaml --bundle guidance
     knowledge_cli validate --profile knowledge/profile.yaml --bundle knowledge
     ;;
+  security-fast)
+    python ci/security_scan.py
+    ;;
   fast)
     python -m unittest discover -s tests -v
     PYTHONPATH=. python tests/test_review_assurance.py
@@ -92,7 +95,7 @@ EOF
     echo "PASS: immutable public linux/amd64 release artifact verified; no rebuild-repeatability claim is made"
     ;;
   *)
-    echo "usage: ./ci/verify {policy|fast|regression|integration|smoke|extended|release}" >&2
+    echo "usage: ./ci/verify {policy|security-fast|fast|regression|integration|smoke|extended|release}" >&2
     exit 2
     ;;
 esac

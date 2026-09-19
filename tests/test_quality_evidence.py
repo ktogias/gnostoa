@@ -22,6 +22,7 @@ from tools.quality_evidence import (
     secret_findings,
 )
 from tools.requirements_lock import LockFormatError
+from tools.security_scan import SecretScanResult
 
 ROOT = Path(__file__).resolve().parent.parent
 TEST_ARTIFACT_HASH = "a" * 64
@@ -498,9 +499,32 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                         ),
                         encoding="utf-8",
                     )
-                elif command[2] == "detect_secrets":
-                    json.dump({"results": {}}, stdout)
                 return 0
+
+            def fake_secret_scan(
+                repository_root,
+                *,
+                report_path=None,
+                baseline_path=None,
+                tracked_paths=None,
+            ):
+                self.assertEqual(root.resolve(), repository_root.resolve())
+                self.assertIn(
+                    baseline_path,
+                    (None, Path(".secrets.baseline")),
+                )
+                self.assertIsNone(tracked_paths)
+                assert report_path is not None
+                report_path.write_text('{"results": {}}\n', encoding="utf-8")
+                return SecretScanResult(
+                    reviewed_false_positives=4,
+                    unresolved_findings=[],
+                    # Deliberately different from the collector's own
+                    # candidate_paths() result below: the summary must report
+                    # the scope the scan actually covered, not a second
+                    # enumeration that may describe a different tree state.
+                    scanned_files=7,
+                )
 
             with (
                 patch("tools.quality_evidence._run", side_effect=fake_run),
@@ -535,6 +559,10 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                     return_value="MIT",
                 ),
                 patch("tools.quality_evidence.validate_cyclonedx_document"),
+                patch(
+                    "tools.quality_evidence.scan_tracked_tree",
+                    side_effect=fake_secret_scan,
+                ),
             ):
                 summary_path = collect_quality_evidence(root, output)
 
@@ -554,9 +582,14 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                 summary["results"]["secret_scan"]["candidates"],
             )
             self.assertEqual(
+                4,
+                summary["results"]["secret_scan"]["reviewed_false_positives"],
+            )
+            self.assertEqual(
                 {
+                    "baseline": ".secrets.baseline",
                     "boundary": "current Git-tracked regular-file working tree only",
-                    "tracked_files": 1,
+                    "tracked_files": 7,
                 },
                 summary["scope"]["secret_scan"],
             )
@@ -625,22 +658,36 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                         json.dumps({"dependencies": [], "fixes": []}),
                         encoding="utf-8",
                     )
-                elif command[2] == "detect_secrets":
-                    json.dump(
-                        {
-                            "results": {
-                                "tracked.txt": [
-                                    {
-                                        "type": "Secret Keyword",
-                                        "line_number": 3,
-                                        "hashed_secret": "not-exposed",  # pragma: allowlist secret -- derived parser fixture
-                                    }
-                                ]
-                            }
-                        },
-                        stdout,
-                    )
                 return 0
+
+            def fake_secret_scan(
+                repository_root,
+                *,
+                report_path=None,
+                baseline_path=None,
+                tracked_paths=None,
+            ):
+                self.assertEqual(root.resolve(), repository_root.resolve())
+                self.assertIn(
+                    baseline_path,
+                    (None, Path(".secrets.baseline")),
+                )
+                self.assertIsNone(tracked_paths)
+                assert report_path is not None
+                report_path.write_text(
+                    '{"results":{"tracked.txt":[]}}\n',
+                    encoding="utf-8",
+                )
+                return SecretScanResult(
+                    reviewed_false_positives=0,
+                    unresolved_findings=[
+                        {
+                            "path": "tracked.txt",
+                            "line": 3,
+                            "type": "Secret Keyword",
+                        }
+                    ],
+                )
 
             with (
                 patch("tools.quality_evidence._run", side_effect=fake_run),
@@ -675,6 +722,10 @@ class QualityEvidenceParsingTests(unittest.TestCase):
                     return_value="MIT",
                 ),
                 patch("tools.quality_evidence.validate_cyclonedx_document"),
+                patch(
+                    "tools.quality_evidence.scan_tracked_tree",
+                    side_effect=fake_secret_scan,
+                ),
             ):
                 with self.assertRaisesRegex(QualityEvidenceError, "secret_candidates"):
                     collect_quality_evidence(root, output)

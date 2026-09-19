@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 import math
 import os
@@ -9,6 +10,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -18,18 +20,126 @@ _SHA40 = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 _IMAGE_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
 _CONTAINER_ID = re.compile(r"^[0-9a-f]{64}$")
+_RESOURCE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$")
 _DIGEST_IMAGE = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9._:-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)+"
     r"@sha256:[0-9a-f]{64}$"
 )
 _DOCKER_TIMEOUT_SECONDS = 90
 _DOCKER_CLEANUP_TIMEOUT_SECONDS = 10
+_DOCKER_CLEANUP_ATTEMPTS = 3
+_MAX_CLEANUP_DIAGNOSTIC_BYTES = 4_096
+_ABSENT_CONTAINER_DIAGNOSTIC = "no such container"
+_CLEANUP_SELECTOR_CLOSE_ISSUE = "protected Docker cleanup selector could not be closed"
+_CLEANUP_STREAM_CLOSE_ISSUE = "protected Docker cleanup stderr pipe could not be closed"
+_CLEANUP_CLOSE_ISSUES = (
+    _CLEANUP_SELECTOR_CLOSE_ISSUE,
+    _CLEANUP_STREAM_CLOSE_ISSUE,
+)
+_PROCESS_REAP_TIMEOUT_SECONDS = 5
+_MAX_RUNTIME_INPUT_BYTES = 4_194_304
 _MAX_RUNTIME_OUTPUT_BYTES = 2_097_152
 _READ_CHUNK_BYTES = 65_536
+_WRITE_CHUNK_BYTES = 65_536
+_DOCKER_RUN_FLAG_OPTIONS = frozenset({"--interactive", "--read-only", "--rm", "-i"})
+_DOCKER_RUN_VALUE_OPTIONS = frozenset(
+    {
+        "--cap-drop",
+        "--entrypoint",
+        "--log-driver",
+        "--mount",
+        "--network",
+        "--pull",
+        "--security-opt",
+        "--tmpfs",
+    }
+)
+_DOCKER_RUN_IDENTITY_OPTIONS = frozenset({"--cidfile", "--name"})
+
+_CONTAINER_PAYLOAD_BRIDGE = f"""
+import json
+import os
+import sys
+
+limit = {_MAX_RUNTIME_INPUT_BYTES}
+raw = bytearray()
+while len(raw) <= limit:
+    remaining = limit + 1 - len(raw)
+    chunk = sys.stdin.buffer.read(min(65_536, remaining))
+    if not chunk:
+        break
+    raw.extend(chunk)
+if len(raw) > limit:
+    raise SystemExit("protected payload envelope exceeds the bounded size")
+try:
+    envelope = json.loads(raw.decode("utf-8"))
+except (UnicodeDecodeError, json.JSONDecodeError):
+    raise SystemExit("protected payload envelope is invalid") from None
+if not isinstance(envelope, dict) or set(envelope) != {{"input", "policy"}}:
+    raise SystemExit("protected payload envelope has the wrong shape")
+if not isinstance(envelope["input"], dict) or not isinstance(envelope["policy"], dict):
+    raise SystemExit("protected payload envelope members must be objects")
+
+os.umask(0o077)
+paths = {{
+    "input": "/tmp/gnostoa-review-input.json",
+    "policy": "/tmp/gnostoa-review-policy.json",
+}}
+for name, path in paths.items():
+    data = json.dumps(
+        envelope[name],
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8") + b"\\n"
+    descriptor = os.open(
+        path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        0o400,
+    )
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(data)
+
+os.execv(
+    sys.executable,
+    [
+        sys.executable,
+        "-m",
+        "tools.cli",
+        "review-check",
+        "--input",
+        paths["input"],
+        "--policy",
+        paths["policy"],
+    ],
+)
+""".strip()
 
 
 class ProtectedJudgeUnavailable(RuntimeError):
     """Raised when the exact prior-integrated OCI judge cannot be used safely."""
+
+
+@dataclass(frozen=True)
+class _ContainerRunIdentity:
+    name: str
+    cidfile: Path
+    executable: str | None = None
+
+
+@dataclass(frozen=True)
+class _AbortOutcome:
+    """Bounded secondary context for one abort, plus its cleanup verdict.
+
+    ``cleanup_confirmed`` reports container removal only. A client reap failure
+    is reported in ``detail`` without withdrawing that confirmation, so a reaped
+    identity is still discarded and no recovery identity is advertised for an
+    already removed container.
+    """
+
+    detail: str | None
+    cleanup_confirmed: bool
 
 
 def _docker_executable() -> str:
@@ -52,65 +162,400 @@ def _docker_environment(config_dir: Path) -> dict[str, str]:
 
 
 def _kill_and_reap(process: subprocess.Popen[bytes]) -> None:
+    """Kill the Docker client and confirm its reap within the bound.
+
+    The kill precedes the wait so the wait is never spent on a live child,
+    and the wait itself is bounded, so an abort cannot stall the caller
+    regardless of the child's state. An unconfirmed reap is raised, because a
+    client that was never reaped may still hold the run's pipes open.
+    """
+
     if process.poll() is None:
         try:
             process.kill()
         except OSError:
             pass
     try:
-        process.wait()
-    except OSError:
-        pass
-
-
-def _run_cidfile(arguments: list[str], config_dir: Path) -> Path | None:
-    if not arguments or arguments[0] != "run":
-        return None
-    return config_dir / f"protected-run-{os.getpid()}-{time.monotonic_ns()}.cid"
-
-
-def _cleanup_container(cidfile: Path | None, config_dir: Path) -> None:
-    if cidfile is None:
-        return
-    try:
-        container_id = cidfile.read_text(encoding="ascii").strip()
-    except FileNotFoundError:
-        return
-    except OSError as exc:
-        raise ProtectedJudgeUnavailable(
-            f"protected Docker container cleanup identity is unavailable: {exc}"
-        ) from exc
-    if _CONTAINER_ID.fullmatch(container_id) is None:
-        raise ProtectedJudgeUnavailable(
-            "protected Docker container cleanup identity is malformed"
-        )
-    try:
-        completed = subprocess.run(
-            [_docker_executable(), "rm", "-f", container_id],
-            check=False,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=_DOCKER_CLEANUP_TIMEOUT_SECONDS,
-            env=_docker_environment(config_dir),
-        )
+        process.wait(timeout=_PROCESS_REAP_TIMEOUT_SECONDS)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise ProtectedJudgeUnavailable(
-            f"protected Docker container cleanup failed: {exc}"
+            "protected Docker client reap could not be confirmed within the bound"
         ) from exc
-    if completed.returncode != 0:
+
+
+def _validate_docker_run_options(arguments: list[str]) -> None:
+    """Accept only the run shapes whose container this module can reconcile.
+
+    A run receives a predeclared cleanup identity, and the success path retires
+    that identity without reconciling the container, so the run must remove its
+    own container. Requiring ``--rm`` here keeps that precondition stated rather
+    than assumed by every caller.
+    """
+
+    index = 1
+    removes_container = False
+    image_found = False
+    while index < len(arguments):
+        token = arguments[index]
+        if token == "--":
+            if index + 1 >= len(arguments):
+                raise ProtectedJudgeUnavailable(
+                    "protected Docker run has no image argument"
+                )
+            image_found = True
+            break
+        option, separator, value = token.partition("=")
+        if option in _DOCKER_RUN_IDENTITY_OPTIONS:
+            raise ProtectedJudgeUnavailable(
+                "protected Docker run contains a caller-owned cleanup identity option"
+            )
+        if token in _DOCKER_RUN_FLAG_OPTIONS:
+            removes_container = removes_container or token == "--rm"
+            index += 1
+            continue
+        if option in _DOCKER_RUN_VALUE_OPTIONS:
+            if separator:
+                if not value:
+                    raise ProtectedJudgeUnavailable(
+                        "protected Docker run option has no value"
+                    )
+                index += 1
+                continue
+            if index + 1 >= len(arguments) or not arguments[index + 1]:
+                raise ProtectedJudgeUnavailable(
+                    "protected Docker run option has no value"
+                )
+            index += 2
+            continue
+        if token.startswith("-"):
+            raise ProtectedJudgeUnavailable(
+                "protected Docker run contains an unsupported option"
+            )
+        image_found = True
+        break
+    if not image_found:
+        raise ProtectedJudgeUnavailable("protected Docker run has no image argument")
+    if not removes_container:
         raise ProtectedJudgeUnavailable(
-            "protected Docker container cleanup returned a non-zero status"
+            "protected Docker run does not remove its container with --rm"
         )
+
+
+def _run_identity(
+    arguments: list[str],
+    config_dir: Path,
+    *,
+    executable: str | None = None,
+    requested_name: str | None = None,
+) -> _ContainerRunIdentity | None:
+    if not arguments or arguments[0] != "run":
+        if requested_name is not None:
+            raise ProtectedJudgeUnavailable(
+                "a protected Docker run name is valid only for a run command"
+            )
+        return None
+    _validate_docker_run_options(arguments)
+    if requested_name is not None and _RESOURCE_NAME.fullmatch(requested_name) is None:
+        raise ProtectedJudgeUnavailable("protected Docker run name is invalid")
+    nonce = f"{os.getpid()}-{time.monotonic_ns()}"
+    name = requested_name or f"gnostoa-protected-{nonce}"
+    return _ContainerRunIdentity(
+        name=name,
+        cidfile=config_dir / f"protected-run-{nonce}.cid",
+        executable=executable,
+    )
+
+
+def _bounded_diagnostic(raw: bytes | None) -> str:
+    """Return one bounded, single-line rendering of a cleanup diagnostic."""
+
+    if not raw:
+        return ""
+    decoded = raw[:_MAX_CLEANUP_DIAGNOSTIC_BYTES].decode("utf-8", errors="replace")
+    normalized = " ".join(decoded.split()).encode("utf-8")
+    return normalized[:_MAX_CLEANUP_DIAGNOSTIC_BYTES].decode("utf-8", errors="ignore")
+
+
+def _os_error_detail(prefix: str, exc: OSError) -> str:
+    """Classify OS failures without copying exception text or filenames."""
+
+    code = (
+        errno.errorcode.get(exc.errno, "UNKNOWN")
+        if type(exc.errno) is int
+        else "UNKNOWN"
+    )
+    return f"{prefix} (OS error: {code})"
+
+
+def _discard_cidfile(identity: _ContainerRunIdentity | None) -> str | None:
+    """Remove the predeclared cleanup identity file without ever raising.
+
+    Discarding the identity file is subordinate to whatever failure is being
+    reported, so a filesystem problem here is returned as bounded secondary
+    context instead of replacing the caller's primary diagnostic.
+    """
+
+    if identity is None:
+        return None
+    try:
+        identity.cidfile.unlink(missing_ok=True)
+    except OSError:
+        return "protected Docker cleanup identity file could not be removed"
+    return None
+
+
+def _cleanup_diagnostic(
+    command: list[str],
+    *,
+    config_dir: Path,
+) -> tuple[int | None, str]:
+    """Run one cleanup command, reading only a bounded stderr prefix.
+
+    The child is stopped as soon as the diagnostic bound is reached, so a noisy
+    or malfunctioning cleanup client cannot buffer an unbounded stream. Returns
+    the exit status, or ``None`` when the command could not be run or did not
+    complete, together with the bounded diagnostic.
+    """
+
+    try:
+        process = subprocess.Popen(
+            command,
+            shell=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            env=_docker_environment(config_dir),
+        )
+    except OSError as exc:
+        return None, _os_error_detail(
+            "protected Docker cleanup could not be started", exc
+        )
+
+    diagnostic = bytearray()
+    overflowed = False
+    issue = ""
+    returncode: int | None = None
+    stream = process.stderr
+    close_issues: list[str] = []
+    selector: selectors.BaseSelector | None = None
+    deadline = time.monotonic() + _DOCKER_CLEANUP_TIMEOUT_SECONDS
+    try:
+        if stream is None:
+            raise OSError("protected Docker cleanup stderr is unavailable")
+        selector = selectors.DefaultSelector()
+        selector.register(stream, selectors.EVENT_READ)
+        while selector.get_map() and not overflowed:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not selector.select(remaining):
+                raise subprocess.TimeoutExpired(
+                    command,
+                    _DOCKER_CLEANUP_TIMEOUT_SECONDS,
+                )
+            wanted = _MAX_CLEANUP_DIAGNOSTIC_BYTES + 1 - len(diagnostic)
+            chunk = os.read(
+                stream.fileno(),
+                max(1, min(_READ_CHUNK_BYTES, wanted)),
+            )
+            if not chunk:
+                selector.unregister(stream)
+                continue
+            diagnostic.extend(chunk)
+            overflowed = len(diagnostic) > _MAX_CLEANUP_DIAGNOSTIC_BYTES
+        if overflowed:
+            issue = "protected Docker cleanup diagnostic exceeds the bounded size"
+        else:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(
+                    command,
+                    _DOCKER_CLEANUP_TIMEOUT_SECONDS,
+                )
+            returncode = process.wait(timeout=remaining)
+    except subprocess.TimeoutExpired:
+        issue = "protected Docker cleanup timed out"
+    except OSError as exc:
+        issue = _os_error_detail("protected Docker cleanup failed", exc)
+    finally:
+        if selector is not None:
+            try:
+                selector.close()
+            except OSError:
+                close_issues.append(_CLEANUP_SELECTOR_CLOSE_ISSUE)
+        if process.poll() is None:
+            try:
+                process.kill()
+            except OSError:
+                pass
+        try:
+            process.wait(timeout=_PROCESS_REAP_TIMEOUT_SECONDS)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        if stream is not None:
+            try:
+                stream.close()
+            except OSError:
+                close_issues.append(_CLEANUP_STREAM_CLOSE_ISSUE)
+
+    detail = _bounded_diagnostic(bytes(diagnostic))
+    if close_issues:
+        primary = (
+            (issue or detail or "protected Docker cleanup did not complete")
+            if returncode is None
+            else detail
+        )
+        # Reserve room for the fixed close roles before truncating the primary
+        # diagnostic. A known command exit status stays independent of local I/O.
+        suffix = "; ".join(close_issues)
+        prefix_budget = max(
+            0, _MAX_CLEANUP_DIAGNOSTIC_BYTES - len(suffix.encode("utf-8")) - 2
+        )
+        prefix = _bounded_diagnostic(primary.encode("utf-8"))
+        prefix = prefix.encode("utf-8")[:prefix_budget].decode("utf-8", errors="ignore")
+        detail = _bounded_diagnostic(
+            (f"{prefix}; {suffix}" if prefix else suffix).encode("utf-8")
+        )
+        return returncode, detail
+    if returncode is None:
+        return None, issue or detail or "protected Docker cleanup did not complete"
+    return returncode, detail
+
+
+def _carries_local_finalization_context(detail: str) -> bool:
+    """Report whether a cleanup diagnostic also carries local close context.
+
+    Absence may be concluded only from the removal command's own response.
+    ``_cleanup_diagnostic`` merges local close failures into the same bounded
+    string, so a diagnostic that reports a removed or absent container *and* a
+    failed close is not evidence of clean cleanup: concluding it would discard
+    the close failure and retire the recovery identity with it. The roles are
+    this module's own static strings, so an unexpected match only makes the
+    caller report rather than conclude, which is the safe direction.
+    """
+
+    return any(issue in detail for issue in _CLEANUP_CLOSE_ISSUES)
+
+
+def _cleanup_container(
+    identity: _ContainerRunIdentity | None,
+    config_dir: Path,
+) -> str | None:
+    """Reconcile the predeclared container identity.
+
+    Returns ``None`` when cleanup is confirmed, which includes the bounded
+    already-absent response a container removed by ``--rm`` produces, and a
+    bounded issue description for every other outcome. Cleanup never raises, so
+    it can never replace the caller's primary execution failure.
+    """
+
+    if identity is None:
+        return None
+    cleanup_target = identity.name
+    try:
+        container_id = identity.cidfile.read_text(encoding="ascii").strip()
+    except FileNotFoundError:
+        pass
+    except (OSError, UnicodeError):
+        pass
+    else:
+        if _CONTAINER_ID.fullmatch(container_id) is not None:
+            cleanup_target = container_id
+
+    try:
+        executable = identity.executable or _docker_executable()
+    except ProtectedJudgeUnavailable as exc:
+        return (
+            "protected Docker container cleanup could not resolve the retained "
+            f"executable: {exc}; recovery identity: {identity.name}"
+        )
+
+    last_issue = "no cleanup attempt completed"
+    for _attempt in range(_DOCKER_CLEANUP_ATTEMPTS):
+        returncode, detail = _cleanup_diagnostic(
+            [executable, "rm", "-f", cleanup_target],
+            config_dir=config_dir,
+        )
+        if _carries_local_finalization_context(detail):
+            # Neither a zero exit nor an absence response clears a local
+            # finalization failure, and another removal attempt cannot undo
+            # one: it would only produce a cleaner-looking diagnostic that
+            # discards this observation. Report it now and keep the recovery
+            # identity rather than letting the container outcome speak for it.
+            return (
+                "protected Docker container cleanup observed a local "
+                f"finalization failure: {detail}; "
+                f"recovery identity: {identity.name}"
+            )
+        if returncode == 0:
+            return None
+        if returncode is not None and _ABSENT_CONTAINER_DIAGNOSTIC in detail.casefold():
+            return None
+        if returncode is not None:
+            last_issue = detail or f"status {returncode}"
+        else:
+            last_issue = detail or "protected Docker cleanup did not complete"
+    return (
+        f"protected Docker container cleanup failed after retries: {last_issue}; "
+        f"recovery identity: {identity.name}"
+    )
 
 
 def _abort_docker_run(
     process: subprocess.Popen[bytes],
-    cidfile: Path | None,
+    identity: _ContainerRunIdentity | None,
     config_dir: Path,
-) -> None:
-    _kill_and_reap(process)
-    _cleanup_container(cidfile, config_dir)
+) -> _AbortOutcome:
+    """Abort one protected Docker run and report bounded secondary context.
+
+    The abort itself never raises: reap and cleanup problems are returned so the
+    caller can keep the triggering timeout, bounded-size or I/O failure as the
+    primary diagnostic and attach this detail as secondary context. Container
+    cleanup is reported separately from reaping, because only an unconfirmed
+    removal leaves a container behind to recover.
+    """
+
+    issues: list[str] = []
+    try:
+        _kill_and_reap(process)
+    except ProtectedJudgeUnavailable as exc:
+        issues.append(str(exc))
+    cleanup_issue = _cleanup_container(identity, config_dir)
+    if cleanup_issue is not None:
+        issues.append(cleanup_issue)
+    return _AbortOutcome(
+        detail="; ".join(issues) if issues else None,
+        cleanup_confirmed=cleanup_issue is None,
+    )
+
+
+def _with_secondary(primary: str, secondary: str | None) -> str:
+    """Keep the primary failure first and append bounded secondary context."""
+
+    return primary if secondary is None else f"{primary}; {secondary}"
+
+
+def _joined_details(*details: str | None) -> str | None:
+    """Join bounded secondary details, or return ``None`` when there are none."""
+
+    present = [detail for detail in details if detail]
+    return "; ".join(present) if present else None
+
+
+def _abort_and_discard(
+    process: subprocess.Popen[bytes],
+    identity: _ContainerRunIdentity | None,
+    config_dir: Path,
+) -> str | None:
+    """Abort one run and discard its cleanup identity, reporting both problems.
+
+    The identity file is discarded only once container cleanup is confirmed, so
+    an unconfirmed cleanup still leaves the recovery identity behind. Every
+    problem observed here is bounded secondary context for the caller's primary
+    failure and is never raised.
+    """
+
+    outcome = _abort_docker_run(process, identity, config_dir)
+    discard_detail = _discard_cidfile(identity) if outcome.cleanup_confirmed else None
+    return _joined_details(outcome.detail, discard_detail)
 
 
 def _run_docker(
@@ -118,42 +563,109 @@ def _run_docker(
     *,
     config_dir: Path,
     timeout: int = _DOCKER_TIMEOUT_SECONDS,
+    input_bytes: bytes | None = None,
+    run_name: str | None = None,
+    reject_incomplete_input: bool = False,
 ) -> subprocess.CompletedProcess[bytes]:
-    cidfile = _run_cidfile(arguments, config_dir)
+    if input_bytes is not None and len(input_bytes) > _MAX_RUNTIME_INPUT_BYTES:
+        raise ProtectedJudgeUnavailable(
+            "protected Docker input exceeds the bounded size"
+        )
+    docker_executable = _docker_executable()
+    identity = _run_identity(
+        arguments,
+        config_dir,
+        executable=docker_executable,
+        requested_name=run_name,
+    )
     docker_arguments = arguments
-    if cidfile is not None:
-        docker_arguments = ["run", "--cidfile", str(cidfile), *arguments[1:]]
-    command = [_docker_executable(), *docker_arguments]
+    if identity is not None:
+        docker_arguments = [
+            "run",
+            "--name",
+            identity.name,
+            "--cidfile",
+            str(identity.cidfile),
+            *arguments[1:],
+        ]
+    command = [docker_executable, *docker_arguments]
     try:
+        # Audited for command injection: no shell is involved. The program is
+        # resolved by shutil.which() from os.defpath, the argv is a list, and
+        # every option has passed _validate_docker_run_options(). shlex.quote
+        # would insert literal quotes into argv elements and corrupt the call.
+        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
         process = subprocess.Popen(
             command,
+            shell=False,
+            stdin=subprocess.PIPE if input_bytes is not None else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=_docker_environment(config_dir),
         )
     except OSError as exc:
         raise ProtectedJudgeUnavailable(
-            f"protected Docker execution failed: {exc}"
+            _os_error_detail("protected Docker execution failed", exc)
         ) from exc
 
-    if process.stdout is None or process.stderr is None:
-        try:
-            _abort_docker_run(process, cidfile, config_dir)
-        finally:
-            if cidfile is not None:
-                cidfile.unlink(missing_ok=True)
-        raise ProtectedJudgeUnavailable("protected Docker output pipes are unavailable")
+    cleanup_attempted = False
+    if (
+        process.stdout is None
+        or process.stderr is None
+        or (input_bytes is not None and process.stdin is None)
+    ):
+        cleanup_attempted = True
+        pipe_role = (
+            "input"
+            if process.stdout is not None and process.stderr is not None
+            else "output"
+        )
+        abort_detail = _abort_and_discard(process, identity, config_dir)
+        close_issues: list[str] = []
+        for role, stream in (
+            ("stdout", process.stdout),
+            ("stderr", process.stderr),
+            ("stdin", process.stdin),
+        ):
+            if stream is not None:
+                try:
+                    stream.close()
+                except OSError:
+                    close_issues.append(
+                        f"protected Docker {role} pipe could not be closed"
+                    )
+        raise ProtectedJudgeUnavailable(
+            _with_secondary(
+                f"protected Docker {pipe_role} pipes are unavailable",
+                _joined_details(abort_detail, *close_issues),
+            )
+        )
 
     outputs = {
         "stdout": bytearray(),
         "stderr": bytearray(),
     }
-    selector = selectors.DefaultSelector()
-    selector.register(process.stdout, selectors.EVENT_READ, "stdout")
-    selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+    selector: selectors.BaseSelector | None = None
+    input_view: memoryview | None = None
+    input_offset = 0
     deadline = time.monotonic() + timeout
+    execution_error: str | None = None
+    execution_cause: Exception | None = None
+    close_issues = []
+    returncode: int | None = None
 
     try:
+        selector = selectors.DefaultSelector()
+        selector.register(process.stdout, selectors.EVENT_READ, "stdout")
+        selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+        if input_bytes is not None:
+            assert process.stdin is not None
+            if input_bytes:
+                input_view = memoryview(input_bytes)
+                os.set_blocking(process.stdin.fileno(), False)
+                selector.register(process.stdin, selectors.EVENT_WRITE, "stdin")
+            else:
+                process.stdin.close()
         while selector.get_map():
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -163,6 +675,32 @@ def _run_docker(
                 raise subprocess.TimeoutExpired(command, timeout)
             for key, _ in events:
                 label = str(key.data)
+                if label == "stdin":
+                    assert input_view is not None
+                    try:
+                        written = os.write(
+                            key.fd,
+                            input_view[
+                                input_offset : input_offset + _WRITE_CHUNK_BYTES
+                            ],
+                        )
+                    except BrokenPipeError:
+                        written = 0
+                    if written > 0:
+                        input_offset += written
+                    if written == 0 or input_offset == len(input_view):
+                        if reject_incomplete_input and input_offset != len(input_view):
+                            cleanup_attempted = True
+                            raise ProtectedJudgeUnavailable(
+                                _with_secondary(
+                                    "protected Docker stdin closed before the envelope was delivered",
+                                    _abort_and_discard(process, identity, config_dir),
+                                )
+                            )
+                        selector.unregister(key.fileobj)
+                        assert process.stdin is not None
+                        process.stdin.close()
+                    continue
                 buffer = outputs[label]
                 remaining_bound = _MAX_RUNTIME_OUTPUT_BYTES + 1 - len(buffer)
                 read_size = min(_READ_CHUNK_BYTES, max(1, remaining_bound))
@@ -172,9 +710,12 @@ def _run_docker(
                     continue
                 buffer.extend(chunk)
                 if len(buffer) > _MAX_RUNTIME_OUTPUT_BYTES:
-                    _abort_docker_run(process, cidfile, config_dir)
+                    cleanup_attempted = True
                     raise ProtectedJudgeUnavailable(
-                        f"protected Docker {label} exceeds the bounded size"
+                        _with_secondary(
+                            f"protected Docker {label} exceeds the bounded size",
+                            _abort_and_discard(process, identity, config_dir),
+                        )
                     )
 
         remaining = deadline - time.monotonic()
@@ -182,21 +723,79 @@ def _run_docker(
             raise subprocess.TimeoutExpired(command, timeout)
         returncode = process.wait(timeout=remaining)
     except subprocess.TimeoutExpired as exc:
-        _abort_docker_run(process, cidfile, config_dir)
-        raise ProtectedJudgeUnavailable(
-            f"protected Docker execution failed: {exc}"
-        ) from exc
+        cleanup_attempted = True
+        execution_error = _with_secondary(
+            f"protected Docker execution timed out after {timeout} seconds",
+            _abort_and_discard(process, identity, config_dir),
+        )
+        execution_cause = exc
     except OSError as exc:
-        _abort_docker_run(process, cidfile, config_dir)
-        raise ProtectedJudgeUnavailable(
-            f"protected Docker execution failed: {exc}"
-        ) from exc
+        cleanup_attempted = True
+        execution_error = _with_secondary(
+            _os_error_detail("protected Docker execution failed", exc),
+            _abort_and_discard(process, identity, config_dir),
+        )
+        execution_cause = exc
+    except ProtectedJudgeUnavailable as exc:
+        execution_error = str(exc)
+        execution_cause = exc
+    except Exception as exc:
+        # A type this runner does not classify would otherwise leave the try
+        # without reaching the aggregation below, discarding every close issue
+        # the finally collected and leaving the container and its child behind.
+        # Abort as the classified arms do, name the failure by type only, and
+        # keep the original as the cause.
+        cleanup_attempted = True
+        execution_error = _with_secondary(
+            f"protected Docker execution failed (unexpected {type(exc).__name__})",
+            _abort_and_discard(process, identity, config_dir),
+        )
+        execution_cause = exc
     finally:
-        selector.close()
-        process.stdout.close()
-        process.stderr.close()
-        if cidfile is not None:
-            cidfile.unlink(missing_ok=True)
+        if selector is not None:
+            try:
+                selector.close()
+            except OSError:
+                close_issues.append("protected Docker selector could not be closed")
+        for role, stream in (
+            ("stdout", process.stdout),
+            ("stderr", process.stderr),
+            ("stdin", process.stdin),
+        ):
+            if stream is not None and not stream.closed:
+                try:
+                    stream.close()
+                except OSError:
+                    close_issues.append(
+                        f"protected Docker {role} pipe could not be closed"
+                    )
+        if input_view is not None:
+            input_view.release()
+        if identity is not None and not cleanup_attempted:
+            # Container reconciliation is independent from local handle closure.
+            discard_detail = _discard_cidfile(identity)
+            if discard_detail is not None:
+                close_issues.append(discard_detail)
+
+    if execution_error is not None or close_issues:
+        primary = execution_error
+        if primary is None:
+            primary = (
+                f"protected Docker process exited with status {returncode}"
+                if returncode not in (None, 0)
+                else "protected Docker process finalization failed"
+            )
+        raise ProtectedJudgeUnavailable(
+            _with_secondary(primary, _joined_details(*close_issues))
+        ) from execution_cause
+
+    if returncode is None:
+        # Reaching success without a reaped child would mean the run was never
+        # waited for, so report it as a controlled failure rather than
+        # publishing a result with no child status.
+        raise ProtectedJudgeUnavailable(
+            "protected Docker process finished without a reaped child status"
+        )
 
     return subprocess.CompletedProcess(
         command,
@@ -295,7 +894,8 @@ def run_prior_integrated_judge(
     authority. Production exposes no repository, image, Docker context, daemon,
     credential, policy or runtime selector. The one network-capable Docker action
     is anonymous acquisition of the immutable digest; judge execution itself is
-    network-none and receives only two read-only JSON files.
+    network-none and receives one bounded stdin envelope. The compatibility files
+    required by the immutable judge exist only in the container's bounded tmpfs.
     """
 
     if _DIGEST_IMAGE.fullmatch(image) is None:
@@ -309,6 +909,14 @@ def run_prior_integrated_judge(
             "protected judge public-surface digest is invalid"
         )
 
+    envelope = (
+        canonical_json({"input": input_document, "policy": policy_document}) + "\n"
+    ).encode("utf-8")
+    if len(envelope) > _MAX_RUNTIME_INPUT_BYTES:
+        raise ProtectedJudgeUnavailable(
+            "protected Docker input exceeds the bounded size"
+        )
+
     # Use a fixed system temporary root instead of caller-controlled TMPDIR so the
     # bind-mount grammar cannot be redirected through a caller-selected path.
     with tempfile.TemporaryDirectory(
@@ -316,16 +924,7 @@ def run_prior_integrated_judge(
     ) as directory:
         root = Path(directory)
         config_dir = root / "docker-config"
-        payload_dir = root / "input"
         config_dir.mkdir(mode=0o700)
-        payload_dir.mkdir(mode=0o755)
-
-        input_path = payload_dir / "input.json"
-        policy_path = payload_dir / "policy.json"
-        input_path.write_text(canonical_json(input_document) + "\n", encoding="utf-8")
-        policy_path.write_text(canonical_json(policy_document) + "\n", encoding="utf-8")
-        input_path.chmod(0o444)
-        policy_path.chmod(0o444)
 
         _checked_output(
             ["pull", image],
@@ -411,23 +1010,23 @@ def run_prior_integrated_judge(
                 "protected judge public surface does not match the authority binding"
             )
 
-        mount = f"type=bind,src={payload_dir},dst=/gnostoa-input,readonly"
         result = _run_docker(
             [
                 "run",
                 "--rm",
+                "--log-driver=none",
                 "--pull=never",
+                "-i",
                 *_security_arguments(),
-                "--mount",
-                mount,
+                "--entrypoint",
+                "python",
                 image,
-                "review-check",
-                "--input",
-                "/gnostoa-input/input.json",
-                "--policy",
-                "/gnostoa-input/policy.json",
+                "-c",
+                _CONTAINER_PAYLOAD_BRIDGE,
             ],
             config_dir=config_dir,
+            input_bytes=envelope,
+            reject_incomplete_input=True,
         )
         payload = _decode_result(result.stdout)
         return result.returncode, payload

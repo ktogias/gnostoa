@@ -39,18 +39,69 @@ _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 _CONTAINER_ID = re.compile(r"^[0-9a-f]{64}$")
 _RESOURCE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$")
 _MAX_RESULT_BYTES = 2_097_152
+_MAX_OUTER_INPUT_BYTES = 4_194_304
 _DAEMON_READY_SECONDS = 30
 _DOCKER_STEP_SECONDS = 120
 _OUTER_RUNTIME_SECONDS = 180
 _CLEANUP_ATTEMPTS = 3
 _CLEANUP_BACKOFF_SECONDS = 0.25
 _FORMAT_CHECKER = FormatChecker()
+# Decision 0082: a restriction, never an alternative authority/image selector.
+# Keys bind the complete closed-schema consumer identity, not just its image.
+# No existing immutable runtime has admitted host-persistence-free transport.
+# A future entry requires separate owner admission, runtime proof and review;
+# neither caller input nor environment can populate this catalog.
+_HOST_PERSISTENCE_FREE_CONSUMER_IDENTITIES: frozenset[str] = frozenset()
+_TRANSPORT_UNAVAILABLE = (
+    "protected outer-consumer transport is not admitted as host-persistence-free; "
+    "current_advisory is unavailable"
+)
 _PUBLIC_ERROR_CODES = {
     "MALFORMED_INVOCATION",
     "UNSUPPORTED_INPUT",
     "CONFIGURATION_ERROR",
     "TOOL_ERROR",
 }
+_OUTER_INPUT_PATH = "/gnostoa-input/input.json"
+_OUTER_INPUT_TMPFS = (
+    "/gnostoa-input:rw,noexec,nosuid,nodev,size=8m,mode=0700,uid=10001,gid=10001"
+)
+_OUTER_PAYLOAD_BRIDGE = f"""
+import os
+import sys
+
+limit = {_MAX_OUTER_INPUT_BYTES}
+raw = bytearray()
+while len(raw) <= limit:
+    remaining = limit + 1 - len(raw)
+    chunk = sys.stdin.buffer.read(min(65_536, remaining))
+    if not chunk:
+        break
+    raw.extend(chunk)
+if len(raw) > limit:
+    raise SystemExit("protected outer input exceeds the bounded size")
+
+os.umask(0o077)
+path = {_OUTER_INPUT_PATH!r}
+descriptor = os.open(
+    path,
+    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+    0o400,
+)
+with os.fdopen(descriptor, "wb") as stream:
+    stream.write(raw)
+
+os.execv(
+    sys.executable,
+    [
+        sys.executable,
+        "-m",
+        "tools.review_live_entrypoint",
+        "--input",
+        path,
+    ],
+)
+""".strip()
 
 
 @_FORMAT_CHECKER.checks("date-time")
@@ -178,6 +229,12 @@ def _validate_consumer_authority(document: object) -> dict[str, Any]:
             "protected outer consumer does not support input schema 1.0"
         )
     return acquired
+
+
+def _require_transport_compatible_consumer(consumer: dict[str, Any]) -> None:
+    """Restrict the validated protected identity before outer lifecycle effects."""
+    if canonical_json(consumer) not in _HOST_PERSISTENCE_FREE_CONSUMER_IDENTITIES:
+        raise PriorEffectiveOuterUnavailable(_TRANSPORT_UNAVAILABLE)
 
 
 def _new_resource_name(role: str) -> str:
@@ -330,7 +387,6 @@ def _initialize_tmp_volume(
 def _build_isolated_execution_plan(
     *,
     consumer: dict[str, Any],
-    input_dir: Path,
     socket_volume: str,
     tmp_volume: str,
     daemon_name: str,
@@ -345,6 +401,8 @@ def _build_isolated_execution_plan(
     daemon = [
         "--label",
         f"gnostoa.r2a.role={daemon_name}",
+        "--log-driver",
+        "none",
         "--privileged",
         "--env",
         "DOCKER_TLS_CERTDIR=",
@@ -356,10 +414,14 @@ def _build_isolated_execution_plan(
         "dockerd",
         "--host=unix:///gnostoa-docker/docker.sock",
         "--group=10001",
+        "--log-driver=none",
     ]
     outer = [
         "--label",
         f"gnostoa.r2a.role={outer_name}",
+        "--log-driver",
+        "none",
+        "--interactive",
         "--read-only",
         "--cap-drop",
         "ALL",
@@ -369,15 +431,13 @@ def _build_isolated_execution_plan(
         f"{socket_volume}:/var/run",
         "--volume",
         f"{tmp_volume}:/tmp",
-        "--mount",
-        f"type=bind,src={input_dir},dst=/gnostoa-input,readonly",
+        "--tmpfs",
+        _OUTER_INPUT_TMPFS,
         "--entrypoint",
         "python",
         image,
-        "-m",
-        "tools.review_live_entrypoint",
-        "--input",
-        "/gnostoa-input/input.json",
+        "-c",
+        _OUTER_PAYLOAD_BRIDGE,
     ]
     return {
         "daemon_image": _DAEMON_IMAGE,
@@ -719,6 +779,8 @@ def run_prior_effective_current_advisory(
     outer runtime. The host Docker daemon owns bounded lifecycle orchestration only;
     it is never mounted into the protected outer runtime. The outer runtime receives
     a Unix socket from an isolated nested daemon and returns the canonical result.
+    Until an exact protected transport identity is separately admitted, return
+    TOOL_ERROR before outer temporary resources, image acquisition or Docker use.
     """
 
     owned_containers: list[str] = []
@@ -727,8 +789,14 @@ def run_prior_effective_current_advisory(
     result: tuple[int, bytes] | None = None
 
     try:
+        input_bytes = (canonical_json(input_document) + "\n").encode("utf-8")
+        if len(input_bytes) > _MAX_OUTER_INPUT_BYTES:
+            raise PriorEffectiveOuterUnavailable(
+                "protected outer input exceeds the bounded size"
+            )
         protected = acquire_gnostoa_current_advisory_consumer()
         consumer = _validate_consumer_authority(protected.document)
+        _require_transport_compatible_consumer(consumer)
     except (
         json.JSONDecodeError,
         OSError,
@@ -747,17 +815,8 @@ def run_prior_effective_current_advisory(
         ) as directory:
             root = Path(directory)
             config_dir = root / "docker-config"
-            input_dir = root / "input"
             config_dir.mkdir(mode=0o700)
-            input_dir.mkdir(mode=0o755)
-            input_path = input_dir / "input.json"
             try:
-                input_path.write_text(
-                    canonical_json(input_document) + "\n",
-                    encoding="utf-8",
-                )
-                input_path.chmod(0o444)
-
                 _verify_outer_image(consumer, config_dir)
                 _checked_output(
                     ["pull", _DAEMON_IMAGE],
@@ -780,7 +839,6 @@ def run_prior_effective_current_advisory(
                 outer_name = _new_resource_name("outer")
                 plan = _build_isolated_execution_plan(
                     consumer=consumer,
-                    input_dir=input_dir,
                     socket_volume=socket_volume,
                     tmp_volume=tmp_volume,
                     daemon_name=daemon_name,
@@ -816,9 +874,10 @@ def run_prior_effective_current_advisory(
                     owned_containers,
                 )
                 outer_result = _run_docker(
-                    ["start", "--attach", outer_container],
+                    ["start", "--attach", "--interactive", outer_container],
                     config_dir=config_dir,
                     timeout=_OUTER_RUNTIME_SECONDS,
+                    input_bytes=input_bytes,
                 )
                 if outer_result.stderr:
                     raise PriorEffectiveOuterUnavailable(

@@ -236,26 +236,38 @@ python -m pip install --only-binary=:all: --require-hashes \
   -r requirements/development.lock
 
 ./ci/verify policy
+./ci/verify security-fast
 ./ci/verify fast
 ./ci/verify regression
 ./ci/verify smoke
 ./ci/verify extended
 ```
 
-The scheduled/manual `extended` suite first rejects tracked Ruff inputs hidden by
-Git or other Ruff-recognized ignore rules, then checks Ruff formatting and a
-bounded, explicit lint rule set over the repository-root subject (`.`).
-Root-anchored Git ignores keep local generated outputs outside the candidate
-while `pyproject.toml` declares the additional Ruff exclusions. The suite runs
-strict mypy across `tools/` and `ci/` and emits those reports with branch-aware
-coverage,
+The `security-fast` suite scans the current Git-tracked regular-file tree on
+ordinary candidates and accepts only exact, reviewed false positives from
+`.secrets.baseline` for the two immutable protected-authority JSON documents;
+any new, stale, unauthorized or malformed candidate state fails closed.
+The always-visible extended router runs the heavyweight `extended` suite for
+scheduled/manual events and for candidate changes to maintained Python, CI,
+dependency, documentation, release-evidence or protected-authority surfaces;
+other candidates are explicitly `NOT_APPLICABLE` rather than silently treated
+as tested. The regression prerequisite gate accepts only a successful applicable
+`extended` run or an explicit `NOT_APPLICABLE`/skipped pair. The `extended`
+suite first rejects tracked Ruff inputs hidden by Git or other Ruff-recognized
+ignore rules, then checks Ruff formatting and a bounded, explicit lint rule set
+over the repository-root subject (`.`). Root-anchored Git ignores keep local
+generated outputs outside the candidate while `pyproject.toml` declares the
+additional Ruff exclusions. The suite runs strict mypy across `tools/` and
+`ci/` and emits those reports with branch-aware coverage,
 exact-lock Python dependency audits, package-declared license inventories,
-strictly validated CycloneDX 1.6 SBOMs and a heuristic scan of the current
-Git-tracked tree into
+strictly validated CycloneDX 1.6 SBOMs and the shared tracked-tree secret gate
+into
 `${GNOSTOA_QUALITY_OUTPUT:-/tmp/gnostoa-quality-evidence}`. Static analysis and
 the coverage floor are regression signals, not acceptance. The dependency
-lookup is time/provider-bound, and the tree scan does not replace the separate
-full history and provider-surface disclosure audit. The inventories and SBOMs
+lookup is time/provider-bound, and the secret gate does not replace the separate
+full-history and provider-surface disclosure audit. Its retained report contains
+only path, line and rule metadata, never candidate values or candidate-derived
+hashes. The inventories and SBOMs
 cover only the exact installed Python distributions named by the runtime and
 development locks. Legacy license metadata remains flagged for human review;
 the locks now enforce wheel-only SHA-256 verification and the evidence binds

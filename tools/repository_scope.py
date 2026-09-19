@@ -9,9 +9,43 @@ from pathlib import Path
 
 SOURCE_MANIFEST = ".gnostoa-source-files"
 
+REPOSITORY_SCOPE_ERROR_CATEGORIES = frozenset(
+    {
+        "GIT_FAILED",
+        "GIT_IO",
+        "GIT_METADATA_IO",
+        "MANIFEST_INVALID",
+        "MANIFEST_IO",
+        "MANIFEST_MISSING",
+        "UNSAFE_PATH",
+        "UNKNOWN",
+    }
+)
+
 
 class RepositoryScopeError(RuntimeError):
     """Raised when the canonical repository candidate cannot be enumerated."""
+
+    def __init__(self, message: str, *, category: str = "UNKNOWN") -> None:
+        super().__init__(message)
+        self.category = (
+            category if category in REPOSITORY_SCOPE_ERROR_CATEGORIES else "UNKNOWN"
+        )
+
+
+def scope_error_detail(prefix: str, exc: RepositoryScopeError) -> str:
+    """Describe one scope failure without publishing its exception text.
+
+    Scope failures carry the repository root, manifest paths, unsafe candidate
+    paths and raw Git or OSError text, so every consumer must report the
+    classified category instead of the message. Reporting goes through this
+    one helper so a new consumer cannot silently reintroduce the leak.
+    """
+
+    category = (
+        exc.category if exc.category in REPOSITORY_SCOPE_ERROR_CATEGORIES else "UNKNOWN"
+    )
+    return f"{prefix} (scope error: {category})"
 
 
 def _decode_paths(encoded_paths: bytes, source: str) -> list[Path]:
@@ -22,7 +56,8 @@ def _decode_paths(encoded_paths: bytes, source: str) -> list[Path]:
         relative = Path(os.fsdecode(encoded))
         if relative == Path(".") or relative.is_absolute() or ".." in relative.parts:
             raise RepositoryScopeError(
-                f"{source} returned an unsafe candidate path: {relative}"
+                f"{source} returned an unsafe candidate path: {relative}",
+                category="UNSAFE_PATH",
             )
         paths.append(relative)
     return sorted(set(paths), key=lambda path: path.as_posix())
@@ -47,13 +82,15 @@ def _git_candidate_paths(root: Path) -> list[Path]:
         )
     except OSError as exc:
         raise RepositoryScopeError(
-            f"cannot enumerate Git-tracked candidate files in {root}: {exc}"
+            f"cannot enumerate Git-tracked candidate files in {root}: {exc}",
+            category="GIT_IO",
         ) from exc
 
     if result.returncode != 0:
         message = result.stderr.decode("utf-8", errors="replace").strip()
         raise RepositoryScopeError(
-            message or f"cannot enumerate Git-tracked candidate files in {root}"
+            message or f"cannot enumerate Git-tracked candidate files in {root}",
+            category="GIT_FAILED",
         )
     return _decode_paths(result.stdout, "Git")
 
@@ -64,11 +101,13 @@ def _manifest_candidate_paths(root: Path) -> list[Path]:
         mode = manifest.lstat().st_mode
     except OSError as exc:
         raise RepositoryScopeError(
-            f"cannot read packaged source manifest {manifest}: {exc}"
+            f"cannot read packaged source manifest {manifest}: {exc}",
+            category="MANIFEST_IO",
         ) from exc
     if not stat.S_ISREG(mode):
         raise RepositoryScopeError(
-            f"packaged source manifest is not a regular file: {manifest}"
+            f"packaged source manifest is not a regular file: {manifest}",
+            category="MANIFEST_INVALID",
         )
 
     flags = os.O_RDONLY
@@ -78,14 +117,16 @@ def _manifest_candidate_paths(root: Path) -> list[Path]:
         descriptor = os.open(manifest, flags)
     except OSError as exc:
         raise RepositoryScopeError(
-            f"cannot open packaged source manifest {manifest}: {exc}"
+            f"cannot open packaged source manifest {manifest}: {exc}",
+            category="MANIFEST_IO",
         ) from exc
     try:
         with os.fdopen(descriptor, "rb") as source:
             encoded_paths = source.read()
     except OSError as exc:
         raise RepositoryScopeError(
-            f"cannot read packaged source manifest {manifest}: {exc}"
+            f"cannot read packaged source manifest {manifest}: {exc}",
+            category="MANIFEST_IO",
         ) from exc
     return _decode_paths(encoded_paths, "packaged source manifest")
 
@@ -101,7 +142,8 @@ def candidate_paths(repository_root: Path) -> list[Path]:
         git_metadata_exists = False
     except OSError as exc:
         raise RepositoryScopeError(
-            f"cannot inspect Git metadata at {git_metadata}: {exc}"
+            f"cannot inspect Git metadata at {git_metadata}: {exc}",
+            category="GIT_METADATA_IO",
         ) from exc
     else:
         git_metadata_exists = True
@@ -114,11 +156,13 @@ def candidate_paths(repository_root: Path) -> list[Path]:
         manifest.lstat()
     except FileNotFoundError:
         raise RepositoryScopeError(
-            f"{root} has neither Git metadata nor {SOURCE_MANIFEST}"
+            f"{root} has neither Git metadata nor {SOURCE_MANIFEST}",
+            category="MANIFEST_MISSING",
         ) from None
     except OSError as exc:
         raise RepositoryScopeError(
-            f"cannot inspect packaged source manifest {manifest}: {exc}"
+            f"cannot inspect packaged source manifest {manifest}: {exc}",
+            category="MANIFEST_IO",
         ) from exc
     return _manifest_candidate_paths(root)
 
@@ -126,7 +170,8 @@ def candidate_paths(repository_root: Path) -> list[Path]:
 def _read_candidate_text(root: Path, relative: Path) -> str | None:
     if relative.is_absolute() or ".." in relative.parts:
         raise RepositoryScopeError(
-            f"candidate source contains an unsafe candidate path: {relative}"
+            f"candidate source contains an unsafe candidate path: {relative}",
+            category="UNSAFE_PATH",
         )
 
     current = root
