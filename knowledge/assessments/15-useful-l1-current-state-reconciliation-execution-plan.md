@@ -57,12 +57,17 @@ code or inventing semantic authority.
    - exact subject and source-coverage reduction;
    - R2A input assembly using the protected authority bundle;
    - bounded provider-neutral projection model/rendering;
+   - literal HTML/Markdown-safe rendering of provider-controlled titles;
    - no provider endpoint, network, credential or write effects.
 
 2. `ci/review_github_current_state.py`
    - first concrete GitHub REST adapter;
    - translation from GitHub-native Pull Request/review/comment/check objects into the provider-neutral internal snapshot;
    - complete Link-header pagination;
+   - RFC3339 timestamp validation and explicit per-source errors;
+   - at most three bounded passes to confirm the retained observation cut;
+   - continued change or a future cut remains explicitly PARTIAL, not clean;
+   - subject acquisition failures produce non-publishable per-PR diagnostics without aborting other selected PRs;
    - normalized provider snapshot;
    - immediate pre-write head/currentness re-read;
    - one marker-owned issue-comment create/update path;
@@ -71,8 +76,11 @@ code or inventing semantic authority.
 3. `.github/workflows/review-current-state.yml`
    - protected-source `workflow_run`, hourly schedule and default-branch `repository_dispatch` recovery;
    - minimum token permissions;
+   - repository-root imports configured for both collect and publish entrypoints;
    - bounded collect→publish transfer sized below the provider job-output limit after encoding;
-   - repository-scoped non-canceling serialization for liveness without cross-PR cancellation;
+   - repository-scoped serialization with `cancel-in-progress: false` and `queue: max`;
+   - finite queue of at most 100 pending runs, with possible overflow and scheduling delay;
+   - hourly open-PR recovery, not an immediate or lossless wake-up guarantee;
    - Actions summary plus bounded projection publication.
 
 4. Focused tests and workflow-policy contracts only. Do not introduce a public
@@ -95,6 +103,11 @@ provider state plus AVAILABLE protected capability. Duplicate workflow-owned
 projection comments are an explicit fail-closed provider-write condition rather
 than an invitation to guess which comment owns the projection; marker text from
 an arbitrary participant does not establish ownership.
+
+Bounded stable read-back is not atomic provider history or an L2 effect fence.
+The confirming pass starts after the retained cut and repeats all required
+reads; inability to confirm within three passes preserves incomplete coverage.
+Per-source counts describe the retained pass, not total API requests.
 
 ## RED evidence
 
@@ -157,6 +170,8 @@ Focused:
 - provider pagination/currentness tests;
 - projection effect tests with mocked provider transport;
 - workflow YAML structural/security tests;
+- executable collect/publish import checks with inherited PYTHONPATH removed;
+- Markdown-rendered adversarial title checks;
 - existing R2A current-advisory regressions.
 
 Repository:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import copy
+import html
 import json
 import re
 from typing import Any
@@ -519,7 +520,12 @@ def render_projection(projection: dict[str, Any]) -> str:
     ]
     title = _optional_summary(subject.get("title"))
     if title is not None:
-        lines.append(f"- Intent summary: {title}")
+        literal_title = re.sub(
+            r"([\\`*_{}\[\]()#+.!|~-])",
+            r"\\\1",
+            html.escape(title, quote=False),
+        )
+        lines.append(f"- Intent summary: {literal_title}")
     lines.extend(
         [
             (

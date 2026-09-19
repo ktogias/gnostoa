@@ -28,6 +28,9 @@ sources:
   - id: github-token-permissions
     resource: https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#permissions
     title: GitHub Actions GITHUB_TOKEN permissions
+  - id: github-concurrency
+    resource: https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency
+    title: GitHub Actions bounded concurrency queues
   - id: github-pagination
     resource: https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api
     title: GitHub REST pagination
@@ -146,6 +149,24 @@ Events are wake-ups only. Every execution reacquires current provider state.
 Missing pages, API failures or ambiguous currentness remain explicit
 `PARTIAL|UNAVAILABLE|ERROR`; they never mean clean.
 
+Timestamp fields are validated as RFC3339 during provider normalization. A
+malformed timestamp yields source ERROR on the first page or PARTIAL after
+retained pages; it cannot escape as an uncaught date parser error or silently
+fall back to another timestamp.
+
+A single sequential sweep cannot prove that early sources cover a later
+observation cut. The adapter therefore performs at most three complete bounded
+collection passes, including subject/merge-base reads. A confirming pass must
+start at or after the retained cut and reproduce the preceding normalized
+snapshot without advancing that cut. Continuous change or a future cut leaves
+otherwise COMPLETE sources PARTIAL. Existing source errors are not upgraded.
+Page and item counts describe the retained pass, not aggregate API calls.
+
+This bounded stable read-back is not an atomic historical snapshot: provider
+history, transient changes between reads, and changes after the retained cut are
+not reconstructed. It does not create a transactional provider or L2 effect
+fence. Repeated reads may cost up to three times a single bounded sweep.
+
 ### Reducer and R2A composition
 
 The deterministic reducer:
@@ -173,6 +194,8 @@ the consumed R2A result itself is PASS.
 ### Projection
 
 Publish one replaceable PR conversation comment and the Actions job summary.
+Provider-controlled title text is rendered literally with HTML and Markdown
+escaping; it cannot supply formatting that looks like the advisory's verdict.
 
 The projection is non-canonical and must visibly declare:
 
@@ -201,10 +224,19 @@ ownership evidence and must not make an arbitrary participant comment writable.
 This rejects stale writes that are already observable at the pre-write
 read-back. It does **not** claim an atomic or exactly-once publication fence:
 a concurrent provider race can still occur between the final read and comment
-write. Repository-scoped non-canceling workflow serialization reduces overlapping writes without dropping another Pull Request's immediate reconciliation, and every projection
-remains self-describing by exact head and execution generation so a stale write
-cannot masquerade as a different subject. A hard effect fence belongs to the
-separately admitted L2 boundary.
+write. Repository-scoped serialization uses `cancel-in-progress: false` and
+`queue: max`, allowing one running and at most 100 pending executions. Without
+`queue: max`, a new pending execution replaces the preceding pending execution;
+non-cancellation alone does not preserve wake-ups. The queue is finite: excess
+runs can be canceled, and scheduling or provider delays can postpone execution.
+There is no immediate, lossless, or unbounded liveness guarantee. The hourly
+open-PR sweep and default-branch recovery path reacquire current state after
+missed wake-ups; they do not reconstruct a lost event history or guarantee an
+execution deadline.
+
+Every projection remains self-describing by exact head and execution generation
+so a stale write cannot masquerade as a different subject. A hard effect fence
+belongs to the separately admitted L2 boundary.
 
 ### Permissions
 
@@ -313,6 +345,12 @@ diagnostic state and no positive-permission claim. When the provider subject is
 known but protected authority/runtime acquisition is unavailable, the projection
 retains that subject and explicitly reports protected status `UNAVAILABLE`
 rather than aborting the whole reconciliation or inventing identities.
+
+When PR metadata or comparison acquisition cannot establish the exact subject,
+retain an explicit per-PR `UNAVAILABLE / PROVIDER_SUBJECT_UNAVAILABLE` diagnostic
+in the bounded payload and job summaries. Do not invent a head SHA or publish a
+subjectless advisory. Other selected PRs are still collected, and publication
+skips the unavailable entry without making a provider call.
 
 A workflow can complete successfully while the semantic result is
 `INCOMPLETE`, `BLOCKED`, `CONFLICTING` or a clearly labelled

@@ -79,7 +79,7 @@ class UsefulL1PresentationTests(unittest.TestCase):
         reducer = fixtures._reducer()
         snapshot = fixtures._snapshot()
         snapshot["subject"]["title"] = (
-            '[fake approval](https://example.invalid) **PASS** '
+            "[fake approval](https://example.invalid) **PASS** "
             '<img src="x"> `CONTINUE` &lt;b&gt;'
         )
         projection = reducer.build_projection(
@@ -94,9 +94,7 @@ class UsefulL1PresentationTests(unittest.TestCase):
             },
         )
         rendered = reducer.render_projection(projection)
-        line = next(
-            line for line in rendered.splitlines() if "Intent summary:" in line
-        )
+        line = next(line for line in rendered.splitlines() if "Intent summary:" in line)
         html = markdown.markdown(line)
         for active in ("<a ", "<strong>", "<img ", "<code>", "<b>"):
             with self.subTest(active=active):

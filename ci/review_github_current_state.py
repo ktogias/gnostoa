@@ -348,7 +348,9 @@ def _normalize_check(value: Any) -> dict[str, Any]:
     item = _mapping(value, "check run")
     check_id = _integer(item.get("id"), "check_run.id")
     started_at = _optional_timestamp(item.get("started_at"), "check_run.started_at")
-    completed_at = _optional_timestamp(item.get("completed_at"), "check_run.completed_at")
+    completed_at = _optional_timestamp(
+        item.get("completed_at"), "check_run.completed_at"
+    )
     observed_at = completed_at or started_at
     if observed_at is None:
         raise ProviderReadError("check run has no observation timestamp")
@@ -509,8 +511,7 @@ def collect_snapshot(
         if (
             previous is not None
             and snapshot == previous
-            and parse_rfc3339(read_started_at)
-            >= parse_rfc3339(snapshot["observed_at"])
+            and parse_rfc3339(read_started_at) >= parse_rfc3339(snapshot["observed_at"])
         ):
             snapshot["collection"] = {
                 "status": "STABLE_READBACK",
