@@ -322,30 +322,41 @@ def _check_summary(snapshot: dict[str, Any], target_head: str) -> dict[str, Any]
         if not isinstance(status, str) or not status:
             continue
         observed_at = _timestamp(check.get("observed_at"), "check.observed_at")
-        sort_key = (parse_rfc3339(observed_at), check_id)
+        observed_key = parse_rfc3339(observed_at)
+        state = (status, check.get("conclusion"))
         previous = latest.get(name)
-        if previous is None or sort_key > previous["sort_key"]:
+        if previous is None or observed_key > previous["observed_key"]:
             latest[name] = {
-                "id": check_id,
                 "observed_at": observed_at,
-                "status": status,
-                "conclusion": check.get("conclusion"),
-                "sort_key": sort_key,
+                "observed_key": observed_key,
+                "states": {state},
             }
+        elif observed_key == previous["observed_key"]:
+            previous["states"].add(state)
 
-    pending = sorted(
-        name for name, item in latest.items() if item["status"] != "completed"
-    )
-    non_success = sorted(
-        name
-        for name, item in latest.items()
-        if item["status"] == "completed"
-        and item["conclusion"] not in {"success", "neutral", "skipped"}
-    )
+    ambiguous: list[str] = []
+    pending: list[str] = []
+    non_success: list[str] = []
+    for name, item in latest.items():
+        states = item["states"]
+        if len(states) != 1:
+            ambiguous.append(name)
+            continue
+        status, conclusion = next(iter(states))
+        if status != "completed":
+            pending.append(name)
+        elif conclusion not in {"success", "neutral", "skipped"}:
+            non_success.append(name)
+
+    ambiguous.sort()
+    pending.sort()
+    non_success.sort()
     return {
         "observed_names": len(latest),
+        "ambiguous": ambiguous[:32],
         "pending": pending[:32],
         "non_success": non_success[:32],
+        "omitted_ambiguous": max(0, len(ambiguous) - 32),
         "omitted_pending": max(0, len(pending) - 32),
         "omitted_non_success": max(0, len(non_success) - 32),
     }
@@ -425,7 +436,13 @@ def build_projection(
         else "INCOMPLETE_AT_OBSERVATION"
     )
     checks = _check_summary(snapshot, provider_subject["head_commit"])
-    if checks["pending"]:
+    if provider_subject["state"] != "open" or not complete:
+        next_action = "WAIT_OR_RECONCILE_REQUIRED_EVIDENCE"
+    elif protected_status != "AVAILABLE":
+        next_action = "WAIT_FOR_PROTECTED_CAPABILITY"
+    elif checks["ambiguous"]:
+        next_action = "RECONCILE_PROVIDER_CHECKS"
+    elif checks["pending"]:
         next_action = "WAIT_FOR_PROVIDER_CHECKS"
     elif checks["non_success"]:
         next_action = "RECONCILE_PROVIDER_CHECKS"
@@ -516,6 +533,7 @@ def render_projection(projection: dict[str, Any]) -> str:
             f"- Coverage: {coverage_text}",
             (
                 f"- Checks: observed={checks['observed_names']}, "
+                f"ambiguous={len(checks['ambiguous'])}, "
                 f"pending={len(checks['pending'])}, "
                 f"non-success={len(checks['non_success'])}"
             ),
