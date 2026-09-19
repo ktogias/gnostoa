@@ -234,6 +234,8 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
         self.assertIn('"_HOST_PERSISTENCE_FREE_CONSUMER_IDENTITIES"', smoke)
         self.assertIn('"_verify_outer_image"', smoke)
         self.assertIn('"--interactive"', smoke)
+        self.assertIn('"--mount"', smoke)
+        self.assertNotIn('"--volume"', smoke)
 
     def test_decision_keeps_publication_and_promotion_outside_r2(self) -> None:
         decision = DECISION_PATH.read_text(encoding="utf-8")
