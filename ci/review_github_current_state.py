@@ -30,6 +30,7 @@ _PROJECTION_AUTHOR = "github-actions[bot]"
 _TIMEOUT_SECONDS = 30
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
 _NEXT_LINK = re.compile(r'<([^>]+)>;\s*rel="next"')
+_GITHUB_EXECUTION_ID = re.compile(r"^github-actions:([1-9][0-9]*):([1-9][0-9]*)$")
 
 
 class ProviderReadError(RuntimeError):
@@ -555,12 +556,16 @@ def _projection_key(projection: dict[str, Any]) -> tuple[Any, int, int]:
     if not isinstance(observation, dict):
         raise ValueError("projection observation is unavailable")
     observed_at = observation.get("observed_at")
-    run_id = observation.get("run_id")
-    run_attempt = observation.get("run_attempt")
+    execution_id = observation.get("execution_id")
     if not isinstance(observed_at, str):
         raise ValueError("projection observed_at is unavailable")
-    if type(run_id) is not int or type(run_attempt) is not int:
-        raise ValueError("projection execution generation is unavailable")
+    if not isinstance(execution_id, str):
+        raise ValueError("projection execution identity is unavailable")
+    match = _GITHUB_EXECUTION_ID.fullmatch(execution_id)
+    if match is None:
+        raise ValueError("projection execution identity is not GitHub-orderable")
+    run_id = int(match.group(1))
+    run_attempt = int(match.group(2))
     return parse_rfc3339(observed_at), run_id, run_attempt
 
 
@@ -855,8 +860,7 @@ def _collect_entry(
         outer_consumer=outer,
         r2a_result=semantic,
         execution={
-            "run_id": run_id,
-            "run_attempt": run_attempt,
+            "execution_id": f"github-actions:{run_id}:{run_attempt}",
             "observed_at": _now(),
         },
     )
