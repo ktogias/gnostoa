@@ -25,6 +25,7 @@ _MAX_PAGES = 20
 _MAX_ITEMS = 5_000
 _MAX_OPEN_PULLS = 10
 _MAX_PUBLICATION_PAYLOAD_BYTES = 300_000
+_PROJECTION_AUTHOR = "github-actions[bot]"
 _TIMEOUT_SECONDS = 30
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
 _NEXT_LINK = re.compile(r'<([^>]+)>;\s*rel="next"')
@@ -185,7 +186,14 @@ def _collect_pages(
         try:
             payload, headers = client.get(url)
             raw_items = page_items(payload)
-            normalized = [normalize(item) for item in raw_items]
+            normalized: list[dict[str, Any]] = []
+            omitted = 0
+            for item in raw_items:
+                value = normalize(item)
+                if value is None:
+                    omitted += 1
+                    continue
+                normalized.append(value)
         except ProviderReadError as exc:
             return items, {
                 "status": _error_status(exc, pages),
@@ -205,6 +213,14 @@ def _collect_pages(
         items.extend(normalized)
         pages += 1
         url = _next_url(headers)
+        if omitted:
+            return items, {
+                "status": "PARTIAL",
+                "pages": pages,
+                "count": len(items),
+                "omitted": omitted,
+                "reason": "unsubmitted_provider_items",
+            }
     return items, {"status": "COMPLETE", "pages": pages, "count": len(items)}
 
 
@@ -265,14 +281,20 @@ def _normalize_issue_comment(value: Any) -> dict[str, Any]:
     }
 
 
-def _normalize_review(value: Any) -> dict[str, Any]:
+def _normalize_review(value: Any) -> dict[str, Any] | None:
     item = _mapping(value, "review")
     review_id = _integer(item.get("id"), "review.id")
+    state = _text(item.get("state"), "review.state")
+    submitted_at = _optional_text(item.get("submitted_at"))
+    if state.upper() == "PENDING" and submitted_at is None:
+        return None
+    if submitted_at is None:
+        raise ProviderReadError("submitted GitHub review has no submitted_at")
     return {
         "observation_id": f"github-review-{review_id}",
         "reviewer_id": _login(item.get("user"), "review.user"),
-        "recommendation_state": _text(item.get("state"), "review.state"),
-        "observed_at": _text(item.get("submitted_at"), "review.submitted_at"),
+        "recommendation_state": state,
+        "observed_at": submitted_at,
         "head_commit": _optional_text(item.get("commit_id")),
         "source_url": _optional_text(item.get("html_url")),
     }
@@ -459,12 +481,31 @@ def publication_decision(
 
 def _existing_projection(
     comments: list[dict[str, Any]],
+    *,
+    repository: str,
+    pull_number: int,
 ) -> tuple[int, dict[str, Any]] | None:
+    expected_repository = f"https://github.com/{repository}"
+    expected_change = {
+        "kind": "github-pull-request",
+        "id": str(pull_number),
+    }
     candidates: list[tuple[tuple[Any, int, int], int, dict[str, Any]]] = []
     for comment in comments:
+        if comment.get("author") != _PROJECTION_AUTHOR:
+            continue
         comment_id = comment.get("id")
         projection = parse_projection_comment(comment.get("body"))
         if type(comment_id) is not int or projection is None:
+            continue
+        subject = projection.get("subject")
+        if not isinstance(subject, dict):
+            continue
+        if subject.get("provider_id") != "github":
+            continue
+        if subject.get("repository") != expected_repository:
+            continue
+        if subject.get("change_request") != expected_change:
             continue
         try:
             key = _projection_key(projection)
@@ -475,7 +516,7 @@ def _existing_projection(
         return None
     if len(candidates) > 1:
         raise ProviderWriteError(
-            "multiple valid L1 projection comments exist; refusing ambiguous write"
+            "multiple valid owned L1 projection comments exist; refusing ambiguous write"
         )
     _, comment_id, projection = candidates[0]
     return comment_id, projection
@@ -512,7 +553,11 @@ def publish_entry(
         raise ProviderWriteError(
             "cannot publish without complete current projection-comment read-back"
         )
-    existing = _existing_projection(comments)
+    existing = _existing_projection(
+        comments,
+        repository=repository,
+        pull_number=pull_number,
+    )
     allowed, reason = publication_decision(
         current_pr=current,
         collected_head=collected_head,
