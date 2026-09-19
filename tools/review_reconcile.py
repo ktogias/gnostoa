@@ -439,9 +439,7 @@ def build_projection(
     complete = all(item["status"] == "COMPLETE" for item in coverage.values())
     provider_current = provider_subject["state"] == "open" and complete
     currentness = (
-        "CURRENT_AT_OBSERVATION"
-        if provider_current
-        else "INCOMPLETE_AT_OBSERVATION"
+        "CURRENT_AT_OBSERVATION" if provider_current else "INCOMPLETE_AT_OBSERVATION"
     )
     projection_r2a = (
         observed_r2a
