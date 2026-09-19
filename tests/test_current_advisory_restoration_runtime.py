@@ -145,8 +145,8 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
         for required in (
             "git -C restoration-source rev-parse HEAD",
             "git -C restoration-source rev-parse 'HEAD^{tree}'",
-            'test "${{ github.event.pull_request.base.sha }}" = "${SOURCE_COMMIT}"',
             "git -C restoration-source status --porcelain",
+            "SOURCE_COMMIT is the immutable runtime subject",
         ):
             self.assertIn(required, bind_run)
 
@@ -218,6 +218,14 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
         self.assertEqual(
             "${{ steps.identity.outputs.public_surface_digest }}",
             smoke_env.get("GNOSTOA_R2_EXPECTED_PUBLIC_SURFACE_DIGEST"),
+        )
+        self.assertEqual(
+            "${{ github.event.pull_request.base.sha || env.SOURCE_COMMIT }}",
+            smoke_env.get("GNOSTOA_R2_EXPECTED_PROTECTED_MAIN"),
+        )
+        self.assertNotIn(
+            'test "${{ github.event.pull_request.base.sha }}" = "${SOURCE_COMMIT}"',
+            bind_run,
         )
 
         _, receipt = _named_step(steps, "Record bounded qualification receipt")
