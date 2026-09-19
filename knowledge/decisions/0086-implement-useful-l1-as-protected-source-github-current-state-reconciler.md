@@ -152,8 +152,13 @@ the prior projection. Refuse publication when:
 - the PR is closed/merged when the projection expects open work;
 - a retained projection names a later observation cut/execution generation.
 
-This prevents an older run from overwriting a newer view. Concurrency
-cancellation is additional liveness control, not the correctness mechanism.
+This rejects stale writes that are already observable at the pre-write
+read-back. It does **not** claim an atomic or exactly-once publication fence:
+a concurrent provider race can still occur between the final read and comment
+write. Global workflow concurrency reduces that window, and every projection
+remains self-describing by exact head and execution generation so a stale write
+cannot masquerade as a different subject. A hard effect fence belongs to the
+separately admitted L2 boundary.
 
 ### Permissions
 
