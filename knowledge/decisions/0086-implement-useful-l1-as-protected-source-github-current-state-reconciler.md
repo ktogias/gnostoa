@@ -37,6 +37,12 @@ sources:
   - id: github-review-comments
     resource: https://docs.github.com/en/rest/pulls/comments
     title: GitHub Pull Request review-comment endpoints
+  - id: pygithub
+    resource: https://github.com/PyGithub/PyGithub
+    title: PyGithub — GitHub REST SDK for Python, LGPL-3.0-or-later
+  - id: githubkit
+    resource: https://github.com/yanyongyu/githubkit
+    title: githubkit — typed GitHub SDK for Python, MIT
 x-project-knowledge:
   id: kit.decision.0086.implement-useful-l1-as-protected-source-github-current-state-reconciler
   owners:
@@ -238,6 +244,30 @@ Reuse:
 - existing R2A schemas, policy, qualification and result semantics;
 - ordinary PR issue comments plus Actions summary rather than a custom Check Run
   or GitHub App.
+
+### Prior-art / license assessment
+
+Two concrete Python GitHub SDKs were evaluated before retaining the bounded
+stdlib REST adapter:
+
+1. **PyGithub** — LGPL-3.0-or-later. It is mature and covers GitHub REST
+   resources, but adopting it would add a substantial GitHub-specific object
+   model and an additional LGPL compliance surface while still requiring our
+   provider-neutral normalization, exact coverage accounting, protected-source
+   workflow split and stale-safe projection rules. It therefore replaces HTTP
+   plumbing, not the custom reconciliation semantics.
+2. **githubkit** — MIT. Its permissive license is compatible with the project's
+   Apache-2.0 distribution model, and its typed REST/pagination support is a
+   technically viable GitHub adapter implementation. It was not selected for
+   this L1 slice because the admitted surface needs only a small bounded subset
+   of endpoints; introducing a new runtime dependency would increase supply-chain
+   and lockfile scope without removing the provider-neutral reducer or
+   currentness/write-fencing work.
+
+The custom code is therefore limited to the irreducible boundary: provider
+normalization, exact coverage/currentness semantics, protected R2A composition
+and the single bounded projection effect. A future adapter may use either an SDK
+or raw provider primitives as long as it satisfies the same internal contract.
 
 Do not add a database, event bus, queue service, generic DAG, custom GitHub App,
 provider simulator or new semantic policy.
