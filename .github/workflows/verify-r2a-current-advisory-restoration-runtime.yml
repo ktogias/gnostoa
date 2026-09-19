@@ -21,8 +21,8 @@ permissions:
   contents: read
 
 env:
-  SOURCE_COMMIT: 315487e7a67635ebf3ec3f70f666ef41646102e1
-  SOURCE_TREE: ea3fdebc6afa9bf5a4c2d0691199beca4dcece81
+  SOURCE_COMMIT: 315487e7a67635ebf3ec3f70f666ef41646102e1 # pragma: allowlist secret -- public integrated source revision
+  SOURCE_TREE: ea3fdebc6afa9bf5a4c2d0691199beca4dcece81 # pragma: allowlist secret -- public integrated source tree
   GNOSTOA_R2_CANDIDATE_IMAGE: gnostoa-r2-restoration:${{ github.run_id }}-${{ github.run_attempt }}
 
 jobs:
