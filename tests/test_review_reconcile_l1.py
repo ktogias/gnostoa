@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
-import json
-import tempfile
 import unittest
 from pathlib import Path
 from types import ModuleType
