@@ -16,6 +16,9 @@ sources:
   - id: decision
     resource: /decisions/0086-implement-useful-l1-as-protected-source-github-current-state-reconciler.md
     title: Implement useful L1 as provider-neutral current-state reconciliation with a GitHub adapter
+  - id: provider-abstraction-retrospective
+    resource: ./15-provider-abstraction-retrospective.md
+    title: Provider-abstraction retrospective and root-cause analysis
 x-project-knowledge:
   id: kit.assessment.15-useful-l1-current-state-reconciliation-execution-plan
   owners:
@@ -27,6 +30,8 @@ x-project-knowledge:
       target: /decisions/0086-implement-useful-l1-as-protected-source-github-current-state-reconciler.md
     - kind: derived-from
       target: /assessments/15-l0-lite-observed-workflow-baseline.md
+    - kind: references
+      target: /assessments/15-provider-abstraction-retrospective.md
 ---
 
 # Issue 15 useful L1 current-state reconciliation execution plan
@@ -131,14 +136,23 @@ missing capabilities:
 Characterization evidence may additionally pin existing R2A and protected-main
 behavior, but it does not replace the required RED cases.
 
+Historical qualification: the original list above omitted a provider-portability
+falsifier. The dated corrective addendum below records that gap; later tests or
+this plan correction cannot retroactively satisfy a before-implementation gate.
+
 ## Implementation sequence
 
 ### L1-A — pure reducer
 
 Implement snapshot normalization/reduction and R2A envelope construction with
-network/write effects injected or absent. Keep provider vocabulary internal.
+network/write effects injected or absent. Define the implementation-private
+normalized meanings before extending the core; keep provider-native vocabulary,
+identity rules and API translation in the adapter, not merely inside a private
+core module. A private contract does not require a public schema or framework.
 
-Exit: focused pure tests green; R2A outcomes/reasons are unchanged.
+Exit: focused pure tests green; R2A outcomes/reasons are unchanged; reconcile the
+provider-boundary evidence in the dated addendum rather than infer portability
+from I/O separation or provider-name substitution alone.
 
 ### L1-B — GitHub read adapter
 
@@ -217,3 +231,82 @@ Stop and return to the owner only if:
 - merge/integration authority is due after convergence.
 
 Ordinary queued/running checks or reviewer latency are not stop conditions.
+
+## Provider-boundary corrective addendum — 2026-09-19 UTC
+
+Author: ChatGPT / GPT-6 Astra Pro. Owner-directed capture scope is recorded in
+[#15 comment 5745552200](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5745552200).
+The [full retrospective](15-provider-abstraction-retrospective.md) retains the
+original implementation, causal analysis, counterfactual limits and current
+corrections. This is a late reconciliation of Decision 0086 and the existing
+[behavioral-traceability Requirement](../requirements/bounded-behavioral-traceability.md),
+not a claim that an adequate map existed before the initial implementation.
+
+Architecture inspection was bound to implementation
+`0743998c0de025f7b92f5b519390481c388cdc41`. Documentation preparation was re-read
+at `9ec4a2e1554b046e3879f4a27d8b073e9fdb9289`; intervening queued-check timestamp
+and transfer-budget clarifications are preserved. Before disposition, re-bind
+each affected row to the actual review head and executable evidence. The
+inspection below is not full-suite execution or independent approval.
+
+### Inherited obligation to evidence map
+
+| ID | Exact obligation / source selector | Expected observable behavior | Implementation and evidence path | Observed state at inspection / remaining evidence | Execution; alignment; independent disposition |
+|---|---|---|---|---|---|
+| PN-01 | #15 Scope / Included: provider-neutral contract and shared semantics in thin adapters; Decision 0086 / Provider abstraction boundary | Another provider supplies its own repository and opaque change-request identity without a core provider branch | `tools/review_reconcile.py::_subject`; `tests/test_review_reconcile_l1.py::test_reducer_core_is_provider_neutral_and_accepts_second_adapter_shape` | GitHub-only restriction removed; identity substitution asserted. This establishes a narrower claim than native semantic portability | Static source inspection only; execution NOT RUN here; SUPPORTS structural correction only; reviewer PENDING |
+| PN-02 | Decision 0086 / Each provider adapter owns translation; #15 provider-neutral scope | A materially different native lifecycle/check model translates into the private contract and yields equivalent common behavior without common production changes | Existing GitHub adapter plus a small test-only alternative translator; common reducer and projection | Current named second-provider test reuses `_snapshot` with identity changes. Distinct native translation and semantic-equivalence evidence are requested, not recorded as completed | NOT RUN; UNKNOWN for full claim; executor/reviewer PENDING |
+| PN-03 | Decision 0086 / opaque IDs and explicit freshness; same-time conflicts | Renaming opaque IDs or permuting equivalent observations cannot select a different semantic result; conflicting latest equal-time checks remain ambiguous | `_check_summary`; existing equal-time and observation-time tests; bounded metamorphic additions | Earlier ID tie-break is addressed in source/test assertions. Reuse those tests and add explicit ID-renaming/input-order comparisons where needed | Tests NOT RUN in this session; SUPPORTS inspected correction, metamorphic result UNKNOWN; reviewer PENDING |
+| PN-04 | Decision 0086 / Provider collection and Failure behavior | Missing or unsupported required evidence remains incomplete/unavailable, never complete or a positive permission claim | `_coverage`, `build_projection`, adapter normalization; existing partial/closed/protected-capability tests plus alternative-provider missing-capability case | Existing fail-closed assertions inspected. Verify the alternative translator does not fabricate absent capability evidence | NOT RUN here; UNKNOWN for cross-provider claim; reviewer PENDING |
+| PN-05 | Decision 0086 / Reducer and R2A composition, Permissions and Non-goals | Adapter changes preserve existing R2A authority/outcomes and do not introduce source mutation, approval, merge or L2/L3 authority | `build_review_input`, existing R2A regressions, adapter/workflow security contracts | Existing assertions are inputs to review, not this author's fresh execution or approval; retain all current security and exact-head checks | NOT RUN here; UNKNOWN for final candidate; reviewer PENDING |
+
+The existing #15 multipart record and its acceptance criteria remain unchanged.
+These rows instantiate the admitted L1 boundary; they do not claim completion of
+#15's full future cross-provider operational scope.
+
+### Bounded requested verification
+
+Use the current focused test surface, not a new framework. A test-only
+synthetic adapter may map genuinely different native fields and lifecycle/check
+states, non-numeric opaque IDs and unavailable capabilities into the existing
+private contract. Exercise `build_review_input` and `build_projection` unchanged.
+Compare semantic fields while explicitly excluding legitimate provider identity,
+source URL and observation-provenance differences; do not compare by dropping
+fields that carry the property being tested.
+
+Names such as `completed` or `success` may be owned normalized vocabulary.
+Similar spelling to a native provider is not itself a defect. Document the
+mapping and unknown/unsupported behavior; do not require a cosmetic vocabulary
+rewrite or silently reinterpret existing R2A recommendation semantics.
+
+Prove that a focused portability case rejects the known failure: for example,
+introduce a temporary GitHub-only acceptance mutant at the private boundary in
+an isolated test execution, or replay the compatible historical boundary. A
+failure caused only by a missing module, an unsupported unrelated schema or a
+broken fixture is not portability evidence. Preserve this as post-hoc
+regression sensitivity, not historical pre-implementation RED compliance.
+
+For any corrective production mutation, establish the affected failing or
+characterization evidence first, then run formatting and the applicable focused
+and repository suites under the existing policy. Do not widen production scope
+to a second provider, public schema, generic engine or new required CI gate.
+
+### Architecture review handoff
+
+The next architecture reviewer starts from #15's provider-neutral scope and
+Decision 0086, then the exact candidate, before using this author's conclusions
+as an answer key. It must answer:
+
+- Which common production files must change solely to add a second adapter, and
+  why? An unavoidable common change requires explicit contract-gap disposition,
+  not a blanket claim of already-proven portability.
+- Are native lifecycle/check/capability assumptions normalized at the adapter
+  boundary, and are missing information and equal-time conflicts preserved?
+- Does the portability counterexample reject the prohibited old coupling for
+  the intended reason, rather than only pass a renamed fixture?
+
+Retain the reviewer's own conclusion and each finding separately from executor
+responses. An unclosed material portability finding remains for explicit
+resolution before architectural acceptance; this addendum is not its closure.
+Existing review-count, independence, exact-head CI and owner-merge controls are
+unchanged. Broad future assurance-method changes belong to #263 under its
+separate admission boundary, not to this L1 patch.
