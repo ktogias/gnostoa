@@ -162,7 +162,7 @@ class CurrentAdvisoryRestorationRuntimeTests(unittest.TestCase):
         _, bind = _named_step(steps, "Bind exact integrated source")
         bind_run = _step_run(bind, "source binding")
         self.assertNotIn(
-            'git -C restoration-source merge-base',
+            "git -C restoration-source merge-base",
             bind_run,
         )
         for required in (

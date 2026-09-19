@@ -75,7 +75,9 @@ def _load_promotion_smoke() -> ModuleType:
         PROMOTION_SMOKE_PATH,
     )
     if spec is None or spec.loader is None:
-        raise RuntimeError(f"cannot load promotion smoke module from {PROMOTION_SMOKE_PATH}")
+        raise RuntimeError(
+            f"cannot load promotion smoke module from {PROMOTION_SMOKE_PATH}"
+        )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
