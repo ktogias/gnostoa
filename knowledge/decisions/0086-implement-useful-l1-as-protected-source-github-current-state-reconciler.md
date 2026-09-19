@@ -1,6 +1,6 @@
 ---
 type: Decision
-title: Implement useful L1 as a protected-source GitHub current-state reconciler
+title: Implement useful L1 as provider-neutral current-state reconciliation with a GitHub adapter
 description: Use one Gnostoa-self GitHub Actions adapter plus a deterministic reducer to reacquire live Pull Request state, assemble existing R2A evidence and publish a non-canonical read-only current-state projection without acquiring semantic or candidate-mutation authority.
 status: draft
 generated:
@@ -54,7 +54,7 @@ x-project-knowledge:
       target: /decisions/0085-promote-current-advisory-restoration-runtime.md
 ---
 
-# Implement useful L1 as a protected-source GitHub current-state reconciler
+# Implement useful L1 as provider-neutral current-state reconciliation with a GitHub adapter
 
 ## Context
 
@@ -74,9 +74,31 @@ original conversation.
 
 ## Decision
 
-Implement useful L1 as **one Gnostoa-self GitHub adapter plus one deterministic
-reducer**, kept implementation-private until repeated evidence justifies a
-public contract.
+Implement useful L1 as **one provider-neutral deterministic reconciliation core plus provider adapters**. The first concrete adapter is Gnostoa-self GitHub, but provider identity, repository/change-request identity, review observations, review-thread observations, check observations and coverage are normalized before they reach the core. The internal contract stays implementation-private until repeated evidence justifies a public contract.
+
+### Provider abstraction boundary
+
+The core `tools/review_reconcile.py` must not contain GitHub-specific endpoint,
+event, Pull Request field, URL-shape or object-ID semantics. It consumes one
+provider-neutral internal snapshot with these normalized concepts:
+
+- provider identity;
+- repository identity;
+- change-request `kind + id`;
+- open/closed lifecycle state;
+- exact head/base/merge-base commits;
+- conversation coverage;
+- semantic-review observations;
+- review-thread observations;
+- exact-head check observations.
+
+Each provider adapter owns translation from its native API into that internal
+shape and owns any provider-specific projection write. Adding another provider
+therefore means implementing another adapter against the same internal contract,
+not refactoring R2A, the reducer, projection semantics or current-state logic.
+
+The GitHub adapter remains self-only and implementation-private in this slice.
+No GitHub vocabulary is promoted into R2A or a generic public Gnostoa schema.
 
 ### Trusted execution/source boundary
 
