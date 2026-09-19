@@ -881,7 +881,9 @@ class UsefulL1RedContractTests(unittest.TestCase):
             fake.calls,
         )
 
-    def test_scheduled_population_refuses_silent_open_pr_truncation(self) -> None:
+    def test_scheduled_population_is_fully_enumerated_before_batch_selection(
+        self,
+    ) -> None:
         adapter = _adapter()
         root = "https://api.github.com/repos/ktogias/gnostoa"
         pulls = [
@@ -900,11 +902,10 @@ class UsefulL1RedContractTests(unittest.TestCase):
             }
         )
 
-        with self.assertRaisesRegex(
-            adapter.ProviderReadError,
-            "exceeds the bounded reconciliation capacity",
-        ):
-            adapter._open_pull_numbers(fake, "ktogias/gnostoa")
+        self.assertEqual(
+            list(range(1, 12)),
+            adapter._open_pull_numbers(fake, "ktogias/gnostoa"),
+        )
 
     def test_duplicate_projection_comments_fail_closed(self) -> None:
         adapter = _adapter()
