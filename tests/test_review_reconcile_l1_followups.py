@@ -223,6 +223,69 @@ class UsefulL1FollowupTests(unittest.TestCase):
         self.assertNotEqual("COMPLETE", snapshot["coverage"]["conversation"]["status"])
         self.assertLessEqual(len(reader.calls), 60)
 
+    def test_queued_check_without_provider_timestamps_uses_collection_cut(self) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        reducer = fixtures._reducer()
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+        replies = copy.deepcopy(fixtures._complete_replies(root))
+        check_url = f"{root}/commits/{'a' * 40}/check-runs?per_page=100"
+        replies[check_url] = (
+            {
+                "check_runs": [
+                    {
+                        "id": 88,
+                        "name": "queued-check",
+                        "head_sha": "a" * 40,
+                        "started_at": None,
+                        "completed_at": None,
+                        "status": "queued",
+                        "conclusion": None,
+                        "details_url": "https://example.invalid/check/88",
+                    }
+                ]
+            },
+            {},
+        )
+        cut = "2026-09-19T16:41:00Z"
+        snapshot = adapter.collect_snapshot(
+            fixtures._PagedFake(replies),
+            repository="ktogias/gnostoa",
+            pull_number=300,
+            observed_at=cut,
+        )
+
+        self.assertEqual("COMPLETE", snapshot["coverage"]["checks"]["status"])
+        self.assertEqual(1, len(snapshot["checks"]))
+        self.assertEqual(cut, snapshot["checks"][0]["observed_at"])
+        projection = reducer.build_projection(
+            snapshot,
+            protected_main_revision="e" * 40,
+            outer_consumer={
+                "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
+                "runtime_revision": "9" * 40,
+            },
+            r2a_result={
+                "outcome": "INCOMPLETE",
+                "reason": "QUORUM_UNMET",
+                "binding": False,
+            },
+            execution={
+                "run_id": 250,
+                "run_attempt": 1,
+                "observed_at": cut,
+            },
+        )
+        self.assertEqual(["queued-check"], projection["checks"]["pending"])
+
+    def test_publication_batch_bound_matches_admitted_population(self) -> None:
+        adapter = _fixtures()._adapter()
+        self.assertEqual(8, adapter._MAX_OPEN_PULLS)
+        self.assertLessEqual(
+            adapter._MAX_OPEN_PULLS * 32_768 + 20_000,
+            adapter._MAX_PUBLICATION_PAYLOAD_BYTES,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
