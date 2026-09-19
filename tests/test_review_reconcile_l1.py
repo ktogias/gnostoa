@@ -1081,8 +1081,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
         self.assertNotIn("workflow_dispatch:", text)
         self.assertIn("schedule:", text)
         self.assertNotIn("workflow_run.pull_requests[0]", text)
-        self.assertNotIn("WORKFLOW_RUN_PULL", text)
-        self.assertIn("github.event.client_payload.pull_number || 'all'", text)
+        self.assertNotIn("workflow_run.pull_requests[0]", text)
         self.assertNotIn("pull_request_target:", text)
         self.assertIn("300_000", text)
         self.assertNotIn("600_000", text)
@@ -1090,6 +1089,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
 
         concurrency = workflow.get("concurrency")
         self.assertIsInstance(concurrency, dict)
+        self.assertEqual("gnostoa-review-current-state", concurrency.get("group"))
         self.assertIs(False, concurrency.get("cancel-in-progress"))
         self.assertNotIn("pull_requests[0]", text)
         self.assertIn(
