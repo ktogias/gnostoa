@@ -654,14 +654,27 @@ class UsefulL1RedContractTests(unittest.TestCase):
     def test_provider_observation_cut_cannot_precede_collected_evidence(self) -> None:
         adapter = _adapter()
         root = "https://api.github.com/repos/ktogias/gnostoa"
-        snapshot = adapter.collect_snapshot(
-            _PagedFake(_complete_replies(root)),
-            repository="ktogias/gnostoa",
-            pull_number=300,
-            observed_at="2026-09-19T16:40:00Z",
-        )
+        with mock.patch.object(
+            adapter,
+            "_now",
+            side_effect=[
+                "2026-09-19T16:40:10Z",
+                "2026-09-19T16:40:20Z",
+                "2026-09-19T16:40:30Z",
+            ],
+        ):
+            snapshot = adapter.collect_snapshot(
+                _PagedFake(_complete_replies(root)),
+                repository="ktogias/gnostoa",
+                pull_number=300,
+                observed_at="2026-09-19T16:40:00Z",
+            )
 
-        self.assertEqual("2026-09-19T16:40:09Z", snapshot["observed_at"])
+        self.assertEqual("2026-09-19T16:40:30Z", snapshot["observed_at"])
+        self.assertEqual(
+            "2026-09-19T16:40:30Z",
+            snapshot["collection"]["confirming_read_completed_at"],
+        )
 
     def test_deleted_commenter_is_unavailable_not_provider_failure(self) -> None:
         adapter = _adapter()
