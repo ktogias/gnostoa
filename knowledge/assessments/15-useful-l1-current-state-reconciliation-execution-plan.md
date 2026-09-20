@@ -68,7 +68,11 @@ code or inventing semantic authority.
 2. `ci/review_github_current_state.py`
    - first concrete GitHub REST adapter;
    - translation from GitHub-native Pull Request/review/comment/check objects into the provider-neutral internal snapshot;
-   - complete Link-header pagination;
+   - complete Link-header pagination for the REST surfaces used by this slice;
+   - inline review comments retained without claiming complete review-thread
+     resolution state; any non-empty REST comment set leaves
+     `review_threads` PARTIAL until an adapter surface can establish true
+     provider thread identity/resolution;
    - RFC3339 timestamp validation and explicit per-source errors;
    - queued checks without provider start/completion timestamps use the stable collection cut and remain pending;
    - at most three bounded passes to confirm the retained observation cut;
