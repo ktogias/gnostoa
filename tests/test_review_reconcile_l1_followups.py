@@ -118,6 +118,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
                 }
             },
         )
+
         def valid_result(
             input_document: object,
             *,
