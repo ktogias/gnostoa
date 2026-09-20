@@ -16,6 +16,7 @@ _ALLOWED_COVERAGE = {"COMPLETE", "PARTIAL", "RATE_LIMITED", "UNAVAILABLE", "ERRO
 _SEMANTIC_OUTCOMES = {"PASS", "BLOCKED", "INCOMPLETE", "CONFLICTING"}
 _MARKER = re.compile(r"<!-- gnostoa:l1-current-state:v1:([A-Za-z0-9_-]+) -->")
 _MAX_RENDER_BYTES = 32_768
+_MAX_CHECK_NAMES = 32
 
 
 class ReconciliationInputError(ValueError):
@@ -445,12 +446,12 @@ def _check_summary(snapshot: dict[str, Any], target_head: str) -> dict[str, Any]
     non_success.sort()
     return {
         "observed_names": len(latest),
-        "ambiguous": ambiguous[:32],
-        "pending": pending[:32],
-        "non_success": non_success[:32],
-        "omitted_ambiguous": max(0, len(ambiguous) - 32),
-        "omitted_pending": max(0, len(pending) - 32),
-        "omitted_non_success": max(0, len(non_success) - 32),
+        "ambiguous": ambiguous[:_MAX_CHECK_NAMES],
+        "pending": pending[:_MAX_CHECK_NAMES],
+        "non_success": non_success[:_MAX_CHECK_NAMES],
+        "omitted_ambiguous": max(0, len(ambiguous) - _MAX_CHECK_NAMES),
+        "omitted_pending": max(0, len(pending) - _MAX_CHECK_NAMES),
+        "omitted_non_success": max(0, len(non_success) - _MAX_CHECK_NAMES),
     }
 
 
@@ -604,16 +605,27 @@ def _validate_projection_checks(value: object) -> dict[str, Any]:
 
     result: dict[str, Any] = {"observed_names": observed_names}
     classified = 0
+    seen_names: set[str] = set()
     for name in ("ambiguous", "pending", "non_success"):
         items = _projection_string_list(
             checks.get(name),
             f"projection.checks.{name}",
         )
+        overlap = seen_names.intersection(items)
+        if overlap:
+            raise ReconciliationInputError(
+                "projection.checks categories must not overlap"
+            )
+        seen_names.update(items)
         omitted_name = f"omitted_{name}"
         omitted = checks.get(omitted_name)
         if type(omitted) is not int or omitted < 0:
             raise ReconciliationInputError(
                 f"projection.checks.{omitted_name} must be a non-negative integer"
+            )
+        if omitted and len(items) != _MAX_CHECK_NAMES:
+            raise ReconciliationInputError(
+                f"projection.checks.{omitted_name} requires a full retained list"
             )
         result[name] = items
         result[omitted_name] = omitted
@@ -760,11 +772,11 @@ def _validate_projection_document(document: dict[str, Any]) -> None:
         expected_action = "WAIT_OR_RECONCILE_REQUIRED_EVIDENCE"
     elif protected_status != "AVAILABLE":
         expected_action = "WAIT_FOR_PROTECTED_CAPABILITY"
-    elif checks["ambiguous"]:
+    elif checks["ambiguous"] or checks["omitted_ambiguous"]:
         expected_action = "RECONCILE_PROVIDER_CHECKS"
-    elif checks["pending"]:
+    elif checks["pending"] or checks["omitted_pending"]:
         expected_action = "WAIT_FOR_PROVIDER_CHECKS"
-    elif checks["non_success"]:
+    elif checks["non_success"] or checks["omitted_non_success"]:
         expected_action = "RECONCILE_PROVIDER_CHECKS"
     else:
         expected_action = {
