@@ -713,6 +713,41 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
                 )
                 self.assertEqual("CURRENT_AT_OBSERVATION", projection["currentness"])
 
+    def test_duplicate_normalized_review_and_thread_ids_fail_closed(
+        self,
+    ) -> None:
+        fixtures = _fixtures()
+        reducer = fixtures._reducer()
+
+        for collection in ("reviews", "review_threads"):
+            with self.subTest(collection=collection):
+                snapshot = fixtures._snapshot()
+                snapshot[collection].append(dict(snapshot[collection][0]))
+
+                with self.assertRaises(reducer.ReconciliationInputError):
+                    reducer.build_review_input(snapshot, fixtures._bundle())
+
+                with self.assertRaises(reducer.ReconciliationInputError):
+                    reducer.build_projection(
+                        snapshot,
+                        protected_main_revision="e" * 40,
+                        outer_consumer={
+                            "runtime_image": (
+                                "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64
+                            ),
+                            "runtime_revision": "9" * 40,
+                        },
+                        r2a_result={
+                            "outcome": "PASS",
+                            "reason": "QUORUM_SATISFIED",
+                            "binding": False,
+                        },
+                        execution={
+                            "execution_id": "github-actions:1006:1",
+                            "observed_at": "2026-09-19T16:41:10Z",
+                        },
+                    )
+
     def test_malformed_normalized_thread_fields_fail_closed_in_common_core(
         self,
     ) -> None:
