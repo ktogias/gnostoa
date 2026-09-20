@@ -509,6 +509,49 @@ class UsefulL1FollowupTests(unittest.TestCase):
         client.post.assert_not_called()
         client.patch.assert_not_called()
 
+    def test_publication_rejects_stale_collected_lifecycle(self) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        reducer = fixtures._reducer()
+        snapshot = fixtures._snapshot()
+        snapshot["subject"]["state"] = "closed"
+        projection = reducer.build_projection(
+            snapshot,
+            protected_main_revision="e" * 40,
+            outer_consumer={
+                "runtime_image": (
+                    "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64
+                ),
+                "runtime_revision": "9" * 40,
+            },
+            r2a_result={
+                "outcome": "PASS",
+                "reason": "QUORUM_SATISFIED",
+                "binding": False,
+            },
+            execution={
+                "execution_id": "github-actions:272:1",
+                "observed_at": "2026-09-19T16:41:10Z",
+            },
+        )
+
+        allowed, reason = adapter.publication_decision(
+            repository="ktogias/gnostoa",
+            pull_number=300,
+            current_pr={
+                "state": "open",
+                "head_sha": "a" * 40,
+                "base_sha": "b" * 40,
+                "merge_base_sha": "c" * 40,
+            },
+            collected_head="a" * 40,
+            existing_projection=None,
+            candidate_projection=projection,
+        )
+
+        self.assertIs(False, allowed)
+        self.assertEqual("STALE_LIFECYCLE", reason)
+
     def test_publication_rechecks_exact_subject_after_comment_readback(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures._adapter()
