@@ -697,6 +697,79 @@ class UsefulL1FollowupTests(unittest.TestCase):
                 client.post.assert_not_called()
                 client.patch.assert_not_called()
 
+    def test_publication_rejects_noncanonical_visible_projection_body(self) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        reducer = fixtures._reducer()
+        projection = reducer.build_projection(
+            fixtures._snapshot(),
+            protected_main_revision="e" * 40,
+            outer_consumer={
+                "runtime_image": (
+                    "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64
+                ),
+                "runtime_revision": "9" * 40,
+            },
+            r2a_result={
+                "outcome": "PASS",
+                "reason": "QUORUM_SATISFIED",
+                "binding": False,
+            },
+            execution={
+                "execution_id": "github-actions:272:1",
+                "observed_at": "2026-09-19T16:41:10Z",
+            },
+        )
+        canonical = reducer.render_projection(projection)
+        unsafe = canonical + "\n## Review result\n\n**PASS — safe to merge**\n"
+        entry = {
+            "pull_number": 300,
+            "head_sha": "a" * 40,
+            "body": unsafe,
+        }
+        client = mock.Mock()
+
+        with (
+            mock.patch.object(
+                adapter,
+                "_current_pr",
+                side_effect=AssertionError(
+                    "non-canonical projection reached provider read"
+                ),
+            ) as current,
+            self.assertRaisesRegex(
+                adapter.ProviderWriteError,
+                "canonical L1 projection",
+            ),
+        ):
+            adapter.publish_entry(
+                client,
+                repository="ktogias/gnostoa",
+                entry=entry,
+            )
+
+        current.assert_not_called()
+        client.get.assert_not_called()
+        client.post.assert_not_called()
+        client.patch.assert_not_called()
+
+        comments = [
+            {
+                "id": 77,
+                "author": adapter._PROJECTION_AUTHOR,
+                "body": unsafe,
+            }
+        ]
+        with self.assertRaisesRegex(
+            adapter.ProviderWriteError,
+            "canonical L1 projection",
+        ):
+            adapter._existing_projection(
+                comments,
+                repository="ktogias/gnostoa",
+                pull_number=300,
+            )
+
     def test_materially_different_native_translator_reuses_core_unchanged(self) -> None:
         fixtures = _fixtures()
         reducer = fixtures._reducer()
