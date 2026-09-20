@@ -581,6 +581,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
                 "conclusion": "failure",
             },
         ]
+        snapshot["coverage"]["checks"]["count"] = len(snapshot["checks"])
 
         projection = reducer.build_projection(
             snapshot,
@@ -629,6 +630,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
                 "conclusion": "success",
             },
         ]
+        snapshot["coverage"]["checks"]["count"] = len(snapshot["checks"])
 
         projection = reducer.build_projection(
             snapshot,
