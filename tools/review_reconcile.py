@@ -191,7 +191,10 @@ def _observations(
         raise ReconciliationInputError("reviews and review_threads must be arrays")
 
     review_observation_ids = {
-        _string(_mapping(raw_review, "review").get("observation_id"), "review.observation_id")
+        _string(
+            _mapping(raw_review, "review").get("observation_id"),
+            "review.observation_id",
+        )
         for raw_review in reviews
     }
     threads_by_review: dict[str, list[dict[str, Any]]] = {}
