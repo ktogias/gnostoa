@@ -204,7 +204,7 @@ def _observations(
             thread.get("review_observation_id"),
             "review_thread.review_observation_id",
         )
-        thread_id = _string(thread.get("id"), "review_thread.id")
+        _string(thread.get("id"), "review_thread.id")
         if review_observation_id not in review_observation_ids:
             raise ReconciliationInputError(
                 "review_thread references unknown review observation"
