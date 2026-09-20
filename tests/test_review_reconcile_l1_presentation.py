@@ -111,5 +111,48 @@ class UsefulL1PresentationTests(unittest.TestCase):
         self.assertEqual(projection, reducer.parse_projection_comment(rendered))
 
 
+    def test_provider_controlled_identities_cannot_inject_markdown_structure(
+        self,
+    ) -> None:
+        fixtures = _fixtures()
+        reducer = fixtures._reducer()
+        snapshot = fixtures._snapshot(
+            provider_id="provider\`\n- **FORGED PROVIDER**",
+            repository="https://example.invalid/repo\`\n## FORGED REPOSITORY",
+            change_kind="merge\`\n> FORGED KIND",
+            change_id="42\`\n[FORGED](https://example.invalid)",
+            source_url="https://example.invalid/change/42",
+        )
+        projection = reducer.build_projection(
+            snapshot,
+            protected_main_revision=None,
+            outer_consumer=None,
+            r2a_result={"reason": "TEST_UNAVAILABLE"},
+            execution={
+                "execution_id": "provider-run\`\n- [x] FORGED EXECUTION",
+                "observed_at": "2026-09-19T16:41:00Z",
+            },
+        )
+
+        rendered = reducer.render_projection(projection)
+        lines = rendered.splitlines()
+        forbidden_lines = {
+            "- **FORGED PROVIDER**",
+            "## FORGED REPOSITORY",
+            "> FORGED KIND",
+            "[FORGED](https://example.invalid)",
+            "- [x] FORGED EXECUTION",
+        }
+        self.assertTrue(forbidden_lines.isdisjoint(lines))
+        self.assertEqual(1, sum(line.startswith("- Provider:") for line in lines))
+        self.assertEqual(1, sum(line.startswith("- Repository:") for line in lines))
+        self.assertEqual(1, sum(line.startswith("- Subject:") for line in lines))
+        self.assertEqual(
+            1,
+            sum(line.startswith("- Execution generation:") for line in lines),
+        )
+        self.assertEqual(projection, reducer.parse_projection_comment(rendered))
+
+
 if __name__ == "__main__":
     unittest.main()
