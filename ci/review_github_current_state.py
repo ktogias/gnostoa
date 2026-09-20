@@ -290,9 +290,7 @@ def _collect_review_threads(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     owner, name = repository.split("/", 1)
     comments_by_id = {
-        item["id"]: item
-        for item in review_comments
-        if isinstance(item.get("id"), str)
+        item["id"]: item for item in review_comments if isinstance(item.get("id"), str)
     }
     cursor: str | None = None
     items: list[dict[str, Any]] = []
@@ -366,9 +364,7 @@ def _collect_review_threads(
                     root_comment.get("databaseId"),
                     "graphql.reviewThread.comments[0].databaseId",
                 )
-                retained = comments_by_id.get(
-                    f"github-review-comment-{database_id}"
-                )
+                retained = comments_by_id.get(f"github-review-comment-{database_id}")
                 if retained is None:
                     omitted += 1
                     continue
