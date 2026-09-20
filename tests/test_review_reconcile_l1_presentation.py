@@ -152,5 +152,6 @@ class UsefulL1PresentationTests(unittest.TestCase):
         )
         self.assertEqual(projection, reducer.parse_projection_comment(rendered))
 
+
 if __name__ == "__main__":
     unittest.main()
