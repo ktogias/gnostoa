@@ -424,6 +424,96 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         self.assertEqual(3, snapshot["collection"]["passes"])
         self.assertEqual("unresolved", snapshot["review_threads"][0]["state"])
 
+    def test_stable_readback_advances_evaluation_cut_after_confirming_read(
+        self,
+    ) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        reducer = fixtures._reducer()
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+        client = fixtures._PagedFake(fixtures._complete_replies(root))
+        read_times = [
+            "2026-09-19T16:41:10Z",
+            "2026-09-19T16:41:20Z",
+            "2026-09-19T16:41:30Z",
+        ]
+
+        with mock.patch.object(adapter, "_now", side_effect=read_times):
+            snapshot = adapter.collect_snapshot(
+                client,
+                repository="ktogias/gnostoa",
+                pull_number=300,
+                observed_at="2026-09-19T16:41:00Z",
+            )
+
+        self.assertEqual("STABLE_READBACK", snapshot["collection"]["status"])
+        self.assertEqual("2026-09-19T16:41:30Z", snapshot["observed_at"])
+        self.assertEqual(
+            "2026-09-19T16:41:30Z",
+            snapshot["collection"]["confirming_read_completed_at"],
+        )
+        review_input = reducer.build_review_input(snapshot, fixtures._bundle())
+        self.assertEqual(
+            "2026-09-19T16:41:30Z",
+            review_input["evaluation_context"]["as_of"],
+        )
+
+    def test_graphql_primary_rate_limit_error_is_classified_rate_limited(self) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        client = adapter.GitHubRestClient("test-token")
+
+        with mock.patch.object(
+            client,
+            "_request",
+            return_value=(
+                {
+                    "data": {"repository": None},
+                    "errors": [{"message": "API rate limit exceeded"}],
+                },
+                {
+                    "x-ratelimit-remaining": "0",
+                    "x-ratelimit-reset": "1789905600",
+                },
+            ),
+        ):
+            with self.assertRaisesRegex(
+                adapter.ProviderReadError,
+                "GraphQL returned errors",
+            ) as caught:
+                client.graphql(
+                    "query($cursor:String){viewer{login}}",
+                    {"cursor": None},
+                )
+
+        self.assertEqual(429, caught.exception.status)
+
+    def test_graphql_secondary_rate_limit_retry_after_is_classified_rate_limited(
+        self,
+    ) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        client = adapter.GitHubRestClient("test-token")
+
+        with mock.patch.object(
+            client,
+            "_request",
+            return_value=(
+                {
+                    "data": {"repository": None},
+                    "errors": [{"message": "secondary rate limit"}],
+                },
+                {"retry-after": "60", "x-ratelimit-remaining": "100"},
+            ),
+        ):
+            with self.assertRaises(adapter.ProviderReadError) as caught:
+                client.graphql(
+                    "query($cursor:String){viewer{login}}",
+                    {"cursor": None},
+                )
+
+        self.assertEqual(429, caught.exception.status)
+
     def test_graphql_payload_errors_are_provider_read_failures(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures._adapter()
