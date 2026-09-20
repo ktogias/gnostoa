@@ -159,6 +159,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         fixtures = _fixtures()
         adapter = fixtures._adapter()
         root = "https://api.github.com/repos/ktogias/gnostoa"
+        self.assertIn("replyTo", adapter._REVIEW_THREADS_QUERY)
         page = _thread_page(
             thread_id="PRRT_reply_first",
             comment_id=21,
