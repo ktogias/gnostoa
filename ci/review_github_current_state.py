@@ -745,8 +745,7 @@ def _combined_check_coverage(
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
         "status": _combined_coverage_status(check_runs, commit_statuses),
-        "pages": int(check_runs.get("pages", 0))
-        + int(commit_statuses.get("pages", 0)),
+        "pages": int(check_runs.get("pages", 0)) + int(commit_statuses.get("pages", 0)),
         "count": count,
         "check_runs_status": check_runs.get("status"),
         "commit_statuses_status": commit_statuses.get("status"),
@@ -761,6 +760,7 @@ def _combined_check_coverage(
                 coverage.get("error", "provider_check_source_incomplete"),
             )
     return result
+
 
 def _normalize_pull(value: Any) -> dict[str, Any]:
     item = _mapping(value, "pull request")
@@ -997,6 +997,7 @@ def collect_snapshot(
         "passes": _MAX_COLLECTION_PASSES,
     }
     return snapshot
+
 
 def _projection_key(projection: dict[str, Any]) -> tuple[Any, int, int]:
     observation = projection.get("observation")
