@@ -617,6 +617,41 @@ def _normalize_review(value: Any) -> dict[str, Any] | None:
     }
 
 
+def _mark_effective_reviews(
+    reviews: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    marked = [dict(item) for item in reviews]
+    opinionated: dict[str, list[tuple[Any, int, str]]] = {}
+    for index, review in enumerate(marked):
+        reviewer_id = _text(review.get("reviewer_id"), "review.reviewer_id")
+        state = _text(
+            review.get("recommendation_state"),
+            "review.recommendation_state",
+        ).upper()
+        if state == "DISMISSED":
+            review["effective"] = False
+            continue
+        if state in {"APPROVED", "CHANGES_REQUESTED"}:
+            observed = parse_rfc3339(
+                _timestamp(review.get("observed_at"), "review.observed_at")
+            )
+            opinionated.setdefault(reviewer_id, []).append((observed, index, state))
+            review["effective"] = False
+            continue
+        review["effective"] = True
+
+    ambiguities = 0
+    for rows in opinionated.values():
+        latest_cut = max(item[0] for item in rows)
+        latest = [item for item in rows if item[0] == latest_cut]
+        if len({item[2] for item in latest}) != 1:
+            ambiguities += 1
+            continue
+        for _, index, _ in latest:
+            marked[index]["effective"] = True
+    return marked, ambiguities
+
+
 def _normalize_review_comment(value: Any) -> dict[str, Any]:
     item = _mapping(value, "review comment")
     comment_id = _integer(item.get("id"), "review_comment.id")
@@ -648,6 +683,9 @@ def _normalize_check(
 ) -> dict[str, Any]:
     item = _mapping(value, "check run")
     check_id = _integer(item.get("id"), "check_run.id")
+    name = _text(item.get("name"), "check_run.name")
+    app = _mapping(item.get("app"), "check_run.app")
+    app_id = _integer(app.get("id"), "check_run.app.id")
     started_at = _optional_timestamp(item.get("started_at"), "check_run.started_at")
     completed_at = _optional_timestamp(
         item.get("completed_at"), "check_run.completed_at"
@@ -662,7 +700,8 @@ def _normalize_check(
         )
     return {
         "id": f"github-check-{check_id}",
-        "name": _text(item.get("name"), "check_run.name"),
+        "key": f"github-check-run:{app_id}:{name}",
+        "name": name,
         "head_commit": _sha(item.get("head_sha"), "check_run.head_sha"),
         "observed_at": observed_at,
         "status": _text(item.get("status"), "check_run.status"),
@@ -670,6 +709,58 @@ def _normalize_check(
         "source_url": _optional_text(item.get("details_url")),
     }
 
+
+def _normalize_commit_status(
+    value: Any,
+    *,
+    head_commit: str,
+) -> dict[str, Any]:
+    item = _mapping(value, "commit status")
+    status_id = _integer(item.get("id"), "commit_status.id")
+    context = _text(item.get("context"), "commit_status.context")
+    state = _text(item.get("state"), "commit_status.state").lower()
+    if state not in {"pending", "success", "failure", "error"}:
+        raise ProviderReadError("commit_status.state is unsupported")
+    observed_at = _timestamp(
+        item.get("updated_at") or item.get("created_at"),
+        "commit_status.updated_at",
+    )
+    return {
+        "id": f"github-status-{status_id}",
+        "key": f"github-commit-status:{context}",
+        "name": context,
+        "head_commit": _sha(head_commit, "commit_status.head_commit"),
+        "observed_at": observed_at,
+        "status": "queued" if state == "pending" else "completed",
+        "conclusion": None if state == "pending" else state,
+        "source_url": _optional_text(item.get("target_url")),
+    }
+
+
+def _combined_check_coverage(
+    check_runs: dict[str, Any],
+    commit_statuses: dict[str, Any],
+    *,
+    count: int,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "status": _combined_coverage_status(check_runs, commit_statuses),
+        "pages": int(check_runs.get("pages", 0))
+        + int(commit_statuses.get("pages", 0)),
+        "count": count,
+        "check_runs_status": check_runs.get("status"),
+        "commit_statuses_status": commit_statuses.get("status"),
+    }
+    for label, coverage in (
+        ("check_runs", check_runs),
+        ("commit_statuses", commit_statuses),
+    ):
+        if coverage.get("status") != "COMPLETE":
+            result[f"{label}_reason"] = coverage.get(
+                "reason",
+                coverage.get("error", "provider_check_source_incomplete"),
+            )
+    return result
 
 def _normalize_pull(value: Any) -> dict[str, Any]:
     item = _mapping(value, "pull request")
@@ -725,6 +816,13 @@ def _collect_snapshot_once(
         f"{root}/pulls/{pull_number}/reviews?per_page=100",
         normalize=_normalize_review,
     )
+    reviews, opinion_ambiguities = _mark_effective_reviews(reviews)
+    if opinion_ambiguities:
+        review_coverage = dict(review_coverage)
+        review_coverage["effective_opinion_ambiguities"] = opinion_ambiguities
+        if review_coverage.get("status") == "COMPLETE":
+            review_coverage["status"] = "PARTIAL"
+            review_coverage["reason"] = "ambiguous_latest_reviewer_opinion"
     review_comments, review_comment_coverage = _collect_pages(
         client,
         f"{root}/pulls/{pull_number}/comments?per_page=100",
@@ -757,7 +855,7 @@ def _collect_snapshot_once(
             "reason",
             review_comment_coverage.get("error", "review_comment_metadata_incomplete"),
         )
-    check_runs, check_coverage = _collect_pages(
+    check_runs, check_run_coverage = _collect_pages(
         client,
         f"{root}/commits/{pull['head_sha']}/check-runs?per_page=100",
         page_items=_check_page,
@@ -765,6 +863,20 @@ def _collect_snapshot_once(
             item,
             fallback_observed_at=collection_cut,
         ),
+    )
+    commit_statuses, commit_status_coverage = _collect_pages(
+        client,
+        f"{root}/commits/{pull['head_sha']}/statuses?per_page=100",
+        normalize=lambda item: _normalize_commit_status(
+            item,
+            head_commit=pull["head_sha"],
+        ),
+    )
+    checks = [*check_runs, *commit_statuses]
+    check_coverage = _combined_check_coverage(
+        check_run_coverage,
+        commit_status_coverage,
+        count=len(checks),
     )
 
     cut_candidates = [collection_cut]
@@ -785,7 +897,7 @@ def _collect_snapshot_once(
     )
     cut_candidates.extend(
         item["observed_at"]
-        for item in check_runs
+        for item in checks
         if isinstance(item.get("observed_at"), str)
     )
     effective_observed_at = max(cut_candidates, key=parse_rfc3339)
@@ -823,7 +935,7 @@ def _collect_snapshot_once(
         "conversation": issue_comments,
         "reviews": reviews,
         "review_threads": review_threads,
-        "checks": check_runs,
+        "checks": checks,
     }
 
 
@@ -834,13 +946,10 @@ def collect_snapshot(
     pull_number: int,
     observed_at: str | None,
 ) -> dict[str, Any]:
-    """Confirm a fixed observation cut with bounded, repeated provider reads.
-
-    This is a current-state read-back, not an atomic historical snapshot or an
-    effect fence. Every source is reread after the cut before claiming complete
-    coverage. Continued change, or a cut ahead of the local clock, fails closed.
-    """
+    """Confirm a cut that is covered by a subsequent full provider reread."""
     previous: dict[str, Any] | None = None
+    previous_cut: str | None = None
+    snapshot: dict[str, Any] = {}
     for attempt in range(1, _MAX_COLLECTION_PASSES + 1):
         read_started_at = _now()
         snapshot = _collect_snapshot_once(
@@ -849,26 +958,35 @@ def collect_snapshot(
             pull_number=pull_number,
             observed_at=observed_at,
         )
+        read_completed_at = _now()
+        if parse_rfc3339(read_completed_at) < parse_rfc3339(read_started_at):
+            previous = snapshot
+            previous_cut = None
+            observed_at = snapshot["observed_at"]
+            continue
         if (
             previous is not None
+            and previous_cut is not None
             and snapshot == previous
-            and parse_rfc3339(read_started_at) >= parse_rfc3339(snapshot["observed_at"])
+            and parse_rfc3339(read_started_at) >= parse_rfc3339(previous_cut)
         ):
-            read_completed_at = _now()
-            if parse_rfc3339(read_completed_at) < parse_rfc3339(read_started_at):
-                previous = snapshot
-                observed_at = snapshot["observed_at"]
-                continue
-            snapshot["observed_at"] = read_completed_at
+            snapshot["observed_at"] = previous_cut
             snapshot["collection"] = {
                 "status": "STABLE_READBACK",
                 "passes": attempt,
+                "certified_cut": previous_cut,
                 "confirming_read_started_at": read_started_at,
                 "confirming_read_completed_at": read_completed_at,
             }
             return snapshot
+        raw_cut = snapshot["observed_at"]
+        previous_cut = (
+            raw_cut
+            if parse_rfc3339(raw_cut) > parse_rfc3339(read_completed_at)
+            else read_completed_at
+        )
         previous = snapshot
-        observed_at = snapshot["observed_at"]
+        observed_at = raw_cut
 
     for coverage in snapshot["coverage"].values():
         if coverage["status"] == "COMPLETE":
@@ -879,7 +997,6 @@ def collect_snapshot(
         "passes": _MAX_COLLECTION_PASSES,
     }
     return snapshot
-
 
 def _projection_key(projection: dict[str, Any]) -> tuple[Any, int, int]:
     observation = projection.get("observation")
@@ -990,8 +1107,10 @@ def _existing_projection(
             continue
         try:
             key = _projection_key(projection)
-        except ValueError:
-            continue
+        except ValueError as exc:
+            raise ProviderWriteError(
+                "workflow-owned projection execution identity is not GitHub-orderable"
+            ) from exc
         candidates.append((key, comment_id, projection))
     if not candidates:
         return None
@@ -1049,6 +1168,12 @@ def publish_entry(
     candidate_projection = _parse_canonical_projection_body(body)
     if candidate_projection is None:
         raise ProviderWriteError("publication payload has no valid L1 projection")
+    try:
+        _projection_key(candidate_projection)
+    except ValueError as exc:
+        raise ProviderWriteError(
+            "publication candidate execution identity is not GitHub-orderable"
+        ) from exc
 
     initial_current = _current_pr(client, repository, pull_number)
     allowed, reason = publication_decision(
@@ -1087,6 +1212,21 @@ def publish_entry(
     )
     if not allowed:
         return {"pull_number": pull_number, "published": False, "reason": reason}
+
+    protected = candidate_projection.get("protected")
+    if isinstance(protected, dict) and protected.get("status") == "AVAILABLE":
+        candidate_protected_revision = protected.get("main_revision")
+        bundle, consumer = _protected_state()
+        if (
+            not isinstance(candidate_protected_revision, str)
+            or bundle.protected_main_revision != candidate_protected_revision
+            or consumer.protected_main_revision != candidate_protected_revision
+        ):
+            return {
+                "pull_number": pull_number,
+                "published": False,
+                "reason": "STALE_PROTECTED_AUTHORITY",
+            }
 
     if existing is None:
         client.post(
@@ -1334,6 +1474,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.mode == "collect":
         if args.output is None:
             raise SystemExit("--output is required for collect")
+        if args.run_id <= 0 or args.run_attempt <= 0:
+            raise SystemExit("--run-id and --run-attempt must be positive for collect")
         pulls = list(
             dict.fromkeys(
                 [
@@ -1417,7 +1559,17 @@ def main(argv: list[str] | None = None) -> int:
         [
             "## Gnostoa useful L1 publication",
             "",
-            *[f"- PR #{item['pull_number']}: {item['reason']}" for item in results],
+            *[
+                (
+                    f"- PR #{item['pull_number']}: {item['reason']}"
+                    + (
+                        f" ({item['error_type']})"
+                        if isinstance(item.get("error_type"), str)
+                        else ""
+                    )
+                )
+                for item in results
+            ],
         ]
     )
     return 0

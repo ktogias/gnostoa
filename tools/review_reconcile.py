@@ -212,6 +212,8 @@ def _thread_records_by_review(
     review_observation_ids: set[str] = set()
     for raw_review in reviews:
         review = _mapping(raw_review, "review")
+        if review.get("effective") is False:
+            continue
         observation_id = _string(
             review.get("observation_id"),
             "review.observation_id",
@@ -227,6 +229,9 @@ def _thread_records_by_review(
         source_url = review.get("source_url")
         if source_url is not None:
             _string(source_url, "review.source_url")
+        effective = review.get("effective")
+        if effective is not None and type(effective) is not bool:
+            raise ReconciliationInputError("review.effective must be a boolean")
         review_observation_ids.add(observation_id)
         normalized_reviews.append(review)
 
@@ -402,6 +407,7 @@ def _check_summary(snapshot: dict[str, Any], target_head: str) -> dict[str, Any]
     for raw in raw_checks:
         check = _mapping(raw, "check")
         _string(check.get("id"), "check.id")
+        key = _string(check.get("key"), "check.key")
         name = _string(check.get("name"), "check.name")
         head_commit = _sha(check.get("head_commit"), "check.head_commit")
         observed_at = _timestamp(check.get("observed_at"), "check.observed_at")
@@ -416,10 +422,10 @@ def _check_summary(snapshot: dict[str, Any], target_head: str) -> dict[str, Any]
         if head_commit != target_head:
             continue
         observed_key = parse_rfc3339(observed_at)
-        state = (status, conclusion)
-        previous = latest.get(name)
+        state = (name, status, conclusion)
+        previous = latest.get(key)
         if previous is None or observed_key > previous["observed_key"]:
-            latest[name] = {
+            latest[key] = {
                 "observed_at": observed_at,
                 "observed_key": observed_key,
                 "states": {state},
@@ -427,23 +433,38 @@ def _check_summary(snapshot: dict[str, Any], target_head: str) -> dict[str, Any]
         elif observed_key == previous["observed_key"]:
             previous["states"].add(state)
 
-    ambiguous: list[str] = []
-    pending: list[str] = []
-    non_success: list[str] = []
-    for name, item in latest.items():
+    classified: list[tuple[str, str, str]] = []
+    for key, item in latest.items():
         states = item["states"]
+        names = sorted({state[0] for state in states})
+        name = names[0] if len(names) == 1 else key
         if len(states) != 1:
-            ambiguous.append(name)
+            classified.append((key, name, "ambiguous"))
             continue
-        status, conclusion = next(iter(states))
+        _, status, conclusion = next(iter(states))
         if status != "completed":
-            pending.append(name)
+            classified.append((key, name, "pending"))
         elif conclusion not in {"success", "neutral", "skipped"}:
-            non_success.append(name)
+            classified.append((key, name, "non_success"))
 
-    ambiguous.sort()
-    pending.sort()
-    non_success.sort()
+    name_counts: dict[str, int] = {}
+    for _, name, _ in classified:
+        name_counts[name] = name_counts.get(name, 0) + 1
+
+    categories: dict[str, list[str]] = {
+        "ambiguous": [],
+        "pending": [],
+        "non_success": [],
+    }
+    for key, name, category in classified:
+        label = name if name_counts[name] == 1 else f"{name} [{key}]"
+        categories[category].append(label)
+    for items in categories.values():
+        items.sort()
+
+    ambiguous = categories["ambiguous"]
+    pending = categories["pending"]
+    non_success = categories["non_success"]
     return {
         "observed_names": len(latest),
         "ambiguous": ambiguous[:_MAX_CHECK_NAMES],
@@ -840,6 +861,10 @@ def render_projection(projection: dict[str, Any]) -> str:
         observation.get("execution_id"),
         "projection.observation.execution_id",
     )
+    runtime_image_literal = _markdown_code(
+        protected.get("outer_runtime_image") or "UNAVAILABLE",
+        "projection.protected.outer_runtime_image",
+    )
 
     lines = [
         f"<!-- gnostoa:l1-current-state:v1:{_encode_projection(projection)} -->",
@@ -883,10 +908,7 @@ def render_projection(projection: dict[str, Any]) -> str:
                 f"- Protected authority: **{protected['status']}**; "
                 f"main=`{protected.get('main_revision') or 'UNAVAILABLE'}`"
             ),
-            (
-                "- Protected outer runtime: "
-                f"`{protected.get('outer_runtime_image') or 'UNAVAILABLE'}`"
-            ),
+            f"- Protected outer runtime: {runtime_image_literal}",
             f"- R2A: **{r2a['outcome']} / {r2a['reason']}**, binding: false",
             f"- Currentness: **{projection['currentness']}**",
             f"- Next permitted action: `{projection['next_permitted_action']}`",
