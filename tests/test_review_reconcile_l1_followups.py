@@ -354,6 +354,8 @@ class UsefulL1FollowupTests(unittest.TestCase):
                         "301",
                         "--output",
                         str(output),
+                        "--run-id",
+                        "999",
                     ]
                 )
             self.assertEqual(0, code)
@@ -436,6 +438,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
                     {
                         "id": 88,
                         "name": "queued-check",
+                        "app": {"id": 1001},
                         "head_sha": "a" * 40,
                         "started_at": None,
                         "completed_at": None,
@@ -938,6 +941,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
                 "checks": [
                     {
                         "id": item["token"],
+                        "key": f"nebula-signal:{item['label']}",
                         "name": item["label"],
                         "head_commit": item["revision"],
                         "observed_at": item["when"],
@@ -1109,6 +1113,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
         signals = [
             {
                 "id": "opaque-Z-success",
+                "key": "native-signal",
                 "name": "native-signal",
                 "head_commit": "a" * 40,
                 "observed_at": "2026-09-19T16:41:00Z",
@@ -1117,6 +1122,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
             },
             {
                 "id": "opaque-A-failure",
+                "key": "native-signal",
                 "name": "native-signal",
                 "head_commit": "a" * 40,
                 "observed_at": "2026-09-19T16:41:00Z",

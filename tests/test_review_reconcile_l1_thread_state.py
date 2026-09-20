@@ -501,6 +501,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             "2026-09-19T16:41:10Z",
             "2026-09-19T16:41:20Z",
             "2026-09-19T16:41:30Z",
+            "2026-09-19T16:41:40Z",
         ]
 
         with mock.patch.object(adapter, "_now", side_effect=read_times):
@@ -512,14 +513,18 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             )
 
         self.assertEqual("STABLE_READBACK", snapshot["collection"]["status"])
-        self.assertEqual("2026-09-19T16:41:30Z", snapshot["observed_at"])
+        self.assertEqual("2026-09-19T16:41:20Z", snapshot["observed_at"])
         self.assertEqual(
-            "2026-09-19T16:41:30Z",
+            "2026-09-19T16:41:20Z",
+            snapshot["collection"]["certified_cut"],
+        )
+        self.assertEqual(
+            "2026-09-19T16:41:40Z",
             snapshot["collection"]["confirming_read_completed_at"],
         )
         review_input = reducer.build_review_input(snapshot, fixtures._bundle())
         self.assertEqual(
-            "2026-09-19T16:41:30Z",
+            "2026-09-19T16:41:20Z",
             review_input["evaluation_context"]["as_of"],
         )
 
@@ -831,6 +836,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         reducer = fixtures._reducer()
         cases = (
             ("id", ""),
+            ("key", ""),
             ("name", ""),
             ("head_commit", "not-a-git-commit"),
             ("observed_at", "not-a-timestamp"),

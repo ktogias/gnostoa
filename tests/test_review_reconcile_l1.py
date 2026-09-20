@@ -150,6 +150,7 @@ def _snapshot(
         "checks": [
             {
                 "id": "provider-check-00000000000000000030",
+                "key": "provider-check:fast",
                 "name": "fast",
                 "head_commit": "a" * 40,
                 "observed_at": "2026-09-19T16:40:40Z",
@@ -327,6 +328,7 @@ def _complete_replies(root: str) -> dict[str, tuple[Any, dict[str, str]]]:
                     {
                         "id": 30,
                         "name": "fast",
+                        "app": {"id": 1001},
                         "head_sha": "a" * 40,
                         "started_at": "2026-09-19T16:40:06Z",
                         "completed_at": "2026-09-19T16:40:07Z",
@@ -343,6 +345,7 @@ def _complete_replies(root: str) -> dict[str, tuple[Any, dict[str, str]]]:
                     {
                         "id": 31,
                         "name": "policy",
+                        "app": {"id": 1001},
                         "head_sha": "a" * 40,
                         "started_at": "2026-09-19T16:40:08Z",
                         "completed_at": "2026-09-19T16:40:09Z",
@@ -353,6 +356,7 @@ def _complete_replies(root: str) -> dict[str, tuple[Any, dict[str, str]]]:
             },
             {},
         ),
+        f"{root}/commits/{'a' * 40}/statuses?per_page=100": ([], {}),
     }
 
 
@@ -566,6 +570,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
         snapshot["checks"] = [
             {
                 "id": "provider-a",
+                "key": "provider-check:fast",
                 "name": "fast",
                 "head_commit": "a" * 40,
                 "observed_at": "2026-09-19T16:41:00Z",
@@ -574,6 +579,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
             },
             {
                 "id": "provider-z",
+                "key": "provider-check:fast",
                 "name": "fast",
                 "head_commit": "a" * 40,
                 "observed_at": "2026-09-19T16:41:00Z",
@@ -615,6 +621,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
         snapshot["checks"] = [
             {
                 "id": "z-earlier-provider-id",
+                "key": "provider-check:fast",
                 "name": "fast",
                 "head_commit": "a" * 40,
                 "observed_at": "2026-09-19T16:40:00Z",
@@ -623,6 +630,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
             },
             {
                 "id": "a-later-provider-id",
+                "key": "provider-check:fast",
                 "name": "fast",
                 "head_commit": "a" * 40,
                 "observed_at": "2026-09-19T16:41:00Z",
@@ -663,6 +671,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
                 "2026-09-19T16:40:10Z",
                 "2026-09-19T16:40:20Z",
                 "2026-09-19T16:40:30Z",
+                "2026-09-19T16:40:40Z",
             ],
         ):
             snapshot = adapter.collect_snapshot(
@@ -672,7 +681,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
                 observed_at="2026-09-19T16:40:00Z",
             )
 
-        self.assertEqual("2026-09-19T16:40:30Z", snapshot["observed_at"])
+        self.assertEqual("2026-09-19T16:40:20Z", snapshot["observed_at"])
         self.assertEqual(
             "2026-09-19T16:40:30Z",
             snapshot["collection"]["confirming_read_completed_at"],
@@ -1391,6 +1400,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
             {
                 "contents": "read",
                 "checks": "read",
+                "statuses": "read",
                 "pull-requests": "read",
                 "issues": "read",
             },
