@@ -169,6 +169,25 @@ def _coverage(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return result
 
 
+def _validate_source_payloads(
+    snapshot: dict[str, Any],
+    coverage: dict[str, dict[str, Any]],
+) -> None:
+    subject_count = coverage["subject"].get("count")
+    if subject_count is not None and subject_count != 1:
+        raise ReconciliationInputError("coverage.subject.count must equal one subject")
+
+    for source in ("conversation", "reviews", "review_threads", "checks"):
+        payload = snapshot.get(source)
+        if not isinstance(payload, list):
+            raise ReconciliationInputError(f"{source} must be an array")
+        count = coverage[source].get("count")
+        if count is not None and count != len(payload):
+            raise ReconciliationInputError(
+                f"coverage.{source}.count does not match retained payload"
+            )
+
+
 def _review_source_status(coverage: dict[str, dict[str, Any]]) -> str:
     statuses = {
         coverage["reviews"]["status"],
@@ -324,6 +343,7 @@ def build_review_input(
 
     subject, provider_subject = _subject(snapshot)
     coverage = _coverage(snapshot)
+    _validate_source_payloads(snapshot, coverage)
     bundle = _mapping(protected_bundle, "protected_bundle")
     authority = _mapping(bundle.get("authority"), "protected_bundle.authority")
     judge = _mapping(bundle.get("acquired_judge"), "protected_bundle.acquired_judge")
@@ -445,8 +465,9 @@ def build_projection(
     """Build a bounded non-canonical owner-facing current-state projection."""
 
     _, provider_subject = _subject(snapshot)
-    _thread_records_by_review(snapshot)
     coverage = _projection_coverage(snapshot)
+    _validate_source_payloads(snapshot, coverage)
+    _thread_records_by_review(snapshot)
     protected_revision = (
         _sha(protected_main_revision, "protected_main_revision")
         if protected_main_revision is not None
