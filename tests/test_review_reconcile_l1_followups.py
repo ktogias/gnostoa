@@ -767,7 +767,9 @@ class UsefulL1FollowupTests(unittest.TestCase):
                 client.post.assert_not_called()
                 client.patch.assert_not_called()
 
-    def test_noncanonical_candidate_rejected_but_owned_prior_render_accepted(self) -> None:
+    def test_noncanonical_candidate_rejected_but_owned_prior_render_accepted(
+        self,
+    ) -> None:
         fixtures = _fixtures()
         adapter = fixtures._adapter()
         reducer = fixtures._reducer()
