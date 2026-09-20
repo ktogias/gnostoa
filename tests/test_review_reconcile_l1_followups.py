@@ -644,6 +644,18 @@ class UsefulL1FollowupTests(unittest.TestCase):
             "incomplete_current_claim": lambda item: item["coverage"][
                 "conversation"
             ].__setitem__("status", "PARTIAL"),
+            "omitted_ambiguous_claim": lambda item: item["checks"].__setitem__(
+                "omitted_ambiguous",
+                1,
+            ),
+            "omitted_pending_claim": lambda item: item["checks"].__setitem__(
+                "omitted_pending",
+                1,
+            ),
+            "omitted_non_success_claim": lambda item: item["checks"].__setitem__(
+                "omitted_non_success",
+                1,
+            ),
         }
         for name, mutate in mutations.items():
             with self.subTest(name=name):
