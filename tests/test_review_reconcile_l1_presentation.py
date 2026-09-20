@@ -73,6 +73,44 @@ class UsefulL1PresentationTests(unittest.TestCase):
                 self.assertEqual(0, completed.returncode, completed.stderr)
                 self.assertIn("--mode", completed.stdout)
 
+    def test_rendered_check_summary_exposes_omitted_adverse_counts(self) -> None:
+        fixtures = _fixtures()
+        reducer = fixtures._reducer()
+        projection = reducer.build_projection(
+            fixtures._snapshot(),
+            protected_main_revision="e" * 40,
+            outer_consumer={
+                "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
+                "runtime_revision": "9" * 40,
+            },
+            r2a_result={
+                "outcome": "PASS",
+                "reason": "QUORUM_SATISFIED",
+                "binding": False,
+            },
+            execution={
+                "execution_id": "presentation-test::omitted-checks",
+                "observed_at": "2026-09-19T16:41:00Z",
+            },
+        )
+        projection["checks"] = {
+            "observed_names": 11,
+            "ambiguous": ["ambiguous-visible"],
+            "pending": [],
+            "non_success": [],
+            "omitted_ambiguous": 5,
+            "omitted_pending": 3,
+            "omitted_non_success": 2,
+        }
+        projection["next_permitted_action"] = "RECONCILE_PROVIDER_CHECKS"
+
+        rendered = reducer.render_projection(projection)
+
+        self.assertIn("ambiguous=1 (+5 omitted)", rendered)
+        self.assertIn("pending=0 (+3 omitted)", rendered)
+        self.assertIn("non-success=0 (+2 omitted)", rendered)
+        self.assertEqual(projection, reducer.parse_projection_comment(rendered))
+
     def test_provider_title_cannot_inject_markdown_or_html(self) -> None:
         fixtures = _fixtures()
         reducer = fixtures._reducer()
