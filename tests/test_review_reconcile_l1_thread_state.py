@@ -634,6 +634,85 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
                 },
             )
 
+    def test_malformed_normalized_review_fields_fail_closed_in_common_core(
+        self,
+    ) -> None:
+        fixtures = _fixtures()
+        reducer = fixtures._reducer()
+        cases = (
+            ("reviewer_id", ""),
+            ("recommendation_state", None),
+            ("observed_at", "not-a-timestamp"),
+            ("source_url", 123),
+        )
+
+        for field, value in cases:
+            with self.subTest(field=field):
+                snapshot = fixtures._snapshot()
+                snapshot["reviews"][0][field] = value
+
+                with self.assertRaises(reducer.ReconciliationInputError):
+                    reducer.build_review_input(snapshot, fixtures._bundle())
+
+                with self.assertRaises(reducer.ReconciliationInputError):
+                    reducer.build_projection(
+                        snapshot,
+                        protected_main_revision="e" * 40,
+                        outer_consumer={
+                            "runtime_image": (
+                                "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64
+                            ),
+                            "runtime_revision": "9" * 40,
+                        },
+                        r2a_result={
+                            "outcome": "PASS",
+                            "reason": "QUORUM_SATISFIED",
+                            "binding": False,
+                        },
+                        execution={
+                            "execution_id": "github-actions:1004:1",
+                            "observed_at": "2026-09-19T16:41:10Z",
+                        },
+                    )
+
+    def test_optional_normalized_review_bindings_remain_admissible(self) -> None:
+        fixtures = _fixtures()
+        reducer = fixtures._reducer()
+
+        for field in ("head_commit", "source_url"):
+            with self.subTest(field=field):
+                snapshot = fixtures._snapshot()
+                snapshot["reviews"][0][field] = None
+
+                review_input = reducer.build_review_input(snapshot, fixtures._bundle())
+                observation = next(
+                    item
+                    for item in review_input["evidence_set"]["observations"]
+                    if item["observation_id"] == "provider-review-10"
+                )
+                self.assertEqual("unresolved", observation["threads"]["state"])
+
+                projection = reducer.build_projection(
+                    snapshot,
+                    protected_main_revision="e" * 40,
+                    outer_consumer={
+                        "runtime_image": (
+                            "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64
+                        ),
+                        "runtime_revision": "9" * 40,
+                    },
+                    r2a_result={
+                        "outcome": "BLOCKED",
+                        "reason": "BLOCKER_PRESENT",
+                        "binding": False,
+                    },
+                    execution={
+                        "execution_id": "github-actions:1005:1",
+                        "observed_at": "2026-09-19T16:41:10Z",
+                    },
+                )
+                self.assertEqual("CURRENT_AT_OBSERVATION", projection["currentness"])
+
     def test_malformed_normalized_thread_fields_fail_closed_in_common_core(
         self,
     ) -> None:
