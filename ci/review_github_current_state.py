@@ -444,14 +444,9 @@ def _collect_snapshot_once(
         normalize=_normalize_review_comment,
     )
     review_thread_coverage = dict(review_comment_coverage)
-    if (
-        review_thread_coverage.get("status") == "COMPLETE"
-        and review_comments
-    ):
+    if review_thread_coverage.get("status") == "COMPLETE" and review_comments:
         review_thread_coverage["status"] = "PARTIAL"
-        review_thread_coverage["reason"] = (
-            "review_comments_without_resolution_state"
-        )
+        review_thread_coverage["reason"] = "review_comments_without_resolution_state"
     check_runs, check_coverage = _collect_pages(
         client,
         f"{root}/commits/{pull['head_sha']}/check-runs?per_page=100",
