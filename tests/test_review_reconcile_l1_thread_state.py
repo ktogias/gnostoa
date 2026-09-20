@@ -696,9 +696,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
                     snapshot,
                     protected_main_revision="e" * 40,
                     outer_consumer={
-                        "runtime_image": (
-                            "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64
-                        ),
+                        "runtime_image": ("ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64),
                         "runtime_revision": "9" * 40,
                     },
                     r2a_result={
