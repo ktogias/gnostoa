@@ -115,7 +115,9 @@ class UsefulL1FollowupTests(unittest.TestCase):
             protected_main_revision="e" * 40,
             document={
                 "acquired_consumer": {
-                    "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
+                    "runtime_image": (
+                    "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64
+                ),
                 }
             },
         )
