@@ -15,6 +15,7 @@ from tools.review_model import parse_rfc3339
 from tools.review_reconcile import (
     PROVIDER_STATE_SCHEMA_VERSION,
     parse_projection_comment,
+    render_projection,
 )
 
 _API_ROOT = "https://api.github.com"
@@ -898,6 +899,15 @@ def _projection_key(projection: dict[str, Any]) -> tuple[Any, int, int]:
     return parse_rfc3339(observed_at), run_id, run_attempt
 
 
+def _parse_canonical_projection_body(body: object) -> dict[str, Any] | None:
+    projection = parse_projection_comment(body)
+    if projection is None:
+        return None
+    if not isinstance(body, str) or render_projection(projection) != body:
+        raise ProviderWriteError("publication payload is not a canonical L1 projection")
+    return projection
+
+
 def publication_decision(
     *,
     repository: str,
@@ -961,7 +971,7 @@ def _existing_projection(
         if comment.get("author") != _PROJECTION_AUTHOR:
             continue
         comment_id = comment.get("id")
-        projection = parse_projection_comment(comment.get("body"))
+        projection = _parse_canonical_projection_body(comment.get("body"))
         if type(comment_id) is not int or projection is None:
             continue
         subject = projection.get("subject")
@@ -1031,7 +1041,7 @@ def publish_entry(
         }
     collected_head = _sha(entry.get("head_sha"), "entry.head_sha")
     body = _text(entry.get("body"), "entry.body")
-    candidate_projection = parse_projection_comment(body)
+    candidate_projection = _parse_canonical_projection_body(body)
     if candidate_projection is None:
         raise ProviderWriteError("publication payload has no valid L1 projection")
 
