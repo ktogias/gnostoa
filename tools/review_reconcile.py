@@ -225,6 +225,17 @@ def _observations(
             binding_status = "unestablished"
 
         thread_records = threads_by_review.get(observation_id, [])
+        thread_states: set[str] = set()
+        for item in thread_records:
+            thread_state = item.get("state")
+            if thread_state not in {"resolved", "unresolved"}:
+                raise ReconciliationInputError(
+                    "review_thread.state must be resolved or unresolved"
+                )
+            thread_states.add(thread_state)
+        aggregate_thread_state = (
+            "unresolved" if "unresolved" in thread_states else "resolved"
+        )
         observations.append(
             {
                 "observation_id": observation_id,
@@ -248,7 +259,7 @@ def _observations(
                 },
                 "findings": [],
                 "threads": {
-                    "state": "observed",
+                    "state": aggregate_thread_state,
                     "count": len(thread_records),
                     "thread_ids": sorted(
                         item["id"]
