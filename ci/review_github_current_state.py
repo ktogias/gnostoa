@@ -973,7 +973,10 @@ def _existing_projection(
         if comment.get("author") != _PROJECTION_AUTHOR:
             continue
         comment_id = comment.get("id")
-        projection = _parse_canonical_projection_body(comment.get("body"))
+        # Retained workflow-owned comments are identified by their validated
+        # embedded semantics. Their visible Markdown is a disposable rendering
+        # that may have been produced by an older same-schema renderer.
+        projection = parse_projection_comment(comment.get("body"))
         if type(comment_id) is not int or projection is None:
             continue
         subject = projection.get("subject")

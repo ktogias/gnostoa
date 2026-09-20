@@ -767,7 +767,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
                 client.post.assert_not_called()
                 client.patch.assert_not_called()
 
-    def test_publication_rejects_noncanonical_visible_projection_body(self) -> None:
+    def test_publication_rejects_noncanonical_candidate_but_accepts_owned_prior_render(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures._adapter()
         reducer = fixtures._reducer()
@@ -828,15 +828,14 @@ class UsefulL1FollowupTests(unittest.TestCase):
                 "body": unsafe,
             }
         ]
-        with self.assertRaisesRegex(
-            adapter.ProviderWriteError,
-            "canonical L1 projection",
-        ):
-            adapter._existing_projection(
-                comments,
-                repository="ktogias/gnostoa",
-                pull_number=300,
-            )
+        existing = adapter._existing_projection(
+            comments,
+            repository="ktogias/gnostoa",
+            pull_number=300,
+        )
+        self.assertIsNotNone(existing)
+        self.assertEqual(77, existing[0])
+        self.assertEqual(projection, existing[1])
 
     def test_materially_different_native_translator_reuses_core_unchanged(self) -> None:
         fixtures = _fixtures()

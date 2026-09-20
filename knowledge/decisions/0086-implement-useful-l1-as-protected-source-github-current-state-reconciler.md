@@ -274,6 +274,18 @@ For the GitHub adapter, workflow ownership means the provider comment author is
 repository and Pull Request identity being reconciled. Marker text alone is not
 ownership evidence and must not make an arbitrary participant comment writable.
 
+For a retained workflow-owned comment, the embedded same-schema projection is
+the durable machine-readable identity and ordering evidence; its visible
+Markdown is a disposable presentation. Existing-comment discovery therefore
+validates the decoded projection semantically but does not require the retained
+body to byte-match the current renderer. A presentation-only renderer change is
+self-healing: the next admissible publication patches the same owned comment
+with the current canonical rendering. In contrast, every **new candidate body**
+to be written must still byte-match the current renderer before any provider
+effect. A semantic/schema-version change remains a separate compatibility and
+migration boundary; presentation evolution alone does not require manual comment
+deletion or a schema-version bump.
+
 This rejects stale writes that are already observable at the pre-write
 read-back. It does **not** claim an atomic or exactly-once publication fence:
 a concurrent provider race can still occur between the final read and comment
