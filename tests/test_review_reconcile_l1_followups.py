@@ -455,6 +455,59 @@ class UsefulL1FollowupTests(unittest.TestCase):
             adapter._MAX_PUBLICATION_PAYLOAD_BYTES,
         )
 
+    def test_publication_rejects_wrong_pull_identity_before_write(self) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        reducer = fixtures._reducer()
+        projection = reducer.build_projection(
+            fixtures._snapshot(),
+            protected_main_revision="e" * 40,
+            outer_consumer={
+                "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
+                "runtime_revision": "9" * 40,
+            },
+            r2a_result={
+                "outcome": "INCOMPLETE",
+                "reason": "QUORUM_UNMET",
+                "binding": False,
+            },
+            execution={
+                "execution_id": "github-actions:259:1",
+                "observed_at": "2026-09-19T16:41:10Z",
+            },
+        )
+        entry = {
+            "pull_number": 300,
+            "head_sha": "a" * 40,
+            "body": reducer.render_projection(projection),
+        }
+        client = mock.Mock()
+        client.get.return_value = (
+            {
+                "number": 999,
+                "state": "open",
+                "html_url": "https://github.com/ktogias/gnostoa/pull/999",
+                "title": "wrong subject",
+                "body": "",
+                "head": {"sha": "a" * 40},
+                "base": {"sha": "b" * 40},
+            },
+            {},
+        )
+
+        with self.assertRaisesRegex(
+            adapter.ProviderReadError,
+            "Pull Request identity changed during publication",
+        ):
+            adapter.publish_entry(
+                client,
+                repository="ktogias/gnostoa",
+                entry=entry,
+            )
+
+        client.post.assert_not_called()
+        client.patch.assert_not_called()
+
     def test_publication_rechecks_exact_subject_after_comment_readback(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures._adapter()
