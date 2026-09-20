@@ -646,6 +646,49 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
                         },
                     )
 
+    def test_malformed_normalized_checks_fail_closed_before_head_filtering(
+        self,
+    ) -> None:
+        fixtures = _fixtures()
+        reducer = fixtures._reducer()
+        cases = (
+            ("id", ""),
+            ("name", ""),
+            ("head_commit", "not-a-git-commit"),
+            ("observed_at", "not-a-timestamp"),
+            ("status", ""),
+            ("conclusion", 123),
+        )
+
+        for field, value in cases:
+            for target_bound in (True, False):
+                with self.subTest(field=field, target_bound=target_bound):
+                    snapshot = fixtures._snapshot()
+                    check = snapshot["checks"][0]
+                    check["head_commit"] = "a" * 40 if target_bound else "d" * 40
+                    check[field] = value
+
+                    with self.assertRaises(reducer.ReconciliationInputError):
+                        reducer.build_projection(
+                            snapshot,
+                            protected_main_revision="e" * 40,
+                            outer_consumer={
+                                "runtime_image": (
+                                    "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64
+                                ),
+                                "runtime_revision": "9" * 40,
+                            },
+                            r2a_result={
+                                "outcome": "PASS",
+                                "reason": "QUORUM_SATISFIED",
+                                "binding": False,
+                            },
+                            execution={
+                                "execution_id": "github-actions:1000:1",
+                                "observed_at": "2026-09-19T16:41:10Z",
+                            },
+                        )
+
     def test_publish_mode_isolates_one_entry_failure(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures._adapter()
