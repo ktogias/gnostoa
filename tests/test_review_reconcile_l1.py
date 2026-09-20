@@ -207,7 +207,7 @@ class _PagedFake:
             }
             for item in payload
         ]
-        has_next = "rel=\"next\"" in headers.get("link", "")
+        has_next = 'rel="next"' in headers.get("link", "")
         return {
             "data": {
                 "repository": {
