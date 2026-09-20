@@ -127,7 +127,9 @@ class UsefulL1FollowupTests(unittest.TestCase):
         ).encode("utf-8")
 
         with (
-            mock.patch.object(adapter, "_protected_state", return_value=(bundle, consumer)),
+            mock.patch.object(
+                adapter, "_protected_state", return_value=(bundle, consumer)
+            ),
             mock.patch(
                 "tools.review_outer._run_prior_effective_current_advisory_with_acquisition",
                 return_value=(0, valid_result),
