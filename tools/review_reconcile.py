@@ -190,15 +190,22 @@ def _observations(
     if not isinstance(reviews, list) or not isinstance(review_threads, list):
         raise ReconciliationInputError("reviews and review_threads must be arrays")
 
+    review_observation_ids = {
+        _string(_mapping(raw_review, "review").get("observation_id"), "review.observation_id")
+        for raw_review in reviews
+    }
     threads_by_review: dict[str, list[dict[str, Any]]] = {}
     for raw_thread in review_threads:
         thread = _mapping(raw_thread, "review_thread")
-        review_observation_id = thread.get("review_observation_id")
-        thread_id = thread.get("id")
-        if not isinstance(review_observation_id, str) or not review_observation_id:
-            continue
-        if not isinstance(thread_id, str) or not thread_id:
-            continue
+        review_observation_id = _string(
+            thread.get("review_observation_id"),
+            "review_thread.review_observation_id",
+        )
+        thread_id = _string(thread.get("id"), "review_thread.id")
+        if review_observation_id not in review_observation_ids:
+            raise ReconciliationInputError(
+                "review_thread references unknown review observation"
+            )
         threads_by_review.setdefault(review_observation_id, []).append(thread)
 
     target_head = subject["head_commit"]
