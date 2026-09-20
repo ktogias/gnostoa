@@ -974,6 +974,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
         for ordered in (signals, list(reversed(signals))):
             snapshot = copy.deepcopy(base)
             snapshot["checks"] = ordered
+            snapshot["coverage"]["checks"]["count"] = len(snapshot["checks"])
             projection = reducer.build_projection(
                 snapshot,
                 protected_main_revision="e" * 40,
