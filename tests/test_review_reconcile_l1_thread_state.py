@@ -284,6 +284,71 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         self.assertEqual("unmapped_thread_root_comment", coverage["reason"])
         self.assertEqual([], snapshot["review_threads"])
 
+    def test_graphql_thread_with_unknown_review_is_partial(self) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+        replies = fixtures._complete_replies(root)
+        review_url = f"{root}/pulls/300/comments?per_page=100"
+        replies[review_url][0][0]["pull_request_review_id"] = 999
+        snapshot = adapter._collect_snapshot_once(
+            fixtures._PagedFake(replies),
+            repository="ktogias/gnostoa",
+            pull_number=300,
+            observed_at="2026-09-19T16:41:00Z",
+        )
+
+        coverage = snapshot["coverage"]["review_threads"]
+        self.assertEqual("PARTIAL", coverage["status"])
+        self.assertEqual("unmapped_thread_review_observation", coverage["reason"])
+        review_ids = {item["observation_id"] for item in snapshot["reviews"]}
+        self.assertTrue(
+            all(
+                item["review_observation_id"] in review_ids
+                for item in snapshot["review_threads"]
+            )
+        )
+
+    def test_orphan_thread_cannot_build_current_projection(self) -> None:
+        fixtures = _fixtures()
+        reducer = fixtures._reducer()
+        snapshot = fixtures._snapshot()
+        snapshot["review_threads"][0]["review_observation_id"] = "missing-review"
+
+        with self.assertRaisesRegex(
+            reducer.ReconciliationInputError,
+            "unknown review observation",
+        ):
+            reducer.build_projection(
+                snapshot,
+                protected_main_revision="e" * 40,
+                outer_consumer={
+                    "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
+                    "runtime_revision": "9" * 40,
+                },
+                r2a_result={
+                    "outcome": "PASS",
+                    "reason": "QUORUM_SATISFIED",
+                    "binding": False,
+                },
+                execution={
+                    "execution_id": "github-actions:999:1",
+                    "observed_at": "2026-09-19T16:41:10Z",
+                },
+            )
+
+    def test_github_api_url_rejects_non_default_and_malformed_ports(self) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+
+        for url in (
+            "https://api.github.com:8443/repos/ktogias/gnostoa",
+            "https://api.github.com:not-a-port/repos/ktogias/gnostoa",
+        ):
+            with self.subTest(url=url):
+                with self.assertRaises(adapter.ProviderReadError):
+                    adapter._validate_api_url(url)
+
     def test_empty_graphql_thread_connection_is_complete(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures._adapter()
