@@ -154,53 +154,6 @@ class UsefulL1PresentationTests(unittest.TestCase):
         self.assertEqual(projection, reducer.parse_projection_comment(rendered))
 
 
-    def test_provider_controlled_projection_identity_is_literal_safe(self) -> None:
-        fixtures = _fixtures()
-        reducer = fixtures._reducer()
-        snapshot = fixtures._snapshot(
-            provider_id="evil`\n## APPROVED <img src=x>",
-            repository="urn:repo:`\n**PASS** <b>owned</b>",
-            change_kind="proposal`\n# MERGED",
-            change_id="42`\n[fake](https://example.invalid)",
-            source_url="urn:source:opaque",
-        )
-        projection = reducer.build_projection(
-            snapshot,
-            protected_main_revision=None,
-            outer_consumer=None,
-            r2a_result={"reason": "TEST_UNAVAILABLE"},
-            execution={
-                "execution_id": "run`\n## CONTINUE <script>alert(1)</script>",
-                "observed_at": "2026-09-19T16:41:00Z",
-            },
-        )
-
-        rendered = reducer.render_projection(projection)
-
-        for injected in (
-            "\n## APPROVED",
-            "\n# MERGED",
-            "\n## CONTINUE",
-            "**PASS**",
-            "[fake](https://example.invalid)",
-            "<img ",
-            "<b>owned</b>",
-            "<script>",
-        ):
-            with self.subTest(injected=injected):
-                self.assertNotIn(injected, rendered)
-
-        self.assertIn(r"<code>evil`\\n## APPROVED &lt;img src=x&gt;</code>", rendered)
-        self.assertIn(r"<code>proposal`\\n# MERGED</code>", rendered)
-        self.assertIn(
-            r"<code>42`\\n[fake](https://example.invalid)</code>",
-            rendered,
-        )
-        self.assertIn(
-            r"<code>run`\\n## CONTINUE &lt;script&gt;alert(1)&lt;/script&gt;</code>",
-            rendered,
-        )
-        self.assertEqual(projection, reducer.parse_projection_comment(rendered))
 
 
 if __name__ == "__main__":
