@@ -188,6 +188,37 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         self.assertEqual(1, coverage["count"])
         self.assertEqual(1, len(snapshot["review_threads"]))
 
+    def test_malformed_graphql_page_info_is_explicit_thread_error(self) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+        malformed = _thread_page(
+            thread_id="PRRT_bad_page_info",
+            comment_id=20,
+            resolved=True,
+            next_cursor=None,
+        )
+        malformed["data"]["repository"]["pullRequest"]["reviewThreads"]["pageInfo"][
+            "hasNextPage"
+        ] = "yes"
+        client = _GraphQLPagedFake(
+            fixtures._complete_replies(root),
+            {None: malformed},
+        )
+
+        snapshot = adapter._collect_snapshot_once(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=300,
+            observed_at="2026-09-19T16:41:00Z",
+        )
+
+        coverage = snapshot["coverage"]["review_threads"]
+        self.assertEqual("ERROR", coverage["status"])
+        self.assertEqual(0, coverage["pages"])
+        self.assertEqual(0, coverage["count"])
+        self.assertEqual([], snapshot["review_threads"])
+
     def test_unmapped_graphql_thread_root_fails_closed(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures._adapter()
