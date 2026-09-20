@@ -872,9 +872,12 @@ def render_projection(projection: dict[str, Any]) -> str:
             f"- Coverage: {coverage_text}",
             (
                 f"- Checks: observed={checks['observed_names']}, "
-                f"ambiguous={len(checks['ambiguous'])}, "
-                f"pending={len(checks['pending'])}, "
-                f"non-success={len(checks['non_success'])}"
+                f"ambiguous={len(checks['ambiguous'])} "
+                f"(+{checks['omitted_ambiguous']} omitted), "
+                f"pending={len(checks['pending'])} "
+                f"(+{checks['omitted_pending']} omitted), "
+                f"non-success={len(checks['non_success'])} "
+                f"(+{checks['omitted_non_success']} omitted)"
             ),
             (
                 f"- Protected authority: **{protected['status']}**; "
