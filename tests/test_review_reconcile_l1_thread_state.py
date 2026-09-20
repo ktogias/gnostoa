@@ -381,6 +381,18 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         client.post.assert_not_called()
         client.patch.assert_not_called()
 
+    def test_orphan_normalized_thread_fails_closed_in_common_reducer(self) -> None:
+        fixtures = _fixtures()
+        reducer = fixtures._reducer()
+        snapshot = fixtures._snapshot()
+        snapshot["review_threads"][0]["review_observation_id"] = "missing-review"
+
+        with self.assertRaisesRegex(
+            reducer.ReconciliationInputError,
+            "unknown review observation",
+        ):
+            reducer.build_review_input(snapshot, fixtures._bundle())
+
     def test_graphql_http_failure_is_a_provider_read_failure(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures._adapter()
