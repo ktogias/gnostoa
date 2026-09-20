@@ -821,7 +821,7 @@ def _select_scheduled_pull_batch(
         return numbers
 
     batch_count = (len(numbers) + _MAX_OPEN_PULLS - 1) // _MAX_OPEN_PULLS
-    batch_index = int(observed.timestamp() // 3600) % batch_count
+    batch_index = (observed.timeline_seconds // 3_600) % batch_count
     start = batch_index * _MAX_OPEN_PULLS
     return numbers[start : start + _MAX_OPEN_PULLS]
 
