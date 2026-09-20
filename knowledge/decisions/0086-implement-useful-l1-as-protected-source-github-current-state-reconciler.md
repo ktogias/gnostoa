@@ -152,12 +152,20 @@ retains independent source coverage for:
 - Pull Request metadata and exact head/base;
 - issue/conversation comments;
 - formal Pull Request reviews;
-- inline Pull Request review comments/threads;
+- inline Pull Request review comments as retained evidence;
+- review-thread coverage, which is COMPLETE only when the bounded adapter can
+  establish the required thread state; the REST-only comment surface is not
+  allowed to masquerade as resolved/unresolved thread truth;
 - exact-head check runs/status needed by the current diagnostic view.
 
 Events are wake-ups only. Every execution reacquires current provider state.
-Missing pages, API failures or ambiguous currentness remain explicit
-`PARTIAL|UNAVAILABLE|ERROR`; they never mean clean.
+Missing pages, API failures, unavailable thread-resolution state or ambiguous
+currentness remain explicit `PARTIAL|UNAVAILABLE|ERROR`; they never mean clean.
+When GitHub REST returns inline review comments but does not expose the actual
+review-thread identity/resolution state, those comments are retained while
+`review_threads` is marked PARTIAL with an explicit reason. A later GitHub
+adapter may add GraphQL thread acquisition without changing the provider-neutral
+core contract.
 
 Timestamp fields are validated as RFC3339 during provider normalization. A
 malformed timestamp yields source ERROR on the first page or PARTIAL after
