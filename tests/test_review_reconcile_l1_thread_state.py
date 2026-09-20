@@ -155,6 +155,42 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             [None, "cursor-2"], [call.get("cursor") for call in client.graphql_calls]
         )
 
+    def test_graphql_reply_uses_explicit_root_comment_identity(self) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+        page = _thread_page(
+            thread_id="PRRT_reply_first",
+            comment_id=21,
+            resolved=False,
+            next_cursor=None,
+        )
+        comment = page["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"][0][
+            "comments"
+        ]["nodes"][0]
+        comment["replyTo"] = {
+            "databaseId": 20,
+            "url": "https://example.invalid/comment/20",
+        }
+        client = _GraphQLPagedFake(
+            fixtures._complete_replies(root),
+            {None: page},
+        )
+
+        snapshot = adapter._collect_snapshot_once(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=300,
+            observed_at="2026-09-19T16:41:00Z",
+        )
+
+        self.assertEqual("COMPLETE", snapshot["coverage"]["review_threads"]["status"])
+        self.assertEqual(1, len(snapshot["review_threads"]))
+        thread = snapshot["review_threads"][0]
+        self.assertEqual("github-review-10", thread["review_observation_id"])
+        self.assertEqual("one", thread["reviewer_id"])
+        self.assertEqual("https://example.invalid/comment/20", thread["source_url"])
+
     def test_graphql_second_page_failure_is_partial_not_complete(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures._adapter()
