@@ -288,7 +288,9 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         self.assertEqual(0, code)
         self.assertEqual(2, collect.call_count)
         rendered = "\n".join(summary.call_args.args[0])
-        self.assertIn("PR #300: UNAVAILABLE (RECONCILIATION_ENTRY_UNAVAILABLE)", rendered)
+        self.assertIn(
+            "PR #300: UNAVAILABLE (RECONCILIATION_ENTRY_UNAVAILABLE)", rendered
+        )
         self.assertIn("PR #301: projection collected", rendered)
 
     def test_unavailable_entry_reason_survives_publish_skip(self) -> None:
