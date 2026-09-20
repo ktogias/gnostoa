@@ -809,8 +809,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
                 self.assertEqual("PARTIAL", snapshot["coverage"][source]["status"])
                 self.assertEqual(1, snapshot["coverage"][source]["pages"])
                 self.assertEqual(1, snapshot["coverage"][source]["count"])
-                expected_items = 0 if source == "review_threads" else 1
-                self.assertEqual(expected_items, len(snapshot[source]))
+                self.assertEqual(1, len(snapshot[source]))
 
     def test_publication_refuses_stale_head_and_later_same_head_projection(
         self,
