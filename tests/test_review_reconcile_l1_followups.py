@@ -577,6 +577,114 @@ class UsefulL1FollowupTests(unittest.TestCase):
         client.post.assert_not_called()
         client.patch.assert_not_called()
 
+    def test_normalized_source_payload_shapes_and_counts_fail_closed(self) -> None:
+        fixtures = _fixtures()
+        reducer = fixtures._reducer()
+
+        for source in ("conversation", "reviews", "review_threads", "checks"):
+            for mutation in ("missing_payload", "count_mismatch"):
+                with self.subTest(source=source, mutation=mutation):
+                    snapshot = fixtures._snapshot()
+                    if mutation == "missing_payload":
+                        snapshot[source] = None
+                    else:
+                        snapshot["coverage"][source]["count"] += 1
+
+                    with self.assertRaises(reducer.ReconciliationInputError):
+                        reducer.build_review_input(snapshot, fixtures._bundle())
+
+                    with self.assertRaises(reducer.ReconciliationInputError):
+                        reducer.build_projection(
+                            snapshot,
+                            protected_main_revision="e" * 40,
+                            outer_consumer={
+                                "runtime_image": (
+                                    "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64
+                                ),
+                                "runtime_revision": "9" * 40,
+                            },
+                            r2a_result={
+                                "outcome": "PASS",
+                                "reason": "QUORUM_SATISFIED",
+                                "binding": False,
+                            },
+                            execution={
+                                "execution_id": "github-actions:270:1",
+                                "observed_at": "2026-09-19T16:41:10Z",
+                            },
+                        )
+
+    def test_publication_rejects_semantically_unsafe_projection_artifacts(
+        self,
+    ) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        reducer = fixtures._reducer()
+        projection = reducer.build_projection(
+            fixtures._snapshot(),
+            protected_main_revision="e" * 40,
+            outer_consumer={
+                "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
+                "runtime_revision": "9" * 40,
+            },
+            r2a_result={
+                "outcome": "PASS",
+                "reason": "QUORUM_SATISFIED",
+                "binding": False,
+            },
+            execution={
+                "execution_id": "github-actions:271:1",
+                "observed_at": "2026-09-19T16:41:10Z",
+            },
+        )
+
+        mutations = {
+            "canonical_claim": lambda item: item.__setitem__("non_canonical", False),
+            "binding_claim": lambda item: item["r2a"].__setitem__("binding", True),
+            "incomplete_current_claim": lambda item: item["coverage"][
+                "conversation"
+            ].__setitem__("status", "PARTIAL"),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                unsafe = copy.deepcopy(projection)
+                mutate(unsafe)
+                body = (
+                    "<!-- gnostoa:l1-current-state:v1:"
+                    + reducer._encode_projection(unsafe)
+                    + " -->"
+                )
+                entry = {
+                    "pull_number": 300,
+                    "head_sha": "a" * 40,
+                    "body": body,
+                }
+                client = mock.Mock()
+
+                with (
+                    mock.patch.object(
+                        adapter,
+                        "_current_pr",
+                        side_effect=AssertionError(
+                            "unsafe projection reached provider read"
+                        ),
+                    ) as current,
+                    self.assertRaisesRegex(
+                        adapter.ProviderWriteError,
+                        "publication payload has no valid L1 projection",
+                    ),
+                ):
+                    adapter.publish_entry(
+                        client,
+                        repository="ktogias/gnostoa",
+                        entry=entry,
+                    )
+
+                current.assert_not_called()
+                client.get.assert_not_called()
+                client.post.assert_not_called()
+                client.patch.assert_not_called()
+
     def test_materially_different_native_translator_reuses_core_unchanged(self) -> None:
         fixtures = _fixtures()
         reducer = fixtures._reducer()
