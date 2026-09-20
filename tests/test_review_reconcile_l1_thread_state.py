@@ -246,40 +246,70 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         self.assertEqual(0, code)
         self.assertEqual(2, publish.call_count)
         rendered = "\n".join(summary.call_args.args[0])
-        self.assertIn("PR #1: PUBLISH_UNAVAILABLE", rendered)
+        self.assertIn("PR #1: PUBLICATION_ENTRY_UNAVAILABLE", rendered)
         self.assertIn("PR #2: UPDATED", rendered)
 
-    def test_collect_entry_isolates_projection_render_failure(self) -> None:
+    def test_collect_mode_preserves_per_entry_failure_reason(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures._adapter()
+        good = {
+            "pull_number": 301,
+            "head_sha": "a" * 40,
+            "body": "projection",
+        }
 
         with (
             mock.patch.object(
                 adapter,
-                "collect_snapshot",
-                return_value=fixtures._snapshot(),
-            ),
-            mock.patch.object(
-                adapter,
-                "_protected_state",
-                side_effect=adapter.ProviderReadError("protected unavailable"),
-            ),
-            mock.patch(
-                "tools.review_reconcile.render_projection",
-                side_effect=ValueError("projection too large"),
-            ),
+                "_collect_entry",
+                side_effect=[ValueError("projection too large"), good],
+            ) as collect,
+            mock.patch.object(adapter, "_write_payload"),
+            mock.patch.object(adapter, "_summary") as summary,
+            mock.patch.dict(adapter.os.environ, {"GH_TOKEN": "test-token"}),
         ):
-            entry = adapter._collect_entry(
-                mock.Mock(),
-                "ktogias/gnostoa",
-                300,
-                run_id=999,
-                run_attempt=1,
+            code = adapter.main(
+                [
+                    "--mode",
+                    "collect",
+                    "--repository",
+                    "ktogias/gnostoa",
+                    "--pull-number",
+                    "300",
+                    "--pull-number",
+                    "301",
+                    "--output",
+                    "unused.json",
+                    "--run-id",
+                    "999",
+                ]
             )
 
-        self.assertEqual("UNAVAILABLE", entry["collection_status"])
-        self.assertEqual("PROJECTION_UNAVAILABLE", entry["reason"])
-        self.assertEqual(300, entry["pull_number"])
+        self.assertEqual(0, code)
+        self.assertEqual(2, collect.call_count)
+        rendered = "\n".join(summary.call_args.args[0])
+        self.assertIn("PR #300: UNAVAILABLE (RECONCILIATION_ENTRY_UNAVAILABLE)", rendered)
+        self.assertIn("PR #301: projection collected", rendered)
+
+    def test_unavailable_entry_reason_survives_publish_skip(self) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        client = mock.Mock()
+
+        result = adapter.publish_entry(
+            client,
+            repository="ktogias/gnostoa",
+            entry={
+                "pull_number": 300,
+                "collection_status": "UNAVAILABLE",
+                "reason": "RECONCILIATION_ENTRY_UNAVAILABLE",
+            },
+        )
+
+        self.assertEqual("RECONCILIATION_ENTRY_UNAVAILABLE", result["reason"])
+        client.get.assert_not_called()
+        client.post.assert_not_called()
+        client.patch.assert_not_called()
 
     def test_graphql_http_failure_is_a_provider_read_failure(self) -> None:
         fixtures = _fixtures()
