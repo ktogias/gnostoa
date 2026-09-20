@@ -66,13 +66,16 @@ code or inventing semantic authority.
    - no provider endpoint, network, credential or write effects.
 
 2. `ci/review_github_current_state.py`
-   - first concrete GitHub REST adapter;
-   - translation from GitHub-native Pull Request/review/comment/check objects into the provider-neutral internal snapshot;
-   - complete Link-header pagination for the REST surfaces used by this slice;
-   - inline review comments retained without claiming complete review-thread
-     resolution state; any non-empty REST comment set leaves
-     `review_threads` PARTIAL until an adapter surface can establish true
-     provider thread identity/resolution;
+   - first concrete GitHub REST + GraphQL adapter;
+   - translation from GitHub-native Pull Request/review/comment/thread/check
+     objects into the provider-neutral internal snapshot;
+   - complete Link-header pagination for REST surfaces and bounded cursor
+     pagination for GraphQL review threads;
+   - inline REST review comments retained as metadata used to bind each GraphQL
+     thread root to its review observation and exact commit;
+   - GraphQL `reviewThreads.isResolved` normalized to provider-neutral
+     `resolved|unresolved`; unmapped roots, GraphQL errors, missing cursors or
+     partial REST metadata remain explicitly incomplete;
    - RFC3339 timestamp validation and explicit per-source errors;
    - queued checks without provider start/completion timestamps use the stable collection cut and remain pending;
    - at most three bounded passes to confirm the retained observation cut;
@@ -87,8 +90,9 @@ code or inventing semantic authority.
    - protected-source `workflow_run`, hourly schedule and default-branch `repository_dispatch` recovery;
    - minimum token permissions;
    - repository-root imports configured for both collect and publish entrypoints;
-   - bounded collect→publish transfer sized below the provider job-output limit after encoding;
-   - at most 8 Pull Requests per execution so 8 × 32,768-byte projections plus envelope overhead remain below the 300,000-byte raw transfer bound;
+   - bounded collect→publish transfer through a one-day Actions artifact;
+   - at most 8 Pull Requests per execution so 8 × 32,768-byte projections plus
+     envelope overhead remain below the 300,000-byte raw transfer bound;
    - repository-scoped serialization with `cancel-in-progress: false` and `queue: max`;
    - finite queue of at most 100 pending runs, with possible overflow and scheduling delay;
    - hourly open-PR recovery, not an immediate or lossless wake-up guarantee;
@@ -196,8 +200,10 @@ Exit: workflow contract tests plus normal CI green.
 
 Focused:
 - reducer unit/property-style permutations;
-- provider pagination/currentness tests;
+- provider REST/GraphQL pagination, thread-resolution and currentness tests;
 - projection effect tests with mocked provider transport;
+- per-PR collect/publish failure-isolation tests so one provider failure cannot
+  abort the remaining bounded batch;
 - workflow YAML structural/security tests;
 - executable collect/publish import checks with inherited PYTHONPATH removed;
 - Markdown-rendered adversarial title checks;
@@ -319,3 +325,42 @@ resolution before architectural acceptance; this addendum is not its closure.
 Existing review-count, independence, exact-head CI and owner-merge controls are
 unchanged. Broad future assurance-method changes belong to #263 under its
 separate admission boundary, not to this L1 patch.
+
+
+## Thread-state completion addendum — 2026-09-20 UTC
+
+Owner direction after the first convergence pass admitted completion of real
+review-thread state inside this same useful-L1 slice before merge. This closes
+the previously honest-but-low-utility REST-only degradation without widening
+the semantic authority boundary.
+
+Acceptance criteria:
+
+- **TS-01 — real identity/state:** acquire GitHub review-thread IDs and
+  `isResolved` through GraphQL; do not infer resolution from REST comments.
+- **TS-02 — bounded pagination:** follow GraphQL cursors under the existing page
+  and item bounds; missing cursors and page failures remain partial/error.
+- **TS-03 — exact bridge:** join each GraphQL thread to retained REST
+  review-comment metadata by the provider database identity of the root comment.
+  An unmapped root is incomplete evidence, never silently dropped as complete.
+- **TS-04 — provider-neutral core:** normalize the adapter result to
+  `resolved|unresolved` before the common reducer. No GitHub endpoint, GraphQL
+  field name or token rule enters `tools/review_reconcile.py`.
+- **TS-05 — existing R2A only:** aggregate a review's thread state as
+  `unresolved` when any associated normalized thread is unresolved, otherwise
+  `resolved`; pass that through the existing R2A input. Do not redefine
+  unresolved-thread policy.
+- **TS-06 — read failure semantics:** GraphQL uses POST transport but is a
+  provider read; HTTP/transport/GraphQL failures must therefore become
+  `ProviderReadError` and source incompleteness, not write failures.
+- **TS-07 — executable evidence:** retain RED evidence for the prior REST-only
+  behavior, then require focused thread pagination/state/error regressions,
+  normal style/compatibility/repository verification and fresh exact-head
+  review.
+
+A fresh review also exposed a bounded-batch availability defect: an exception
+while collecting or publishing one Pull Request could abort the remaining
+entries. The same corrective generation therefore requires per-entry isolation:
+the affected subject degrades to an explicit non-published diagnostic while
+subsequent subjects are still attempted. This changes availability/blast radius,
+not stale-write or merge authority semantics.
