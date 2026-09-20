@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 import io
-import urllib.error
 import unittest
+import urllib.error
 from pathlib import Path
 from typing import Any
 from unittest import mock
