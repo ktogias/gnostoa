@@ -193,37 +193,21 @@ class UsefulL1FollowupTests(unittest.TestCase):
         self.assertEqual(set(enumerated), set(first) | set(second))
         self.assertNotEqual(first, second)
 
-    def test_workflow_run_over_capacity_processes_bounded_subset(self) -> None:
+    def test_explicit_event_population_over_capacity_fails_closed(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures._adapter()
         workflow_pulls = json.dumps(
             [{"number": number} for number in range(1, adapter._MAX_OPEN_PULLS + 2)]
         )
 
-        def collected(
-            client: Any,
-            repository: str,
-            pull_number: int,
-            *,
-            run_id: int,
-            run_attempt: int,
-        ) -> dict[str, Any]:
-            del client, repository, run_id, run_attempt
-            return {
-                "pull_number": pull_number,
-                "head_sha": "a" * 40,
-                "body": "projection",
-            }
-
         with (
-            mock.patch.object(
-                adapter, "_collect_entry", side_effect=collected
-            ) as collect,
-            mock.patch.object(adapter, "_write_payload") as write_payload,
-            mock.patch.object(adapter, "_summary") as summary,
             mock.patch.dict(adapter.os.environ, {"GH_TOKEN": "test-token"}),
+            self.assertRaisesRegex(
+                SystemExit,
+                "selected Pull Request population exceeds bounded reconciliation capacity",
+            ),
         ):
-            code = adapter.main(
+            adapter.main(
                 [
                     "--mode",
                     "collect",
@@ -237,17 +221,6 @@ class UsefulL1FollowupTests(unittest.TestCase):
                     "999",
                 ]
             )
-
-        self.assertEqual(0, code)
-        self.assertEqual(adapter._MAX_OPEN_PULLS, collect.call_count)
-        entries = write_payload.call_args.args[1]
-        self.assertEqual(
-            list(range(1, adapter._MAX_OPEN_PULLS + 1)),
-            [item["pull_number"] for item in entries],
-        )
-        rendered = "\n".join(summary.call_args.args[0])
-        self.assertIn("deferred", rendered.lower())
-        self.assertIn("1", rendered)
 
     def test_invalid_provider_timestamps_are_source_errors(self) -> None:
         fixtures = _fixtures()

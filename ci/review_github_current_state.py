@@ -1339,15 +1339,15 @@ def main(argv: list[str] | None = None) -> int:
                 ]
             )
         )
-        deferred_pulls = 0
         if not pulls:
             pulls = _select_scheduled_pull_batch(
                 _open_pull_numbers(client, args.repository),
                 _now(),
             )
-        elif len(pulls) > _MAX_OPEN_PULLS:
-            deferred_pulls = len(pulls) - _MAX_OPEN_PULLS
-            pulls = pulls[:_MAX_OPEN_PULLS]
+        if len(pulls) > _MAX_OPEN_PULLS:
+            raise SystemExit(
+                "selected Pull Request population exceeds bounded reconciliation capacity"
+            )
         entries = []
         for number in pulls:
             try:
@@ -1372,11 +1372,6 @@ def main(argv: list[str] | None = None) -> int:
                 "## Gnostoa useful L1 collection",
                 "",
                 f"- Pull Requests attempted: {len(entries)}",
-                *(
-                    [f"- Pull Requests deferred to later recovery: {deferred_pulls}"]
-                    if deferred_pulls
-                    else []
-                ),
                 *[
                     f"- PR #{item['pull_number']}: "
                     + (
