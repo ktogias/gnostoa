@@ -317,7 +317,8 @@ def _collect_review_threads(
                     "cursor": cursor,
                 },
             )
-            data = _mapping(payload.get("data"), "graphql.data")
+            graphql_payload = _mapping(payload, "graphql response")
+            data = _mapping(graphql_payload.get("data"), "graphql.data")
             repository_payload = _mapping(
                 data.get("repository"),
                 "graphql.data.repository",
@@ -1258,7 +1259,7 @@ def main(argv: list[str] | None = None) -> int:
                 *[
                     f"- PR #{item['pull_number']}: "
                     + (
-                        "UNAVAILABLE (PROVIDER_SUBJECT_UNAVAILABLE); no projection"
+                        f"UNAVAILABLE ({item.get('reason', 'UNKNOWN')}); no projection"
                         if item.get("collection_status") == "UNAVAILABLE"
                         else "projection collected; inspect its coverage and R2A state"
                     )
