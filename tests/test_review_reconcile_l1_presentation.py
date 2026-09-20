@@ -94,10 +94,10 @@ class UsefulL1PresentationTests(unittest.TestCase):
             },
         )
         projection["checks"] = {
-            "observed_names": 11,
-            "ambiguous": ["ambiguous-visible"],
-            "pending": [],
-            "non_success": [],
+            "observed_names": 106,
+            "ambiguous": [f"ambiguous-{index}" for index in range(32)],
+            "pending": [f"pending-{index}" for index in range(32)],
+            "non_success": [f"non-success-{index}" for index in range(32)],
             "omitted_ambiguous": 5,
             "omitted_pending": 3,
             "omitted_non_success": 2,
@@ -106,9 +106,9 @@ class UsefulL1PresentationTests(unittest.TestCase):
 
         rendered = reducer.render_projection(projection)
 
-        self.assertIn("ambiguous=1 (+5 omitted)", rendered)
-        self.assertIn("pending=0 (+3 omitted)", rendered)
-        self.assertIn("non-success=0 (+2 omitted)", rendered)
+        self.assertIn("ambiguous=32 (+5 omitted)", rendered)
+        self.assertIn("pending=32 (+3 omitted)", rendered)
+        self.assertIn("non-success=32 (+2 omitted)", rendered)
         self.assertEqual(projection, reducer.parse_projection_comment(rendered))
 
     def test_provider_title_cannot_inject_markdown_or_html(self) -> None:
