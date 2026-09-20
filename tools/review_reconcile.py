@@ -201,6 +201,12 @@ def _thread_records_by_review(
             "review_thread.review_observation_id",
         )
         _string(thread.get("id"), "review_thread.id")
+        _string(thread.get("reviewer_id"), "review_thread.reviewer_id")
+        _timestamp(thread.get("observed_at"), "review_thread.observed_at")
+        _sha(thread.get("head_commit"), "review_thread.head_commit")
+        if not isinstance(thread.get("body"), str):
+            raise ReconciliationInputError("review_thread.body must be a string")
+        _string(thread.get("source_url"), "review_thread.source_url")
         thread_state = thread.get("state")
         if thread_state not in {"resolved", "unresolved"}:
             raise ReconciliationInputError(
