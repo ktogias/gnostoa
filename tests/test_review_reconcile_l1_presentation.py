@@ -110,7 +110,6 @@ class UsefulL1PresentationTests(unittest.TestCase):
         self.assertLessEqual(len(rendered.encode("utf-8")), 65_536)
         self.assertEqual(projection, reducer.parse_projection_comment(rendered))
 
-
     def test_provider_controlled_identities_cannot_inject_markdown_structure(
         self,
     ) -> None:
