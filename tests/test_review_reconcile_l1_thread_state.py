@@ -216,6 +216,71 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         self.assertEqual("unmapped_thread_root_comment", coverage["reason"])
         self.assertEqual([], snapshot["review_threads"])
 
+    def test_publish_mode_isolates_one_entry_failure(self) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        entries = [{"pull_number": 1}, {"pull_number": 2}]
+        second = {"pull_number": 2, "published": True, "reason": "UPDATED"}
+
+        with (
+            mock.patch.object(adapter, "_load_payload", return_value=entries),
+            mock.patch.object(
+                adapter,
+                "publish_entry",
+                side_effect=[adapter.ProviderWriteError("first failed"), second],
+            ) as publish,
+            mock.patch.object(adapter, "_summary") as summary,
+            mock.patch.dict(adapter.os.environ, {"GH_TOKEN": "test-token"}),
+        ):
+            code = adapter.main(
+                [
+                    "--mode",
+                    "publish",
+                    "--repository",
+                    "ktogias/gnostoa",
+                    "--payload",
+                    "unused.json",
+                ]
+            )
+
+        self.assertEqual(0, code)
+        self.assertEqual(2, publish.call_count)
+        rendered = "\n".join(summary.call_args.args[0])
+        self.assertIn("PR #1: PUBLISH_UNAVAILABLE", rendered)
+        self.assertIn("PR #2: UPDATED", rendered)
+
+    def test_collect_entry_isolates_projection_render_failure(self) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+
+        with (
+            mock.patch.object(
+                adapter,
+                "collect_snapshot",
+                return_value=fixtures._snapshot(),
+            ),
+            mock.patch.object(
+                adapter,
+                "_protected_state",
+                side_effect=adapter.ProviderReadError("protected unavailable"),
+            ),
+            mock.patch(
+                "tools.review_reconcile.render_projection",
+                side_effect=ValueError("projection too large"),
+            ),
+        ):
+            entry = adapter._collect_entry(
+                mock.Mock(),
+                "ktogias/gnostoa",
+                300,
+                run_id=999,
+                run_attempt=1,
+            )
+
+        self.assertEqual("UNAVAILABLE", entry["collection_status"])
+        self.assertEqual("PROJECTION_UNAVAILABLE", entry["reason"])
+        self.assertEqual(300, entry["pull_number"])
+
     def test_graphql_http_failure_is_a_provider_read_failure(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures._adapter()
