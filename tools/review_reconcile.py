@@ -188,10 +188,7 @@ def _thread_records_by_review(
     if not isinstance(reviews, list) or not isinstance(review_threads, list):
         raise ReconciliationInputError("reviews and review_threads must be arrays")
 
-    normalized_reviews = [
-        _mapping(raw_review, "review")
-        for raw_review in reviews
-    ]
+    normalized_reviews = [_mapping(raw_review, "review") for raw_review in reviews]
     review_observation_ids = {
         _string(review.get("observation_id"), "review.observation_id")
         for review in normalized_reviews
