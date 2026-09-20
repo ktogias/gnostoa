@@ -284,6 +284,171 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         self.assertEqual("unmapped_thread_root_comment", coverage["reason"])
         self.assertEqual([], snapshot["review_threads"])
 
+    def test_empty_graphql_thread_connection_is_complete(self) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+        empty_page = {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "reviewThreads": {
+                            "nodes": [],
+                            "pageInfo": {
+                                "hasNextPage": False,
+                                "endCursor": None,
+                            },
+                        }
+                    }
+                }
+            }
+        }
+        client = _GraphQLPagedFake(
+            fixtures._complete_replies_without_review_comments(root),
+            {None: empty_page},
+        )
+
+        snapshot = adapter._collect_snapshot_once(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=300,
+            observed_at="2026-09-19T16:41:00Z",
+        )
+
+        self.assertEqual(
+            {"status": "COMPLETE", "pages": 1, "count": 0},
+            snapshot["coverage"]["review_threads"],
+        )
+        self.assertEqual([], snapshot["review_threads"])
+
+    def test_missing_graphql_cursor_is_partial(self) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+        page = _thread_page(
+            thread_id="PRRT_missing_cursor",
+            comment_id=20,
+            resolved=False,
+            next_cursor="placeholder",
+        )
+        page["data"]["repository"]["pullRequest"]["reviewThreads"]["pageInfo"][
+            "endCursor"
+        ] = None
+        client = _GraphQLPagedFake(
+            fixtures._complete_replies(root),
+            {None: page},
+        )
+
+        snapshot = adapter._collect_snapshot_once(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=300,
+            observed_at="2026-09-19T16:41:00Z",
+        )
+
+        coverage = snapshot["coverage"]["review_threads"]
+        self.assertEqual("PARTIAL", coverage["status"])
+        self.assertEqual("missing_graphql_cursor", coverage["reason"])
+        self.assertEqual(1, coverage["pages"])
+
+    def test_outdated_unresolved_thread_remains_unresolved(self) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        reducer = fixtures._reducer()
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+        page = _thread_page(
+            thread_id="PRRT_outdated_open",
+            comment_id=20,
+            resolved=False,
+            next_cursor=None,
+        )
+        page["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"][0][
+            "isOutdated"
+        ] = True
+        client = _GraphQLPagedFake(
+            fixtures._complete_replies(root),
+            {None: page},
+        )
+
+        snapshot = adapter._collect_snapshot_once(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=300,
+            observed_at="2026-09-19T16:41:00Z",
+        )
+
+        self.assertTrue(snapshot["review_threads"][0]["outdated"])
+        self.assertEqual("unresolved", snapshot["review_threads"][0]["state"])
+        review_input = reducer.build_review_input(snapshot, fixtures._bundle())
+        observation = next(
+            item
+            for item in review_input["evidence_set"]["observations"]
+            if item["observation_id"] == "github-review-10"
+        )
+        self.assertEqual("unresolved", observation["threads"]["state"])
+
+    def test_reopened_thread_state_is_reacquired_before_stable_readback(self) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+        replies = fixtures._complete_replies(root)
+        review_url = f"{root}/pulls/300/comments?per_page=100"
+        first_comment = replies[review_url][0][0]
+        replies[review_url] = ([first_comment], {})
+        replies.pop("https://api.github.com/page2/review-comments", None)
+
+        class ReopenedFake(_GraphQLPagedFake):
+            def __init__(self) -> None:
+                super().__init__(replies, {})
+                self.thread_reads = 0
+
+            def graphql(self, query: str, variables: dict[str, Any]) -> Any:
+                del query, variables
+                self.thread_reads += 1
+                return _thread_page(
+                    thread_id="PRRT_reopened",
+                    comment_id=20,
+                    resolved=self.thread_reads == 1,
+                    next_cursor=None,
+                )
+
+        client = ReopenedFake()
+        snapshot = adapter.collect_snapshot(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=300,
+            observed_at="2026-09-19T16:41:00Z",
+        )
+
+        self.assertEqual("STABLE_READBACK", snapshot["collection"]["status"])
+        self.assertEqual(3, snapshot["collection"]["passes"])
+        self.assertEqual("unresolved", snapshot["review_threads"][0]["state"])
+
+    def test_graphql_payload_errors_are_provider_read_failures(self) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        client = adapter.GitHubRestClient("test-token")
+
+        with mock.patch.object(
+            client,
+            "_request",
+            return_value=(
+                {
+                    "data": {"repository": None},
+                    "errors": [{"message": "rate limited"}],
+                },
+                {},
+            ),
+        ):
+            with self.assertRaisesRegex(
+                adapter.ProviderReadError,
+                "GraphQL returned errors",
+            ):
+                client.graphql(
+                    "query($cursor:String){viewer{login}}",
+                    {"cursor": None},
+                )
+
     def test_publish_mode_isolates_one_entry_failure(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures._adapter()
