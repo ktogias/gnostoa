@@ -43,6 +43,20 @@ def _optional_summary(value: object, *, limit: int = 512) -> str | None:
     return normalized[:limit]
 
 
+def _markdown_code(value: object, label: str) -> str:
+    rendered = _string(value, label)
+    normalized = " ".join(rendered.split())
+    if not normalized:
+        raise ReconciliationInputError(f"{label} must contain visible text")
+    escaped = html.escape(normalized, quote=False)
+    longest = max(
+        (len(match.group(0)) for match in re.finditer(r"`+", escaped)),
+        default=0,
+    )
+    fence = "`" * (longest + 1)
+    return f"{fence}{escaped}{fence}"
+
+
 def _timestamp(value: object, label: str) -> str:
     rendered = _string(value, label)
     try:
@@ -515,14 +529,35 @@ def render_projection(projection: dict[str, Any]) -> str:
         f"{name}={_mapping(value, f'coverage.{name}').get('status')}"
         for name, value in sorted(coverage.items())
     )
+    provider_literal = _markdown_code(
+        subject.get("provider_id"),
+        "projection.subject.provider_id",
+    )
+    repository_literal = _markdown_code(
+        subject.get("repository"),
+        "projection.subject.repository",
+    )
+    change_kind_literal = _markdown_code(
+        change_request.get("kind"),
+        "projection.subject.change_request.kind",
+    )
+    change_id_literal = _markdown_code(
+        change_request.get("id"),
+        "projection.subject.change_request.id",
+    )
+    execution_literal = _markdown_code(
+        observation.get("execution_id"),
+        "projection.observation.execution_id",
+    )
+
     lines = [
         f"<!-- gnostoa:l1-current-state:v1:{_encode_projection(projection)} -->",
         "## Gnostoa current-state advisory",
         "",
         "**Non-canonical diagnostic projection. It grants no approval or merge authority.**",
         "",
-        f"- Provider: `{subject['provider_id']}`",
-        f"- Repository: `{subject['repository']}`",
+        f"- Provider: {provider_literal}",
+        f"- Repository: {repository_literal}",
     ]
     title = _optional_summary(subject.get("title"))
     if title is not None:
@@ -535,8 +570,8 @@ def render_projection(projection: dict[str, Any]) -> str:
     lines.extend(
         [
             (
-                f"- Subject: {change_request['kind']} "
-                f"`{change_request['id']}` at `{subject['head_commit']}`"
+                f"- Subject: {change_kind_literal} "
+                f"{change_id_literal} at `{subject['head_commit']}`"
             ),
             (
                 f"- Base / merge-base: `{subject['base_commit']}` / "
@@ -561,7 +596,7 @@ def render_projection(projection: dict[str, Any]) -> str:
             f"- R2A: **{r2a['outcome']} / {r2a['reason']}**, binding: false",
             f"- Currentness: **{projection['currentness']}**",
             f"- Next permitted action: `{projection['next_permitted_action']}`",
-            f"- Execution generation: `{observation['execution_id']}`",
+            f"- Execution generation: {execution_literal}",
             "",
         ]
     )
