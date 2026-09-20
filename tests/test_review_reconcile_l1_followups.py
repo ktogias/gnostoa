@@ -118,13 +118,14 @@ class UsefulL1FollowupTests(unittest.TestCase):
                 }
             },
         )
-        valid_result = json.dumps(
-            {
-                "outcome": "PASS",
-                "reason": "QUORUM_SATISFIED",
-                "binding": False,
-            }
-        ).encode("utf-8")
+        def valid_result(
+            input_document: object,
+            *,
+            acquire_consumer: Any,
+        ) -> tuple[int, bytes]:
+            self.assertIs(consumer, acquire_consumer())
+            self.assertIsInstance(input_document, dict)
+            return fixtures._valid_incomplete_result(input_document)
 
         with (
             mock.patch.object(
@@ -132,11 +133,13 @@ class UsefulL1FollowupTests(unittest.TestCase):
             ),
             mock.patch(
                 "tools.review_outer._run_prior_effective_current_advisory_with_acquisition",
-                return_value=(0, valid_result),
+                side_effect=valid_result,
             ),
         ):
             entry = adapter._collect_entry(
-                fixtures._PagedFake(fixtures._complete_replies(root)),
+                fixtures._PagedFake(
+                    fixtures._complete_replies_without_review_comments(root)
+                ),
                 "ktogias/gnostoa",
                 300,
                 run_id=141,
