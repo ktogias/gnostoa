@@ -167,7 +167,7 @@ class GitHubRestClient:
         return self._request("GET", url)
 
     def graphql(self, query: str, variables: dict[str, Any]) -> Any:
-        document, _ = self._request(
+        document, headers = self._request(
             "POST",
             _GRAPHQL_ROOT,
             {"query": query, "variables": variables},
@@ -177,7 +177,15 @@ class GitHubRestClient:
             raise ProviderReadError("GitHub GraphQL returned invalid shape")
         errors = document.get("errors")
         if errors:
-            raise ProviderReadError("GitHub GraphQL returned errors")
+            rate_limited = (
+                headers.get("x-ratelimit-remaining") == "0"
+                or bool(headers.get("retry-after"))
+                or _graphql_errors_indicate_rate_limit(errors)
+            )
+            raise ProviderReadError(
+                "GitHub GraphQL returned errors",
+                status=429 if rate_limited else None,
+            )
         return document
 
     def post(self, url: str, payload: dict[str, Any]) -> Any:
@@ -187,6 +195,18 @@ class GitHubRestClient:
     def patch(self, url: str, payload: dict[str, Any]) -> Any:
         document, _ = self._request("PATCH", url, payload)
         return document
+
+
+def _graphql_errors_indicate_rate_limit(errors: Any) -> bool:
+    if not isinstance(errors, list):
+        return False
+    for raw_error in errors:
+        if not isinstance(raw_error, dict):
+            continue
+        message = raw_error.get("message")
+        if isinstance(message, str) and "rate limit" in message.lower():
+            return True
+    return False
 
 
 def _next_url(headers: dict[str, str]) -> str | None:
@@ -790,10 +810,17 @@ def collect_snapshot(
             and snapshot == previous
             and parse_rfc3339(read_started_at) >= parse_rfc3339(snapshot["observed_at"])
         ):
+            read_completed_at = _now()
+            if parse_rfc3339(read_completed_at) < parse_rfc3339(read_started_at):
+                previous = snapshot
+                observed_at = snapshot["observed_at"]
+                continue
+            snapshot["observed_at"] = read_completed_at
             snapshot["collection"] = {
                 "status": "STABLE_READBACK",
                 "passes": attempt,
                 "confirming_read_started_at": read_started_at,
+                "confirming_read_completed_at": read_completed_at,
             }
             return snapshot
         previous = snapshot
