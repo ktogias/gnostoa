@@ -281,6 +281,14 @@ def _boolean(value: Any, label: str) -> bool:
     return value
 
 
+def _combined_coverage_status(*coverages: dict[str, Any]) -> str:
+    statuses = {item.get("status") for item in coverages}
+    for status in ("ERROR", "UNAVAILABLE", "RATE_LIMITED", "PARTIAL"):
+        if status in statuses:
+            return status
+    return "COMPLETE"
+
+
 def _collect_review_threads(
     client: JsonReader,
     *,
@@ -650,17 +658,28 @@ def _collect_snapshot_once(
         f"{root}/pulls/{pull_number}/comments?per_page=100",
         normalize=_normalize_review_comment,
     )
-    if review_comment_coverage.get("status") == "COMPLETE":
-        review_threads, review_thread_coverage = _collect_review_threads(
-            client,
-            repository=repository,
-            pull_number=pull_number,
-            review_comments=review_comments,
+    review_threads, review_thread_coverage = _collect_review_threads(
+        client,
+        repository=repository,
+        pull_number=pull_number,
+        review_comments=review_comments,
+    )
+    metadata_status = review_comment_coverage.get("status")
+    combined_status = _combined_coverage_status(
+        review_comment_coverage,
+        review_thread_coverage,
+    )
+    if combined_status != review_thread_coverage.get("status"):
+        review_thread_coverage = dict(review_thread_coverage)
+        review_thread_coverage["status"] = combined_status
+    if metadata_status != "COMPLETE":
+        review_thread_coverage["metadata_status"] = metadata_status
+        review_thread_coverage["metadata_pages"] = review_comment_coverage.get("pages")
+        review_thread_coverage["metadata_count"] = review_comment_coverage.get("count")
+        review_thread_coverage["metadata_reason"] = review_comment_coverage.get(
+            "reason",
+            review_comment_coverage.get("error", "review_comment_metadata_incomplete"),
         )
-    else:
-        review_threads = []
-        review_thread_coverage = dict(review_comment_coverage)
-        review_thread_coverage["reason"] = "review_comment_metadata_incomplete"
     check_runs, check_coverage = _collect_pages(
         client,
         f"{root}/commits/{pull['head_sha']}/check-runs?per_page=100",
