@@ -126,9 +126,15 @@ class UsefulL1RenderCompatibilityTests(unittest.TestCase):
             "merge_base_sha": "c" * 40,
         }
         client = mock.Mock()
+        protected = mock.Mock(protected_main_revision="e" * 40)
 
         with (
             mock.patch.object(adapter, "_current_pr", return_value=current_pr),
+            mock.patch.object(
+                adapter,
+                "_protected_state",
+                return_value=(protected, protected),
+            ),
             mock.patch.object(
                 adapter,
                 "_collect_pages",

@@ -683,7 +683,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
 
         self.assertEqual("2026-09-19T16:40:20Z", snapshot["observed_at"])
         self.assertEqual(
-            "2026-09-19T16:40:30Z",
+            "2026-09-19T16:40:40Z",
             snapshot["collection"]["confirming_read_completed_at"],
         )
 
@@ -726,14 +726,17 @@ class UsefulL1RedContractTests(unittest.TestCase):
             observed_at="2026-09-19T16:41:00Z",
         )
 
-        for source, payload_key in (
-            ("conversation", "conversation"),
-            ("reviews", "reviews"),
-            ("checks", "checks"),
+        for source, payload_key, expected_pages in (
+            ("conversation", "conversation", 2),
+            ("reviews", "reviews", 2),
+            ("checks", "checks", 3),
         ):
             with self.subTest(source=source):
                 self.assertEqual(2, len(snapshot[payload_key]))
-                self.assertEqual(2, snapshot["coverage"][source]["pages"])
+                self.assertEqual(
+                    expected_pages,
+                    snapshot["coverage"][source]["pages"],
+                )
                 self.assertEqual(2, snapshot["coverage"][source]["count"])
                 self.assertEqual("COMPLETE", snapshot["coverage"][source]["status"])
 
@@ -831,7 +834,11 @@ class UsefulL1RedContractTests(unittest.TestCase):
             )
             with self.subTest(source=source):
                 self.assertEqual("PARTIAL", snapshot["coverage"][source]["status"])
-                self.assertEqual(1, snapshot["coverage"][source]["pages"])
+                expected_pages = 2 if source == "checks" else 1
+                self.assertEqual(
+                    expected_pages,
+                    snapshot["coverage"][source]["pages"],
+                )
                 self.assertEqual(1, snapshot["coverage"][source]["count"])
                 self.assertEqual(1, len(snapshot[source]))
 
