@@ -151,9 +151,9 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             },
             observations["github-review-11"]["threads"],
         )
-        self.assertEqual([None, "cursor-2"], [
-            call.get("cursor") for call in client.graphql_calls
-        ])
+        self.assertEqual(
+            [None, "cursor-2"], [call.get("cursor") for call in client.graphql_calls]
+        )
 
     def test_graphql_second_page_failure_is_partial_not_complete(self) -> None:
         fixtures = _fixtures()
