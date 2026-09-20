@@ -166,9 +166,9 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             resolved=False,
             next_cursor=None,
         )
-        comment = page["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"][0][
-            "comments"
-        ]["nodes"][0]
+        comment = page["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"][
+            0
+        ]["comments"]["nodes"][0]
         comment["replyTo"] = {
             "databaseId": 20,
             "url": "https://example.invalid/comment/20",
