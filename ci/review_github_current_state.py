@@ -938,6 +938,8 @@ def publication_decision(
         or not isinstance(candidate_subject.get("merge_base_commit"), str)
     ):
         return False, "CANDIDATE_SUBJECT_MISMATCH"
+    if candidate_subject.get("state") != current_pr.get("state"):
+        return False, "STALE_LIFECYCLE"
     if (
         current_pr.get("base_sha") != candidate_subject["base_commit"]
         or current_pr.get("merge_base_sha") != candidate_subject["merge_base_commit"]
