@@ -604,6 +604,34 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
                     {"cursor": None},
                 )
 
+    def test_malformed_non_null_review_head_binding_fails_closed(self) -> None:
+        fixtures = _fixtures()
+        reducer = fixtures._reducer()
+        snapshot = fixtures._snapshot()
+        snapshot["reviews"][0]["head_commit"] = "not-a-git-commit"
+
+        with self.assertRaises(reducer.ReconciliationInputError):
+            reducer.build_review_input(snapshot, fixtures._bundle())
+
+        with self.assertRaises(reducer.ReconciliationInputError):
+            reducer.build_projection(
+                snapshot,
+                protected_main_revision="e" * 40,
+                outer_consumer={
+                    "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
+                    "runtime_revision": "9" * 40,
+                },
+                r2a_result={
+                    "outcome": "PASS",
+                    "reason": "QUORUM_SATISFIED",
+                    "binding": False,
+                },
+                execution={
+                    "execution_id": "github-actions:1002:1",
+                    "observed_at": "2026-09-19T16:41:10Z",
+                },
+            )
+
     def test_malformed_normalized_thread_fields_fail_closed_in_common_core(
         self,
     ) -> None:
