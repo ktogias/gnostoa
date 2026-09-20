@@ -40,11 +40,7 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
             nonlocal pass_number, injected
             if url == pull_url:
                 pass_number += 1
-            if (
-                pass_number == 2
-                and url == review_comments_url
-                and not injected
-            ):
+            if pass_number == 2 and url == review_comments_url and not injected:
                 injected = True
                 replies[review_url][0].append(
                     {
@@ -81,10 +77,9 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
 
         retained_ids = {item["observation_id"] for item in snapshot["reviews"]}
         late_review_retained = "github-review-99" in retained_ids
-        cut_precedes_unseen_review = (
-            adapter.parse_rfc3339(snapshot["observed_at"])
-            < adapter.parse_rfc3339("2026-09-19T16:41:25Z")
-        )
+        cut_precedes_unseen_review = adapter.parse_rfc3339(
+            snapshot["observed_at"]
+        ) < adapter.parse_rfc3339("2026-09-19T16:41:25Z")
         incomplete = snapshot["coverage"]["reviews"]["status"] != "COMPLETE"
         self.assertTrue(
             late_review_retained or cut_precedes_unseen_review or incomplete,
@@ -312,7 +307,9 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
 
     def test_useful_l1_guardrail_lists_all_material_focused_test_modules(self) -> None:
         fixtures = _fixtures()
-        guardrails = yaml.safe_load(fixtures.GUARDRAILS_PATH.read_text(encoding="utf-8"))
+        guardrails = yaml.safe_load(
+            fixtures.GUARDRAILS_PATH.read_text(encoding="utf-8")
+        )
         entry = next(
             item
             for item in guardrails["guardrails"]
