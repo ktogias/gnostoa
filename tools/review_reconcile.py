@@ -585,6 +585,208 @@ def build_projection(
     }
 
 
+def _projection_string_list(value: object, label: str) -> list[str]:
+    if not isinstance(value, list):
+        raise ReconciliationInputError(f"{label} must be an array")
+    result = [_string(item, f"{label}[]") for item in value]
+    if len(set(result)) != len(result):
+        raise ReconciliationInputError(f"{label} must not contain duplicates")
+    return result
+
+
+def _validate_projection_checks(value: object) -> dict[str, Any]:
+    checks = _mapping(value, "projection.checks")
+    observed_names = checks.get("observed_names")
+    if type(observed_names) is not int or observed_names < 0:
+        raise ReconciliationInputError(
+            "projection.checks.observed_names must be a non-negative integer"
+        )
+
+    result: dict[str, Any] = {"observed_names": observed_names}
+    classified = 0
+    for name in ("ambiguous", "pending", "non_success"):
+        items = _projection_string_list(
+            checks.get(name),
+            f"projection.checks.{name}",
+        )
+        omitted_name = f"omitted_{name}"
+        omitted = checks.get(omitted_name)
+        if type(omitted) is not int or omitted < 0:
+            raise ReconciliationInputError(
+                f"projection.checks.{omitted_name} must be a non-negative integer"
+            )
+        result[name] = items
+        result[omitted_name] = omitted
+        classified += len(items) + omitted
+
+    if classified > observed_names:
+        raise ReconciliationInputError(
+            "projection.checks classified count exceeds observed names"
+        )
+    return result
+
+
+def _validate_projection_protected(value: object) -> str:
+    protected = _mapping(value, "projection.protected")
+    status = _string(protected.get("status"), "projection.protected.status")
+
+    main_revision = protected.get("main_revision")
+    if main_revision is not None:
+        _sha(main_revision, "projection.protected.main_revision")
+    runtime_image = protected.get("outer_runtime_image")
+    if runtime_image is not None:
+        _string(runtime_image, "projection.protected.outer_runtime_image")
+    runtime_revision = protected.get("outer_runtime_revision")
+    if runtime_revision is not None:
+        _sha(runtime_revision, "projection.protected.outer_runtime_revision")
+
+    expected_status = (
+        "AVAILABLE"
+        if main_revision is not None
+        and runtime_image is not None
+        and runtime_revision is not None
+        else "PARTIAL"
+        if any(
+            item is not None
+            for item in (main_revision, runtime_image, runtime_revision)
+        )
+        else "UNAVAILABLE"
+    )
+    if status != expected_status:
+        raise ReconciliationInputError(
+            "projection.protected.status is inconsistent with protected evidence"
+        )
+    return status
+
+
+def _validate_projection_observed_r2a(value: object, label: str) -> str:
+    r2a = _mapping(value, label)
+    status = _string(r2a.get("status"), f"{label}.status")
+    outcome = _string(r2a.get("outcome"), f"{label}.outcome")
+    _string(r2a.get("reason"), f"{label}.reason")
+    if r2a.get("binding") is not False:
+        raise ReconciliationInputError(f"{label}.binding must be false")
+    if status == "SEMANTIC_RESULT":
+        if outcome not in _SEMANTIC_OUTCOMES:
+            raise ReconciliationInputError(f"{label}.outcome is unsupported")
+    elif status == "UNAVAILABLE":
+        if outcome != "UNAVAILABLE":
+            raise ReconciliationInputError(
+                f"{label}.outcome must be UNAVAILABLE when status is UNAVAILABLE"
+            )
+    else:
+        raise ReconciliationInputError(f"{label}.status is unsupported")
+    return outcome
+
+
+def _validate_projection_document(document: dict[str, Any]) -> None:
+    if document.get("schema_version") != _INTERNAL_SCHEMA_VERSION:
+        raise ReconciliationInputError("projection schema_version is unsupported")
+    if document.get("status") != "draft":
+        raise ReconciliationInputError("projection status must be draft")
+    if document.get("non_canonical") is not True:
+        raise ReconciliationInputError("projection must remain non-canonical")
+
+    subject = _mapping(document.get("subject"), "projection.subject")
+    _string(subject.get("provider_id"), "projection.subject.provider_id")
+    _string(subject.get("repository"), "projection.subject.repository")
+    _change_request(
+        subject.get("change_request"),
+        "projection.subject.change_request",
+    )
+    state = _string(subject.get("state"), "projection.subject.state")
+    _sha(subject.get("head_commit"), "projection.subject.head_commit")
+    _sha(subject.get("base_commit"), "projection.subject.base_commit")
+    _sha(
+        subject.get("merge_base_commit"),
+        "projection.subject.merge_base_commit",
+    )
+    _string(subject.get("source_url"), "projection.subject.source_url")
+
+    coverage = _coverage({"coverage": document.get("coverage")})
+    complete = all(item["status"] == "COMPLETE" for item in coverage.values())
+    provider_current = state == "open" and complete
+    expected_currentness = (
+        "CURRENT_AT_OBSERVATION"
+        if provider_current
+        else "INCOMPLETE_AT_OBSERVATION"
+    )
+    currentness = _string(
+        document.get("currentness"),
+        "projection.currentness",
+    )
+    if currentness != expected_currentness:
+        raise ReconciliationInputError(
+            "projection currentness is inconsistent with provider coverage"
+        )
+
+    protected_status = _validate_projection_protected(document.get("protected"))
+    checks = _validate_projection_checks(document.get("checks"))
+    r2a = _mapping(document.get("r2a"), "projection.r2a")
+    if provider_current:
+        semantic_outcome = _validate_projection_observed_r2a(
+            r2a,
+            "projection.r2a",
+        )
+    else:
+        if (
+            r2a.get("status") != "NON_CURRENT"
+            or r2a.get("outcome") != "UNAVAILABLE"
+            or r2a.get("reason") != "PROVIDER_STATE_INCOMPLETE"
+            or r2a.get("binding") is not False
+        ):
+            raise ReconciliationInputError(
+                "incomplete provider evidence requires non-current R2A state"
+            )
+        _validate_projection_observed_r2a(
+            r2a.get("observed"),
+            "projection.r2a.observed",
+        )
+        semantic_outcome = "UNAVAILABLE"
+
+    observation = _mapping(document.get("observation"), "projection.observation")
+    _timestamp(
+        observation.get("observed_at"),
+        "projection.observation.observed_at",
+    )
+    _timestamp(
+        observation.get("execution_observed_at"),
+        "projection.observation.execution_observed_at",
+    )
+    _string(
+        observation.get("execution_id"),
+        "projection.observation.execution_id",
+    )
+
+    if not provider_current:
+        expected_action = "WAIT_OR_RECONCILE_REQUIRED_EVIDENCE"
+    elif protected_status != "AVAILABLE":
+        expected_action = "WAIT_FOR_PROTECTED_CAPABILITY"
+    elif checks["ambiguous"]:
+        expected_action = "RECONCILE_PROVIDER_CHECKS"
+    elif checks["pending"]:
+        expected_action = "WAIT_FOR_PROVIDER_CHECKS"
+    elif checks["non_success"]:
+        expected_action = "RECONCILE_PROVIDER_CHECKS"
+    else:
+        expected_action = {
+            "PASS": "CONTINUE_EXISTING_WORKFLOW",
+            "BLOCKED": "RECONCILE_REVIEW_EVIDENCE",
+            "CONFLICTING": "RECONCILE_REVIEW_EVIDENCE",
+            "INCOMPLETE": "WAIT_OR_RECONCILE_REQUIRED_EVIDENCE",
+            "UNAVAILABLE": "WAIT_FOR_PROTECTED_CAPABILITY",
+        }[semantic_outcome]
+
+    next_action = _string(
+        document.get("next_permitted_action"),
+        "projection.next_permitted_action",
+    )
+    if next_action != expected_action:
+        raise ReconciliationInputError(
+            "projection next permitted action is inconsistent with current state"
+        )
+
+
 def _encode_projection(projection: dict[str, Any]) -> str:
     raw = canonical_json(projection).encode("utf-8")
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
@@ -700,8 +902,8 @@ def parse_projection_comment(body: object) -> dict[str, Any] | None:
         return None
     if not isinstance(document, dict):
         return None
-    if document.get("schema_version") != _INTERNAL_SCHEMA_VERSION:
-        return None
-    if document.get("status") != "draft":
+    try:
+        _validate_projection_document(document)
+    except ReconciliationInputError:
         return None
     return document
