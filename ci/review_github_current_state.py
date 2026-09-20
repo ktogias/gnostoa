@@ -916,10 +916,16 @@ def publish_entry(
 ) -> dict[str, Any]:
     pull_number = _integer(entry.get("pull_number"), "entry.pull_number")
     if entry.get("collection_status") == "UNAVAILABLE":
+        raw_reason = entry.get("reason")
+        reason = (
+            raw_reason
+            if isinstance(raw_reason, str) and raw_reason
+            else "PROVIDER_SUBJECT_UNAVAILABLE"
+        )
         return {
             "pull_number": pull_number,
             "published": False,
-            "reason": "PROVIDER_SUBJECT_UNAVAILABLE",
+            "reason": reason,
         }
     collected_head = _sha(entry.get("head_sha"), "entry.head_sha")
     body = _text(entry.get("body"), "entry.body")
