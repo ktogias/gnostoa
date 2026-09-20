@@ -115,6 +115,11 @@ not refactoring R2A, the reducer, projection semantics or current-state logic.
 
 The GitHub adapter remains self-only and implementation-private in this slice.
 No GitHub vocabulary is promoted into R2A or a generic public Gnostoa schema.
+The common snapshot boundary validates normalized review-thread state and
+referential integrity before both R2A-input composition and owner-facing
+projection construction. A thread that references an unknown review observation
+is invalid normalized evidence and cannot be silently omitted from a
+`CURRENT_AT_OBSERVATION` projection.
 
 Execution identity follows the same boundary. The shared projection core carries
 one opaque, non-empty `execution_id`; it does not parse, order or coerce that
@@ -171,6 +176,12 @@ infer resolution from REST comments: it joins each GraphQL thread to the
 retained REST root-comment metadata and marks coverage partial if that identity
 bridge cannot be established. The provider-neutral core receives only
 normalized thread observations and contains no GitHub GraphQL vocabulary.
+
+REST pagination links and GraphQL requests stay inside the admitted GitHub API
+transport boundary: HTTPS, exact host `api.github.com`, and only the default
+HTTPS port (implicit or explicit 443), with no userinfo or fragments.
+Malformed or non-default explicit ports are provider-read failures rather than
+accepted continuation targets.
 
 Timestamp fields are validated as RFC3339 during provider normalization. A
 malformed timestamp yields source ERROR on the first page or PARTIAL after

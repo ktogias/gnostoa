@@ -368,6 +368,15 @@ Acceptance criteria:
 - **TS-10 — explicit GraphQL rate limits:** classify both HTTP rate-limit
   responses and HTTP-200 GraphQL error documents carrying primary/secondary
   rate-limit evidence as provider `RATE_LIMITED`, not generic `ERROR`.
+- **TS-11 — projection-side referential integrity:** apply normalized
+  review-thread validation before owner-facing projection construction as well
+  as before R2A-input composition. Malformed/orphan thread evidence cannot be
+  reported as `CURRENT_AT_OBSERVATION` merely because source coverage fields
+  say COMPLETE.
+- **TS-12 — exact GitHub API transport boundary:** accept only HTTPS
+  `api.github.com` continuation/request URLs on the default HTTPS port
+  (implicit or explicit 443), with no userinfo or fragments. Reject malformed
+  and non-default explicit ports before any provider read follows them.
 
 A fresh review also exposed a bounded-batch availability defect: an exception
 while collecting or publishing one Pull Request could abort the remaining
