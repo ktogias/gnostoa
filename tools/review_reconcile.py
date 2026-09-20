@@ -188,19 +188,40 @@ def _thread_records_by_review(
     if not isinstance(reviews, list) or not isinstance(review_threads, list):
         raise ReconciliationInputError("reviews and review_threads must be arrays")
 
-    normalized_reviews = [_mapping(raw_review, "review") for raw_review in reviews]
-    review_observation_ids = {
-        _string(review.get("observation_id"), "review.observation_id")
-        for review in normalized_reviews
-    }
+    normalized_reviews: list[dict[str, Any]] = []
+    review_observation_ids: set[str] = set()
+    for raw_review in reviews:
+        review = _mapping(raw_review, "review")
+        observation_id = _string(
+            review.get("observation_id"),
+            "review.observation_id",
+        )
+        if observation_id in review_observation_ids:
+            raise ReconciliationInputError("duplicate review observation_id")
+        _string(review.get("reviewer_id"), "review.reviewer_id")
+        _string(review.get("recommendation_state"), "review.recommendation_state")
+        _timestamp(review.get("observed_at"), "review.observed_at")
+        head_commit = review.get("head_commit")
+        if head_commit is not None:
+            _sha(head_commit, "review.head_commit")
+        source_url = review.get("source_url")
+        if source_url is not None:
+            _string(source_url, "review.source_url")
+        review_observation_ids.add(observation_id)
+        normalized_reviews.append(review)
+
     threads_by_review: dict[str, list[dict[str, Any]]] = {}
+    thread_ids: set[str] = set()
     for raw_thread in review_threads:
         thread = _mapping(raw_thread, "review_thread")
         review_observation_id = _string(
             thread.get("review_observation_id"),
             "review_thread.review_observation_id",
         )
-        _string(thread.get("id"), "review_thread.id")
+        thread_id = _string(thread.get("id"), "review_thread.id")
+        if thread_id in thread_ids:
+            raise ReconciliationInputError("duplicate review_thread.id")
+        thread_ids.add(thread_id)
         _string(thread.get("reviewer_id"), "review_thread.reviewer_id")
         _timestamp(thread.get("observed_at"), "review_thread.observed_at")
         head_commit = thread.get("head_commit")
@@ -247,12 +268,12 @@ def _observations(
         observed_at = _timestamp(review.get("observed_at"), "review.observed_at")
         review_head = review.get("head_commit")
 
-        if isinstance(review_head, str) and _SHA40.fullmatch(review_head):
-            bound_head = review_head
-            binding_status = "exact" if review_head == target_head else "partial"
-        else:
+        if review_head is None:
             bound_head = target_head
             binding_status = "unestablished"
+        else:
+            bound_head = _sha(review_head, "review.head_commit")
+            binding_status = "exact" if review_head == target_head else "partial"
 
         thread_records = threads_by_review.get(observation_id, [])
         thread_states = {item["state"] for item in thread_records}
