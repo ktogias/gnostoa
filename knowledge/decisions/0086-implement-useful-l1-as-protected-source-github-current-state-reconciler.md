@@ -146,26 +146,29 @@ credentials.
 
 ### Provider collection
 
-The GitHub adapter uses the versioned REST API with complete pagination and
-retains independent source coverage for:
+The GitHub adapter uses the versioned REST API plus the GraphQL
+`PullRequest.reviewThreads` connection, with bounded complete pagination and
+independent source coverage for:
 
 - Pull Request metadata and exact head/base;
 - issue/conversation comments;
 - formal Pull Request reviews;
-- inline Pull Request review comments as retained evidence;
-- review-thread coverage, which is COMPLETE only when the bounded adapter can
-  establish the required thread state; the REST-only comment surface is not
-  allowed to masquerade as resolved/unresolved thread truth;
+- inline Pull Request review comments as the metadata bridge that binds a
+  GraphQL thread root to its review observation, reviewer, commit and retained
+  body;
+- GraphQL review-thread identity plus `isResolved` state, normalized to
+  provider-neutral `resolved|unresolved` thread observations;
 - exact-head check runs/status needed by the current diagnostic view.
 
 Events are wake-ups only. Every execution reacquires current provider state.
-Missing pages, API failures, unavailable thread-resolution state or ambiguous
-currentness remain explicit `PARTIAL|UNAVAILABLE|ERROR`; they never mean clean.
-When GitHub REST returns inline review comments but does not expose the actual
-review-thread identity/resolution state, those comments are retained while
-`review_threads` is marked PARTIAL with an explicit reason. A later GitHub
-adapter may add GraphQL thread acquisition without changing the provider-neutral
-core contract.
+Missing pages, API failures, unavailable thread-resolution state, an unmapped
+GraphQL thread root or ambiguous currentness remain explicit
+`PARTIAL|UNAVAILABLE|ERROR`; they never mean clean. GraphQL POSTs are classified
+as provider reads, not writes. The adapter does not infer resolution from REST
+comments: it joins each GraphQL thread to the retained REST root-comment
+metadata and marks coverage partial if that identity bridge cannot be
+established. The provider-neutral core receives only normalized thread
+observations and contains no GitHub GraphQL vocabulary.
 
 Timestamp fields are validated as RFC3339 during provider normalization. A
 malformed timestamp yields source ERROR on the first page or PARTIAL after
@@ -190,10 +193,12 @@ fence. Repeated reads may cost up to three times a single bounded sweep.
 
 The scheduled open-PR sweep admits at most **8** Pull Requests per execution.
 Combined with the 32,768-byte per-projection renderer cap, this keeps the
-worst-case JSON transfer below the 300,000-byte raw collect→publish bound and
-therefore below the GitHub job-output limit after base64 encoding. A larger
-population fails closed and is retried through later bounded wake-ups; it is not
-silently truncated.
+worst-case JSON transfer below the 300,000-byte raw collect→publish bound. The
+bounded JSON is transferred through a one-day GitHub Actions artifact rather
+than a job output. When more than eight open Pull Requests exist, scheduled
+recovery rotates deterministic bounded batches across later hourly wake-ups
+instead of silently truncating the population. An explicitly selected event
+population above the bound still fails closed.
 
 ### Reducer and R2A composition
 
@@ -302,7 +307,8 @@ convergence.
 Reuse:
 
 - existing GitHub Actions rather than an always-on service;
-- existing REST provider primitives and explicit pagination;
+- existing REST provider primitives plus GitHub GraphQL review-thread reads,
+  with explicit pagination;
 - existing protected-main acquisition;
 - existing R2A schemas, policy, qualification and result semantics;
 - ordinary PR issue comments plus Actions summary rather than a custom Check Run
@@ -311,7 +317,7 @@ Reuse:
 ### Prior-art / license assessment
 
 Two concrete Python GitHub SDKs were evaluated before retaining the bounded
-stdlib REST adapter:
+stdlib REST/GraphQL adapter:
 
 1. **PyGithub** — LGPL-3.0-or-later. It is mature and covers GitHub REST
    resources, but adopting it would add a substantial GitHub-specific object
