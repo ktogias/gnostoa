@@ -678,6 +678,8 @@ def _current_pr(
     root = f"{_API_ROOT}/repos/{repository}"
     payload, _ = client.get(f"{root}/pulls/{pull_number}")
     pull = _normalize_pull(payload)
+    if pull["number"] != pull_number:
+        raise ProviderReadError("Pull Request identity changed during publication")
     compare_payload, _ = client.get(
         f"{root}/compare/{pull['base_sha']}...{pull['head_sha']}"
     )
