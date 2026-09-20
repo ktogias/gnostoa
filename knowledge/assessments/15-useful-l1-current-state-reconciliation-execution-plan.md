@@ -361,6 +361,13 @@ Acceptance criteria:
   review thread must reference a collected review observation. Orphan thread
   references are invalid input and fail closed in the provider-neutral reducer;
   they are never silently dropped from otherwise COMPLETE evidence.
+- **TS-09 — confirming-read evaluation cut:** after a stable confirming pass,
+  advance the retained provider observation / R2A `as_of` cut to that pass's
+  completion time. Thread state read during the pass must never be attributed
+  to an earlier cut; backward-clock or unstable cases remain incomplete.
+- **TS-10 — explicit GraphQL rate limits:** classify both HTTP rate-limit
+  responses and HTTP-200 GraphQL error documents carrying primary/secondary
+  rate-limit evidence as provider `RATE_LIMITED`, not generic `ERROR`.
 
 A fresh review also exposed a bounded-batch availability defect: an exception
 while collecting or publishing one Pull Request could abort the remaining

@@ -163,12 +163,14 @@ independent source coverage for:
 Events are wake-ups only. Every execution reacquires current provider state.
 Missing pages, API failures, unavailable thread-resolution state, an unmapped
 GraphQL thread root or ambiguous currentness remain explicit
-`PARTIAL|UNAVAILABLE|ERROR`; they never mean clean. GraphQL POSTs are classified
-as provider reads, not writes. The adapter does not infer resolution from REST
-comments: it joins each GraphQL thread to the retained REST root-comment
-metadata and marks coverage partial if that identity bridge cannot be
-established. The provider-neutral core receives only normalized thread
-observations and contains no GitHub GraphQL vocabulary.
+`PARTIAL|RATE_LIMITED|UNAVAILABLE|ERROR`; they never mean clean. GraphQL POSTs
+are classified as provider reads, not writes. HTTP-level limits and HTTP-200
+GraphQL error documents carrying primary/secondary rate-limit evidence are
+classified as `RATE_LIMITED`, not generic provider errors. The adapter does not
+infer resolution from REST comments: it joins each GraphQL thread to the
+retained REST root-comment metadata and marks coverage partial if that identity
+bridge cannot be established. The provider-neutral core receives only
+normalized thread observations and contains no GitHub GraphQL vocabulary.
 
 Timestamp fields are validated as RFC3339 during provider normalization. A
 malformed timestamp yields source ERROR on the first page or PARTIAL after
@@ -182,9 +184,13 @@ A single sequential sweep cannot prove that early sources cover a later
 observation cut. The adapter therefore performs at most three complete bounded
 collection passes, including subject/merge-base reads. A confirming pass must
 start at or after the retained cut and reproduce the preceding normalized
-snapshot without advancing that cut. Continuous change or a future cut leaves
-otherwise COMPLETE sources PARTIAL. Existing source errors are not upgraded.
-Page and item counts describe the retained pass, not aggregate API calls.
+snapshot. Once that confirming read completes, the retained observation and R2A
+evaluation cut advances to the confirming-read completion time so state acquired
+during the pass is never attributed to an earlier instant. A backward local
+clock, continued provider change or a future cut prevents a stable claim and
+leaves otherwise COMPLETE sources PARTIAL. Existing source errors are not
+upgraded. Page and item counts describe the retained pass, not aggregate API
+calls.
 
 This bounded stable read-back is not an atomic historical snapshot: provider
 history, transient changes between reads, and changes after the retained cut are
