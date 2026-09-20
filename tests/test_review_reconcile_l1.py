@@ -46,6 +46,31 @@ def _bundle() -> dict[str, Any]:
     return loaded
 
 
+def _consumer_document() -> dict[str, Any]:
+    path = ROOT / "tasks" / "issue-11-r2a-current-advisory-consumer.json"
+    loaded = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(loaded, dict):
+        raise AssertionError("protected consumer fixture must be an object")
+    return loaded
+
+
+def _valid_incomplete_result(input_document: dict[str, Any]) -> tuple[int, bytes]:
+    from tools import review_live
+    from tools.review_model import canonical_json
+
+    trusted_cut = input_document["evaluation_context"]["as_of"]
+    if not isinstance(trusted_cut, str):
+        raise AssertionError("evaluation cut must be a string")
+    code, payload = review_live._semantic_incomplete(
+        input_document,
+        _bundle(),
+        trusted_cut,
+        "QUORUM_UNMET",
+        "fixture semantic incomplete",
+    )
+    return code, (canonical_json(payload) + "\n").encode("utf-8")
+
+
 def _snapshot(
     *,
     provider_id: str = "github",
@@ -275,6 +300,15 @@ def _complete_replies(root: str) -> dict[str, tuple[Any, dict[str, str]]]:
             {},
         ),
     }
+
+
+def _complete_replies_without_review_comments(
+    root: str,
+) -> dict[str, tuple[Any, dict[str, str]]]:
+    replies = _complete_replies(root)
+    replies[f"{root}/pulls/300/comments?per_page=100"] = ([], {})
+    replies.pop("https://api.github.com/page2/review-comments", None)
+    return replies
 
 
 class UsefulL1RedContractTests(unittest.TestCase):
@@ -1073,12 +1107,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
         )
         consumer = SimpleNamespace(
             protected_main_revision="e" * 40,
-            document={
-                "acquired_consumer": {
-                    "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
-                    "runtime_revision": "9" * 40,
-                }
-            },
+            document=_consumer_document(),
         )
 
         def run_bound(
@@ -1088,10 +1117,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
         ) -> tuple[int, bytes]:
             self.assertIs(consumer, acquire_consumer())
             self.assertIsInstance(input_document, dict)
-            return (
-                0,
-                b'{"binding":false,"outcome":"INCOMPLETE","reason":"QUORUM_UNMET"}',
-            )
+            return _valid_incomplete_result(input_document)
 
         with (
             mock.patch.object(
@@ -1105,7 +1131,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
             ) as runner,
         ):
             entry = adapter._collect_entry(
-                _PagedFake(_complete_replies(root)),
+                _PagedFake(_complete_replies_without_review_comments(root)),
                 "ktogias/gnostoa",
                 300,
                 run_id=139,
@@ -1124,7 +1150,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
         adapter = _adapter()
         reducer = _reducer()
         root = "https://api.github.com/repos/ktogias/gnostoa"
-        fake = _PagedFake(_complete_replies(root))
+        fake = _PagedFake(_complete_replies_without_review_comments(root))
 
         with mock.patch.object(
             adapter,
