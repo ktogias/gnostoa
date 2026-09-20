@@ -336,6 +336,11 @@ def _collect_review_threads(
                 connection.get("pageInfo"),
                 "graphql.reviewThreads.pageInfo",
             )
+            has_next = _boolean(
+                page_info.get("hasNextPage"),
+                "graphql.reviewThreads.pageInfo.hasNextPage",
+            )
+            end_cursor = page_info.get("endCursor")
 
             normalized: list[dict[str, Any]] = []
             for raw_node in nodes:
@@ -405,11 +410,6 @@ def _collect_review_threads(
         items.extend(normalized)
         pages += 1
 
-        has_next = _boolean(
-            page_info.get("hasNextPage"),
-            "graphql.reviewThreads.pageInfo.hasNextPage",
-        )
-        end_cursor = page_info.get("endCursor")
         if has_next:
             if not isinstance(end_cursor, str) or not end_cursor:
                 return items, {
