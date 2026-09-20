@@ -60,7 +60,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
                 )
                 self.assertEqual([], snapshot[source])
 
-    def test_review_comments_without_resolution_mark_thread_coverage_partial(
+    def test_graphql_resolution_makes_thread_coverage_complete(
         self,
     ) -> None:
         fixtures = _fixtures()
@@ -72,10 +72,11 @@ class UsefulL1FollowupTests(unittest.TestCase):
             pull_number=300,
             observed_at="2026-09-19T16:41:00Z",
         )
-        self.assertEqual("PARTIAL", snapshot["coverage"]["review_threads"]["status"])
+        self.assertEqual("COMPLETE", snapshot["coverage"]["review_threads"]["status"])
+        self.assertTrue(snapshot["review_threads"])
         self.assertEqual(
-            "review_comments_without_resolution_state",
-            snapshot["coverage"]["review_threads"]["reason"],
+            {"resolved"},
+            {item["state"] for item in snapshot["review_threads"]},
         )
 
     def test_malformed_semantic_result_becomes_unavailable(self) -> None:
