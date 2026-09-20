@@ -18,7 +18,38 @@ from tools.review_reconcile import (
 )
 
 _API_ROOT = "https://api.github.com"
+_GRAPHQL_ROOT = f"{_API_ROOT}/graphql"
 _API_VERSION = "2022-11-28"
+_REVIEW_THREADS_QUERY = """
+query ReviewThreads(
+  $owner: String!
+  $name: String!
+  $number: Int!
+  $cursor: String
+) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $cursor) {
+        nodes {
+          id
+          isResolved
+          isOutdated
+          comments(first: 1) {
+            nodes {
+              databaseId
+              url
+            }
+          }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  }
+}
+"""
 _MAX_RESPONSE_BYTES = 4_194_304
 _MAX_BODY_BYTES = 65_536
 _MAX_PAGES = 20
@@ -47,6 +78,8 @@ class ProviderWriteError(RuntimeError):
 
 class JsonReader(Protocol):
     def get(self, url: str) -> tuple[Any, dict[str, str]]: ...
+
+    def graphql(self, query: str, variables: dict[str, Any]) -> Any: ...
 
 
 def _validate_api_url(url: str) -> str:
@@ -80,6 +113,8 @@ class GitHubRestClient:
         method: str,
         url: str,
         payload: dict[str, Any] | None = None,
+        *,
+        read: bool = False,
     ) -> tuple[Any, dict[str, str]]:
         encoded = None
         if payload is not None:
@@ -116,16 +151,30 @@ class GitHubRestClient:
             message = f"GitHub API HTTP {exc.code}"
             if detail:
                 message += f": {' '.join(detail.split())[:512]}"
-            if method == "GET":
+            if method == "GET" or read:
                 raise ProviderReadError(message, status=exc.code) from exc
             raise ProviderWriteError(message) from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            if method == "GET":
+            if method == "GET" or read:
                 raise ProviderReadError("GitHub API transport failed") from exc
             raise ProviderWriteError("GitHub API transport failed") from exc
 
     def get(self, url: str) -> tuple[Any, dict[str, str]]:
         return self._request("GET", url)
+
+    def graphql(self, query: str, variables: dict[str, Any]) -> Any:
+        document, _ = self._request(
+            "POST",
+            _GRAPHQL_ROOT,
+            {"query": query, "variables": variables},
+            read=True,
+        )
+        if not isinstance(document, dict):
+            raise ProviderReadError("GitHub GraphQL returned invalid shape")
+        errors = document.get("errors")
+        if errors:
+            raise ProviderReadError("GitHub GraphQL returned errors")
+        return document
 
     def post(self, url: str, payload: dict[str, Any]) -> Any:
         document, _ = self._request("POST", url, payload)
@@ -222,6 +271,167 @@ def _collect_pages(
             "count": len(items),
             "omitted": omitted_total,
             "reason": "unsubmitted_provider_items",
+        }
+    return items, {"status": "COMPLETE", "pages": pages, "count": len(items)}
+
+
+def _boolean(value: Any, label: str) -> bool:
+    if type(value) is not bool:
+        raise ProviderReadError(f"{label} must be a boolean")
+    return value
+
+
+def _collect_review_threads(
+    client: JsonReader,
+    *,
+    repository: str,
+    pull_number: int,
+    review_comments: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    owner, name = repository.split("/", 1)
+    comments_by_id = {
+        item["id"]: item
+        for item in review_comments
+        if isinstance(item.get("id"), str)
+    }
+    cursor: str | None = None
+    items: list[dict[str, Any]] = []
+    pages = 0
+    omitted = 0
+
+    while True:
+        if pages >= _MAX_PAGES:
+            return items, {
+                "status": "PARTIAL",
+                "pages": pages,
+                "count": len(items),
+                "limit": "page_limit",
+            }
+        try:
+            payload = client.graphql(
+                _REVIEW_THREADS_QUERY,
+                {
+                    "owner": owner,
+                    "name": name,
+                    "number": pull_number,
+                    "cursor": cursor,
+                },
+            )
+            data = _mapping(payload.get("data"), "graphql.data")
+            repository_payload = _mapping(
+                data.get("repository"),
+                "graphql.data.repository",
+            )
+            pull_payload = _mapping(
+                repository_payload.get("pullRequest"),
+                "graphql.data.repository.pullRequest",
+            )
+            connection = _mapping(
+                pull_payload.get("reviewThreads"),
+                "graphql.reviewThreads",
+            )
+            nodes = connection.get("nodes")
+            if not isinstance(nodes, list):
+                raise ProviderReadError("GitHub reviewThreads.nodes must be an array")
+            page_info = _mapping(
+                connection.get("pageInfo"),
+                "graphql.reviewThreads.pageInfo",
+            )
+
+            normalized: list[dict[str, Any]] = []
+            for raw_node in nodes:
+                node = _mapping(raw_node, "graphql.reviewThread")
+                thread_id = _text(node.get("id"), "graphql.reviewThread.id")
+                resolved = _boolean(
+                    node.get("isResolved"),
+                    "graphql.reviewThread.isResolved",
+                )
+                outdated = _boolean(
+                    node.get("isOutdated"),
+                    "graphql.reviewThread.isOutdated",
+                )
+                comments = _mapping(
+                    node.get("comments"),
+                    "graphql.reviewThread.comments",
+                ).get("nodes")
+                if not isinstance(comments, list) or not comments:
+                    omitted += 1
+                    continue
+                root_comment = _mapping(
+                    comments[0],
+                    "graphql.reviewThread.comments[0]",
+                )
+                database_id = _integer(
+                    root_comment.get("databaseId"),
+                    "graphql.reviewThread.comments[0].databaseId",
+                )
+                retained = comments_by_id.get(
+                    f"github-review-comment-{database_id}"
+                )
+                if retained is None:
+                    omitted += 1
+                    continue
+                normalized.append(
+                    {
+                        "id": f"github-review-thread-{thread_id}",
+                        "review_observation_id": retained["review_observation_id"],
+                        "reviewer_id": retained["reviewer_id"],
+                        "observed_at": retained["observed_at"],
+                        "head_commit": retained["head_commit"],
+                        "body": retained["body"],
+                        "body_truncated": retained["body_truncated"],
+                        "source_url": (
+                            _optional_text(root_comment.get("url"))
+                            or retained["source_url"]
+                        ),
+                        "state": "resolved" if resolved else "unresolved",
+                        "outdated": outdated,
+                    }
+                )
+        except ProviderReadError as exc:
+            return items, {
+                "status": _error_status(exc, pages),
+                "pages": pages,
+                "count": len(items),
+                "error": str(exc),
+            }
+
+        if len(items) + len(normalized) > _MAX_ITEMS:
+            remaining = max(0, _MAX_ITEMS - len(items))
+            items.extend(normalized[:remaining])
+            return items, {
+                "status": "PARTIAL",
+                "pages": pages + 1,
+                "count": len(items),
+                "limit": "item_limit",
+            }
+        items.extend(normalized)
+        pages += 1
+
+        has_next = _boolean(
+            page_info.get("hasNextPage"),
+            "graphql.reviewThreads.pageInfo.hasNextPage",
+        )
+        end_cursor = page_info.get("endCursor")
+        if has_next:
+            if not isinstance(end_cursor, str) or not end_cursor:
+                return items, {
+                    "status": "PARTIAL",
+                    "pages": pages,
+                    "count": len(items),
+                    "reason": "missing_graphql_cursor",
+                }
+            cursor = end_cursor
+            continue
+        break
+
+    if omitted:
+        return items, {
+            "status": "PARTIAL",
+            "pages": pages,
+            "count": len(items),
+            "omitted": omitted,
+            "reason": "unmapped_thread_root_comment",
         }
     return items, {"status": "COMPLETE", "pages": pages, "count": len(items)}
 
@@ -443,10 +653,17 @@ def _collect_snapshot_once(
         f"{root}/pulls/{pull_number}/comments?per_page=100",
         normalize=_normalize_review_comment,
     )
-    review_thread_coverage = dict(review_comment_coverage)
-    if review_thread_coverage.get("status") == "COMPLETE" and review_comments:
-        review_thread_coverage["status"] = "PARTIAL"
-        review_thread_coverage["reason"] = "review_comments_without_resolution_state"
+    if review_comment_coverage.get("status") == "COMPLETE":
+        review_threads, review_thread_coverage = _collect_review_threads(
+            client,
+            repository=repository,
+            pull_number=pull_number,
+            review_comments=review_comments,
+        )
+    else:
+        review_threads = []
+        review_thread_coverage = dict(review_comment_coverage)
+        review_thread_coverage["reason"] = "review_comment_metadata_incomplete"
     check_runs, check_coverage = _collect_pages(
         client,
         f"{root}/commits/{pull['head_sha']}/check-runs?per_page=100",
@@ -470,7 +687,7 @@ def _collect_snapshot_once(
     )
     cut_candidates.extend(
         item["observed_at"]
-        for item in review_comments
+        for item in review_threads
         if isinstance(item.get("observed_at"), str)
     )
     cut_candidates.extend(
@@ -484,7 +701,7 @@ def _collect_snapshot_once(
         "schema_version": PROVIDER_STATE_SCHEMA_VERSION,
         "provider": {
             "id": "github",
-            "adapter": "gnostoa.github-rest-current-state/v1",
+            "adapter": "gnostoa.github-rest-graphql-current-state/v1",
         },
         "observed_at": effective_observed_at,
         "subject": {
@@ -512,7 +729,7 @@ def _collect_snapshot_once(
         },
         "conversation": issue_comments,
         "reviews": reviews,
-        "review_threads": review_comments,
+        "review_threads": review_threads,
         "checks": check_runs,
     }
 
@@ -1014,16 +1231,24 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(
                 "selected Pull Request population exceeds bounded reconciliation capacity"
             )
-        entries = [
-            _collect_entry(
-                client,
-                args.repository,
-                number,
-                run_id=args.run_id,
-                run_attempt=args.run_attempt,
-            )
-            for number in pulls
-        ]
+        entries = []
+        for number in pulls:
+            try:
+                entry = _collect_entry(
+                    client,
+                    args.repository,
+                    number,
+                    run_id=args.run_id,
+                    run_attempt=args.run_attempt,
+                )
+            except (OSError, RuntimeError, ValueError) as exc:
+                entry = {
+                    "pull_number": number,
+                    "collection_status": "UNAVAILABLE",
+                    "reason": "RECONCILIATION_ENTRY_UNAVAILABLE",
+                    "error_type": type(exc).__name__,
+                }
+            entries.append(entry)
         _write_payload(args.output, entries)
         _summary(
             [
@@ -1047,10 +1272,27 @@ def main(argv: list[str] | None = None) -> int:
     if args.payload is None:
         raise SystemExit("--payload is required for publish")
     entries = _load_payload(args.payload)
-    results = [
-        publish_entry(client, repository=args.repository, entry=entry)
-        for entry in entries
-    ]
+    results = []
+    for entry in entries:
+        try:
+            result = publish_entry(
+                client,
+                repository=args.repository,
+                entry=entry,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            pull_number = entry.get("pull_number")
+            result = {
+                "pull_number": (
+                    pull_number
+                    if type(pull_number) is int and pull_number > 0
+                    else "UNKNOWN"
+                ),
+                "published": False,
+                "reason": "PUBLICATION_ENTRY_UNAVAILABLE",
+                "error_type": type(exc).__name__,
+            }
+        results.append(result)
     _summary(
         [
             "## Gnostoa useful L1 publication",
