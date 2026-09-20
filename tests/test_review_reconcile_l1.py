@@ -617,7 +617,6 @@ class UsefulL1RedContractTests(unittest.TestCase):
         for source, payload_key in (
             ("conversation", "conversation"),
             ("reviews", "reviews"),
-            ("review_threads", "review_threads"),
             ("checks", "checks"),
         ):
             with self.subTest(source=source):
@@ -625,6 +624,18 @@ class UsefulL1RedContractTests(unittest.TestCase):
                 self.assertEqual(2, snapshot["coverage"][source]["pages"])
                 self.assertEqual(2, snapshot["coverage"][source]["count"])
                 self.assertEqual("COMPLETE", snapshot["coverage"][source]["status"])
+
+        self.assertEqual(2, len(snapshot["review_threads"]))
+        self.assertEqual(2, snapshot["coverage"]["review_threads"]["pages"])
+        self.assertEqual(2, snapshot["coverage"]["review_threads"]["count"])
+        self.assertEqual(
+            "PARTIAL",
+            snapshot["coverage"]["review_threads"]["status"],
+        )
+        self.assertEqual(
+            "review_comments_without_resolution_state",
+            snapshot["coverage"]["review_threads"]["reason"],
+        )
 
     def test_pending_github_review_is_omitted_and_marks_coverage_partial(
         self,
