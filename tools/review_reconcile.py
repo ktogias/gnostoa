@@ -180,22 +180,21 @@ def _review_source_status(coverage: dict[str, dict[str, Any]]) -> str:
     return "COMPLETE"
 
 
-def _observations(
+def _thread_records_by_review(
     snapshot: dict[str, Any],
-    subject: dict[str, Any],
-    provider_id: str,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
     reviews = snapshot.get("reviews")
     review_threads = snapshot.get("review_threads")
     if not isinstance(reviews, list) or not isinstance(review_threads, list):
         raise ReconciliationInputError("reviews and review_threads must be arrays")
 
-    review_observation_ids = {
-        _string(
-            _mapping(raw_review, "review").get("observation_id"),
-            "review.observation_id",
-        )
+    normalized_reviews = [
+        _mapping(raw_review, "review")
         for raw_review in reviews
+    ]
+    review_observation_ids = {
+        _string(review.get("observation_id"), "review.observation_id")
+        for review in normalized_reviews
     }
     threads_by_review: dict[str, list[dict[str, Any]]] = {}
     for raw_thread in review_threads:
@@ -205,11 +204,25 @@ def _observations(
             "review_thread.review_observation_id",
         )
         _string(thread.get("id"), "review_thread.id")
+        thread_state = thread.get("state")
+        if thread_state not in {"resolved", "unresolved"}:
+            raise ReconciliationInputError(
+                "review_thread.state must be resolved or unresolved"
+            )
         if review_observation_id not in review_observation_ids:
             raise ReconciliationInputError(
                 "review_thread references unknown review observation"
             )
         threads_by_review.setdefault(review_observation_id, []).append(thread)
+    return normalized_reviews, threads_by_review
+
+
+def _observations(
+    snapshot: dict[str, Any],
+    subject: dict[str, Any],
+    provider_id: str,
+) -> list[dict[str, Any]]:
+    reviews, threads_by_review = _thread_records_by_review(snapshot)
 
     target_head = subject["head_commit"]
     observations: list[dict[str, Any]] = []
@@ -235,14 +248,7 @@ def _observations(
             binding_status = "unestablished"
 
         thread_records = threads_by_review.get(observation_id, [])
-        thread_states: set[str] = set()
-        for item in thread_records:
-            thread_state = item.get("state")
-            if thread_state not in {"resolved", "unresolved"}:
-                raise ReconciliationInputError(
-                    "review_thread.state must be resolved or unresolved"
-                )
-            thread_states.add(thread_state)
+        thread_states = {item["state"] for item in thread_records}
         aggregate_thread_state = (
             "unresolved" if "unresolved" in thread_states else "resolved"
         )
@@ -409,6 +415,7 @@ def build_projection(
     """Build a bounded non-canonical owner-facing current-state projection."""
 
     _, provider_subject = _subject(snapshot)
+    _thread_records_by_review(snapshot)
     coverage = _projection_coverage(snapshot)
     protected_revision = (
         _sha(protected_main_revision, "protected_main_revision")
