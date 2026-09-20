@@ -357,6 +357,10 @@ Acceptance criteria:
   behavior, then require focused thread pagination/state/error regressions,
   normal style/compatibility/repository verification and fresh exact-head
   review.
+- **TS-08 — normalized referential integrity:** every retained normalized
+  review thread must reference a collected review observation. Orphan thread
+  references are invalid input and fail closed in the provider-neutral reducer;
+  they are never silently dropped from otherwise COMPLETE evidence.
 
 A fresh review also exposed a bounded-batch availability defect: an exception
 while collecting or publishing one Pull Request could abort the remaining
