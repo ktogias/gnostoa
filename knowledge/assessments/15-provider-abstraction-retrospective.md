@@ -437,7 +437,7 @@ selected #15 objective and the L1/L2/L3 boundaries. This retrospective must not
 promote #263, reopen L0-lite, replace the #15 Work Item, or make the non-blocking
 Decision 0081 assessment lane a new dependency.
 
-## 7. What would count as prevention working?
+## 8. What would count as prevention working?
 
 A passing test suite, a longer checklist or more clean review providers is not
 sufficient evidence. The concrete target is earlier detection of this failure
@@ -461,7 +461,7 @@ established causal claim**. Compare outcomes to the retained incident without
 claiming that absence of recurrence in a small sample proves prevention.
 Narrow or remove ceremony if its cost exceeds demonstrated detection benefit.
 
-## 8. Verification and residual limits of this record
+## 9. Verification and residual limits of this record
 
 This session inspected exact source through the connected GitHub tools,
 including the original reducer/plan, current reducer/tests, current Decision,
