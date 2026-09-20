@@ -384,3 +384,38 @@ entries. The same corrective generation therefore requires per-entry isolation:
 the affected subject degrades to an explicit non-published diagnostic while
 subsequent subjects are still attempted. This changes availability/blast radius,
 not stale-write or merge authority semantics.
+
+
+## Independent full-review remediation addendum — 2026-09-20 UTC
+
+Owner admission after the exact-head independent review selects FR-01 through
+FR-05 for same-purpose remediation before merge. The RED candidate
+`49d9c997728aca8d3c08c4a8f3ea63acdc812232` changes tests only and runs 1,118
+source tests with six expected failures plus one expected pre-provider-I/O
+error, proving the following gaps before production mutation:
+
+- **FR-01 / certified cut:** a later full pass must cover the retained cut; the
+  cut cannot advance to the end of the confirming pass.
+- **FR-02 / complete status-check model:** GitHub Check Runs and commit statuses
+  are both normalized; logical check identity is adapter-owned and distinct
+  from display name/integration collisions.
+- **FR-03 / effective review state:** retained review history stays available for
+  thread identity, but only the provider-effective latest opinionated review per
+  reviewer enters semantic R2A observations. Equal-time conflicting latest
+  opinions make review coverage partial rather than selecting by opaque ID.
+- **FR-04 / protected authority currentness:** an AVAILABLE protected-main
+  generation is reacquired immediately before provider write; a superseded
+  generation is non-publishable.
+- **FR-05 / traceability:** the Useful-L1 guardrail names thread-state,
+  render-compatibility and independent-full-review regression suites.
+
+The same generation also hardens the already-captured GitHub execution-ID
+boundary: a publication candidate must be GitHub-orderable before provider I/O,
+and an exact-subject workflow-owned retained projection with an unorderable
+generation fails closed instead of being ignored. Direct collect mode requires a
+positive run/attempt and per-entry publication summaries surface retained error
+types.
+
+These corrections do not add L2 effect fencing, merge/approval authority, a
+public provider schema or a second production provider. Final read→write TOCTOU
+remains the explicitly admitted L1 residual.

@@ -563,6 +563,9 @@ guardrails:
       - tests/test_review_reconcile_l1.py
       - tests/test_review_reconcile_l1_followups.py
       - tests/test_review_reconcile_l1_presentation.py
+      - tests/test_review_reconcile_l1_thread_state.py
+      - tests/test_review_reconcile_l1_render_compat.py
+      - tests/test_review_reconcile_l1_full_review_followups.py
 
   - id: authoritative-centralized-ci
     title: Centralized CI authoritatively verifies the latest integration candidate

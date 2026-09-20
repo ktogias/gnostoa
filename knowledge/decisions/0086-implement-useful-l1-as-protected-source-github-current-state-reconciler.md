@@ -99,14 +99,17 @@ provider-neutral internal snapshot with these normalized concepts:
 - conversation coverage;
 - semantic-review observations;
 - review-thread observations;
-- exact-head check observations with explicit observation timestamps.
+- exact-head check observations with an adapter-defined opaque logical key,
+  human display name and explicit observation timestamps.
 
 Provider-native IDs are opaque identities, not ordering primitives. Adapters must
+normalize a logical check identity separately from the human display name and
 normalize freshness/order evidence explicitly; the core chooses current check
-state by observation time rather than assuming GitHub-, GitLab- or other
-provider-specific ID ordering. If multiple latest observations for the same
-check share an observation timestamp but disagree on status/conclusion, the
-state is explicitly ambiguous and cannot be tie-broken by opaque IDs.
+state by logical key and observation time rather than assuming GitHub-, GitLab-
+or other provider-specific ID ordering. If multiple latest observations for the
+same logical check share an observation timestamp but disagree on
+name/status/conclusion, the state is explicitly ambiguous and cannot be
+tie-broken by opaque IDs.
 
 Each provider adapter owns translation from its native API into that internal
 shape and owns any provider-specific projection write. Adding another provider
@@ -157,13 +160,17 @@ independent source coverage for:
 
 - Pull Request metadata and exact head/base;
 - issue/conversation comments;
-- formal Pull Request reviews;
+- formal Pull Request review history, with provider-effective/latest
+  opinionated state marked explicitly per reviewer before common reduction;
 - inline Pull Request review comments as the metadata bridge that binds a
   GraphQL thread root to its review observation, reviewer, commit and retained
   body;
 - GraphQL review-thread identity plus `isResolved` state, normalized to
   provider-neutral `resolved|unresolved` thread observations;
-- exact-head check runs/status needed by the current diagnostic view.
+- exact-head GitHub Check Runs **and** commit-status contexts needed by the
+  current diagnostic view; Check Run logical identity includes its integration
+  identity so same-name signals from different integrations cannot overwrite one
+  another, while commit statuses retain their provider context identity.
 
 Events are wake-ups only. Every execution reacquires current provider state.
 Missing pages, API failures, unavailable thread-resolution state, an unmapped
@@ -174,8 +181,12 @@ GraphQL error documents carrying primary/secondary rate-limit evidence are
 classified as `RATE_LIMITED`, not generic provider errors. The adapter does not
 infer resolution from REST comments: it joins each GraphQL thread to the
 retained REST root-comment metadata and marks coverage partial if that identity
-bridge cannot be established. The provider-neutral core receives only
-normalized thread observations and contains no GitHub GraphQL vocabulary.
+bridge cannot be established. GraphQL supplies the current resolved/unresolved
+state while the normalized per-thread timestamp remains the retained REST root
+comment metadata timestamp; the certified snapshot cut, not that per-thread
+timestamp, proves that the state was reacquired. The provider-neutral core
+receives only normalized thread observations and contains no GitHub GraphQL
+vocabulary.
 
 REST pagination links and GraphQL requests stay inside the admitted GitHub API
 transport boundary: HTTPS, exact host `api.github.com`, and only the default
@@ -193,15 +204,18 @@ into ERROR.
 
 A single sequential sweep cannot prove that early sources cover a later
 observation cut. The adapter therefore performs at most three complete bounded
-collection passes, including subject/merge-base reads. A confirming pass must
-start at or after the retained cut and reproduce the preceding normalized
-snapshot. Once that confirming read completes, the retained observation and R2A
-evaluation cut advances to the confirming-read completion time so state acquired
-during the pass is never attributed to an earlier instant. A backward local
-clock, continued provider change or a future cut prevents a stable claim and
-leaves otherwise COMPLETE sources PARTIAL. Existing source errors are not
-upgraded. Page and item counts describe the retained pass, not aggregate API
-calls.
+collection passes, including subject/merge-base reads. Completion of one full
+pass establishes a **candidate cut** no earlier than both that pass completion
+and every retained provider evidence timestamp. A later confirming pass must
+start at or after that candidate cut and reproduce the preceding normalized
+snapshot. The retained observation/R2A cut is then the candidate cut covered by
+that later full reread — **not** the end of the confirming pass. State that
+arrives after an early source was read during the confirming pass is therefore
+after the certified cut, rather than silently preceding a completion-time cut
+the snapshot did not cover. A backward local clock, continued provider change
+or future candidate cut prevents a stable claim and leaves otherwise COMPLETE
+sources PARTIAL. Existing source errors are not upgraded. Page and item counts
+describe the retained pass, not aggregate API calls.
 
 This bounded stable read-back is not an atomic historical snapshot: provider
 history, transient changes between reads, and changes after the retained cut are
@@ -257,8 +271,11 @@ The projection is non-canonical and must visibly declare:
 - next permitted action or explicit wait/block;
 - opaque workflow execution identity.
 
-Before any comment create/update, reacquire the change-request head and re-read
-the prior provider projection. The candidate projection must also name the exact
+Before any comment create/update, reacquire the change-request head, re-read
+the prior provider projection, and — for a projection that used AVAILABLE
+protected authority — reacquire the protected-main authority generation. A
+candidate collected under a superseded protected-main revision is stale and is
+not written. The candidate projection must also name the exact
 target provider, repository, change-request kind/id and collected head; a
 same-head projection for another change request is not publishable. Refuse
 publication when:
@@ -286,8 +303,9 @@ effect. A semantic/schema-version change remains a separate compatibility and
 migration boundary; presentation evolution alone does not require manual comment
 deletion or a schema-version bump.
 
-This rejects stale writes that are already observable at the pre-write
-read-back. It does **not** claim an atomic or exactly-once publication fence:
+This rejects PR-subject, projection-generation and protected-authority staleness
+already observable at the pre-write read-back. It does **not** claim an atomic
+or exactly-once publication fence:
 a concurrent provider race can still occur between the final read and comment
 write. Repository-scoped serialization uses `cancel-in-progress: false` and
 `queue: max`, allowing one running and at most 100 pending executions. Without
