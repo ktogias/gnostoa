@@ -604,6 +604,48 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
                     {"cursor": None},
                 )
 
+    def test_malformed_normalized_thread_fields_fail_closed_in_common_core(
+        self,
+    ) -> None:
+        fixtures = _fixtures()
+        reducer = fixtures._reducer()
+        cases = (
+            ("reviewer_id", ""),
+            ("observed_at", "not-a-timestamp"),
+            ("head_commit", "not-a-git-commit"),
+            ("body", None),
+            ("source_url", 123),
+        )
+
+        for field, value in cases:
+            with self.subTest(field=field):
+                snapshot = fixtures._snapshot()
+                snapshot["review_threads"][0][field] = value
+
+                with self.assertRaises(reducer.ReconciliationInputError):
+                    reducer.build_review_input(snapshot, fixtures._bundle())
+
+                with self.assertRaises(reducer.ReconciliationInputError):
+                    reducer.build_projection(
+                        snapshot,
+                        protected_main_revision="e" * 40,
+                        outer_consumer={
+                            "runtime_image": (
+                                "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64
+                            ),
+                            "runtime_revision": "9" * 40,
+                        },
+                        r2a_result={
+                            "outcome": "PASS",
+                            "reason": "QUORUM_SATISFIED",
+                            "binding": False,
+                        },
+                        execution={
+                            "execution_id": "github-actions:999:1",
+                            "observed_at": "2026-09-19T16:41:10Z",
+                        },
+                    )
+
     def test_publish_mode_isolates_one_entry_failure(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures._adapter()
