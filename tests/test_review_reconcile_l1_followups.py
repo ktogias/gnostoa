@@ -216,7 +216,9 @@ class UsefulL1FollowupTests(unittest.TestCase):
             }
 
         with (
-            mock.patch.object(adapter, "_collect_entry", side_effect=collected) as collect,
+            mock.patch.object(
+                adapter, "_collect_entry", side_effect=collected
+            ) as collect,
             mock.patch.object(adapter, "_write_payload") as write_payload,
             mock.patch.object(adapter, "_summary") as summary,
             mock.patch.dict(adapter.os.environ, {"GH_TOKEN": "test-token"}),
