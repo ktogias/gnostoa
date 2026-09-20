@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import importlib.util
 import unittest
-from unittest import mock
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 
 def _fixtures() -> Any:
