@@ -144,6 +144,7 @@ def _snapshot(
                 "head_commit": "a" * 40,
                 "body": "inline raw finding",
                 "source_url": source_url + "#thread-20",
+                "state": "unresolved",
             }
         ],
         "checks": [
@@ -169,6 +170,59 @@ class _PagedFake:
         if url not in self.replies:
             raise RuntimeError(f"unexpected URL: {url}")
         return self.replies[url]
+
+    def graphql(self, query: str, variables: dict[str, Any]) -> Any:
+        del query
+        cursor = variables.get("cursor")
+        first_url = next(
+            (
+                url
+                for url in self.replies
+                if url.endswith("/pulls/300/comments?per_page=100")
+            ),
+            None,
+        )
+        if first_url is None:
+            raise RuntimeError("review comment fixture is unavailable")
+        if cursor is None:
+            url = first_url
+        elif cursor == "page-2":
+            url = "https://api.github.com/page2/review-comments"
+        else:
+            raise RuntimeError(f"unexpected GraphQL cursor: {cursor!r}")
+        payload, headers = self.get(url)
+        nodes = [
+            {
+                "id": f"PRRT_fixture_{item['id']}",
+                "isResolved": True,
+                "isOutdated": False,
+                "comments": {
+                    "nodes": [
+                        {
+                            "databaseId": item["id"],
+                            "url": item.get("html_url"),
+                        }
+                    ]
+                },
+            }
+            for item in payload
+        ]
+        has_next = "rel=\"next\"" in headers.get("link", "")
+        return {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "reviewThreads": {
+                            "nodes": nodes,
+                            "pageInfo": {
+                                "hasNextPage": has_next,
+                                "endCursor": "page-2" if has_next else None,
+                            },
+                        }
+                    }
+                }
+            }
+        }
 
 
 def _complete_replies(root: str) -> dict[str, tuple[Any, dict[str, str]]]:
@@ -663,12 +717,12 @@ class UsefulL1RedContractTests(unittest.TestCase):
         self.assertEqual(2, snapshot["coverage"]["review_threads"]["pages"])
         self.assertEqual(2, snapshot["coverage"]["review_threads"]["count"])
         self.assertEqual(
-            "PARTIAL",
+            "COMPLETE",
             snapshot["coverage"]["review_threads"]["status"],
         )
         self.assertEqual(
-            "review_comments_without_resolution_state",
-            snapshot["coverage"]["review_threads"]["reason"],
+            ["resolved", "resolved"],
+            [item["state"] for item in snapshot["review_threads"]],
         )
 
     def test_pending_github_review_is_omitted_and_marks_coverage_partial(
