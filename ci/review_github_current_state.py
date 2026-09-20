@@ -38,6 +38,10 @@ query ReviewThreads(
             nodes {
               databaseId
               url
+              replyTo {
+                databaseId
+                url
+              }
             }
           }
         }
@@ -373,9 +377,18 @@ def _collect_review_threads(
                     comments[0],
                     "graphql.reviewThread.comments[0]",
                 )
+                reply_to = root_comment.get("replyTo")
+                identity_comment = (
+                    _mapping(
+                        reply_to,
+                        "graphql.reviewThread.comments[0].replyTo",
+                    )
+                    if reply_to is not None
+                    else root_comment
+                )
                 database_id = _integer(
-                    root_comment.get("databaseId"),
-                    "graphql.reviewThread.comments[0].databaseId",
+                    identity_comment.get("databaseId"),
+                    "graphql.reviewThread.rootComment.databaseId",
                 )
                 retained = comments_by_id.get(f"github-review-comment-{database_id}")
                 if retained is None:
@@ -391,7 +404,7 @@ def _collect_review_threads(
                         "body": retained["body"],
                         "body_truncated": retained["body_truncated"],
                         "source_url": (
-                            _optional_text(root_comment.get("url"))
+                            _optional_text(identity_comment.get("url"))
                             or retained["source_url"]
                         ),
                         "state": "resolved" if resolved else "unresolved",
