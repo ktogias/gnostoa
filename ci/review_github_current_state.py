@@ -157,11 +157,20 @@ class GitHubRestClient:
                 return _decode_json(raw, "GitHub API"), headers
         except urllib.error.HTTPError as exc:
             detail = exc.read(4_096).decode("utf-8", errors="replace")
+            headers = {
+                key.lower(): value for key, value in (exc.headers or {}).items()
+            }
             message = f"GitHub API HTTP {exc.code}"
             if detail:
                 message += f": {' '.join(detail.split())[:512]}"
             if method == "GET" or read:
-                raise ProviderReadError(message, status=exc.code) from exc
+                status = exc.code
+                if exc.code == 403 and _http_error_indicates_rate_limit(
+                    headers,
+                    detail,
+                ):
+                    status = 429
+                raise ProviderReadError(message, status=status) from exc
             raise ProviderWriteError(message) from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             if method == "GET" or read:
@@ -202,6 +211,17 @@ class GitHubRestClient:
         return document
 
 
+def _http_error_indicates_rate_limit(
+    headers: dict[str, str],
+    detail: str,
+) -> bool:
+    return (
+        headers.get("x-ratelimit-remaining") == "0"
+        or bool(headers.get("retry-after"))
+        or "rate limit" in detail.lower()
+    )
+
+
 def _graphql_errors_indicate_rate_limit(errors: Any) -> bool:
     if not isinstance(errors, list):
         return False
@@ -225,7 +245,7 @@ def _next_url(headers: dict[str, str]) -> str | None:
 
 
 def _error_status(error: ProviderReadError, pages: int) -> str:
-    if error.status in {403, 429}:
+    if error.status == 429:
         return "RATE_LIMITED"
     return "PARTIAL" if pages else "ERROR"
 
