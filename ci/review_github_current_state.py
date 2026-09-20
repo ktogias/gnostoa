@@ -157,9 +157,7 @@ class GitHubRestClient:
                 return _decode_json(raw, "GitHub API"), headers
         except urllib.error.HTTPError as exc:
             detail = exc.read(4_096).decode("utf-8", errors="replace")
-            headers = {
-                key.lower(): value for key, value in (exc.headers or {}).items()
-            }
+            headers = {key.lower(): value for key, value in (exc.headers or {}).items()}
             message = f"GitHub API HTTP {exc.code}"
             if detail:
                 message += f": {' '.join(detail.split())[:512]}"
