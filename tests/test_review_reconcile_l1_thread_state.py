@@ -976,6 +976,50 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         ):
             reducer.build_review_input(snapshot, fixtures._bundle())
 
+    def test_rest_forbidden_is_not_misclassified_as_rate_limited(self) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        client = adapter.GitHubRestClient("test-token")
+        response = io.BytesIO(b'{"message":"Resource not accessible by integration"}')
+        error = urllib.error.HTTPError(
+            "https://api.github.com/repos/ktogias/gnostoa/issues/300/comments",
+            403,
+            "Forbidden",
+            {"x-ratelimit-remaining": "42"},
+            response,
+        )
+
+        with mock.patch("urllib.request.urlopen", side_effect=error):
+            with self.assertRaises(adapter.ProviderReadError) as caught:
+                client.get(
+                    "https://api.github.com/repos/ktogias/gnostoa/issues/300/comments"
+                )
+
+        self.assertEqual(403, caught.exception.status)
+        self.assertEqual("ERROR", adapter._error_status(caught.exception, 0))
+
+    def test_rest_403_with_rate_limit_evidence_is_rate_limited(self) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        client = adapter.GitHubRestClient("test-token")
+        response = io.BytesIO(b'{"message":"API rate limit exceeded"}')
+        error = urllib.error.HTTPError(
+            "https://api.github.com/repos/ktogias/gnostoa/issues/300/comments",
+            403,
+            "Forbidden",
+            {"x-ratelimit-remaining": "0"},
+            response,
+        )
+
+        with mock.patch("urllib.request.urlopen", side_effect=error):
+            with self.assertRaises(adapter.ProviderReadError) as caught:
+                client.get(
+                    "https://api.github.com/repos/ktogias/gnostoa/issues/300/comments"
+                )
+
+        self.assertEqual(429, caught.exception.status)
+        self.assertEqual("RATE_LIMITED", adapter._error_status(caught.exception, 0))
+
     def test_graphql_http_failure_is_a_provider_read_failure(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures._adapter()
