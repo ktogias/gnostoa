@@ -6,6 +6,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
@@ -58,6 +59,96 @@ class UsefulL1FollowupTests(unittest.TestCase):
                     snapshot["coverage"][source]["status"],
                 )
                 self.assertEqual([], snapshot[source])
+
+    def test_review_comments_without_resolution_mark_thread_coverage_partial(
+        self,
+    ) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+        snapshot = adapter.collect_snapshot(
+            fixtures._PagedFake(fixtures._complete_replies(root)),
+            repository="ktogias/gnostoa",
+            pull_number=300,
+            observed_at="2026-09-19T16:41:00Z",
+        )
+        self.assertEqual("PARTIAL", snapshot["coverage"]["review_threads"]["status"])
+        self.assertEqual(
+            "review_comments_without_resolution_state",
+            snapshot["coverage"]["review_threads"]["reason"],
+        )
+
+    def test_malformed_semantic_result_becomes_unavailable(self) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        malformed = (
+            {"outcome": "PASS"},
+            {"outcome": "PASS", "reason": "QUORUM_SATISFIED"},
+            {
+                "outcome": "PASS",
+                "reason": "QUORUM_SATISFIED",
+                "binding": True,
+            },
+        )
+        for payload in malformed:
+            with self.subTest(payload=payload):
+                result = adapter._semantic_result(
+                    0,
+                    json.dumps(payload).encode("utf-8"),
+                )
+                self.assertEqual(
+                    {"reason": "INVALID_R2A_RESULT"},
+                    result,
+                )
+
+    def test_malformed_protected_consumer_is_projected_unavailable(self) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        reducer = fixtures._reducer()
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+        bundle = SimpleNamespace(
+            protected_main_revision="e" * 40,
+            document=fixtures._bundle(),
+        )
+        consumer = SimpleNamespace(
+            protected_main_revision="e" * 40,
+            document={
+                "acquired_consumer": {
+                    "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
+                }
+            },
+        )
+        valid_result = json.dumps(
+            {
+                "outcome": "PASS",
+                "reason": "QUORUM_SATISFIED",
+                "binding": False,
+            }
+        ).encode("utf-8")
+
+        with (
+            mock.patch.object(adapter, "_protected_state", return_value=(bundle, consumer)),
+            mock.patch(
+                "tools.review_outer._run_prior_effective_current_advisory_with_acquisition",
+                return_value=(0, valid_result),
+            ),
+        ):
+            entry = adapter._collect_entry(
+                fixtures._PagedFake(fixtures._complete_replies(root)),
+                "ktogias/gnostoa",
+                300,
+                run_id=141,
+                run_attempt=1,
+            )
+
+        projection = reducer.parse_projection_comment(entry["body"])
+        self.assertIsInstance(projection, dict)
+        self.assertEqual("PARTIAL", projection["protected"]["status"])
+        self.assertEqual("UNAVAILABLE", projection["r2a"]["outcome"])
+        self.assertEqual(
+            "WAIT_FOR_PROTECTED_CAPABILITY",
+            projection["next_permitted_action"],
+        )
 
     def test_hourly_recovery_rotates_bounded_open_pull_batches(self) -> None:
         fixtures = _fixtures()
