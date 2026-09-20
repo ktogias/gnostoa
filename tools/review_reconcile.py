@@ -707,9 +707,7 @@ def _validate_projection_document(document: dict[str, Any]) -> None:
     complete = all(item["status"] == "COMPLETE" for item in coverage.values())
     provider_current = state == "open" and complete
     expected_currentness = (
-        "CURRENT_AT_OBSERVATION"
-        if provider_current
-        else "INCOMPLETE_AT_OBSERVATION"
+        "CURRENT_AT_OBSERVATION" if provider_current else "INCOMPLETE_AT_OBSERVATION"
     )
     currentness = _string(
         document.get("currentness"),
