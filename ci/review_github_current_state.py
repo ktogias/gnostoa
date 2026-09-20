@@ -88,9 +88,14 @@ class JsonReader(Protocol):
 
 def _validate_api_url(url: str) -> str:
     parsed = urllib.parse.urlparse(url)
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ProviderReadError("GitHub API URL has an invalid port") from exc
     if (
         parsed.scheme != "https"
         or parsed.hostname != "api.github.com"
+        or port not in {None, 443}
         or parsed.username is not None
         or parsed.password is not None
         or parsed.fragment
@@ -319,6 +324,7 @@ def _collect_review_threads(
     repository: str,
     pull_number: int,
     review_comments: list[dict[str, Any]],
+    review_observation_ids: set[str],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     owner, name = repository.split("/", 1)
     comments_by_id = {
@@ -327,7 +333,8 @@ def _collect_review_threads(
     cursor: str | None = None
     items: list[dict[str, Any]] = []
     pages = 0
-    omitted = 0
+    omitted_roots = 0
+    omitted_reviews = 0
 
     while True:
         if pages >= _MAX_PAGES:
@@ -391,7 +398,7 @@ def _collect_review_threads(
                     "graphql.reviewThread.comments",
                 ).get("nodes")
                 if not isinstance(comments, list) or not comments:
-                    omitted += 1
+                    omitted_roots += 1
                     continue
                 root_comment = _mapping(
                     comments[0],
@@ -412,7 +419,10 @@ def _collect_review_threads(
                 )
                 retained = comments_by_id.get(f"github-review-comment-{database_id}")
                 if retained is None:
-                    omitted += 1
+                    omitted_roots += 1
+                    continue
+                if retained["review_observation_id"] not in review_observation_ids:
+                    omitted_reviews += 1
                     continue
                 normalized.append(
                     {
@@ -463,12 +473,22 @@ def _collect_review_threads(
             continue
         break
 
-    if omitted:
+    if omitted_reviews:
         return items, {
             "status": "PARTIAL",
             "pages": pages,
             "count": len(items),
-            "omitted": omitted,
+            "omitted": omitted_reviews + omitted_roots,
+            "unmapped_reviews": omitted_reviews,
+            "unmapped_roots": omitted_roots,
+            "reason": "unmapped_thread_review_observation",
+        }
+    if omitted_roots:
+        return items, {
+            "status": "PARTIAL",
+            "pages": pages,
+            "count": len(items),
+            "omitted": omitted_roots,
             "reason": "unmapped_thread_root_comment",
         }
     return items, {"status": "COMPLETE", "pages": pages, "count": len(items)}
@@ -696,6 +716,11 @@ def _collect_snapshot_once(
         repository=repository,
         pull_number=pull_number,
         review_comments=review_comments,
+        review_observation_ids={
+            item["observation_id"]
+            for item in reviews
+            if isinstance(item.get("observation_id"), str)
+        },
     )
     metadata_status = review_comment_coverage.get("status")
     combined_status = _combined_coverage_status(
