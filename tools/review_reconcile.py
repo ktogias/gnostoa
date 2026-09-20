@@ -355,20 +355,22 @@ def _check_summary(snapshot: dict[str, Any], target_head: str) -> dict[str, Any]
     latest: dict[str, dict[str, Any]] = {}
     for raw in raw_checks:
         check = _mapping(raw, "check")
-        if check.get("head_commit") != target_head:
-            continue
-        check_id = check.get("id")
-        name = check.get("name")
-        status = check.get("status")
-        if not isinstance(check_id, str) or not check_id:
-            continue
-        if not isinstance(name, str) or not name:
-            continue
-        if not isinstance(status, str) or not status:
-            continue
+        _string(check.get("id"), "check.id")
+        name = _string(check.get("name"), "check.name")
+        head_commit = _sha(check.get("head_commit"), "check.head_commit")
         observed_at = _timestamp(check.get("observed_at"), "check.observed_at")
+        status = _string(check.get("status"), "check.status")
+        conclusion = check.get("conclusion")
+        if conclusion is not None and (
+            not isinstance(conclusion, str) or not conclusion
+        ):
+            raise ReconciliationInputError(
+                "check.conclusion must be null or a non-empty string"
+            )
+        if head_commit != target_head:
+            continue
         observed_key = parse_rfc3339(observed_at)
-        state = (status, check.get("conclusion"))
+        state = (status, conclusion)
         previous = latest.get(name)
         if previous is None or observed_key > previous["observed_key"]:
             latest[name] = {
