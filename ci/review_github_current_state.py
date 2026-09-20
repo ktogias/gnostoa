@@ -443,6 +443,15 @@ def _collect_snapshot_once(
         f"{root}/pulls/{pull_number}/comments?per_page=100",
         normalize=_normalize_review_comment,
     )
+    review_thread_coverage = dict(review_comment_coverage)
+    if (
+        review_thread_coverage.get("status") == "COMPLETE"
+        and review_comments
+    ):
+        review_thread_coverage["status"] = "PARTIAL"
+        review_thread_coverage["reason"] = (
+            "review_comments_without_resolution_state"
+        )
     check_runs, check_coverage = _collect_pages(
         client,
         f"{root}/commits/{pull['head_sha']}/check-runs?per_page=100",
@@ -503,7 +512,7 @@ def _collect_snapshot_once(
             "subject": {"status": "COMPLETE", "pages": 1, "count": 1},
             "conversation": issue_coverage,
             "reviews": review_coverage,
-            "review_threads": review_comment_coverage,
+            "review_threads": review_thread_coverage,
             "checks": check_coverage,
         },
         "conversation": issue_comments,
@@ -831,18 +840,20 @@ def _now() -> str:
 
 
 def _semantic_result(code: int, raw: bytes) -> dict[str, Any]:
+    from tools import review_outer
+
     try:
-        payload = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return {"reason": f"TOOL_ERROR_EXIT_{code}"}
-    if not isinstance(payload, dict):
-        return {"reason": f"TOOL_ERROR_EXIT_{code}"}
-    if payload.get("outcome") in {"PASS", "BLOCKED", "INCOMPLETE", "CONFLICTING"}:
+        payload = review_outer._decode_outer_result(code, raw)
+    except (RuntimeError, TypeError, ValueError):
+        return {"reason": "INVALID_R2A_RESULT"}
+
+    outcome = payload.get("outcome")
+    if outcome in {"PASS", "BLOCKED", "INCOMPLETE", "CONFLICTING"}:
         return payload
     error = payload.get("error")
     if isinstance(error, dict) and isinstance(error.get("code"), str):
         return {"reason": error["code"]}
-    return {"reason": f"TOOL_ERROR_EXIT_{code}"}
+    return {"reason": "INVALID_R2A_RESULT"}
 
 
 def _protected_state() -> tuple[Any, Any]:
@@ -910,6 +921,7 @@ def _collect_entry(
         acquired = consumer.document.get("acquired_consumer")
         if not isinstance(acquired, dict):
             raise ProviderReadError("protected outer-consumer authority is malformed")
+        review_outer._require_transport_compatible_consumer(acquired)
         outer = acquired
     except (OSError, RuntimeError, ValueError) as exc:
         semantic = {"reason": type(exc).__name__}
