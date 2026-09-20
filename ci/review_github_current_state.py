@@ -1374,10 +1374,8 @@ def main(argv: list[str] | None = None) -> int:
                 f"- Pull Requests attempted: {len(entries)}",
                 *(
                     [
-                        (
-                            "- Pull Requests deferred to later recovery: "
-                            f"{deferred_pulls}"
-                        )
+                        "- Pull Requests deferred to later recovery: "
+                        f"{deferred_pulls}"
                     ]
                     if deferred_pulls
                     else []
