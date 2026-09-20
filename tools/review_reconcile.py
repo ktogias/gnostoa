@@ -212,8 +212,6 @@ def _thread_records_by_review(
     review_observation_ids: set[str] = set()
     for raw_review in reviews:
         review = _mapping(raw_review, "review")
-        if review.get("effective") is False:
-            continue
         observation_id = _string(
             review.get("observation_id"),
             "review.observation_id",
@@ -281,6 +279,8 @@ def _observations(
     observations: list[dict[str, Any]] = []
     for raw_review in reviews:
         review = _mapping(raw_review, "review")
+        if review.get("effective") is False:
+            continue
         observation_id = _string(
             review.get("observation_id"),
             "review.observation_id",
