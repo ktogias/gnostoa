@@ -219,6 +219,7 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
                 "user": {"login": "one"},
                 "state": "CHANGES_REQUESTED",
                 "submitted_at": "2026-09-19T16:40:02Z",
+                "commit_id": "d" * 40,
             }
         )
         replies["https://api.github.com/page2/reviews"][0][0].update(
@@ -226,8 +227,12 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
                 "user": {"login": "one"},
                 "state": "APPROVED",
                 "submitted_at": "2026-09-19T16:40:03Z",
+                "commit_id": "a" * 40,
             }
         )
+        replies[f"{root}/pulls/300/comments?per_page=100"][0][0][
+            "commit_id"
+        ] = "d" * 40
 
         class UnresolvedOlderThreadFake(fixtures._PagedFake):
             def graphql(self, query: str, variables: dict[str, Any]) -> Any:
@@ -277,6 +282,41 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
         self.assertEqual(
             "CHANGES_REQUESTED",
             thread_only["native"]["superseded_recommendation_state"],
+        )
+        self.assertEqual("exact", thread_only["subject_binding"]["status"])
+        self.assertEqual("a" * 40, thread_only["subject_binding"]["head_commit"])
+        self.assertEqual("d" * 40, thread_only["native"]["review_commit_id"])
+
+        from tools.review_evaluate import evaluate
+        from tools.review_model import canonical_digest
+
+        policy = copy.deepcopy(fixtures._bundle()["policy"])
+        policy["blockers"]["unresolved_threads"] = "block"
+        review_input["authority"]["policy_digest"] = canonical_digest(policy)
+        review_input["evaluation_context"] = {
+            "mode": "historical_replay",
+            "as_of": review_input["subject"]["observed_at"],
+            "judge_relation": "prior_integrated",
+            "fixture_only": True,
+        }
+
+        result = evaluate(review_input, policy)
+        self.assertEqual("BLOCKED", result["outcome"])
+        self.assertEqual("BLOCKER_PRESENT", result["reason"])
+        self.assertIn(
+            {
+                "observation_id": thread_only["observation_id"],
+                "kind": "thread",
+                "value": "unresolved",
+            },
+            result["blockers"],
+        )
+        self.assertFalse(
+            any(
+                item.get("kind") == "recommendation"
+                and item.get("value") == "REQUEST_CHANGES"
+                for item in result["blockers"]
+            )
         )
 
     def test_publish_refuses_projection_from_superseded_protected_main(self) -> None:
