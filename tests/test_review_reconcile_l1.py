@@ -718,7 +718,9 @@ class UsefulL1RedContractTests(unittest.TestCase):
         self.assertEqual("COMPLETE", snapshot["coverage"]["conversation"]["status"])
         self.assertEqual("UNAVAILABLE", snapshot["conversation"][0]["author"])
 
-    def test_deleted_review_actor_keeps_review_and_thread_sources_complete(self) -> None:
+    def test_deleted_review_actor_keeps_review_and_thread_sources_complete(
+        self,
+    ) -> None:
         adapter = _adapter()
         root = "https://api.github.com/repos/ktogias/gnostoa"
         replies = _complete_replies(root)
