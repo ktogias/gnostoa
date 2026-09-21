@@ -1130,7 +1130,7 @@ def parse_projection_comment(
     try:
         raw = base64.urlsafe_b64decode((encoded + padding).encode("ascii"))
         document = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
+    except ValueError:
         return None
     if not isinstance(document, dict):
         return None

@@ -1505,7 +1505,6 @@ def _collect_entry(
     from tools.review_reconcile import (
         build_projection,
         build_review_input,
-        render_projection,
     )
 
     try:
