@@ -170,6 +170,77 @@ class UsefulL1RenderCompatibilityTests(unittest.TestCase):
             {"body": candidate_body},
         )
 
+    def test_current_and_legacy_retained_check_bounds_are_explicit(self) -> None:
+        fixtures = _fixtures()
+        reducer = fixtures._reducer()
+        snapshot = fixtures._snapshot()
+        projection = reducer.build_projection(
+            snapshot,
+            protected_main_revision="e" * 40,
+            outer_consumer={
+                "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
+                "runtime_revision": "9" * 40,
+            },
+            r2a_result={
+                "outcome": "INCOMPLETE",
+                "reason": "QUORUM_UNMET",
+                "binding": False,
+            },
+            execution={
+                "execution_id": "github-actions:281:1",
+                "observed_at": "2026-09-19T16:42:10Z",
+            },
+        )
+
+        strict_over_bound = dict(projection)
+        strict_over_bound["checks"] = {
+            "observed_names": 9,
+            "ambiguous": [],
+            "pending": [],
+            "non_success": [f"strict-check-{index}" for index in range(9)],
+            "omitted_ambiguous": 0,
+            "omitted_pending": 0,
+            "omitted_non_success": 0,
+        }
+        strict_over_bound["next_permitted_action"] = "RECONCILE_PROVIDER_CHECKS"
+        strict_body = reducer.render_projection(strict_over_bound)
+        self.assertIsNone(reducer.parse_projection_comment(strict_body))
+
+        legacy_max = dict(projection)
+        legacy_max["checks"] = {
+            "observed_names": 32,
+            "ambiguous": [],
+            "pending": [],
+            "non_success": [f"legacy-check-{index}" for index in range(32)],
+            "omitted_ambiguous": 0,
+            "omitted_pending": 0,
+            "omitted_non_success": 0,
+        }
+        legacy_max["next_permitted_action"] = "RECONCILE_PROVIDER_CHECKS"
+        legacy_body = reducer.render_projection(legacy_max)
+        self.assertIsNone(reducer.parse_projection_comment(legacy_body))
+        self.assertEqual(
+            legacy_max,
+            reducer.parse_projection_comment(
+                legacy_body,
+                allow_legacy_check_bounds=True,
+            ),
+        )
+
+        legacy_over_bound = dict(legacy_max)
+        legacy_over_bound["checks"] = dict(legacy_max["checks"])
+        legacy_over_bound["checks"]["observed_names"] = 33
+        legacy_over_bound["checks"]["non_success"] = [
+            f"legacy-check-{index}" for index in range(33)
+        ]
+        legacy_over_body = reducer.render_projection(legacy_over_bound)
+        self.assertIsNone(
+            reducer.parse_projection_comment(
+                legacy_over_body,
+                allow_legacy_check_bounds=True,
+            )
+        )
+
     def test_publish_updates_pre_bound_long_check_label_in_place(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures._adapter()
