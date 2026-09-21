@@ -725,7 +725,9 @@ class UsefulL1RedContractTests(unittest.TestCase):
         root = "https://api.github.com/repos/ktogias/gnostoa"
         replies = _complete_replies(root)
         replies[f"{root}/pulls/300/reviews?per_page=100"][0][0]["user"] = None
-        replies[f"{root}/pulls/300/reviews?per_page=100"][0][0]["state"] = "CHANGES_REQUESTED"
+        replies[f"{root}/pulls/300/reviews?per_page=100"][0][0]["state"] = (
+            "CHANGES_REQUESTED"
+        )
         replies[f"{root}/pulls/300/comments?per_page=100"][0][0]["user"] = None
 
         snapshot = adapter.collect_snapshot(
