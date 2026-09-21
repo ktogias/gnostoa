@@ -47,7 +47,7 @@ jobs:
       - name: Reconcile current Pull Request state
         id: collect
         env:
-          GNOSTOA_GITHUB_API_BEARER: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
           WORKFLOW_RUN_PULLS_JSON: ${{ toJSON(github.event.workflow_run.pull_requests) }}
           DISPATCH_PULL: ${{ github.event.client_payload.pull_number }}
         run: |
@@ -97,7 +97,7 @@ jobs:
           path: ${{ runner.temp }}/gnostoa-l1-transfer
       - name: Publish stale-safe non-canonical projection
         env:
-          GNOSTOA_GITHUB_API_BEARER: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           PYTHONPATH=. python ci/review_github_current_state.py \
             --mode publish \
