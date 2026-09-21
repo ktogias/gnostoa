@@ -121,7 +121,7 @@ class _GitHubRedirectHandler(urllib.request.HTTPRedirectHandler):
         authorization = req.get_header("Authorization")
         redirected = super().redirect_request(
             req,
-        fp,
+            fp,
             code,
             msg,
             headers,
@@ -146,47 +146,6 @@ class GitHubRestClient:
         self._token = token
         self._opener = urllib.request.build_opener(_GitHubRedirectHandler())
 
-    def _encode_payload(
-        self, payload: dict[str, Any] | None
-    ) -> bytes | None:
-        if payload is None:
-            return None
-        return json.dumps(
-            payload,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=True,
-            allow_nan=False,
-        ).encode("utf-8")
-
-    def _build_request(
-        self, method: str, url: str, encoded: bytes | None
-    ) -> urllib.request.Request:
-        headers: dict[str, str] = {
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": _API_VERSION,
-            "User-Agent": "gnostoa-useful-l1",
-            "Authorization": f"token {self._token}",
-        }
-        if encoded is not None:
-            headers["Content-Type"] = "application/json"
-        return urllib.request.Request(
-            _validate_api_url(url),
-            data=encoded,
-            method=method,
-            headers=headers,
-        )
-
-    def _parse_response(
-        self, response: urllib.response.addinfourl, read: bool
-    ) -> tuple[Any, dict[str, str]]:
-        status = response.getcode()
-        response_headers = dict(response.headers.items())
-        if not read or status == 204:
-            return None, response_headers
-        raw = response.read()
-        return _decode_json(raw, f"GitHub API {status} response"), response_headers
-
     def _request(
         self,
         method: str,
@@ -195,10 +154,24 @@ class GitHubRestClient:
         *,
         read: bool = False,
     ) -> tuple[Any, dict[str, str]]:
-        encoded = self._encode_payload(payload)
-        request = self._build_request(method, url, encoded)
-        response = self._opener.open(request)
-        return self._parse_response(response, read)
+        encoded = None
+        if payload is not None:
+            encoded = json.dumps(
+                payload,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            ).encode("utf-8")
+        request = urllib.request.Request(
+            _validate_api_url(url),
+            data=encoded,
+            method=method,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": _API_VERSION,
+                "User-Agent": "gnostoa-useful-l1",
+                **({"Content-Type": "application/json"} if encoded is not None else {}),
             },
         )
         request.add_unredirected_header(
@@ -235,7 +208,7 @@ class GitHubRestClient:
                     status = 429
                 raise ProviderReadError(message, status=status) from exc
             raise ProviderWriteError(message) from exc
-        except OSError as exc:
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
             if method == "GET" or read:
                 raise ProviderReadError("GitHub API transport failed") from exc
             raise ProviderWriteError("GitHub API transport failed") from exc
@@ -826,32 +799,30 @@ def _combined_check_coverage(
     }
     for label, coverage in (
         ("check_runs", check_runs),
-def _validate_repository(repository: str) -> None:
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
-        raise ProviderReadError("repository must be owner/name")
+        ("commit_statuses", commit_statuses),
+    ):
+        if coverage.get("status") != "COMPLETE":
+            result[f"{label}_reason"] = coverage.get(
+                "reason",
+                coverage.get("error", "provider_check_source_incomplete"),
+            )
+    return result
 
-def _validate_collection_cut(observed_at: str | None) -> str:
-    cut = observed_at or _now()
-    try:
-        parse_rfc3339(cut)
-    except ValueError as exc:
-        raise ProviderReadError(
-            "collection observation cut must be a valid RFC3339 timestamp"
-        ) from exc
-    return cut
 
-def _fetch_pull(client: JsonReader, repository: str, pull_number: int) -> dict[str, Any]:
-    root = f"{_API_ROOT}/repos/{repository}"
-    payload, _ = client.get(f"{root}/pulls/{pull_number}")
-    pull = _normalize_pull(payload)
-    if pull["number"] != pull_number:
-        raise ProviderReadError("Pull Request identity changed during collection")
-    return pull
+def _normalize_pull(value: Any) -> dict[str, Any]:
+    item = _mapping(value, "pull request")
+    head = _mapping(item.get("head"), "pull.head")
+    base = _mapping(item.get("base"), "pull.base")
+    return {
+        "number": _integer(item.get("number"), "pull.number"),
+        "state": _text(item.get("state"), "pull.state"),
+        "html_url": _text(item.get("html_url"), "pull.html_url"),
+        "title": _optional_text(item.get("title")),
+        "body": _optional_text(item.get("body")),
+        "head_sha": _sha(head.get("sha"), "pull.head.sha"),
+        "base_sha": _sha(base.get("sha"), "pull.base.sha"),
+    }
 
-def _fetch_compare(client: JsonReader, repository: str, base_sha: str, head_sha: str) -> dict[str, Any]:
-    root = f"{_API_ROOT}/repos/{repository}"
-    payload, _ = client.get(f"{root}/compare/{base_sha}...{head_sha}")
-    return _mapping(payload, "compare")
 
 def _collect_snapshot_once(
     client: JsonReader,
@@ -860,10 +831,25 @@ def _collect_snapshot_once(
     pull_number: int,
     observed_at: str | None,
 ) -> dict[str, Any]:
-    _validate_repository(repository)
-    collection_cut = _validate_collection_cut(observed_at)
-    pull = _fetch_pull(client, repository, pull_number)
-    compare = _fetch_compare(client, repository, pull["base_sha"], pull["head_sha"])
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
+        raise ProviderReadError("repository must be owner/name")
+    collection_cut = observed_at or _now()
+    try:
+        parse_rfc3339(collection_cut)
+    except ValueError as exc:
+        raise ProviderReadError(
+            "collection observation cut must be a valid RFC3339 timestamp"
+        ) from exc
+    root = f"{_API_ROOT}/repos/{repository}"
+    pull_payload, _ = client.get(f"{root}/pulls/{pull_number}")
+    pull = _normalize_pull(pull_payload)
+    if pull["number"] != pull_number:
+        raise ProviderReadError("Pull Request identity changed during collection")
+
+    compare_payload, _ = client.get(
+        f"{root}/compare/{pull['base_sha']}...{pull['head_sha']}"
+    )
+    compare = _mapping(compare_payload, "compare")
     merge_base = _mapping(compare.get("merge_base_commit"), "compare.merge_base")
     merge_base_sha = _sha(merge_base.get("sha"), "compare.merge_base.sha")
 
@@ -1087,29 +1073,6 @@ def _parse_canonical_projection_body(body: object) -> dict[str, Any] | None:
     return projection
 
 
-def _is_pr_open(current_pr: dict[str, Any]) -> bool:
-    return current_pr.get("state") == "open"
-
-def _is_head_fresh(current_pr: dict[str, Any], collected_head: str) -> bool:
-    return current_pr.get("head_sha") == collected_head
-
-def _validate_candidate_subject(
-    subject: object,
-    expected_repository: str,
-    expected_change_request: dict[str, str],
-    collected_head: str,
-) -> bool:
-    if not isinstance(subject, dict):
-        return False
-    expected = {
-        "provider_id": "github",
-        "repository": expected_repository,
-        "change_request": expected_change_request,
-        "head_commit": collected_head,
-    }
-    return subject == expected
-
-
 def publication_decision(
     *,
     repository: str,
@@ -1119,20 +1082,23 @@ def publication_decision(
     existing_projection: dict[str, Any] | None,
     candidate_projection: dict[str, Any],
 ) -> tuple[bool, str]:
-    if not _is_pr_open(current_pr):
+    if current_pr.get("state") != "open":
         return False, "PULL_NOT_OPEN"
-    if not _is_head_fresh(current_pr, collected_head):
+    current_head = current_pr.get("head_sha")
+    if current_head != collected_head:
         return False, "STALE_HEAD"
     candidate_subject = candidate_projection.get("subject")
     expected_repository = f"https://github.com/{repository}"
-    expected_change_request = {"kind": "github-pull-request", "id": str(pull_number)}
-    if not _validate_candidate_subject(
-        candidate_subject,
-        expected_repository,
-        expected_change_request,
-        collected_head,
-    ):
-        return False, "SUBJECT_MISMATCH"
+    expected_change_request = {
+        "kind": "github-pull-request",
+        "id": str(pull_number),
+    }
+    if (
+        not isinstance(candidate_subject, dict)
+        or candidate_subject.get("provider_id") != "github"
+        or candidate_subject.get("repository") != expected_repository
+        or candidate_subject.get("change_request") != expected_change_request
+        or candidate_subject.get("head_commit") != collected_head
         or not isinstance(candidate_subject.get("base_commit"), str)
         or not isinstance(candidate_subject.get("merge_base_commit"), str)
     ):
@@ -1474,7 +1440,7 @@ def _semantic_result(code: int, raw: bytes) -> dict[str, Any]:
     from tools import review_outer
 
     try:
-        payload = review_outer.decode_outer_result(code, raw)
+        payload = review_outer._decode_outer_result(code, raw)
     except (RuntimeError, TypeError, ValueError):
         return {"reason": "INVALID_R2A_RESULT"}
 
@@ -1515,6 +1481,7 @@ def _collect_entry(
     from tools.review_reconcile import (
         build_projection,
         build_review_input,
+        render_projection,
     )
 
     try:
@@ -1543,7 +1510,7 @@ def _collect_entry(
         bundle, consumer = _protected_state()
         protected_revision = bundle.protected_main_revision
         review_input = build_review_input(snapshot, bundle.document)
-        code, raw = review_outer.run_prior_effective_current_advisory_with_acquisition(
+        code, raw = review_outer._run_prior_effective_current_advisory_with_acquisition(
             review_input,
             acquire_consumer=lambda: consumer,
         )
@@ -1551,7 +1518,7 @@ def _collect_entry(
         acquired = consumer.document.get("acquired_consumer")
         if not isinstance(acquired, dict):
             raise ProviderReadError("protected outer-consumer authority is malformed")
-        review_outer.require_transport_compatible_consumer(acquired)
+        review_outer._require_transport_compatible_consumer(acquired)
         outer = acquired
     except (OSError, RuntimeError, ValueError) as exc:
         semantic = {"reason": type(exc).__name__}
@@ -1622,46 +1589,32 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _validate_collect_args(args: argparse.Namespace) -> None:
-    if args.output is None:
-        raise SystemExit("--output is required for collect")
-    if args.run_id <= 0 or args.run_attempt <= 0:
-        raise SystemExit("--run-id and --run-attempt must be positive for collect")
-
-
-def _get_collect_pulls(args: argparse.Namespace, client: GitHubRestClient) -> list[int]:
-    pulls = list(
-        dict.fromkeys(
-            [
-                *args.pull_number,
-                *_workflow_run_pull_numbers(args.workflow_run_pulls_json),
-            ]
-        )
-    )
-    if not pulls:
-        pulls = _select_scheduled_pull_batch(
-            _open_pull_numbers(client, args.repository),
-            _now(),
-        )
-    return pulls
-
-
-def _check_collect_pulls_limit(pulls: list[int]) -> None:
-    if len(pulls) > _MAX_OPEN_PULLS:
-        raise SystemExit(
-            "selected Pull Request population exceeds bounded reconciliation capacity"
-        )
-
-
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
     client = GitHubRestClient(token)
 
     if args.mode == "collect":
-        _validate_collect_args(args)
-        pulls = _get_collect_pulls(args, client)
-        _check_collect_pulls_limit(pulls)
+        if args.output is None:
+            raise SystemExit("--output is required for collect")
+        if args.run_id <= 0 or args.run_attempt <= 0:
+            raise SystemExit("--run-id and --run-attempt must be positive for collect")
+        pulls = list(
+            dict.fromkeys(
+                [
+                    *args.pull_number,
+                    *_workflow_run_pull_numbers(args.workflow_run_pulls_json),
+                ]
+            )
+        )
+        if not pulls:
+            pulls = _select_scheduled_pull_batch(
+                _open_pull_numbers(client, args.repository),
+                _now(),
+            )
+        if len(pulls) > _MAX_OPEN_PULLS:
+            raise SystemExit(
+                "selected Pull Request population exceeds bounded reconciliation capacity"
             )
         entries = []
         for number in pulls:

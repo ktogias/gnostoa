@@ -61,7 +61,7 @@ def _valid_incomplete_result(input_document: dict[str, Any]) -> tuple[int, bytes
     trusted_cut = input_document["evaluation_context"]["as_of"]
     if not isinstance(trusted_cut, str):
         raise AssertionError("evaluation cut must be a string")
-    code, payload = review_live.semantic_incomplete(
+    code, payload = review_live._semantic_incomplete(
         input_document,
         _bundle(),
         trusted_cut,
@@ -173,6 +173,7 @@ class _PagedFake:
         return self.replies[url]
 
     def graphql(self, query: str, variables: dict[str, Any]) -> Any:
+        del query
         cursor = variables.get("cursor")
         first_url = next(
             (
@@ -970,8 +971,8 @@ class UsefulL1RedContractTests(unittest.TestCase):
             "state": "open",
         }
         for mutation in ("provider", "repository", "pull"):
-            subject = base_subject.copy()
-            subject["change_request"] = base_subject["change_request"].copy()
+            subject = dict(base_subject)
+            subject["change_request"] = dict(base_subject["change_request"])
             if mutation == "provider":
                 subject["provider_id"] = "gitlab"
             elif mutation == "repository":
@@ -1046,7 +1047,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
         root = "https://api.github.com/repos/ktogias/gnostoa"
         fake = _PagedFake(_complete_replies(root))
 
-        current = adapter.current_pr(fake, "ktogias/gnostoa", 300)
+        current = adapter._current_pr(fake, "ktogias/gnostoa", 300)
 
         self.assertEqual(
             {
@@ -1085,7 +1086,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
 
         self.assertEqual(
             list(range(1, 12)),
-            adapter.open_pull_numbers(fake, "ktogias/gnostoa"),
+            adapter._open_pull_numbers(fake, "ktogias/gnostoa"),
         )
 
     def test_duplicate_projection_comments_fail_closed(self) -> None:
@@ -1144,7 +1145,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
             adapter.ProviderWriteError,
             "multiple valid owned L1 projection comments",
         ):
-            adapter.existing_projection(
+            adapter._existing_projection(
                 comments,
                 repository="ktogias/gnostoa",
                 pull_number=300,
@@ -1208,7 +1209,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
             },
         )
 
-        existing = adapter.existing_projection(
+        existing = adapter._existing_projection(
             [
                 {
                     "id": 1,
@@ -1247,7 +1248,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
         )
 
         def run_bound(
-            input_document: dict[str, Any],
+            input_document: object,
             *,
             acquire_consumer: Any,
         ) -> tuple[int, bytes]:
@@ -1266,7 +1267,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
                 side_effect=run_bound,
             ) as runner,
         ):
-            entry = adapter.collect_entry(
+            entry = adapter._collect_entry(
                 _PagedFake(_complete_replies_without_review_comments(root)),
                 "ktogias/gnostoa",
                 300,
@@ -1293,7 +1294,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
             "_protected_state",
             side_effect=adapter.ProviderReadError("protected state unavailable"),
         ):
-            entry = adapter.collect_entry(
+            entry = adapter._collect_entry(
                 fake,
                 "ktogias/gnostoa",
                 300,
@@ -1317,12 +1318,12 @@ class UsefulL1RedContractTests(unittest.TestCase):
         adapter = _adapter()
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "payload.json"
-            path.write_bytes(b"x" * (adapter.MAX_PUBLICATION_PAYLOAD_BYTES + 1))
+            path.write_bytes(b"x" * (adapter._MAX_PUBLICATION_PAYLOAD_BYTES + 1))
             with self.assertRaisesRegex(
                 ValueError,
                 "publication payload exceeds bounded size",
             ):
-                adapter.load_payload(path)
+                adapter._load_payload(path)
 
     def test_workflow_run_preserves_all_associated_pull_requests(self) -> None:
         adapter = _adapter()
@@ -1335,30 +1336,27 @@ class UsefulL1RedContractTests(unittest.TestCase):
         )
         self.assertEqual(
             [301, 302],
-            adapter.workflow_run_pull_numbers(payload),
+            adapter._workflow_run_pull_numbers(payload),
         )
-        self.assertEqual([], adapter.workflow_run_pull_numbers(""))
-        self.assertEqual([], adapter.workflow_run_pull_numbers("null"))
+        self.assertEqual([], adapter._workflow_run_pull_numbers(""))
+        self.assertEqual([], adapter._workflow_run_pull_numbers("null"))
         with self.assertRaisesRegex(
             adapter.ProviderReadError,
             "workflow_run.pull_requests",
         ):
-            adapter.workflow_run_pull_numbers(json.dumps([{"number": 0}]))
+            adapter._workflow_run_pull_numbers(json.dumps([{"number": 0}]))
 
     def test_l1_has_separate_guardrail_from_historical_r2a_promotion(self) -> None:
         loaded = yaml.safe_load(GUARDRAILS_PATH.read_text(encoding="utf-8"))
         self.assertIsInstance(loaded, dict)
         entries = loaded.get("guardrails")
         self.assertIsInstance(entries, list)
-        try:
-            l1 = next(
-                item
-                for item in entries
-                if isinstance(item, dict)
-                and item.get("id") == "useful-l1-current-state-reconciliation"
-            )
-        except StopIteration:
-            return
+        l1 = next(
+            item
+            for item in entries
+            if isinstance(item, dict)
+            and item.get("id") == "useful-l1-current-state-reconciliation"
+        )
         self.assertIn("tools/review_reconcile.py", l1.get("implementation", []))
         self.assertIn(
             "ci/review_github_current_state.py",
@@ -1370,14 +1368,11 @@ class UsefulL1RedContractTests(unittest.TestCase):
         )
         self.assertIn("tests/test_review_reconcile_l1.py", l1.get("tests", []))
 
-        try:
-            semantic = next(
-                item
-                for item in entries
-                if isinstance(item, dict) and item.get("id") == "semantic-review-assurance"
-            )
-        except StopIteration:
-            return
+        semantic = next(
+            item
+            for item in entries
+            if isinstance(item, dict) and item.get("id") == "semantic-review-assurance"
+        )
         self.assertNotIn(
             "ci/review_github_current_state.py",
             semantic.get("implementation", []),
@@ -1438,24 +1433,18 @@ class UsefulL1RedContractTests(unittest.TestCase):
         publish_steps = publish.get("steps")
         self.assertIsInstance(collect_steps, list)
         self.assertIsInstance(publish_steps, list)
-        try:
-            upload = next(
-                item
-                for item in collect_steps
-                if isinstance(item, dict)
-                and str(item.get("uses", "")).startswith("actions/upload-artifact@")
-            )
-        except StopIteration:
-            return
-        try:
-            download = next(
-                item
-                for item in publish_steps
-                if isinstance(item, dict)
-                and str(item.get("uses", "")).startswith("actions/download-artifact@")
-            )
-        except StopIteration:
-            return
+        upload = next(
+            item
+            for item in collect_steps
+            if isinstance(item, dict)
+            and str(item.get("uses", "")).startswith("actions/upload-artifact@")
+        )
+        download = next(
+            item
+            for item in publish_steps
+            if isinstance(item, dict)
+            and str(item.get("uses", "")).startswith("actions/download-artifact@")
+        )
         self.assertEqual(1, upload.get("with", {}).get("retention-days"))
         self.assertEqual(
             "gnostoa-l1-publication",
@@ -1490,15 +1479,12 @@ class UsefulL1RedContractTests(unittest.TestCase):
             self.assertIn("github.ref == 'refs/heads/main'", condition)
             steps = job.get("steps")
             self.assertIsInstance(steps, list)
-            try:
-                checkout = next(
-                    item
-                    for item in steps
-                    if isinstance(item, dict)
-                    and str(item.get("uses", "")).startswith("actions/checkout@")
-                )
-            except StopIteration:
-                continue
+            checkout = next(
+                item
+                for item in steps
+                if isinstance(item, dict)
+                and str(item.get("uses", "")).startswith("actions/checkout@")
+            )
             checkout_with = checkout.get("with")
             self.assertIsInstance(checkout_with, dict)
             self.assertEqual("main", checkout_with.get("ref"))

@@ -7,7 +7,6 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
-from http.client import HTTPMessage
 from unittest import mock
 
 _NONEMPTY_TEST_VALUE = "fixture-value"
@@ -41,6 +40,7 @@ class _GraphQLPagedFake:
         return self.replies[url]
 
     def graphql(self, query: str, variables: dict[str, Any]) -> Any:
+        del query
         self.graphql_calls.append(dict(variables))
         cursor = variables.get("cursor")
         response = self.graphql_pages.get(cursor)
@@ -97,11 +97,11 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         self,
     ) -> None:
         fixtures = _fixtures()
-        adapter = fixtures.adapter()
-        reducer = fixtures.reducer()
+        adapter = fixtures._adapter()
+        reducer = fixtures._reducer()
         root = "https://api.github.com/repos/ktogias/gnostoa"
         client = _GraphQLPagedFake(
-            fixtures.complete_replies(root),
+            fixtures._complete_replies(root),
             {
                 None: _thread_page(
                     thread_id="PRRT_thread_one",
@@ -118,7 +118,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             },
         )
 
-        snapshot = adapter.collect_snapshot_once(
+        snapshot = adapter._collect_snapshot_once(
             client,
             repository="ktogias/gnostoa",
             pull_number=300,
@@ -133,7 +133,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             ["unresolved", "resolved"],
             [thread["state"] for thread in snapshot["review_threads"]],
         )
-        review_input = reducer.build_review_input(snapshot, fixtures.bundle())
+        review_input = reducer.build_review_input(snapshot, fixtures._bundle())
         observations = {
             item["observation_id"]: item
             for item in review_input["evidence_set"]["observations"]
@@ -160,9 +160,9 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
 
     def test_graphql_reply_uses_explicit_root_comment_identity(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures.adapter()
+        adapter = fixtures._adapter()
         root = "https://api.github.com/repos/ktogias/gnostoa"
-        self.assertIn("replyTo", adapter.review_threads_query)
+        self.assertIn("replyTo", adapter._REVIEW_THREADS_QUERY)
         page = _thread_page(
             thread_id="PRRT_reply_first",
             comment_id=21,
@@ -177,11 +177,11 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             "url": "https://example.invalid/comment/20",
         }
         client = _GraphQLPagedFake(
-            fixtures.complete_replies(root),
+            fixtures._complete_replies(root),
             {None: page},
         )
 
-        snapshot = adapter.collect_snapshot_once(
+        snapshot = adapter._collect_snapshot_once(
             client,
             repository="ktogias/gnostoa",
             pull_number=300,
@@ -197,10 +197,10 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
 
     def test_graphql_second_page_failure_is_partial_not_complete(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures.adapter()
+        adapter = fixtures._adapter()
         root = "https://api.github.com/repos/ktogias/gnostoa"
         client = _GraphQLPagedFake(
-            fixtures.complete_replies(root),
+            fixtures._complete_replies(root),
             {
                 None: _thread_page(
                     thread_id="PRRT_thread_one",
@@ -215,7 +215,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             },
         )
 
-        snapshot = adapter.collect_snapshot_once(
+        snapshot = adapter._collect_snapshot_once(
             client,
             repository="ktogias/gnostoa",
             pull_number=300,
@@ -230,7 +230,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
 
     def test_malformed_graphql_page_info_is_explicit_thread_error(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures.adapter()
+        adapter = fixtures._adapter()
         root = "https://api.github.com/repos/ktogias/gnostoa"
         malformed = _thread_page(
             thread_id="PRRT_bad_page_info",
@@ -242,11 +242,11 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             "hasNextPage"
         ] = "yes"
         client = _GraphQLPagedFake(
-            fixtures.complete_replies(root),
+            fixtures._complete_replies(root),
             {None: malformed},
         )
 
-        snapshot = adapter.collect_snapshot_once(
+        snapshot = adapter._collect_snapshot_once(
             client,
             repository="ktogias/gnostoa",
             pull_number=300,
@@ -261,10 +261,10 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
 
     def test_unmapped_graphql_thread_root_fails_closed(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures.adapter()
+        adapter = fixtures._adapter()
         root = "https://api.github.com/repos/ktogias/gnostoa"
         client = _GraphQLPagedFake(
-            fixtures.complete_replies(root),
+            fixtures._complete_replies(root),
             {
                 None: _thread_page(
                     thread_id="PRRT_unmapped",
@@ -275,7 +275,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             },
         )
 
-        snapshot = adapter.collect_snapshot_once(
+        snapshot = adapter._collect_snapshot_once(
             client,
             repository="ktogias/gnostoa",
             pull_number=300,
@@ -289,13 +289,13 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
 
     def test_graphql_thread_with_unknown_review_is_partial(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures.adapter()
+        adapter = fixtures._adapter()
         root = "https://api.github.com/repos/ktogias/gnostoa"
-        replies = fixtures.complete_replies(root)
+        replies = fixtures._complete_replies(root)
         review_url = f"{root}/pulls/300/comments?per_page=100"
         replies[review_url][0][0]["pull_request_review_id"] = 999
-        snapshot = adapter.collect_snapshot_once(
-            fixtures.PagedFake(replies),
+        snapshot = adapter._collect_snapshot_once(
+            fixtures._PagedFake(replies),
             repository="ktogias/gnostoa",
             pull_number=300,
             observed_at="2026-09-19T16:41:00Z",
@@ -314,8 +314,8 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
 
     def test_orphan_thread_cannot_build_current_projection(self) -> None:
         fixtures = _fixtures()
-        reducer = fixtures.get_reducer()
-        snapshot = fixtures.get_snapshot()
+        reducer = fixtures._reducer()
+        snapshot = fixtures._snapshot()
         snapshot["review_threads"][0]["review_observation_id"] = "missing-review"
 
         with self.assertRaisesRegex(
@@ -342,19 +342,20 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
 
     def test_github_api_url_rejects_non_default_and_malformed_ports(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures.adapter()
+        adapter = fixtures._adapter()
 
         for url in (
             "https://api.github.com:8443/repos/ktogias/gnostoa",
             "https://api.github.com:not-a-port/repos/ktogias/gnostoa",
         ):
-            with self.subTest(url=url), self.assertRaises(adapter.ProviderReadError):
-                adapter.validate_api_url(url)
+            with self.subTest(url=url):
+                with self.assertRaises(adapter.ProviderReadError):
+                    adapter._validate_api_url(url)
 
     def test_github_redirect_handler_rejects_escape_from_admitted_origin(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures.adapter()
-        handler = adapter.github_redirect_handler()
+        adapter = fixtures._adapter()
+        handler = adapter._GitHubRedirectHandler()
         request = urllib.request.Request(
             "https://api.github.com/repos/ktogias/gnostoa/issues/300/comments"
         )
@@ -368,22 +369,23 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             "http://api.github.com/repos/ktogias/gnostoa",
             "https://api.github.com:8443/repos/ktogias/gnostoa",
         ):
-            with self.subTest(redirected_url=redirected_url), self.assertRaises(adapter.ProviderReadError):
-                handler.redirect_request(
-                    request,
-                    None,
-                    302,
-                    "Found",
-                    {},
-                    redirected_url,
-                )
+            with self.subTest(redirected_url=redirected_url):
+                with self.assertRaises(adapter.ProviderReadError):
+                    handler.redirect_request(
+                        request,
+                        None,
+                        302,
+                        "Found",
+                        {},
+                        redirected_url,
+                    )
 
     def test_github_redirect_handler_reauthenticates_only_same_admitted_origin(
         self,
     ) -> None:
         fixtures = _fixtures()
-        adapter = fixtures.adapter()
-        handler = adapter.github_redirect_handler()
+        adapter = fixtures._adapter()
+        handler = adapter._GitHubRedirectHandler()
         request = urllib.request.Request(
             "https://api.github.com/repos/ktogias/gnostoa/issues/300/comments"
         )
@@ -416,7 +418,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         self,
     ) -> None:
         fixtures = _fixtures()
-        adapter = fixtures.adapter()
+        adapter = fixtures._adapter()
         response = mock.MagicMock()
         response.read.return_value = b"{}"
         response.headers.items.return_value = []
@@ -447,7 +449,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         build_opener.assert_called_once()
         self.assertTrue(
             any(
-                isinstance(item, client.redirect_handler_class)
+                isinstance(item, adapter._GitHubRedirectHandler)
                 for item in build_opener.call_args.args
             )
         )
@@ -455,7 +457,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
 
     def test_empty_graphql_thread_connection_is_complete(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures.adapter()
+        adapter = fixtures._adapter()
         root = "https://api.github.com/repos/ktogias/gnostoa"
         empty_page = {
             "data": {
@@ -473,11 +475,11 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             }
         }
         client = _GraphQLPagedFake(
-            fixtures.complete_replies_without_review_comments(root),
+            fixtures._complete_replies_without_review_comments(root),
             {None: empty_page},
         )
 
-        snapshot = adapter.collect_snapshot_once(
+        snapshot = adapter._collect_snapshot_once(
             client,
             repository="ktogias/gnostoa",
             pull_number=300,
@@ -492,7 +494,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
 
     def test_missing_graphql_cursor_is_partial(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures.adapter()
+        adapter = fixtures._adapter()
         root = "https://api.github.com/repos/ktogias/gnostoa"
         page = _thread_page(
             thread_id="PRRT_missing_cursor",
@@ -504,11 +506,11 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             "endCursor"
         ] = None
         client = _GraphQLPagedFake(
-            fixtures.complete_replies(root),
+            fixtures._complete_replies(root),
             {None: page},
         )
 
-        snapshot = adapter.collect_snapshot_once(
+        snapshot = adapter._collect_snapshot_once(
             client,
             repository="ktogias/gnostoa",
             pull_number=300,
@@ -522,8 +524,8 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
 
     def test_outdated_unresolved_thread_remains_unresolved(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures.adapter()
-        reducer = fixtures.reducer()
+        adapter = fixtures._adapter()
+        reducer = fixtures._reducer()
         root = "https://api.github.com/repos/ktogias/gnostoa"
         page = _thread_page(
             thread_id="PRRT_outdated_open",
@@ -535,11 +537,11 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             "isOutdated"
         ] = True
         client = _GraphQLPagedFake(
-            fixtures.complete_replies(root),
+            fixtures._complete_replies(root),
             {None: page},
         )
 
-        snapshot = adapter.collect_snapshot_once(
+        snapshot = adapter._collect_snapshot_once(
             client,
             repository="ktogias/gnostoa",
             pull_number=300,
@@ -548,22 +550,19 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
 
         self.assertTrue(snapshot["review_threads"][0]["outdated"])
         self.assertEqual("unresolved", snapshot["review_threads"][0]["state"])
-        review_input = reducer.build_review_input(snapshot, fixtures.bundle())
-        try:
-            observation = next(
-                item
-                for item in review_input["evidence_set"]["observations"]
-                if item["observation_id"] == "gnostoa-thread-evidence::github-review-10"
-            )
-        except StopIteration:
-            return
+        review_input = reducer.build_review_input(snapshot, fixtures._bundle())
+        observation = next(
+            item
+            for item in review_input["evidence_set"]["observations"]
+            if item["observation_id"] == "gnostoa-thread-evidence::github-review-10"
+        )
         self.assertEqual("unresolved", observation["threads"]["state"])
 
     def test_reopened_thread_state_is_reacquired_before_stable_readback(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures.adapter()
+        adapter = fixtures._adapter()
         root = "https://api.github.com/repos/ktogias/gnostoa"
-        replies = fixtures.complete_replies(root)
+        replies = fixtures._complete_replies(root)
         review_url = f"{root}/pulls/300/comments?per_page=100"
         first_comment = replies[review_url][0][0]
         replies[review_url] = ([first_comment], {})
@@ -575,6 +574,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
                 self.thread_reads = 0
 
             def graphql(self, query: str, variables: dict[str, Any]) -> Any:
+                del query, variables
                 self.thread_reads += 1
                 return _thread_page(
                     thread_id="PRRT_reopened",
@@ -599,10 +599,10 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         self,
     ) -> None:
         fixtures = _fixtures()
-        adapter = fixtures.adapter()
-        reducer = fixtures.reducer()
+        adapter = fixtures._adapter()
+        reducer = fixtures._reducer()
         root = "https://api.github.com/repos/ktogias/gnostoa"
-        client = fixtures.PagedFake(fixtures.complete_replies(root))
+        client = fixtures._PagedFake(fixtures._complete_replies(root))
         read_times = [
             "2026-09-19T16:41:10Z",
             "2026-09-19T16:41:20Z",
@@ -628,7 +628,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             "2026-09-19T16:41:40Z",
             snapshot["collection"]["confirming_read_completed_at"],
         )
-        review_input = reducer.build_review_input(snapshot, fixtures.bundle())
+        review_input = reducer.build_review_input(snapshot, fixtures._bundle())
         self.assertEqual(
             "2026-09-19T16:41:20Z",
             review_input["evaluation_context"]["as_of"],
@@ -636,7 +636,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
 
     def test_graphql_primary_rate_limit_error_is_classified_rate_limited(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures.adapter
+        adapter = fixtures._adapter()
         client = adapter.GitHubRestClient(_NONEMPTY_TEST_VALUE)
 
         with mock.patch.object(
@@ -652,14 +652,15 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
                     "x-ratelimit-reset": "1789905600",
                 },
             ),
-        ), self.assertRaisesRegex(
-            adapter.ProviderReadError,
-            "GraphQL returned errors",
-        ) as caught:
-            client.graphql(
-                "query($cursor:String){viewer{login}}",
-                {"cursor": None},
-            )
+        ):
+            with self.assertRaisesRegex(
+                adapter.ProviderReadError,
+                "GraphQL returned errors",
+            ) as caught:
+                client.graphql(
+                    "query($cursor:String){viewer{login}}",
+                    {"cursor": None},
+                )
 
         self.assertEqual(429, caught.exception.status)
 
@@ -667,8 +668,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         self,
     ) -> None:
         fixtures = _fixtures()
-        adapter = fixtures.adapter
-
+        adapter = fixtures._adapter()
         client = adapter.GitHubRestClient(_NONEMPTY_TEST_VALUE)
 
         with mock.patch.object(
@@ -681,17 +681,18 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
                 },
                 {"retry-after": "60", "x-ratelimit-remaining": "100"},
             ),
-        ), self.assertRaises(adapter.ProviderReadError) as caught:
-            client.graphql(
-                "query($cursor:String){viewer{login}}",
-                {"cursor": None},
-            )
+        ):
+            with self.assertRaises(adapter.ProviderReadError) as caught:
+                client.graphql(
+                    "query($cursor:String){viewer{login}}",
+                    {"cursor": None},
+                )
 
         self.assertEqual(429, caught.exception.status)
 
     def test_graphql_payload_errors_are_provider_read_failures(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures.get_adapter()
+        adapter = fixtures._adapter()
         client = adapter.GitHubRestClient(_NONEMPTY_TEST_VALUE)
 
         with mock.patch.object(
@@ -704,23 +705,24 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
                 },
                 {},
             ),
-        ), self.assertRaisesRegex(
-            adapter.ProviderReadError,
-            "GraphQL returned errors",
         ):
-            client.graphql(
-                "query($cursor:String){viewer{login}}",
-                {"cursor": None},
-            )
+            with self.assertRaisesRegex(
+                adapter.ProviderReadError,
+                "GraphQL returned errors",
+            ):
+                client.graphql(
+                    "query($cursor:String){viewer{login}}",
+                    {"cursor": None},
+                )
 
     def test_malformed_non_null_review_head_binding_fails_closed(self) -> None:
         fixtures = _fixtures()
-        reducer = fixtures.reducer()
-        snapshot = fixtures.snapshot()
+        reducer = fixtures._reducer()
+        snapshot = fixtures._snapshot()
         snapshot["reviews"][0]["head_commit"] = "not-a-git-commit"
 
         with self.assertRaises(reducer.ReconciliationInputError):
-            reducer.build_review_input(snapshot, fixtures.bundle())
+            reducer.build_review_input(snapshot, fixtures._bundle())
 
         with self.assertRaises(reducer.ReconciliationInputError):
             reducer.build_projection(
@@ -745,7 +747,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         self,
     ) -> None:
         fixtures = _fixtures()
-        reducer = fixtures.reducer()
+        reducer = fixtures._reducer()
         cases = (
             ("reviewer_id", ""),
             ("recommendation_state", None),
@@ -755,11 +757,11 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
 
         for field, value in cases:
             with self.subTest(field=field):
-                snapshot = fixtures.snapshot()
+                snapshot = fixtures._snapshot()
                 snapshot["reviews"][0][field] = value
 
                 with self.assertRaises(reducer.ReconciliationInputError):
-                    reducer.build_review_input(snapshot, fixtures.bundle())
+                    reducer.build_review_input(snapshot, fixtures._bundle())
 
                 with self.assertRaises(reducer.ReconciliationInputError):
                     reducer.build_projection(
@@ -784,23 +786,20 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
 
     def test_optional_normalized_review_bindings_remain_admissible(self) -> None:
         fixtures = _fixtures()
-        reducer = fixtures.reducer()
+        reducer = fixtures._reducer()
 
         for field in ("head_commit", "source_url"):
             with self.subTest(field=field):
-                snapshot = fixtures.snapshot()
+                snapshot = fixtures._snapshot()
                 snapshot["reviews"][0][field] = None
 
-                review_input = reducer.build_review_input(snapshot, fixtures.bundle())
-                try:
-                    observation = next(
-                        item
-                        for item in review_input["evidence_set"]["observations"]
-                        if item["observation_id"]
-                        == "gnostoa-thread-evidence::provider-review-10"
-                    )
-                except StopIteration:
-                    continue
+                review_input = reducer.build_review_input(snapshot, fixtures._bundle())
+                observation = next(
+                    item
+                    for item in review_input["evidence_set"]["observations"]
+                    if item["observation_id"]
+                    == "gnostoa-thread-evidence::provider-review-10"
+                )
                 self.assertEqual("unresolved", observation["threads"]["state"])
 
                 projection = reducer.build_projection(
@@ -826,15 +825,15 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         self,
     ) -> None:
         fixtures = _fixtures()
-        reducer = fixtures.reducer()
+        reducer = fixtures._reducer()
 
         for collection in ("reviews", "review_threads"):
             with self.subTest(collection=collection):
-                snapshot = fixtures.snapshot()
+                snapshot = fixtures._snapshot()
                 snapshot[collection].append(dict(snapshot[collection][0]))
 
                 with self.assertRaises(reducer.ReconciliationInputError):
-                    reducer.build_review_input(snapshot, fixtures.bundle())
+                    reducer.build_review_input(snapshot, fixtures._bundle())
 
                 with self.assertRaises(reducer.ReconciliationInputError):
                     reducer.build_projection(
@@ -861,7 +860,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         self,
     ) -> None:
         fixtures = _fixtures()
-        reducer = fixtures.reducer
+        reducer = fixtures._reducer()
         cases = (
             ("reviewer_id", ""),
             ("observed_at", "not-a-timestamp"),
@@ -872,11 +871,11 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
 
         for field, value in cases:
             with self.subTest(field=field):
-                snapshot = fixtures.snapshot
+                snapshot = fixtures._snapshot()
                 snapshot["review_threads"][0][field] = value
 
                 with self.assertRaises(reducer.ReconciliationInputError):
-                    reducer.build_review_input(snapshot, fixtures.bundle)
+                    reducer.build_review_input(snapshot, fixtures._bundle())
 
                 with self.assertRaises(reducer.ReconciliationInputError):
                     reducer.build_projection(
@@ -903,23 +902,20 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         self,
     ) -> None:
         fixtures = _fixtures()
-        reducer = fixtures.reducer()
+        reducer = fixtures._reducer()
 
         for field in ("head_commit", "source_url"):
             with self.subTest(field=field):
-                snapshot = fixtures.snapshot()
+                snapshot = fixtures._snapshot()
                 snapshot["review_threads"][0][field] = None
 
-                review_input = reducer.build_review_input(snapshot, fixtures.bundle())
-                try:
-                    observation = next(
-                        item
-                        for item in review_input["evidence_set"]["observations"]
-                        if item["observation_id"]
-                        == "gnostoa-thread-evidence::provider-review-10"
-                    )
-                except StopIteration:
-                    continue
+                review_input = reducer.build_review_input(snapshot, fixtures._bundle())
+                observation = next(
+                    item
+                    for item in review_input["evidence_set"]["observations"]
+                    if item["observation_id"]
+                    == "gnostoa-thread-evidence::provider-review-10"
+                )
                 self.assertEqual("unresolved", observation["threads"]["state"])
 
                 projection = reducer.build_projection(
@@ -945,7 +941,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         self,
     ) -> None:
         fixtures = _fixtures()
-        reducer = fixtures.reducer()
+        reducer = fixtures._reducer()
         cases = (
             ("id", ""),
             ("key", ""),
@@ -959,7 +955,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         for field, value in cases:
             for target_bound in (True, False):
                 with self.subTest(field=field, target_bound=target_bound):
-                    snapshot = fixtures.snapshot()
+                    snapshot = fixtures._snapshot()
                     check = snapshot["checks"][0]
                     check["head_commit"] = "a" * 40 if target_bound else "d" * 40
                     check[field] = value
@@ -987,7 +983,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
 
     def test_publish_mode_isolates_one_entry_failure(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures.adapter()
+        adapter = fixtures._adapter()
         entries = [{"pull_number": 1}, {"pull_number": 2}]
         second = {"pull_number": 2, "published": True, "reason": "UPDATED"}
 
@@ -1020,7 +1016,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
 
     def test_collect_mode_preserves_per_entry_failure_reason(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures.adapter()
+        adapter = fixtures._adapter()
         good = {
             "pull_number": 301,
             "head_sha": "a" * 40,
@@ -1064,7 +1060,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
 
     def test_unavailable_entry_reason_survives_publish_skip(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures.adapter()
+        adapter = fixtures._adapter()
         client = mock.Mock()
 
         result = adapter.publish_entry(
@@ -1084,33 +1080,31 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
 
     def test_orphan_normalized_thread_fails_closed_in_common_reducer(self) -> None:
         fixtures = _fixtures()
-        reducer = fixtures.reducer()
-        snapshot = fixtures.snapshot()
+        reducer = fixtures._reducer()
+        snapshot = fixtures._snapshot()
         snapshot["review_threads"][0]["review_observation_id"] = "missing-review"
 
         with self.assertRaisesRegex(
             reducer.ReconciliationInputError,
             "unknown review observation",
         ):
-            reducer.build_review_input(snapshot, fixtures.bundle())
+            reducer.build_review_input(snapshot, fixtures._bundle())
 
     def test_rest_forbidden_is_not_misclassified_as_rate_limited(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures.adapter()
+        adapter = fixtures._adapter()
         client = adapter.GitHubRestClient(_NONEMPTY_TEST_VALUE)
         response = io.BytesIO(b'{"message":"Resource not accessible by integration"}')
-        headers = HTTPMessage()
-        headers.add_header("x-ratelimit-remaining", "42")
         error = urllib.error.HTTPError(
             "https://api.github.com/repos/ktogias/gnostoa/issues/300/comments",
             403,
             "Forbidden",
-            headers,
+            {"x-ratelimit-remaining": "42"},
             response,
         )
 
         with (
-            mock.patch.object(client.opener, "open", side_effect=error),
+            mock.patch.object(client._opener, "open", side_effect=error),
             self.assertRaises(adapter.ProviderReadError) as caught,
         ):
             client.get(
@@ -1118,25 +1112,23 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             )
 
         self.assertEqual(403, caught.exception.status)
-        self.assertEqual("ERROR", adapter.error_status(caught.exception, 0))
+        self.assertEqual("ERROR", adapter._error_status(caught.exception, 0))
 
     def test_rest_403_with_rate_limit_evidence_is_rate_limited(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures.adapter()
+        adapter = fixtures._adapter()
         client = adapter.GitHubRestClient(_NONEMPTY_TEST_VALUE)
         response = io.BytesIO(b'{"message":"API rate limit exceeded"}')
-        headers = HTTPMessage()
-        headers["x-ratelimit-remaining"] = "0"
         error = urllib.error.HTTPError(
             "https://api.github.com/repos/ktogias/gnostoa/issues/300/comments",
             403,
             "Forbidden",
-            headers,
+            {"x-ratelimit-remaining": "0"},
             response,
         )
 
         with (
-            mock.patch.object(client.opener, "open", side_effect=error),
+            mock.patch.object(client._opener, "open", side_effect=error),
             self.assertRaises(adapter.ProviderReadError) as caught,
         ):
             client.get(
@@ -1144,23 +1136,23 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             )
 
         self.assertEqual(429, caught.exception.status)
-        self.assertEqual("RATE_LIMITED", adapter.error_status(caught.exception, 0))
+        self.assertEqual("RATE_LIMITED", adapter._error_status(caught.exception, 0))
 
     def test_graphql_http_failure_is_a_provider_read_failure(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures.adapter()
+        adapter = fixtures._adapter()
         client = adapter.GitHubRestClient(_NONEMPTY_TEST_VALUE)
         response = io.BytesIO(b'{"message":"temporarily unavailable"}')
         error = urllib.error.HTTPError(
             "https://api.github.com/graphql",
             503,
             "Service Unavailable",
-            HTTPMessage(),
+            {},
             response,
         )
 
         with (
-            mock.patch.object(client.opener, "open", side_effect=error),
+            mock.patch.object(client._opener, "open", side_effect=error),
             self.assertRaises(adapter.ProviderReadError) as caught,
         ):
             client.graphql(

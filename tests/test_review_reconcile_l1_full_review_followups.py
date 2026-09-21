@@ -24,10 +24,10 @@ def _fixtures() -> Any:
 class UsefulL1IndependentReviewRegressions(unittest.TestCase):
     def test_confirming_pass_never_claims_cut_after_unseen_late_review(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures.adapter()
+        adapter = fixtures._adapter()
         root = "https://api.github.com/repos/ktogias/gnostoa"
-        replies = copy.deepcopy(fixtures.complete_replies(root))
-        reader = fixtures.PagedFake(replies)
+        replies = copy.deepcopy(fixtures._complete_replies(root))
+        reader = fixtures._PagedFake(replies)
         original_get = reader.get
         pull_url = f"{root}/pulls/300"
         review_comments_url = f"{root}/pulls/300/comments?per_page=100"
@@ -63,14 +63,9 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
                 "2026-09-19T16:42:00Z",
             )
         )
-        def _next_time():
-            try:
-                return next(times)
-            except StopIteration:
-                return None
         with (
             mock.patch.object(reader, "get", side_effect=read),
-            mock.patch.object(adapter, "_now", side_effect=_next_time),
+            mock.patch.object(adapter, "_now", side_effect=lambda: next(times)),
         ):
             snapshot = adapter.collect_snapshot(
                 reader,
@@ -92,9 +87,9 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
 
     def test_github_adapter_collects_commit_statuses_as_check_signals(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures.adapter()
+        adapter = fixtures._adapter()
         root = "https://api.github.com/repos/ktogias/gnostoa"
-        replies = copy.deepcopy(fixtures.complete_replies(root))
+        replies = copy.deepcopy(fixtures._complete_replies(root))
         replies[f"{root}/commits/{'a' * 40}/statuses?per_page=100"] = (
             [
                 {
@@ -109,8 +104,8 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
             {},
         )
 
-        snapshot = adapter.collect_snapshot_once(
-            fixtures.PagedFake(replies),
+        snapshot = adapter._collect_snapshot_once(
+            fixtures._PagedFake(replies),
             repository="ktogias/gnostoa",
             pull_number=300,
             observed_at="2026-09-19T16:41:00Z",
@@ -125,8 +120,8 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
         self,
     ) -> None:
         fixtures = _fixtures()
-        reducer = fixtures.reducer()
-        snapshot = fixtures.snapshot()
+        reducer = fixtures._reducer()
+        snapshot = fixtures._snapshot()
         snapshot["checks"] = [
             {
                 "id": "signal-a",
@@ -177,8 +172,8 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
         self,
     ) -> None:
         fixtures = _fixtures()
-        reducer = fixtures.reducer()
-        snapshot = fixtures.snapshot()
+        reducer = fixtures._reducer()
+        snapshot = fixtures._snapshot()
         snapshot["checks"] = [
             {
                 "id": "failed-check",
@@ -232,7 +227,7 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
         self,
     ) -> None:
         fixtures = _fixtures()
-        reducer = fixtures.reducer()
+        reducer = fixtures._reducer()
 
         for source in (
             "subject",
@@ -242,14 +237,14 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
             "checks",
         ):
             with self.subTest(source=source):
-                snapshot = fixtures.snapshot()
+                snapshot = fixtures._snapshot()
                 del snapshot["coverage"][source]["count"]
 
                 with self.assertRaisesRegex(
                     reducer.ReconciliationInputError,
                     "count",
                 ):
-                    reducer.build_review_input(snapshot, fixtures.bundle())
+                    reducer.build_review_input(snapshot, fixtures._bundle())
 
                 with self.assertRaisesRegex(
                     reducer.ReconciliationInputError,
@@ -270,10 +265,10 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
         self,
     ) -> None:
         fixtures = _fixtures()
-        adapter = fixtures.adapter()
-        reducer = fixtures.reducer()
+        adapter = fixtures._adapter()
+        reducer = fixtures._reducer()
         root = "https://api.github.com/repos/ktogias/gnostoa"
-        replies = copy.deepcopy(fixtures.complete_replies(root))
+        replies = copy.deepcopy(fixtures._complete_replies(root))
         replies[f"{root}/pulls/300/reviews?per_page=100"][0][0].update(
             {
                 "user": {"login": "one"},
@@ -292,7 +287,7 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
         )
         replies[f"{root}/pulls/300/comments?per_page=100"][0][0]["commit_id"] = "d" * 40
 
-        class UnresolvedOlderThreadFake(fixtures.PagedFake):
+        class UnresolvedOlderThreadFake(fixtures._PagedFake):
             def graphql(self, query: str, variables: dict[str, Any]) -> Any:
                 document = super().graphql(query, variables)
                 nodes = document["data"]["repository"]["pullRequest"]["reviewThreads"][
@@ -304,13 +299,13 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
                         node["isResolved"] = False
                 return document
 
-        snapshot = adapter.collect_snapshot_once(
+        snapshot = adapter._collect_snapshot_once(
             UnresolvedOlderThreadFake(replies),
             repository="ktogias/gnostoa",
             pull_number=300,
             observed_at="2026-09-19T16:41:00Z",
         )
-        review_input = reducer.build_review_input(snapshot, fixtures.bundle())
+        review_input = reducer.build_review_input(snapshot, fixtures._bundle())
         observations = [
             item
             for item in review_input["evidence_set"]["observations"]
@@ -321,22 +316,16 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
         )
 
         self.assertEqual(["APPROVED", "COMMENT_ONLY"], opinions)
-        try:
-            effective = next(
-                item
-                for item in observations
-                if item["native"]["recommendation_state"] == "APPROVED"
-            )
-        except StopIteration:
-            return
-        try:
-            thread_only = next(
-                item
-                for item in observations
-                if item["native"]["recommendation_state"] == "COMMENT_ONLY"
-            )
-        except StopIteration:
-            return
+        effective = next(
+            item
+            for item in observations
+            if item["native"]["recommendation_state"] == "APPROVED"
+        )
+        thread_only = next(
+            item
+            for item in observations
+            if item["native"]["recommendation_state"] == "COMMENT_ONLY"
+        )
         self.assertEqual("resolved", effective["threads"]["state"])
         self.assertEqual("unresolved", thread_only["threads"]["state"])
         self.assertEqual(
@@ -354,7 +343,7 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
         from tools.review_evaluate import evaluate
         from tools.review_model import canonical_digest
 
-        policy = copy.deepcopy(fixtures.bundle()["policy"])
+        policy = copy.deepcopy(fixtures._bundle()["policy"])
         policy["blockers"]["unresolved_threads"] = "block"
         review_input["authority"]["policy_digest"] = canonical_digest(policy)
         review_input["evaluation_context"] = {
@@ -380,7 +369,6 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
                 item.get("kind") == "recommendation"
                 and item.get("value") == "REQUEST_CHANGES"
                 for item in result["blockers"]
-        )
             )
         )
 
@@ -388,15 +376,15 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
         self,
     ) -> None:
         fixtures = _fixtures()
-        reducer = fixtures.reducer()
-        snapshot = fixtures.snapshot()
+        reducer = fixtures._reducer()
+        snapshot = fixtures._snapshot()
         review = snapshot["reviews"][0]
         review["recommendation_state"] = "COMMENTED"
         review["head_commit"] = "d" * 40
         review["effective"] = True
         snapshot["review_threads"][0]["head_commit"] = "d" * 40
 
-        review_input = reducer.build_review_input(snapshot, fixtures.bundle())
+        review_input = reducer.build_review_input(snapshot, fixtures._bundle())
         thread_only = [
             item
             for item in review_input["evidence_set"]["observations"]
@@ -410,7 +398,7 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
         from tools.review_evaluate import evaluate
         from tools.review_model import canonical_digest
 
-        policy = copy.deepcopy(fixtures.bundle()["policy"])
+        policy = copy.deepcopy(fixtures._bundle()["policy"])
         policy["blockers"]["unresolved_threads"] = "block"
         review_input["authority"]["policy_digest"] = canonical_digest(policy)
         review_input["evaluation_context"] = {
@@ -433,8 +421,8 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
 
     def test_reacquired_thread_state_uses_certified_cut_for_freshness(self) -> None:
         fixtures = _fixtures()
-        reducer = fixtures.reducer()
-        snapshot = fixtures.snapshot()
+        reducer = fixtures._reducer()
+        snapshot = fixtures._snapshot()
         review = snapshot["reviews"][0]
         review["effective"] = False
         review["head_commit"] = "d" * 40
@@ -443,15 +431,12 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
         thread["head_commit"] = "d" * 40
         thread["observed_at"] = "2026-09-19T15:00:01Z"
 
-        review_input = reducer.build_review_input(snapshot, fixtures.bundle())
-        try:
-            thread_only = next(
-                item
-                for item in review_input["evidence_set"]["observations"]
-                if item["native"].get("thread_evidence_only") is True
-            )
-        except StopIteration:
-            return
+        review_input = reducer.build_review_input(snapshot, fixtures._bundle())
+        thread_only = next(
+            item
+            for item in review_input["evidence_set"]["observations"]
+            if item["native"].get("thread_evidence_only") is True
+        )
         self.assertEqual(snapshot["observed_at"], thread_only["observed_at"])
         self.assertEqual(
             ["2026-09-19T15:00:01Z"],
@@ -465,7 +450,7 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
         from tools.review_evaluate import evaluate
         from tools.review_model import canonical_digest
 
-        policy = copy.deepcopy(fixtures.bundle()["policy"])
+        policy = copy.deepcopy(fixtures._bundle()["policy"])
         policy["subject"]["observation_freshness"] = {
             "mode": "max_age",
             "seconds": 60,
@@ -494,8 +479,8 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
         self,
     ) -> None:
         fixtures = _fixtures()
-        reducer = fixtures.reducer()
-        snapshot = fixtures.snapshot()
+        reducer = fixtures._reducer()
+        snapshot = fixtures._snapshot()
         snapshot["checks"] = [
             {
                 "id": "signal-failure",
@@ -522,7 +507,7 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
             reducer.ReconciliationInputError,
             "snapshot observation cut",
         ):
-            reducer.build_review_input(snapshot, fixtures.bundle())
+            reducer.build_review_input(snapshot, fixtures._bundle())
 
         with self.assertRaisesRegex(
             reducer.ReconciliationInputError,
@@ -548,10 +533,10 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
 
     def test_publish_refuses_projection_from_superseded_protected_main(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures.adapter()
-        reducer = fixtures.reducer()
+        adapter = fixtures._adapter()
+        reducer = fixtures._reducer()
         projection = reducer.build_projection(
-            fixtures.snapshot(),
+            fixtures._snapshot(),
             protected_main_revision="e" * 40,
             outer_consumer={
                 "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
@@ -615,10 +600,10 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
         self,
     ) -> None:
         fixtures = _fixtures()
-        adapter = fixtures.adapter()
-        reducer = fixtures.reducer()
+        adapter = fixtures._adapter()
+        reducer = fixtures._reducer()
         projection = reducer.build_projection(
-            fixtures.snapshot(),
+            fixtures._snapshot(),
             protected_main_revision="e" * 40,
             outer_consumer={
                 "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
@@ -699,10 +684,10 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
         self,
     ) -> None:
         fixtures = _fixtures()
-        adapter = fixtures.adapter()
-        reducer = fixtures.reducer()
+        adapter = fixtures._adapter()
+        reducer = fixtures._reducer()
         projection = reducer.build_projection(
-            fixtures.snapshot(),
+            fixtures._snapshot(),
             protected_main_revision=None,
             outer_consumer=None,
             r2a_result={"reason": "TEST_UNAVAILABLE"},
@@ -733,14 +718,11 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
         guardrails = yaml.safe_load(
             fixtures.GUARDRAILS_PATH.read_text(encoding="utf-8")
         )
-        try:
-            entry = next(
-                item
-                for item in guardrails["guardrails"]
-                if item["id"] == "useful-l1-current-state-reconciliation"
-            )
-        except StopIteration:
-            return
+        entry = next(
+            item
+            for item in guardrails["guardrails"]
+            if item["id"] == "useful-l1-current-state-reconciliation"
+        )
 
         self.assertIn(
             "tests/test_review_reconcile_l1_thread_state.py",

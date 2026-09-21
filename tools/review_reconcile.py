@@ -480,17 +480,40 @@ def build_review_input(
         "acquired_judge": copy.deepcopy(judge),
         "evidence_set": {
             "observed_at": observed_at,
+            "sources": [
+                {
+                    "source_id": "retained-review-evidence",
+                    "status": source_status,
+                    "observed_at": observed_at,
+                    "snapshot": {
+                        "review_pages": coverage["reviews"]["pages"],
+                        "review_thread_pages": coverage["review_threads"]["pages"],
+                    },
+                }
+            ],
+            "observations": _observations(
+                snapshot,
+                subject,
+                provider_subject["provider_id"],
+            ),
+        },
+        "qualification_snapshot": copy.deepcopy(qualification),
+    }
+
+
 def _projection_coverage(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return _coverage(snapshot)
 
 
-def _get_latest_checks(raw_checks: Any, target_head: str) -> dict[str, dict[str, Any]]:
+def _check_summary(snapshot: dict[str, Any], target_head: str) -> dict[str, Any]:
+    raw_checks = snapshot.get("checks")
     if not isinstance(raw_checks, list):
         raise ReconciliationInputError("checks must be an array")
+
     latest: dict[str, dict[str, Any]] = {}
     for raw in raw_checks:
         check = _mapping(raw, "check")
-        id_str = _string(check.get("id"), "check.id")
+        _string(check.get("id"), "check.id")
         key = _string(check.get("key"), "check.key")
         name = _string(check.get("name"), "check.name")
         head_commit = _sha(check.get("head_commit"), "check.head_commit")
@@ -508,42 +531,6 @@ def _get_latest_checks(raw_checks: Any, target_head: str) -> dict[str, dict[str,
         observed_key = parse_rfc3339(observed_at)
         state = (name, status, conclusion)
         previous = latest.get(key)
-        if previous and previous["state"] == state and previous["observed_at"] == observed_at:
-            continue
-        latest[key] = {
-            "state": state,
-            "observed_at": observed_at,
-            "observed_key": observed_key,
-            "id": id_str,
-        }
-    return latest
-
-
-def _compute_summary_from_latest(latest: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    if not latest:
-        raise ReconciliationInputError("no checks for target head")
-    entries = list(latest.values())
-    priority_order = ["failure", "cancelled", "pending", "success"]
-    for pr in priority_order:
-        matching = [e for e in entries if e["state"][1] == pr or e["state"][2] == pr]
-        if matching:
-            selected = matching[-1]
-            _, status, conclusion = selected["state"]
-            return {
-                "state": status,
-                "conclusion": conclusion,
-                "observed_at": selected["observed_at"],
-                "observed_key": selected["observed_key"],
-            }
-    # Should not reach if latest is non-empty
-    raise ReconciliationInputError("no checks for target head")
-
-
-def _check_summary(snapshot: dict[str, Any], target_head: str) -> dict[str, Any]:
-    raw_checks = snapshot.get("checks")
-    latest = _get_latest_checks(raw_checks, target_head)
-    summary = _compute_summary_from_latest(latest)
-    return summary
         if previous is None or observed_key > previous["observed_key"]:
             latest[key] = {
                 "observed_at": observed_at,
@@ -808,7 +795,32 @@ def _validate_projection_protected(value: object) -> str:
     )
     if status != expected_status:
         raise ReconciliationInputError(
-def _validate_projection_document_meta(document: dict[str, Any]) -> None:
+            "projection.protected.status is inconsistent with protected evidence"
+        )
+    return status
+
+
+def _validate_projection_observed_r2a(value: object, label: str) -> str:
+    r2a = _mapping(value, label)
+    status = _string(r2a.get("status"), f"{label}.status")
+    outcome = _string(r2a.get("outcome"), f"{label}.outcome")
+    _string(r2a.get("reason"), f"{label}.reason")
+    if r2a.get("binding") is not False:
+        raise ReconciliationInputError(f"{label}.binding must be false")
+    if status == "SEMANTIC_RESULT":
+        if outcome not in _SEMANTIC_OUTCOMES:
+            raise ReconciliationInputError(f"{label}.outcome is unsupported")
+    elif status == "UNAVAILABLE":
+        if outcome != "UNAVAILABLE":
+            raise ReconciliationInputError(
+                f"{label}.outcome must be UNAVAILABLE when status is UNAVAILABLE"
+            )
+    else:
+        raise ReconciliationInputError(f"{label}.status is unsupported")
+    return outcome
+
+
+def _validate_projection_document(document: dict[str, Any]) -> None:
     if document.get("schema_version") != _INTERNAL_SCHEMA_VERSION:
         raise ReconciliationInputError("projection schema_version is unsupported")
     if document.get("status") != "draft":
@@ -816,29 +828,21 @@ def _validate_projection_document_meta(document: dict[str, Any]) -> None:
     if document.get("non_canonical") is not True:
         raise ReconciliationInputError("projection must remain non-canonical")
 
-
-def _validate_projection_document_subject(subject: object) -> dict[str, Any]:
-    subject_map = _mapping(subject, "projection.subject")
-    _string(subject_map.get("provider_id"), "projection.subject.provider_id")
-    _string(subject_map.get("repository"), "projection.subject.repository")
+    subject = _mapping(document.get("subject"), "projection.subject")
+    _string(subject.get("provider_id"), "projection.subject.provider_id")
+    _string(subject.get("repository"), "projection.subject.repository")
     _change_request(
-        subject_map.get("change_request"),
+        subject.get("change_request"),
         "projection.subject.change_request",
     )
-    _string(subject_map.get("state"), "projection.subject.state")
-    _sha(subject_map.get("head_commit"), "projection.subject.head_commit")
-    _sha(subject_map.get("base_commit"), "projection.subject.base_commit")
+    state = _string(subject.get("state"), "projection.subject.state")
+    _sha(subject.get("head_commit"), "projection.subject.head_commit")
+    _sha(subject.get("base_commit"), "projection.subject.base_commit")
     _sha(
-        subject_map.get("merge_base_commit"),
+        subject.get("merge_base_commit"),
         "projection.subject.merge_base_commit",
     )
-    _string(subject_map.get("source_url"), "projection.subject.source_url")
-    return subject_map
-
-
-def _validate_projection_document(document: dict[str, Any]) -> None:
-    _validate_projection_document_meta(document)
-    subject = _validate_projection_document_subject(document.get("subject"))
+    _string(subject.get("source_url"), "projection.subject.source_url")
 
     coverage = _coverage({"coverage": document.get("coverage")})
     complete = all(item["status"] == "COMPLETE" for item in coverage.values())
@@ -1086,7 +1090,7 @@ def parse_projection_comment(body: object) -> dict[str, Any] | None:
     try:
         raw = base64.urlsafe_b64decode((encoded + padding).encode("ascii"))
         document = json.loads(raw.decode("utf-8"))
-    except ValueError:
+    except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
         return None
     if not isinstance(document, dict):
         return None

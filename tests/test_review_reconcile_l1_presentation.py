@@ -142,9 +142,9 @@ class UsefulL1PresentationTests(unittest.TestCase):
 
     def test_rendered_check_summary_exposes_omitted_adverse_counts(self) -> None:
         fixtures = _fixtures()
-        reducer = fixtures.reducer()
+        reducer = fixtures._reducer()
         projection = reducer.build_projection(
-            fixtures.snapshot(),
+            fixtures._snapshot(),
             protected_main_revision="e" * 40,
             outer_consumer={
                 "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
@@ -180,9 +180,9 @@ class UsefulL1PresentationTests(unittest.TestCase):
 
     def test_rendered_check_labels_are_visible_bounded_literals(self) -> None:
         fixtures = _fixtures()
-        reducer = fixtures.reducer()
+        reducer = fixtures._reducer()
         projection = reducer.build_projection(
-            fixtures.snapshot(),
+            fixtures._snapshot(),
             protected_main_revision="e" * 40,
             outer_consumer={
                 "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
@@ -221,8 +221,8 @@ class UsefulL1PresentationTests(unittest.TestCase):
 
     def test_provider_title_is_one_inert_literal_including_mentions(self) -> None:
         fixtures = _fixtures()
-        reducer = fixtures.get_reducer()
-        snapshot = fixtures.get_snapshot()
+        reducer = fixtures._reducer()
+        snapshot = fixtures._snapshot()
         snapshot["subject"]["title"] = (
             "[fake approval](https://example.invalid) **PASS** "
             '<img src="x"> `CONTINUE` &lt;b&gt; @octocat @gnostoa/team'
@@ -259,8 +259,8 @@ class UsefulL1PresentationTests(unittest.TestCase):
 
     def test_provider_title_ending_in_backtick_keeps_markdown_inert(self) -> None:
         fixtures = _fixtures()
-        reducer = fixtures.reducer()
-        snapshot = fixtures.snapshot()
+        reducer = fixtures._reducer()
+        snapshot = fixtures._snapshot()
         snapshot["subject"]["title"] = "**pwn** [click](https://evil.example) @octocat`"
         projection = reducer.build_projection(
             snapshot,
@@ -290,8 +290,8 @@ class UsefulL1PresentationTests(unittest.TestCase):
         self,
     ) -> None:
         fixtures = _fixtures()
-        reducer = fixtures.get_reducer()
-        snapshot = fixtures.get_snapshot(
+        reducer = fixtures._reducer()
+        snapshot = fixtures._snapshot(
             provider_id="provider`\n- **FORGED PROVIDER**",
             repository="https://example.invalid/repo`\n## FORGED REPOSITORY",
             change_kind="merge`\n> FORGED KIND",
