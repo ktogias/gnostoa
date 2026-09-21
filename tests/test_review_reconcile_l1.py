@@ -25,6 +25,16 @@ def _reducer() -> ModuleType:
     return importlib.import_module("tools.review_reconcile")
 
 
+def reducer_fixture() -> ModuleType:
+    """Public test-only access to the shared provider-neutral reducer fixture."""
+    return _reducer()
+
+
+def snapshot_fixture() -> dict[str, Any]:
+    """Public test-only access to the shared normalized provider snapshot."""
+    return _snapshot()
+
+
 def _adapter() -> ModuleType:
     if not ADAPTER_PATH.is_file():
         raise AssertionError("L1_GITHUB_ADAPTER_UNAVAILABLE")
