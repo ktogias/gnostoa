@@ -154,10 +154,10 @@ class UsefulL1PresentationTests(unittest.TestCase):
         fixtures = _fixtures()
         reducer = fixtures._reducer()
         snapshot = fixtures._snapshot(
-            provider_id="provider\`\n- **FORGED PROVIDER**",
-            repository="https://example.invalid/repo\`\n## FORGED REPOSITORY",
-            change_kind="merge\`\n> FORGED KIND",
-            change_id="42\`\n[FORGED](https://example.invalid)",
+            provider_id="provider`\n- **FORGED PROVIDER**",
+            repository="https://example.invalid/repo`\n## FORGED REPOSITORY",
+            change_kind="merge`\n> FORGED KIND",
+            change_id="42`\n[FORGED](https://example.invalid)",
             source_url="https://example.invalid/change/42",
         )
         projection = reducer.build_projection(
@@ -166,7 +166,7 @@ class UsefulL1PresentationTests(unittest.TestCase):
             outer_consumer=None,
             r2a_result={"reason": "TEST_UNAVAILABLE"},
             execution={
-                "execution_id": "provider-run\`\n- [x] FORGED EXECUTION",
+                "execution_id": "provider-run`\n- [x] FORGED EXECUTION",
                 "observed_at": "2026-09-19T16:41:00Z",
             },
         )
