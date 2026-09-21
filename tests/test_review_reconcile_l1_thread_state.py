@@ -1103,11 +1103,13 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             response,
         )
 
-        with mock.patch.object(client._opener, "open", side_effect=error):
-            with self.assertRaises(adapter.ProviderReadError) as caught:
-                client.get(
-                    "https://api.github.com/repos/ktogias/gnostoa/issues/300/comments"
-                )
+        with (
+            mock.patch.object(client._opener, "open", side_effect=error),
+            self.assertRaises(adapter.ProviderReadError) as caught,
+        ):
+            client.get(
+                "https://api.github.com/repos/ktogias/gnostoa/issues/300/comments"
+            )
 
         self.assertEqual(403, caught.exception.status)
         self.assertEqual("ERROR", adapter._error_status(caught.exception, 0))
@@ -1125,11 +1127,13 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             response,
         )
 
-        with mock.patch.object(client._opener, "open", side_effect=error):
-            with self.assertRaises(adapter.ProviderReadError) as caught:
-                client.get(
-                    "https://api.github.com/repos/ktogias/gnostoa/issues/300/comments"
-                )
+        with (
+            mock.patch.object(client._opener, "open", side_effect=error),
+            self.assertRaises(adapter.ProviderReadError) as caught,
+        ):
+            client.get(
+                "https://api.github.com/repos/ktogias/gnostoa/issues/300/comments"
+            )
 
         self.assertEqual(429, caught.exception.status)
         self.assertEqual("RATE_LIMITED", adapter._error_status(caught.exception, 0))
@@ -1147,12 +1151,14 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             response,
         )
 
-        with mock.patch.object(client._opener, "open", side_effect=error):
-            with self.assertRaises(adapter.ProviderReadError) as caught:
-                client.graphql(
-                    "query($cursor:String){viewer{login}}",
-                    {"cursor": None},
-                )
+        with (
+            mock.patch.object(client._opener, "open", side_effect=error),
+            self.assertRaises(adapter.ProviderReadError) as caught,
+        ):
+            client.graphql(
+                "query($cursor:String){viewer{login}}",
+                {"cursor": None},
+            )
 
         self.assertEqual(503, caught.exception.status)
 

@@ -952,8 +952,7 @@ def _render_check_labels(
     visible = items[:_MAX_RENDERED_CHECK_NAMES]
     hidden = omitted + max(0, len(items) - len(visible))
     rendered = ", ".join(
-        _markdown_code(item, f"projection.checks.{key}[]")
-        for item in visible
+        _markdown_code(item, f"projection.checks.{key}[]") for item in visible
     )
     if hidden:
         rendered += f" (+{hidden} more)"
