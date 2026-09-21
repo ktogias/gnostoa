@@ -137,6 +137,42 @@ occupied set. In the cryptographically exceptional case where distinct origins
 share the same digest family, sequential probing still prevents duplicate
 emitted identities; assignment follows normalized review iteration order.
 
+## Consequences
+
+### Positive
+
+- Valid opaque provider IDs no longer make L1 reconciliation fail merely
+  because they occupy the legacy derived namespace.
+- Successful non-colliding identities remain stable, so the repair does not
+  migrate ordinary historical observation identities.
+- Full provider provenance is retained separately from the bounded generated
+  identity.
+- The common reducer remains provider-neutral and does not acquire
+  GitHub-specific ID syntax rules.
+- Current GitHub-adapter collision fallbacks cannot amplify arbitrarily large
+  origin IDs into downstream review input.
+
+### Trade-offs and obligations
+
+- A colliding case receives a v2 identity that is intentionally different from
+  the historical legacy form; downstream consumers must continue to treat
+  observation IDs as opaque.
+- Digest-derived IDs are less human-readable than the legacy form, so origin
+  inspection relies on native.origin_review_observation_id.
+- The current 128-byte regression is an operational bound for the admitted
+  GitHub adapter, not a provider-neutral reducer invariant. A future adapter
+  admitting materially larger review populations must either establish its own
+  bounded population/probe contract or evolve the allocator before claiming an
+  equivalent fixed-size guarantee.
+- SHA-256 name derivation provides practical collision resistance, while
+  occupied-set probing provides emitted-ID uniqueness. In the exceptional case
+  of distinct origins sharing one digest family, which origin receives a given
+  suffix follows normalized review iteration order.
+- Reverting the allocator after v2 identities have been observed can create
+  identity discontinuity for collision cases and therefore requires explicit
+  reconciliation rather than assuming a code revert erases provider-visible or
+  retained state.
+
 ## Alternatives considered
 
 ### Reserve a provider-independent prefix
