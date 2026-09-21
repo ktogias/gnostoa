@@ -193,6 +193,7 @@ class _PagedFake:
     def graphql(self, query: str, variables: dict[str, Any]) -> Any:
         del query
         cursor = variables.get("cursor")
+        # skipcq: PTC-W0063 -- explicit default prevents StopIteration
         first_url = next(
             (
                 url
@@ -1450,6 +1451,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
         self.assertIsInstance(loaded, dict)
         entries = loaded.get("guardrails")
         self.assertIsInstance(entries, list)
+        # skipcq: PTC-W0063 -- explicit default prevents StopIteration
         l1 = next(
             (
                 item
@@ -1471,6 +1473,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
         )
         self.assertIn("tests/test_review_reconcile_l1.py", l1.get("tests", []))
 
+        # skipcq: PTC-W0063 -- explicit default prevents StopIteration
         semantic = next(
             (
                 item
@@ -1541,6 +1544,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
         publish_steps = publish.get("steps")
         self.assertIsInstance(collect_steps, list)
         self.assertIsInstance(publish_steps, list)
+        # skipcq: PTC-W0063 -- explicit default prevents StopIteration
         upload = next(
             (
                 item
@@ -1551,6 +1555,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
             None,
         )
         self.assertIsInstance(upload, dict)
+        # skipcq: PTC-W0063 -- explicit default prevents StopIteration
         download = next(
             (
                 item
@@ -1595,6 +1600,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
             self.assertIn("github.ref == 'refs/heads/main'", condition)
             steps = job.get("steps")
             self.assertIsInstance(steps, list)
+            # skipcq: PTC-W0063 -- explicit default prevents StopIteration
             checkout = next(
                 (
                     item
