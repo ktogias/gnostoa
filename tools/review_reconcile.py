@@ -19,6 +19,7 @@ _MARKER = re.compile(r"<!-- gnostoa:l1-current-state:v1:([A-Za-z0-9_-]+) -->")
 _MAX_RENDER_BYTES = 32_768
 _MAX_RENDERED_CHECK_NAMES = 8
 _MAX_CHECK_NAMES = _MAX_RENDERED_CHECK_NAMES
+_PRE_BOUND_MAX_CHECK_NAMES = 32
 _MAX_CHECK_LABEL_BYTES = 128
 
 
@@ -737,7 +738,11 @@ def _projection_string_list(value: object, label: str) -> list[str]:
     return result
 
 
-def _validate_projection_checks(value: object) -> dict[str, Any]:
+def _validate_projection_checks(
+    value: object,
+    *,
+    allow_legacy_check_bounds: bool = False,
+) -> dict[str, Any]:
     checks = _mapping(value, "projection.checks")
     observed_names = checks.get("observed_names")
     if type(observed_names) is not int or observed_names < 0:
@@ -753,7 +758,9 @@ def _validate_projection_checks(value: object) -> dict[str, Any]:
             checks.get(name),
             f"projection.checks.{name}",
         )
-        if any(len(item.encode("utf-8")) > _MAX_CHECK_LABEL_BYTES for item in items):
+        if not allow_legacy_check_bounds and any(
+            len(item.encode("utf-8")) > _MAX_CHECK_LABEL_BYTES for item in items
+        ):
             raise ReconciliationInputError(
                 f"projection.checks.{name} label exceeds bounded size"
             )
@@ -769,7 +776,12 @@ def _validate_projection_checks(value: object) -> dict[str, Any]:
             raise ReconciliationInputError(
                 f"projection.checks.{omitted_name} must be a non-negative integer"
             )
-        if omitted and len(items) != _MAX_CHECK_NAMES:
+        full_retained_sizes = (
+            {_MAX_CHECK_NAMES, _PRE_BOUND_MAX_CHECK_NAMES}
+            if allow_legacy_check_bounds
+            else {_MAX_CHECK_NAMES}
+        )
+        if omitted and len(items) not in full_retained_sizes:
             raise ReconciliationInputError(
                 f"projection.checks.{omitted_name} requires a full retained list"
             )
@@ -837,7 +849,11 @@ def _validate_projection_observed_r2a(value: object, label: str) -> str:
     return outcome
 
 
-def _validate_projection_document(document: dict[str, Any]) -> None:
+def _validate_projection_document(
+    document: dict[str, Any],
+    *,
+    allow_legacy_check_bounds: bool = False,
+) -> None:
     if document.get("schema_version") != _INTERNAL_SCHEMA_VERSION:
         raise ReconciliationInputError("projection schema_version is unsupported")
     if document.get("status") != "draft":
@@ -877,7 +893,10 @@ def _validate_projection_document(document: dict[str, Any]) -> None:
         )
 
     protected_status = _validate_projection_protected(document.get("protected"))
-    checks = _validate_projection_checks(document.get("checks"))
+    checks = _validate_projection_checks(
+        document.get("checks"),
+        allow_legacy_check_bounds=allow_legacy_check_bounds,
+    )
     r2a = _mapping(document.get("r2a"), "projection.r2a")
     if provider_current:
         semantic_outcome = _validate_projection_observed_r2a(
@@ -1096,7 +1115,11 @@ def render_projection(projection: dict[str, Any]) -> str:
     return rendered
 
 
-def parse_projection_comment(body: object) -> dict[str, Any] | None:
+def parse_projection_comment(
+    body: object,
+    *,
+    allow_legacy_check_bounds: bool = False,
+) -> dict[str, Any] | None:
     if not isinstance(body, str):
         return None
     match = _MARKER.search(body)
@@ -1112,7 +1135,10 @@ def parse_projection_comment(body: object) -> dict[str, Any] | None:
     if not isinstance(document, dict):
         return None
     try:
-        _validate_projection_document(document)
+        _validate_projection_document(
+            document,
+            allow_legacy_check_bounds=allow_legacy_check_bounds,
+        )
     except ReconciliationInputError:
         return None
     return document

@@ -1162,7 +1162,10 @@ def _existing_projection(
         # Retained workflow-owned comments are identified by their validated
         # embedded semantics. Their visible Markdown is a disposable rendering
         # that may have been produced by an older same-schema renderer.
-        projection = parse_projection_comment(comment.get("body"))
+        projection = parse_projection_comment(
+            comment.get("body"),
+            allow_legacy_check_bounds=True,
+        )
         if type(comment_id) is not int or projection is None:
             continue
         subject = projection.get("subject")
