@@ -11,6 +11,9 @@ from typing import Any
 from unittest import mock
 
 
+_NONEMPTY_PROVIDER_CREDENTIAL = "fixture-value"
+
+
 def _fixtures() -> Any:
     """Reuse source-bound fixtures independently of discovery's sys.path."""
     path = Path(__file__).with_name("test_review_reconcile_l1.py")
@@ -201,7 +204,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
         )
 
         with (
-            mock.patch.dict(adapter.os.environ, {"GH_TOKEN": "test-token"}),
+            mock.patch.dict(adapter.os.environ, {"GH_TOKEN": _NONEMPTY_PROVIDER_CREDENTIAL}),
             self.assertRaisesRegex(
                 SystemExit,
                 "selected Pull Request population exceeds bounded reconciliation capacity",
