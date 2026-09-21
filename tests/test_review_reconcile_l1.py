@@ -1655,6 +1655,32 @@ class UsefulL1IdentityCollisionTests(unittest.TestCase):
             )
         )
 
+    def test_collision_fallback_identity_is_bounded_for_large_provider_id(self) -> None:
+        reducer = reducer_fixture()
+        snapshot = snapshot_fixture()
+
+        large_origin_id = "x" * 16_384
+        snapshot["reviews"][0]["observation_id"] = large_origin_id
+        snapshot["review_threads"][0]["review_observation_id"] = large_origin_id
+        snapshot["reviews"][1]["observation_id"] = (
+            f"gnostoa-thread-evidence::{large_origin_id}"
+        )
+
+        review_input = reducer.build_review_input(snapshot, _bundle())
+        thread_only = [
+            item
+            for item in review_input["evidence_set"]["observations"]
+            if item["native"].get("thread_evidence_only") is True
+        ]
+
+        self.assertEqual(1, len(thread_only))
+        fallback_id = thread_only[0]["observation_id"]
+        self.assertLessEqual(len(fallback_id.encode("utf-8")), 128)
+        self.assertEqual(
+            large_origin_id,
+            thread_only[0]["native"]["origin_review_observation_id"],
+        )
+
     def test_fallback_probes_past_a_second_provider_collision(self) -> None:
         reducer = reducer_fixture()
         snapshot = snapshot_fixture()
