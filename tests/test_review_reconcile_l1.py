@@ -1493,7 +1493,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
         self.assertEqual(
             {
                 "contents": "read",
-                "pull-requests": "read",
+                "pull-requests": "write",
                 "issues": "write",
             },
             publish.get("permissions"),
