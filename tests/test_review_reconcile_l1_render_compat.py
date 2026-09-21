@@ -170,7 +170,6 @@ class UsefulL1RenderCompatibilityTests(unittest.TestCase):
             {"body": candidate_body},
         )
 
-
     def test_publish_updates_pre_bound_long_check_label_in_place(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures._adapter()
