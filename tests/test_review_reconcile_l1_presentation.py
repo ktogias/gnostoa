@@ -113,6 +113,17 @@ class UsefulL1PresentationTests(unittest.TestCase):
         self.assertIs(False, concurrency["cancel-in-progress"])
         self.assertEqual("max", concurrency.get("queue"))
 
+    def test_reconciliation_jobs_have_explicit_bounded_wall_clock_timeouts(
+        self,
+    ) -> None:
+        workflow = _workflow()
+        for job_name in ("collect", "publish"):
+            with self.subTest(job=job_name):
+                timeout = workflow["jobs"][job_name].get("timeout-minutes")
+                self.assertIsInstance(timeout, int)
+                self.assertGreater(timeout, 0)
+                self.assertLessEqual(timeout, 60)
+
     def test_both_workflow_entrypoints_import_in_a_clean_environment(self) -> None:
         workflow = _workflow()
         for job_name in ("collect", "publish"):
