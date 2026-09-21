@@ -61,6 +61,11 @@ def _bundle() -> dict[str, Any]:
     return loaded
 
 
+def bundle_fixture() -> dict[str, Any]:
+    """Public test-only access to the shared protected R2A bundle fixture."""
+    return _bundle()
+
+
 def _consumer_document() -> dict[str, Any]:
     path = ROOT / "tasks" / "issue-11-r2a-current-advisory-consumer.json"
     loaded = json.loads(path.read_text(encoding="utf-8"))
