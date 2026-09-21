@@ -1728,11 +1728,7 @@ def main(argv: list[str] | None = None) -> int:
                 "published": False,
                 "reason": "PUBLICATION_ENTRY_UNAVAILABLE",
                 "error_type": type(exc).__name__,
-                **(
-                    {"error_status": error_status}
-                    if error_status is not None
-                    else {}
-                ),
+                **({"error_status": error_status} if error_status is not None else {}),
             }
         results.append(result)
     _summary(
@@ -1745,8 +1741,7 @@ def main(argv: list[str] | None = None) -> int:
     return (
         1
         if any(
-            item.get("reason") == "PUBLICATION_ENTRY_UNAVAILABLE"
-            for item in results
+            item.get("reason") == "PUBLICATION_ENTRY_UNAVAILABLE" for item in results
         )
         else 0
     )
