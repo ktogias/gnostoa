@@ -31,6 +31,84 @@ def _workflow() -> dict[str, Any]:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
+def _workflow_entrypoint_pythonpath(
+    workflow: dict[str, Any],
+    job_name: str,
+) -> str:
+    job = workflow["jobs"][job_name]
+    steps = [
+        step
+        for step in job["steps"]
+        if "ci/review_github_current_state.py" in step.get("run", "")
+    ]
+    if len(steps) != 1:
+        raise AssertionError("workflow entrypoint step is unavailable")
+    step = steps[0]
+    command = re.search(
+        r"(?m)^\s*(?:PYTHONPATH=(\S+)\s+)?"
+        r"python ci/review_github_current_state\.py\b",
+        step["run"],
+    )
+    if command is None:
+        raise AssertionError("workflow entrypoint command is unavailable")
+
+    pythonpath: object = None
+    for scope in (workflow, job, step):
+        value = scope.get("env", {}).get("PYTHONPATH")
+        if value is not None:
+            pythonpath = value
+    if command.group(1) is not None:
+        pythonpath = command.group(1)
+    if not isinstance(pythonpath, str):
+        raise AssertionError("workflow entrypoint PYTHONPATH is unavailable")
+    return pythonpath
+
+
+def _load_entrypoint_with_pythonpath(pythonpath: str, job_name: str) -> Any:
+    configured_paths = [
+        str((_ROOT / item).resolve())
+        for item in pythonpath.split(os.pathsep)
+        if item
+    ]
+    if str(_ROOT.resolve()) not in configured_paths:
+        raise AssertionError("workflow entrypoint does not expose repository root")
+
+    repository_paths = {
+        str(_ROOT.resolve()),
+        str((_ROOT / "tests").resolve()),
+    }
+    isolated_path = [
+        *configured_paths,
+        *[
+            entry
+            for entry in sys.path
+            if entry and str(Path(entry).resolve()) not in repository_paths
+        ],
+    ]
+
+    adapter_path = _ROOT / "ci/review_github_current_state.py"
+    module_name = f"gnostoa_l1_workflow_entrypoint_{job_name}"
+    spec = importlib.util.spec_from_file_location(module_name, adapter_path)
+    if spec is None or spec.loader is None:
+        raise AssertionError("workflow entrypoint module is unloadable")
+
+    module_names = ("tools", "tools.review_model", "tools.review_reconcile")
+    preserved_modules = {name: sys.modules.get(name) for name in module_names}
+    for name in module_names:
+        sys.modules.pop(name, None)
+    try:
+        with mock.patch.object(sys, "path", isolated_path):
+            adapter = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(adapter)
+    finally:
+        for name, preserved in preserved_modules.items():
+            if preserved is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = preserved
+    return adapter
+
+
 class UsefulL1PresentationTests(unittest.TestCase):
     def test_serialized_workflow_uses_finite_max_pending_queue(self) -> None:
         concurrency = _workflow()["concurrency"]
@@ -41,80 +119,15 @@ class UsefulL1PresentationTests(unittest.TestCase):
         workflow = _workflow()
         for job_name in ("collect", "publish"):
             with self.subTest(job=job_name):
-                job = workflow["jobs"][job_name]
-                steps = [
-                    step
-                    for step in job["steps"]
-                    if "ci/review_github_current_state.py" in step.get("run", "")
-                ]
-                self.assertEqual(1, len(steps))
-                step = steps[0]
-                command = re.search(
-                    r"(?m)^\s*(?:PYTHONPATH=(\S+)\s+)?"
-                    r"python ci/review_github_current_state\.py\b",
-                    step["run"],
-                )
-                if command is None:
-                    self.fail("workflow entrypoint command is unavailable")
-
-                pythonpath = None
-                for scope in (workflow, job, step):
-                    value = scope.get("env", {}).get("PYTHONPATH")
-                    if value is not None:
-                        pythonpath = value
-                if command.group(1) is not None:
-                    pythonpath = command.group(1)
-                self.assertIsInstance(pythonpath, str)
-
-                configured_paths = [
-                    str((_ROOT / item).resolve())
-                    for item in pythonpath.split(os.pathsep)
-                    if item
-                ]
-                self.assertIn(str(_ROOT.resolve()), configured_paths)
-                repository_paths = {
-                    str(_ROOT.resolve()),
-                    str((_ROOT / "tests").resolve()),
-                }
-                isolated_path = [
-                    *configured_paths,
-                    *[
-                        entry
-                        for entry in sys.path
-                        if entry
-                        and str(Path(entry).resolve()) not in repository_paths
-                    ],
-                ]
-
-                adapter_path = _ROOT / "ci/review_github_current_state.py"
-                module_name = f"gnostoa_l1_workflow_entrypoint_{job_name}"
-                spec = importlib.util.spec_from_file_location(module_name, adapter_path)
-                if spec is None or spec.loader is None:
-                    self.fail("workflow entrypoint module is unloadable")
-
-                module_names = ("tools", "tools.review_model", "tools.review_reconcile")
-                preserved_modules = {
-                    name: sys.modules.get(name) for name in module_names
-                }
-                for name in module_names:
-                    sys.modules.pop(name, None)
-                try:
-                    with mock.patch.object(sys, "path", isolated_path):
-                        adapter = importlib.util.module_from_spec(spec)
-                        spec.loader.exec_module(adapter)
-                finally:
-                    for name, preserved in preserved_modules.items():
-                        if preserved is None:
-                            sys.modules.pop(name, None)
-                        else:
-                            sys.modules[name] = preserved
+                pythonpath = _workflow_entrypoint_pythonpath(workflow, job_name)
+                adapter = _load_entrypoint_with_pythonpath(pythonpath, job_name)
 
                 rendered_help = io.StringIO()
                 with (
                     contextlib.redirect_stdout(rendered_help),
                     self.assertRaises(SystemExit) as caught,
                 ):
-                    adapter._parser().parse_args(["--help"])
+                    adapter.main(["--help"])
                 self.assertEqual(0, caught.exception.code)
                 self.assertIn("--mode", rendered_help.getvalue())
 
