@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from typing import Any, cast
+from typing import Any
 from unittest import mock
 
 import yaml
@@ -1339,13 +1339,13 @@ class UsefulL1RedContractTests(unittest.TestCase):
         )
 
         def run_bound(
-            input_document: object,
+            input_document: dict[str, Any],
             *,
             acquire_consumer: Any,
         ) -> tuple[int, bytes]:
             self.assertIs(consumer, acquire_consumer())
             self.assertIsInstance(input_document, dict)
-            return _valid_incomplete_result(cast(dict[str, Any], input_document))
+            return _valid_incomplete_result(input_document)
 
         with (
             mock.patch.object(
