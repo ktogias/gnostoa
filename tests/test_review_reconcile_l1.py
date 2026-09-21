@@ -482,7 +482,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
         self.assertIn("QUORUM_UNMET", rendered)
         self.assertEqual("draft", projection["status"])
         self.assertIn("binding: false", rendered)
-        self.assertIn("Intent summary: Useful L1 fixture", rendered)
+        self.assertIn("Intent summary: `Useful L1 fixture`", rendered)
         self.assertNotIn("raw provider text", rendered)
         self.assertNotIn("inline raw finding", rendered)
         self.assertLess(len(rendered.encode("utf-8")), 32_768)

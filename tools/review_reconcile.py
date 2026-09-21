@@ -56,7 +56,8 @@ def _markdown_code(value: object, label: str) -> str:
         default=0,
     )
     fence = "`" * (longest + 1)
-    return f"{fence}{escaped}{fence}"
+    padding = " " if escaped.startswith("`") or escaped.endswith("`") else ""
+    return f"{fence}{padding}{escaped}{padding}{fence}"
 
 
 def _timestamp(value: object, label: str) -> str:

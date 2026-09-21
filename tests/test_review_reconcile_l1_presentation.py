@@ -238,7 +238,11 @@ class UsefulL1PresentationTests(unittest.TestCase):
             },
         )
         rendered = reducer.render_projection(projection)
-        line = next(line for line in rendered.splitlines() if "Intent summary:" in line)
+        title_lines = [
+            item for item in rendered.splitlines() if "Intent summary:" in item
+        ]
+        self.assertEqual(1, len(title_lines))
+        line = title_lines[0]
         literal = line.removeprefix("- Intent summary: ")
         match = re.fullmatch(r"(?P<fence>`+)(?P<body>.*)(?P=fence)", literal)
         self.assertIsNotNone(match)
@@ -251,6 +255,37 @@ class UsefulL1PresentationTests(unittest.TestCase):
         self.assertIn("@gnostoa/team", line)
         self.assertFalse(line.startswith("- Intent summary: @"))
         self.assertLessEqual(len(rendered.encode("utf-8")), 65_536)
+        self.assertEqual(projection, reducer.parse_projection_comment(rendered))
+
+    def test_provider_title_ending_in_backtick_keeps_markdown_inert(self) -> None:
+        fixtures = _fixtures()
+        reducer = fixtures._reducer()
+        snapshot = fixtures._snapshot()
+        snapshot["subject"]["title"] = (
+            "**pwn** [click](https://evil.example) @octocat`"
+        )
+        projection = reducer.build_projection(
+            snapshot,
+            protected_main_revision=None,
+            outer_consumer=None,
+            r2a_result={"reason": "TEST_UNAVAILABLE"},
+            execution={
+                "execution_id": "presentation-test::trailing-backtick",
+                "observed_at": "2026-09-19T16:41:00Z",
+            },
+        )
+
+        rendered = reducer.render_projection(projection)
+        title_lines = [
+            item for item in rendered.splitlines() if "Intent summary:" in item
+        ]
+        self.assertEqual(1, len(title_lines))
+        line = title_lines[0]
+        self.assertTrue(line.startswith("- Intent summary: `` "))
+        self.assertTrue(line.endswith(" ``"))
+        self.assertIn("**pwn**", line)
+        self.assertIn("[click](https://evil.example)", line)
+        self.assertIn("@octocat", line)
         self.assertEqual(projection, reducer.parse_projection_comment(rendered))
 
     def test_provider_controlled_identities_cannot_inject_markdown_structure(
