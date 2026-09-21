@@ -148,7 +148,12 @@ class GitHubRestClient:
             },
         )
         try:
-            with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
+            # B310 is intentionally suppressed: _validate_api_url() restricts
+            # every request to HTTPS api.github.com on the default/443 port.
+            with urllib.request.urlopen(  # nosec B310
+                request,
+                timeout=_TIMEOUT_SECONDS,
+            ) as response:
                 raw = response.read(_MAX_RESPONSE_BYTES + 1)
                 if len(raw) > _MAX_RESPONSE_BYTES:
                     raise ProviderReadError("GitHub API response exceeds bounded size")
