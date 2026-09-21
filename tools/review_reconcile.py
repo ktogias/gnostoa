@@ -459,6 +459,28 @@ def _thread_evidence_native_extra(
     return native_extra
 
 
+def _thread_evidence_observation_id(
+    origin_observation_id: str,
+    occupied_observation_ids: set[str],
+) -> str:
+    legacy_id = f"gnostoa-thread-evidence::{origin_observation_id}"
+    if legacy_id not in occupied_observation_ids:
+        return legacy_id
+
+    encoded_origin = (
+        base64.urlsafe_b64encode(origin_observation_id.encode("utf-8"))
+        .decode("ascii")
+        .rstrip("=")
+    )
+    stem = f"gnostoa-thread-evidence:v2:{encoded_origin}"
+    candidate = stem
+    suffix = 0
+    while candidate in occupied_observation_ids:
+        suffix += 1
+        candidate = f"{stem}:{suffix}"
+    return candidate
+
+
 def _derived_thread_observation(
     *,
     review: dict[str, Any],
@@ -476,11 +498,10 @@ def _derived_thread_observation(
         review.get("observation_id"),
         "review.observation_id",
     )
-    thread_observation_id = f"gnostoa-thread-evidence::{observation_id}"
-    if thread_observation_id in review_observation_ids:
-        raise ReconciliationInputError(
-            "derived thread evidence observation_id collides with review evidence"
-        )
+    thread_observation_id = _thread_evidence_observation_id(
+        observation_id,
+        review_observation_ids,
+    )
 
     return _make_observation(
         subject=subject,
