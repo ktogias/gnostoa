@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import importlib.util
 import unittest
 from pathlib import Path
@@ -44,6 +45,87 @@ class UsefulL1IdentityCollisionTests(unittest.TestCase):
             origin_id,
             thread_only[0]["native"]["origin_review_observation_id"],
         )
+
+
+    def test_non_colliding_thread_evidence_id_keeps_legacy_identity(self) -> None:
+        fixtures = _fixtures()
+        reducer = fixtures.reducer_fixture()
+        snapshot = fixtures.snapshot_fixture()
+
+        origin_id = snapshot["reviews"][0]["observation_id"]
+        review_input = reducer.build_review_input(snapshot, fixtures._bundle())
+        thread_only = next(
+            item
+            for item in review_input["evidence_set"]["observations"]
+            if item["native"].get("thread_evidence_only") is True
+        )
+
+        self.assertEqual(
+            f"gnostoa-thread-evidence::{origin_id}",
+            thread_only["observation_id"],
+        )
+
+    def test_fallback_probes_past_a_second_provider_collision(self) -> None:
+        fixtures = _fixtures()
+        reducer = fixtures.reducer_fixture()
+        snapshot = fixtures.snapshot_fixture()
+
+        origin_id = snapshot["reviews"][0]["observation_id"]
+        legacy_thread_id = f"gnostoa-thread-evidence::{origin_id}"
+        encoded_origin = (
+            base64.urlsafe_b64encode(origin_id.encode("utf-8"))
+            .decode("ascii")
+            .rstrip("=")
+        )
+        first_fallback = f"gnostoa-thread-evidence:v2:{encoded_origin}"
+
+        snapshot["reviews"][1]["observation_id"] = legacy_thread_id
+        snapshot["reviews"].append(
+            {
+                "observation_id": first_fallback,
+                "reviewer_id": "collision-fixture",
+                "recommendation_state": "COMMENTED",
+                "observed_at": "2026-09-19T16:39:00Z",
+                "head_commit": "d" * 40,
+                "source_url": snapshot["subject"]["source_url"] + "#collision-fixture",
+            }
+        )
+        snapshot["coverage"]["reviews"]["count"] = 3
+
+        review_input = reducer.build_review_input(snapshot, fixtures._bundle())
+        observations = review_input["evidence_set"]["observations"]
+        thread_only = next(
+            item
+            for item in observations
+            if item["native"].get("thread_evidence_only") is True
+        )
+
+        self.assertEqual(first_fallback + ":1", thread_only["observation_id"])
+        self.assertIn(
+            first_fallback,
+            {item["observation_id"] for item in observations},
+        )
+
+    def test_collision_fallback_is_independent_of_provider_review_order(self) -> None:
+        fixtures = _fixtures()
+        reducer = fixtures.reducer_fixture()
+
+        def thread_id(reverse: bool) -> str:
+            snapshot = fixtures.snapshot_fixture()
+            origin_id = snapshot["reviews"][0]["observation_id"]
+            snapshot["reviews"][1]["observation_id"] = (
+                f"gnostoa-thread-evidence::{origin_id}"
+            )
+            if reverse:
+                snapshot["reviews"].reverse()
+            review_input = reducer.build_review_input(snapshot, fixtures._bundle())
+            return next(
+                item["observation_id"]
+                for item in review_input["evidence_set"]["observations"]
+                if item["native"].get("thread_evidence_only") is True
+            )
+
+        self.assertEqual(thread_id(False), thread_id(True))
 
 
 if __name__ == "__main__":
