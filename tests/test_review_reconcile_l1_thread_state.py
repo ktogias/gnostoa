@@ -9,6 +9,9 @@ from typing import Any
 from unittest import mock
 
 
+_NONEMPTY_PROVIDER_CREDENTIAL = "fixture-value"
+
+
 def _fixtures() -> Any:
     path = Path(__file__).with_name("test_review_reconcile_l1.py")
     spec = importlib.util.spec_from_file_location("l1_thread_state_fixtures", path)
@@ -531,7 +534,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
     def test_graphql_primary_rate_limit_error_is_classified_rate_limited(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures._adapter()
-        client = adapter.GitHubRestClient("test-token")
+        client = adapter.GitHubRestClient(_NONEMPTY_PROVIDER_CREDENTIAL)
 
         with mock.patch.object(
             client,
@@ -563,7 +566,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
     ) -> None:
         fixtures = _fixtures()
         adapter = fixtures._adapter()
-        client = adapter.GitHubRestClient("test-token")
+        client = adapter.GitHubRestClient(_NONEMPTY_PROVIDER_CREDENTIAL)
 
         with mock.patch.object(
             client,
@@ -587,7 +590,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
     def test_graphql_payload_errors_are_provider_read_failures(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures._adapter()
-        client = adapter.GitHubRestClient("test-token")
+        client = adapter.GitHubRestClient(_NONEMPTY_PROVIDER_CREDENTIAL)
 
         with mock.patch.object(
             client,
@@ -889,7 +892,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
                 side_effect=[adapter.ProviderWriteError("first failed"), second],
             ) as publish,
             mock.patch.object(adapter, "_summary") as summary,
-            mock.patch.dict(adapter.os.environ, {"GH_TOKEN": "test-token"}),
+            mock.patch.dict(adapter.os.environ, {"GH_TOKEN": _NONEMPTY_PROVIDER_CREDENTIAL}),
         ):
             code = adapter.main(
                 [
@@ -925,7 +928,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             ) as collect,
             mock.patch.object(adapter, "_write_payload"),
             mock.patch.object(adapter, "_summary") as summary,
-            mock.patch.dict(adapter.os.environ, {"GH_TOKEN": "test-token"}),
+            mock.patch.dict(adapter.os.environ, {"GH_TOKEN": _NONEMPTY_PROVIDER_CREDENTIAL}),
         ):
             code = adapter.main(
                 [
@@ -987,7 +990,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
     def test_rest_forbidden_is_not_misclassified_as_rate_limited(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures._adapter()
-        client = adapter.GitHubRestClient("test-token")
+        client = adapter.GitHubRestClient(_NONEMPTY_PROVIDER_CREDENTIAL)
         response = io.BytesIO(b'{"message":"Resource not accessible by integration"}')
         error = urllib.error.HTTPError(
             "https://api.github.com/repos/ktogias/gnostoa/issues/300/comments",
@@ -1009,7 +1012,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
     def test_rest_403_with_rate_limit_evidence_is_rate_limited(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures._adapter()
-        client = adapter.GitHubRestClient("test-token")
+        client = adapter.GitHubRestClient(_NONEMPTY_PROVIDER_CREDENTIAL)
         response = io.BytesIO(b'{"message":"API rate limit exceeded"}')
         error = urllib.error.HTTPError(
             "https://api.github.com/repos/ktogias/gnostoa/issues/300/comments",
@@ -1031,7 +1034,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
     def test_graphql_http_failure_is_a_provider_read_failure(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures._adapter()
-        client = adapter.GitHubRestClient("test-token")
+        client = adapter.GitHubRestClient(_NONEMPTY_PROVIDER_CREDENTIAL)
         response = io.BytesIO(b'{"message":"temporarily unavailable"}')
         error = urllib.error.HTTPError(
             "https://api.github.com/graphql",
