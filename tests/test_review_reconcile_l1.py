@@ -1626,6 +1626,35 @@ class UsefulL1IdentityCollisionTests(unittest.TestCase):
             thread_only[0]["observation_id"],
         )
 
+    def test_ineffective_review_id_does_not_displace_legacy_thread_evidence_id(
+        self,
+    ) -> None:
+        reducer = reducer_fixture()
+        snapshot = snapshot_fixture()
+
+        origin_id = snapshot["reviews"][0]["observation_id"]
+        legacy_thread_id = f"gnostoa-thread-evidence::{origin_id}"
+        snapshot["reviews"][1]["observation_id"] = legacy_thread_id
+        snapshot["reviews"][1]["effective"] = False
+
+        review_input = reducer.build_review_input(snapshot, _bundle())
+        observations = review_input["evidence_set"]["observations"]
+        thread_only = [
+            item
+            for item in observations
+            if item["native"].get("thread_evidence_only") is True
+        ]
+
+        self.assertEqual(1, len(thread_only))
+        self.assertEqual(legacy_thread_id, thread_only[0]["observation_id"])
+        self.assertFalse(
+            any(
+                item["observation_id"] == legacy_thread_id
+                and item["native"].get("thread_evidence_only") is not True
+                for item in observations
+            )
+        )
+
     def test_fallback_probes_past_a_second_provider_collision(self) -> None:
         reducer = reducer_fixture()
         snapshot = snapshot_fixture()
