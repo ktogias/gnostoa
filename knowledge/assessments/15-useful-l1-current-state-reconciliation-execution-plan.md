@@ -462,6 +462,29 @@ recommendation-blocker semantics therefore remain owned by existing R2A, while
 an R2A policy that blocks unresolved threads can still see the retained
 discussion.
 
+A fresh exact-head CodeRabbit pass then exposed a narrower follow-up in that
+remediation:
+
+- **RC-03 / current subject binding for old-head thread state:** the derived
+  `COMMENT_ONLY` observation still inherited the superseded review's old commit
+  as its subject binding. R2A therefore excluded it as `subject_not_exact` when
+  the Pull Request had advanced to a newer head, so an
+  `unresolved_threads: block` policy still could not see the retained thread.
+
+The style-clean tests-only RED candidate
+`8a752666dc1299d2739429a86eecea378ba13e28` completed the Python 3.11 source
+suite with **1,119 tests, 1 failure, 2 skips**; the sole failure was the derived
+thread observation being `partial` instead of `exact`. The regression also
+requires the existing evaluator to return `BLOCKED / BLOCKER_PRESENT` under an
+`unresolved_threads: block` policy without restoring the superseded
+`REQUEST_CHANGES` recommendation.
+
+Implementation candidate
+`46129457da4ac9fd7e6df83c1d3ee4752b06a30c` binds only the derived current
+thread-state observation to the current target head while retaining the older
+review commit in native provenance. Python 3.11 and 3.12 compatibility are GREEN;
+the Python 3.12 source suite completed **1,119 tests PASS, 2 skips**.
+
 These corrections leave the admitted L1 boundaries unchanged: no reviewer
 selection, merge/approval authority, L2 effect fence, L3 orchestration, public
 provider schema or second production provider is introduced.
