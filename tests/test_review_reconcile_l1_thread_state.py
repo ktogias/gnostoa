@@ -1131,6 +1131,38 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         self.assertEqual(403, caught.exception.status)
         self.assertEqual("ERROR", adapter._error_status(caught.exception, 0))
 
+    def test_rest_write_forbidden_exposes_only_bounded_status(self) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        client = adapter.GitHubRestClient(_NONEMPTY_TEST_VALUE)
+        response = io.BytesIO(
+            b'{"message":"Resource not accessible by integration",'
+            b'"private_detail":"must-not-reach-logs"}'
+        )
+        error = urllib.error.HTTPError(
+            "https://api.github.com/repos/ktogias/gnostoa/issues/300/comments",
+            403,
+            "Forbidden",
+            {"x-ratelimit-remaining": "42"},
+            response,
+        )
+
+        with (
+            mock.patch.object(client._opener, "open", side_effect=error),
+            self.assertRaises(adapter.ProviderWriteError) as caught,
+        ):
+            client.post(
+                "https://api.github.com/repos/ktogias/gnostoa/issues/300/comments",
+                {"body": "bounded candidate"},
+            )
+
+        self.assertEqual(403, caught.exception.status)
+        self.assertEqual(
+            "GitHub API write rejected with HTTP 403",
+            str(caught.exception),
+        )
+        self.assertNotIn("must-not-reach-logs", str(caught.exception))
+
     def test_rest_403_with_rate_limit_evidence_is_rate_limited(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures._adapter()
