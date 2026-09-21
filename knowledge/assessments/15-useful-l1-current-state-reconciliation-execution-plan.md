@@ -113,7 +113,18 @@ unchanged.
 
 The internal adapter contract also requires explicit observation timestamps for
 check state; opaque provider IDs never define freshness, and same-timestamp
-conflicts are explicit ambiguity. Shared projection execution identity is also
+conflicts are explicit ambiguity. Every source coverage record also requires a
+non-negative retained `count`; the subject count is exactly one and retained
+array counts must equal their normalized payload lengths. Missing cardinality is
+invalid input even when an adapter labels the source `COMPLETE`.
+
+Review recommendation effectiveness does not own thread lifetime. The latest
+provider-effective opinion remains the only active opinionated recommendation
+per reviewer, while an unresolved thread rooted in a superseded review is
+retained as derived `COMMENT_ONLY` thread evidence. This preserves existing
+R2A unresolved-thread policy without reviving the superseded recommendation.
+
+Shared projection execution identity is also
 opaque: the core accepts a non-empty `execution_id` and does not derive
 freshness from its type or lexical order. Provider-specific publication ordering
 stays in the adapter; the GitHub adapter alone interprets
@@ -419,3 +430,39 @@ types.
 These corrections do not add L2 effect fencing, merge/approval authority, a
 public provider schema or a second production provider. Final read→write TOCTOU
 remains the explicitly admitted L1 residual.
+
+## Post-convergence review hardening addendum — 2026-09-21 UTC
+
+A later exact-head review reopened two normalized-contract gaps after the prior
+FR-01..FR-05 convergence. Both are same-purpose L1 fail-closed corrections, not
+new authority or scope.
+
+The tests-only RED candidate
+`1e83c72576aa2928cb7a448688a24f5afd95f829` adds the regressions before
+production mutation. Its rerun on Python 3.12 completed the source compatibility
+suite with **1,119 tests, 6 failures, 2 skips**:
+
+- **RC-01 / coverage cardinality:** five failures prove that omitting `count`
+  from subject, conversation, reviews, review_threads or checks was accepted by
+  the common reducer instead of failing closed.
+- **RC-02 / superseded unresolved thread:** one failure proves that a newer
+  opinion from the same reviewer removed an unresolved thread rooted in the
+  older review from R2A evidence.
+
+The implementation candidate
+`8b921fb9a055b8c24d9efeb9fded48ecb3673d2d` makes `count` mandatory and
+preserves unresolved superseded-review threads as derived `COMMENT_ONLY`
+thread-only observations. The same Python 3.12 source compatibility route then
+completed **1,119 tests PASS, 2 skips**; the Python 3.11 compatibility job also
+completed successfully.
+
+The thread-only observation deliberately does **not** restore the superseded
+`APPROVED|CHANGES_REQUESTED` recommendation. Quorum, conflict and
+recommendation-blocker semantics therefore remain owned by existing R2A, while
+an R2A policy that blocks unresolved threads can still see the retained
+discussion.
+
+These corrections leave the admitted L1 boundaries unchanged: no reviewer
+selection, merge/approval authority, L2 effect fence, L3 orchestration, public
+provider schema or second production provider is introduced.
+
