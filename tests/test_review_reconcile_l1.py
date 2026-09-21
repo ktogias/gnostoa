@@ -1788,13 +1788,16 @@ class UsefulL1IdentityCollisionTests(unittest.TestCase):
             )
         snapshot["coverage"]["reviews"]["count"] = len(snapshot["reviews"])
 
-        with mock.patch.object(
-            reducer,
-            "_THREAD_EVIDENCE_MAX_PROBE",
-            3,
-        ), self.assertRaisesRegex(
-            reducer.ReconciliationInputError,
-            "unable to allocate a collision-free thread evidence observation ID",
+        with (
+            mock.patch.object(
+                reducer,
+                "_THREAD_EVIDENCE_MAX_PROBE",
+                3,
+            ),
+            self.assertRaisesRegex(
+                reducer.ReconciliationInputError,
+                "unable to allocate a collision-free thread evidence observation ID",
+            ),
         ):
             reducer.build_review_input(snapshot, _bundle())
 
