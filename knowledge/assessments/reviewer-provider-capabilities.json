@@ -233,8 +233,7 @@
           "subject": {
             "repository": "ktogias/gnostoa",
             "change_request": "pull/297",
-            "head_commit": "716687d9b033efc5bba0f719ab183c177b91a11c",
-            "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
+            "head_commit": "716687d9b033efc5bba0f719ab183c177b91a11c", "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
           },
           "retry_after": null,
           "reason": null,
@@ -692,8 +691,7 @@
           "subject": {
             "repository": "ktogias/gnostoa",
             "change_request": "pull/297",
-            "head_commit": "716687d9b033efc5bba0f719ab183c177b91a11c",
-            "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
+            "head_commit": "716687d9b033efc5bba0f719ab183c177b91a11c", "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
           },
           "retry_after": null,
           "reason": null,
@@ -713,8 +711,7 @@
           "subject": {
             "repository": "ktogias/gnostoa",
             "change_request": "pull/297",
-            "head_commit": "562fc9a7f986665438528b599aa3e1a12633f76e",
-            "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
+            "head_commit": "562fc9a7f986665438528b599aa3e1a12633f76e", "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
           },
           "retry_after": null,
           "reason": null,
@@ -735,8 +732,7 @@
           "subject": {
             "repository": "ktogias/gnostoa",
             "change_request": "pull/297",
-            "head_commit": "e304af4dcd5298e79b66e60a9ac3012643af24ea",
-            "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
+            "head_commit": "e304af4dcd5298e79b66e60a9ac3012643af24ea", "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
           },
           "retry_after": null,
           "reason": null,
@@ -797,7 +793,7 @@
           "type": "repository_observation",
           "url": "https://github.com/ktogias/gnostoa/pull/297#pullrequestreview-5270699955",
           "observed_at": "2026-09-21T19:05:45Z",
-          "note": "Formal Gitar COMMENTED review 5270699955 was submitted on exact head c9d04df74704d4de1138fa719d916a855f3b069f at the retained provider timestamp. This durable artifact verifies the review identity, exact-head binding and event time for the subject-scoped COMPLETED observation; route completion remains distinct from semantic acceptance or quorum."
+          "note": "Formal Gitar COMMENTED review 5270699955 was submitted on the exact head retained by the matching subject observation at the provider-attributable timestamp. This durable artifact verifies the review identity, exact-head binding and event time for the subject-scoped COMPLETED observation; route completion remains distinct from semantic acceptance or quorum."
         }
       ],
       "observations": [
@@ -831,8 +827,7 @@
           "subject": {
             "repository": "ktogias/gnostoa",
             "change_request": "pull/297",
-            "head_commit": "c9d04df74704d4de1138fa719d916a855f3b069f",
-            "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
+            "head_commit": "c9d04df74704d4de1138fa719d916a855f3b069f", "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
           },
           "retry_after": null,
           "reason": null,
