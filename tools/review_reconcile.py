@@ -108,6 +108,7 @@ def _subject(snapshot: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
         "subject.comparison.commit_sha",
     )
     source_url = _string(subject.get("source_url"), "subject.source_url")
+    title = _optional_summary(subject.get("title"))
 
     return (
         {
@@ -129,11 +130,7 @@ def _subject(snapshot: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
             "base_commit": base,
             "merge_base_commit": merge_base,
             "source_url": source_url,
-            **(
-                {"title": title}
-                if (title := _optional_summary(subject.get("title"))) is not None
-                else {}
-            ),
+            **({"title": title} if title is not None else {}),
         },
     )
 
