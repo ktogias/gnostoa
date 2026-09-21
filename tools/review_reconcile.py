@@ -235,7 +235,6 @@ def _review_source_status(coverage: dict[str, dict[str, Any]]) -> str:
     return "COMPLETE"
 
 
-
 def _review_payloads(
     snapshot: dict[str, Any],
 ) -> tuple[list[object], list[object]]:
@@ -335,7 +334,6 @@ def _thread_records_by_review(
         threads_by_review.setdefault(review_observation_id, []).append(thread)
 
     return normalized_reviews, threads_by_review
-
 
 
 def _observation_binding(
@@ -624,7 +622,6 @@ def _projection_coverage(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return _coverage(snapshot)
 
 
-
 def _normalize_check(raw_check: object) -> dict[str, Any]:
     check = _mapping(raw_check, "check")
     _string(check.get("id"), "check.id")
@@ -761,7 +758,6 @@ def _check_summary(snapshot: dict[str, Any], target_head: str) -> dict[str, Any]
         "omitted_pending": omitted_pending,
         "omitted_non_success": omitted_non_success,
     }
-
 
 
 def _protected_projection(
@@ -955,7 +951,6 @@ def _projection_string_list(value: object, label: str) -> list[str]:
     return result
 
 
-
 def _projection_check_limit(*, allow_legacy_check_bounds: bool) -> int:
     if allow_legacy_check_bounds:
         return _PRE_BOUND_MAX_CHECK_NAMES
@@ -1099,7 +1094,6 @@ def _validate_projection_observed_r2a(value: object, label: str) -> str:
     else:
         raise ReconciliationInputError(f"{label}.status is unsupported")
     return outcome
-
 
 
 def _validate_projection_header(document: dict[str, Any]) -> None:
