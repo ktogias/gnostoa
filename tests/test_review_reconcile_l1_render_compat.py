@@ -262,14 +262,20 @@ class UsefulL1RenderCompatibilityTests(unittest.TestCase):
             },
         )
 
-        for byte_count, accepted in ((128, True), (129, False)):
-            with self.subTest(byte_count=byte_count):
+        cases = (
+            ("x" * 128, True),
+            ("x" * 129, False),
+            ("é" * 64, True),
+            ("é" * 64 + "x", False),
+        )
+        for label, accepted in cases:
+            with self.subTest(byte_count=len(label.encode("utf-8")), accepted=accepted):
                 candidate = dict(projection)
                 candidate["checks"] = {
                     "observed_names": 1,
                     "ambiguous": [],
                     "pending": [],
-                    "non_success": ["x" * byte_count],
+                    "non_success": [label],
                     "omitted_ambiguous": 0,
                     "omitted_pending": 0,
                     "omitted_non_success": 0,
