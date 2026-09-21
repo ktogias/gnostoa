@@ -1020,6 +1020,49 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         self.assertIn("HTTP 403", rendered)
         self.assertIn("PR #2: UPDATED", rendered)
 
+    def test_publish_summary_omits_unbounded_http_status(self) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures.adapter_fixture()
+
+        with tempfile.TemporaryDirectory() as directory:
+            payload = Path(directory) / "publication.json"
+            payload.write_text('[{"pull_number":1}]', encoding="utf-8")
+            with (
+                mock.patch.object(
+                    adapter,
+                    "publish_entry",
+                    side_effect=adapter.ProviderWriteError(
+                        "bounded failure",
+                        status=999,
+                    ),
+                ),
+                mock.patch("builtins.print") as print_output,
+                mock.patch.dict(
+                    adapter.os.environ,
+                    {"GH_TOKEN": _NONEMPTY_TEST_VALUE},
+                    clear=True,
+                ),
+            ):
+                code = adapter.main(
+                    [
+                        "--mode",
+                        "publish",
+                        "--repository",
+                        "ktogias/gnostoa",
+                        "--payload",
+                        str(payload),
+                    ]
+                )
+
+        self.assertEqual(1, code)
+        printed = "\n".join(
+            call.args[0]
+            for call in print_output.call_args_list
+            if call.args and isinstance(call.args[0], str)
+        )
+        self.assertIn("ProviderWriteError", printed)
+        self.assertNotIn("HTTP 999", printed)
+
     def test_publish_summary_is_visible_in_ordinary_logs(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures.adapter_fixture()
