@@ -718,6 +718,51 @@ class UsefulL1RedContractTests(unittest.TestCase):
         self.assertEqual("COMPLETE", snapshot["coverage"]["conversation"]["status"])
         self.assertEqual("UNAVAILABLE", snapshot["conversation"][0]["author"])
 
+    def test_deleted_review_actor_keeps_review_and_thread_sources_complete(self) -> None:
+        adapter = _adapter()
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+        replies = _complete_replies(root)
+        replies[f"{root}/pulls/300/reviews?per_page=100"][0][0]["user"] = None
+        replies[f"{root}/pulls/300/comments?per_page=100"][0][0]["user"] = None
+
+        snapshot = adapter.collect_snapshot(
+            _PagedFake(replies),
+            repository="ktogias/gnostoa",
+            pull_number=300,
+            observed_at="2026-09-19T16:41:00Z",
+        )
+
+        fallback = "github-unavailable-reviewer:10"
+        self.assertEqual("COMPLETE", snapshot["coverage"]["reviews"]["status"])
+        self.assertEqual("COMPLETE", snapshot["coverage"]["review_threads"]["status"])
+        self.assertEqual(fallback, snapshot["reviews"][0]["reviewer_id"])
+        first_thread = next(
+            item
+            for item in snapshot["review_threads"]
+            if item["review_observation_id"] == "github-review-10"
+        )
+        self.assertEqual(fallback, first_thread["reviewer_id"])
+
+    def test_missing_review_identity_stays_fail_closed(self) -> None:
+        adapter = _adapter()
+        root = "https://api.github.com/repos/ktogias/gnostoa"
+        replies = _complete_replies(root)
+        replies[f"{root}/pulls/300/comments?per_page=100"][0][0][
+            "pull_request_review_id"
+        ] = None
+
+        snapshot = adapter.collect_snapshot(
+            _PagedFake(replies),
+            repository="ktogias/gnostoa",
+            pull_number=300,
+            observed_at="2026-09-19T16:41:00Z",
+        )
+
+        self.assertNotEqual(
+            "COMPLETE",
+            snapshot["coverage"]["review_threads"]["status"],
+        )
+
     def test_adapter_follows_pagination_and_marks_each_source_complete(self) -> None:
         adapter = _adapter()
         root = "https://api.github.com/repos/ktogias/gnostoa"
