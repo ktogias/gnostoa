@@ -100,7 +100,14 @@ provider-neutral internal snapshot with these normalized concepts:
 - semantic-review observations;
 - review-thread observations;
 - exact-head check observations with an adapter-defined opaque logical key,
-  human display name and explicit observation timestamps.
+  human display name and explicit observation timestamps;
+- source coverage with explicit status, page count and retained cardinality.
+
+Every normalized coverage entry carries a mandatory non-negative `count`.
+Subject coverage must count exactly one subject, and every retained array source
+must have `count == len(payload)`. A provider cannot claim `COMPLETE` while
+omitting cardinality evidence; missing or contradictory cardinality is invalid
+normalized input and fails closed in the common reducer.
 
 Provider-native IDs are opaque identities, not ordering primitives. Adapters must
 normalize a logical check identity separately from the human display name and
@@ -123,6 +130,15 @@ referential integrity before both R2A-input composition and owner-facing
 projection construction. A thread that references an unknown review observation
 is invalid normalized evidence and cannot be silently omitted from a
 `CURRENT_AT_OBSERVATION` projection.
+
+Recommendation effectiveness and thread persistence are separate normalized
+concerns. A later provider-effective opinion may supersede an older
+`APPROVED|CHANGES_REQUESTED` recommendation, but it does not resolve threads
+rooted in that older review. If such a superseded review still owns an
+unresolved thread, the common reducer retains that discussion as a derived
+thread-only `COMMENT_ONLY` observation. This keeps unresolved-thread policy
+visible to existing R2A semantics without resurrecting the superseded
+recommendation for quorum, conflict or recommendation-blocker evaluation.
 
 Execution identity follows the same boundary. The shared projection core carries
 one opaque, non-empty `execution_id`; it does not parse, order or coerce that
