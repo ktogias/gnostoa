@@ -1024,7 +1024,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         adapter = fixtures._adapter()
 
         with (
-            mock.patch.object(adapter, "print") as print_output,
+            mock.patch("builtins.print") as print_output,
             mock.patch.dict(adapter.os.environ, {}, clear=True),
         ):
             adapter._summary(["line one", "line two"])
