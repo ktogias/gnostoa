@@ -1,6 +1,6 @@
 {
-  "schema_version": "gnostoa-reviewer-capability-registry/v0.11",
-  "generated_at": "2026-09-21T23:07:19Z",
+  "schema_version": "gnostoa-reviewer-capability-registry/v0.12",
+  "generated_at": "2026-09-21T23:26:00Z",
   "research_date": "2026-09-21",
   "subject": {
     "repository": "ktogias/gnostoa",
@@ -69,7 +69,8 @@
         },
         "ready_activation": {
           "mode": "automatic_observed",
-          "readback_before_manual": true
+          "readback_before_manual": true,
+          "route_id": "coderabbit:ready:auto-review"
         }
       },
       "evidence": [
@@ -134,7 +135,8 @@
         },
         "ready_activation": {
           "mode": "manual_observed",
-          "readback_before_manual": true
+          "readback_before_manual": true,
+          "route_id": null
         }
       },
       "evidence": [
@@ -201,7 +203,8 @@
           "route_state": "QUOTA_EXHAUSTED",
           "scope_identity": null,
           "event_at": "2026-09-21T08:23:00Z",
-          "attempt_id": "github:issue-comment:5757528323"
+          "attempt_id": "github:issue-comment:5757528323",
+          "route_id": null
         },
         {
           "scope": "repository",
@@ -224,7 +227,8 @@
           "route_state": "UNKNOWN",
           "scope_identity": "github:ktogias/gnostoa",
           "event_at": "2026-09-21T18:06:10Z",
-          "attempt_id": "github:pull-review:5270142025"
+          "attempt_id": "github:pull-review:5270142025",
+          "route_id": null
         },
         {
           "scope": "subject",
@@ -245,7 +249,8 @@
           "route_state": "COMPLETED",
           "scope_identity": "github:ktogias/gnostoa:pull/297",
           "event_at": "2026-09-21T18:55:52Z",
-          "attempt_id": "github:pull-review:5270605827"
+          "attempt_id": "github:pull-review:5270605827",
+          "route_id": "sourcery:comment:review"
         },
         {
           "scope": "account",
@@ -262,7 +267,8 @@
           "route_state": "AVAILABLE",
           "scope_identity": null,
           "event_at": "2026-09-21T18:55:52Z",
-          "attempt_id": "github:pull-review:5270605827"
+          "attempt_id": "github:pull-review:5270605827",
+          "route_id": null
         },
         {
           "scope": "account",
@@ -279,7 +285,8 @@
           "route_state": "AVAILABLE",
           "scope_identity": null,
           "event_at": "2026-09-21T19:35:39Z",
-          "attempt_id": "github:pull-review:5270987018"
+          "attempt_id": "github:pull-review:5270987018",
+          "route_id": null
         }
       ]
     },
@@ -338,7 +345,8 @@
         },
         "ready_activation": {
           "mode": "automatic_observed",
-          "readback_before_manual": true
+          "readback_before_manual": true,
+          "route_id": "qodo:ready:auto-review"
         }
       },
       "evidence": [
@@ -400,7 +408,8 @@
         },
         "ready_activation": {
           "mode": "automatic_observed",
-          "readback_before_manual": true
+          "readback_before_manual": true,
+          "route_id": "codeant:ready:auto-review"
         }
       },
       "evidence": [
@@ -452,7 +461,8 @@
         },
         "ready_activation": {
           "mode": "unknown",
-          "readback_before_manual": true
+          "readback_before_manual": true,
+          "route_id": null
         }
       },
       "evidence": [
@@ -495,7 +505,8 @@
           "route_state": "QUOTA_EXHAUSTED",
           "scope_identity": null,
           "event_at": "2026-09-19T17:55:48Z",
-          "attempt_id": "github:issue-comment:5744117247"
+          "attempt_id": "github:issue-comment:5744117247",
+          "route_id": null
         }
       ]
     },
@@ -526,7 +537,8 @@
         },
         "ready_activation": {
           "mode": "configurable",
-          "readback_before_manual": true
+          "readback_before_manual": true,
+          "route_id": "bito:ready:auto-review"
         }
       },
       "evidence": [
@@ -575,7 +587,8 @@
           "route_state": "UNSUPPORTED_FOR_SUBJECT",
           "scope_identity": "github:ktogias/gnostoa:pull/285",
           "event_at": "2026-09-21T16:21:45Z",
-          "attempt_id": "github:issue-comment:5763817612"
+          "attempt_id": "github:issue-comment:5763817612",
+          "route_id": "bito:comment:review"
         }
       ]
     },
@@ -619,7 +632,8 @@
         },
         "ready_activation": {
           "mode": "automatic_observed",
-          "readback_before_manual": true
+          "readback_before_manual": true,
+          "route_id": "codacy-ai-reviewer:ready:auto-review"
         }
       },
       "evidence": [
@@ -682,7 +696,8 @@
           "route_state": "UNKNOWN",
           "scope_identity": "github:ktogias/gnostoa",
           "event_at": "2026-09-21T18:05:31Z",
-          "attempt_id": "github:issue-comment:5765187617"
+          "attempt_id": "github:issue-comment:5765187617",
+          "route_id": null
         },
         {
           "scope": "subject",
@@ -702,7 +717,8 @@
           "route_state": "COMPLETED",
           "scope_identity": "github:ktogias/gnostoa:pull/297",
           "event_at": "2026-09-21T18:55:26Z",
-          "attempt_id": "github:pull-review:5270601975"
+          "attempt_id": "github:pull-review:5270601975",
+          "route_id": null
         },
         {
           "scope": "subject",
@@ -723,7 +739,8 @@
           "route_state": "COMPLETED",
           "scope_identity": "github:ktogias/gnostoa:pull/297",
           "event_at": "2026-09-21T20:20:00Z",
-          "attempt_id": null
+          "attempt_id": null,
+          "route_id": null
         },
         {
           "scope": "subject",
@@ -744,7 +761,8 @@
           "route_state": "COMPLETED",
           "scope_identity": "github:ktogias/gnostoa:pull/297",
           "event_at": "2026-09-21T21:14:36Z",
-          "attempt_id": null
+          "attempt_id": null,
+          "route_id": null
         }
       ]
     },
@@ -773,7 +791,8 @@
         },
         "ready_activation": {
           "mode": "unknown",
-          "readback_before_manual": true
+          "readback_before_manual": true,
+          "route_id": null
         }
       },
       "evidence": [
@@ -818,7 +837,8 @@
           "route_state": "UNKNOWN",
           "scope_identity": "github:ktogias/gnostoa",
           "event_at": null,
-          "attempt_id": null
+          "attempt_id": null,
+          "route_id": null
         },
         {
           "scope": "subject",
@@ -841,7 +861,8 @@
           "route_state": "COMPLETED",
           "scope_identity": "github:ktogias/gnostoa:pull/297",
           "event_at": "2026-09-21T19:05:45Z",
-          "attempt_id": "github:pull-review:5270699955"
+          "attempt_id": "github:pull-review:5270699955",
+          "route_id": null
         }
       ]
     },
@@ -869,7 +890,8 @@
         },
         "ready_activation": {
           "mode": "unknown",
-          "readback_before_manual": true
+          "readback_before_manual": true,
+          "route_id": null
         }
       },
       "evidence": [
@@ -896,7 +918,8 @@
           "route_state": "CREDIT_REQUIRED",
           "scope_identity": null,
           "event_at": "2026-09-21T09:25:20Z",
-          "attempt_id": "github:issue-comment:5758253881"
+          "attempt_id": "github:issue-comment:5758253881",
+          "route_id": null
         }
       ]
     },
@@ -926,7 +949,8 @@
         },
         "ready_activation": {
           "mode": "manual_observed",
-          "readback_before_manual": true
+          "readback_before_manual": true,
+          "route_id": null
         }
       },
       "evidence": [
@@ -989,6 +1013,7 @@
       "scope_identity",
       "status",
       "route_state",
+      "route_id",
       "attempt_id",
       "event_at",
       "observed_at",
@@ -1045,13 +1070,14 @@
     "route_state_rule": "Every observations[].route_state is required and must belong to terminal_route_states or nonterminal_route_states. observations[].status may be a descriptive provider-event label or a route-state label; orchestration terminality is determined only from route_state, never inferred from descriptive status. COMPLETED is route completion only and gains no semantic-review meaning without the separate subject/evidence/qualification gates.",
     "attempt_failure_stales_availability_rule": "If an applicable observation with route_state FAILED or TIMED_OUT is newer than the latest applicable AVAILABLE observation, a planner must not auto-dispatch from that stale AVAILABLE state. It must reacquire availability/eligibility; absent a current read-back, use REVALIDATION_REQUIRED/manual disposition. The failure/timeout remains an attempt outcome, not a claim that the provider is unavailable.",
     "descriptive_event_rule": "Statuses listed in descriptive_observation_statuses are provider-event evidence only. Repository-scoped descriptive observations MUST use route_state UNKNOWN because they establish configuration behavior without an exact route subject; they are intentionally unable to decide route terminality, semantic completion, availability, or quorum. Subject-scoped route outcomes use the exact-head rules separately.",
-    "attempt_state_precedence_rule": "Invocation-attempt state is evaluated independently from availability. For the same applicable subject/route and comparable timestamps, the latest observation among REQUESTED, IN_PROGRESS, COMPLETED, SKIPPED, FAILED, and TIMED_OUT is the latest known attempt state. COMPLETED is the only attempt-terminal state that may carry successful review evidence; SKIPPED, FAILED, and TIMED_OUT never satisfy a required review domain. If attempt identity/order is ambiguous, revalidate instead of guessing.",
+    "attempt_state_precedence_rule": "Invocation-attempt state is evaluated independently from availability. Route-specific precedence requires the same provider, same applicable subject, the same non-null route_id, attributable attempt/order and comparable timestamps. The latest observation among REQUESTED, IN_PROGRESS, COMPLETED, SKIPPED, FAILED, and TIMED_OUT is then the latest known attempt state for that route. COMPLETED is the only attempt-terminal state that may carry successful review evidence; SKIPPED, FAILED, and TIMED_OUT never create semantic acceptance. Null/mismatched route identity or ambiguous attempt order requires revalidation instead of guessed precedence.",
     "status_dimension_rule": "A single observation.status may belong to a route-state vocabulary or to descriptive_observation_statuses. Scheduling combines separate availability and attempt dimensions; no precedence rule may reinterpret an attempt failure as provider unavailability or a descriptive event as route completion.",
     "availability_freshness_rule": "Availability has no implicit age-based TTL. For automatic scarce-review dispatch, freshness requires provider/account/subject availability read-back acquired in the same planning execution/cut. If no current read-back adapter/result exists, or the result is ambiguous, route_state is REVALIDATION_REQUIRED for automation purposes. Historical retry_after may guide when to reacquire but never substitutes for current dispatch authorization.",
-    "ready_activation_rule": "Ready transition and manual invocation are mutually exclusive provider-level activation paths for one reviewer/candidate generation. After moving a PR to Ready, the planner MUST perform a bounded current-state read-back before recommending any manual trigger. If the selected provider has already started or completed automatically on the exact head through any of its retained route_id surfaces, no primary or alternative manual trigger is permitted. Otherwise exactly one retained route may be selected for manual activation only if that route is dispatch-eligible; sibling routes remain suppressed once activation is attributable.",
-    "activation_identity_rule": "Activation suppression has two nested identities on one exact head. First, provider/head mutual exclusion: after Ready auto-starts or completes any current-head review for a provider, the planner MUST NOT recommend a manual activation through that provider's primary or alternative route. Second, when no provider/head activation exists, stable route_id distinguishes the chosen invocation surface and suppresses duplicate REQUESTED/IN_PROGRESS/COMPLETED activation on that same route/head. Different route_id values remain distinct surfaces for attribution and pre-activation selection, but they are never a license for concurrent or sequential duplicate provider activation on the same exact head.",
+    "ready_activation_rule": "Ready transition and manual invocation are mutually exclusive provider-level activation paths for one reviewer/candidate generation. After moving a PR to Ready, the planner MUST perform a bounded current-state read-back before recommending any manual trigger. Automatic Ready activity is attributed to ready_activation.route_id; manual activity uses its retained manual route_id. If the selected provider has already started or completed on the exact head through any retained route surface, no sibling manual/Ready activation is permitted. Otherwise exactly one manual route may be selected only if dispatch-eligible; if automatic activity is observed but cannot be attributed to a retained Ready route identity, use REVALIDATION_REQUIRED rather than aliasing it to a manual route.",
+    "activation_identity_rule": "Activation suppression has two nested identities on one exact head. First, provider/head mutual exclusion: after Ready auto-starts or completes any current-head review for a provider, the planner MUST NOT recommend a manual activation through that provider's primary or alternative route. Second, every attributable activation uses its stable route_id — including non-null ready_activation.route_id for automatic Ready review — for surface-specific reconciliation and duplicate suppression. Different route_id values remain distinct surfaces for attribution and pre-activation selection, but never authorize duplicate provider activation on the same exact head.",
     "ready_activation_fields": [
       "mode",
+      "route_id",
       "readback_before_manual"
     ],
     "ready_activation_modes": [
@@ -1062,7 +1088,7 @@
       "not_applicable"
     ],
     "planning_as_of_rule": "Planner input carries an exact RFC3339 planning as_of plus current provider read-back evidence and current non-secret scope identities. Historical committed observations may explain prior states but cannot by themselves authorize automatic scarce-review dispatch at as_of.",
-    "route_completion_scope_rule": "route_state=COMPLETED means only that an appropriately scoped provider route/attempt reached a terminal completed state. It does NOT establish current-head semantic review evidence, qualified reviewer/domain status, quorum, approval, or merge authority. Repository-scoped descriptive observations MUST use route_state UNKNOWN and never COMPLETED. Semantic review evidence can be considered only through subject-scoped exact-head-bound records and the existing review-assurance/qualification policy.",
+    "route_completion_scope_rule": "route_state=COMPLETED means only that an appropriately scoped provider attempt reached a terminal completed state. A non-null matching route_id is required before that observation can suppress or complete an orchestration route. A subject-scoped exact-head formal review with route_id=null may still be retained as semantic review evidence through existing reviewer/source R2A capture, but it is not route-specific activation evidence. COMPLETED does NOT by itself establish qualified reviewer/domain status, quorum, approval, or merge authority. Repository-scoped descriptive observations MUST use route_state UNKNOWN.",
     "scope_identity_rule": "Every observation carries scope_identity as a non-secret stable identifier or null. Historical precedence and cross-observation comparison are allowed only when provider, scope, applicable subject, and a non-null scope_identity all match. A null scope_identity is historical-only and MUST force current revalidation before automatic dispatch; identities must never contain credentials, tokens, billing secrets, or private installation secrets.",
     "event_time_rule": "event_at is the provider/source event time when an exact RFC3339 timestamp is attributable; observed_at is when Gnostoa acquired/retained the observation. Historical precedence uses event_at only when it is exact and scope_identity is non-null and matching. Missing/coarse event_at cannot be reconstructed from observed_at and requires revalidation for current-state selection.",
     "instruction_render_rule": "Instructions are caller-supplied text, never provider folklore generated by the planner. Normalize CRLF/CR to LF, encode UTF-8, and reject payloads over instruction_policy.max_utf8_bytes. HT and LF are the only permitted control characters; other C0/C1 controls are rejected. Caller text containing reserved placeholder literals is rejected. Rendering is exactly one non-recursive substitution pass. For optional_template, empty instructions emit command-only; for required_template, empty instructions are invalid. When isolation is required/recommended, caller instructions MUST NOT contain any retained comment-command trigger from the registry. Any validation failure yields MANUAL_ONLY_NO_DISPATCH; no partial/fallback comment is emitted.",
@@ -1077,7 +1103,7 @@
     "retry_time_rule": "retry_after is an exact RFC3339 instant or null. Date-only provider recovery/resume information is non-comparable coarse metadata retained in details and may guide when to revalidate, but it is never normalized into retry_after.",
     "optional_route_disposition_rule": "DESELECTED_OPTIONAL is a terminal scheduling/disposition outcome only when protected assurance already reports PASS or an authority-produced route_binding has optional_for_current_assurance=true. It MUST record the reason and remains non-evidence: it never counts as a review and never advances protected assurance. When assurance is not PASS, a policy_eligible route that could add a not-yet-qualified authority-bound independence domain is not automatically optional. Missing or ambiguous route binding forbids automatic deselection and yields QUALIFICATION_ROUTE_BINDING_REQUIRED/manual disposition.",
     "reconciliation_wait_rule": "Final collection waits for every route that remains selected. A REVALIDATION_REQUIRED route may be explicitly transitioned to DESELECTED_OPTIONAL only under optional_route_disposition_rule; this removes it from the active selected set without fabricating review evidence. A policy_eligible assurance-advancing route, or any route whose qualification binding is missing/ambiguous while protected assurance is not PASS, remains blocking for automatic convergence recommendations.",
-    "attempt_identity_rule": "attempt_id is an optional non-secret provider/request/review identity for one invocation or result. It is interpreted only inside its stable route_id and exact-head scope. When present it participates in same-head activation de-duplication and attempt ordering. If multiple same-route/same-head attempts exist and their identities/order cannot be distinguished, the planner MUST return REVALIDATION_REQUIRED rather than suppress or emit a trigger by guess.",
+    "attempt_identity_rule": "attempt_id is an optional non-secret provider/request/review identity for one invocation or result. It participates in route-level activation de-duplication and attempt ordering only when observations[].route_id is non-null and matches the retained route identity. A route_id=null attempt remains historical provider evidence and cannot suppress a current route. If multiple same-route/same-head attempts exist and their identities/order cannot be distinguished, the planner MUST return REVALIDATION_REQUIRED rather than suppress or emit a trigger by guess.",
     "planning_cut_fields": [
       "cut_id",
       "as_of",
@@ -1119,7 +1145,7 @@
       "TIMED_OUT",
       "REVALIDATION_REQUIRED"
     ],
-    "current_readback_rule": "Automatic scarce-review dispatch requires source=provider_current_readback, cut_id exactly equal to the active planning_cut.cut_id, route_id exactly equal to one retained registry primary/alternative route identity, planning_subject exactly equal to the planning-cut exact subject/head, availability_state=AVAILABLE, and eligibility_state=ELIGIBLE. The fact-level subject MUST obey its declared scope semantics and may be null for account scope. scope_identity must be current and non-null where required. readback_at and planning_cut.as_of are exact RFC3339 timestamps from the same planner execution. Committed historical registry observations MUST NOT be promoted into this shape or satisfy the same-cut read-back requirement. Missing, stale-head, mismatched-cut, unknown-route, null-identity, incomplete availability-plus-eligibility proof, or ambiguous read-back yields REVALIDATION_REQUIRED.",
+    "current_readback_rule": "Automatic scarce-review dispatch requires source=provider_current_readback, cut_id exactly equal to the active planning_cut.cut_id, route_id exactly equal to one retained manual primary/alternative route_id or one non-null ready_activation.route_id, planning_subject exactly equal to the planning-cut exact subject/head, availability_state=AVAILABLE, and eligibility_state=ELIGIBLE. The fact-level subject MUST obey its declared scope semantics and may be null for account scope. scope_identity must be current and non-null where required. readback_at and planning_cut.as_of are exact RFC3339 timestamps from the same planner execution. Committed historical registry observations MUST NOT be promoted into this shape or satisfy the same-cut read-back requirement. Missing, stale-head, mismatched-cut, unknown-route, null-identity, incomplete availability-plus-eligibility proof, or ambiguous read-back yields REVALIDATION_REQUIRED.",
     "final_review_cut_fields": [
       "cut_id",
       "head_commit",
@@ -1239,7 +1265,7 @@
       "RECONCILE"
     ],
     "failure_recovery_rule": "FAILED and TIMED_OUT terminate one invocation attempt. There is no automatic retry in the admitted read-only planner. After same-cut revalidation, a policy_eligible assurance-advancing route moves to MANUAL_ESCALATION_REQUIRED and remains non-converged until a new explicitly authorized attempt succeeds and protected R2A is recomputed, or alternative qualified evidence changes protected assurance. Missing/ambiguous route qualification binding yields QUALIFICATION_ROUTE_BINDING_REQUIRED. Optional routes may be DESELECTED_OPTIONAL only under optional_route_disposition_rule.",
-    "route_identity_rule": "route_id is a retained, stable, non-secret identity for one provider invocation/configuration surface. It is unique across all primary and alternative registry routes and is never derived at runtime from command text, provider display labels or array position. A materially different invocation surface receives a new route_id. Route selection, current_readback, activation deduplication, protected route bindings and reconciliation MUST use this exact identity.",
+    "route_identity_rule": "route_id is a retained, stable, non-secret identity for one provider review surface. The route inventory is the union of every manual_trigger primary/alternative route_id and every non-null ready_activation.route_id. Identities are unique across that inventory and are never derived at runtime from command text, provider display labels or array position. A materially different invocation/lifecycle surface receives a new route_id. Route selection, current_readback, activation deduplication, protected route bindings and reconciliation MUST use this exact identity.",
     "protected_assurance_fields": [
       "subject_head_commit",
       "outcome",
@@ -1279,9 +1305,11 @@
       "revoked"
     ],
     "assurance_pass_through_rule": "protected_assurance is authority-produced input derived from the effective review policy, R2A result and accepted Issue #10 qualification snapshot. The planner MUST preserve outcome, reason, minimum_distinct_domains, qualified_domain_ids, required_capability_ids and qualification_revision without re-evaluating quorum or qualification. Owner-decision readiness is blocked unless completeness=COMPLETE, subject_head_commit equals the current exact head and outcome=PASS. Missing, ambiguous, differently-head-bound or incomplete protected assurance is blocking.",
-    "route_binding_rule": "Each protected route_binding joins one retained route_id to authority-owned reviewer_id/source_id qualification identity and independence_domain_id. policy_eligible and optional_for_current_assurance are produced upstream by the protected qualification/policy adapter after applying qualification status, freshness, owner relation, scope and required-capability rules; the planner MUST NOT derive either value from provider identity, route count or registry capability claims. A binding whose route_id is absent from the registry, duplicated, ambiguous or not attributable to the accepted qualification revision is invalid protected input.",
+    "route_binding_rule": "Each protected route_binding joins one retained review route_id — manual/alternative or non-null Ready-auto surface — to authority-owned reviewer_id/source_id qualification identity and independence_domain_id. policy_eligible and optional_for_current_assurance are produced upstream by the protected qualification/policy adapter after applying qualification status, freshness, owner relation, scope and required-capability rules; the planner MUST NOT derive either value from provider identity, route count or registry capability claims. A binding whose route_id is absent from the retained route inventory, duplicated, ambiguous or not attributable to the accepted qualification revision is invalid protected input.",
     "assurance_progression_rule": "When protected assurance is INCOMPLETE with reason=QUORUM_UNMET, the planner may prioritize only currently AVAILABLE+ELIGIBLE routes with policy_eligible=true whose authority-bound independence_domain_id is not already present in qualified_domain_ids. This is scheduling diversity, not a quorum decision. The planner MUST NOT claim that dispatching or completing such a route satisfies quorum; only a later protected R2A result may do so. If assurance is not PASS and no complete authority route binding exists for a route claimed to advance assurance, surface QUALIFICATION_ROUTE_BINDING_REQUIRED rather than spending scarce quota by guess. Unbound routes may still be described as exploratory/optional evidence but never as assurance-advancing final routes.",
-    "alternative_activation_rule": "Primary and alternative routes of one provider are mutually exclusive activation choices for one exact candidate generation unless the earlier choice produced no attributable activation and a fresh same-cut provider read-back proves no REQUESTED, IN_PROGRESS or COMPLETED provider/head attempt exists. Once any provider/head activation is attributable, every sibling route is suppressed for that head. A failed or timed-out attempt follows retry_policy/manual escalation and cannot be bypassed by switching to a sibling route."
+    "alternative_activation_rule": "Primary, alternative and Ready-auto routes of one provider are mutually exclusive activation choices for one exact candidate generation. A sibling route may replace a prior choice only when the earlier choice produced no attributable provider/head activation and a fresh same-cut provider read-back proves no REQUESTED, IN_PROGRESS or COMPLETED attempt exists. Once any provider/head activation is attributable, every sibling route is suppressed for that head. A failed or timed-out attempt follows retry_policy/manual escalation and cannot be bypassed by switching route.",
+    "ready_activation_route_rule": "ready_activation.route_id identifies the provider's Ready-triggered automatic/configurable review surface, not a manual trigger. mode=automatic_observed MUST have a non-null unique route_id. mode=manual_observed and not_applicable MUST use route_id=null. mode=configurable may retain a non-null route_id when the automatic surface is known even if current repository configuration must still be read back. mode=unknown uses null unless an attributable automatic surface identity is independently established. A non-null Ready route participates in the same provider/head mutual-exclusion rule as manual routes.",
+    "observation_route_identity_rule": "observations[].route_id is either one retained route identity from the provider's manual/Ready route inventory or null. Null means the historical fact/attempt cannot be attributed to one review surface and therefore MUST NOT suppress, deduplicate, satisfy or order a specific route activation. Provider/account availability facts may legitimately use route_id=null. Subject-scoped formal review evidence with route_id=null may still remain exact-head semantic evidence for R2A through its reviewer/source attribution, but it cannot be used as route-specific orchestration evidence."
   },
   "observation_status_vocabulary": [
     "COMPLETED",

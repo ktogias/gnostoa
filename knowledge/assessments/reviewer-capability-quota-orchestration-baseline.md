@@ -5,7 +5,7 @@ description: Dated Gnostoa-self baseline separating reviewer capabilities, accou
 status: draft
 generated:
   by: openai/gpt-5.6-sol
-  at: "2026-09-21T23:07:19Z"
+  at: "2026-09-21T23:26:00Z"
 sources:
   - id: work-item
     resource: https://github.com/ktogias/gnostoa/issues/15
@@ -167,7 +167,7 @@ is the first implementation-private registry snapshot. It intentionally has no
 standalone lifecycle/promotion flag: the protected repository revision and
 Decision 0087 determine whether a registry revision is operative, and a
 standalone JSON status token must not manufacture review or integration
-authority. Version `v0.11` exposes one planner-facing shape rather than
+authority. Version `v0.12` exposes one planner-facing shape rather than
 provider-specific field names.
 
 Every provider has the same typed `capabilities.manual_trigger` contract:
@@ -175,8 +175,10 @@ Every provider has the same typed `capabilities.manual_trigger` contract:
 `configuration_path`, `isolation`, `instruction_mode`,
 `instruction_template`, `dispatch_safety`, stable `route_id` and `alternatives`.
 Alternatives use the same normalized dispatch payload plus a `purpose` and their
-own stable `route_id`. Route identity is retained data, never reconstructed
-from command text, provider display name or array position.
+own stable `route_id`. Ready-triggered automatic/configurable review is a
+separate lifecycle surface and, when attributable, has its own stable
+`ready_activation.route_id`. Route identity is retained data, never
+reconstructed from command text, provider display name or array position.
 `dispatch_kind` prevents unlike surfaces from being conflated:
 `comment_command` carries actual comment syntax, `provider_action` carries a
 UI/API action, `configuration_only` carries a repository configuration path
@@ -187,7 +189,7 @@ configuration path or sentinel as GitHub comment syntax.
 Every volatile provider fact belongs in one `observations[]` array. Each
 observation has the same fields and an explicit `scope` of `account`,
 `repository` or `subject`; absent values are `null`, not alternate
-top-level keys. Version `v0.11` separates the operational dimensions inside every
+top-level keys. Version `v0.12` separates the operational dimensions inside every
 observation:
 
 - `status` records the observed provider event or outcome and may therefore be
@@ -225,7 +227,7 @@ instead of guessed precedence. A newer `FAILED` or `TIMED_OUT` attempt also
 stales older cached `AVAILABLE` for automatic dispatch without asserting
 `UNAVAILABLE`.
 
-Version `v0.11` keeps freshness deterministic by refusing to invent a TTL:
+Version `v0.12` keeps freshness deterministic by refusing to invent a TTL:
 retained registry observations are historical scheduling hints, not sufficient
 current provider truth for automatic dispatch. Before a scarce route is
 automatically dispatched, eligibility and the current non-sensitive scope identity
@@ -299,7 +301,7 @@ configuration paths and interactive/manual routes use their own fields.
 The registry therefore retains an explicit `instruction_mode` and optional
 `instruction_template`. CodeAnt's observed comment shape is represented as
 `{command}\n\n{instructions}`, where `instructions` is bounded,
-caller-supplied text rather than provider folklore. Version `v0.11` makes the
+caller-supplied text rather than provider folklore. Version `v0.12` makes the
 bound deterministic: normalize CRLF/CR to LF, allow HT/LF as the only control
 characters, reject other C0/C1 controls and the reserved caller literals
 `{command}` / `{instructions}`, and cap the normalized UTF-8 payload at
@@ -343,7 +345,7 @@ review could be requested in **13h03m**, retained as a
 `2026-09-21T21:26:00Z` retry prediction. A successful formal review was then
 observed at `2026-09-21T18:55:52Z`, proving historically that review capacity
 was usable by that later event. However, the retained account observations have
-`scope_identity=null`, so v0.11 deliberately forbids machine supersession or
+`scope_identity=null`, so v0.12 deliberately forbids machine supersession or
 current dispatch authorization from those records alone; current scheduling
 requires fresh account/provider read-back in the planning cut. The
 automatic-per-PR limit and rolling account availability remain separate quota
@@ -379,7 +381,7 @@ reviewed-line plans; reviewed-line usage resets with the billing period,
 incremental reviews count newly reviewed lines, and manual reruns count again.
 Gnostoa directly observed quota refusal at 40,037/40,000 reviewed lines and later
 at a higher account allowance. The later provider message supplied only the
-resume **date** `2026-10-15`, not an attributable instant, so v0.11 retains that
+resume **date** `2026-10-15`, not an attributable instant, so v0.12 retains that
 coarse value in observation details and keeps normalized `retry_after=null`.
 Current availability must still be reacquired before dispatch.
 
@@ -649,21 +651,25 @@ Accordingly:
 The next implementation should be a **read-only review planner**, not a
 dispatcher.
 
-Version `v0.11` makes freshness, activation, route identity and protected
+Version `v0.12` makes freshness, activation, route identity and protected
 assurance inputs explicit:
 
 - a planning cut carries `cut_id`, exact RFC3339 `as_of`, and the exact
   candidate subject;
-- every provider invocation/configuration surface has a stable retained
-  `route_id`; current read-back, activation deduplication, protected
-  qualification binding and reconciliation all use that same identity;
+- every manual review surface and every attributable Ready-auto surface has a
+  stable retained `route_id`; current read-back, activation deduplication,
+  protected qualification binding and reconciliation all use that same identity.
+  Ready auto-activity is never aliased to a manual command route;
 - a provider `current_readback` is a same-cut route-target evaluation, not a
   raw historical observation. Its `planning_subject` must equal the active
   cut's exact PR/head, while its fact-level `subject` remains faithful to the
   declared scope. Automatic scarce-review dispatch still requires current
   same-cut `availability_state=AVAILABLE` and
   `eligibility_state=ELIGIBLE`;
-- an observation may retain a non-sensitive `attempt_id`; ambiguous multiple
+- an observation may retain a nullable stable `route_id` plus non-sensitive
+  `attempt_id`. Only a non-null retained route identity allows route-level
+  activation deduplication/ordering; `route_id=null` keeps the fact historical
+  provider evidence and cannot suppress a current route. Ambiguous multiple
   same-route/same-head attempts become `REVALIDATION_REQUIRED`, never an
   inferred duplicate or retry;
 - a final-review cut is bound to one exact `head_commit` and one protected

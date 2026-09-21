@@ -5,7 +5,7 @@ description: Adopt a Gnostoa-self reviewer capability registry and staged review
 status: draft
 generated:
   by: openai/gpt-5.6-sol
-  at: "2026-09-21T23:07:19Z"
+  at: "2026-09-21T23:26:00Z"
 sources:
   - id: work-item
     resource: https://github.com/ktogias/gnostoa/issues/15
@@ -132,7 +132,7 @@ provider availability/eligibility and current scope identity are revalidated.
 
 No fixed freshness TTL is invented. For automatic dispatch of an external
 review route, current availability/eligibility must be reacquired in the current
-orchestration observation cut. Version `v0.11` binds that proof explicitly:
+orchestration observation cut. Version `v0.12` binds that proof explicitly:
 the active planning input carries `cut_id`, exact `as_of` and exact subject.
 A provider `current_readback` is a **same-cut route-target evaluation**, not a
 raw retained observation. It must carry the same `cut_id` and a
@@ -178,11 +178,13 @@ command whose ownership is not isolated from other installed apps is not
 eligible for automatic dispatch until repository-specific collision behavior is
 verified.
 
-The registry declares the smallest known-safe trigger form, a stable retained
-`route_id`, an explicit instruction contract and independent dispatch-safety
-metadata. Every primary and alternative surface has its own route identity;
-current read-back, activation deduplication and reconciliation use that exact
-identity rather than provider name, command text or array position. Typed
+The registry declares the smallest known-safe trigger form, stable retained
+route identities, an explicit instruction contract and independent dispatch-safety
+metadata. Every manual primary/alternative surface has its own `route_id`; an
+attributable Ready-triggered automatic/configurable surface has a distinct
+`ready_activation.route_id`. Current read-back, activation deduplication and
+reconciliation use the exact retained surface identity rather than provider
+name, command text or array position. Typed
 `dispatch_kind` separates `comment_command`, `provider_action`,
 `configuration_only`, `interactive_manual` and `unknown`; a UI action,
 configuration path or manual sentinel may never be reinterpreted as GitHub
@@ -192,7 +194,7 @@ and cannot override a `manual_only_until_*` dispatch-safety state.
 A planner may emit only a retained typed recipe whose fields satisfy the
 machine-readable `dispatch_kind_constraints`, or render a retained
 `instruction_template` using supported placeholders and bounded
-caller-supplied instructions. Version `v0.11` fixes a 4096-byte normalized
+caller-supplied instructions. Version `v0.12` fixes a 4096-byte normalized
 UTF-8 instruction maximum, CRLF/CR-to-LF normalization, HT/LF-only
 control-character allowance, reserved-placeholder rejection and one
 non-recursive substitution pass. Invalid input becomes
@@ -354,6 +356,11 @@ should implement a deterministic **read-only review planner**.
 It consumes current state and produces an advisory plan from the exact planning
 cut, provider-current read-backs, stable route identities and **protected
 assurance input aligned with the existing R2A/Issue #10 contracts**.
+
+Historical observations also carry nullable `route_id`. A null identity is
+truthful when the old provider event cannot be attributed to one retained
+activation surface; it remains semantic/provider evidence but cannot suppress a
+current route or participate in route-level attempt precedence.
 
 Protected assurance carries, without reinterpretation:
 

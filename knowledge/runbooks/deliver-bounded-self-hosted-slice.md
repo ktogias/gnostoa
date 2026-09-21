@@ -297,9 +297,12 @@ proof is `REVALIDATION_REQUIRED`/manual disposition.
 
 Use one isolated invocation per reviewer through the provider-specific channel
 retained in the capability registry. Use the retained stable `route_id` for the
-primary or alternative surface in current read-back, activation deduplication,
-protected qualification binding and reconciliation; never reconstruct route
-identity from provider name or command text. For comment-driven reviewers, use one
+primary/alternative manual surface and the distinct non-null
+`ready_activation.route_id` for attributable Ready auto-review in current
+read-back, activation deduplication, protected qualification binding and
+reconciliation; never reconstruct or alias route identity from provider name or
+command text. Historical observations with `route_id=null` cannot suppress a
+current activation. For comment-driven reviewers, use one
 top-level trigger comment per reviewer and do not batch several reviewer
 commands into one comment. For UI, API, GitHub-app and interactive-agent routes,
 use their recorded channel instead of manufacturing a comment command. The
@@ -336,10 +339,13 @@ intermediate head:
 4. transition to Ready when final collection is intended, then **read back
    current-head provider request/review state before any manual trigger** and
    bind that read-back to the active planning `cut_id`; for each selected
-   reviewer use exactly one activation path: if Ready already auto-started or
-   completed a current-head request/review, wait/reconcile it and do not
-   manually retrigger; otherwise consider one manual trigger only after
-   dispatch-safety and current eligibility are established. When multiple
+   reviewer use exactly one provider-level activation path: if Ready already
+   auto-started or completed a current-head request/review, attribute it to the
+   retained Ready route identity, wait/reconcile it and suppress every sibling
+   manual route; otherwise consider exactly one manual route only after
+   dispatch-safety and current eligibility are established. If automatic Ready
+   activity cannot be attributed to a retained route identity, use
+   `REVALIDATION_REQUIRED` rather than aliasing it to a manual route. When multiple
    same-head attempts exist and their provider/request identity or ordering is
    ambiguous, use `REVALIDATION_REQUIRED` instead of guessing;
 5. if current provider eligibility cannot be reacquired for an automatic
