@@ -150,6 +150,20 @@ rewrite or erase that history. This keeps existing R2A unresolved-thread policy
 visible without resurrecting a superseded or old-head recommendation for quorum,
 conflict or recommendation-blocker evaluation.
 
+If GitHub no longer exposes the review actor (`user: null`), the adapter may retain
+the native review through an opaque per-review fallback identity for provenance and
+thread correlation, but an `APPROVED` or `CHANGES_REQUESTED` recommendation from
+that unavailable identity is **non-effective**. It therefore cannot contribute
+quorum, conflict or recommendation-blocker authority. Any unresolved thread rooted
+in that review remains independently current through the derived `COMMENT_ONLY`
+thread observation described above.
+
+GitHub's native `isOutdated` thread flag is retained as provider provenance but
+does not suppress unresolved-thread evidence. L1 deliberately treats the
+reacquired current GraphQL resolved/unresolved state as the current thread-state
+fact even when the thread belongs to an old/outdated review diff; `isOutdated`
+must not resurrect recommendation authority or erase an unresolved discussion.
+
 Normalized semantic evidence must also respect the certified temporal boundary.
 Review, review-thread and check observation timestamps may equal or precede the
 snapshot cut, but cannot be later than it. A future-dated normalized observation
@@ -165,6 +179,15 @@ inside its stale/supersession comparator. A future adapter may use a completely
 different opaque execution token and ordering rule without changing the core.
 This is diagnostic generation identity only; it is not an L2 WorkLease,
 sequence service or exactly-once effect fence.
+
+For positive publication, the first GitHub adapter conservatively reuses the
+minimum applicable protected R2A subject/collection freshness bound as a
+write-side age ceiling. This is deliberately fail-closed: a slow collect/publish
+run may refuse a stale `CONTINUE_EXISTING_WORKFLOW` projection even though the
+workflow itself has a longer timeout. The coupling is an L1 operational proxy,
+not a redefinition of R2A semantics. Follow-up #290 owns measurement, batch-size
+and protected-state acquisition improvements and the decision whether publication
+should receive a dedicated freshness bound.
 
 ### Trusted execution/source boundary
 
