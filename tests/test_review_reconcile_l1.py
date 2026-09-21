@@ -78,6 +78,7 @@ def _valid_incomplete_result(input_document: dict[str, Any]) -> tuple[int, bytes
     trusted_cut = input_document["evaluation_context"]["as_of"]
     if not isinstance(trusted_cut, str):
         raise AssertionError("evaluation cut must be a string")
+    # skipcq: PYL-W0212 -- intentional white-box L1 test
     code, payload = review_live._semantic_incomplete(
         input_document,
         _bundle(),
@@ -1133,6 +1134,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
         root = "https://api.github.com/repos/ktogias/gnostoa"
         fake = _PagedFake(_complete_replies(root))
 
+        # skipcq: PYL-W0212 -- intentional white-box L1 test
         current = adapter._current_pr(fake, "ktogias/gnostoa", 300)
 
         self.assertEqual(
@@ -1172,6 +1174,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
 
         self.assertEqual(
             list(range(1, 12)),
+            # skipcq: PYL-W0212 -- intentional white-box L1 test
             adapter._open_pull_numbers(fake, "ktogias/gnostoa"),
         )
 
@@ -1231,6 +1234,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
             adapter.ProviderWriteError,
             "multiple valid owned L1 projection comments",
         ):
+            # skipcq: PYL-W0212 -- intentional white-box L1 test
             adapter._existing_projection(
                 comments,
                 repository="ktogias/gnostoa",
@@ -1295,6 +1299,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
             },
         )
 
+        # skipcq: PYL-W0212 -- intentional white-box L1 test
         existing = adapter._existing_projection(
             [
                 {
@@ -1353,6 +1358,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
                 side_effect=run_bound,
             ) as runner,
         ):
+            # skipcq: PYL-W0212 -- intentional white-box L1 test
             entry = adapter._collect_entry(
                 _PagedFake(_complete_replies_without_review_comments(root)),
                 "ktogias/gnostoa",
@@ -1380,6 +1386,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
             "_protected_state",
             side_effect=adapter.ProviderReadError("protected state unavailable"),
         ):
+            # skipcq: PYL-W0212 -- intentional white-box L1 test
             entry = adapter._collect_entry(
                 fake,
                 "ktogias/gnostoa",
@@ -1404,11 +1411,13 @@ class UsefulL1RedContractTests(unittest.TestCase):
         adapter = _adapter()
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "payload.json"
+            # skipcq: PYL-W0212 -- intentional white-box L1 test
             path.write_bytes(b"x" * (adapter._MAX_PUBLICATION_PAYLOAD_BYTES + 1))
             with self.assertRaisesRegex(
                 ValueError,
                 "publication payload exceeds bounded size",
             ):
+                # skipcq: PYL-W0212 -- intentional white-box L1 test
                 adapter._load_payload(path)
 
     def test_workflow_run_preserves_all_associated_pull_requests(self) -> None:
@@ -1422,14 +1431,18 @@ class UsefulL1RedContractTests(unittest.TestCase):
         )
         self.assertEqual(
             [301, 302],
+            # skipcq: PYL-W0212 -- intentional white-box L1 test
             adapter._workflow_run_pull_numbers(payload),
         )
+        # skipcq: PYL-W0212 -- intentional white-box L1 test
         self.assertEqual([], adapter._workflow_run_pull_numbers(""))
+        # skipcq: PYL-W0212 -- intentional white-box L1 test
         self.assertEqual([], adapter._workflow_run_pull_numbers("null"))
         with self.assertRaisesRegex(
             adapter.ProviderReadError,
             "workflow_run.pull_requests",
         ):
+            # skipcq: PYL-W0212 -- intentional white-box L1 test
             adapter._workflow_run_pull_numbers(json.dumps([{"number": 0}]))
 
     def test_l1_has_separate_guardrail_from_historical_r2a_promotion(self) -> None:
