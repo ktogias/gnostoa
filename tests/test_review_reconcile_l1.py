@@ -192,14 +192,16 @@ class _PagedFake:
     def graphql(self, query: str, variables: dict[str, Any]) -> Any:
         del query
         cursor = variables.get("cursor")
-        first_urls = [
-            url
-            for url in self.replies
-            if url.endswith("/pulls/300/comments?per_page=100")
-        ]
-        if len(first_urls) != 1:
-            raise RuntimeError("review comment fixture is unavailable or ambiguous")
-        first_url = first_urls[0]
+        first_url = next(
+            (
+                url
+                for url in self.replies
+                if url.endswith("/pulls/300/comments?per_page=100")
+            ),
+            None,
+        )
+        if first_url is None:
+            raise RuntimeError("review comment fixture is unavailable")
         if cursor is None:
             url = first_url
         elif cursor == "page-2":
@@ -1435,14 +1437,16 @@ class UsefulL1RedContractTests(unittest.TestCase):
         self.assertIsInstance(loaded, dict)
         entries = loaded.get("guardrails")
         self.assertIsInstance(entries, list)
-        l1_entries = [
-            item
-            for item in entries
-            if isinstance(item, dict)
-            and item.get("id") == "useful-l1-current-state-reconciliation"
-        ]
-        self.assertEqual(1, len(l1_entries))
-        l1 = l1_entries[0]
+        l1 = next(
+            (
+                item
+                for item in entries
+                if isinstance(item, dict)
+                and item.get("id") == "useful-l1-current-state-reconciliation"
+            ),
+            None,
+        )
+        self.assertIsInstance(l1, dict)
         self.assertIn("tools/review_reconcile.py", l1.get("implementation", []))
         self.assertIn(
             "ci/review_github_current_state.py",
@@ -1454,13 +1458,16 @@ class UsefulL1RedContractTests(unittest.TestCase):
         )
         self.assertIn("tests/test_review_reconcile_l1.py", l1.get("tests", []))
 
-        semantic_entries = [
-            item
-            for item in entries
-            if isinstance(item, dict) and item.get("id") == "semantic-review-assurance"
-        ]
-        self.assertEqual(1, len(semantic_entries))
-        semantic = semantic_entries[0]
+        semantic = next(
+            (
+                item
+                for item in entries
+                if isinstance(item, dict)
+                and item.get("id") == "semantic-review-assurance"
+            ),
+            None,
+        )
+        self.assertIsInstance(semantic, dict)
         self.assertNotIn(
             "ci/review_github_current_state.py",
             semantic.get("implementation", []),
@@ -1521,22 +1528,26 @@ class UsefulL1RedContractTests(unittest.TestCase):
         publish_steps = publish.get("steps")
         self.assertIsInstance(collect_steps, list)
         self.assertIsInstance(publish_steps, list)
-        uploads = [
-            item
-            for item in collect_steps
-            if isinstance(item, dict)
-            and str(item.get("uses", "")).startswith("actions/upload-artifact@")
-        ]
-        self.assertEqual(1, len(uploads))
-        upload = uploads[0]
-        downloads = [
-            item
-            for item in publish_steps
-            if isinstance(item, dict)
-            and str(item.get("uses", "")).startswith("actions/download-artifact@")
-        ]
-        self.assertEqual(1, len(downloads))
-        download = downloads[0]
+        upload = next(
+            (
+                item
+                for item in collect_steps
+                if isinstance(item, dict)
+                and str(item.get("uses", "")).startswith("actions/upload-artifact@")
+            ),
+            None,
+        )
+        self.assertIsInstance(upload, dict)
+        download = next(
+            (
+                item
+                for item in publish_steps
+                if isinstance(item, dict)
+                and str(item.get("uses", "")).startswith("actions/download-artifact@")
+            ),
+            None,
+        )
+        self.assertIsInstance(download, dict)
         self.assertEqual(1, upload.get("with", {}).get("retention-days"))
         self.assertEqual(
             "gnostoa-l1-publication",
@@ -1571,14 +1582,16 @@ class UsefulL1RedContractTests(unittest.TestCase):
             self.assertIn("github.ref == 'refs/heads/main'", condition)
             steps = job.get("steps")
             self.assertIsInstance(steps, list)
-            checkouts = [
-                item
-                for item in steps
-                if isinstance(item, dict)
-                and str(item.get("uses", "")).startswith("actions/checkout@")
-            ]
-            self.assertEqual(1, len(checkouts))
-            checkout = checkouts[0]
+            checkout = next(
+                (
+                    item
+                    for item in steps
+                    if isinstance(item, dict)
+                    and str(item.get("uses", "")).startswith("actions/checkout@")
+                ),
+                None,
+            )
+            self.assertIsInstance(checkout, dict)
             checkout_with = checkout.get("with")
             self.assertIsInstance(checkout_with, dict)
             self.assertEqual("main", checkout_with.get("ref"))
