@@ -66,9 +66,7 @@ def _workflow_entrypoint_pythonpath(
 
 def _load_entrypoint_with_pythonpath(pythonpath: str, job_name: str) -> Any:
     configured_paths = [
-        str((_ROOT / item).resolve())
-        for item in pythonpath.split(os.pathsep)
-        if item
+        str((_ROOT / item).resolve()) for item in pythonpath.split(os.pathsep) if item
     ]
     if str(_ROOT.resolve()) not in configured_paths:
         raise AssertionError("workflow entrypoint does not expose repository root")
