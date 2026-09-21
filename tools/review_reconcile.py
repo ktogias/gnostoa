@@ -354,9 +354,7 @@ def _observations(
         if review.get("effective") is False:
             if not any(item["state"] == "unresolved" for item in thread_records):
                 continue
-            thread_observation_id = (
-                f"gnostoa-thread-evidence::{observation_id}"
-            )
+            thread_observation_id = f"gnostoa-thread-evidence::{observation_id}"
             if thread_observation_id in review_observation_ids:
                 raise ReconciliationInputError(
                     "derived thread evidence observation_id collides with review evidence"
