@@ -148,8 +148,10 @@ class GitHubRestClient:
             },
         )
         try:
-            # B310 is intentionally suppressed: _validate_api_url() restricts
-            # every request to HTTPS api.github.com on the default/443 port.
+            # B310 / dynamic urllib are intentionally suppressed:
+            # _validate_api_url() restricts every request to HTTPS api.github.com
+            # on the default/443 port, including pagination URLs.
+            # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected
             with urllib.request.urlopen(  # nosec B310
                 request,
                 timeout=_TIMEOUT_SECONDS,
