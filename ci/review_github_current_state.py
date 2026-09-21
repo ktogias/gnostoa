@@ -674,10 +674,10 @@ def _mark_effective_reviews(
         if state == "DISMISSED":
             review["effective"] = False
             continue
-        if (
-            reviewer_id.startswith("github-unavailable-reviewer:")
-            and state in {"APPROVED", "CHANGES_REQUESTED"}
-        ):
+        if reviewer_id.startswith("github-unavailable-reviewer:") and state in {
+            "APPROVED",
+            "CHANGES_REQUESTED",
+        }:
             review["effective"] = False
             continue
         if state in {"APPROVED", "CHANGES_REQUESTED"}:
