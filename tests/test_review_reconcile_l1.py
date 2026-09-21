@@ -11,8 +11,8 @@ from types import ModuleType, SimpleNamespace
 from typing import Any
 from unittest import mock
 
-from jsonschema import Draft202012Validator, FormatChecker
 import yaml
+from jsonschema import Draft202012Validator, FormatChecker
 
 ROOT = Path(__file__).resolve().parents[1]
 ADAPTER_PATH = ROOT / "ci" / "review_github_current_state.py"
