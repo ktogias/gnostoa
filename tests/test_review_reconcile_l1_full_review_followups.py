@@ -317,6 +317,165 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
             )
         )
 
+    def test_effective_old_head_review_retains_current_unresolved_thread_state(
+        self,
+    ) -> None:
+        fixtures = _fixtures()
+        reducer = fixtures._reducer()
+        snapshot = fixtures._snapshot()
+        review = snapshot["reviews"][0]
+        review["recommendation_state"] = "COMMENTED"
+        review["head_commit"] = "d" * 40
+        review["effective"] = True
+        snapshot["review_threads"][0]["head_commit"] = "d" * 40
+
+        review_input = reducer.build_review_input(snapshot, fixtures._bundle())
+        thread_only = [
+            item
+            for item in review_input["evidence_set"]["observations"]
+            if item["native"].get("thread_evidence_only") is True
+        ]
+        self.assertEqual(1, len(thread_only))
+        self.assertEqual("exact", thread_only[0]["subject_binding"]["status"])
+        self.assertEqual("a" * 40, thread_only[0]["subject_binding"]["head_commit"])
+        self.assertEqual("d" * 40, thread_only[0]["native"]["review_commit_id"])
+
+        from tools.review_evaluate import evaluate
+        from tools.review_model import canonical_digest
+
+        policy = copy.deepcopy(fixtures._bundle()["policy"])
+        policy["blockers"]["unresolved_threads"] = "block"
+        review_input["authority"]["policy_digest"] = canonical_digest(policy)
+        review_input["evaluation_context"] = {
+            "mode": "historical_replay",
+            "as_of": review_input["subject"]["observed_at"],
+            "judge_relation": "prior_integrated",
+            "fixture_only": True,
+        }
+
+        result = evaluate(review_input, policy)
+        self.assertEqual("BLOCKED", result["outcome"])
+        self.assertIn(
+            {
+                "observation_id": thread_only[0]["observation_id"],
+                "kind": "thread",
+                "value": "unresolved",
+            },
+            result["blockers"],
+        )
+
+    def test_reacquired_thread_state_uses_certified_cut_for_freshness(self) -> None:
+        fixtures = _fixtures()
+        reducer = fixtures._reducer()
+        snapshot = fixtures._snapshot()
+        review = snapshot["reviews"][0]
+        review["effective"] = False
+        review["head_commit"] = "d" * 40
+        review["observed_at"] = "2026-09-19T15:00:00Z"
+        thread = snapshot["review_threads"][0]
+        thread["head_commit"] = "d" * 40
+        thread["observed_at"] = "2026-09-19T15:00:01Z"
+
+        review_input = reducer.build_review_input(snapshot, fixtures._bundle())
+        thread_only = next(
+            item
+            for item in review_input["evidence_set"]["observations"]
+            if item["native"].get("thread_evidence_only") is True
+        )
+        self.assertEqual(snapshot["observed_at"], thread_only["observed_at"])
+        self.assertEqual(
+            ["2026-09-19T15:00:01Z"],
+            thread_only["native"]["origin_thread_observed_at"],
+        )
+        self.assertEqual(
+            "2026-09-19T15:00:00Z",
+            thread_only["native"]["origin_review_observed_at"],
+        )
+
+        from tools.review_evaluate import evaluate
+        from tools.review_model import canonical_digest
+
+        policy = copy.deepcopy(fixtures._bundle()["policy"])
+        policy["subject"]["observation_freshness"] = {
+            "mode": "max_age",
+            "seconds": 60,
+        }
+        policy["blockers"]["unresolved_threads"] = "block"
+        review_input["authority"]["policy_digest"] = canonical_digest(policy)
+        review_input["evaluation_context"] = {
+            "mode": "historical_replay",
+            "as_of": review_input["subject"]["observed_at"],
+            "judge_relation": "prior_integrated",
+            "fixture_only": True,
+        }
+
+        result = evaluate(review_input, policy)
+        self.assertEqual("BLOCKED", result["outcome"])
+        self.assertIn(
+            {
+                "observation_id": thread_only["observation_id"],
+                "kind": "thread",
+                "value": "unresolved",
+            },
+            result["blockers"],
+        )
+
+    def test_future_dated_normalized_check_is_rejected_before_reduction(
+        self,
+    ) -> None:
+        fixtures = _fixtures()
+        reducer = fixtures._reducer()
+        snapshot = fixtures._snapshot()
+        snapshot["checks"] = [
+            {
+                "id": "signal-failure",
+                "key": "provider-check:shared",
+                "name": "shared",
+                "head_commit": "a" * 40,
+                "observed_at": "2026-09-19T16:40:00Z",
+                "status": "completed",
+                "conclusion": "failure",
+            },
+            {
+                "id": "signal-future-success",
+                "key": "provider-check:shared",
+                "name": "shared",
+                "head_commit": "a" * 40,
+                "observed_at": "2026-09-19T16:42:00Z",
+                "status": "completed",
+                "conclusion": "success",
+            },
+        ]
+        snapshot["coverage"]["checks"]["count"] = 2
+
+        with self.assertRaisesRegex(
+            reducer.ReconciliationInputError,
+            "snapshot observation cut",
+        ):
+            reducer.build_review_input(snapshot, fixtures._bundle())
+
+        with self.assertRaisesRegex(
+            reducer.ReconciliationInputError,
+            "snapshot observation cut",
+        ):
+            reducer.build_projection(
+                snapshot,
+                protected_main_revision="e" * 40,
+                outer_consumer={
+                    "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
+                    "runtime_revision": "9" * 40,
+                },
+                r2a_result={
+                    "outcome": "PASS",
+                    "reason": "QUORUM_SATISFIED",
+                    "binding": False,
+                },
+                execution={
+                    "execution_id": "github-actions:700:1",
+                    "observed_at": "2026-09-19T16:41:10Z",
+                },
+            )
+
     def test_publish_refuses_projection_from_superseded_protected_main(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures._adapter()
