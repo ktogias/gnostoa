@@ -467,14 +467,25 @@ def _thread_evidence_observation_id(
     if legacy_id not in occupied_observation_ids:
         return legacy_id
 
-    origin_digest = hashlib.sha256(origin_observation_id.encode("utf-8")).hexdigest()
-    stem = f"gnostoa-thread-evidence:v2:sha256:{origin_digest}"
-    candidate = stem
-    suffix = 0
-    while candidate in occupied_observation_ids:
-        suffix += 1
-        candidate = f"{stem}:{suffix}"
-    return candidate
+    probe = 0
+    while True:
+        if probe == 0:
+            digest_payload = origin_observation_id.encode("utf-8")
+        else:
+            digest_payload = canonical_json(
+                {
+                    "namespace": "gnostoa-thread-evidence/v2",
+                    "origin_observation_id": origin_observation_id,
+                    "probe": probe,
+                }
+            ).encode("utf-8")
+        candidate = (
+            "gnostoa-thread-evidence:v2:sha256:"
+            + hashlib.sha256(digest_payload).hexdigest()
+        )
+        if candidate not in occupied_observation_ids:
+            return candidate
+        probe += 1
 
 
 def _derived_thread_observation(
