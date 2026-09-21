@@ -1688,9 +1688,7 @@ class UsefulL1IdentityCollisionTests(unittest.TestCase):
         origin_id = snapshot["reviews"][0]["observation_id"]
         legacy_thread_id = f"gnostoa-thread-evidence::{origin_id}"
         origin_digest = hashlib.sha256(origin_id.encode("utf-8")).hexdigest()
-        first_fallback = (
-            f"gnostoa-thread-evidence:v2:sha256:{origin_digest}"
-        )
+        first_fallback = f"gnostoa-thread-evidence:v2:sha256:{origin_digest}"
 
         snapshot["reviews"][1]["observation_id"] = legacy_thread_id
         snapshot["reviews"].append(
