@@ -168,6 +168,61 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
             projection["next_permitted_action"],
         )
 
+    def test_failed_check_takes_precedence_over_unrelated_pending_check(
+        self,
+    ) -> None:
+        fixtures = _fixtures()
+        reducer = fixtures._reducer()
+        snapshot = fixtures._snapshot()
+        snapshot["checks"] = [
+            {
+                "id": "failed-check",
+                "key": "provider-check:failed",
+                "name": "failed",
+                "head_commit": "a" * 40,
+                "observed_at": "2026-09-19T16:40:00Z",
+                "status": "completed",
+                "conclusion": "failure",
+            },
+            {
+                "id": "pending-check",
+                "key": "provider-check:pending",
+                "name": "pending",
+                "head_commit": "a" * 40,
+                "observed_at": "2026-09-19T16:40:01Z",
+                "status": "in_progress",
+                "conclusion": None,
+            },
+        ]
+        snapshot["coverage"]["checks"]["count"] = 2
+
+        projection = reducer.build_projection(
+            snapshot,
+            protected_main_revision="e" * 40,
+            outer_consumer={
+                "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
+                "runtime_revision": "9" * 40,
+            },
+            r2a_result={
+                "outcome": "PASS",
+                "reason": "QUORUM_SATISFIED",
+                "binding": False,
+            },
+            execution={
+                "execution_id": "github-actions:501:1",
+                "observed_at": "2026-09-19T16:41:10Z",
+            },
+        )
+
+        self.assertEqual(["failed"], projection["checks"]["non_success"])
+        self.assertEqual(["pending"], projection["checks"]["pending"])
+        self.assertEqual(
+            "RECONCILE_PROVIDER_CHECKS",
+            projection["next_permitted_action"],
+        )
+        rendered = reducer.render_projection(projection)
+        self.assertEqual(projection, reducer.parse_projection_comment(rendered))
+
     def test_normalized_coverage_requires_cardinality_for_every_source(
         self,
     ) -> None:

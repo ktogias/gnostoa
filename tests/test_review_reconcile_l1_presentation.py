@@ -167,6 +167,47 @@ class UsefulL1PresentationTests(unittest.TestCase):
         self.assertIn("non-success=32 (+2 omitted)", rendered)
         self.assertEqual(projection, reducer.parse_projection_comment(rendered))
 
+    def test_rendered_check_labels_are_visible_bounded_literals(self) -> None:
+        fixtures = _fixtures()
+        reducer = fixtures._reducer()
+        projection = reducer.build_projection(
+            fixtures._snapshot(),
+            protected_main_revision="e" * 40,
+            outer_consumer={
+                "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
+                "runtime_revision": "9" * 40,
+            },
+            r2a_result={
+                "outcome": "PASS",
+                "reason": "QUORUM_SATISFIED",
+                "binding": False,
+            },
+            execution={
+                "execution_id": "presentation-test::check-labels",
+                "observed_at": "2026-09-19T16:41:00Z",
+            },
+        )
+        projection["checks"] = {
+            "observed_names": 3,
+            "ambiguous": ["@octocat"],
+            "pending": ["**pending**"],
+            "non_success": ["[failure](https://example.invalid)"],
+            "omitted_ambiguous": 0,
+            "omitted_pending": 0,
+            "omitted_non_success": 0,
+        }
+        projection["next_permitted_action"] = "RECONCILE_PROVIDER_CHECKS"
+
+        rendered = reducer.render_projection(projection)
+
+        self.assertIn("- Ambiguous checks: `@octocat`", rendered)
+        self.assertIn("- Pending checks: `**pending**`", rendered)
+        self.assertIn(
+            "- Non-success checks: `[failure](https://example.invalid)`",
+            rendered,
+        )
+        self.assertEqual(projection, reducer.parse_projection_comment(rendered))
+
     def test_provider_title_is_one_inert_literal_including_mentions(self) -> None:
         fixtures = _fixtures()
         reducer = fixtures._reducer()
@@ -187,11 +228,12 @@ class UsefulL1PresentationTests(unittest.TestCase):
         )
         rendered = reducer.render_projection(projection)
         line = next(line for line in rendered.splitlines() if "Intent summary:" in line)
-        expected_literal = reducer._markdown_code(
-            projection["subject"]["title"],
-            "projection.subject.title",
-        )
-        self.assertEqual(f"- Intent summary: {expected_literal}", line)
+        literal = line.removeprefix("- Intent summary: ")
+        match = re.fullmatch(r"(?P<fence>`+)(?P<body>.*)(?P=fence)", literal)
+        self.assertIsNotNone(match)
+        assert match is not None
+        self.assertIn("@octocat", match.group("body"))
+        self.assertIn("@gnostoa/team", match.group("body"))
         self.assertNotIn("<img ", line)
         self.assertNotIn("<b>", line)
         self.assertIn("@octocat", line)
