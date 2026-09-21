@@ -1712,21 +1712,7 @@ class UsefulL1IdentityCollisionTests(unittest.TestCase):
         ]
 
         self.assertEqual(1, len(thread_only))
-        second_probe_payload = json.dumps(
-            {
-                "namespace": "gnostoa-thread-evidence/v2",
-                "origin_observation_id": origin_id,
-                "probe": 1,
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=True,
-            allow_nan=False,
-        ).encode("utf-8")
-        second_fallback = (
-            "gnostoa-thread-evidence:v2:sha256:"
-            + hashlib.sha256(second_probe_payload).hexdigest()
-        )
+        second_fallback = f"{first_fallback}:p{1:016x}"
         self.assertEqual(second_fallback, thread_only[0]["observation_id"])
         self.assertLessEqual(len(second_fallback.encode("utf-8")), 128)
         self.assertIn(
