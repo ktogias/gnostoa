@@ -1025,6 +1025,52 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         self.assertIn("ProviderWriteError:HTTP_403", logged)
         self.assertIn("PR #2: UPDATED", logged)
 
+    def test_publish_mode_keeps_safe_noop_decisions_successful(self) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        entries = [{"pull_number": 1}, {"pull_number": 2}]
+        results = [
+            {"pull_number": 1, "published": False, "reason": "STALE_HEAD"},
+            {
+                "pull_number": 2,
+                "published": False,
+                "reason": "SUPERSEDED_PROJECTION",
+            },
+        ]
+
+        with (
+            mock.patch.object(adapter, "_load_payload", return_value=entries),
+            mock.patch.object(
+                adapter,
+                "publish_entry",
+                side_effect=results,
+            ) as publish,
+            mock.patch.object(adapter, "_summary") as summary,
+            mock.patch("builtins.print") as print_line,
+            mock.patch.dict(adapter.os.environ, {"GH_TOKEN": _NONEMPTY_TEST_VALUE}),
+        ):
+            code = adapter.main(
+                [
+                    "--mode",
+                    "publish",
+                    "--repository",
+                    "ktogias/gnostoa",
+                    "--payload",
+                    "unused.json",
+                ]
+            )
+
+        self.assertEqual(0, code)
+        self.assertEqual(2, publish.call_count)
+        rendered = "\n".join(summary.call_args.args[0])
+        self.assertIn("PR #1: STALE_HEAD", rendered)
+        self.assertIn("PR #2: SUPERSEDED_PROJECTION", rendered)
+        logged = "\n".join(
+            str(call.args[0]) for call in print_line.call_args_list if call.args
+        )
+        self.assertIn("PR #1: STALE_HEAD", logged)
+        self.assertIn("PR #2: SUPERSEDED_PROJECTION", logged)
+
     def test_collect_mode_preserves_per_entry_failure_reason(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures._adapter()
