@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import base64
 import importlib.util
+import json
 import unittest
 from pathlib import Path
 from typing import Any
+
+from jsonschema import Draft202012Validator, FormatChecker
 
 
 def _fixtures() -> Any:
@@ -23,6 +26,7 @@ class UsefulL1IdentityCollisionTests(unittest.TestCase):
         reducer = fixtures.reducer_fixture()
         snapshot = fixtures.snapshot_fixture()
 
+        self.assertGreaterEqual(len(snapshot["reviews"]), 2)
         origin_id = snapshot["reviews"][0]["observation_id"]
         legacy_thread_id = f"gnostoa-thread-evidence::{origin_id}"
         snapshot["reviews"][1]["observation_id"] = legacy_thread_id
@@ -126,6 +130,29 @@ class UsefulL1IdentityCollisionTests(unittest.TestCase):
             )
 
         self.assertEqual(thread_id(False), thread_id(True))
+
+
+    def test_collision_fallback_remains_valid_r2a_input(self) -> None:
+        fixtures = _fixtures()
+        reducer = fixtures.reducer_fixture()
+        snapshot = fixtures.snapshot_fixture()
+
+        self.assertGreaterEqual(len(snapshot["reviews"]), 2)
+        origin_id = snapshot["reviews"][0]["observation_id"]
+        snapshot["reviews"][1]["observation_id"] = (
+            f"gnostoa-thread-evidence::{origin_id}"
+        )
+        review_input = reducer.build_review_input(snapshot, fixtures._bundle())
+
+        schema_path = Path(__file__).resolve().parents[1] / "schemas" / (
+            "review-check-input.schema.json"
+        )
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        Draft202012Validator.check_schema(schema)
+        Draft202012Validator(
+            schema,
+            format_checker=FormatChecker(),
+        ).validate(review_input)
 
 
 if __name__ == "__main__":
