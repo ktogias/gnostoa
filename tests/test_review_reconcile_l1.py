@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import base64
+import hashlib
 import importlib
 import importlib.util
 import json
@@ -1687,12 +1687,10 @@ class UsefulL1IdentityCollisionTests(unittest.TestCase):
 
         origin_id = snapshot["reviews"][0]["observation_id"]
         legacy_thread_id = f"gnostoa-thread-evidence::{origin_id}"
-        encoded_origin = (
-            base64.urlsafe_b64encode(origin_id.encode("utf-8"))
-            .decode("ascii")
-            .rstrip("=")
+        origin_digest = hashlib.sha256(origin_id.encode("utf-8")).hexdigest()
+        first_fallback = (
+            f"gnostoa-thread-evidence:v2:sha256:{origin_digest}"
         )
-        first_fallback = f"gnostoa-thread-evidence:v2:{encoded_origin}"
 
         snapshot["reviews"][1]["observation_id"] = legacy_thread_id
         snapshot["reviews"].append(
