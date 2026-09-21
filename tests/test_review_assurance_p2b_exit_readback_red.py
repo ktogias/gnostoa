@@ -214,11 +214,14 @@ class ReviewAssuranceP2bExitReadbackRedTests(unittest.TestCase):
 
     def test_dedicated_workflow_executes_subsequent_candidate_readback(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
-        workflow = yaml.load(workflow_text, Loader=yaml.BaseLoader)
+        workflow = yaml.safe_load(workflow_text)
         self.assertIsInstance(workflow, dict)
         assert isinstance(workflow, dict)
 
         events = workflow.get("on")
+        if events is None:
+            # PyYAML's YAML 1.1 resolver may coerce the workflow key "on" to True.
+            events = workflow.get(True)
         self.assertIsInstance(events, dict)
         assert isinstance(events, dict)
         pull_request = events.get("pull_request")
@@ -249,7 +252,12 @@ class ReviewAssuranceP2bExitReadbackRedTests(unittest.TestCase):
         ]
         self.assertEqual(1, len(matches))
         step = matches[0]
-        self.assertEqual("github.event_name == 'pull_request'", step.get("if"))
+        self.assertEqual(
+            "github.event_name == 'pull_request' && "
+            "github.event.pull_request.base.sha == "
+            f"'{PROMOTION_MAIN_REVISION}'",
+            step.get("if"),
+        )
         env = step.get("env")
         self.assertIsInstance(env, dict)
         assert isinstance(env, dict)
