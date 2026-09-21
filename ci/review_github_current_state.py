@@ -674,6 +674,12 @@ def _mark_effective_reviews(
         if state == "DISMISSED":
             review["effective"] = False
             continue
+        if (
+            reviewer_id.startswith("github-unavailable-reviewer:")
+            and state in {"APPROVED", "CHANGES_REQUESTED"}
+        ):
+            review["effective"] = False
+            continue
         if state in {"APPROVED", "CHANGES_REQUESTED"}:
             observed = parse_rfc3339(
                 _timestamp(review.get("observed_at"), "review.observed_at")
