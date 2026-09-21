@@ -725,6 +725,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
         root = "https://api.github.com/repos/ktogias/gnostoa"
         replies = _complete_replies(root)
         replies[f"{root}/pulls/300/reviews?per_page=100"][0][0]["user"] = None
+        replies[f"{root}/pulls/300/reviews?per_page=100"][0][0]["state"] = "CHANGES_REQUESTED"
         replies[f"{root}/pulls/300/comments?per_page=100"][0][0]["user"] = None
 
         snapshot = adapter.collect_snapshot(
@@ -738,6 +739,15 @@ class UsefulL1RedContractTests(unittest.TestCase):
         self.assertEqual("COMPLETE", snapshot["coverage"]["reviews"]["status"])
         self.assertEqual("COMPLETE", snapshot["coverage"]["review_threads"]["status"])
         self.assertEqual(fallback, snapshot["reviews"][0]["reviewer_id"])
+        self.assertFalse(snapshot["reviews"][0]["effective"])
+        review_input = _reducer().build_review_input(snapshot, _bundle())
+        self.assertNotIn(
+            "github-review-10",
+            {
+                item["observation_id"]
+                for item in review_input["evidence_set"]["observations"]
+            },
+        )
         first_threads = [
             item
             for item in snapshot["review_threads"]
