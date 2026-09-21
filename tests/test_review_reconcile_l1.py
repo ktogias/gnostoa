@@ -487,6 +487,57 @@ class UsefulL1RedContractTests(unittest.TestCase):
         self.assertNotIn("inline raw finding", rendered)
         self.assertLess(len(rendered.encode("utf-8")), 32_768)
 
+    def test_projection_semantic_outcomes_keep_current_action_mapping(self) -> None:
+        reducer = _reducer()
+        cases = {
+            "PASS": ("SEMANTIC_RESULT", "CONTINUE_EXISTING_WORKFLOW"),
+            "BLOCKED": ("SEMANTIC_RESULT", "RECONCILE_REVIEW_EVIDENCE"),
+            "CONFLICTING": ("SEMANTIC_RESULT", "RECONCILE_REVIEW_EVIDENCE"),
+            "INCOMPLETE": (
+                "SEMANTIC_RESULT",
+                "WAIT_OR_RECONCILE_REQUIRED_EVIDENCE",
+            ),
+            "UNAVAILABLE": ("UNAVAILABLE", "WAIT_FOR_PROTECTED_CAPABILITY"),
+        }
+
+        for outcome, (expected_status, expected_action) in cases.items():
+            with self.subTest(outcome=outcome):
+                projection = reducer.build_projection(
+                    _snapshot(),
+                    protected_main_revision="e" * 40,
+                    outer_consumer={
+                        "runtime_image": (
+                            "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64
+                        ),
+                        "runtime_revision": "9" * 40,
+                    },
+                    r2a_result={
+                        "outcome": outcome,
+                        "reason": (
+                            "NOT_RUN"
+                            if outcome == "UNAVAILABLE"
+                            else f"{outcome}_FIXTURE"
+                        ),
+                        "binding": False,
+                    },
+                    execution={
+                        "execution_id": "github-actions:124:1",
+                        "observed_at": "2026-09-19T16:41:11Z",
+                    },
+                )
+
+                self.assertEqual(expected_status, projection["r2a"]["status"])
+                self.assertEqual(outcome, projection["r2a"]["outcome"])
+                self.assertEqual(
+                    expected_action,
+                    projection["next_permitted_action"],
+                )
+                rendered = reducer.render_projection(projection)
+                self.assertEqual(
+                    projection,
+                    reducer.parse_projection_comment(rendered),
+                )
+
     def test_pass_cannot_continue_with_incomplete_or_closed_provider_state(
         self,
     ) -> None:
