@@ -57,11 +57,11 @@ class UsefulL1RenderCompatibilityTests(unittest.TestCase):
             reducer.parse_projection_comment(prior_render),
         )
 
-        existing = adapter._existing_projection(
+        existing = adapter.existing_projection(
             [
                 {
                     "id": 77,
-                    "author": adapter._PROJECTION_AUTHOR,
+                    "author": adapter.projection_author,
                     "body": prior_render,
                 }
             ],
@@ -142,7 +142,7 @@ class UsefulL1RenderCompatibilityTests(unittest.TestCase):
                     [
                         {
                             "id": 77,
-                            "author": adapter._PROJECTION_AUTHOR,
+                            "author": adapter.projection_author,
                             "body": prior_render,
                         }
                     ],

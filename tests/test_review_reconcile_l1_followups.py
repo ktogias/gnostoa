@@ -27,7 +27,7 @@ def _fixtures() -> Any:
 class UsefulL1FollowupTests(unittest.TestCase):
     def test_malformed_native_commit_bindings_make_source_incomplete(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures._adapter()
+        adapter = fixtures.adapter()
         root = "https://api.github.com/repos/ktogias/gnostoa"
 
         cases = (
@@ -46,12 +46,12 @@ class UsefulL1FollowupTests(unittest.TestCase):
         )
         for source, url, wrapped, field in cases:
             with self.subTest(source=source):
-                replies = copy.deepcopy(fixtures._complete_replies(root))
+                replies = copy.deepcopy(fixtures.complete_replies(root))
                 payload = replies[url][0]
                 items = payload["check_runs"] if wrapped else payload
                 items[0][field] = "not-an-exact-git-commit"
                 snapshot = adapter.collect_snapshot(
-                    fixtures._PagedFake(replies),
+                    fixtures.PagedFake(replies),
                     repository="ktogias/gnostoa",
                     pull_number=300,
                     observed_at="2026-09-19T16:41:00Z",
@@ -66,10 +66,10 @@ class UsefulL1FollowupTests(unittest.TestCase):
         self,
     ) -> None:
         fixtures = _fixtures()
-        adapter = fixtures._adapter()
+        adapter = fixtures.adapter()
         root = "https://api.github.com/repos/ktogias/gnostoa"
         snapshot = adapter.collect_snapshot(
-            fixtures._PagedFake(fixtures._complete_replies(root)),
+            fixtures.PagedFake(fixtures.complete_replies(root)),
             repository="ktogias/gnostoa",
             pull_number=300,
             observed_at="2026-09-19T16:41:00Z",
@@ -83,7 +83,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
 
     def test_malformed_semantic_result_becomes_unavailable(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures._adapter()
+        adapter = fixtures.adapter()
         malformed = (
             {"outcome": "PASS"},
             {"outcome": "PASS", "reason": "QUORUM_SATISFIED"},
@@ -95,7 +95,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
         )
         for payload in malformed:
             with self.subTest(payload=payload):
-                result = adapter._semantic_result(
+                result = adapter.semantic_result(
                     0,
                     json.dumps(payload).encode("utf-8"),
                 )
@@ -106,12 +106,12 @@ class UsefulL1FollowupTests(unittest.TestCase):
 
     def test_malformed_protected_consumer_is_projected_unavailable(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures._adapter()
-        reducer = fixtures._reducer()
+        adapter = fixtures.adapter()
+        reducer = fixtures.reducer()
         root = "https://api.github.com/repos/ktogias/gnostoa"
         bundle = SimpleNamespace(
             protected_main_revision="e" * 40,
-            document=fixtures._bundle(),
+            document=fixtures.bundle(),
         )
         consumer = SimpleNamespace(
             protected_main_revision="e" * 40,
@@ -129,20 +129,20 @@ class UsefulL1FollowupTests(unittest.TestCase):
         ) -> tuple[int, bytes]:
             self.assertIs(consumer, acquire_consumer())
             self.assertIsInstance(input_document, dict)
-            return fixtures._valid_incomplete_result(input_document)
+            return fixtures.valid_incomplete_result(input_document)
 
         with (
             mock.patch.object(
-                adapter, "_protected_state", return_value=(bundle, consumer)
+                adapter, "protected_state", return_value=(bundle, consumer)
             ),
             mock.patch(
                 "tools.review_outer._run_prior_effective_current_advisory_with_acquisition",
                 side_effect=valid_result,
             ),
         ):
-            entry = adapter._collect_entry(
-                fixtures._PagedFake(
-                    fixtures._complete_replies_without_review_comments(root)
+            entry = adapter.collect_entry(
+                fixtures.PagedFake(
+                    fixtures.complete_replies_without_review_comments(root)
                 ),
                 "ktogias/gnostoa",
                 300,
@@ -161,7 +161,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
 
     def test_hourly_recovery_rotates_bounded_open_pull_batches(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures._adapter()
+        adapter = fixtures.adapter()
         root = "https://api.github.com/repos/ktogias/gnostoa"
         pulls = [
             {
@@ -173,25 +173,25 @@ class UsefulL1FollowupTests(unittest.TestCase):
             }
             for number in range(1, 12)
         ]
-        reader = fixtures._PagedFake(
+        reader = fixtures.PagedFake(
             {
                 f"{root}/pulls?state=open&per_page=100": (pulls, {}),
             }
         )
 
-        enumerated = adapter._open_pull_numbers(reader, "ktogias/gnostoa")
-        first = adapter._select_scheduled_pull_batch(
+        enumerated = adapter.open_pull_numbers(reader, "ktogias/gnostoa")
+        first = adapter.select_scheduled_pull_batch(
             enumerated,
             "2026-09-19T22:00:00Z",
         )
-        second = adapter._select_scheduled_pull_batch(
+        second = adapter.select_scheduled_pull_batch(
             enumerated,
             "2026-09-19T23:00:00Z",
         )
 
         self.assertEqual(list(range(1, 12)), enumerated)
-        self.assertLessEqual(len(first), adapter._MAX_OPEN_PULLS)
-        self.assertLessEqual(len(second), adapter._MAX_OPEN_PULLS)
+        self.assertLessEqual(len(first), adapter.MAX_OPEN_PULLS)
+        self.assertLessEqual(len(second), adapter.MAX_OPEN_PULLS)
         self.assertEqual(set(enumerated), set(first) | set(second))
         self.assertNotEqual(first, second)
 
@@ -199,7 +199,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
         fixtures = _fixtures()
         adapter = fixtures._adapter()
         workflow_pulls = json.dumps(
-            [{"number": number} for number in range(1, adapter._MAX_OPEN_PULLS + 2)]
+            [{"number": number} for number in range(1, adapter.max_open_pulls + 2)]
         )
 
         with (
@@ -226,7 +226,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
 
     def test_invalid_provider_timestamps_are_source_errors(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures._adapter()
+        adapter = fixtures.adapter()
         root = "https://api.github.com/repos/ktogias/gnostoa"
         sources = (
             (
@@ -258,12 +258,12 @@ class UsefulL1FollowupTests(unittest.TestCase):
             for field in fields:
                 for value in ("not-a-timestamp", "2026-99-19T16:40:00Z", 123):
                     with self.subTest(source=source, field=field, value=value):
-                        replies = copy.deepcopy(fixtures._complete_replies(root))
+                        replies = copy.deepcopy(fixtures.complete_replies(root))
                         payload = replies[url][0]
                         items = payload["check_runs"] if wrapped else payload
                         items[0][field] = value
                         snapshot = adapter.collect_snapshot(
-                            fixtures._PagedFake(replies),
+                            fixtures.PagedFake(replies),
                             repository="ktogias/gnostoa",
                             pull_number=300,
                             observed_at="2026-09-19T16:41:00Z",
@@ -275,7 +275,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
 
     def test_subject_read_failure_is_a_non_publishable_per_pr_diagnostic(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures._adapter()
+        adapter = fixtures.adapter()
         root = "https://api.github.com/repos/ktogias/gnostoa"
         endpoints = (
             f"{root}/pulls/300",
@@ -284,7 +284,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
         for endpoint in endpoints:
             for malformed in (False, True):
                 with self.subTest(endpoint=endpoint, malformed=malformed):
-                    reader = fixtures._PagedFake(fixtures._complete_replies(root))
+                    reader = fixtures.PagedFake(fixtures.complete_replies(root))
                     original_get = reader.get
 
                     def read(
@@ -306,7 +306,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
                         mock.patch.object(reader, "get", side_effect=read),
                         mock.patch.object(adapter, "_protected_state") as protected,
                     ):
-                        entry = adapter._collect_entry(
+                        entry = adapter.collect_entry(
                             reader,
                             "ktogias/gnostoa",
                             300,
@@ -327,7 +327,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
                     self.assertEqual([], publisher.mock_calls)
 
     def test_collection_keeps_other_prs_and_diagnostic_in_summary(self) -> None:
-        adapter = _fixtures()._adapter()
+        adapter = _fixtures().adapter()
         diagnostic = {
             "pull_number": 300,
             "collection_status": "UNAVAILABLE",
@@ -340,7 +340,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
             with (
                 mock.patch.object(adapter, "GitHubRestClient"),
                 mock.patch.object(
-                    adapter, "_collect_entry", side_effect=[diagnostic, good]
+                    adapter, "collect_entry", side_effect=[diagnostic, good]
                 ),
                 mock.patch.object(adapter, "_summary") as summary,
             ):
@@ -367,10 +367,10 @@ class UsefulL1FollowupTests(unittest.TestCase):
 
     def test_source_changed_after_read_is_reacquired_or_incomplete(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures._adapter()
+        adapter = fixtures.adapter()
         root = "https://api.github.com/repos/ktogias/gnostoa"
-        replies = fixtures._complete_replies(root)
-        reader = fixtures._PagedFake(replies)
+        replies = fixtures.complete_replies(root)
+        reader = fixtures.PagedFake(replies)
         original_get = reader.get
         changed = False
 
@@ -403,9 +403,9 @@ class UsefulL1FollowupTests(unittest.TestCase):
 
     def test_continuously_changing_source_is_bounded_and_incomplete(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures._adapter()
+        adapter = fixtures.adapter()
         root = "https://api.github.com/repos/ktogias/gnostoa"
-        reader = fixtures._PagedFake(fixtures._complete_replies(root))
+        reader = fixtures.PagedFake(fixtures.complete_replies(root))
         original_get = reader.get
         reads = 0
 
@@ -429,10 +429,10 @@ class UsefulL1FollowupTests(unittest.TestCase):
 
     def test_queued_check_without_provider_timestamps_uses_collection_cut(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures._adapter()
-        reducer = fixtures._reducer()
+        adapter = fixtures.adapter()
+        reducer = fixtures.reducer()
         root = "https://api.github.com/repos/ktogias/gnostoa"
-        replies = copy.deepcopy(fixtures._complete_replies(root))
+        replies = copy.deepcopy(fixtures.complete_replies(root))
         check_url = f"{root}/commits/{'a' * 40}/check-runs?per_page=100"
         replies[check_url] = (
             {
@@ -454,7 +454,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
         )
         cut = "2026-09-19T16:41:00Z"
         snapshot = adapter.collect_snapshot(
-            fixtures._PagedFake(replies),
+            fixtures.PagedFake(replies),
             repository="ktogias/gnostoa",
             pull_number=300,
             observed_at=cut,
@@ -483,19 +483,19 @@ class UsefulL1FollowupTests(unittest.TestCase):
         self.assertEqual(["queued-check"], projection["checks"]["pending"])
 
     def test_publication_batch_bound_matches_admitted_population(self) -> None:
-        adapter = _fixtures()._adapter()
-        self.assertEqual(8, adapter._MAX_OPEN_PULLS)
+        adapter = fixtures().adapter()
+        self.assertEqual(8, adapter.max_open_pulls)
         self.assertLessEqual(
-            adapter._MAX_OPEN_PULLS * 32_768 + 20_000,
-            adapter._MAX_PUBLICATION_PAYLOAD_BYTES,
+            adapter.max_open_pulls * 32_768 + 20_000,
+            adapter.max_publication_payload_bytes,
         )
 
     def test_publication_rejects_wrong_pull_identity_before_write(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures._adapter()
-        reducer = fixtures._reducer()
+        adapter = fixtures.adapter()
+        reducer = fixtures.reducer()
         projection = reducer.build_projection(
-            fixtures._snapshot(),
+            fixtures.snapshot(),
             protected_main_revision="e" * 40,
             outer_consumer={
                 "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
@@ -545,9 +545,9 @@ class UsefulL1FollowupTests(unittest.TestCase):
 
     def test_publication_rejects_stale_collected_lifecycle(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures._adapter()
-        reducer = fixtures._reducer()
-        snapshot = fixtures._snapshot()
+        adapter = fixtures.adapter()
+        reducer = fixtures.reducer()
+        snapshot = fixtures.snapshot()
         snapshot["subject"]["state"] = "closed"
         projection = reducer.build_projection(
             snapshot,
@@ -586,9 +586,9 @@ class UsefulL1FollowupTests(unittest.TestCase):
 
     def test_publication_rechecks_exact_subject_after_comment_readback(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures._adapter()
-        reducer = fixtures._reducer()
-        snapshot = fixtures._snapshot()
+        adapter = fixtures.adapter()
+        reducer = fixtures.reducer()
+        snapshot = fixtures.snapshot()
         projection = reducer.build_projection(
             snapshot,
             protected_main_revision="e" * 40,
@@ -654,19 +654,19 @@ class UsefulL1FollowupTests(unittest.TestCase):
 
     def test_normalized_source_payload_shapes_and_counts_fail_closed(self) -> None:
         fixtures = _fixtures()
-        reducer = fixtures._reducer()
+        reducer = fixtures.reducer()
 
         for source in ("conversation", "reviews", "review_threads", "checks"):
             for mutation in ("missing_payload", "count_mismatch"):
                 with self.subTest(source=source, mutation=mutation):
-                    snapshot = fixtures._snapshot()
+                    snapshot = fixtures.snapshot()
                     if mutation == "missing_payload":
                         snapshot[source] = None
                     else:
                         snapshot["coverage"][source]["count"] += 1
 
                     with self.assertRaises(reducer.ReconciliationInputError):
-                        reducer.build_review_input(snapshot, fixtures._bundle())
+                        reducer.build_review_input(snapshot, fixtures.bundle())
 
                     with self.assertRaises(reducer.ReconciliationInputError):
                         reducer.build_projection(
@@ -693,10 +693,10 @@ class UsefulL1FollowupTests(unittest.TestCase):
         self,
     ) -> None:
         fixtures = _fixtures()
-        adapter = fixtures._adapter()
-        reducer = fixtures._reducer()
+        adapter = fixtures.adapter()
+        reducer = fixtures.reducer()
         projection = reducer.build_projection(
-            fixtures._snapshot(),
+            fixtures.snapshot(),
             protected_main_revision="e" * 40,
             outer_consumer={
                 "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
@@ -713,24 +713,26 @@ class UsefulL1FollowupTests(unittest.TestCase):
             },
         )
 
+        def canonical_claim(item: dict[str, Any]) -> None:
+            item.__setitem__("non_canonical", False)
+        def binding_claim(item: dict[str, Any]) -> None:
+            item["r2a"].__setitem__("binding", True)
+        def incomplete_current_claim(item: dict[str, Any]) -> None:
+            item["coverage"]["conversation"].__setitem__("status", "PARTIAL")
+        def omitted_ambiguous_claim(item: dict[str, Any]) -> None:
+            item["checks"].__setitem__("omitted_ambiguous", 1)
+        def omitted_pending_claim(item: dict[str, Any]) -> None:
+            item["checks"].__setitem__("omitted_pending", 1)
+        def omitted_non_success_claim(item: dict[str, Any]) -> None:
+            item["checks"].__setitem__("omitted_non_success", 1)
+
         mutations = {
-            "canonical_claim": lambda item: item.__setitem__("non_canonical", False),
-            "binding_claim": lambda item: item["r2a"].__setitem__("binding", True),
-            "incomplete_current_claim": lambda item: item["coverage"][
-                "conversation"
-            ].__setitem__("status", "PARTIAL"),
-            "omitted_ambiguous_claim": lambda item: item["checks"].__setitem__(
-                "omitted_ambiguous",
-                1,
-            ),
-            "omitted_pending_claim": lambda item: item["checks"].__setitem__(
-                "omitted_pending",
-                1,
-            ),
-            "omitted_non_success_claim": lambda item: item["checks"].__setitem__(
-                "omitted_non_success",
-                1,
-            ),
+            "canonical_claim": canonical_claim,
+            "binding_claim": binding_claim,
+            "incomplete_current_claim": incomplete_current_claim,
+            "omitted_ambiguous_claim": omitted_ambiguous_claim,
+            "omitted_pending_claim": omitted_pending_claim,
+            "omitted_non_success_claim": omitted_non_success_claim,
         }
         for name, mutate in mutations.items():
             with self.subTest(name=name):
@@ -738,7 +740,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
                 mutate(unsafe)
                 body = (
                     "<!-- gnostoa:l1-current-state:v1:"
-                    + reducer._encode_projection(unsafe)
+                    + reducer.encode_projection(unsafe)
                     + " -->"
                 )
                 entry = {
@@ -776,10 +778,10 @@ class UsefulL1FollowupTests(unittest.TestCase):
         self,
     ) -> None:
         fixtures = _fixtures()
-        adapter = fixtures._adapter()
-        reducer = fixtures._reducer()
+        adapter = fixtures.adapter()
+        reducer = fixtures.reducer()
         projection = reducer.build_projection(
-            fixtures._snapshot(),
+            fixtures.snapshot(),
             protected_main_revision="e" * 40,
             outer_consumer={
                 "runtime_image": ("ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64),
@@ -831,11 +833,11 @@ class UsefulL1FollowupTests(unittest.TestCase):
         comments = [
             {
                 "id": 77,
-                "author": adapter._PROJECTION_AUTHOR,
+                "author": adapter.projection_author,
                 "body": unsafe,
             }
         ]
-        existing = adapter._existing_projection(
+        existing = adapter.existing_projection(
             comments,
             repository="ktogias/gnostoa",
             pull_number=300,
@@ -846,7 +848,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
 
     def test_materially_different_native_translator_reuses_core_unchanged(self) -> None:
         fixtures = _fixtures()
-        reducer = fixtures._reducer()
+        reducer = fixtures.reducer()
         native = {
             "engine": "nebula-review",
             "project_key": "opaque-project::7",
@@ -915,13 +917,13 @@ class UsefulL1FollowupTests(unittest.TestCase):
                     "reviews": {
                         "status": "COMPLETE",
                         "pages": 1,
-                        "count": len(document["decisions"]),
+                        "count": len(document.get("decisions", [])),
                     },
                     "review_threads": {"status": "COMPLETE", "pages": 1, "count": 0},
                     "checks": {
                         "status": "COMPLETE" if checks_available else "UNAVAILABLE",
                         "pages": 1 if checks_available else 0,
-                        "count": len(native_checks),
+                        "count": len(native_checks or []),
                     },
                 },
                 "conversation": [],
@@ -962,7 +964,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
             }
 
         snapshot = translate(native)
-        review_input = reducer.build_review_input(snapshot, fixtures._bundle())
+        review_input = reducer.build_review_input(snapshot, fixtures.bundle())
         projection = reducer.build_projection(
             snapshot,
             protected_main_revision="e" * 40,
@@ -1011,7 +1013,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
             }
         ]
         native_full = translate(full_native)
-        reference = fixtures._snapshot(
+        reference = fixtures.snapshot(
             provider_id="reference-provider",
             repository="urn:reference:project:7",
             change_kind="proposal",
@@ -1019,9 +1021,10 @@ class UsefulL1FollowupTests(unittest.TestCase):
             source_url="urn:reference:proposal:42",
         )
         reference["review_threads"] = []
+        reference["coverage"]["review_threads"] = {}
         reference["coverage"]["review_threads"]["count"] = 0
-        native_input = reducer.build_review_input(native_full, fixtures._bundle())
-        reference_input = reducer.build_review_input(reference, fixtures._bundle())
+        native_input = reducer.build_review_input(native_full, fixtures.bundle())
+        reference_input = reducer.build_review_input(reference, fixtures.bundle())
 
         def binding_semantics(document: dict[str, Any]) -> list[tuple[str, str]]:
             return sorted(
@@ -1112,8 +1115,8 @@ class UsefulL1FollowupTests(unittest.TestCase):
 
     def test_native_id_ordering_mutant_is_rejected_by_ambiguity_semantics(self) -> None:
         fixtures = _fixtures()
-        reducer = fixtures._reducer()
-        base = fixtures._snapshot(provider_id="nebula-review")
+        reducer = fixtures.reducer()
+        base = fixtures.snapshot(provider_id="nebula-review")
         signals = [
             {
                 "id": "opaque-Z-success",

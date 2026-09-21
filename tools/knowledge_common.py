@@ -27,7 +27,7 @@ TOOLKIT_ROOT_MARKERS = (
 )
 
 
-class KnowledgeLoader(yaml.SafeLoader):
+class KnowledgeLoader:
     """Safe YAML loader that keeps ISO dates as strings."""
 
     def construct_mapping(
@@ -64,7 +64,7 @@ class KnowledgeLoader(yaml.SafeLoader):
                 )
             seen.add(identity)
 
-        return super().construct_mapping(node, deep=deep)
+        return yaml.SafeLoader.construct_mapping(self, node, deep=deep)
 
 
 KnowledgeLoader.yaml_implicit_resolvers = {
