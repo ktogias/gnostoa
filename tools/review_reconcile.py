@@ -569,7 +569,7 @@ def _observations(
         thread_observation = _derived_thread_observation(
             review=review,
             unresolved_threads=unresolved_threads,
-            review_observation_ids=review_observation_ids,
+            occupied_observation_ids=occupied_observation_ids,
             subject=subject,
             provider_id=provider_id,
             target_head=target_head,
