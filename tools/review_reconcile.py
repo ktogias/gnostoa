@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import copy
 import hashlib
 import html
@@ -467,12 +466,8 @@ def _thread_evidence_observation_id(
     if legacy_id not in occupied_observation_ids:
         return legacy_id
 
-    encoded_origin = (
-        base64.urlsafe_b64encode(origin_observation_id.encode("utf-8"))
-        .decode("ascii")
-        .rstrip("=")
-    )
-    stem = f"gnostoa-thread-evidence:v2:{encoded_origin}"
+    origin_digest = hashlib.sha256(origin_observation_id.encode("utf-8")).hexdigest()
+    stem = f"gnostoa-thread-evidence:v2:sha256:{origin_digest}"
     candidate = stem
     suffix = 0
     while candidate in occupied_observation_ids:
