@@ -167,13 +167,13 @@ class UsefulL1PresentationTests(unittest.TestCase):
         self.assertIn("non-success=32 (+2 omitted)", rendered)
         self.assertEqual(projection, reducer.parse_projection_comment(rendered))
 
-    def test_provider_title_cannot_inject_markdown_or_html(self) -> None:
+    def test_provider_title_is_one_inert_literal_including_mentions(self) -> None:
         fixtures = _fixtures()
         reducer = fixtures._reducer()
         snapshot = fixtures._snapshot()
         snapshot["subject"]["title"] = (
             "[fake approval](https://example.invalid) **PASS** "
-            '<img src="x"> `CONTINUE` &lt;b&gt;'
+            '<img src="x"> `CONTINUE` &lt;b&gt; @octocat @gnostoa/team'
         )
         projection = reducer.build_projection(
             snapshot,
@@ -187,20 +187,16 @@ class UsefulL1PresentationTests(unittest.TestCase):
         )
         rendered = reducer.render_projection(projection)
         line = next(line for line in rendered.splitlines() if "Intent summary:" in line)
-        for active in (
-            "[fake approval](",
-            "**PASS**",
-            "<img ",
-            "`CONTINUE`",
-            "<b>",
-        ):
-            with self.subTest(active=active):
-                self.assertNotIn(active, line)
-        self.assertIn(r"\[fake approval\]\(https://example\.invalid\)", line)
-        self.assertIn(r"\*\*PASS\*\*", line)
-        self.assertIn('&lt;img src="x"&gt;', line)
-        self.assertIn(r"\`CONTINUE\`", line)
-        self.assertIn("&amp;lt;b&amp;gt;", line)
+        expected_literal = reducer._markdown_code(
+            projection["subject"]["title"],
+            "projection.subject.title",
+        )
+        self.assertEqual(f"- Intent summary: {expected_literal}", line)
+        self.assertNotIn("<img ", line)
+        self.assertNotIn("<b>", line)
+        self.assertIn("@octocat", line)
+        self.assertIn("@gnostoa/team", line)
+        self.assertFalse(line.startswith("- Intent summary: @"))
         self.assertLessEqual(len(rendered.encode("utf-8")), 65_536)
         self.assertEqual(projection, reducer.parse_projection_comment(rendered))
 

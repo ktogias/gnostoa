@@ -4,6 +4,7 @@ import importlib.util
 import io
 import unittest
 import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -350,6 +351,109 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             with self.subTest(url=url):
                 with self.assertRaises(adapter.ProviderReadError):
                     adapter._validate_api_url(url)
+
+    def test_github_redirect_handler_rejects_escape_from_admitted_origin(self) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        handler = adapter._GitHubRedirectHandler()
+        request = urllib.request.Request(
+            "https://api.github.com/repos/ktogias/gnostoa/issues/300/comments"
+        )
+        request.add_unredirected_header(
+            "Authorization",
+            "Bearer fixture-token",
+        )
+
+        for redirected_url in (
+            "https://example.invalid/steal-token",
+            "http://api.github.com/repos/ktogias/gnostoa",
+            "https://api.github.com:8443/repos/ktogias/gnostoa",
+        ):
+            with self.subTest(redirected_url=redirected_url):
+                with self.assertRaises(adapter.ProviderReadError):
+                    handler.redirect_request(
+                        request,
+                        None,
+                        302,
+                        "Found",
+                        {},
+                        redirected_url,
+                    )
+
+    def test_github_redirect_handler_reauthenticates_only_same_admitted_origin(
+        self,
+    ) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        handler = adapter._GitHubRedirectHandler()
+        request = urllib.request.Request(
+            "https://api.github.com/repos/ktogias/gnostoa/issues/300/comments"
+        )
+        request.add_unredirected_header(
+            "Authorization",
+            "Bearer fixture-token",
+        )
+
+        redirected = handler.redirect_request(
+            request,
+            None,
+            302,
+            "Found",
+            {},
+            "https://api.github.com/repos/ktogias/gnostoa/issues/300/comments?per_page=100",
+        )
+
+        self.assertIsNotNone(redirected)
+        assert redirected is not None
+        self.assertEqual(
+            "https://api.github.com/repos/ktogias/gnostoa/issues/300/comments?per_page=100",
+            redirected.full_url,
+        )
+        self.assertEqual(
+            "Bearer fixture-token",
+            redirected.get_header("Authorization"),
+        )
+
+    def test_github_client_routes_requests_through_guarded_redirect_opener(
+        self,
+    ) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        response = mock.MagicMock()
+        response.read.return_value = b"{}"
+        response.headers.items.return_value = []
+        context = mock.MagicMock()
+        context.__enter__.return_value = response
+        opener = mock.MagicMock()
+        opener.open.return_value = context
+
+        with (
+            mock.patch.object(
+                adapter.urllib.request,
+                "build_opener",
+                return_value=opener,
+            ) as build_opener,
+            mock.patch.object(
+                adapter.urllib.request,
+                "urlopen",
+                side_effect=AssertionError("unguarded urlopen must not be used"),
+            ),
+        ):
+            client = adapter.GitHubRestClient("fixture-token")
+            payload, headers = client.get(
+                "https://api.github.com/repos/ktogias/gnostoa"
+            )
+
+        self.assertEqual({}, payload)
+        self.assertEqual({}, headers)
+        build_opener.assert_called_once()
+        self.assertTrue(
+            any(
+                isinstance(item, adapter._GitHubRedirectHandler)
+                for item in build_opener.call_args.args
+            )
+        )
+        opener.open.assert_called_once()
 
     def test_empty_graphql_thread_connection_is_complete(self) -> None:
         fixtures = _fixtures()
