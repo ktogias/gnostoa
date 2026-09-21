@@ -245,8 +245,8 @@ class UsefulL1PresentationTests(unittest.TestCase):
         line = title_lines[0]
         literal = line.removeprefix("- Intent summary: ")
         match = re.fullmatch(r"(?P<fence>`+)(?P<body>.*)(?P=fence)", literal)
-        self.assertIsNotNone(match)
-        assert match is not None
+        if match is None:
+            self.fail("provider title did not render as one fenced literal")
         self.assertIn("@octocat", match.group("body"))
         self.assertIn("@gnostoa/team", match.group("body"))
         self.assertNotIn("<img ", line)

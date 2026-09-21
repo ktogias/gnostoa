@@ -403,8 +403,8 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             "https://api.github.com/repos/ktogias/gnostoa/issues/300/comments?per_page=100",
         )
 
-        self.assertIsNotNone(redirected)
-        assert redirected is not None
+        if redirected is None:
+            self.fail("same-origin redirect was unexpectedly refused")
         self.assertEqual(
             "https://api.github.com/repos/ktogias/gnostoa/issues/300/comments?per_page=100",
             redirected.full_url,

@@ -907,14 +907,14 @@ def _validate_projection_document(document: dict[str, Any]) -> None:
         expected_action = "RECONCILE_PROVIDER_CHECKS"
     elif checks["pending"] or checks["omitted_pending"]:
         expected_action = "WAIT_FOR_PROVIDER_CHECKS"
+    elif semantic_outcome == "PASS":
+        expected_action = "CONTINUE_EXISTING_WORKFLOW"
+    elif semantic_outcome in {"BLOCKED", "CONFLICTING"}:
+        expected_action = "RECONCILE_REVIEW_EVIDENCE"
+    elif semantic_outcome == "INCOMPLETE":
+        expected_action = "WAIT_OR_RECONCILE_REQUIRED_EVIDENCE"
     else:
-        expected_action = {
-            "PASS": "CONTINUE_EXISTING_WORKFLOW",
-            "BLOCKED": "RECONCILE_REVIEW_EVIDENCE",
-            "CONFLICTING": "RECONCILE_REVIEW_EVIDENCE",
-            "INCOMPLETE": "WAIT_OR_RECONCILE_REQUIRED_EVIDENCE",
-            "UNAVAILABLE": "WAIT_FOR_PROTECTED_CAPABILITY",
-        }[semantic_outcome]
+        expected_action = "WAIT_FOR_PROTECTED_CAPABILITY"
 
     next_action = _string(
         document.get("next_permitted_action"),
