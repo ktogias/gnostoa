@@ -753,9 +753,7 @@ def _validate_projection_checks(value: object) -> dict[str, Any]:
             checks.get(name),
             f"projection.checks.{name}",
         )
-        if any(
-            len(item.encode("utf-8")) > _MAX_CHECK_LABEL_BYTES for item in items
-        ):
+        if any(len(item.encode("utf-8")) > _MAX_CHECK_LABEL_BYTES for item in items):
             raise ReconciliationInputError(
                 f"projection.checks.{name} label exceeds bounded size"
             )
