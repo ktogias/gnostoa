@@ -710,7 +710,7 @@ def _classify_latest_check(
     if len(states) != 1:
         return key, name, "ambiguous"
 
-    _, status, conclusion = next(iter(states))
+    ((_, status, conclusion),) = states
     if status != "completed":
         return key, name, "pending"
     if conclusion not in {"success", "neutral", "skipped"}:
