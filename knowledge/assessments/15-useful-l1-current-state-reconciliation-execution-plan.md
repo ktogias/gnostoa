@@ -485,6 +485,36 @@ thread-state observation to the current target head while retaining the older
 review commit in native provenance. Python 3.11 and 3.12 compatibility are GREEN;
 the Python 3.12 source suite completed **1,119 tests PASS, 2 skips**.
 
+A subsequent independent deep pass reopened three narrower invariants:
+
+- **RC-04 / effective old-head thread survival:** an unresolved thread could
+  still disappear when its owning review remained effective but was bound to an
+  older head, because the whole review observation was excluded as
+  `subject_not_exact`.
+- **RC-05 / certified-cut thread freshness:** derived current thread-state
+  evidence still used the root-comment metadata timestamp, so a valid
+  age-sensitive observation policy could discard freshly reacquired unresolved
+  state as stale.
+- **RC-06 / normalized temporal integrity:** the common reducer accepted
+  review/review-thread/check observations later than the snapshot cut; a
+  future-dated success could therefore override an earlier failure in a buggy
+  second adapter.
+
+The tests-only RED candidate
+`8efe64c6fa7b1d92d85fa15d77ac7a7606bacf51` completed the Python 3.11
+source suite with **1,122 tests, 3 failures, 2 skips**, one failure per RC-04,
+RC-05 and RC-06. Style and type-check passed before the source suite.
+
+The implementation lineage beginning at
+`60008ea5d596508c8e195e897b9743e981a08251` separates unresolved current
+thread state into a dedicated exact-current `COMMENT_ONLY` observation,
+timestamps that state at the certified snapshot cut while retaining origin
+timestamps/commits as native provenance, and rejects normalized semantic
+observations later than the snapshot cut before both R2A-input composition and
+projection reduction. Follow-up test alignment through
+`519c6753a2cc512588fec4f4c1665188f3bc3112` updates pre-existing expectations
+to the new separated representation without changing R2A policy semantics.
+
 These corrections leave the admitted L1 boundaries unchanged: no reviewer
 selection, merge/approval authority, L2 effect fence, L3 orchestration, public
 provider schema or second production provider is introduced.
