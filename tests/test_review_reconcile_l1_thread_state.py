@@ -1027,7 +1027,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
 
     def test_publish_mode_keeps_safe_noop_decisions_successful(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures._adapter()
+        adapter = fixtures.adapter_fixture()
         entries = [{"pull_number": 1}, {"pull_number": 2}]
         results = [
             {"pull_number": 1, "published": False, "reason": "STALE_HEAD"},
