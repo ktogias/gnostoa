@@ -34,7 +34,7 @@ class UsefulL1IdentityCollisionTests(unittest.TestCase):
         legacy_thread_id = f"gnostoa-thread-evidence::{origin_id}"
         snapshot["reviews"][1]["observation_id"] = legacy_thread_id
 
-        review_input = reducer.build_review_input(snapshot, fixtures._bundle())
+        review_input = reducer.build_review_input(snapshot, fixtures.bundle_fixture())
         observations = review_input["evidence_set"]["observations"]
         observation_ids = {item["observation_id"] for item in observations}
 
@@ -59,16 +59,17 @@ class UsefulL1IdentityCollisionTests(unittest.TestCase):
         snapshot = fixtures.snapshot_fixture()
 
         origin_id = snapshot["reviews"][0]["observation_id"]
-        review_input = reducer.build_review_input(snapshot, fixtures._bundle())
-        thread_only = next(
+        review_input = reducer.build_review_input(snapshot, fixtures.bundle_fixture())
+        thread_only = [
             item
             for item in review_input["evidence_set"]["observations"]
             if item["native"].get("thread_evidence_only") is True
-        )
+        ]
 
+        self.assertEqual(1, len(thread_only))
         self.assertEqual(
             f"gnostoa-thread-evidence::{origin_id}",
-            thread_only["observation_id"],
+            thread_only[0]["observation_id"],
         )
 
     def test_fallback_probes_past_a_second_provider_collision(self) -> None:
@@ -98,15 +99,16 @@ class UsefulL1IdentityCollisionTests(unittest.TestCase):
         )
         snapshot["coverage"]["reviews"]["count"] = 3
 
-        review_input = reducer.build_review_input(snapshot, fixtures._bundle())
+        review_input = reducer.build_review_input(snapshot, fixtures.bundle_fixture())
         observations = review_input["evidence_set"]["observations"]
-        thread_only = next(
+        thread_only = [
             item
             for item in observations
             if item["native"].get("thread_evidence_only") is True
-        )
+        ]
 
-        self.assertEqual(first_fallback + ":1", thread_only["observation_id"])
+        self.assertEqual(1, len(thread_only))
+        self.assertEqual(first_fallback + ":1", thread_only[0]["observation_id"])
         self.assertIn(
             first_fallback,
             {item["observation_id"] for item in observations},
@@ -124,12 +126,14 @@ class UsefulL1IdentityCollisionTests(unittest.TestCase):
             )
             if reverse:
                 snapshot["reviews"].reverse()
-            review_input = reducer.build_review_input(snapshot, fixtures._bundle())
-            return next(
-                item["observation_id"]
+            review_input = reducer.build_review_input(snapshot, fixtures.bundle_fixture())
+            thread_only = [
+                item
                 for item in review_input["evidence_set"]["observations"]
                 if item["native"].get("thread_evidence_only") is True
-            )
+            ]
+            self.assertEqual(1, len(thread_only))
+            return thread_only[0]["observation_id"]
 
         self.assertEqual(thread_id(False), thread_id(True))
 
@@ -143,7 +147,7 @@ class UsefulL1IdentityCollisionTests(unittest.TestCase):
         snapshot["reviews"][1]["observation_id"] = (
             f"gnostoa-thread-evidence::{origin_id}"
         )
-        review_input = reducer.build_review_input(snapshot, fixtures._bundle())
+        review_input = reducer.build_review_input(snapshot, fixtures.bundle_fixture())
 
         schema_path = (
             Path(__file__).resolve().parents[1]
