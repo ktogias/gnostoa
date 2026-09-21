@@ -241,6 +241,47 @@ class UsefulL1RenderCompatibilityTests(unittest.TestCase):
             )
         )
 
+    def test_strict_check_label_byte_bound_is_exact(self) -> None:
+        fixtures = _fixtures()
+        reducer = fixtures.reducer_fixture()
+        projection = reducer.build_projection(
+            fixtures.snapshot_fixture(),
+            protected_main_revision="e" * 40,
+            outer_consumer={
+                "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
+                "runtime_revision": "9" * 40,
+            },
+            r2a_result={
+                "outcome": "INCOMPLETE",
+                "reason": "QUORUM_UNMET",
+                "binding": False,
+            },
+            execution={
+                "execution_id": "github-actions:281:1",
+                "observed_at": "2026-09-19T16:42:10Z",
+            },
+        )
+
+        for byte_count, accepted in ((128, True), (129, False)):
+            with self.subTest(byte_count=byte_count):
+                candidate = dict(projection)
+                candidate["checks"] = {
+                    "observed_names": 1,
+                    "ambiguous": [],
+                    "pending": [],
+                    "non_success": ["x" * byte_count],
+                    "omitted_ambiguous": 0,
+                    "omitted_pending": 0,
+                    "omitted_non_success": 0,
+                }
+                candidate["next_permitted_action"] = "RECONCILE_PROVIDER_CHECKS"
+                rendered = reducer.render_projection(candidate)
+                parsed = reducer.parse_projection_comment(rendered)
+                if accepted:
+                    self.assertEqual(candidate, parsed)
+                else:
+                    self.assertIsNone(parsed)
+
     def test_publish_updates_pre_bound_long_check_label_in_place(self) -> None:
         fixtures = _fixtures()
         adapter = fixtures._adapter()
