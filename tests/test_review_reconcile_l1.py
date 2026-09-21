@@ -736,12 +736,13 @@ class UsefulL1RedContractTests(unittest.TestCase):
         self.assertEqual("COMPLETE", snapshot["coverage"]["reviews"]["status"])
         self.assertEqual("COMPLETE", snapshot["coverage"]["review_threads"]["status"])
         self.assertEqual(fallback, snapshot["reviews"][0]["reviewer_id"])
-        first_thread = next(
+        first_threads = [
             item
             for item in snapshot["review_threads"]
             if item["review_observation_id"] == "github-review-10"
-        )
-        self.assertEqual(fallback, first_thread["reviewer_id"])
+        ]
+        self.assertEqual(1, len(first_threads))
+        self.assertEqual(fallback, first_threads[0]["reviewer_id"])
 
     def test_missing_review_identity_stays_fail_closed(self) -> None:
         adapter = _adapter()
