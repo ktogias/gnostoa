@@ -852,7 +852,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
             "engine": "nebula-review",
             "project_key": "opaque-project::7",
             "proposal": {
-                "token": "proposal::alpha/42",
+                "native_ref": "proposal::alpha/42",
                 "phase": "active",
                 "tip": "a" * 40,
                 "parent": "b" * 40,
@@ -861,14 +861,14 @@ class UsefulL1FollowupTests(unittest.TestCase):
             },
             "decisions": [
                 {
-                    "token": "decision::opaque-Z9",
+                    "native_ref": "decision::opaque-Z9",
                     "actor": "reviewer::opaque-A",
                     "verdict": "accept",
                     "when": "2026-09-19T16:40:30Z",
                     "revision": "a" * 40,
                 },
                 {
-                    "token": "decision::opaque-Q2",
+                    "native_ref": "decision::opaque-Q2",
                     "actor": "reviewer::opaque-B",
                     "verdict": "note",
                     "when": "2026-09-19T16:39:30Z",
@@ -898,7 +898,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
                     "repository": f"urn:nebula:project:{document['project_key']}",
                     "change_request": {
                         "kind": "proposal",
-                        "id": proposal["token"],
+                        "id": proposal["native_ref"],
                     },
                     "state": "open" if proposal["phase"] == "active" else "closed",
                     "head_commit": proposal["tip"],
@@ -928,7 +928,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
                 "conversation": [],
                 "reviews": [
                     {
-                        "observation_id": item["token"],
+                        "observation_id": item["native_ref"],
                         "reviewer_id": item["actor"],
                         "recommendation_state": verdict_map.get(
                             item["verdict"],
@@ -936,14 +936,14 @@ class UsefulL1FollowupTests(unittest.TestCase):
                         ),
                         "observed_at": item["when"],
                         "head_commit": item["revision"],
-                        "source_url": f"urn:nebula:{item['token']}",
+                        "source_url": f"urn:nebula:{item['native_ref']}",
                     }
                     for item in document["decisions"]
                 ],
                 "review_threads": [],
                 "checks": [
                     {
-                        "id": item["token"],
+                        "id": item["native_ref"],
                         "key": f"nebula-signal:{item['label']}",
                         "name": item["label"],
                         "head_commit": item["revision"],
@@ -956,7 +956,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
                             if item["result"] == "error"
                             else None
                         ),
-                        "source_url": f"urn:nebula:{item['token']}",
+                        "source_url": f"urn:nebula:{item['native_ref']}",
                     }
                     for item in native_checks
                 ],
@@ -977,7 +977,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
                 "binding": False,
             },
             execution={
-                "execution_id": "pipeline-token::sha256:opaque-7f",
+                "execution_id": "pipeline-ref::sha256:opaque-7f",
                 "observed_at": "2026-09-19T16:41:10Z",
             },
         )
@@ -988,7 +988,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
             review_input["subject"]["change_request"]["id"],
         )
         self.assertEqual(
-            "pipeline-token::sha256:opaque-7f",
+            "pipeline-ref::sha256:opaque-7f",
             projection["observation"]["execution_id"],
         )
         self.assertNotIn("run_id", projection["observation"])
@@ -1003,7 +1003,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
         full_native = copy.deepcopy(native)
         full_native["signals"] = [
             {
-                "token": "signal::opaque-91",
+                "native_ref": "signal::opaque-91",
                 "label": "fast",
                 "revision": "a" * 40,
                 "when": "2026-09-19T16:40:40Z",
@@ -1089,7 +1089,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
             },
             r2a_result=common_result,
             execution={
-                "execution_id": "reference-exec::different-native-token",
+                "execution_id": "reference-exec::different-native-ref",
                 "observed_at": "2026-09-19T16:41:10Z",
             },
         )
