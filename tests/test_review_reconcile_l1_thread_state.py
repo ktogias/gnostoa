@@ -141,7 +141,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
                 "count": 1,
                 "thread_ids": ["github-review-thread-PRRT_thread_one"],
             },
-            observations["github-review-10"]["threads"],
+            observations["gnostoa-thread-evidence::github-review-10"]["threads"],
         )
         self.assertEqual(
             {
@@ -448,7 +448,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         observation = next(
             item
             for item in review_input["evidence_set"]["observations"]
-            if item["observation_id"] == "github-review-10"
+            if item["observation_id"] == "gnostoa-thread-evidence::github-review-10"
         )
         self.assertEqual("unresolved", observation["threads"]["state"])
 
@@ -691,7 +691,8 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
                 observation = next(
                     item
                     for item in review_input["evidence_set"]["observations"]
-                    if item["observation_id"] == "provider-review-10"
+                    if item["observation_id"]
+                    == "gnostoa-thread-evidence::provider-review-10"
                 )
                 self.assertEqual("unresolved", observation["threads"]["state"])
 
@@ -806,7 +807,8 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
                 observation = next(
                     item
                     for item in review_input["evidence_set"]["observations"]
-                    if item["observation_id"] == "provider-review-10"
+                    if item["observation_id"]
+                    == "gnostoa-thread-evidence::provider-review-10"
                 )
                 self.assertEqual("unresolved", observation["threads"]["state"])
 
