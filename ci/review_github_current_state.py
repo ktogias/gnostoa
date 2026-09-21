@@ -105,6 +105,33 @@ def _validate_api_url(url: str) -> str:
     return url
 
 
+class _GitHubRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Keep every authenticated redirect inside the admitted GitHub API origin."""
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        admitted_url = _validate_api_url(newurl)
+        authorization = req.get_header("Authorization")
+        redirected = super().redirect_request(
+            req,
+            fp,
+            code,
+            msg,
+            headers,
+            admitted_url,
+        )
+        if redirected is not None and authorization is not None:
+            redirected.add_unredirected_header("Authorization", authorization)
+        return redirected
+
+
 def _decode_json(raw: bytes, label: str) -> Any:
     try:
         return json.loads(raw.decode("utf-8"))
@@ -117,6 +144,7 @@ class GitHubRestClient:
         if not token:
             raise ValueError("GitHub token is required")
         self._token = token
+        self._opener = urllib.request.build_opener(_GitHubRedirectHandler())
 
     def _request(
         self,
@@ -141,18 +169,20 @@ class GitHubRestClient:
             method=method,
             headers={
                 "Accept": "application/vnd.github+json",
-                "Authorization": f"Bearer {self._token}",
                 "X-GitHub-Api-Version": _API_VERSION,
                 "User-Agent": "gnostoa-useful-l1",
                 **({"Content-Type": "application/json"} if encoded is not None else {}),
             },
         )
+        request.add_unredirected_header(
+            "Authorization",
+            f"Bearer {self._token}",
+        )
         try:
-            # B310 / dynamic urllib are intentionally suppressed:
-            # _validate_api_url() restricts every request to HTTPS api.github.com
-            # on the default/443 port, including pagination URLs.
+            # The request and every redirect target are restricted to HTTPS
+            # api.github.com on the default/443 port before credentials are sent.
             # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected
-            with urllib.request.urlopen(  # nosec B310
+            with self._opener.open(
                 request,
                 timeout=_TIMEOUT_SECONDS,
             ) as response:

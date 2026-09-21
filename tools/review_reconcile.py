@@ -983,12 +983,11 @@ def render_projection(projection: dict[str, Any]) -> str:
     ]
     title = _optional_summary(subject.get("title"))
     if title is not None:
-        literal_title = re.sub(
-            r"([\\`*_{}\[\]()#+.!|~-])",
-            r"\\\1",
-            html.escape(title, quote=False),
+        title_literal = _markdown_code(
+            title,
+            "projection.subject.title",
         )
-        lines.append(f"- Intent summary: {literal_title}")
+        lines.append(f"- Intent summary: {title_literal}")
     lines.extend(
         [
             (

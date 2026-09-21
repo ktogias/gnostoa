@@ -1103,7 +1103,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             response,
         )
 
-        with mock.patch("urllib.request.urlopen", side_effect=error):
+        with mock.patch.object(client._opener, "open", side_effect=error):
             with self.assertRaises(adapter.ProviderReadError) as caught:
                 client.get(
                     "https://api.github.com/repos/ktogias/gnostoa/issues/300/comments"
@@ -1125,7 +1125,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             response,
         )
 
-        with mock.patch("urllib.request.urlopen", side_effect=error):
+        with mock.patch.object(client._opener, "open", side_effect=error):
             with self.assertRaises(adapter.ProviderReadError) as caught:
                 client.get(
                     "https://api.github.com/repos/ktogias/gnostoa/issues/300/comments"
@@ -1147,7 +1147,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             response,
         )
 
-        with mock.patch("urllib.request.urlopen", side_effect=error):
+        with mock.patch.object(client._opener, "open", side_effect=error):
             with self.assertRaises(adapter.ProviderReadError) as caught:
                 client.graphql(
                     "query($cursor:String){viewer{login}}",
