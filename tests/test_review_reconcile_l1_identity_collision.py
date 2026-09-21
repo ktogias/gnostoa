@@ -12,7 +12,10 @@ from jsonschema import Draft202012Validator, FormatChecker
 
 def _fixtures() -> Any:
     path = Path(__file__).with_name("test_review_reconcile_l1.py")
-    spec = importlib.util.spec_from_file_location("l1_identity_collision_fixtures", path)
+    spec = importlib.util.spec_from_file_location(
+        "l1_identity_collision_fixtures",
+        path,
+    )
     if spec is None or spec.loader is None:
         raise AssertionError("L1_FIXTURES_UNAVAILABLE")
     module = importlib.util.module_from_spec(spec)
