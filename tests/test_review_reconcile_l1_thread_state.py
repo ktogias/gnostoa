@@ -6,6 +6,7 @@ import tempfile
 import unittest
 import urllib.error
 import urllib.request
+from email.message import Message
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -1199,22 +1200,28 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
 
     def test_rest_write_forbidden_exposes_only_bounded_status(self) -> None:
         fixtures = _fixtures()
-        adapter = fixtures._adapter()
+        adapter = fixtures.adapter_fixture()
         client = adapter.GitHubRestClient(_NONEMPTY_TEST_VALUE)
         response = io.BytesIO(
             b'{"message":"Resource not accessible by integration",'
             b'"private_detail":"must-not-reach-logs"}'
         )
+        headers = Message()
+        headers["x-ratelimit-remaining"] = "42"
         error = urllib.error.HTTPError(
             "https://api.github.com/repos/ktogias/gnostoa/issues/300/comments",
             403,
             "Forbidden",
-            {"x-ratelimit-remaining": "42"},
+            headers,
             response,
         )
 
         with (
-            mock.patch.object(client._opener, "open", side_effect=error),
+            mock.patch.object(
+                urllib.request.OpenerDirector,
+                "open",
+                side_effect=error,
+            ),
             self.assertRaises(adapter.ProviderWriteError) as caught,
         ):
             client.post(
