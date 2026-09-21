@@ -992,9 +992,13 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             mock.patch.object(
                 adapter,
                 "publish_entry",
-                side_effect=[adapter.ProviderWriteError("first failed"), second],
+                side_effect=[
+                    adapter.ProviderWriteError("first failed", status=403),
+                    second,
+                ],
             ) as publish,
             mock.patch.object(adapter, "_summary") as summary,
+            mock.patch("builtins.print") as print_line,
             mock.patch.dict(adapter.os.environ, {"GH_TOKEN": _NONEMPTY_TEST_VALUE}),
         ):
             code = adapter.main(
@@ -1008,11 +1012,18 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
                 ]
             )
 
-        self.assertEqual(0, code)
+        self.assertEqual(1, code)
         self.assertEqual(2, publish.call_count)
         rendered = "\n".join(summary.call_args.args[0])
         self.assertIn("PR #1: PUBLICATION_ENTRY_UNAVAILABLE", rendered)
+        self.assertIn("ProviderWriteError:HTTP_403", rendered)
         self.assertIn("PR #2: UPDATED", rendered)
+        logged = "\n".join(
+            str(call.args[0]) for call in print_line.call_args_list if call.args
+        )
+        self.assertIn("PR #1: PUBLICATION_ENTRY_UNAVAILABLE", logged)
+        self.assertIn("ProviderWriteError:HTTP_403", logged)
+        self.assertIn("PR #2: UPDATED", logged)
 
     def test_collect_mode_preserves_per_entry_failure_reason(self) -> None:
         fixtures = _fixtures()
