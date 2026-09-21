@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import os
 import re
-import subprocess
 import sys
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import yaml
 
@@ -52,29 +54,69 @@ class UsefulL1PresentationTests(unittest.TestCase):
                     r"python ci/review_github_current_state\.py\b",
                     step["run"],
                 )
-                self.assertIsNotNone(command)
-                assert command is not None
-                environment = {"PATH": os.defpath, "PYTHONNOUSERSITE": "1"}
+                if command is None:
+                    self.fail("workflow entrypoint command is unavailable")
+
+                pythonpath = None
                 for scope in (workflow, job, step):
                     value = scope.get("env", {}).get("PYTHONPATH")
                     if value is not None:
-                        environment["PYTHONPATH"] = value
+                        pythonpath = value
                 if command.group(1) is not None:
-                    environment["PYTHONPATH"] = command.group(1)
-                # Audited: argv is fixed, shell=False, and no provider-controlled
-                # value reaches the executable or arguments.
-                # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
-                completed = subprocess.run(
-                    [sys.executable, "ci/review_github_current_state.py", "--help"],
-                    cwd=_ROOT,
-                    env=environment,
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                    check=False,
-                )
-                self.assertEqual(0, completed.returncode, completed.stderr)
-                self.assertIn("--mode", completed.stdout)
+                    pythonpath = command.group(1)
+                self.assertIsInstance(pythonpath, str)
+
+                configured_paths = [
+                    str((_ROOT / item).resolve())
+                    for item in pythonpath.split(os.pathsep)
+                    if item
+                ]
+                self.assertIn(str(_ROOT.resolve()), configured_paths)
+                repository_paths = {
+                    str(_ROOT.resolve()),
+                    str((_ROOT / "tests").resolve()),
+                }
+                isolated_path = [
+                    *configured_paths,
+                    *[
+                        entry
+                        for entry in sys.path
+                        if entry
+                        and str(Path(entry).resolve()) not in repository_paths
+                    ],
+                ]
+
+                adapter_path = _ROOT / "ci/review_github_current_state.py"
+                module_name = f"gnostoa_l1_workflow_entrypoint_{job_name}"
+                spec = importlib.util.spec_from_file_location(module_name, adapter_path)
+                if spec is None or spec.loader is None:
+                    self.fail("workflow entrypoint module is unloadable")
+
+                module_names = ("tools", "tools.review_model", "tools.review_reconcile")
+                preserved_modules = {
+                    name: sys.modules.get(name) for name in module_names
+                }
+                for name in module_names:
+                    sys.modules.pop(name, None)
+                try:
+                    with mock.patch.object(sys, "path", isolated_path):
+                        adapter = importlib.util.module_from_spec(spec)
+                        spec.loader.exec_module(adapter)
+                finally:
+                    for name, preserved in preserved_modules.items():
+                        if preserved is None:
+                            sys.modules.pop(name, None)
+                        else:
+                            sys.modules[name] = preserved
+
+                rendered_help = io.StringIO()
+                with (
+                    contextlib.redirect_stdout(rendered_help),
+                    self.assertRaises(SystemExit) as caught,
+                ):
+                    adapter._parser().parse_args(["--help"])
+                self.assertEqual(0, caught.exception.code)
+                self.assertIn("--mode", rendered_help.getvalue())
 
     def test_rendered_check_summary_exposes_omitted_adverse_counts(self) -> None:
         fixtures = _fixtures()
