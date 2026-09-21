@@ -194,13 +194,18 @@ class UsefulL1RenderCompatibilityTests(unittest.TestCase):
             },
         )
         existing_projection["checks"] = {
-            "observed_names": 1,
+            "observed_names": 40,
             "ambiguous": [],
             "pending": [],
-            "non_success": ["legacy-check-" + ("x" * 180)],
+            "non_success": [
+                "legacy-check-" + ("x" * 180)
+                if index == 0
+                else f"legacy-check-{index}"
+                for index in range(32)
+            ],
             "omitted_ambiguous": 0,
             "omitted_pending": 0,
-            "omitted_non_success": 0,
+            "omitted_non_success": 8,
         }
         existing_projection["next_permitted_action"] = "RECONCILE_PROVIDER_CHECKS"
         prior_render = reducer.render_projection(existing_projection)
