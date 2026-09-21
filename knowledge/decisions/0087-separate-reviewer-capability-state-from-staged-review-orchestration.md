@@ -308,20 +308,17 @@ for a policy-established optional route. It never counts as review evidence,
 never satisfies a required review domain/capability, and is forbidden when the
 required-domain status is unknown or incomplete.
 
-`FAILED` and `TIMED_OUT` are terminal for one invocation attempt. The
-read-only planner has zero automatic retry authority. After same-cut
-revalidation, a required or unknown-required route produces
-`MANUAL_ESCALATION_REQUIRED` and remains blocking. A separately authorized
-provider-write effect may create a new activation identity on the same exact
-head; only its subsequent exact-head result can advance the route. Optional
-routes may be deselected only under the protected optional-route rule.
-
 `FAILED` and `TIMED_OUT` are terminal for one invocation attempt, not for
-the semantic requirement. They must not become "clean review" observations. A
-required route/domain remains incomplete until a later successful exact-head
-result or other policy-sufficient qualified evidence exists. Recovery is
-manual-escalation-only as defined above; the read-only planner has no automatic
-retry loop or provider-write authority.
+the semantic requirement, and must never become "clean review" observations.
+The read-only planner has zero automatic retry authority. After same-cut
+revalidation, a required or unknown-required route produces
+`MANUAL_ESCALATION_REQUIRED` and remains blocking until a later successful
+exact-head result or other policy-sufficient qualified evidence exists. The
+planner neither invents backoff nor performs provider writes. A separately
+authorized provider-write effect may create a new activation identity on the
+same exact head after current eligibility is revalidated; only its later result
+can advance the route. Optional routes may be deselected only under the
+protected optional-route rule.
 
 Nor does every unavailable configured reviewer block convergence. The effective
 Gnostoa review policy remains authoritative for required distinct domains and
