@@ -1345,9 +1345,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
         ) -> tuple[int, bytes]:
             self.assertIs(consumer, acquire_consumer())
             self.assertIsInstance(input_document, dict)
-            return _valid_incomplete_result(
-                cast(dict[str, Any], input_document)
-            )
+            return _valid_incomplete_result(cast(dict[str, Any], input_document))
 
         with (
             mock.patch.object(
