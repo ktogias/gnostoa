@@ -150,6 +150,18 @@ rewrite or erase that history. This keeps existing R2A unresolved-thread policy
 visible without resurrecting a superseded or old-head recommendation for quorum,
 conflict or recommendation-blocker evaluation.
 
+Derived thread-only observation identity is owned by the provider-neutral common
+reducer and must never rewrite a provider-native review identity. When available,
+the reducer preserves the legacy `gnostoa-thread-evidence::<origin>` identity.
+If that collides, the first fallback is the fixed SHA-256 stem
+`gnostoa-thread-evidence:v2:sha256:<sha256(origin)>`. Further collisions probe
+the fixed-width family `:p<16 lowercase hexadecimal digits>`, using probe values
+1 through `2^64 - 1`. Allocation checks the shared occupied-ID set and fails
+closed only after every representable probe candidate has been occupied; total
+occupied-set cardinality alone is not evidence that this probe family is
+exhausted. Provider-native IDs and full origin provenance remain opaque and
+unchanged.
+
 If GitHub no longer exposes the review actor (`user: null`), the adapter may retain
 the native review through an opaque per-review fallback identity for provenance and
 thread correlation, but an `APPROVED` or `CHANGES_REQUESTED` recommendation from
