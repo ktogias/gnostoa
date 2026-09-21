@@ -187,6 +187,26 @@ def _validate_source_payloads(
             )
 
 
+def _validate_temporal_integrity(snapshot: dict[str, Any]) -> None:
+    cut_text = _timestamp(snapshot.get("observed_at"), "observed_at")
+    cut = parse_rfc3339(cut_text)
+    for source in ("reviews", "review_threads", "checks"):
+        payload = snapshot.get(source)
+        if not isinstance(payload, list):
+            raise ReconciliationInputError(f"{source} must be an array")
+        for index, raw_item in enumerate(payload):
+            item = _mapping(raw_item, f"{source}[{index}]")
+            observed_at = _timestamp(
+                item.get("observed_at"),
+                f"{source}[{index}].observed_at",
+            )
+            if parse_rfc3339(observed_at) > cut:
+                raise ReconciliationInputError(
+                    f"{source}[{index}].observed_at is later than "
+                    "snapshot observation cut"
+                )
+
+
 def _review_source_status(coverage: dict[str, dict[str, Any]]) -> str:
     statuses = {
         coverage["reviews"]["status"],
@@ -274,6 +294,7 @@ def _observations(
     reviews, threads_by_review = _thread_records_by_review(snapshot)
 
     target_head = subject["head_commit"]
+    snapshot_cut = _timestamp(subject.get("observed_at"), "subject.observed_at")
     review_observation_ids = {
         _string(review.get("observation_id"), "review.observation_id")
         for review in reviews
@@ -352,53 +373,76 @@ def _observations(
         review_head = review.get("head_commit")
         source_url = review.get("source_url")
         thread_records = threads_by_review.get(observation_id, [])
+        unresolved_threads = [
+            item for item in thread_records if item["state"] == "unresolved"
+        ]
+        resolved_threads = [
+            item for item in thread_records if item["state"] == "resolved"
+        ]
 
-        if review.get("effective") is False:
-            if not any(item["state"] == "unresolved" for item in thread_records):
-                continue
-            thread_observation_id = f"gnostoa-thread-evidence::{observation_id}"
-            if thread_observation_id in review_observation_ids:
-                raise ReconciliationInputError(
-                    "derived thread evidence observation_id collides with review evidence"
-                )
-            thread_observed_at = max(
-                (
-                    _timestamp(
-                        item.get("observed_at"),
-                        "review_thread.observed_at",
-                    )
-                    for item in thread_records
-                ),
-                key=parse_rfc3339,
-            )
+        if review.get("effective") is not False:
             observations.append(
                 make_observation(
-                    observation_id=thread_observation_id,
+                    observation_id=observation_id,
                     reviewer_id=reviewer_id,
-                    state="COMMENT_ONLY",
-                    observed_at=thread_observed_at,
+                    state=state,
+                    observed_at=observed_at,
                     review_head=review_head,
                     source_url=source_url,
-                    thread_records=thread_records,
-                    binding_head=target_head,
-                    native_extra={
-                        "thread_evidence_only": True,
-                        "superseded_review_observation_id": observation_id,
-                        "superseded_recommendation_state": state,
-                    },
+                    thread_records=resolved_threads,
                 )
             )
+
+        if not unresolved_threads:
             continue
 
+        thread_observation_id = f"gnostoa-thread-evidence::{observation_id}"
+        if thread_observation_id in review_observation_ids:
+            raise ReconciliationInputError(
+                "derived thread evidence observation_id collides with review evidence"
+            )
+        thread_origin_times = sorted(
+            {
+                _timestamp(
+                    item.get("observed_at"),
+                    "review_thread.observed_at",
+                )
+                for item in unresolved_threads
+            },
+            key=parse_rfc3339,
+        )
+        thread_origin_heads = sorted(
+            {
+                _sha(item["head_commit"], "review_thread.head_commit")
+                for item in unresolved_threads
+                if item.get("head_commit") is not None
+            }
+        )
+        native_extra: dict[str, Any] = {
+            "thread_evidence_only": True,
+            "origin_review_observation_id": observation_id,
+            "origin_review_observed_at": observed_at,
+            "origin_thread_observed_at": thread_origin_times,
+            "origin_thread_head_commits": thread_origin_heads,
+        }
+        if review.get("effective") is False:
+            native_extra.update(
+                {
+                    "superseded_review_observation_id": observation_id,
+                    "superseded_recommendation_state": state,
+                }
+            )
         observations.append(
             make_observation(
-                observation_id=observation_id,
+                observation_id=thread_observation_id,
                 reviewer_id=reviewer_id,
-                state=state,
-                observed_at=observed_at,
+                state="COMMENT_ONLY",
+                observed_at=snapshot_cut,
                 review_head=review_head,
                 source_url=source_url,
-                thread_records=thread_records,
+                thread_records=unresolved_threads,
+                binding_head=target_head,
+                native_extra=native_extra,
             )
         )
     return observations
@@ -413,6 +457,7 @@ def build_review_input(
     subject, provider_subject = _subject(snapshot)
     coverage = _coverage(snapshot)
     _validate_source_payloads(snapshot, coverage)
+    _validate_temporal_integrity(snapshot)
     bundle = _mapping(protected_bundle, "protected_bundle")
     authority = _mapping(bundle.get("authority"), "protected_bundle.authority")
     judge = _mapping(bundle.get("acquired_judge"), "protected_bundle.acquired_judge")
@@ -552,6 +597,7 @@ def build_projection(
     _, provider_subject = _subject(snapshot)
     coverage = _projection_coverage(snapshot)
     _validate_source_payloads(snapshot, coverage)
+    _validate_temporal_integrity(snapshot)
     _thread_records_by_review(snapshot)
     protected_revision = (
         _sha(protected_main_revision, "protected_main_revision")
