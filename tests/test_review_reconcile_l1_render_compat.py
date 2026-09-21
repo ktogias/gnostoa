@@ -198,9 +198,7 @@ class UsefulL1RenderCompatibilityTests(unittest.TestCase):
             "ambiguous": [],
             "pending": [],
             "non_success": [
-                "legacy-check-" + ("x" * 180)
-                if index == 0
-                else f"legacy-check-{index}"
+                "legacy-check-" + ("x" * 180) if index == 0 else f"legacy-check-{index}"
                 for index in range(32)
             ],
             "omitted_ambiguous": 0,
