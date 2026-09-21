@@ -530,6 +530,7 @@ def _observations(
     occupied_observation_ids = {
         _string(review.get("observation_id"), "review.observation_id")
         for review in reviews
+        if review.get("effective") is not False
     }
     observations: list[dict[str, Any]] = []
 
