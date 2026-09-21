@@ -1016,6 +1016,8 @@ class UsefulL1FollowupTests(unittest.TestCase):
             change_id="reference::42",
             source_url="urn:reference:proposal:42",
         )
+        reference["review_threads"] = []
+        reference["coverage"]["review_threads"]["count"] = 0
         native_input = reducer.build_review_input(native_full, fixtures._bundle())
         reference_input = reducer.build_review_input(reference, fixtures._bundle())
 
