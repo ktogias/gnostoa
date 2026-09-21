@@ -172,8 +172,8 @@ class UsefulL1RenderCompatibilityTests(unittest.TestCase):
 
     def test_current_and_legacy_retained_check_bounds_are_explicit(self) -> None:
         fixtures = _fixtures()
-        reducer = fixtures._reducer()
-        snapshot = fixtures._snapshot()
+        reducer = fixtures.reducer_fixture()
+        snapshot = fixtures.snapshot_fixture()
         projection = reducer.build_projection(
             snapshot,
             protected_main_revision="e" * 40,
