@@ -108,10 +108,12 @@ The fallback must not copy an arbitrarily large provider ID into the generated
 identity. The SHA-256 stem has fixed size while complete origin provenance stays
 available in native.origin_review_observation_id.
 
-The current GitHub collector admits at most 5,000 retained items. The fixed
-fallback stem is 98 ASCII bytes; even a sequential probe through `:5000` is
-103 bytes. The focused regression therefore uses a conservative 128-byte bound
-for the collision fallback.
+The current GitHub collector admits at most 5,000 retained review items.
+At most one derived thread-evidence observation is emitted per review, so the
+occupied set remains below roughly 10,000 provider plus derived identities. The
+fixed fallback stem is 98 ASCII bytes; even a five-digit sequential probe stays
+well below 128 bytes. The focused regression therefore uses a conservative
+128-byte bound for the collision fallback.
 
 That regression bound is not a public schema ceiling. The current review-input
 schema requires a non-empty observation_id string and does not define a
