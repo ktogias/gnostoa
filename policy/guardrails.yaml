@@ -550,7 +550,7 @@ guardrails:
       - ci/review_current_advisory_promotion_smoke.py
 
   - id: useful-l1-current-state-reconciliation
-    title: Useful L1 reconciliation stays provider-neutral, protected-source, bounded, non-canonical and fail-closed
+    title: Useful L1 reconciliation stays provider-neutral, protected-source, non-canonical and fail-closed; check labels retain at most 8 per current category and at most 32 only for already-owned legacy parsing
     applies_to: [kit]
     enforcement: hybrid
     owner: team:gnostoa-maintainers

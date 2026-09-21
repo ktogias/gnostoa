@@ -19,6 +19,10 @@ _MARKER = re.compile(r"<!-- gnostoa:l1-current-state:v1:([A-Za-z0-9_-]+) -->")
 _MAX_RENDER_BYTES = 32_768
 _MAX_RENDERED_CHECK_NAMES = 8
 _MAX_CHECK_NAMES = _MAX_RENDERED_CHECK_NAMES
+# Compatibility is only for already-owned pre-bound projections. Retire it once
+# repository-wide inventory finds no open change request whose owned projection
+# is accepted only by the legacy parser: every such projection has been rewritten
+# by the strict bounded reconciler or its change request has closed.
 _PRE_BOUND_MAX_CHECK_NAMES = 32
 _MAX_CHECK_LABEL_BYTES = 128
 
@@ -231,72 +235,267 @@ def _review_source_status(coverage: dict[str, dict[str, Any]]) -> str:
     return "COMPLETE"
 
 
-def _thread_records_by_review(
+def _review_payloads(
     snapshot: dict[str, Any],
-) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+) -> tuple[list[object], list[object]]:
     reviews = snapshot.get("reviews")
     review_threads = snapshot.get("review_threads")
     if not isinstance(reviews, list) or not isinstance(review_threads, list):
         raise ReconciliationInputError("reviews and review_threads must be arrays")
+    return reviews, review_threads
+
+
+def _normalize_review(
+    raw_review: object,
+    review_observation_ids: set[str],
+) -> dict[str, Any]:
+    review = _mapping(raw_review, "review")
+    observation_id = _string(
+        review.get("observation_id"),
+        "review.observation_id",
+    )
+    if observation_id in review_observation_ids:
+        raise ReconciliationInputError("duplicate review observation_id")
+
+    _string(review.get("reviewer_id"), "review.reviewer_id")
+    _string(review.get("recommendation_state"), "review.recommendation_state")
+    _timestamp(review.get("observed_at"), "review.observed_at")
+    head_commit = review.get("head_commit")
+    if head_commit is not None:
+        _sha(head_commit, "review.head_commit")
+    source_url = review.get("source_url")
+    if source_url is not None:
+        _string(source_url, "review.source_url")
+    effective = review.get("effective")
+    if effective is not None and type(effective) is not bool:
+        raise ReconciliationInputError("review.effective must be a boolean")
+
+    review_observation_ids.add(observation_id)
+    return review
+
+
+def _normalize_review_thread(
+    raw_thread: object,
+    *,
+    review_observation_ids: set[str],
+    thread_ids: set[str],
+) -> tuple[str, dict[str, Any]]:
+    thread = _mapping(raw_thread, "review_thread")
+    review_observation_id = _string(
+        thread.get("review_observation_id"),
+        "review_thread.review_observation_id",
+    )
+    thread_id = _string(thread.get("id"), "review_thread.id")
+    if thread_id in thread_ids:
+        raise ReconciliationInputError("duplicate review_thread.id")
+    thread_ids.add(thread_id)
+
+    _string(thread.get("reviewer_id"), "review_thread.reviewer_id")
+    _timestamp(thread.get("observed_at"), "review_thread.observed_at")
+    head_commit = thread.get("head_commit")
+    if head_commit is not None:
+        _sha(head_commit, "review_thread.head_commit")
+    if not isinstance(thread.get("body"), str):
+        raise ReconciliationInputError("review_thread.body must be a string")
+    source_url = thread.get("source_url")
+    if source_url is not None:
+        _string(source_url, "review_thread.source_url")
+    if thread.get("state") not in {"resolved", "unresolved"}:
+        raise ReconciliationInputError(
+            "review_thread.state must be resolved or unresolved"
+        )
+    if review_observation_id not in review_observation_ids:
+        raise ReconciliationInputError(
+            "review_thread references unknown review observation"
+        )
+    return review_observation_id, thread
+
+
+def _thread_records_by_review(
+    snapshot: dict[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+    reviews, review_threads = _review_payloads(snapshot)
 
     normalized_reviews: list[dict[str, Any]] = []
     review_observation_ids: set[str] = set()
     for raw_review in reviews:
-        review = _mapping(raw_review, "review")
-        observation_id = _string(
-            review.get("observation_id"),
-            "review.observation_id",
-        )
-        if observation_id in review_observation_ids:
-            raise ReconciliationInputError("duplicate review observation_id")
-        _string(review.get("reviewer_id"), "review.reviewer_id")
-        _string(review.get("recommendation_state"), "review.recommendation_state")
-        _timestamp(review.get("observed_at"), "review.observed_at")
-        head_commit = review.get("head_commit")
-        if head_commit is not None:
-            _sha(head_commit, "review.head_commit")
-        source_url = review.get("source_url")
-        if source_url is not None:
-            _string(source_url, "review.source_url")
-        effective = review.get("effective")
-        if effective is not None and type(effective) is not bool:
-            raise ReconciliationInputError("review.effective must be a boolean")
-        review_observation_ids.add(observation_id)
-        normalized_reviews.append(review)
+        normalized_reviews.append(_normalize_review(raw_review, review_observation_ids))
 
     threads_by_review: dict[str, list[dict[str, Any]]] = {}
     thread_ids: set[str] = set()
     for raw_thread in review_threads:
-        thread = _mapping(raw_thread, "review_thread")
-        review_observation_id = _string(
-            thread.get("review_observation_id"),
-            "review_thread.review_observation_id",
+        review_observation_id, thread = _normalize_review_thread(
+            raw_thread,
+            review_observation_ids=review_observation_ids,
+            thread_ids=thread_ids,
         )
-        thread_id = _string(thread.get("id"), "review_thread.id")
-        if thread_id in thread_ids:
-            raise ReconciliationInputError("duplicate review_thread.id")
-        thread_ids.add(thread_id)
-        _string(thread.get("reviewer_id"), "review_thread.reviewer_id")
-        _timestamp(thread.get("observed_at"), "review_thread.observed_at")
-        head_commit = thread.get("head_commit")
-        if head_commit is not None:
-            _sha(head_commit, "review_thread.head_commit")
-        if not isinstance(thread.get("body"), str):
-            raise ReconciliationInputError("review_thread.body must be a string")
-        source_url = thread.get("source_url")
-        if source_url is not None:
-            _string(source_url, "review_thread.source_url")
-        thread_state = thread.get("state")
-        if thread_state not in {"resolved", "unresolved"}:
-            raise ReconciliationInputError(
-                "review_thread.state must be resolved or unresolved"
-            )
-        if review_observation_id not in review_observation_ids:
-            raise ReconciliationInputError(
-                "review_thread references unknown review observation"
-            )
         threads_by_review.setdefault(review_observation_id, []).append(thread)
+
     return normalized_reviews, threads_by_review
+
+
+def _observation_binding(
+    *,
+    target_head: str,
+    review_head: object,
+    binding_head: object | None,
+) -> tuple[str, str]:
+    subject_head = review_head if binding_head is None else binding_head
+    if subject_head is None:
+        return target_head, "unestablished"
+
+    bound_head = _sha(subject_head, "review.subject_binding.head_commit")
+    status = "exact" if bound_head == target_head else "partial"
+    return bound_head, status
+
+
+def _make_observation(
+    *,
+    subject: dict[str, Any],
+    provider_id: str,
+    target_head: str,
+    observation_id: str,
+    reviewer_id: str,
+    state: str,
+    observed_at: str,
+    review_head: object,
+    source_url: object,
+    thread_records: list[dict[str, Any]],
+    binding_head: object | None = None,
+    native_extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    bound_head, binding_status = _observation_binding(
+        target_head=target_head,
+        review_head=review_head,
+        binding_head=binding_head,
+    )
+    thread_states = {item["state"] for item in thread_records}
+    aggregate_thread_state = (
+        "unresolved" if "unresolved" in thread_states else "resolved"
+    )
+    return {
+        "observation_id": observation_id,
+        "reviewer_id": reviewer_id,
+        "source_id": "retained-review-evidence",
+        "observed_at": observed_at,
+        "subject_binding": {
+            "status": binding_status,
+            "repository": subject["repository"],
+            "change_request": copy.deepcopy(subject["change_request"]),
+            "head_commit": bound_head,
+            "comparison": copy.deepcopy(subject["comparison"]),
+        },
+        "native": {
+            "object_id": observation_id,
+            "revision": 1,
+            "provider": provider_id,
+            "source_url": source_url,
+            "review_commit_id": review_head,
+            "recommendation_state": state,
+            **({} if native_extra is None else copy.deepcopy(native_extra)),
+        },
+        "findings": [],
+        "threads": {
+            "state": aggregate_thread_state,
+            "count": len(thread_records),
+            "thread_ids": sorted(
+                item["id"] for item in thread_records if isinstance(item.get("id"), str)
+            ),
+        },
+    }
+
+
+def _partition_review_threads(
+    thread_records: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    unresolved = [item for item in thread_records if item["state"] == "unresolved"]
+    resolved = [item for item in thread_records if item["state"] == "resolved"]
+    return resolved, unresolved
+
+
+def _thread_evidence_native_extra(
+    review: dict[str, Any],
+    unresolved_threads: list[dict[str, Any]],
+) -> dict[str, Any]:
+    observed_at = _timestamp(review.get("observed_at"), "review.observed_at")
+    observation_id = _string(
+        review.get("observation_id"),
+        "review.observation_id",
+    )
+    thread_origin_times = sorted(
+        {
+            _timestamp(
+                item.get("observed_at"),
+                "review_thread.observed_at",
+            )
+            for item in unresolved_threads
+        },
+        key=parse_rfc3339,
+    )
+    thread_origin_heads = sorted(
+        {
+            _sha(item["head_commit"], "review_thread.head_commit")
+            for item in unresolved_threads
+            if item.get("head_commit") is not None
+        }
+    )
+    native_extra: dict[str, Any] = {
+        "thread_evidence_only": True,
+        "origin_review_observation_id": observation_id,
+        "origin_review_observed_at": observed_at,
+        "origin_thread_observed_at": thread_origin_times,
+        "origin_thread_head_commits": thread_origin_heads,
+    }
+    if review.get("effective") is False:
+        native_extra.update(
+            {
+                "superseded_review_observation_id": observation_id,
+                "superseded_recommendation_state": _string(
+                    review.get("recommendation_state"),
+                    "review.recommendation_state",
+                ),
+            }
+        )
+    return native_extra
+
+
+def _derived_thread_observation(
+    *,
+    review: dict[str, Any],
+    unresolved_threads: list[dict[str, Any]],
+    review_observation_ids: set[str],
+    subject: dict[str, Any],
+    provider_id: str,
+    target_head: str,
+    snapshot_cut: str,
+) -> dict[str, Any] | None:
+    if not unresolved_threads:
+        return None
+
+    observation_id = _string(
+        review.get("observation_id"),
+        "review.observation_id",
+    )
+    thread_observation_id = f"gnostoa-thread-evidence::{observation_id}"
+    if thread_observation_id in review_observation_ids:
+        raise ReconciliationInputError(
+            "derived thread evidence observation_id collides with review evidence"
+        )
+
+    return _make_observation(
+        subject=subject,
+        provider_id=provider_id,
+        target_head=target_head,
+        observation_id=thread_observation_id,
+        reviewer_id=_string(review.get("reviewer_id"), "review.reviewer_id"),
+        state="COMMENT_ONLY",
+        observed_at=snapshot_cut,
+        review_head=review.get("head_commit"),
+        source_url=review.get("source_url"),
+        thread_records=unresolved_threads,
+        binding_head=target_head,
+        native_extra=_thread_evidence_native_extra(review, unresolved_threads),
+    )
 
 
 def _observations(
@@ -305,7 +504,6 @@ def _observations(
     provider_id: str,
 ) -> list[dict[str, Any]]:
     reviews, threads_by_review = _thread_records_by_review(snapshot)
-
     target_head = subject["head_commit"]
     snapshot_cut = _timestamp(subject.get("observed_at"), "subject.observed_at")
     review_observation_ids = {
@@ -314,150 +512,51 @@ def _observations(
     }
     observations: list[dict[str, Any]] = []
 
-    def make_observation(
-        *,
-        observation_id: str,
-        reviewer_id: str,
-        state: str,
-        observed_at: str,
-        review_head: object,
-        source_url: object,
-        thread_records: list[dict[str, Any]],
-        binding_head: object | None = None,
-        native_extra: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        subject_head = review_head if binding_head is None else binding_head
-        if subject_head is None:
-            bound_head = target_head
-            binding_status = "unestablished"
-        else:
-            bound_head = _sha(subject_head, "review.subject_binding.head_commit")
-            binding_status = "exact" if bound_head == target_head else "partial"
-
-        thread_states = {item["state"] for item in thread_records}
-        aggregate_thread_state = (
-            "unresolved" if "unresolved" in thread_states else "resolved"
-        )
-        return {
-            "observation_id": observation_id,
-            "reviewer_id": reviewer_id,
-            "source_id": "retained-review-evidence",
-            "observed_at": observed_at,
-            "subject_binding": {
-                "status": binding_status,
-                "repository": subject["repository"],
-                "change_request": copy.deepcopy(subject["change_request"]),
-                "head_commit": bound_head,
-                "comparison": copy.deepcopy(subject["comparison"]),
-            },
-            "native": {
-                "object_id": observation_id,
-                "revision": 1,
-                "provider": provider_id,
-                "source_url": source_url,
-                "review_commit_id": review_head,
-                "recommendation_state": state,
-                **({} if native_extra is None else copy.deepcopy(native_extra)),
-            },
-            "findings": [],
-            "threads": {
-                "state": aggregate_thread_state,
-                "count": len(thread_records),
-                "thread_ids": sorted(
-                    item["id"]
-                    for item in thread_records
-                    if isinstance(item.get("id"), str)
-                ),
-            },
-        }
-
-    for raw_review in reviews:
-        review = _mapping(raw_review, "review")
+    for review in reviews:
         observation_id = _string(
             review.get("observation_id"),
             "review.observation_id",
         )
-        reviewer_id = _string(review.get("reviewer_id"), "review.reviewer_id")
-        state = _string(
-            review.get("recommendation_state"),
-            "review.recommendation_state",
-        )
-        observed_at = _timestamp(review.get("observed_at"), "review.observed_at")
-        review_head = review.get("head_commit")
-        source_url = review.get("source_url")
         thread_records = threads_by_review.get(observation_id, [])
-        unresolved_threads = [
-            item for item in thread_records if item["state"] == "unresolved"
-        ]
-        resolved_threads = [
-            item for item in thread_records if item["state"] == "resolved"
-        ]
+        resolved_threads, unresolved_threads = _partition_review_threads(thread_records)
 
         if review.get("effective") is not False:
             observations.append(
-                make_observation(
+                _make_observation(
+                    subject=subject,
+                    provider_id=provider_id,
+                    target_head=target_head,
                     observation_id=observation_id,
-                    reviewer_id=reviewer_id,
-                    state=state,
-                    observed_at=observed_at,
-                    review_head=review_head,
-                    source_url=source_url,
+                    reviewer_id=_string(
+                        review.get("reviewer_id"),
+                        "review.reviewer_id",
+                    ),
+                    state=_string(
+                        review.get("recommendation_state"),
+                        "review.recommendation_state",
+                    ),
+                    observed_at=_timestamp(
+                        review.get("observed_at"),
+                        "review.observed_at",
+                    ),
+                    review_head=review.get("head_commit"),
+                    source_url=review.get("source_url"),
                     thread_records=resolved_threads,
                 )
             )
 
-        if not unresolved_threads:
-            continue
+        thread_observation = _derived_thread_observation(
+            review=review,
+            unresolved_threads=unresolved_threads,
+            review_observation_ids=review_observation_ids,
+            subject=subject,
+            provider_id=provider_id,
+            target_head=target_head,
+            snapshot_cut=snapshot_cut,
+        )
+        if thread_observation is not None:
+            observations.append(thread_observation)
 
-        thread_observation_id = f"gnostoa-thread-evidence::{observation_id}"
-        if thread_observation_id in review_observation_ids:
-            raise ReconciliationInputError(
-                "derived thread evidence observation_id collides with review evidence"
-            )
-        thread_origin_times = sorted(
-            {
-                _timestamp(
-                    item.get("observed_at"),
-                    "review_thread.observed_at",
-                )
-                for item in unresolved_threads
-            },
-            key=parse_rfc3339,
-        )
-        thread_origin_heads = sorted(
-            {
-                _sha(item["head_commit"], "review_thread.head_commit")
-                for item in unresolved_threads
-                if item.get("head_commit") is not None
-            }
-        )
-        native_extra: dict[str, Any] = {
-            "thread_evidence_only": True,
-            "origin_review_observation_id": observation_id,
-            "origin_review_observed_at": observed_at,
-            "origin_thread_observed_at": thread_origin_times,
-            "origin_thread_head_commits": thread_origin_heads,
-        }
-        if review.get("effective") is False:
-            native_extra.update(
-                {
-                    "superseded_review_observation_id": observation_id,
-                    "superseded_recommendation_state": state,
-                }
-            )
-        observations.append(
-            make_observation(
-                observation_id=thread_observation_id,
-                reviewer_id=reviewer_id,
-                state="COMMENT_ONLY",
-                observed_at=snapshot_cut,
-                review_head=review_head,
-                source_url=source_url,
-                thread_records=unresolved_threads,
-                binding_head=target_head,
-                native_extra=native_extra,
-            )
-        )
     return observations
 
 
@@ -519,55 +618,93 @@ def _projection_coverage(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return _coverage(snapshot)
 
 
-def _check_summary(snapshot: dict[str, Any], target_head: str) -> dict[str, Any]:
-    raw_checks = snapshot.get("checks")
-    if not isinstance(raw_checks, list):
-        raise ReconciliationInputError("checks must be an array")
+def _normalize_check(raw_check: object) -> dict[str, Any]:
+    check = _mapping(raw_check, "check")
+    _string(check.get("id"), "check.id")
+    key = _string(check.get("key"), "check.key")
+    name = _string(check.get("name"), "check.name")
+    head_commit = _sha(check.get("head_commit"), "check.head_commit")
+    observed_at = _timestamp(check.get("observed_at"), "check.observed_at")
+    status = _string(check.get("status"), "check.status")
+    conclusion = check.get("conclusion")
+    if conclusion is not None and (not isinstance(conclusion, str) or not conclusion):
+        raise ReconciliationInputError(
+            "check.conclusion must be null or a non-empty string"
+        )
+    return {
+        "key": key,
+        "name": name,
+        "head_commit": head_commit,
+        "observed_at": observed_at,
+        "observed_key": parse_rfc3339(observed_at),
+        "status": status,
+        "conclusion": conclusion,
+    }
 
+
+def _record_latest_check(
+    latest: dict[str, dict[str, Any]],
+    check: dict[str, Any],
+    target_head: str,
+) -> None:
+    if check["head_commit"] != target_head:
+        return
+
+    key = check["key"]
+    state = (check["name"], check["status"], check["conclusion"])
+    previous = latest.get(key)
+    if previous is None or check["observed_key"] > previous["observed_key"]:
+        latest[key] = {
+            "observed_at": check["observed_at"],
+            "observed_key": check["observed_key"],
+            "states": {state},
+        }
+    elif check["observed_key"] == previous["observed_key"]:
+        previous["states"].add(state)
+
+
+def _latest_checks(
+    raw_checks: list[object],
+    target_head: str,
+) -> dict[str, dict[str, Any]]:
     latest: dict[str, dict[str, Any]] = {}
-    for raw in raw_checks:
-        check = _mapping(raw, "check")
-        _string(check.get("id"), "check.id")
-        key = _string(check.get("key"), "check.key")
-        name = _string(check.get("name"), "check.name")
-        head_commit = _sha(check.get("head_commit"), "check.head_commit")
-        observed_at = _timestamp(check.get("observed_at"), "check.observed_at")
-        status = _string(check.get("status"), "check.status")
-        conclusion = check.get("conclusion")
-        if conclusion is not None and (
-            not isinstance(conclusion, str) or not conclusion
-        ):
-            raise ReconciliationInputError(
-                "check.conclusion must be null or a non-empty string"
-            )
-        if head_commit != target_head:
-            continue
-        observed_key = parse_rfc3339(observed_at)
-        state = (name, status, conclusion)
-        previous = latest.get(key)
-        if previous is None or observed_key > previous["observed_key"]:
-            latest[key] = {
-                "observed_at": observed_at,
-                "observed_key": observed_key,
-                "states": {state},
-            }
-        elif observed_key == previous["observed_key"]:
-            previous["states"].add(state)
+    for raw_check in raw_checks:
+        _record_latest_check(latest, _normalize_check(raw_check), target_head)
+    return latest
 
+
+def _classify_latest_check(
+    key: str,
+    item: dict[str, Any],
+) -> tuple[str, str, str] | None:
+    states = item["states"]
+    names = sorted({state[0] for state in states})
+    name = names[0] if len(names) == 1 else key
+    if len(states) != 1:
+        return key, name, "ambiguous"
+
+    _, status, conclusion = next(iter(states))
+    if status != "completed":
+        return key, name, "pending"
+    if conclusion not in {"success", "neutral", "skipped"}:
+        return key, name, "non_success"
+    return None
+
+
+def _classified_checks(
+    latest: dict[str, dict[str, Any]],
+) -> list[tuple[str, str, str]]:
     classified: list[tuple[str, str, str]] = []
     for key, item in latest.items():
-        states = item["states"]
-        names = sorted({state[0] for state in states})
-        name = names[0] if len(names) == 1 else key
-        if len(states) != 1:
-            classified.append((key, name, "ambiguous"))
-            continue
-        _, status, conclusion = next(iter(states))
-        if status != "completed":
-            classified.append((key, name, "pending"))
-        elif conclusion not in {"success", "neutral", "skipped"}:
-            classified.append((key, name, "non_success"))
+        result = _classify_latest_check(key, item)
+        if result is not None:
+            classified.append(result)
+    return classified
 
+
+def _check_categories(
+    classified: list[tuple[str, str, str]],
+) -> dict[str, list[str]]:
     name_counts: dict[str, int] = {}
     for _, name, _ in classified:
         name_counts[name] = name_counts.get(name, 0) + 1
@@ -582,19 +719,157 @@ def _check_summary(snapshot: dict[str, Any], target_head: str) -> dict[str, Any]
         categories[category].append(_bounded_check_label(label))
     for items in categories.values():
         items.sort()
+    return categories
 
-    ambiguous = categories["ambiguous"]
-    pending = categories["pending"]
-    non_success = categories["non_success"]
+
+def _retained_check_category(items: list[str]) -> tuple[list[str], int]:
+    return (
+        items[:_MAX_CHECK_NAMES],
+        max(0, len(items) - _MAX_CHECK_NAMES),
+    )
+
+
+def _check_summary(snapshot: dict[str, Any], target_head: str) -> dict[str, Any]:
+    raw_checks = snapshot.get("checks")
+    if not isinstance(raw_checks, list):
+        raise ReconciliationInputError("checks must be an array")
+
+    latest = _latest_checks(raw_checks, target_head)
+    categories = _check_categories(_classified_checks(latest))
+    ambiguous, omitted_ambiguous = _retained_check_category(categories["ambiguous"])
+    pending, omitted_pending = _retained_check_category(categories["pending"])
+    non_success, omitted_non_success = _retained_check_category(
+        categories["non_success"]
+    )
     return {
         "observed_names": len(latest),
-        "ambiguous": ambiguous[:_MAX_CHECK_NAMES],
-        "pending": pending[:_MAX_CHECK_NAMES],
-        "non_success": non_success[:_MAX_CHECK_NAMES],
-        "omitted_ambiguous": max(0, len(ambiguous) - _MAX_CHECK_NAMES),
-        "omitted_pending": max(0, len(pending) - _MAX_CHECK_NAMES),
-        "omitted_non_success": max(0, len(non_success) - _MAX_CHECK_NAMES),
+        "ambiguous": ambiguous,
+        "pending": pending,
+        "non_success": non_success,
+        "omitted_ambiguous": omitted_ambiguous,
+        "omitted_pending": omitted_pending,
+        "omitted_non_success": omitted_non_success,
     }
+
+
+def _protected_projection(
+    protected_main_revision: str | None,
+    outer_consumer: dict[str, Any] | None,
+) -> dict[str, Any]:
+    protected_revision = (
+        _sha(protected_main_revision, "protected_main_revision")
+        if protected_main_revision is not None
+        else None
+    )
+    consumer = outer_consumer if isinstance(outer_consumer, dict) else None
+    runtime_image = (
+        _string(consumer.get("runtime_image"), "outer_consumer.runtime_image")
+        if consumer is not None
+        else None
+    )
+    runtime_revision = (
+        _sha(consumer.get("runtime_revision"), "outer_consumer.runtime_revision")
+        if consumer is not None
+        else None
+    )
+    status = (
+        "AVAILABLE"
+        if protected_revision is not None
+        and runtime_image is not None
+        and runtime_revision is not None
+        else "PARTIAL"
+        if any(
+            item is not None
+            for item in (protected_revision, runtime_image, runtime_revision)
+        )
+        else "UNAVAILABLE"
+    )
+    return {
+        "status": status,
+        "main_revision": protected_revision,
+        "outer_runtime_image": runtime_image,
+        "outer_runtime_revision": runtime_revision,
+    }
+
+
+def _observed_r2a(r2a_result: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    outcome = r2a_result.get("outcome")
+    if isinstance(outcome, str) and outcome in _SEMANTIC_OUTCOMES:
+        reason = _string(r2a_result.get("reason"), "r2a_result.reason")
+        if r2a_result.get("binding") is not False:
+            raise ReconciliationInputError("R2A semantic result must be non-binding")
+        semantic_outcome = outcome
+        status = "SEMANTIC_RESULT"
+    else:
+        raw_reason = r2a_result.get("reason")
+        reason = raw_reason if isinstance(raw_reason, str) and raw_reason else "NOT_RUN"
+        semantic_outcome = "UNAVAILABLE"
+        status = "UNAVAILABLE"
+
+    return (
+        {
+            "status": status,
+            "outcome": semantic_outcome,
+            "reason": reason,
+            "binding": False,
+        },
+        semantic_outcome,
+    )
+
+
+def _provider_is_current(
+    state: str,
+    coverage: dict[str, dict[str, Any]],
+) -> bool:
+    return state == "open" and all(
+        item["status"] == "COMPLETE" for item in coverage.values()
+    )
+
+
+def _projection_r2a(
+    observed_r2a: dict[str, Any],
+    *,
+    provider_current: bool,
+) -> dict[str, Any]:
+    if provider_current:
+        return observed_r2a
+    return {
+        "status": "NON_CURRENT",
+        "outcome": "UNAVAILABLE",
+        "reason": "PROVIDER_STATE_INCOMPLETE",
+        "binding": False,
+        "observed": observed_r2a,
+    }
+
+
+def _check_category_present(checks: dict[str, Any], name: str) -> bool:
+    return bool(checks[name] or checks.get(f"omitted_{name}", 0))
+
+
+def _next_permitted_action(
+    *,
+    provider_current: bool,
+    protected_status: str,
+    checks: dict[str, Any],
+    semantic_outcome: str,
+) -> str:
+    if not provider_current:
+        return "WAIT_OR_RECONCILE_REQUIRED_EVIDENCE"
+    if protected_status != "AVAILABLE":
+        return "WAIT_FOR_PROTECTED_CAPABILITY"
+    if _check_category_present(checks, "ambiguous"):
+        return "RECONCILE_PROVIDER_CHECKS"
+    if _check_category_present(checks, "non_success"):
+        return "RECONCILE_PROVIDER_CHECKS"
+    if _check_category_present(checks, "pending"):
+        return "WAIT_FOR_PROVIDER_CHECKS"
+    if semantic_outcome == "PASS":
+        return "CONTINUE_EXISTING_WORKFLOW"
+    if semantic_outcome in {"BLOCKED", "CONFLICTING"}:
+        return "RECONCILE_REVIEW_EVIDENCE"
+    if semantic_outcome == "INCOMPLETE":
+        return "WAIT_OR_RECONCILE_REQUIRED_EVIDENCE"
+    return "WAIT_FOR_PROTECTED_CAPABILITY"
 
 
 def build_projection(
@@ -612,35 +887,8 @@ def build_projection(
     _validate_source_payloads(snapshot, coverage)
     _validate_temporal_integrity(snapshot)
     _thread_records_by_review(snapshot)
-    protected_revision = (
-        _sha(protected_main_revision, "protected_main_revision")
-        if protected_main_revision is not None
-        else None
-    )
-    consumer = outer_consumer if isinstance(outer_consumer, dict) else None
-    runtime_image = (
-        _string(consumer.get("runtime_image"), "outer_consumer.runtime_image")
-        if consumer is not None
-        else None
-    )
-    runtime_revision = (
-        _sha(consumer.get("runtime_revision"), "outer_consumer.runtime_revision")
-        if consumer is not None
-        else None
-    )
-    protected_status = (
-        "AVAILABLE"
-        if protected_revision is not None
-        and runtime_image is not None
-        and runtime_revision is not None
-        else "PARTIAL"
-        if any(
-            item is not None
-            for item in (protected_revision, runtime_image, runtime_revision)
-        )
-        else "UNAVAILABLE"
-    )
 
+    protected = _protected_projection(protected_main_revision, outer_consumer)
     execution_id = _string(
         execution.get("execution_id"),
         "execution.execution_id",
@@ -649,61 +897,19 @@ def build_projection(
         execution.get("observed_at"),
         "execution.observed_at",
     )
-
-    outcome = r2a_result.get("outcome")
-    if isinstance(outcome, str) and outcome in _SEMANTIC_OUTCOMES:
-        r2a_status = "SEMANTIC_RESULT"
-        semantic_outcome = outcome
-        reason = _string(r2a_result.get("reason"), "r2a_result.reason")
-        if r2a_result.get("binding") is not False:
-            raise ReconciliationInputError("R2A semantic result must be non-binding")
-    else:
-        r2a_status = "UNAVAILABLE"
-        semantic_outcome = "UNAVAILABLE"
-        raw_reason = r2a_result.get("reason")
-        reason = raw_reason if isinstance(raw_reason, str) and raw_reason else "NOT_RUN"
-
-    observed_r2a = {
-        "status": r2a_status,
-        "outcome": semantic_outcome,
-        "reason": reason,
-        "binding": False,
-    }
-    complete = all(item["status"] == "COMPLETE" for item in coverage.values())
-    provider_current = provider_subject["state"] == "open" and complete
-    currentness = (
-        "CURRENT_AT_OBSERVATION" if provider_current else "INCOMPLETE_AT_OBSERVATION"
-    )
-    projection_r2a = (
-        observed_r2a
-        if provider_current
-        else {
-            "status": "NON_CURRENT",
-            "outcome": "UNAVAILABLE",
-            "reason": "PROVIDER_STATE_INCOMPLETE",
-            "binding": False,
-            "observed": observed_r2a,
-        }
+    observed_r2a, semantic_outcome = _observed_r2a(r2a_result)
+    provider_current = _provider_is_current(provider_subject["state"], coverage)
+    projection_r2a = _projection_r2a(
+        observed_r2a,
+        provider_current=provider_current,
     )
     checks = _check_summary(snapshot, provider_subject["head_commit"])
-    if provider_subject["state"] != "open" or not complete:
-        next_action = "WAIT_OR_RECONCILE_REQUIRED_EVIDENCE"
-    elif protected_status != "AVAILABLE":
-        next_action = "WAIT_FOR_PROTECTED_CAPABILITY"
-    elif checks["ambiguous"]:
-        next_action = "RECONCILE_PROVIDER_CHECKS"
-    elif checks["non_success"]:
-        next_action = "RECONCILE_PROVIDER_CHECKS"
-    elif checks["pending"]:
-        next_action = "WAIT_FOR_PROVIDER_CHECKS"
-    elif semantic_outcome == "PASS":
-        next_action = "CONTINUE_EXISTING_WORKFLOW"
-    elif semantic_outcome in {"BLOCKED", "CONFLICTING"}:
-        next_action = "RECONCILE_REVIEW_EVIDENCE"
-    elif semantic_outcome == "INCOMPLETE":
-        next_action = "WAIT_OR_RECONCILE_REQUIRED_EVIDENCE"
-    else:
-        next_action = "WAIT_FOR_PROTECTED_CAPABILITY"
+    next_action = _next_permitted_action(
+        provider_current=provider_current,
+        protected_status=protected["status"],
+        checks=checks,
+        semantic_outcome=semantic_outcome,
+    )
 
     return {
         "schema_version": _INTERNAL_SCHEMA_VERSION,
@@ -712,14 +918,13 @@ def build_projection(
         "subject": provider_subject,
         "coverage": coverage,
         "checks": checks,
-        "protected": {
-            "status": protected_status,
-            "main_revision": protected_revision,
-            "outer_runtime_image": runtime_image,
-            "outer_runtime_revision": runtime_revision,
-        },
+        "protected": protected,
         "r2a": projection_r2a,
-        "currentness": currentness,
+        "currentness": (
+            "CURRENT_AT_OBSERVATION"
+            if provider_current
+            else "INCOMPLETE_AT_OBSERVATION"
+        ),
         "next_permitted_action": next_action,
         "observation": {
             "observed_at": snapshot["observed_at"],
@@ -738,6 +943,63 @@ def _projection_string_list(value: object, label: str) -> list[str]:
     return result
 
 
+def _projection_check_limit(*, allow_legacy_check_bounds: bool) -> int:
+    if allow_legacy_check_bounds:
+        return _PRE_BOUND_MAX_CHECK_NAMES
+    return _MAX_CHECK_NAMES
+
+
+def _full_retained_check_sizes(*, allow_legacy_check_bounds: bool) -> set[int]:
+    if allow_legacy_check_bounds:
+        return {_MAX_CHECK_NAMES, _PRE_BOUND_MAX_CHECK_NAMES}
+    return {_MAX_CHECK_NAMES}
+
+
+def _validate_projection_check_category(
+    checks: dict[str, Any],
+    *,
+    name: str,
+    allow_legacy_check_bounds: bool,
+    seen_names: set[str],
+) -> tuple[list[str], int]:
+    items = _projection_string_list(
+        checks.get(name),
+        f"projection.checks.{name}",
+    )
+    retained_limit = _projection_check_limit(
+        allow_legacy_check_bounds=allow_legacy_check_bounds
+    )
+    if len(items) > retained_limit:
+        raise ReconciliationInputError(
+            f"projection.checks.{name} exceeds retained label bound"
+        )
+    if not allow_legacy_check_bounds and any(
+        len(item.encode("utf-8")) > _MAX_CHECK_LABEL_BYTES for item in items
+    ):
+        raise ReconciliationInputError(
+            f"projection.checks.{name} label exceeds bounded size"
+        )
+
+    overlap = seen_names.intersection(items)
+    if overlap:
+        raise ReconciliationInputError("projection.checks categories must not overlap")
+    seen_names.update(items)
+
+    omitted_name = f"omitted_{name}"
+    omitted = checks.get(omitted_name)
+    if type(omitted) is not int or omitted < 0:
+        raise ReconciliationInputError(
+            f"projection.checks.{omitted_name} must be a non-negative integer"
+        )
+    if omitted and len(items) not in _full_retained_check_sizes(
+        allow_legacy_check_bounds=allow_legacy_check_bounds
+    ):
+        raise ReconciliationInputError(
+            f"projection.checks.{omitted_name} requires a full retained list"
+        )
+    return items, omitted
+
+
 def _validate_projection_checks(
     value: object,
     *,
@@ -754,39 +1016,14 @@ def _validate_projection_checks(
     classified = 0
     seen_names: set[str] = set()
     for name in ("ambiguous", "pending", "non_success"):
-        items = _projection_string_list(
-            checks.get(name),
-            f"projection.checks.{name}",
+        items, omitted = _validate_projection_check_category(
+            checks,
+            name=name,
+            allow_legacy_check_bounds=allow_legacy_check_bounds,
+            seen_names=seen_names,
         )
-        if not allow_legacy_check_bounds and any(
-            len(item.encode("utf-8")) > _MAX_CHECK_LABEL_BYTES for item in items
-        ):
-            raise ReconciliationInputError(
-                f"projection.checks.{name} label exceeds bounded size"
-            )
-        overlap = seen_names.intersection(items)
-        if overlap:
-            raise ReconciliationInputError(
-                "projection.checks categories must not overlap"
-            )
-        seen_names.update(items)
-        omitted_name = f"omitted_{name}"
-        omitted = checks.get(omitted_name)
-        if type(omitted) is not int or omitted < 0:
-            raise ReconciliationInputError(
-                f"projection.checks.{omitted_name} must be a non-negative integer"
-            )
-        full_retained_sizes = (
-            {_MAX_CHECK_NAMES, _PRE_BOUND_MAX_CHECK_NAMES}
-            if allow_legacy_check_bounds
-            else {_MAX_CHECK_NAMES}
-        )
-        if omitted and len(items) not in full_retained_sizes:
-            raise ReconciliationInputError(
-                f"projection.checks.{omitted_name} requires a full retained list"
-            )
         result[name] = items
-        result[omitted_name] = omitted
+        result[f"omitted_{name}"] = omitted
         classified += len(items) + omitted
 
     if classified > observed_names:
@@ -849,11 +1086,7 @@ def _validate_projection_observed_r2a(value: object, label: str) -> str:
     return outcome
 
 
-def _validate_projection_document(
-    document: dict[str, Any],
-    *,
-    allow_legacy_check_bounds: bool = False,
-) -> None:
+def _validate_projection_header(document: dict[str, Any]) -> None:
     if document.get("schema_version") != _INTERNAL_SCHEMA_VERSION:
         raise ReconciliationInputError("projection schema_version is unsupported")
     if document.get("status") != "draft":
@@ -861,7 +1094,9 @@ def _validate_projection_document(
     if document.get("non_canonical") is not True:
         raise ReconciliationInputError("projection must remain non-canonical")
 
-    subject = _mapping(document.get("subject"), "projection.subject")
+
+def _validate_projection_subject(value: object) -> str:
+    subject = _mapping(value, "projection.subject")
     _string(subject.get("provider_id"), "projection.subject.provider_id")
     _string(subject.get("repository"), "projection.subject.repository")
     _change_request(
@@ -876,10 +1111,16 @@ def _validate_projection_document(
         "projection.subject.merge_base_commit",
     )
     _string(subject.get("source_url"), "projection.subject.source_url")
+    return state
 
+
+def _validate_projection_currentness(
+    document: dict[str, Any],
+    *,
+    state: str,
+) -> tuple[dict[str, dict[str, Any]], bool]:
     coverage = _coverage({"coverage": document.get("coverage")})
-    complete = all(item["status"] == "COMPLETE" for item in coverage.values())
-    provider_current = state == "open" and complete
+    provider_current = _provider_is_current(state, coverage)
     expected_currentness = (
         "CURRENT_AT_OBSERVATION" if provider_current else "INCOMPLETE_AT_OBSERVATION"
     )
@@ -891,35 +1132,39 @@ def _validate_projection_document(
         raise ReconciliationInputError(
             "projection currentness is inconsistent with provider coverage"
         )
+    return coverage, provider_current
 
-    protected_status = _validate_projection_protected(document.get("protected"))
-    checks = _validate_projection_checks(
-        document.get("checks"),
-        allow_legacy_check_bounds=allow_legacy_check_bounds,
-    )
-    r2a = _mapping(document.get("r2a"), "projection.r2a")
+
+def _validate_projection_r2a(
+    value: object,
+    *,
+    provider_current: bool,
+) -> str:
+    r2a = _mapping(value, "projection.r2a")
     if provider_current:
-        semantic_outcome = _validate_projection_observed_r2a(
+        return _validate_projection_observed_r2a(
             r2a,
             "projection.r2a",
         )
-    else:
-        if (
-            r2a.get("status") != "NON_CURRENT"
-            or r2a.get("outcome") != "UNAVAILABLE"
-            or r2a.get("reason") != "PROVIDER_STATE_INCOMPLETE"
-            or r2a.get("binding") is not False
-        ):
-            raise ReconciliationInputError(
-                "incomplete provider evidence requires non-current R2A state"
-            )
-        _validate_projection_observed_r2a(
-            r2a.get("observed"),
-            "projection.r2a.observed",
-        )
-        semantic_outcome = "UNAVAILABLE"
 
-    observation = _mapping(document.get("observation"), "projection.observation")
+    if (
+        r2a.get("status") != "NON_CURRENT"
+        or r2a.get("outcome") != "UNAVAILABLE"
+        or r2a.get("reason") != "PROVIDER_STATE_INCOMPLETE"
+        or r2a.get("binding") is not False
+    ):
+        raise ReconciliationInputError(
+            "incomplete provider evidence requires non-current R2A state"
+        )
+    _validate_projection_observed_r2a(
+        r2a.get("observed"),
+        "projection.r2a.observed",
+    )
+    return "UNAVAILABLE"
+
+
+def _validate_projection_observation(value: object) -> None:
+    observation = _mapping(value, "projection.observation")
     _timestamp(
         observation.get("observed_at"),
         "projection.observation.observed_at",
@@ -933,25 +1178,35 @@ def _validate_projection_document(
         "projection.observation.execution_id",
     )
 
-    if not provider_current:
-        expected_action = "WAIT_OR_RECONCILE_REQUIRED_EVIDENCE"
-    elif protected_status != "AVAILABLE":
-        expected_action = "WAIT_FOR_PROTECTED_CAPABILITY"
-    elif checks["ambiguous"] or checks["omitted_ambiguous"]:
-        expected_action = "RECONCILE_PROVIDER_CHECKS"
-    elif checks["non_success"] or checks["omitted_non_success"]:
-        expected_action = "RECONCILE_PROVIDER_CHECKS"
-    elif checks["pending"] or checks["omitted_pending"]:
-        expected_action = "WAIT_FOR_PROVIDER_CHECKS"
-    elif semantic_outcome == "PASS":
-        expected_action = "CONTINUE_EXISTING_WORKFLOW"
-    elif semantic_outcome in {"BLOCKED", "CONFLICTING"}:
-        expected_action = "RECONCILE_REVIEW_EVIDENCE"
-    elif semantic_outcome == "INCOMPLETE":
-        expected_action = "WAIT_OR_RECONCILE_REQUIRED_EVIDENCE"
-    else:
-        expected_action = "WAIT_FOR_PROTECTED_CAPABILITY"
 
+def _validate_projection_document(
+    document: dict[str, Any],
+    *,
+    allow_legacy_check_bounds: bool = False,
+) -> None:
+    _validate_projection_header(document)
+    state = _validate_projection_subject(document.get("subject"))
+    _, provider_current = _validate_projection_currentness(
+        document,
+        state=state,
+    )
+    protected_status = _validate_projection_protected(document.get("protected"))
+    checks = _validate_projection_checks(
+        document.get("checks"),
+        allow_legacy_check_bounds=allow_legacy_check_bounds,
+    )
+    semantic_outcome = _validate_projection_r2a(
+        document.get("r2a"),
+        provider_current=provider_current,
+    )
+    _validate_projection_observation(document.get("observation"))
+
+    expected_action = _next_permitted_action(
+        provider_current=provider_current,
+        protected_status=protected_status,
+        checks=checks,
+        semantic_outcome=semantic_outcome,
+    )
     next_action = _string(
         document.get("next_permitted_action"),
         "projection.next_permitted_action",
