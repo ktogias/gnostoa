@@ -361,7 +361,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         )
         request.add_unredirected_header(
             "Authorization",
-            "Bearer fixture-token",
+            f"Bearer {_NONEMPTY_TEST_VALUE}",
         )
 
         for redirected_url in (
@@ -391,7 +391,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         )
         request.add_unredirected_header(
             "Authorization",
-            "Bearer fixture-token",
+            f"Bearer {_NONEMPTY_TEST_VALUE}",
         )
 
         redirected = handler.redirect_request(
@@ -410,7 +410,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             redirected.full_url,
         )
         self.assertEqual(
-            "Bearer fixture-token",
+            f"Bearer {_NONEMPTY_TEST_VALUE}",
             redirected.get_header("Authorization"),
         )
 
@@ -439,7 +439,7 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
                 side_effect=AssertionError("unguarded urlopen must not be used"),
             ),
         ):
-            client = adapter.GitHubRestClient("fixture-token")
+            client = adapter.GitHubRestClient(_NONEMPTY_TEST_VALUE)
             payload, headers = client.get(
                 "https://api.github.com/repos/ktogias/gnostoa"
             )
