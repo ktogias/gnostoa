@@ -163,11 +163,12 @@ capabilities and requires fresh read-back before scarce scheduling decisions.
 
 The companion
 [`reviewer-provider-capabilities.json`](reviewer-provider-capabilities.json)
-is the first implementation-private registry snapshot. Its top-level
-`status: draft` is the machine-readable lifecycle status for independent
-consumers; it remains draft until a separate review/integration flow promotes
-the snapshot. Version `v0.10` exposes
-one planner-facing shape rather than provider-specific field names.
+is the first implementation-private registry snapshot. It intentionally has no
+standalone lifecycle/promotion flag: the protected repository revision and
+Decision 0087 determine whether a registry revision is operative, and a
+standalone JSON status token must not manufacture review or integration
+authority. Version `v0.10` exposes one planner-facing shape rather than
+provider-specific field names.
 
 Every provider has the same typed `capabilities.manual_trigger` contract:
 `channel`, `dispatch_kind`, `command`, `action`,
