@@ -680,14 +680,14 @@ def build_projection(
         next_action = "WAIT_FOR_PROVIDER_CHECKS"
     elif checks["non_success"]:
         next_action = "RECONCILE_PROVIDER_CHECKS"
+    elif semantic_outcome == "PASS":
+        next_action = "CONTINUE_EXISTING_WORKFLOW"
+    elif semantic_outcome in {"BLOCKED", "CONFLICTING"}:
+        next_action = "RECONCILE_REVIEW_EVIDENCE"
+    elif semantic_outcome == "INCOMPLETE":
+        next_action = "WAIT_OR_RECONCILE_REQUIRED_EVIDENCE"
     else:
-        next_action = {
-            "PASS": "CONTINUE_EXISTING_WORKFLOW",
-            "BLOCKED": "RECONCILE_REVIEW_EVIDENCE",
-            "CONFLICTING": "RECONCILE_REVIEW_EVIDENCE",
-            "INCOMPLETE": "WAIT_OR_RECONCILE_REQUIRED_EVIDENCE",
-            "UNAVAILABLE": "WAIT_FOR_PROTECTED_CAPABILITY",
-        }[semantic_outcome]
+        next_action = "WAIT_FOR_PROTECTED_CAPABILITY"
 
     return {
         "schema_version": _INTERNAL_SCHEMA_VERSION,
