@@ -1474,12 +1474,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    token = (
-        os.environ.get("GNOSTOA_GITHUB_API_BEARER")
-        or os.environ.get("GH_TOKEN")
-        or os.environ.get("GITHUB_TOKEN")
-        or ""
-    )
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
     client = GitHubRestClient(token)
 
     if args.mode == "collect":
