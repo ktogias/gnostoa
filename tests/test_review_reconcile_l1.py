@@ -389,7 +389,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
         )
 
         observations = review_input["evidence_set"]["observations"]
-        self.assertEqual(2, len(observations))
+        self.assertEqual(3, len(observations))
         by_id = {item["observation_id"]: item for item in observations}
         self.assertEqual(
             "exact", by_id["provider-review-10"]["subject_binding"]["status"]
@@ -401,6 +401,10 @@ class UsefulL1RedContractTests(unittest.TestCase):
             "APPROVED",
             by_id["provider-review-10"]["native"]["recommendation_state"],
         )
+        thread_only = by_id["gnostoa-thread-evidence::provider-review-10"]
+        self.assertEqual("COMMENT_ONLY", thread_only["native"]["recommendation_state"])
+        self.assertEqual("exact", thread_only["subject_binding"]["status"])
+        self.assertEqual("unresolved", thread_only["threads"]["state"])
 
     def test_reducer_core_is_provider_neutral_and_accepts_second_adapter_shape(
         self,
