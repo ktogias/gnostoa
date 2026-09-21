@@ -634,12 +634,8 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
             protected_main_revision="e" * 40,
             document={
                 "policy": {
-                    "subject": {
-                        "freshness": {"mode": "max_age", "seconds": 900}
-                    },
-                    "collection": {
-                        "freshness": {"mode": "max_age", "seconds": 900}
-                    },
+                    "subject": {"freshness": {"mode": "max_age", "seconds": 900}},
+                    "collection": {"freshness": {"mode": "max_age", "seconds": 900}},
                 }
             },
         )

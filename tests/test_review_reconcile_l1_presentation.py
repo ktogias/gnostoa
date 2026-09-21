@@ -261,9 +261,7 @@ class UsefulL1PresentationTests(unittest.TestCase):
         fixtures = _fixtures()
         reducer = fixtures._reducer()
         snapshot = fixtures._snapshot()
-        snapshot["subject"]["title"] = (
-            "**pwn** [click](https://evil.example) @octocat`"
-        )
+        snapshot["subject"]["title"] = "**pwn** [click](https://evil.example) @octocat`"
         projection = reducer.build_projection(
             snapshot,
             protected_main_revision=None,
