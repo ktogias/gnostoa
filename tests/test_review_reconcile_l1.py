@@ -38,6 +38,11 @@ def _adapter() -> ModuleType:
     return module
 
 
+def adapter_fixture() -> ModuleType:
+    """Public test-only access to the shared GitHub adapter fixture."""
+    return _adapter()
+
+
 def _bundle() -> dict[str, Any]:
     path = ROOT / "tasks" / "issue-11-r2a-current-advisory.json"
     loaded = json.loads(path.read_text(encoding="utf-8"))
