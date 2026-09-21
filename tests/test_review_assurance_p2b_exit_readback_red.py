@@ -214,11 +214,14 @@ class ReviewAssuranceP2bExitReadbackRedTests(unittest.TestCase):
 
     def test_dedicated_workflow_executes_subsequent_candidate_readback(self) -> None:
         workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
-        workflow = yaml.load(workflow_text, Loader=yaml.BaseLoader)
+        workflow = yaml.safe_load(workflow_text)
         self.assertIsInstance(workflow, dict)
         assert isinstance(workflow, dict)
 
         events = workflow.get("on")
+        if events is None:
+            # PyYAML's YAML 1.1 resolver may coerce the workflow key "on" to True.
+            events = workflow.get(True)
         self.assertIsInstance(events, dict)
         assert isinstance(events, dict)
         pull_request = events.get("pull_request")
