@@ -80,6 +80,10 @@ class ProviderReadError(RuntimeError):
 class ProviderWriteError(RuntimeError):
     """A bounded GitHub provider write failed."""
 
+    def __init__(self, message: str, *, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
+
 
 class JsonReader(Protocol):
     def get(self, url: str) -> tuple[Any, dict[str, str]]: ...
@@ -207,7 +211,7 @@ class GitHubRestClient:
                 ):
                     status = 429
                 raise ProviderReadError(message, status=status) from exc
-            raise ProviderWriteError(message) from exc
+            raise ProviderWriteError(message, status=exc.code) from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             if method == "GET" or read:
                 raise ProviderReadError("GitHub API transport failed") from exc
@@ -1599,6 +1603,34 @@ def _summary(lines: list[str]) -> None:
         handle.write("\n".join(lines) + "\n")
 
 
+def _publication_error_diagnostic(error: BaseException) -> str:
+    status = getattr(error, "status", None)
+    if type(status) is int and 100 <= status <= 599:
+        return f"{type(error).__name__}:HTTP_{status}"
+    return type(error).__name__
+
+
+def _publication_result_line(item: dict[str, Any]) -> str:
+    line = f"PR #{item['pull_number']}: {item['reason']}"
+    diagnostic = item.get("diagnostic")
+    if isinstance(diagnostic, str):
+        line += f" ({diagnostic})"
+    return line
+
+
+def _emit_publication_results(results: list[dict[str, Any]]) -> None:
+    lines = [_publication_result_line(item) for item in results]
+    for line in lines:
+        print(line)
+    _summary(
+        [
+            "## Gnostoa useful L1 publication",
+            "",
+            *[f"- {line}" for line in lines],
+        ]
+    )
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=("collect", "publish"), required=True)
@@ -1681,6 +1713,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("--payload is required for publish")
     entries = _load_payload(args.payload)
     results = []
+    publication_failed = False
     for entry in entries:
         try:
             result = publish_entry(
@@ -1690,6 +1723,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         except (OSError, RuntimeError, ValueError) as exc:
             pull_number = entry.get("pull_number")
+            publication_failed = True
             result = {
                 "pull_number": (
                     pull_number
@@ -1699,26 +1733,12 @@ def main(argv: list[str] | None = None) -> int:
                 "published": False,
                 "reason": "PUBLICATION_ENTRY_UNAVAILABLE",
                 "error_type": type(exc).__name__,
+                "diagnostic": _publication_error_diagnostic(exc),
             }
         results.append(result)
-    _summary(
-        [
-            "## Gnostoa useful L1 publication",
-            "",
-            *[
-                (
-                    f"- PR #{item['pull_number']}: {item['reason']}"
-                    + (
-                        f" ({item['error_type']})"
-                        if isinstance(item.get("error_type"), str)
-                        else ""
-                    )
-                )
-                for item in results
-            ],
-        ]
-    )
-    return 0
+
+    _emit_publication_results(results)
+    return 1 if publication_failed else 0
 
 
 if __name__ == "__main__":
