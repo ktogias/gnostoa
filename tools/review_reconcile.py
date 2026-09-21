@@ -319,9 +319,7 @@ def _thread_records_by_review(
     normalized_reviews: list[dict[str, Any]] = []
     review_observation_ids: set[str] = set()
     for raw_review in reviews:
-        normalized_reviews.append(
-            _normalize_review(raw_review, review_observation_ids)
-        )
+        normalized_reviews.append(_normalize_review(raw_review, review_observation_ids))
 
     threads_by_review: dict[str, list[dict[str, Any]]] = {}
     thread_ids: set[str] = set()
@@ -401,9 +399,7 @@ def _make_observation(
             "state": aggregate_thread_state,
             "count": len(thread_records),
             "thread_ids": sorted(
-                item["id"]
-                for item in thread_records
-                if isinstance(item.get("id"), str)
+                item["id"] for item in thread_records if isinstance(item.get("id"), str)
             ),
         },
     }
@@ -631,9 +627,7 @@ def _normalize_check(raw_check: object) -> dict[str, Any]:
     observed_at = _timestamp(check.get("observed_at"), "check.observed_at")
     status = _string(check.get("status"), "check.status")
     conclusion = check.get("conclusion")
-    if conclusion is not None and (
-        not isinstance(conclusion, str) or not conclusion
-    ):
+    if conclusion is not None and (not isinstance(conclusion, str) or not conclusion):
         raise ReconciliationInputError(
             "check.conclusion must be null or a non-empty string"
         )
@@ -742,9 +736,7 @@ def _check_summary(snapshot: dict[str, Any], target_head: str) -> dict[str, Any]
 
     latest = _latest_checks(raw_checks, target_head)
     categories = _check_categories(_classified_checks(latest))
-    ambiguous, omitted_ambiguous = _retained_check_category(
-        categories["ambiguous"]
-    )
+    ambiguous, omitted_ambiguous = _retained_check_category(categories["ambiguous"])
     pending, omitted_pending = _retained_check_category(categories["pending"])
     non_success, omitted_non_success = _retained_check_category(
         categories["non_success"]
@@ -990,9 +982,7 @@ def _validate_projection_check_category(
 
     overlap = seen_names.intersection(items)
     if overlap:
-        raise ReconciliationInputError(
-            "projection.checks categories must not overlap"
-        )
+        raise ReconciliationInputError("projection.checks categories must not overlap")
     seen_names.update(items)
 
     omitted_name = f"omitted_{name}"
@@ -1132,9 +1122,7 @@ def _validate_projection_currentness(
     coverage = _coverage({"coverage": document.get("coverage")})
     provider_current = _provider_is_current(state, coverage)
     expected_currentness = (
-        "CURRENT_AT_OBSERVATION"
-        if provider_current
-        else "INCOMPLETE_AT_OBSERVATION"
+        "CURRENT_AT_OBSERVATION" if provider_current else "INCOMPLETE_AT_OBSERVATION"
     )
     currentness = _string(
         document.get("currentness"),
