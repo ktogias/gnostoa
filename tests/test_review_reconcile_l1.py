@@ -1675,6 +1675,11 @@ class UsefulL1IdentityCollisionTests(unittest.TestCase):
 
         self.assertEqual(1, len(thread_only))
         fallback_id = thread_only[0]["observation_id"]
+        expected_fallback = (
+            "gnostoa-thread-evidence:v2:sha256:"
+            + hashlib.sha256(large_origin_id.encode("utf-8")).hexdigest()
+        )
+        self.assertEqual(expected_fallback, fallback_id)
         self.assertLessEqual(len(fallback_id.encode("utf-8")), 128)
         self.assertEqual(
             large_origin_id,
@@ -1719,6 +1724,39 @@ class UsefulL1IdentityCollisionTests(unittest.TestCase):
             first_fallback,
             {item["observation_id"] for item in observations},
         )
+
+    def test_probe_cardinality_boundary_checks_available_candidate(self) -> None:
+        reducer = reducer_fixture()
+        origin_id = "provider-review-boundary"
+        legacy_id = f"gnostoa-thread-evidence::{origin_id}"
+        origin_digest = hashlib.sha256(origin_id.encode("utf-8")).hexdigest()
+        stem = f"gnostoa-thread-evidence:v2:sha256:{origin_digest}"
+        probes = [f"{stem}:p{probe:016x}" for probe in range(1, 4)]
+        occupied = {legacy_id, stem, probes[0], probes[1]}
+
+        with mock.patch.object(reducer, "_THREAD_EVIDENCE_MAX_PROBE", 3):
+            candidate = reducer._thread_evidence_observation_id(
+                origin_id,
+                occupied,
+            )
+
+        self.assertEqual(probes[2], candidate)
+
+    def test_probe_space_exhaustion_fails_closed(self) -> None:
+        reducer = reducer_fixture()
+        origin_id = "provider-review-exhaustion"
+        legacy_id = f"gnostoa-thread-evidence::{origin_id}"
+        origin_digest = hashlib.sha256(origin_id.encode("utf-8")).hexdigest()
+        stem = f"gnostoa-thread-evidence:v2:sha256:{origin_digest}"
+        probes = {f"{stem}:p{probe:016x}" for probe in range(1, 4)}
+        occupied = {legacy_id, stem, *probes}
+
+        with mock.patch.object(reducer, "_THREAD_EVIDENCE_MAX_PROBE", 3):
+            with self.assertRaisesRegex(
+                reducer.ReconciliationInputError,
+                "unable to allocate a collision-free thread evidence observation ID",
+            ):
+                reducer._thread_evidence_observation_id(origin_id, occupied)
 
     def test_collision_fallback_is_independent_of_provider_review_order(self) -> None:
         reducer = reducer_fixture()
