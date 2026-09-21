@@ -61,6 +61,9 @@ class UsefulL1PresentationTests(unittest.TestCase):
                         environment["PYTHONPATH"] = value
                 if command.group(1) is not None:
                     environment["PYTHONPATH"] = command.group(1)
+                # Audited: argv is fixed, shell=False, and no provider-controlled
+                # value reaches the executable or arguments.
+                # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
                 completed = subprocess.run(
                     [sys.executable, "ci/review_github_current_state.py", "--help"],
                     cwd=_ROOT,
