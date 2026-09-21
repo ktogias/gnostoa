@@ -80,6 +80,10 @@ class ProviderReadError(RuntimeError):
 class ProviderWriteError(RuntimeError):
     """A bounded GitHub provider write failed."""
 
+    def __init__(self, message: str, *, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
+
 
 class JsonReader(Protocol):
     def get(self, url: str) -> tuple[Any, dict[str, str]]: ...
@@ -207,7 +211,10 @@ class GitHubRestClient:
                 ):
                     status = 429
                 raise ProviderReadError(message, status=status) from exc
-            raise ProviderWriteError(message) from exc
+            raise ProviderWriteError(
+                f"GitHub API write rejected with HTTP {exc.code}",
+                status=exc.code,
+            ) from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             if method == "GET" or read:
                 raise ProviderReadError("GitHub API transport failed") from exc
@@ -1592,11 +1599,20 @@ def _load_payload(path: Path) -> list[dict[str, Any]]:
 
 
 def _summary(lines: list[str]) -> None:
+    rendered = "\n".join(lines)
+    print(rendered)
     path = os.environ.get("GITHUB_STEP_SUMMARY")
     if not path:
         return
     with Path(path).open("a", encoding="utf-8") as handle:
-        handle.write("\n".join(lines) + "\n")
+        handle.write(rendered + "\n")
+
+
+def _bounded_error_status(error: BaseException) -> int | None:
+    status = getattr(error, "status", None)
+    if type(status) is int and 100 <= status <= 599:
+        return status
+    return None
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -1690,6 +1706,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         except (OSError, RuntimeError, ValueError) as exc:
             pull_number = entry.get("pull_number")
+            error_status = _bounded_error_status(exc)
             result = {
                 "pull_number": (
                     pull_number
@@ -1699,6 +1716,11 @@ def main(argv: list[str] | None = None) -> int:
                 "published": False,
                 "reason": "PUBLICATION_ENTRY_UNAVAILABLE",
                 "error_type": type(exc).__name__,
+                **(
+                    {"error_status": error_status}
+                    if error_status is not None
+                    else {}
+                ),
             }
         results.append(result)
     _summary(
@@ -1709,7 +1731,14 @@ def main(argv: list[str] | None = None) -> int:
                 (
                     f"- PR #{item['pull_number']}: {item['reason']}"
                     + (
-                        f" ({item['error_type']})"
+                        " ("
+                        + item["error_type"]
+                        + (
+                            f"; HTTP {item['error_status']}"
+                            if type(item.get("error_status")) is int
+                            else ""
+                        )
+                        + ")"
                         if isinstance(item.get("error_type"), str)
                         else ""
                     )
@@ -1718,7 +1747,14 @@ def main(argv: list[str] | None = None) -> int:
             ],
         ]
     )
-    return 0
+    return (
+        1
+        if any(
+            item.get("reason") == "PUBLICATION_ENTRY_UNAVAILABLE"
+            for item in results
+        )
+        else 0
+    )
 
 
 if __name__ == "__main__":
