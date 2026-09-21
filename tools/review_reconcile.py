@@ -459,11 +459,29 @@ def _thread_evidence_native_extra(
     return native_extra
 
 
+def _thread_evidence_observation_id(
+    origin_observation_id: str,
+    occupied_observation_ids: set[str],
+) -> str:
+    legacy_id = f"gnostoa-thread-evidence::{origin_observation_id}"
+    if legacy_id not in occupied_observation_ids:
+        return legacy_id
+
+    origin_digest = hashlib.sha256(origin_observation_id.encode("utf-8")).hexdigest()
+    stem = f"gnostoa-thread-evidence:v2:sha256:{origin_digest}"
+    candidate = stem
+    suffix = 0
+    while candidate in occupied_observation_ids:
+        suffix += 1
+        candidate = f"{stem}:{suffix}"
+    return candidate
+
+
 def _derived_thread_observation(
     *,
     review: dict[str, Any],
     unresolved_threads: list[dict[str, Any]],
-    review_observation_ids: set[str],
+    occupied_observation_ids: set[str],
     subject: dict[str, Any],
     provider_id: str,
     target_head: str,
@@ -476,11 +494,10 @@ def _derived_thread_observation(
         review.get("observation_id"),
         "review.observation_id",
     )
-    thread_observation_id = f"gnostoa-thread-evidence::{observation_id}"
-    if thread_observation_id in review_observation_ids:
-        raise ReconciliationInputError(
-            "derived thread evidence observation_id collides with review evidence"
-        )
+    thread_observation_id = _thread_evidence_observation_id(
+        observation_id,
+        occupied_observation_ids,
+    )
 
     return _make_observation(
         subject=subject,
@@ -506,9 +523,10 @@ def _observations(
     reviews, threads_by_review = _thread_records_by_review(snapshot)
     target_head = subject["head_commit"]
     snapshot_cut = _timestamp(subject.get("observed_at"), "subject.observed_at")
-    review_observation_ids = {
+    occupied_observation_ids = {
         _string(review.get("observation_id"), "review.observation_id")
         for review in reviews
+        if review.get("effective") is not False
     }
     observations: list[dict[str, Any]] = []
 
@@ -548,7 +566,7 @@ def _observations(
         thread_observation = _derived_thread_observation(
             review=review,
             unresolved_threads=unresolved_threads,
-            review_observation_ids=review_observation_ids,
+            occupied_observation_ids=occupied_observation_ids,
             subject=subject,
             provider_id=provider_id,
             target_head=target_head,
@@ -556,6 +574,7 @@ def _observations(
         )
         if thread_observation is not None:
             observations.append(thread_observation)
+            occupied_observation_ids.add(thread_observation["observation_id"])
 
     return observations
 
