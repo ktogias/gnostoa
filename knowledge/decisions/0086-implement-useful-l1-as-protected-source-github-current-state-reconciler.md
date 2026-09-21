@@ -156,7 +156,13 @@ thread correlation, but an `APPROVED` or `CHANGES_REQUESTED` recommendation from
 that unavailable identity is **non-effective**. It therefore cannot contribute
 quorum, conflict or recommendation-blocker authority. Any unresolved thread rooted
 in that review remains independently current through the derived `COMMENT_ONLY`
-thread observation described above.
+thread observation described above. Because the provider has lost the identity
+needed to establish recommendation currentness or supersession, retaining any such
+opinionated review downgrades `reviews` coverage to `PARTIAL`, records
+`reason: unavailable_reviewer_identity` and counts
+`unavailable_opinionated_reviews`. The native review remains retained for
+provenance; the coverage downgrade prevents that uncertainty from being hidden
+behind a positive current-state projection.
 
 GitHub's native `isOutdated` thread flag is retained as provider provenance but
 does not suppress unresolved-thread evidence. L1 deliberately treats the
@@ -179,6 +185,11 @@ inside its stale/supersession comparator. A future adapter may use a completely
 different opaque execution token and ordering rule without changing the core.
 This is diagnostic generation identity only; it is not an L2 WorkLease,
 sequence service or exactly-once effect fence.
+
+Adverse provider check labels are retained with both a count bound and a
+per-label byte bound before they enter the projection. Omitted counts preserve the
+fact that more adverse checks exist, while deterministic truncation keeps provider
+naming conventions from exhausting the bounded comment payload.
 
 For positive publication, the first GitHub adapter conservatively reuses the
 minimum applicable protected R2A subject/collection freshness bound as a

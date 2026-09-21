@@ -162,9 +162,9 @@ class UsefulL1PresentationTests(unittest.TestCase):
         )
         projection["checks"] = {
             "observed_names": 106,
-            "ambiguous": [f"ambiguous-{index}" for index in range(32)],
-            "pending": [f"pending-{index}" for index in range(32)],
-            "non_success": [f"non-success-{index}" for index in range(32)],
+            "ambiguous": [f"ambiguous-{index}" for index in range(8)],
+            "pending": [f"pending-{index}" for index in range(8)],
+            "non_success": [f"non-success-{index}" for index in range(8)],
             "omitted_ambiguous": 5,
             "omitted_pending": 3,
             "omitted_non_success": 2,
@@ -173,9 +173,9 @@ class UsefulL1PresentationTests(unittest.TestCase):
 
         rendered = reducer.render_projection(projection)
 
-        self.assertIn("ambiguous=32 (+5 omitted)", rendered)
-        self.assertIn("pending=32 (+3 omitted)", rendered)
-        self.assertIn("non-success=32 (+2 omitted)", rendered)
+        self.assertIn("ambiguous=8 (+5 omitted)", rendered)
+        self.assertIn("pending=8 (+3 omitted)", rendered)
+        self.assertIn("non-success=8 (+2 omitted)", rendered)
         self.assertEqual(projection, reducer.parse_projection_comment(rendered))
 
     def test_long_provider_check_labels_stay_within_projection_bound(self) -> None:
@@ -222,7 +222,7 @@ class UsefulL1PresentationTests(unittest.TestCase):
         self.assertEqual(32, projection["checks"]["omitted_non_success"])
         self.assertTrue(
             all(
-                len(label.encode("utf-8")) <= 256
+                len(label.encode("utf-8")) <= 128
                 for label in projection["checks"]["non_success"]
             )
         )

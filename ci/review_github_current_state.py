@@ -662,9 +662,10 @@ def _normalize_review(value: Any) -> dict[str, Any] | None:
 
 def _mark_effective_reviews(
     reviews: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], int]:
+) -> tuple[list[dict[str, Any]], int, int]:
     marked = [dict(item) for item in reviews]
     opinionated: dict[str, list[tuple[Any, int, str]]] = {}
+    unavailable_opinionated_reviews = 0
     for index, review in enumerate(marked):
         reviewer_id = _text(review.get("reviewer_id"), "review.reviewer_id")
         state = _text(
@@ -679,6 +680,7 @@ def _mark_effective_reviews(
             "CHANGES_REQUESTED",
         }:
             review["effective"] = False
+            unavailable_opinionated_reviews += 1
             continue
         if state in {"APPROVED", "CHANGES_REQUESTED"}:
             observed = parse_rfc3339(
@@ -698,7 +700,7 @@ def _mark_effective_reviews(
             continue
         for _, index, _ in latest:
             marked[index]["effective"] = True
-    return marked, ambiguities
+    return marked, ambiguities, unavailable_opinionated_reviews
 
 
 def _normalize_review_comment(value: Any) -> dict[str, Any]:
@@ -869,13 +871,26 @@ def _collect_snapshot_once(
         f"{root}/pulls/{pull_number}/reviews?per_page=100",
         normalize=_normalize_review,
     )
-    reviews, opinion_ambiguities = _mark_effective_reviews(reviews)
-    if opinion_ambiguities:
+    (
+        reviews,
+        opinion_ambiguities,
+        unavailable_opinionated_reviews,
+    ) = _mark_effective_reviews(reviews)
+    if opinion_ambiguities or unavailable_opinionated_reviews:
         review_coverage = dict(review_coverage)
-        review_coverage["effective_opinion_ambiguities"] = opinion_ambiguities
+        if opinion_ambiguities:
+            review_coverage["effective_opinion_ambiguities"] = opinion_ambiguities
+        if unavailable_opinionated_reviews:
+            review_coverage["unavailable_opinionated_reviews"] = (
+                unavailable_opinionated_reviews
+            )
         if review_coverage.get("status") == "COMPLETE":
             review_coverage["status"] = "PARTIAL"
-            review_coverage["reason"] = "ambiguous_latest_reviewer_opinion"
+            review_coverage["reason"] = (
+                "unavailable_reviewer_identity"
+                if unavailable_opinionated_reviews
+                else "ambiguous_latest_reviewer_opinion"
+            )
     review_comments, review_comment_coverage = _collect_pages(
         client,
         f"{root}/pulls/{pull_number}/comments?per_page=100",

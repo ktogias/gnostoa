@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import copy
+import hashlib
 import html
 import json
 import re
@@ -16,8 +17,9 @@ _ALLOWED_COVERAGE = {"COMPLETE", "PARTIAL", "RATE_LIMITED", "UNAVAILABLE", "ERRO
 _SEMANTIC_OUTCOMES = {"PASS", "BLOCKED", "INCOMPLETE", "CONFLICTING"}
 _MARKER = re.compile(r"<!-- gnostoa:l1-current-state:v1:([A-Za-z0-9_-]+) -->")
 _MAX_RENDER_BYTES = 32_768
-_MAX_CHECK_NAMES = 32
 _MAX_RENDERED_CHECK_NAMES = 8
+_MAX_CHECK_NAMES = _MAX_RENDERED_CHECK_NAMES
+_MAX_CHECK_LABEL_BYTES = 128
 
 
 class ReconciliationInputError(ValueError):
@@ -43,6 +45,17 @@ def _optional_summary(value: object, *, limit: int = 512) -> str | None:
     if not normalized:
         return None
     return normalized[:limit]
+
+
+def _bounded_check_label(value: str) -> str:
+    raw = value.encode("utf-8")
+    if len(raw) <= _MAX_CHECK_LABEL_BYTES:
+        return value
+    digest = hashlib.sha256(raw).hexdigest()[:12]
+    suffix = f"...#{digest}"
+    budget = _MAX_CHECK_LABEL_BYTES - len(suffix.encode("ascii"))
+    prefix = raw[:budget].decode("utf-8", errors="ignore")
+    return prefix + suffix
 
 
 def _markdown_code(value: object, label: str) -> str:
@@ -565,7 +578,7 @@ def _check_summary(snapshot: dict[str, Any], target_head: str) -> dict[str, Any]
     }
     for key, name, category in classified:
         label = name if name_counts[name] == 1 else f"{name} [{key}]"
-        categories[category].append(label)
+        categories[category].append(_bounded_check_label(label))
     for items in categories.values():
         items.sort()
 
@@ -740,6 +753,12 @@ def _validate_projection_checks(value: object) -> dict[str, Any]:
             checks.get(name),
             f"projection.checks.{name}",
         )
+        if any(
+            len(item.encode("utf-8")) > _MAX_CHECK_LABEL_BYTES for item in items
+        ):
+            raise ReconciliationInputError(
+                f"projection.checks.{name} label exceeds bounded size"
+            )
         overlap = seen_names.intersection(items)
         if overlap:
             raise ReconciliationInputError(
