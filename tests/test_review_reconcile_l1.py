@@ -1494,7 +1494,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
             {
                 "contents": "read",
                 "pull-requests": "write",
-                "issues": "write",
+                "issues": "read",
             },
             publish.get("permissions"),
         )
