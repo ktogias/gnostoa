@@ -1438,11 +1438,15 @@ class UsefulL1RedContractTests(unittest.TestCase):
         entries = loaded.get("guardrails")
         self.assertIsInstance(entries, list)
         l1 = next(
-            item
-            for item in entries
-            if isinstance(item, dict)
-            and item.get("id") == "useful-l1-current-state-reconciliation"
+            (
+                item
+                for item in entries
+                if isinstance(item, dict)
+                and item.get("id") == "useful-l1-current-state-reconciliation"
+            ),
+            None,
         )
+        self.assertIsInstance(l1, dict)
         self.assertIn("tools/review_reconcile.py", l1.get("implementation", []))
         self.assertIn(
             "ci/review_github_current_state.py",
@@ -1455,10 +1459,15 @@ class UsefulL1RedContractTests(unittest.TestCase):
         self.assertIn("tests/test_review_reconcile_l1.py", l1.get("tests", []))
 
         semantic = next(
-            item
-            for item in entries
-            if isinstance(item, dict) and item.get("id") == "semantic-review-assurance"
+            (
+                item
+                for item in entries
+                if isinstance(item, dict)
+                and item.get("id") == "semantic-review-assurance"
+            ),
+            None,
         )
+        self.assertIsInstance(semantic, dict)
         self.assertNotIn(
             "ci/review_github_current_state.py",
             semantic.get("implementation", []),
@@ -1520,17 +1529,25 @@ class UsefulL1RedContractTests(unittest.TestCase):
         self.assertIsInstance(collect_steps, list)
         self.assertIsInstance(publish_steps, list)
         upload = next(
-            item
-            for item in collect_steps
-            if isinstance(item, dict)
-            and str(item.get("uses", "")).startswith("actions/upload-artifact@")
+            (
+                item
+                for item in collect_steps
+                if isinstance(item, dict)
+                and str(item.get("uses", "")).startswith("actions/upload-artifact@")
+            ),
+            None,
         )
+        self.assertIsInstance(upload, dict)
         download = next(
-            item
-            for item in publish_steps
-            if isinstance(item, dict)
-            and str(item.get("uses", "")).startswith("actions/download-artifact@")
+            (
+                item
+                for item in publish_steps
+                if isinstance(item, dict)
+                and str(item.get("uses", "")).startswith("actions/download-artifact@")
+            ),
+            None,
         )
+        self.assertIsInstance(download, dict)
         self.assertEqual(1, upload.get("with", {}).get("retention-days"))
         self.assertEqual(
             "gnostoa-l1-publication",
@@ -1566,11 +1583,15 @@ class UsefulL1RedContractTests(unittest.TestCase):
             steps = job.get("steps")
             self.assertIsInstance(steps, list)
             checkout = next(
-                item
-                for item in steps
-                if isinstance(item, dict)
-                and str(item.get("uses", "")).startswith("actions/checkout@")
+                (
+                    item
+                    for item in steps
+                    if isinstance(item, dict)
+                    and str(item.get("uses", "")).startswith("actions/checkout@")
+                ),
+                None,
             )
+            self.assertIsInstance(checkout, dict)
             checkout_with = checkout.get("with")
             self.assertIsInstance(checkout_with, dict)
             self.assertEqual("main", checkout_with.get("ref"))
