@@ -17,6 +17,7 @@ _SEMANTIC_OUTCOMES = {"PASS", "BLOCKED", "INCOMPLETE", "CONFLICTING"}
 _MARKER = re.compile(r"<!-- gnostoa:l1-current-state:v1:([A-Za-z0-9_-]+) -->")
 _MAX_RENDER_BYTES = 32_768
 _MAX_CHECK_NAMES = 32
+_MAX_RENDERED_CHECK_NAMES = 8
 
 
 class ReconciliationInputError(ValueError):
@@ -676,10 +677,10 @@ def build_projection(
         next_action = "WAIT_FOR_PROTECTED_CAPABILITY"
     elif checks["ambiguous"]:
         next_action = "RECONCILE_PROVIDER_CHECKS"
-    elif checks["pending"]:
-        next_action = "WAIT_FOR_PROVIDER_CHECKS"
     elif checks["non_success"]:
         next_action = "RECONCILE_PROVIDER_CHECKS"
+    elif checks["pending"]:
+        next_action = "WAIT_FOR_PROVIDER_CHECKS"
     elif semantic_outcome == "PASS":
         next_action = "CONTINUE_EXISTING_WORKFLOW"
     elif semantic_outcome in {"BLOCKED", "CONFLICTING"}:
@@ -901,10 +902,10 @@ def _validate_projection_document(document: dict[str, Any]) -> None:
         expected_action = "WAIT_FOR_PROTECTED_CAPABILITY"
     elif checks["ambiguous"] or checks["omitted_ambiguous"]:
         expected_action = "RECONCILE_PROVIDER_CHECKS"
-    elif checks["pending"] or checks["omitted_pending"]:
-        expected_action = "WAIT_FOR_PROVIDER_CHECKS"
     elif checks["non_success"] or checks["omitted_non_success"]:
         expected_action = "RECONCILE_PROVIDER_CHECKS"
+    elif checks["pending"] or checks["omitted_pending"]:
+        expected_action = "WAIT_FOR_PROVIDER_CHECKS"
     else:
         expected_action = {
             "PASS": "CONTINUE_EXISTING_WORKFLOW",
@@ -927,6 +928,36 @@ def _validate_projection_document(document: dict[str, Any]) -> None:
 def _encode_projection(projection: dict[str, Any]) -> str:
     raw = canonical_json(projection).encode("utf-8")
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _render_check_labels(
+    checks: dict[str, Any],
+    *,
+    key: str,
+    label: str,
+) -> str | None:
+    items = _projection_string_list(
+        checks.get(key),
+        f"projection.checks.{key}",
+    )
+    omitted_key = f"omitted_{key}"
+    omitted = checks.get(omitted_key)
+    if type(omitted) is not int or omitted < 0:
+        raise ReconciliationInputError(
+            f"projection.checks.{omitted_key} must be a non-negative integer"
+        )
+    if not items and omitted == 0:
+        return None
+
+    visible = items[:_MAX_RENDERED_CHECK_NAMES]
+    hidden = omitted + max(0, len(items) - len(visible))
+    rendered = ", ".join(
+        _markdown_code(item, f"projection.checks.{key}[]")
+        for item in visible
+    )
+    if hidden:
+        rendered += f" (+{hidden} more)"
+    return f"- {label}: {rendered}"
 
 
 def render_projection(projection: dict[str, Any]) -> str:
@@ -1009,6 +1040,27 @@ def render_projection(projection: dict[str, Any]) -> str:
                 f"non-success={len(checks['non_success'])} "
                 f"(+{checks['omitted_non_success']} omitted)"
             ),
+            *[
+                line
+                for line in (
+                    _render_check_labels(
+                        checks,
+                        key="ambiguous",
+                        label="Ambiguous checks",
+                    ),
+                    _render_check_labels(
+                        checks,
+                        key="pending",
+                        label="Pending checks",
+                    ),
+                    _render_check_labels(
+                        checks,
+                        key="non_success",
+                        label="Non-success checks",
+                    ),
+                )
+                if line is not None
+            ],
             (
                 f"- Protected authority: **{protected['status']}**; "
                 f"main=`{protected.get('main_revision') or 'UNAVAILABLE'}`"
