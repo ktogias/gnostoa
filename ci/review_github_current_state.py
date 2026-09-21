@@ -1615,6 +1615,18 @@ def _bounded_error_status(error: BaseException) -> int | None:
     return None
 
 
+def _publication_result_summary(item: dict[str, Any]) -> str:
+    suffix = ""
+    error_type = item.get("error_type")
+    if isinstance(error_type, str):
+        suffix = f" ({error_type}"
+        error_status = item.get("error_status")
+        if type(error_status) is int:
+            suffix += f"; HTTP {error_status}"
+        suffix += ")"
+    return f"- PR #{item['pull_number']}: {item['reason']}{suffix}"
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=("collect", "publish"), required=True)
@@ -1727,24 +1739,7 @@ def main(argv: list[str] | None = None) -> int:
         [
             "## Gnostoa useful L1 publication",
             "",
-            *[
-                (
-                    f"- PR #{item['pull_number']}: {item['reason']}"
-                    + (
-                        " ("
-                        + item["error_type"]
-                        + (
-                            f"; HTTP {item['error_status']}"
-                            if type(item.get("error_status")) is int
-                            else ""
-                        )
-                        + ")"
-                        if isinstance(item.get("error_type"), str)
-                        else ""
-                    )
-                )
-                for item in results
-            ],
+            *[_publication_result_summary(item) for item in results],
         ]
     )
     return (
