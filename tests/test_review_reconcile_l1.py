@@ -718,7 +718,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
         self.assertEqual("COMPLETE", snapshot["coverage"]["conversation"]["status"])
         self.assertEqual("UNAVAILABLE", snapshot["conversation"][0]["author"])
 
-    def test_deleted_review_actor_keeps_review_and_thread_sources_complete(
+    def test_deleted_review_actor_marks_review_coverage_partial_but_keeps_threads_complete(
         self,
     ) -> None:
         adapter = _adapter()
@@ -738,7 +738,15 @@ class UsefulL1RedContractTests(unittest.TestCase):
         )
 
         fallback = "github-unavailable-reviewer:10"
-        self.assertEqual("COMPLETE", snapshot["coverage"]["reviews"]["status"])
+        self.assertEqual("PARTIAL", snapshot["coverage"]["reviews"]["status"])
+        self.assertEqual(
+            "unavailable_reviewer_identity",
+            snapshot["coverage"]["reviews"]["reason"],
+        )
+        self.assertEqual(
+            1,
+            snapshot["coverage"]["reviews"]["unavailable_opinionated_reviews"],
+        )
         self.assertEqual("COMPLETE", snapshot["coverage"]["review_threads"]["status"])
         self.assertEqual(fallback, snapshot["reviews"][0]["reviewer_id"])
         self.assertFalse(snapshot["reviews"][0]["effective"])

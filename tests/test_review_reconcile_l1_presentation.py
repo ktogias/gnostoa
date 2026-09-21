@@ -178,6 +178,58 @@ class UsefulL1PresentationTests(unittest.TestCase):
         self.assertIn("non-success=32 (+2 omitted)", rendered)
         self.assertEqual(projection, reducer.parse_projection_comment(rendered))
 
+    def test_long_provider_check_labels_stay_within_projection_bound(self) -> None:
+        fixtures = _fixtures()
+        reducer = fixtures._reducer()
+        snapshot = fixtures._snapshot()
+        snapshot["checks"] = [
+            {
+                "id": f"failed-{index}",
+                "key": f"provider-check:{index}",
+                "name": ("x" * 2_000) + f"-{index}",
+                "head_commit": "a" * 40,
+                "observed_at": "2026-09-19T16:40:00Z",
+                "status": "completed",
+                "conclusion": "failure",
+            }
+            for index in range(40)
+        ]
+        snapshot["coverage"]["checks"] = {
+            "status": "COMPLETE",
+            "pages": 1,
+            "count": 40,
+        }
+
+        projection = reducer.build_projection(
+            snapshot,
+            protected_main_revision="e" * 40,
+            outer_consumer={
+                "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
+                "runtime_revision": "9" * 40,
+            },
+            r2a_result={
+                "outcome": "PASS",
+                "reason": "QUORUM_SATISFIED",
+                "binding": False,
+            },
+            execution={
+                "execution_id": "presentation-test::long-check-labels",
+                "observed_at": "2026-09-19T16:41:00Z",
+            },
+        )
+
+        self.assertEqual(8, len(projection["checks"]["non_success"]))
+        self.assertEqual(32, projection["checks"]["omitted_non_success"])
+        self.assertTrue(
+            all(
+                len(label.encode("utf-8")) <= 256
+                for label in projection["checks"]["non_success"]
+            )
+        )
+        rendered = reducer.render_projection(projection)
+        self.assertLessEqual(len(rendered.encode("utf-8")), 32_768)
+        self.assertEqual(projection, reducer.parse_projection_comment(rendered))
+
     def test_rendered_check_labels_are_visible_bounded_literals(self) -> None:
         fixtures = _fixtures()
         reducer = fixtures._reducer()
