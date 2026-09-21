@@ -27,6 +27,8 @@ x-project-knowledge:
       target: /decisions/0061-retain-individual-agent-review-dispositions.md
     - kind: governed-by
       target: /decisions/0062-require-proportionate-prior-art-and-reuse-review.md
+    - kind: governed-by
+      target: /decisions/0087-separate-reviewer-capability-state-from-staged-review-orchestration.md
     - kind: depends-on
       target: /lifecycles/evidence-gated-capability-evolution.md
     - kind: references
@@ -194,8 +196,12 @@ The existing emergency route retains its declared timing and follow-up.
     integrated-main revision are separate observations. Read the exact protected
     revision, changed paths, provider jobs and lifecycle state.
 14. **Re-bind the subject and reconcile.** A new SHA alone does not invalidate
-    evidence. Prove the relevant subject unchanged before reuse; when it changed
-    materially, replay only affected evidence. Re-read navigation under
+    general evidence. Prove the relevant subject unchanged before reuse; when it
+    changed materially, replay only affected evidence. **Final semantic review
+    evidence is the explicit exception:** Decision 0067 binds it to the exact
+    head, so any new candidate head invalidates the prior final review cut even
+    when the broader subject is otherwise unchanged. Other evidence may still be
+    reused after subject-equivalence is proven. Re-read navigation under
     [Decision 0024](../decisions/0024-separate-stable-navigation-from-volatile-state.md).
 15. **Record the micro-retrospective.** Before closure, answer briefly: what was
     expected; what actually happened; what surprised us or was detected late;
@@ -245,6 +251,138 @@ or implementation admission. Apply the
 [explicit-admission requirement](../requirements/retrospective-findings-require-explicit-admission.md)
 to new work. Record capture and source validation are review practices; neither
 establishes mandatory software enforcement or prevents future omissions.
+
+
+### Staged external review collection
+
+This subsection is operative only when read from a protected-main revision that
+already contains Decision 0087. On an unintegrated review branch it is candidate
+guidance under falsification, not governing repository state.
+
+For Gnostoa-self external automated reviewers, apply
+[Decision 0087](../decisions/0087-separate-reviewer-capability-state-from-staged-review-orchestration.md)
+and the dated
+[reviewer capability baseline](../assessments/reviewer-capability-quota-orchestration-baseline.md).
+Keep provider capability, current account/workspace availability, exact-subject
+eligibility and completed review evidence separate. In registry observations,
+`status` preserves the provider event while mandatory `route_state` carries
+the terminal/nonterminal orchestration state; never infer terminality from a
+descriptive status label. A `COMPLETED` route state records provider-route
+completion only; it is not semantic review acceptance unless separate
+subject-bound exact-head evidence satisfies the existing review-assurance path.
+
+Historical observations are comparable only when provider, scope, applicable
+subject and a **non-null matching non-secret `scope_identity`** agree and an
+exact source/provider `event_at` is attributable. `observed_at` is
+acquisition provenance, not event ordering. A subject-scoped observation matches
+the current candidate only when its retained `head_commit` exactly equals the
+current head; null/unknown identity or head is historical-only and requires
+revalidation. A newer `FAILED` or `TIMED_OUT` attempt also stales an older
+cached `AVAILABLE` state for automatic dispatch until availability is
+revalidated. Historical committed observations have no implicit TTL and never
+authorize automatic scarce-review dispatch by themselves. For automatic
+dispatch, require a provider `current_readback` whose `cut_id` equals the
+active planning cut and whose `planning_subject` equals the exact target
+PR/head. Keep its fact-level `subject` faithful to the declared scope:
+account scope uses `subject=null`, repository scope remains repository-scoped,
+and subject scope uses the exact subject. Require same-cut
+`availability_state=AVAILABLE` and `eligibility_state=ELIGIBLE`, with a
+current non-secret `scope_identity` where required and an actual provider
+current-readback source. An adapter may combine separately acquired
+account/workspace availability and exact-subject eligibility only when both were
+acquired in the same cut; it must not rewrite the fact scope to manufacture an
+exact-subject record. Historical registry observations cannot be promoted into
+this shape; missing, incomplete, or ambiguous availability-plus-eligibility
+proof is `REVALIDATION_REQUIRED`/manual disposition.
+
+Use one isolated invocation per reviewer through the provider-specific channel
+retained in the capability registry. For comment-driven reviewers, use one
+top-level trigger comment per reviewer and do not batch several reviewer
+commands into one comment. For UI, API, GitHub-app and interactive-agent routes,
+use their recorded channel instead of manufacturing a comment command. The
+typed `dispatch_kind` is authoritative for payload meaning:
+`comment_command` may carry comment syntax, `provider_action` carries a
+UI/API action, `configuration_only` is not an invocation, and
+`interactive_manual`/`unknown` are non-automatic. Treat a generic comment
+command as manual-only for future automation until repository-specific command
+ownership/collision behavior is verified. Treat any
+`dispatch_safety: manual_only_until_*` route as ineligible for automatic
+dispatch regardless of `instruction_mode`.
+
+Follow only the retained typed recipe and enforce its
+`dispatch_kind_constraints`: comment commands require only a command,
+provider actions require only an action, configuration-only routes are never
+invocations, and interactive/unknown routes are non-automatic. For templates,
+normalize CRLF/CR to LF, allow only HT/LF controls, reject reserved placeholder
+literals, enforce the **4096-byte UTF-8 maximum**, and perform one
+non-recursive render pass. Invalid input is `MANUAL_ONLY_NO_DISPATCH`.
+Optional-template empty instructions reduce to command-only;
+required-template empty instructions are invalid, and isolated instructions may
+not contain another retained comment-trigger command. Never invent provider
+syntax or instruction prose. The current Sourcery route uses a standalone
+comment containing only `@sourcery-ai review`.
+
+Collect review in stages rather than spending every configured reviewer on each
+intermediate head:
+
+1. while the PR is unstable, run deterministic preflight, applicable CI and
+   self-review first;
+2. use only selected, currently available early-review routes whose expected
+   value justifies reviewing a Draft or intermediate candidate;
+3. explicitly seal the exact head before final collection;
+4. transition to Ready when final collection is intended, then **read back
+   current-head provider request/review state before any manual trigger** and
+   bind that read-back to the active planning `cut_id`; for each selected
+   reviewer use exactly one activation path: if Ready already auto-started or
+   completed a current-head request/review, wait/reconcile it and do not
+   manually retrigger; otherwise consider one manual trigger only after
+   dispatch-safety and current eligibility are established. When multiple
+   same-head attempts exist and their provider/request identity or ordering is
+   ambiguous, use `REVALIDATION_REQUIRED` instead of guessing;
+5. if current provider eligibility cannot be reacquired for an automatic
+   dispatch decision, use `REVALIDATION_REQUIRED` and do not spend quota
+   speculatively; retained dated registry observations are historical hints, not
+   sufficient current provider truth;
+6. if a selected route remains `REVALIDATION_REQUIRED`, keep it blocking
+   unless protected policy/R2A already identifies it as optional; an established
+   optional route may be moved explicitly to `DESELECTED_OPTIONAL` with a
+   retained reason before reconciliation, but that disposition is never review
+   evidence and never satisfies a required domain/capability;
+7. treat `SKIPPED`, `QUOTA_EXHAUSTED`, `CREDIT_REQUIRED`,
+   `UNAVAILABLE`, `UNSUPPORTED_FOR_SUBJECT`, `FAILED`, `TIMED_OUT` and
+   `DESELECTED_OPTIONAL` as truthful scheduling outcomes, never as clean
+   reviews. The admitted read-only planner performs **zero automatic retries**:
+   after same-cut revalidation, a required or unknown-required failed/timed-out
+   route becomes `MANUAL_ESCALATION_REQUIRED` and stays blocking until an
+   explicitly authorized new activation succeeds or protected alternative
+   evidence satisfies the domain. Optional routes may be deselected only under
+   the protected optional-route rule;
+8. batch related repair findings before creating another final candidate where
+   practical;
+9. before any final-review repair that will change the exact head, invalidate
+   the complete prior final review cut and convert the provider PR back to Draft;
+   `final_review_cut.head_commit` must equal the current candidate head,
+   otherwise the cut is `INVALIDATED_HEAD_CHANGED` and no old-head required
+   domain completion survives;
+   for **final semantic review evidence this exact-head rule supersedes the
+   general subject-rebinding reuse rule in step 14**; batch the mutation, rerun
+   deterministic/CI evidence, reseal the new exact candidate, then return to
+   Ready and reacquire fresh exact-head evidence from every review domain
+   required by effective policy/qualification; optional old-head reviews remain
+   historical and do not count in the new cut;
+10. keep a Ready PR Ready only for reconciliation/disposition that does not change
+   the exact candidate head; architecture, broad production behavior,
+   scope/classification or another implementation phase also reopens the broader
+   development state.
+
+Configured-provider count is not review quorum. The effective review policy and
+R2A qualification/independence semantics remain authoritative. The planner must
+pass protected required-domain `id`/`status` values through unchanged,
+never assign or infer domains from provider identity, and treat missing,
+ambiguous, incomplete or differently-head-bound protected input as blocking. Optional provider unavailability may remain
+non-blocking only when protected policy/R2A already says all required domains
+are satisfied; any incomplete required domain is an explicit blocker and the
+planner cannot recommend convergence or owner-decision readiness.
 
 ## Verification
 
