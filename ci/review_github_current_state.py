@@ -1160,6 +1160,71 @@ def _existing_projection(
     return comment_id, projection
 
 
+def _protected_positive_projection_freshness_seconds(
+    document: object,
+) -> int | None:
+    if not isinstance(document, dict):
+        raise ProviderWriteError("protected authority document is malformed")
+    policy = document.get("policy")
+    if not isinstance(policy, dict):
+        raise ProviderWriteError("protected review policy is unavailable")
+
+    bounds: list[int] = []
+    for section_name in ("subject", "collection"):
+        section = policy.get(section_name)
+        if not isinstance(section, dict):
+            raise ProviderWriteError(
+                f"protected review policy {section_name} section is unavailable"
+            )
+        freshness = section.get("freshness")
+        if not isinstance(freshness, dict):
+            raise ProviderWriteError(
+                f"protected review policy {section_name} freshness is unavailable"
+            )
+        mode = freshness.get("mode")
+        if mode == "not_age_sensitive":
+            continue
+        if mode != "max_age":
+            raise ProviderWriteError(
+                f"protected review policy {section_name} freshness is unsupported"
+            )
+        seconds = freshness.get("seconds")
+        if type(seconds) is not int or seconds < 0:
+            raise ProviderWriteError(
+                f"protected review policy {section_name} freshness bound is invalid"
+            )
+        bounds.append(seconds)
+    return min(bounds) if bounds else None
+
+
+def _positive_projection_is_fresh(
+    projection: dict[str, Any],
+    *,
+    protected_bundle: object,
+    observed_now: str,
+) -> bool:
+    if projection.get("next_permitted_action") != "CONTINUE_EXISTING_WORKFLOW":
+        return True
+    if not hasattr(protected_bundle, "document"):
+        raise ProviderWriteError("protected authority document is unavailable")
+    observation = projection.get("observation")
+    if not isinstance(observation, dict):
+        raise ProviderWriteError("projection observation is unavailable")
+    observed_at = observation.get("observed_at")
+    if not isinstance(observed_at, str):
+        raise ProviderWriteError("projection observation cut is unavailable")
+    try:
+        cut = parse_rfc3339(observed_at)
+        now = parse_rfc3339(observed_now)
+    except ValueError as exc:
+        raise ProviderWriteError("projection publication time is invalid") from exc
+
+    max_age = _protected_positive_projection_freshness_seconds(
+        protected_bundle.document
+    )
+    return max_age is None or now.is_within_seconds_after(cut, max_age)
+
+
 def _current_pr(
     client: JsonReader, repository: str, pull_number: int
 ) -> dict[str, Any]:
@@ -1264,6 +1329,16 @@ def publish_entry(
                 "pull_number": pull_number,
                 "published": False,
                 "reason": "STALE_PROTECTED_AUTHORITY",
+            }
+        if not _positive_projection_is_fresh(
+            candidate_projection,
+            protected_bundle=bundle,
+            observed_now=_now(),
+        ):
+            return {
+                "pull_number": pull_number,
+                "published": False,
+                "reason": "STALE_PROVIDER_OBSERVATION",
             }
 
     if existing is None:
