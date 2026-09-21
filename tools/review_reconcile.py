@@ -247,7 +247,7 @@ def _review_payloads(
 
 def _normalize_review(
     raw_review: object,
-    review_observation_ids: set[str],
+    occupied_observation_ids: set[str],
 ) -> dict[str, Any]:
     review = _mapping(raw_review, "review")
     observation_id = _string(
@@ -326,7 +326,7 @@ def _thread_records_by_review(
     for raw_thread in review_threads:
         review_observation_id, thread = _normalize_review_thread(
             raw_thread,
-            review_observation_ids=review_observation_ids,
+            occupied_observation_ids=occupied_observation_ids,
             thread_ids=thread_ids,
         )
         threads_by_review.setdefault(review_observation_id, []).append(thread)
@@ -500,7 +500,7 @@ def _derived_thread_observation(
     )
     thread_observation_id = _thread_evidence_observation_id(
         observation_id,
-        review_observation_ids,
+        occupied_observation_ids,
     )
 
     return _make_observation(
@@ -527,7 +527,7 @@ def _observations(
     reviews, threads_by_review = _thread_records_by_review(snapshot)
     target_head = subject["head_commit"]
     snapshot_cut = _timestamp(subject.get("observed_at"), "subject.observed_at")
-    review_observation_ids = {
+    occupied_observation_ids = {
         _string(review.get("observation_id"), "review.observation_id")
         for review in reviews
     }
@@ -577,6 +577,7 @@ def _observations(
         )
         if thread_observation is not None:
             observations.append(thread_observation)
+            occupied_observation_ids.add(thread_observation["observation_id"])
 
     return observations
 
