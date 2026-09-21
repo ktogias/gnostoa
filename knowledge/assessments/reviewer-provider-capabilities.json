@@ -18,7 +18,8 @@
       "merge or provider-write authority"
     ],
     "runtime_rule": "Committed runtime/account observations are historical evidence and scheduling hints, not current dispatch authority. For any automatic scarce-review dispatch, the planner must use a current provider read-back acquired in the same planning cut; if that read-back is unavailable or ambiguous, surface REVALIDATION_REQUIRED/manual disposition rather than infer freshness from age alone.",
-    "unknown_rule": "Absence of an observed quota or limit MUST NOT be encoded as unlimited."
+    "unknown_rule": "Absence of an observed quota or limit MUST NOT be encoded as unlimited.",
+    "lifecycle_rule": "The registry has no standalone draft/promoted lifecycle authority. Only the protected repository revision and governing Decision determine whether a snapshot is operative; consumers MUST NOT infer review, integration, or promotion authority from a JSON lifecycle-status token."
   },
   "providers": [
     {
@@ -226,7 +227,12 @@
           "scope": "subject",
           "status": "COMPLETED",
           "observed_at": "2026-09-21T20:33:26Z",
-          "subject": {"repository":"ktogias/gnostoa","change_request":"pull/297","head_commit":"716687d9b033efc5bba0f719ab183c177b91a11c","_public_identity_note":"# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"},
+          "subject": {
+            "repository": "ktogias/gnostoa",
+            "change_request": "pull/297",
+            "head_commit": "716687d9b033efc5bba0f719ab183c177b91a11c",
+            "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
+          },
           "retry_after": null,
           "reason": null,
           "details": {
@@ -672,7 +678,12 @@
           "scope": "subject",
           "status": "COMPLETED",
           "observed_at": "2026-09-21T20:33:26Z",
-          "subject": {"repository":"ktogias/gnostoa","change_request":"pull/297","head_commit":"716687d9b033efc5bba0f719ab183c177b91a11c","_public_identity_note":"# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"},
+          "subject": {
+            "repository": "ktogias/gnostoa",
+            "change_request": "pull/297",
+            "head_commit": "716687d9b033efc5bba0f719ab183c177b91a11c",
+            "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
+          },
           "retry_after": null,
           "reason": null,
           "details": {
@@ -688,7 +699,12 @@
           "scope": "subject",
           "status": "COMPLETED",
           "observed_at": "2026-09-21T21:15:32Z",
-          "subject": {"repository":"ktogias/gnostoa","change_request":"pull/297","head_commit":"562fc9a7f986665438528b599aa3e1a12633f76e","_public_identity_note":"# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"},
+          "subject": {
+            "repository": "ktogias/gnostoa",
+            "change_request": "pull/297",
+            "head_commit": "562fc9a7f986665438528b599aa3e1a12633f76e",
+            "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
+          },
           "retry_after": null,
           "reason": null,
           "details": {
@@ -705,7 +721,12 @@
           "scope": "subject",
           "status": "COMPLETED",
           "observed_at": "2026-09-21T21:15:32Z",
-          "subject": {"repository":"ktogias/gnostoa","change_request":"pull/297","head_commit":"e304af4dcd5298e79b66e60a9ac3012643af24ea","_public_identity_note":"# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"},
+          "subject": {
+            "repository": "ktogias/gnostoa",
+            "change_request": "pull/297",
+            "head_commit": "e304af4dcd5298e79b66e60a9ac3012643af24ea",
+            "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
+          },
           "retry_after": null,
           "reason": null,
           "details": {
@@ -789,7 +810,12 @@
           "scope": "subject",
           "status": "COMPLETED",
           "observed_at": "2026-09-21T20:33:26Z",
-          "subject": {"repository":"ktogias/gnostoa","change_request":"pull/297","head_commit":"c9d04df74704d4de1138fa719d916a855f3b069f","_public_identity_note":"# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"},
+          "subject": {
+            "repository": "ktogias/gnostoa",
+            "change_request": "pull/297",
+            "head_commit": "c9d04df74704d4de1138fa719d916a855f3b069f",
+            "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
+          },
           "retry_after": null,
           "reason": null,
           "details": {
@@ -1199,12 +1225,11 @@
       ],
       "retry_transition": "FAILED or TIMED_OUT -> REVALIDATE_CURRENT_STATE -> MANUAL_ESCALATION_REQUIRED. A separately authorized human/provider effect may create a new activation identity and then the planner may observe REQUESTED/IN_PROGRESS/COMPLETED on the same exact head. The read-only planner never performs or loops the retry itself."
     },
-    "retry_recovery_rule": "Recovery from FAILED/TIMED_OUT is deterministic but effect-free: 1) mark REVALIDATION_REQUIRED; 2) reacquire same-cut current provider/subject state; 3) if eligible and the per-cut manual-retry recommendation budget is unused, advise MANUAL_RETRY_PERMITTED; 4) a separately authorized human/provider action starts a new activation_id on the same exact head; 5) after the one planner-recommended retry is consumed, any further retry requires explicit manual disposition outside planner automation. The planner never posts the retry itself.",
+    "retry_recovery_rule": "Recovery from FAILED/TIMED_OUT is deterministic and effect-free: 1) move the route to REVALIDATION_REQUIRED; 2) reacquire same-cut current availability and eligibility for the same exact head; 3) if protected required-domain status is incomplete or unknown, output MANUAL_ESCALATION_REQUIRED; 4) the planner performs no retry and invents no backoff; 5) only a separately authorized provider-write effect may create a new activation identity after manual_retry_prerequisites hold; 6) optional routes may be DESELECTED_OPTIONAL only under optional_route_disposition_rule. The failed or timed-out attempt remains historical and cannot satisfy a required domain.",
     "next_action_vocabulary": [
       "WAIT",
       "REVALIDATE_CURRENT_STATE",
       "MANUAL_ESCALATION_REQUIRED",
-      "MANUAL_RETRY_AUTHORIZED",
       "WAIT_FOR_ALTERNATIVE_QUALIFIED_EVIDENCE",
       "DESELECT_OPTIONAL",
       "RECONCILE"
