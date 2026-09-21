@@ -230,9 +230,7 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
                 "commit_id": "a" * 40,
             }
         )
-        replies[f"{root}/pulls/300/comments?per_page=100"][0][0][
-            "commit_id"
-        ] = "d" * 40
+        replies[f"{root}/pulls/300/comments?per_page=100"][0][0]["commit_id"] = "d" * 40
 
         class UnresolvedOlderThreadFake(fixtures._PagedFake):
             def graphql(self, query: str, variables: dict[str, Any]) -> Any:
