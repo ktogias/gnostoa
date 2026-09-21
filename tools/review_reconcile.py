@@ -289,14 +289,16 @@ def _observations(
         review_head: object,
         source_url: object,
         thread_records: list[dict[str, Any]],
+        binding_head: object | None = None,
         native_extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        if review_head is None:
+        subject_head = review_head if binding_head is None else binding_head
+        if subject_head is None:
             bound_head = target_head
             binding_status = "unestablished"
         else:
-            bound_head = _sha(review_head, "review.head_commit")
-            binding_status = "exact" if review_head == target_head else "partial"
+            bound_head = _sha(subject_head, "review.subject_binding.head_commit")
+            binding_status = "exact" if bound_head == target_head else "partial"
 
         thread_states = {item["state"] for item in thread_records}
         aggregate_thread_state = (
@@ -378,6 +380,7 @@ def _observations(
                     review_head=review_head,
                     source_url=source_url,
                     thread_records=thread_records,
+                    binding_head=target_head,
                     native_extra={
                         "thread_evidence_only": True,
                         "superseded_review_observation_id": observation_id,
