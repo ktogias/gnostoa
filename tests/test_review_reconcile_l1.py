@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest import mock
 
 import yaml
@@ -190,8 +190,7 @@ class _PagedFake:
             raise RuntimeError(f"unexpected URL: {url}")
         return self.replies[url]
 
-    def graphql(self, query: str, variables: dict[str, Any]) -> Any:
-        del query
+    def graphql(self, _query: str, variables: dict[str, Any]) -> Any:
         cursor = variables.get("cursor")
         # skipcq: PTC-W0063 -- explicit default prevents StopIteration
         first_url = next(
@@ -1049,7 +1048,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
         self,
     ) -> None:
         adapter = _adapter()
-        base_subject = {
+        base_subject: dict[str, Any] = {
             "provider_id": "github",
             "repository": "https://github.com/ktogias/gnostoa",
             "change_request": {"kind": "github-pull-request", "id": "300"},
@@ -1346,7 +1345,9 @@ class UsefulL1RedContractTests(unittest.TestCase):
         ) -> tuple[int, bytes]:
             self.assertIs(consumer, acquire_consumer())
             self.assertIsInstance(input_document, dict)
-            return _valid_incomplete_result(input_document)
+            return _valid_incomplete_result(
+                cast(dict[str, Any], input_document)
+            )
 
         with (
             mock.patch.object(
