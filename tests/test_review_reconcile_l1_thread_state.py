@@ -992,9 +992,61 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
             mock.patch.object(
                 adapter,
                 "publish_entry",
-                side_effect=[adapter.ProviderWriteError("first failed"), second],
+                side_effect=[
+                    adapter.ProviderWriteError("first failed", status=403),
+                    second,
+                ],
             ) as publish,
             mock.patch.object(adapter, "_summary") as summary,
+            mock.patch("builtins.print") as print_line,
+            mock.patch.dict(adapter.os.environ, {"GH_TOKEN": _NONEMPTY_TEST_VALUE}),
+        ):
+            code = adapter.main(
+                [
+                    "--mode",
+                    "publish",
+                    "--repository",
+                    "ktogias/gnostoa",
+                    "--payload",
+                    "unused.json",
+                ]
+            )
+
+        self.assertEqual(1, code)
+        self.assertEqual(2, publish.call_count)
+        rendered = "\n".join(summary.call_args.args[0])
+        self.assertIn("PR #1: PUBLICATION_ENTRY_UNAVAILABLE", rendered)
+        self.assertIn("ProviderWriteError:HTTP_403", rendered)
+        self.assertIn("PR #2: UPDATED", rendered)
+        logged = "\n".join(
+            str(call.args[0]) for call in print_line.call_args_list if call.args
+        )
+        self.assertIn("PR #1: PUBLICATION_ENTRY_UNAVAILABLE", logged)
+        self.assertIn("ProviderWriteError:HTTP_403", logged)
+        self.assertIn("PR #2: UPDATED", logged)
+
+    def test_publish_mode_keeps_safe_noop_decisions_successful(self) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures.adapter_fixture()
+        entries = [{"pull_number": 1}, {"pull_number": 2}]
+        results = [
+            {"pull_number": 1, "published": False, "reason": "STALE_HEAD"},
+            {
+                "pull_number": 2,
+                "published": False,
+                "reason": "SUPERSEDED_PROJECTION",
+            },
+        ]
+
+        with (
+            mock.patch.object(adapter, "_load_payload", return_value=entries),
+            mock.patch.object(
+                adapter,
+                "publish_entry",
+                side_effect=results,
+            ) as publish,
+            mock.patch.object(adapter, "_summary") as summary,
+            mock.patch("builtins.print") as print_line,
             mock.patch.dict(adapter.os.environ, {"GH_TOKEN": _NONEMPTY_TEST_VALUE}),
         ):
             code = adapter.main(
@@ -1011,8 +1063,50 @@ class UsefulL1ThreadStateTests(unittest.TestCase):
         self.assertEqual(0, code)
         self.assertEqual(2, publish.call_count)
         rendered = "\n".join(summary.call_args.args[0])
-        self.assertIn("PR #1: PUBLICATION_ENTRY_UNAVAILABLE", rendered)
-        self.assertIn("PR #2: UPDATED", rendered)
+        self.assertIn("PR #1: STALE_HEAD", rendered)
+        self.assertIn("PR #2: SUPERSEDED_PROJECTION", rendered)
+        logged = "\n".join(
+            str(call.args[0]) for call in print_line.call_args_list if call.args
+        )
+        self.assertIn("PR #1: STALE_HEAD", logged)
+        self.assertIn("PR #2: SUPERSEDED_PROJECTION", logged)
+
+    def test_publish_mode_summary_failure_cannot_replace_success(self) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures.adapter_fixture()
+        entries = [{"pull_number": 1}]
+        result = {"pull_number": 1, "published": True, "reason": "CREATED"}
+
+        with (
+            mock.patch.object(adapter, "_load_payload", return_value=entries),
+            mock.patch.object(adapter, "publish_entry", return_value=result) as publish,
+            mock.patch.object(
+                adapter,
+                "_summary",
+                side_effect=OSError("sensitive summary path detail"),
+            ),
+            mock.patch("builtins.print") as print_line,
+            mock.patch.dict(adapter.os.environ, {"GH_TOKEN": _NONEMPTY_TEST_VALUE}),
+        ):
+            code = adapter.main(
+                [
+                    "--mode",
+                    "publish",
+                    "--repository",
+                    "ktogias/gnostoa",
+                    "--payload",
+                    "unused.json",
+                ]
+            )
+
+        self.assertEqual(0, code)
+        publish.assert_called_once()
+        logged = "\n".join(
+            str(call.args[0]) for call in print_line.call_args_list if call.args
+        )
+        self.assertIn("PR #1: CREATED", logged)
+        self.assertIn("STEP_SUMMARY_UNAVAILABLE (OSError)", logged)
+        self.assertNotIn("sensitive summary path detail", logged)
 
     def test_collect_mode_preserves_per_entry_failure_reason(self) -> None:
         fixtures = _fixtures()
