@@ -336,29 +336,39 @@ intermediate head:
 2. use only selected, currently available early-review routes whose expected
    value justifies reviewing a Draft or intermediate candidate;
 3. explicitly seal the exact head before final collection;
-4. transition to Ready when final collection is intended, then **read back
-   current-head provider request/review state before any manual trigger** and
-   bind that read-back to the active planning `cut_id`; for each selected
-   reviewer use exactly one provider-level activation path: if Ready already
-   auto-started or completed a current-head request/review, attribute it to the
-   retained Ready route identity, wait/reconcile it and suppress every sibling
-   manual route; otherwise consider exactly one manual route only after
+4. before recommending Ready, perform **PRE_READY_RECONCILE** on every provider
+   with automatic/configurable Ready activation and every provider already used
+   for early review on that exact head. Read back existing provider/head
+   activations, current `ready_activation_state` and
+   `provider_head_deduplication_state`. Missing/ambiguous state is
+   `REVALIDATION_REQUIRED`. If a same-head activation already exists while Ready
+   auto-activation is enabled/unknown and provider-level deduplication is not
+   established, do not recommend Ready; require manual disposition. Reserve
+   automatic/configurable Ready providers from same-head early review unless the
+   Ready path is currently disabled or provider-level deduplication established;
+5. only after PRE_READY_RECONCILE is safe, transition to Ready and **read back
+   current-head provider request/review state again before any manual trigger**,
+   binding that post-transition read-back to the active planning `cut_id`; for
+   each selected reviewer use exactly one provider-level activation path: if
+   Ready auto-started or completed a current-head request/review, attribute it
+   to the retained Ready route identity, wait/reconcile it and suppress every
+   sibling manual route; otherwise consider exactly one manual route only after
    dispatch-safety and current eligibility are established. If automatic Ready
    activity cannot be attributed to a retained route identity, use
-   `REVALIDATION_REQUIRED` rather than aliasing it to a manual route. When multiple
-   same-head attempts exist and their provider/request identity or ordering is
-   ambiguous, use `REVALIDATION_REQUIRED` instead of guessing;
-5. if current provider eligibility cannot be reacquired for an automatic
+   `REVALIDATION_REQUIRED` rather than aliasing it to a manual route. When
+   multiple same-head attempts exist and their provider/request identity or
+   ordering is ambiguous, use `REVALIDATION_REQUIRED` instead of guessing;
+6. if current provider eligibility cannot be reacquired for an automatic
    dispatch decision, use `REVALIDATION_REQUIRED` and do not spend quota
    speculatively; retained dated registry observations are historical hints, not
    sufficient current provider truth;
-6. if a selected route remains `REVALIDATION_REQUIRED`, use
+7. if a selected route remains `REVALIDATION_REQUIRED`, use
    `DESELECTED_OPTIONAL` only when protected assurance already reports `PASS` or
    an authority-produced route binding marks that stable `route_id`
    `optional_for_current_assurance=true`; if a route is claimed to advance
    non-PASS assurance but its binding is missing/ambiguous, use
    `QUALIFICATION_ROUTE_BINDING_REQUIRED` instead of guessing;
-7. treat `SKIPPED`, `QUOTA_EXHAUSTED`, `CREDIT_REQUIRED`,
+8. treat `SKIPPED`, `QUOTA_EXHAUSTED`, `CREDIT_REQUIRED`,
    `UNAVAILABLE`, `UNSUPPORTED_FOR_SUBJECT`, `FAILED`, `TIMED_OUT` and
    `DESELECTED_OPTIONAL` as truthful scheduling outcomes, never as clean
    reviews. The admitted read-only planner performs **zero automatic retries**:
@@ -366,9 +376,9 @@ intermediate head:
    failed/timed-out route becomes `MANUAL_ESCALATION_REQUIRED`; any later
    activation is a separately authorized provider-write effect, and only a new
    protected R2A result decides whether quorum/assurance advanced;
-8. batch related repair findings before creating another final candidate where
+9. batch related repair findings before creating another final candidate where
    practical;
-9. before any final-review repair that will change the exact head, invalidate
+10. before any final-review repair that will change the exact head, invalidate
    the complete prior final review cut and convert the provider PR back to Draft;
    `final_review_cut.head_commit` must equal the current candidate head,
    otherwise the cut is `INVALIDATED_HEAD_CHANGED` and no old-head review,
@@ -379,10 +389,10 @@ intermediate head:
    Ready, collect fresh exact-head evidence and recompute protected R2A
    assurance; optional old-head reviews remain historical and do not count in
    the new cut;
-10. keep a Ready PR Ready only for reconciliation/disposition that does not change
-   the exact candidate head; architecture, broad production behavior,
-   scope/classification or another implementation phase also reopens the broader
-   development state.
+11. keep a Ready PR Ready only for reconciliation/disposition that does not change
+   the exact candidate head; architecture, provider abstractions, broad
+   production behavior, scope/classification expansion or another implementation
+   phase also reopens the broader development state.
 
 Configured-provider count is not review quorum. The effective review policy,
 R2A result and Issue #10 qualification/independence semantics remain

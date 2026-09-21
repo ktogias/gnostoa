@@ -5,7 +5,7 @@ description: Adopt a Gnostoa-self reviewer capability registry and staged review
 status: draft
 generated:
   by: openai/gpt-5.6-sol
-  at: "2026-09-21T23:26:00Z"
+  at: "2026-09-21T23:53:02Z"
 sources:
   - id: work-item
     resource: https://github.com/ktogias/gnostoa/issues/15
@@ -132,7 +132,7 @@ provider availability/eligibility and current scope identity are revalidated.
 
 No fixed freshness TTL is invented. For automatic dispatch of an external
 review route, current availability/eligibility must be reacquired in the current
-orchestration observation cut. Version `v0.12` binds that proof explicitly:
+orchestration observation cut. Version `v0.13` binds that proof explicitly:
 the active planning input carries `cut_id`, exact `as_of` and exact subject.
 A provider `current_readback` is a **same-cut route-target evaluation**, not a
 raw retained observation. It must carry the same `cut_id` and a
@@ -194,7 +194,7 @@ and cannot override a `manual_only_until_*` dispatch-safety state.
 A planner may emit only a retained typed recipe whose fields satisfy the
 machine-readable `dispatch_kind_constraints`, or render a retained
 `instruction_template` using supported placeholders and bounded
-caller-supplied instructions. Version `v0.12` fixes a 4096-byte normalized
+caller-supplied instructions. Version `v0.13` fixes a 4096-byte normalized
 UTF-8 instruction maximum, CRLF/CR-to-LF normalization, HT/LF-only
 control-character allowance, reserved-placeholder rejection and one
 non-recursive substitution pass. Invalid input becomes
@@ -251,11 +251,29 @@ routes are preferred here. A configured reviewer is not automatically selected.
 The candidate to be used for final review is explicitly identified after the
 relevant deterministic and CI gates are clean.
 
+#### PRE_READY_RECONCILE
+
+Before recommending Draft→Ready, perform a same-cut provider/head read-back for
+all providers with automatic/configurable Ready activation and any provider
+already used for early review on the exact head. Preserve the provider's current
+Ready-activation state and whether provider-level same-head activation
+deduplication is established. Missing or ambiguous state blocks the Ready
+recommendation pending revalidation. If the provider already has an attributable
+same-head activation while Ready auto-activation is enabled or unknown and
+provider-level deduplication is not established, Ready remains blocked and the
+next action is manual disposition. Do not assume that a post-transition
+read-back can undo duplicate quota already spent by the Ready event.
+
+Providers with automatic/configurable Ready activation are therefore reserved
+from same-head early review by default unless current state proves the Ready path
+disabled or provider-level same-head deduplication established.
+
 #### READY_FINAL_COLLECTION
 
-Transition the provider PR to Ready when final collection is intended, then
-**reacquire current-head provider request/review state before any manual
-trigger**. For each selected reviewer and exact head, use exactly one activation
+Transition the provider PR to Ready only after PRE_READY_RECONCILE is safe, then
+**reacquire current-head provider request/review state again before any manual
+trigger**. This post-transition read-back attributes any newly auto-started Ready
+review. For each selected reviewer and exact head, use exactly one activation
 path: if Ready already auto-started or completed a current-head request/review,
 wait for or reconcile that request and do not manually retrigger it. Only routes
 with no current-head activation may be considered for a manual trigger, and only
