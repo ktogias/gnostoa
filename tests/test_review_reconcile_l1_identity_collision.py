@@ -126,7 +126,10 @@ class UsefulL1IdentityCollisionTests(unittest.TestCase):
             )
             if reverse:
                 snapshot["reviews"].reverse()
-            review_input = reducer.build_review_input(snapshot, fixtures.bundle_fixture())
+            review_input = reducer.build_review_input(
+                snapshot,
+                fixtures.bundle_fixture(),
+            )
             thread_only = [
                 item
                 for item in review_input["evidence_set"]["observations"]
