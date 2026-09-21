@@ -145,8 +145,10 @@ class UsefulL1IdentityCollisionTests(unittest.TestCase):
         )
         review_input = reducer.build_review_input(snapshot, fixtures._bundle())
 
-        schema_path = Path(__file__).resolve().parents[1] / "schemas" / (
-            "review-check-input.schema.json"
+        schema_path = (
+            Path(__file__).resolve().parents[1]
+            / "schemas"
+            / "review-check-input.schema.json"
         )
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
         Draft202012Validator.check_schema(schema)
