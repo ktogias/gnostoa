@@ -603,6 +603,12 @@ def _login(value: Any, label: str) -> str:
     return _text(user.get("login"), f"{label}.login")
 
 
+def _reviewer_id(value: Any, label: str, review_id: int) -> str:
+    if value is None:
+        return f"github-unavailable-reviewer:{review_id}"
+    return _login(value, label)
+
+
 def _comment_author(value: Any) -> str:
     if value is None:
         return "UNAVAILABLE"
@@ -646,7 +652,7 @@ def _normalize_review(value: Any) -> dict[str, Any] | None:
         raise ProviderReadError("submitted GitHub review has no submitted_at")
     return {
         "observation_id": f"github-review-{review_id}",
-        "reviewer_id": _login(item.get("user"), "review.user"),
+        "reviewer_id": _reviewer_id(item.get("user"), "review.user", review_id),
         "recommendation_state": state,
         "observed_at": submitted_at,
         "head_commit": _optional_sha(item.get("commit_id"), "review.commit_id"),
@@ -701,7 +707,11 @@ def _normalize_review_comment(value: Any) -> dict[str, Any]:
     return {
         "id": f"github-review-comment-{comment_id}",
         "review_observation_id": f"github-review-{review_id}",
-        "reviewer_id": _login(item.get("user"), "review_comment.user"),
+        "reviewer_id": _reviewer_id(
+            item.get("user"),
+            "review_comment.user",
+            review_id,
+        ),
         "observed_at": _timestamp(item.get("updated_at"), "review_comment.updated_at"),
         "head_commit": _optional_sha(
             item.get("commit_id"),
