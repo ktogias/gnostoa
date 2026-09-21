@@ -5,7 +5,7 @@ description: Dated Gnostoa-self baseline separating reviewer capabilities, accou
 status: draft
 generated:
   by: openai/gpt-5.6-sol
-  at: "2026-09-21T22:29:45Z"
+  at: "2026-09-21T23:07:19Z"
 sources:
   - id: work-item
     resource: https://github.com/ktogias/gnostoa/issues/15
@@ -167,14 +167,16 @@ is the first implementation-private registry snapshot. It intentionally has no
 standalone lifecycle/promotion flag: the protected repository revision and
 Decision 0087 determine whether a registry revision is operative, and a
 standalone JSON status token must not manufacture review or integration
-authority. Version `v0.10` exposes one planner-facing shape rather than
+authority. Version `v0.11` exposes one planner-facing shape rather than
 provider-specific field names.
 
 Every provider has the same typed `capabilities.manual_trigger` contract:
 `channel`, `dispatch_kind`, `command`, `action`,
 `configuration_path`, `isolation`, `instruction_mode`,
-`instruction_template`, `dispatch_safety` and `alternatives`.
-Alternatives use the same normalized dispatch payload plus a `purpose`.
+`instruction_template`, `dispatch_safety`, stable `route_id` and `alternatives`.
+Alternatives use the same normalized dispatch payload plus a `purpose` and their
+own stable `route_id`. Route identity is retained data, never reconstructed
+from command text, provider display name or array position.
 `dispatch_kind` prevents unlike surfaces from being conflated:
 `comment_command` carries actual comment syntax, `provider_action` carries a
 UI/API action, `configuration_only` carries a repository configuration path
@@ -185,7 +187,7 @@ configuration path or sentinel as GitHub comment syntax.
 Every volatile provider fact belongs in one `observations[]` array. Each
 observation has the same fields and an explicit `scope` of `account`,
 `repository` or `subject`; absent values are `null`, not alternate
-top-level keys. Version `v0.10` separates the operational dimensions inside every
+top-level keys. Version `v0.11` separates the operational dimensions inside every
 observation:
 
 - `status` records the observed provider event or outcome and may therefore be
@@ -223,7 +225,7 @@ instead of guessed precedence. A newer `FAILED` or `TIMED_OUT` attempt also
 stales older cached `AVAILABLE` for automatic dispatch without asserting
 `UNAVAILABLE`.
 
-Version `v0.10` keeps freshness deterministic by refusing to invent a TTL:
+Version `v0.11` keeps freshness deterministic by refusing to invent a TTL:
 retained registry observations are historical scheduling hints, not sufficient
 current provider truth for automatic dispatch. Before a scarce route is
 automatically dispatched, eligibility and the current non-sensitive scope identity
@@ -297,7 +299,7 @@ configuration paths and interactive/manual routes use their own fields.
 The registry therefore retains an explicit `instruction_mode` and optional
 `instruction_template`. CodeAnt's observed comment shape is represented as
 `{command}\n\n{instructions}`, where `instructions` is bounded,
-caller-supplied text rather than provider folklore. Version `v0.10` makes the
+caller-supplied text rather than provider folklore. Version `v0.11` makes the
 bound deterministic: normalize CRLF/CR to LF, allow HT/LF as the only control
 characters, reject other C0/C1 controls and the reserved caller literals
 `{command}` / `{instructions}`, and cap the normalized UTF-8 payload at
@@ -341,7 +343,7 @@ review could be requested in **13h03m**, retained as a
 `2026-09-21T21:26:00Z` retry prediction. A successful formal review was then
 observed at `2026-09-21T18:55:52Z`, proving historically that review capacity
 was usable by that later event. However, the retained account observations have
-`scope_identity=null`, so v0.10 deliberately forbids machine supersession or
+`scope_identity=null`, so v0.11 deliberately forbids machine supersession or
 current dispatch authorization from those records alone; current scheduling
 requires fresh account/provider read-back in the planning cut. The
 automatic-per-PR limit and rolling account availability remain separate quota
@@ -356,9 +358,9 @@ surface documents legacy `/review`. Gnostoa has directly observed automatic
 review starting on a Ready transition, but has not yet established
 repository-specific ownership/collision behavior for manual
 `/agentic_review`, so the registry marks that route
-`manual_only_until_repository_validation`. `instruction_mode: none` describes
-the command's instruction syntax only; it does not authorize automatic
-dispatch. Current pricing is usage-based rather than
+`manual_only_until_repository_validation`. `instruction_mode: manual_only` means
+the planner may describe this route but must not emit a dispatch recipe; the
+separate provider-chat alternative has its own route identity and syntax. Current pricing is usage-based rather than
 request-rate-based: reviews consume a **pooled monthly team credit pack**
 according to size/complexity, with a customer-set overage cap. Thus “no rate
 limit” must not be normalized to “no quota.”
@@ -377,7 +379,7 @@ reviewed-line plans; reviewed-line usage resets with the billing period,
 incremental reviews count newly reviewed lines, and manual reruns count again.
 Gnostoa directly observed quota refusal at 40,037/40,000 reviewed lines and later
 at a higher account allowance. The later provider message supplied only the
-resume **date** `2026-10-15`, not an attributable instant, so v0.10 retains that
+resume **date** `2026-10-15`, not an attributable instant, so v0.11 retains that
 coarse value in observation details and keeps normalized `retry_after=null`.
 Current availability must still be reacquired before dispatch.
 
@@ -579,15 +581,19 @@ The default policy should therefore be:
    activation and whose dispatch-safety/current-eligibility requirements are
    satisfied; if eligibility cannot be reacquired, surface
    `REVALIDATION_REQUIRED` rather than spending quota speculatively;
-8. when current read-back cannot revalidate a **policy-established optional**
-   selected route, explicitly move it to `DESELECTED_OPTIONAL` with a retained
-   reason before reconciliation; this is a scheduling disposition, not review
-   evidence;
-9. never use `DESELECTED_OPTIONAL` when the route/domain is required or its
-   required-domain status is unknown/incomplete; those cases remain blocking;
+8. when current read-back cannot revalidate a selected route, use
+   `DESELECTED_OPTIONAL` only if protected assurance already reports `PASS` or
+   an authority-produced route binding marks that route
+   `optional_for_current_assurance=true`; this is a scheduling disposition, not
+   review evidence;
+9. while protected assurance is not `PASS`, do not guess whether an unbound
+   route can advance quorum. A missing/ambiguous authority route binding yields
+   `QUALIFICATION_ROUTE_BINDING_REQUIRED`; a `policy_eligible` route bound to an
+   independence domain not yet in `qualified_domain_ids` is an
+   assurance-progression candidate, not an automatic quorum credit;
 10. record unavailable optional reviewers truthfully and continue according to
-   the effective review policy rather than treating configured-provider count
-   as quorum.
+   the effective review policy/R2A result rather than treating configured-provider
+   count as quorum.
 
 The existing Gnostoa review policy still owns quorum. For normal, normative and
 critical work it currently requires at least two distinct reviewer domains.
@@ -607,26 +613,23 @@ For one scheduling attempt, these are legitimate terminal availability results:
 - `TIMED_OUT`;
 - `DESELECTED_OPTIONAL`.
 
-`DESELECTED_OPTIONAL` is a terminal scheduling disposition only for a route
-that protected policy/R2A already identifies as optional. It is never review
-evidence, never satisfies a required domain/capability, and is forbidden when
-required-domain status is unknown or incomplete.
+`DESELECTED_OPTIONAL` is a terminal scheduling disposition only when protected
+assurance already reports `PASS` or an authority-produced route binding marks
+the route `optional_for_current_assurance=true`. It is never review evidence
+and never advances qualification or quorum. Missing/ambiguous route binding
+cannot be converted into optionality by the planner.
 
 `FAILED` and `TIMED_OUT` terminate one invocation attempt only. The admitted
 read-only planner performs **zero automatic retries**. After same-cut
-revalidation, a required or unknown-required route yields
-`MANUAL_ESCALATION_REQUIRED`; it remains blocking until an explicitly
-authorized provider effect creates a new activation identity and succeeds, or
-alternative protected policy/R2A evidence satisfies the required domain. An
-optional route may be `DESELECTED_OPTIONAL` only when protected policy/R2A
-already proves it optional and policy-sufficient evidence remains. The planner
-never invents a retry/backoff interval.
-
-`FAILED` and `TIMED_OUT` never
-mean clean review; a required review route/domain remains incomplete until a
-later successful exact-head result or other policy-sufficient qualified
-evidence exists. Retries must be bounded and must revalidate current subject and
-provider state.
+revalidation, a `policy_eligible` route that could advance protected assurance
+uses `MANUAL_ESCALATION_REQUIRED`; a missing/ambiguous qualification binding
+uses `QUALIFICATION_ROUTE_BINDING_REQUIRED`. The route remains non-converged
+until an explicitly authorized provider effect creates a new activation identity
+and a later protected R2A evaluation incorporates the result, or alternative
+qualified evidence changes protected assurance. Optional routes use
+`DESELECTED_OPTIONAL` only under the authority-bound optionality rule. The
+planner never invents a retry/backoff interval and never converts route success
+into quorum credit itself.
 
 These route states answer "what happened to this scheduling attempt?" They do
 not answer "is the code clean?"
@@ -646,34 +649,42 @@ Accordingly:
 The next implementation should be a **read-only review planner**, not a
 dispatcher.
 
-Version `v0.10` makes freshness, activation and final-review identity explicit:
+Version `v0.11` makes freshness, activation, route identity and protected
+assurance inputs explicit:
 
 - a planning cut carries `cut_id`, exact RFC3339 `as_of`, and the exact
   candidate subject;
+- every provider invocation/configuration surface has a stable retained
+  `route_id`; current read-back, activation deduplication, protected
+  qualification binding and reconciliation all use that same identity;
 - a provider `current_readback` is a same-cut route-target evaluation, not a
   raw historical observation. Its `planning_subject` must equal the active
   cut's exact PR/head, while its fact-level `subject` remains faithful to the
-  declared scope: account scope uses `subject=null`, repository scope remains
-  repository-scoped, and subject scope carries the exact subject. The read-back
-  separately carries `availability_state` and `eligibility_state`.
-  Automatic scarce-review dispatch requires current same-cut
-  `availability_state=AVAILABLE` **and** `eligibility_state=ELIGIBLE`, plus
-  current non-sensitive `scope_identity` where required and a provider
-  current-readback source. An adapter may combine separately acquired
-  account/workspace availability and exact-subject eligibility only when both
-  were acquired in the same cut; it never rewrites the underlying fact scope.
-  Committed historical registry observations cannot satisfy this same-cut
-  requirement;
+  declared scope. Automatic scarce-review dispatch still requires current
+  same-cut `availability_state=AVAILABLE` and
+  `eligibility_state=ELIGIBLE`;
 - an observation may retain a non-sensitive `attempt_id`; ambiguous multiple
-  same-head attempts without attributable identity/order become
-  `REVALIDATION_REQUIRED`, not an inferred duplicate or retry;
-- a final-review cut is bound to one exact `head_commit`. Any head change
-  invalidates the entire cut as `INVALIDATED_HEAD_CHANGED`; no old-head
-  completion may survive into the successor cut;
-- protected required-domain `{id,status}` entries are opaque pass-through
-  input. The planner preserves them unchanged and blocks readiness when the
-  protected input is missing, ambiguous, incomplete or bound to another head.
+  same-route/same-head attempts become `REVALIDATION_REQUIRED`, never an
+  inferred duplicate or retry;
+- a final-review cut is bound to one exact `head_commit` and one protected
+  assurance/qualification revision. Any head change invalidates the whole cut;
+- protected assurance mirrors the real R2A surface rather than inventing
+  named required-domain slots. It carries the exact-head R2A
+  `outcome`/`reason`, `minimum_distinct_domains`, current
+  `qualified_domain_ids`, required capabilities and qualification revision;
+- protected `route_bindings` are produced upstream from the accepted Issue #10
+  qualification snapshot and explicit route→reviewer/source identity mapping.
+  Each binding carries the authority-owned `independence_domain_id`,
+  capabilities and policy eligibility for one stable `route_id`. The planner
+  never infers these facts from provider names or counts.
 
+When protected assurance is `INCOMPLETE / QUORUM_UNMET`, the planner may
+prioritize a current AVAILABLE+ELIGIBLE, `policy_eligible` route whose bound
+independence domain is not already in `qualified_domain_ids`. That is only a
+scheduling-diversity hint: completion is not quorum credit until protected R2A
+is recomputed. If a route claimed to advance assurance has no complete
+authority binding, the next action is
+`QUALIFICATION_ROUTE_BINDING_REQUIRED`, not speculative dispatch.
 
 Inputs:
 
@@ -682,30 +693,36 @@ Inputs:
 - exact-head check state;
 - existing review-evidence cut and unresolved findings/threads;
 - change class and effective review policy;
-- the protected R2A/review-policy required-domain result, as opaque input;
+- exact-head protected R2A assurance result and accepted Issue #10 qualification
+  revision;
+- authority-produced route bindings for any route claimed to advance assurance;
 - the capability registry;
-- freshly reacquired account/subject availability and current non-sensitive scope
-  identity where a provider exposes it.
+- freshly reacquired account/subject availability and current non-sensitive
+  scope identity where a provider exposes it.
 
 Output:
 
 - current orchestration phase;
-- reviewers eligible for early review;
-- reviewers reserved for final collection;
+- reviewers/routes eligible for early review;
+- routes reserved for final collection;
 - unavailable routes and reasons;
-- typed trigger recipe for each eligible route;
-- the opaque required-domain statuses supplied by effective review policy/R2A,
-  without deriving reviewer independence from provider count;
-- an explicit blocker whenever any required domain remains incomplete;
+- typed trigger recipe keyed by stable `route_id`;
+- protected assurance outcome/reason, minimum-domain requirement and already
+  qualified domain IDs as pass-through facts;
+- authority-bound scheduling-diversity candidates, without deriving
+  qualification from provider identity;
+- explicit `QUALIFICATION_ROUTE_BINDING_REQUIRED` when an assurance-advancing
+  route lacks a complete protected binding;
 - whether the candidate should remain Draft, become Ready, remain Ready for
   reconciliation-only work, or return to Draft for a head-changing repair;
 - the next permitted orchestration action.
 
 The planner must remain advisory and deterministic. It cannot post comments,
-change Draft/Ready state, request reviewers, resolve threads, approve, merge or
-alter R2A/quorum semantics. It also cannot recommend review convergence or
-owner-decision readiness while the protected policy/R2A input reports an
-incomplete required domain, even if optional provider routes completed.
+change Draft/Ready state, request reviewers, resolve threads, approve, merge,
+qualify reviewers or decide quorum. It cannot recommend owner-decision
+readiness unless protected assurance is complete, exact-head-bound and reports
+`PASS`. An `INCOMPLETE / QUORUM_UNMET` result remains truthful even when many
+unqualified provider reviews have completed.
 
 Any future dispatcher is a separate effect-capable slice with its own authority
 decision, exact provider adapters, stale-state protection, idempotence and

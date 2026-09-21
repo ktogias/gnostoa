@@ -296,7 +296,10 @@ this shape; missing, incomplete, or ambiguous availability-plus-eligibility
 proof is `REVALIDATION_REQUIRED`/manual disposition.
 
 Use one isolated invocation per reviewer through the provider-specific channel
-retained in the capability registry. For comment-driven reviewers, use one
+retained in the capability registry. Use the retained stable `route_id` for the
+primary or alternative surface in current read-back, activation deduplication,
+protected qualification binding and reconciliation; never reconstruct route
+identity from provider name or command text. For comment-driven reviewers, use one
 top-level trigger comment per reviewer and do not batch several reviewer
 commands into one comment. For UI, API, GitHub-app and interactive-agent routes,
 use their recorded channel instead of manufacturing a comment command. The
@@ -343,46 +346,50 @@ intermediate head:
    dispatch decision, use `REVALIDATION_REQUIRED` and do not spend quota
    speculatively; retained dated registry observations are historical hints, not
    sufficient current provider truth;
-6. if a selected route remains `REVALIDATION_REQUIRED`, keep it blocking
-   unless protected policy/R2A already identifies it as optional; an established
-   optional route may be moved explicitly to `DESELECTED_OPTIONAL` with a
-   retained reason before reconciliation, but that disposition is never review
-   evidence and never satisfies a required domain/capability;
+6. if a selected route remains `REVALIDATION_REQUIRED`, use
+   `DESELECTED_OPTIONAL` only when protected assurance already reports `PASS` or
+   an authority-produced route binding marks that stable `route_id`
+   `optional_for_current_assurance=true`; if a route is claimed to advance
+   non-PASS assurance but its binding is missing/ambiguous, use
+   `QUALIFICATION_ROUTE_BINDING_REQUIRED` instead of guessing;
 7. treat `SKIPPED`, `QUOTA_EXHAUSTED`, `CREDIT_REQUIRED`,
    `UNAVAILABLE`, `UNSUPPORTED_FOR_SUBJECT`, `FAILED`, `TIMED_OUT` and
    `DESELECTED_OPTIONAL` as truthful scheduling outcomes, never as clean
    reviews. The admitted read-only planner performs **zero automatic retries**:
-   after same-cut revalidation, a required or unknown-required failed/timed-out
-   route becomes `MANUAL_ESCALATION_REQUIRED` and stays blocking until an
-   explicitly authorized new activation succeeds or protected alternative
-   evidence satisfies the domain. Optional routes may be deselected only under
-   the protected optional-route rule;
+   after same-cut revalidation, a policy-eligible assurance-advancing
+   failed/timed-out route becomes `MANUAL_ESCALATION_REQUIRED`; any later
+   activation is a separately authorized provider-write effect, and only a new
+   protected R2A result decides whether quorum/assurance advanced;
 8. batch related repair findings before creating another final candidate where
    practical;
 9. before any final-review repair that will change the exact head, invalidate
    the complete prior final review cut and convert the provider PR back to Draft;
    `final_review_cut.head_commit` must equal the current candidate head,
-   otherwise the cut is `INVALIDATED_HEAD_CHANGED` and no old-head required
-   domain completion survives;
+   otherwise the cut is `INVALIDATED_HEAD_CHANGED` and no old-head review,
+   qualified-domain result or route activation survives;
    for **final semantic review evidence this exact-head rule supersedes the
    general subject-rebinding reuse rule in step 14**; batch the mutation, rerun
    deterministic/CI evidence, reseal the new exact candidate, then return to
-   Ready and reacquire fresh exact-head evidence from every review domain
-   required by effective policy/qualification; optional old-head reviews remain
-   historical and do not count in the new cut;
+   Ready, collect fresh exact-head evidence and recompute protected R2A
+   assurance; optional old-head reviews remain historical and do not count in
+   the new cut;
 10. keep a Ready PR Ready only for reconciliation/disposition that does not change
    the exact candidate head; architecture, broad production behavior,
    scope/classification or another implementation phase also reopens the broader
    development state.
 
-Configured-provider count is not review quorum. The effective review policy and
-R2A qualification/independence semantics remain authoritative. The planner must
-pass protected required-domain `id`/`status` values through unchanged,
-never assign or infer domains from provider identity, and treat missing,
-ambiguous, incomplete or differently-head-bound protected input as blocking. Optional provider unavailability may remain
-non-blocking only when protected policy/R2A already says all required domains
-are satisfied; any incomplete required domain is an explicit blocker and the
-planner cannot recommend convergence or owner-decision readiness.
+Configured-provider count is not review quorum. The effective review policy,
+R2A result and Issue #10 qualification/independence semantics remain
+authoritative. The planner must pass protected `outcome`/`reason`,
+`minimum_distinct_domains`, `qualified_domain_ids`, required capabilities
+and qualification revision through unchanged. Any route claimed to advance
+assurance must have an authority-produced binding from stable `route_id` to
+reviewer/source identity and independence domain; the planner never invents that
+mapping. Missing/ambiguous binding is
+`QUALIFICATION_ROUTE_BINDING_REQUIRED`. Convergence or owner-decision
+readiness may be recommended only when exact-head protected assurance is
+complete and `PASS`; an R2A `INCOMPLETE / QUORUM_UNMET` result remains
+blocking regardless of provider count.
 
 ## Verification
 

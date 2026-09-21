@@ -1,6 +1,6 @@
 {
-  "schema_version": "gnostoa-reviewer-capability-registry/v0.10",
-  "generated_at": "2026-09-21T22:29:45Z",
+  "schema_version": "gnostoa-reviewer-capability-registry/v0.11",
+  "generated_at": "2026-09-21T23:07:19Z",
   "research_date": "2026-09-21",
   "subject": {
     "repository": "ktogias/gnostoa",
@@ -46,12 +46,14 @@
               "dispatch_safety": "safe_observed",
               "dispatch_kind": "comment_command",
               "action": null,
-              "configuration_path": null
+              "configuration_path": null,
+              "route_id": "coderabbit:comment:full-review"
             }
           ],
           "dispatch_kind": "comment_command",
           "action": null,
-          "configuration_path": null
+          "configuration_path": null,
+          "route_id": "coderabbit:comment:review"
         },
         "quota": {
           "model": "per_developer_hourly_allowance_with_optional_usage_based_overage",
@@ -120,7 +122,8 @@
           "alternatives": [],
           "dispatch_kind": "comment_command",
           "action": null,
-          "configuration_path": null
+          "configuration_path": null,
+          "route_id": "sourcery:comment:review"
         },
         "quota": {
           "model": "automatic_rereview_cap_plus_rolling_diff_character_budget",
@@ -230,7 +233,8 @@
           "subject": {
             "repository": "ktogias/gnostoa",
             "change_request": "pull/297",
-            "head_commit": "716687d9b033efc5bba0f719ab183c177b91a11c", "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
+            "head_commit": "716687d9b033efc5bba0f719ab183c177b91a11c",
+            "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
           },
           "retry_after": null,
           "reason": null,
@@ -304,7 +308,8 @@
               "dispatch_safety": "manual_only_until_collision_validation",
               "dispatch_kind": "comment_command",
               "action": null,
-              "configuration_path": null
+              "configuration_path": null,
+              "route_id": "qodo:comment:legacy-review"
             },
             {
               "purpose": "provider_chat",
@@ -316,12 +321,14 @@
               "dispatch_safety": "provider_scoped",
               "dispatch_kind": "interactive_manual",
               "action": "/agentic_review",
-              "configuration_path": null
+              "configuration_path": null,
+              "route_id": "qodo:interactive:agentic-review"
             }
           ],
           "dispatch_kind": "comment_command",
           "action": null,
-          "configuration_path": null
+          "configuration_path": null,
+          "route_id": "qodo:comment:agentic-review"
         },
         "quota": {
           "model": "monthly_team_credit_pool_with_customer_overage_cap",
@@ -385,7 +392,8 @@
           "alternatives": [],
           "dispatch_kind": "comment_command",
           "action": null,
-          "configuration_path": null
+          "configuration_path": null,
+          "route_id": "codeant:comment:review"
         },
         "quota": {
           "model": "plan_dependent",
@@ -434,7 +442,8 @@
           "alternatives": [],
           "dispatch_kind": "comment_command",
           "action": null,
-          "configuration_path": null
+          "configuration_path": null,
+          "route_id": "cubic:comment:review"
         },
         "quota": {
           "model": "monthly_pr_or_reviewed_lines_by_plan",
@@ -507,7 +516,8 @@
           "alternatives": [],
           "dispatch_kind": "comment_command",
           "action": null,
-          "configuration_path": null
+          "configuration_path": null,
+          "route_id": "bito:comment:review"
         },
         "quota": {
           "model": "test_mode_or_full_integration",
@@ -595,12 +605,14 @@
               "dispatch_safety": "configuration_only",
               "dispatch_kind": "configuration_only",
               "action": null,
-              "configuration_path": ".codacy/instructions/review.md"
+              "configuration_path": ".codacy/instructions/review.md",
+              "route_id": "codacy-ai-reviewer:configuration:review-instructions"
             }
           ],
           "dispatch_kind": "provider_action",
           "action": "Run Reviewer",
-          "configuration_path": null
+          "configuration_path": null,
+          "route_id": "codacy-ai-reviewer:provider-action:run-reviewer"
         },
         "quota": {
           "model": "plan_dependent",
@@ -680,7 +692,8 @@
           "subject": {
             "repository": "ktogias/gnostoa",
             "change_request": "pull/297",
-            "head_commit": "716687d9b033efc5bba0f719ab183c177b91a11c", "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
+            "head_commit": "716687d9b033efc5bba0f719ab183c177b91a11c",
+            "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
           },
           "retry_after": null,
           "reason": null,
@@ -700,7 +713,8 @@
           "subject": {
             "repository": "ktogias/gnostoa",
             "change_request": "pull/297",
-            "head_commit": "562fc9a7f986665438528b599aa3e1a12633f76e", "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
+            "head_commit": "562fc9a7f986665438528b599aa3e1a12633f76e",
+            "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
           },
           "retry_after": null,
           "reason": null,
@@ -721,7 +735,8 @@
           "subject": {
             "repository": "ktogias/gnostoa",
             "change_request": "pull/297",
-            "head_commit": "e304af4dcd5298e79b66e60a9ac3012643af24ea", "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
+            "head_commit": "e304af4dcd5298e79b66e60a9ac3012643af24ea",
+            "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
           },
           "retry_after": null,
           "reason": null,
@@ -753,7 +768,8 @@
           "alternatives": [],
           "dispatch_kind": "interactive_manual",
           "action": null,
-          "configuration_path": null
+          "configuration_path": null,
+          "route_id": "gitar:interactive:pr-agent"
         },
         "quota": {
           "model": "flat_plan_features",
@@ -776,6 +792,12 @@
           "url": "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5765282290",
           "observed_at": "2026-09-21",
           "note": "Automatic Draft issue-comment review reported no issues and medium risk."
+        },
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/297#pullrequestreview-5270699955",
+          "observed_at": "2026-09-21T19:05:45Z",
+          "note": "Formal Gitar COMMENTED review 5270699955 was submitted on exact head c9d04df74704d4de1138fa719d916a855f3b069f at the retained provider timestamp. This durable artifact verifies the review identity, exact-head binding and event time for the subject-scoped COMPLETED observation; route completion remains distinct from semantic acceptance or quorum."
         }
       ],
       "observations": [
@@ -809,14 +831,16 @@
           "subject": {
             "repository": "ktogias/gnostoa",
             "change_request": "pull/297",
-            "head_commit": "c9d04df74704d4de1138fa719d916a855f3b069f", "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
+            "head_commit": "c9d04df74704d4de1138fa719d916a855f3b069f",
+            "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
           },
           "retry_after": null,
           "reason": null,
           "details": {
             "result_surface": "formal_pull_request_review",
-            "disposition": "no_issues_found",
-            "review_id": "PRR_kwDOToCF3c8AAAABOih_sw"
+            "review_id": "PRR_kwDOToCF3c8AAAABOih_sw",
+            "database_review_id": 5270699955,
+            "evidence_url": "https://github.com/ktogias/gnostoa/pull/297#pullrequestreview-5270699955"
           },
           "note": "Gitar submitted a formal COMMENTED review on the exact head retained in subject.head_commit after its prior finding was addressed. This completion matches only that head; event_at is bound to the cited GitHub review submission.",
           "route_state": "COMPLETED",
@@ -842,7 +866,8 @@
           "alternatives": [],
           "dispatch_kind": "unknown",
           "action": null,
-          "configuration_path": null
+          "configuration_path": null,
+          "route_id": "turingmind:github-app:unknown"
         },
         "quota": {
           "model": "credit_gated"
@@ -901,7 +926,8 @@
           "alternatives": [],
           "dispatch_kind": "comment_command",
           "action": null,
-          "configuration_path": null
+          "configuration_path": null,
+          "route_id": "deepsource:comment:review"
         },
         "ready_activation": {
           "mode": "manual_observed",
@@ -951,6 +977,7 @@
   ],
   "planner_contract": {
     "manual_trigger_fields": [
+      "route_id",
       "channel",
       "dispatch_kind",
       "command",
@@ -981,7 +1008,7 @@
       "repository",
       "subject"
     ],
-    "rule": "Planner-facing trigger and observation state uses only these normalized shapes. Provider-specific trigger variants belong in manual_trigger.alternatives; volatile account/repository/subject facts belong in observations. Every observation.status must appear in observation_status_vocabulary. Subject-scoped observations are reusable only when subject.head_commit exactly matches the current candidate. Missing exact-head identity never matches and requires revalidation. Missing values are null, not provider-specific keys.",
+    "rule": "Planner-facing trigger and observation state uses only these normalized shapes. Every primary and alternative trigger carries a retained stable route_id; provider-specific trigger variants belong in manual_trigger.alternatives; volatile account/repository/subject facts belong in observations. Every observation.status must appear in observation_status_vocabulary. Subject-scoped observations are reusable only when subject.head_commit exactly matches the current candidate. Missing exact-head identity never matches and requires revalidation. Missing values are null, not provider-specific keys.",
     "subject_fields": [
       "repository",
       "change_request",
@@ -990,11 +1017,12 @@
     "subject_rule": "This rule governs historical observations[] records. For scope=subject, subject MUST contain repository, change_request, and head_commit. A non-null head_commit matches only that exact candidate; null is historical-only and MUST force revalidation rather than match a current candidate. For scope=repository, subject uses the same shape with change_request=null and head_commit=null. For scope=account, subject=null. current_readback uses the separate current_readback_rule and always binds the exact planning target subject/head, even when provider availability was reacquired at account or repository scope.",
     "public_identity_annotation_rule": "A non-null subject.head_commit is a public Git commit identity, not a credential. In retained JSON it carries a non-semantic _public_identity_note with the repository-standard detect-secrets pragma on the same physical line. The planner ignores annotation keys.",
     "observation_status_rule": "observation_status_vocabulary is a closed superset of terminal_route_states, nonterminal_route_states, and descriptive_observation_statuses. Every observations[].status must belong to it, but status membership never determines terminality. Orchestration terminality is determined only from the separate mandatory observations[].route_state field.",
-    "route_failure_rule": "FAILED and TIMED_OUT are terminal for one invocation attempt only. They are never clean semantic-review evidence. DESELECTED_OPTIONAL likewise never represents a clean review. A required review route/domain remains incomplete until a later successful exact-head result or other policy-sufficient qualified evidence exists; retries must remain bounded and revalidate current subject/provider state.",
+    "route_failure_rule": "FAILED and TIMED_OUT are terminal for one invocation attempt only. They are never clean semantic-review evidence. DESELECTED_OPTIONAL likewise never represents a clean review. When protected assurance is not PASS, failure of a policy_eligible assurance-advancing route leaves assurance incomplete until a later successful exact-head result is re-evaluated by protected R2A or alternative qualified evidence changes the protected assurance result; retries remain effect-authorized/manual and require current revalidation.",
     "availability_precedence_rule": "Availability is evaluated independently from invocation-attempt outcome. Historical precedence is permitted only for applicable observations with the same provider, scope, non-null scope_identity, and applicable subject, ordered by exact event_at. AVAILABLE, QUOTA_EXHAUSTED, CREDIT_REQUIRED, UNAVAILABLE, and UNSUPPORTED_FOR_SUBJECT are availability outcomes. FAILED/TIMED_OUT do not overwrite availability because they describe an invocation attempt. Null scope_identity or missing/coarse event_at prevents machine precedence and requires revalidation.",
     "timestamp_rule": "event_at and retry_after use RFC3339 UTC only when exact source/provider timing is retained. observed_at records Gnostoa acquisition/retention time. Date-only source timing MUST remain explicit coarse metadata in details (for example provider_resume_date) with the normalized event_at/retry_after field null; no exact timestamp may be fabricated.",
     "alternative_trigger_fields": [
       "purpose",
+      "route_id",
       "channel",
       "dispatch_kind",
       "command",
@@ -1018,7 +1046,7 @@
     ],
     "trigger_rule": "A planner may emit only the retained command, or render a retained instruction_template using the allowed placeholders and caller-supplied instructions. It MUST NOT invent provider syntax or instruction text. If instruction_mode=manual_only, the planner may describe the route but MUST NOT emit a dispatch recipe. Alternatives use the normalized alternative_trigger_fields contract.",
     "observation_precedence_rule": "Historical interpretation may order observations only when provider, scope, non-null scope_identity, applicable subject, and exact RFC3339 event_at are comparable. observed_at records acquisition/retention and never substitutes for event_at ordering. retry_after is advisory forecast data and cannot override a later attributable event. Null identities, missing/coarse event times, ties, malformed values, or conflicts require REVALIDATION_REQUIRED rather than guessed precedence.",
-    "route_attempt_rule": "FAILED and TIMED_OUT are terminal for one invocation attempt, never clean review evidence. The read-only planner has zero automatic retries. After same-cut revalidation, required or unknown-required routes produce MANUAL_ESCALATION_REQUIRED; an explicitly authorized external retry creates a new activation identity on the same exact head. Optional routes may be deselected only under optional_route_disposition_rule.",
+    "route_attempt_rule": "FAILED and TIMED_OUT are terminal for one invocation attempt, never clean review evidence. The read-only planner has zero automatic retries. After same-cut revalidation, failure of a policy_eligible assurance-advancing route produces MANUAL_ESCALATION_REQUIRED; an explicitly authorized external retry creates a new activation identity on the same stable route_id and exact head. Missing/ambiguous qualification binding yields QUALIFICATION_ROUTE_BINDING_REQUIRED. Optional routes may be deselected only under optional_route_disposition_rule.",
     "route_state_rule": "Every observations[].route_state is required and must belong to terminal_route_states or nonterminal_route_states. observations[].status may be a descriptive provider-event label or a route-state label; orchestration terminality is determined only from route_state, never inferred from descriptive status. COMPLETED is route completion only and gains no semantic-review meaning without the separate subject/evidence/qualification gates.",
     "attempt_failure_stales_availability_rule": "If an applicable observation with route_state FAILED or TIMED_OUT is newer than the latest applicable AVAILABLE observation, a planner must not auto-dispatch from that stale AVAILABLE state. It must reacquire availability/eligibility; absent a current read-back, use REVALIDATION_REQUIRED/manual disposition. The failure/timeout remains an attempt outcome, not a claim that the provider is unavailable.",
     "descriptive_event_rule": "Statuses listed in descriptive_observation_statuses are provider-event evidence only. Repository-scoped descriptive observations MUST use route_state UNKNOWN because they establish configuration behavior without an exact route subject; they are intentionally unable to decide route terminality, semantic completion, availability, or quorum. Subject-scoped route outcomes use the exact-head rules separately.",
@@ -1026,7 +1054,7 @@
     "status_dimension_rule": "A single observation.status may belong to a route-state vocabulary or to descriptive_observation_statuses. Scheduling combines separate availability and attempt dimensions; no precedence rule may reinterpret an attempt failure as provider unavailability or a descriptive event as route completion.",
     "availability_freshness_rule": "Availability has no implicit age-based TTL. For automatic scarce-review dispatch, freshness requires provider/account/subject availability read-back acquired in the same planning execution/cut. If no current read-back adapter/result exists, or the result is ambiguous, route_state is REVALIDATION_REQUIRED for automation purposes. Historical retry_after may guide when to reacquire but never substitutes for current dispatch authorization.",
     "ready_activation_rule": "Ready transition and manual invocation are mutually exclusive activation paths for one reviewer/candidate generation. After moving a PR to Ready, the planner MUST perform a bounded current-state read-back before recommending any manual trigger. If a selected reviewer has already started or completed automatically on the exact head, no manual trigger is permitted. Otherwise one manual trigger may be recommended only if the retained route is dispatch-eligible.",
-    "activation_identity_rule": "Activation deduplication is scoped by provider/reviewer route plus exact head. Older-head requests/reviews never suppress a needed current-head activation; a current-head REQUESTED, IN_PROGRESS, or COMPLETED observation suppresses duplicate manual activation for that route.",
+    "activation_identity_rule": "Activation deduplication is scoped by stable route_id plus exact head. Older-head requests/reviews never suppress a needed current-head activation; a current-head REQUESTED, IN_PROGRESS, or COMPLETED observation/read-back for the same route_id suppresses duplicate manual activation. Different route_id values for the same provider remain distinct activation surfaces.",
     "ready_activation_fields": [
       "mode",
       "readback_before_manual"
@@ -1042,7 +1070,6 @@
     "route_completion_scope_rule": "route_state=COMPLETED means only that an appropriately scoped provider route/attempt reached a terminal completed state. It does NOT establish current-head semantic review evidence, qualified reviewer/domain status, quorum, approval, or merge authority. Repository-scoped descriptive observations MUST use route_state UNKNOWN and never COMPLETED. Semantic review evidence can be considered only through subject-scoped exact-head-bound records and the existing review-assurance/qualification policy.",
     "scope_identity_rule": "Every observation carries scope_identity as a non-secret stable identifier or null. Historical precedence and cross-observation comparison are allowed only when provider, scope, applicable subject, and a non-null scope_identity all match. A null scope_identity is historical-only and MUST force current revalidation before automatic dispatch; identities must never contain credentials, tokens, billing secrets, or private installation secrets.",
     "event_time_rule": "event_at is the provider/source event time when an exact RFC3339 timestamp is attributable; observed_at is when Gnostoa acquired/retained the observation. Historical precedence uses event_at only when it is exact and scope_identity is non-null and matching. Missing/coarse event_at cannot be reconstructed from observed_at and requires revalidation for current-state selection.",
-    "required_domain_visibility_rule": "The planner MUST consume the effective review-policy/R2A required-domain result as opaque protected input, preserve each required domain identifier/status without inferring independence from provider count, and surface incomplete required domains as blockers. It MUST NOT recommend review convergence or owner-decision readiness while any required domain remains incomplete under that protected input, even if optional reviewer routes completed.",
     "instruction_render_rule": "Instructions are caller-supplied text, never provider folklore generated by the planner. Normalize CRLF/CR to LF, encode UTF-8, and reject payloads over instruction_policy.max_utf8_bytes. HT and LF are the only permitted control characters; other C0/C1 controls are rejected. Caller text containing reserved placeholder literals is rejected. Rendering is exactly one non-recursive substitution pass. For optional_template, empty instructions emit command-only; for required_template, empty instructions are invalid. When isolation is required/recommended, caller instructions MUST NOT contain any retained comment-command trigger from the registry. Any validation failure yields MANUAL_ONLY_NO_DISPATCH; no partial/fallback comment is emitted.",
     "dispatch_kinds": [
       "comment_command",
@@ -1053,9 +1080,9 @@
     ],
     "dispatch_kind_rule": "dispatch_kind disambiguates trigger payload semantics. comment_command requires command and null action/configuration_path; provider_action requires action and null command/configuration_path; configuration_only requires configuration_path and is never an invocation; interactive_manual and unknown are non-automatic and carry no executable command. A planner/dispatcher MUST NOT reinterpret UI labels, configuration paths, or sentinel text as comment syntax.",
     "retry_time_rule": "retry_after is an exact RFC3339 instant or null. Date-only provider recovery/resume information is non-comparable coarse metadata retained in details and may guide when to revalidate, but it is never normalized into retry_after.",
-    "optional_route_disposition_rule": "DESELECTED_OPTIONAL is a terminal scheduling/disposition outcome for a selected route that protected policy/R2A already identifies as optional and that cannot be revalidated or is no longer needed for the current exact-head cut. It MUST record the reason and remain non-evidence: it never counts as a review, never satisfies a required domain/capability, and MUST NOT be used when required-domain status is incomplete or unknown. Required routes/domains remain blocking until protected policy/R2A says they are satisfied.",
-    "reconciliation_wait_rule": "Final collection waits for every route that remains selected. A REVALIDATION_REQUIRED optional route may be explicitly transitioned to DESELECTED_OPTIONAL before reconciliation only under optional_route_disposition_rule; this removes it from the active selected set without fabricating a review result. REVALIDATION_REQUIRED for a required or unknown-required-domain route remains nonterminal/blocking.",
-    "attempt_identity_rule": "attempt_id is an optional non-secret provider/request/review identity for one invocation or result. When present it participates in same-head activation de-duplication and attempt ordering. If multiple same-head attempts exist and their identities/order cannot be distinguished, the planner MUST return REVALIDATION_REQUIRED rather than suppress or emit a trigger by guess.",
+    "optional_route_disposition_rule": "DESELECTED_OPTIONAL is a terminal scheduling/disposition outcome only when protected assurance already reports PASS or an authority-produced route_binding has optional_for_current_assurance=true. It MUST record the reason and remains non-evidence: it never counts as a review and never advances protected assurance. When assurance is not PASS, a policy_eligible route that could add a not-yet-qualified authority-bound independence domain is not automatically optional. Missing or ambiguous route binding forbids automatic deselection and yields QUALIFICATION_ROUTE_BINDING_REQUIRED/manual disposition.",
+    "reconciliation_wait_rule": "Final collection waits for every route that remains selected. A REVALIDATION_REQUIRED route may be explicitly transitioned to DESELECTED_OPTIONAL only under optional_route_disposition_rule; this removes it from the active selected set without fabricating review evidence. A policy_eligible assurance-advancing route, or any route whose qualification binding is missing/ambiguous while protected assurance is not PASS, remains blocking for automatic convergence recommendations.",
+    "attempt_identity_rule": "attempt_id is an optional non-secret provider/request/review identity for one invocation or result. It is interpreted only inside its stable route_id and exact-head scope. When present it participates in same-head activation de-duplication and attempt ordering. If multiple same-route/same-head attempts exist and their identities/order cannot be distinguished, the planner MUST return REVALIDATION_REQUIRED rather than suppress or emit a trigger by guess.",
     "planning_cut_fields": [
       "cut_id",
       "as_of",
@@ -1097,38 +1124,24 @@
       "TIMED_OUT",
       "REVALIDATION_REQUIRED"
     ],
-    "current_readback_rule": "Automatic scarce-review dispatch requires source=provider_current_readback, cut_id exactly equal to the active planning_cut.cut_id, planning_subject exactly equal to the planning-cut exact subject/head, availability_state=AVAILABLE, and eligibility_state=ELIGIBLE. The fact-level subject MUST obey its declared scope semantics and may be null for account scope. scope_identity must be current and non-null where required. readback_at and planning_cut.as_of are exact RFC3339 timestamps from the same planner execution. Committed historical registry observations MUST NOT be promoted into this shape or satisfy the same-cut read-back requirement. Missing, stale-head, mismatched-cut, null-identity, incomplete availability-plus-eligibility proof, or ambiguous read-back yields REVALIDATION_REQUIRED.",
-    "required_domain_fields": [
-      "id",
-      "status"
-    ],
-    "protected_required_domains_fields": [
-      "subject_head_commit",
-      "required_domains",
-      "all_required_satisfied",
-      "completeness"
-    ],
-    "protected_required_domains_completeness": [
-      "COMPLETE",
-      "INCOMPLETE",
-      "AMBIGUOUS",
-      "MISSING"
-    ],
-    "required_domain_pass_through_rule": "required_domains is protected opaque input from the effective review-policy/R2A authority. The planner MUST preserve every domain id and status byte-for-byte and MUST NOT infer, rename, merge, rank, or derive independence from providers. Owner-decision readiness is blocked unless completeness=COMPLETE, subject_head_commit equals the current exact head, and all_required_satisfied=true. Missing or ambiguous protected input is blocking.",
+    "current_readback_rule": "Automatic scarce-review dispatch requires source=provider_current_readback, cut_id exactly equal to the active planning_cut.cut_id, route_id exactly equal to one retained registry primary/alternative route identity, planning_subject exactly equal to the planning-cut exact subject/head, availability_state=AVAILABLE, and eligibility_state=ELIGIBLE. The fact-level subject MUST obey its declared scope semantics and may be null for account scope. scope_identity must be current and non-null where required. readback_at and planning_cut.as_of are exact RFC3339 timestamps from the same planner execution. Committed historical registry observations MUST NOT be promoted into this shape or satisfy the same-cut read-back requirement. Missing, stale-head, mismatched-cut, unknown-route, null-identity, incomplete availability-plus-eligibility proof, or ambiguous read-back yields REVALIDATION_REQUIRED.",
     "final_review_cut_fields": [
       "cut_id",
       "head_commit",
       "state",
-      "required_domains",
-      "all_required_satisfied"
+      "assurance_outcome",
+      "assurance_reason",
+      "minimum_distinct_domains",
+      "qualified_domain_ids",
+      "qualification_revision"
     ],
     "final_review_cut_states": [
       "COLLECTING",
       "COMPLETE",
-      "INCOMPLETE_REQUIRED_DOMAINS",
+      "INCOMPLETE_ASSURANCE",
       "INVALIDATED_HEAD_CHANGED"
     ],
-    "final_review_cut_rule": "A final review cut is bound to one exact head_commit. Every required-domain item used for that cut must come from protected input bound to the same head. If the candidate head differs from final_review_cut.head_commit, the entire cut becomes INVALIDATED_HEAD_CHANGED; no old-head COMPLETED observation may count toward the successor cut, and all required-domain collection is reacquired under a new cut. COMPLETE is possible only when the protected required-domain input for that exact head says all_required_satisfied=true.",
+    "final_review_cut_rule": "A final review cut is bound to one exact head_commit and one protected-assurance/qualification revision. If the candidate head differs from final_review_cut.head_commit, the entire cut becomes INVALIDATED_HEAD_CHANGED; no old-head review completion or qualified-domain result counts toward the successor cut. COMPLETE is possible only when exact-head protected assurance has completeness=COMPLETE and outcome=PASS. Otherwise the cut is COLLECTING or INCOMPLETE_ASSURANCE. The planner copies assurance_outcome, assurance_reason, minimum_distinct_domains and qualified_domain_ids from protected authority and never derives quorum itself.",
     "dispatch_kind_constraints": {
       "comment_command": {
         "required_non_null": [
@@ -1209,8 +1222,7 @@
       "automatic_retry": false,
       "maximum_automatic_attempts_per_route_head": 0,
       "backoff_rule": "The planner never invents a backoff interval. provider retry_after or coarse resume metadata may determine when revalidation becomes useful; otherwise timing remains manual.",
-      "required_route_after_failed_or_timed_out": "MANUAL_ESCALATION_REQUIRED",
-      "optional_route_after_failed_or_timed_out": "DESELECT_OPTIONAL only when protected policy/R2A proves the route/domain is optional and policy-sufficient evidence remains; otherwise MANUAL_ESCALATION_REQUIRED",
+      "optional_route_after_failed_or_timed_out": "DESELECT_OPTIONAL only when protected assurance is PASS or the authority route_binding says optional_for_current_assurance=true; otherwise MANUAL_ESCALATION_REQUIRED or QUALIFICATION_ROUTE_BINDING_REQUIRED when the binding is missing/ambiguous.",
       "manual_retry_prerequisites": [
         "the exact head is still current",
         "current availability and eligibility are reacquired in the same planning cut",
@@ -1218,18 +1230,62 @@
         "the retained trigger/action is dispatch-eligible",
         "explicit provider-write effect authorization is present"
       ],
-      "retry_transition": "FAILED or TIMED_OUT -> REVALIDATE_CURRENT_STATE -> MANUAL_ESCALATION_REQUIRED. A separately authorized human/provider effect may create a new activation identity and then the planner may observe REQUESTED/IN_PROGRESS/COMPLETED on the same exact head. The read-only planner never performs or loops the retry itself."
+      "retry_transition": "FAILED or TIMED_OUT -> REVALIDATE_CURRENT_STATE -> MANUAL_ESCALATION_REQUIRED. A separately authorized human/provider effect may create a new activation identity and then the planner may observe REQUESTED/IN_PROGRESS/COMPLETED on the same exact head. The read-only planner never performs or loops the retry itself.",
+      "assurance_advancing_route_after_failed_or_timed_out": "MANUAL_ESCALATION_REQUIRED"
     },
-    "retry_recovery_rule": "Recovery from FAILED/TIMED_OUT is deterministic and effect-free: 1) move the route to REVALIDATION_REQUIRED; 2) reacquire same-cut current availability and eligibility for the same exact head; 3) if protected required-domain status is incomplete or unknown, output MANUAL_ESCALATION_REQUIRED; 4) the planner performs no retry and invents no backoff; 5) only a separately authorized provider-write effect may create a new activation identity after manual_retry_prerequisites hold; 6) optional routes may be DESELECTED_OPTIONAL only under optional_route_disposition_rule. The failed or timed-out attempt remains historical and cannot satisfy a required domain.",
+    "retry_recovery_rule": "Recovery from FAILED/TIMED_OUT is deterministic and effect-free: 1) move the route to REVALIDATION_REQUIRED; 2) reacquire same-cut current availability and eligibility for the same stable route_id and exact head; 3) if protected assurance is not PASS, require a complete authority route_binding before claiming the route can advance assurance; missing/ambiguous binding yields QUALIFICATION_ROUTE_BINDING_REQUIRED; 4) a policy_eligible assurance-advancing route yields MANUAL_ESCALATION_REQUIRED; 5) the planner performs no retry and invents no backoff; 6) only a separately authorized provider-write effect may create a new activation identity after manual_retry_prerequisites hold; 7) optional routes may be DESELECTED_OPTIONAL only under optional_route_disposition_rule.",
     "next_action_vocabulary": [
       "WAIT",
       "REVALIDATE_CURRENT_STATE",
+      "QUALIFICATION_ROUTE_BINDING_REQUIRED",
       "MANUAL_ESCALATION_REQUIRED",
       "WAIT_FOR_ALTERNATIVE_QUALIFIED_EVIDENCE",
       "DESELECT_OPTIONAL",
       "RECONCILE"
     ],
-    "failure_recovery_rule": "FAILED and TIMED_OUT terminate one invocation attempt. There is no automatic retry in the admitted read-only planner. Required or unknown-required routes deterministically move to MANUAL_ESCALATION_REQUIRED after same-cut revalidation; they remain blocking until a new explicitly authorized attempt succeeds or alternative protected policy/R2A evidence satisfies the required domain. Optional routes may be DESELECTED_OPTIONAL only under optional_route_disposition_rule."
+    "failure_recovery_rule": "FAILED and TIMED_OUT terminate one invocation attempt. There is no automatic retry in the admitted read-only planner. After same-cut revalidation, a policy_eligible assurance-advancing route moves to MANUAL_ESCALATION_REQUIRED and remains non-converged until a new explicitly authorized attempt succeeds and protected R2A is recomputed, or alternative qualified evidence changes protected assurance. Missing/ambiguous route qualification binding yields QUALIFICATION_ROUTE_BINDING_REQUIRED. Optional routes may be DESELECTED_OPTIONAL only under optional_route_disposition_rule.",
+    "route_identity_rule": "route_id is a retained, stable, non-secret identity for one provider invocation/configuration surface. It is unique across all primary and alternative registry routes and is never derived at runtime from command text, provider display labels or array position. A materially different invocation surface receives a new route_id. Route selection, current_readback, activation deduplication, protected route bindings and reconciliation MUST use this exact identity.",
+    "protected_assurance_fields": [
+      "subject_head_commit",
+      "outcome",
+      "reason",
+      "minimum_distinct_domains",
+      "qualified_domain_ids",
+      "required_capability_ids",
+      "qualification_revision",
+      "route_bindings",
+      "completeness"
+    ],
+    "protected_assurance_outcomes": [
+      "PASS",
+      "BLOCKED",
+      "INCOMPLETE",
+      "CONFLICTING"
+    ],
+    "protected_assurance_completeness": [
+      "COMPLETE",
+      "INCOMPLETE",
+      "AMBIGUOUS",
+      "MISSING"
+    ],
+    "route_binding_fields": [
+      "route_id",
+      "reviewer_id",
+      "source_id",
+      "independence_domain_id",
+      "capability_ids",
+      "qualification_status",
+      "policy_eligible",
+      "optional_for_current_assurance"
+    ],
+    "route_binding_qualification_status": [
+      "established",
+      "unestablished",
+      "revoked"
+    ],
+    "assurance_pass_through_rule": "protected_assurance is authority-produced input derived from the effective review policy, R2A result and accepted Issue #10 qualification snapshot. The planner MUST preserve outcome, reason, minimum_distinct_domains, qualified_domain_ids, required_capability_ids and qualification_revision without re-evaluating quorum or qualification. Owner-decision readiness is blocked unless completeness=COMPLETE, subject_head_commit equals the current exact head and outcome=PASS. Missing, ambiguous, differently-head-bound or incomplete protected assurance is blocking.",
+    "route_binding_rule": "Each protected route_binding joins one retained route_id to authority-owned reviewer_id/source_id qualification identity and independence_domain_id. policy_eligible and optional_for_current_assurance are produced upstream by the protected qualification/policy adapter after applying qualification status, freshness, owner relation, scope and required-capability rules; the planner MUST NOT derive either value from provider identity, route count or registry capability claims. A binding whose route_id is absent from the registry, duplicated, ambiguous or not attributable to the accepted qualification revision is invalid protected input.",
+    "assurance_progression_rule": "When protected assurance is INCOMPLETE with reason=QUORUM_UNMET, the planner may prioritize only currently AVAILABLE+ELIGIBLE routes with policy_eligible=true whose authority-bound independence_domain_id is not already present in qualified_domain_ids. This is scheduling diversity, not a quorum decision. The planner MUST NOT claim that dispatching or completing such a route satisfies quorum; only a later protected R2A result may do so. If assurance is not PASS and no complete authority route binding exists for a route claimed to advance assurance, surface QUALIFICATION_ROUTE_BINDING_REQUIRED rather than spending scarce quota by guess. Unbound routes may still be described as exploratory/optional evidence but never as assurance-advancing final routes."
   },
   "observation_status_vocabulary": [
     "COMPLETED",

@@ -5,7 +5,7 @@ description: Adopt a Gnostoa-self reviewer capability registry and staged review
 status: draft
 generated:
   by: openai/gpt-5.6-sol
-  at: "2026-09-21T22:29:45Z"
+  at: "2026-09-21T23:07:19Z"
 sources:
   - id: work-item
     resource: https://github.com/ktogias/gnostoa/issues/15
@@ -132,7 +132,7 @@ provider availability/eligibility and current scope identity are revalidated.
 
 No fixed freshness TTL is invented. For automatic dispatch of an external
 review route, current availability/eligibility must be reacquired in the current
-orchestration observation cut. Version `v0.10` binds that proof explicitly:
+orchestration observation cut. Version `v0.11` binds that proof explicitly:
 the active planning input carries `cut_id`, exact `as_of` and exact subject.
 A provider `current_readback` is a **same-cut route-target evaluation**, not a
 raw retained observation. It must carry the same `cut_id` and a
@@ -178,8 +178,11 @@ command whose ownership is not isolated from other installed apps is not
 eligible for automatic dispatch until repository-specific collision behavior is
 verified.
 
-The registry declares the smallest known-safe trigger form, an explicit
-instruction contract and independent dispatch-safety metadata. Typed
+The registry declares the smallest known-safe trigger form, a stable retained
+`route_id`, an explicit instruction contract and independent dispatch-safety
+metadata. Every primary and alternative surface has its own route identity;
+current read-back, activation deduplication and reconciliation use that exact
+identity rather than provider name, command text or array position. Typed
 `dispatch_kind` separates `comment_command`, `provider_action`,
 `configuration_only`, `interactive_manual` and `unknown`; a UI action,
 configuration path or manual sentinel may never be reinterpreted as GitHub
@@ -189,7 +192,7 @@ and cannot override a `manual_only_until_*` dispatch-safety state.
 A planner may emit only a retained typed recipe whose fields satisfy the
 machine-readable `dispatch_kind_constraints`, or render a retained
 `instruction_template` using supported placeholders and bounded
-caller-supplied instructions. Version `v0.10` fixes a 4096-byte normalized
+caller-supplied instructions. Version `v0.11` fixes a 4096-byte normalized
 UTF-8 instruction maximum, CRLF/CR-to-LF normalization, HT/LF-only
 control-character allowance, reserved-placeholder rejection and one
 non-recursive substitution pass. Invalid input becomes
@@ -258,10 +261,13 @@ after their dispatch-safety and current-eligibility requirements are satisfied.
 
 Final collection is not "every integration at any cost." A
 `REVALIDATION_REQUIRED` route may leave the active selected set only through an
-explicit `DESELECTED_OPTIONAL` disposition after protected policy/R2A already
-establishes that the route/domain is optional. That disposition is not review
-evidence and cannot satisfy a required domain or capability. If required-domain
-status is incomplete or unknown, revalidation failure remains blocking.
+explicit `DESELECTED_OPTIONAL` disposition when protected assurance already
+reports `PASS` or an authority-produced route binding marks that stable
+`route_id` optional for current assurance. That disposition is not review
+evidence and never advances qualification/quorum. While protected assurance is
+not `PASS`, a route claimed to advance assurance must have a complete protected
+route→reviewer/source→independence-domain binding; missing or ambiguous binding
+is `QUALIFICATION_ROUTE_BINDING_REQUIRED`, never guessed optionality.
 
 #### REPAIR
 
@@ -275,16 +281,16 @@ final semantic-review evidence is never reusable across heads.
 
 This prevents Ready-only automatic reviewers from spending quota on an unstable
 pre-CI successor. After deterministic/CI re-verification, seal the new exact
-head, transition to Ready again, and obtain fresh evidence from every review
-domain required by the effective review policy/qualification result. Optional
-older-head reviews remain historical only and cannot count in the successor cut
-unless re-run.
+head, transition to Ready again, and collect fresh exact-head evidence before
+recomputing the protected R2A assurance result. Older-head review observations,
+qualified-domain results and route activations remain historical only and cannot
+count in the successor cut.
 
 A Ready PR may remain Ready only for reconciliation or finding disposition that
 does not change the candidate head. The planner's `final_review_cut` is bound
-to one exact `head_commit`; if the candidate head changes, the whole cut is
-`INVALIDATED_HEAD_CHANGED` and every protected required domain is reacquired
-under a new cut. Architecture, provider abstractions, broad production behavior,
+to one exact `head_commit` and protected assurance/qualification revision; if
+the candidate head changes, the whole cut is `INVALIDATED_HEAD_CHANGED` and
+protected assurance is recomputed under a new cut. Architecture, provider abstractions, broad production behavior,
 scope/classification expansion or another implementation phase additionally
 return the internal workflow to broader development. GitHub Draft/Ready remains
 a provider projection of orchestration state, not the complete state machine.
@@ -304,21 +310,21 @@ The scheduler may use terminal route states such as:
 - `DESELECTED_OPTIONAL`.
 
 `DESELECTED_OPTIONAL` is terminal only as an explicit scheduling disposition
-for a policy-established optional route. It never counts as review evidence,
-never satisfies a required review domain/capability, and is forbidden when the
-required-domain status is unknown or incomplete.
+when protected assurance is already `PASS` or an authority route binding marks
+the route optional for current assurance. It never counts as review evidence
+and never advances qualification or quorum. Missing/ambiguous binding cannot be
+turned into optionality by the planner.
 
-`FAILED` and `TIMED_OUT` are terminal for one invocation attempt, not for
-the semantic requirement, and must never become "clean review" observations.
-The read-only planner has zero automatic retry authority. After same-cut
-revalidation, a required or unknown-required route produces
-`MANUAL_ESCALATION_REQUIRED` and remains blocking until a later successful
-exact-head result or other policy-sufficient qualified evidence exists. The
-planner neither invents backoff nor performs provider writes. A separately
-authorized provider-write effect may create a new activation identity on the
-same exact head after current eligibility is revalidated; only its later result
-can advance the route. Optional routes may be deselected only under the
-protected optional-route rule.
+`FAILED` and `TIMED_OUT` are terminal for one invocation attempt and must never
+become "clean review" observations. The read-only planner has zero automatic
+retry authority. After same-cut revalidation, a `policy_eligible` route that can
+advance protected assurance produces `MANUAL_ESCALATION_REQUIRED`; a missing or
+ambiguous route qualification binding produces
+`QUALIFICATION_ROUTE_BINDING_REQUIRED`. A separately authorized provider-write
+effect may create a new activation identity on the same stable `route_id` and
+exact head after current eligibility is revalidated; only a later protected R2A
+result decides whether assurance advanced. Optional routes may be deselected
+only under the authority-bound optional-route rule.
 
 Nor does every unavailable configured reviewer block convergence. The effective
 Gnostoa review policy remains authoritative for required distinct domains and
@@ -345,36 +351,58 @@ the existing protected qualification/policy path says otherwise.
 After this normative baseline is reviewed and integrated, the next #15 slice
 should implement a deterministic **read-only review planner**.
 
-It consumes current state and produces an advisory plan containing at least the
-outputs listed below. The input contract also carries the exact planning cut,
-provider-current read-backs, optional provider/request
-`attempt_id`/activation identity, the current final-review cut, and protected
-required-domain input. Multiple same-head attempts whose identity/order cannot
-be established are `REVALIDATION_REQUIRED`, never deduplicated by guess:
+It consumes current state and produces an advisory plan from the exact planning
+cut, provider-current read-backs, stable route identities and **protected
+assurance input aligned with the existing R2A/Issue #10 contracts**.
+
+Protected assurance carries, without reinterpretation:
+
+- exact `subject_head_commit`;
+- R2A `outcome` and `reason`;
+- `minimum_distinct_domains` from effective policy;
+- current `qualified_domain_ids` and required capabilities from R2A;
+- the accepted qualification revision; and
+- authority-produced `route_bindings` that join stable `route_id` values to
+  Issue #10 reviewer/source identities, independence domains and capabilities.
+
+The binding producer, not the planner, applies qualification status, freshness,
+owner relation, scope and required-capability rules and marks route policy
+eligibility/optionality. The planner must not infer an independence domain from
+provider identity, route count, model name or registry capability claims.
+
+When exact-head protected assurance is `INCOMPLETE / QUORUM_UNMET`, the planner
+may prefer a current AVAILABLE+ELIGIBLE, policy-eligible route whose bound
+independence domain is not already in `qualified_domain_ids`. That preference
+is only review scheduling diversity. The planner never awards domain credit or
+declares quorum; only a later protected R2A evaluation can do so. Missing or
+ambiguous binding for a route claimed to advance assurance is an explicit
+`QUALIFICATION_ROUTE_BINDING_REQUIRED` blocker.
+
+The advisory plan contains at least:
 
 - orchestration phase;
 - exact candidate identity;
-- selected early-review routes;
-- selected final-review routes;
+- selected early-review route IDs;
+- selected final-review route IDs;
 - routes currently unavailable and reason;
-- typed provider-specific trigger recipe;
-- the opaque required-domain identifiers/statuses supplied by effective
-  review-policy/R2A input, without deriving independence from provider count;
-- an explicit blocker whenever any required domain remains incomplete;
+- typed provider-specific trigger recipe keyed by stable `route_id`;
+- protected assurance outcome/reason, minimum-domain requirement and current
+  qualified-domain IDs as pass-through facts;
+- protected route-binding status for routes considered assurance-advancing;
+- explicit blockers for incomplete assurance or missing qualification binding;
 - whether Draft/Ready transition is recommended;
 - next permitted orchestration action.
 
 It must not post comments, request reviewers, change Draft/Ready state, resolve
-threads, approve or merge. Protected required-domain input is an opaque
-pass-through: every `id` and `status` is preserved unchanged, and readiness
-remains blocked unless that protected input is complete, bound to the current
-exact head and reports `all_required_satisfied=true`. Missing or ambiguous
-protected input is blocking regardless of how many optional provider routes
-completed.
+threads, approve, merge, qualify reviewers, map providers to domains on its own,
+or decide quorum. Owner-decision readiness remains blocked unless protected
+assurance is complete, bound to the current exact head and reports `PASS`.
+Many completed provider reviews may truthfully coexist with
+`INCOMPLETE / QUORUM_UNMET`.
 
-The planner must consume the existing L1 projection and protected
-review-policy/R2A results rather than reimplement current-state, qualification,
-independence or semantic-review logic.
+The planner must consume the existing L1 projection, protected R2A result and
+accepted Issue #10 qualification/binding projection rather than reimplement
+current-state, qualification, independence or semantic-review logic.
 
 ### 7. Defer the dispatcher to a separate effect-capable Decision
 
@@ -432,7 +460,7 @@ Review should challenge at least:
 - whether any "unlimited" claim is inferred from missing evidence;
 - whether a provider trigger syntax is claimed without documentation or direct
   repository observation;
-- whether the staged workflow can hide an unavailable required review domain;
+- whether the staged workflow can hide an unmet protected assurance requirement;
 - whether Ready/Draft guidance can wrongly reuse stale exact-head review
   evidence;
 - whether the proposed planner would duplicate R2A or current-state semantics;
