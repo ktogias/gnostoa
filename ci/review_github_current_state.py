@@ -1622,13 +1622,19 @@ def _emit_publication_results(results: list[dict[str, Any]]) -> None:
     lines = [_publication_result_line(item) for item in results]
     for line in lines:
         print(line)
-    _summary(
-        [
-            "## Gnostoa useful L1 publication",
-            "",
-            *[f"- {line}" for line in lines],
-        ]
-    )
+    try:
+        _summary(
+            [
+                "## Gnostoa useful L1 publication",
+                "",
+                *[f"- {line}" for line in lines],
+            ]
+        )
+    except OSError as exc:
+        print(
+            "Gnostoa useful L1 publication: "
+            f"STEP_SUMMARY_UNAVAILABLE ({_publication_error_diagnostic(exc)})"
+        )
 
 
 def _parser() -> argparse.ArgumentParser:
