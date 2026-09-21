@@ -11,7 +11,7 @@ from typing import Any
 from unittest import mock
 
 
-_NONEMPTY_PROVIDER_CREDENTIAL = "fixture-value"
+_NONEMPTY_TEST_VALUE = "fixture-value"
 
 
 def _fixtures() -> Any:
@@ -204,7 +204,7 @@ class UsefulL1FollowupTests(unittest.TestCase):
         )
 
         with (
-            mock.patch.dict(adapter.os.environ, {"GH_TOKEN": _NONEMPTY_PROVIDER_CREDENTIAL}),
+            mock.patch.dict(adapter.os.environ, {"GH_TOKEN": _NONEMPTY_TEST_VALUE}),
             self.assertRaisesRegex(
                 SystemExit,
                 "selected Pull Request population exceeds bounded reconciliation capacity",
