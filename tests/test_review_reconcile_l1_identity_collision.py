@@ -53,7 +53,6 @@ class UsefulL1IdentityCollisionTests(unittest.TestCase):
             thread_only[0]["native"]["origin_review_observation_id"],
         )
 
-
     def test_non_colliding_thread_evidence_id_keeps_legacy_identity(self) -> None:
         fixtures = _fixtures()
         reducer = fixtures.reducer_fixture()
@@ -133,7 +132,6 @@ class UsefulL1IdentityCollisionTests(unittest.TestCase):
             )
 
         self.assertEqual(thread_id(False), thread_id(True))
-
 
     def test_collision_fallback_remains_valid_r2a_input(self) -> None:
         fixtures = _fixtures()
