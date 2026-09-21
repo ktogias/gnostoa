@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-
 _NONEMPTY_TEST_VALUE = "fixture-value"
 
 
