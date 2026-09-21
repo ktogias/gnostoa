@@ -158,14 +158,14 @@ def _coverage(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
                 f"coverage.{source}.pages must be a non-negative integer"
             )
         count = item.get("count")
-        if count is not None and (type(count) is not int or count < 0):
+        if type(count) is not int or count < 0:
             raise ReconciliationInputError(
                 f"coverage.{source}.count must be a non-negative integer"
             )
         result[source] = {
             "status": status,
             "pages": pages,
-            **({"count": count} if count is not None else {}),
+            "count": count,
         }
     return result
 
@@ -174,16 +174,14 @@ def _validate_source_payloads(
     snapshot: dict[str, Any],
     coverage: dict[str, dict[str, Any]],
 ) -> None:
-    subject_count = coverage["subject"].get("count")
-    if subject_count is not None and subject_count != 1:
+    if coverage["subject"]["count"] != 1:
         raise ReconciliationInputError("coverage.subject.count must equal one subject")
 
     for source in ("conversation", "reviews", "review_threads", "checks"):
         payload = snapshot.get(source)
         if not isinstance(payload, list):
             raise ReconciliationInputError(f"{source} must be an array")
-        count = coverage[source].get("count")
-        if count is not None and count != len(payload):
+        if coverage[source]["count"] != len(payload):
             raise ReconciliationInputError(
                 f"coverage.{source}.count does not match retained payload"
             )
@@ -276,11 +274,69 @@ def _observations(
     reviews, threads_by_review = _thread_records_by_review(snapshot)
 
     target_head = subject["head_commit"]
+    review_observation_ids = {
+        _string(review.get("observation_id"), "review.observation_id")
+        for review in reviews
+    }
     observations: list[dict[str, Any]] = []
+
+    def make_observation(
+        *,
+        observation_id: str,
+        reviewer_id: str,
+        state: str,
+        observed_at: str,
+        review_head: object,
+        source_url: object,
+        thread_records: list[dict[str, Any]],
+        native_extra: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if review_head is None:
+            bound_head = target_head
+            binding_status = "unestablished"
+        else:
+            bound_head = _sha(review_head, "review.head_commit")
+            binding_status = "exact" if review_head == target_head else "partial"
+
+        thread_states = {item["state"] for item in thread_records}
+        aggregate_thread_state = (
+            "unresolved" if "unresolved" in thread_states else "resolved"
+        )
+        return {
+            "observation_id": observation_id,
+            "reviewer_id": reviewer_id,
+            "source_id": "retained-review-evidence",
+            "observed_at": observed_at,
+            "subject_binding": {
+                "status": binding_status,
+                "repository": subject["repository"],
+                "change_request": copy.deepcopy(subject["change_request"]),
+                "head_commit": bound_head,
+                "comparison": copy.deepcopy(subject["comparison"]),
+            },
+            "native": {
+                "object_id": observation_id,
+                "revision": 1,
+                "provider": provider_id,
+                "source_url": source_url,
+                "review_commit_id": review_head,
+                "recommendation_state": state,
+                **({} if native_extra is None else copy.deepcopy(native_extra)),
+            },
+            "findings": [],
+            "threads": {
+                "state": aggregate_thread_state,
+                "count": len(thread_records),
+                "thread_ids": sorted(
+                    item["id"]
+                    for item in thread_records
+                    if isinstance(item.get("id"), str)
+                ),
+            },
+        }
+
     for raw_review in reviews:
         review = _mapping(raw_review, "review")
-        if review.get("effective") is False:
-            continue
         observation_id = _string(
             review.get("observation_id"),
             "review.observation_id",
@@ -292,51 +348,57 @@ def _observations(
         )
         observed_at = _timestamp(review.get("observed_at"), "review.observed_at")
         review_head = review.get("head_commit")
-
-        if review_head is None:
-            bound_head = target_head
-            binding_status = "unestablished"
-        else:
-            bound_head = _sha(review_head, "review.head_commit")
-            binding_status = "exact" if review_head == target_head else "partial"
-
+        source_url = review.get("source_url")
         thread_records = threads_by_review.get(observation_id, [])
-        thread_states = {item["state"] for item in thread_records}
-        aggregate_thread_state = (
-            "unresolved" if "unresolved" in thread_states else "resolved"
-        )
+
+        if review.get("effective") is False:
+            if not any(item["state"] == "unresolved" for item in thread_records):
+                continue
+            thread_observation_id = (
+                f"gnostoa-thread-evidence::{observation_id}"
+            )
+            if thread_observation_id in review_observation_ids:
+                raise ReconciliationInputError(
+                    "derived thread evidence observation_id collides with review evidence"
+                )
+            thread_observed_at = max(
+                (
+                    _timestamp(
+                        item.get("observed_at"),
+                        "review_thread.observed_at",
+                    )
+                    for item in thread_records
+                ),
+                key=parse_rfc3339,
+            )
+            observations.append(
+                make_observation(
+                    observation_id=thread_observation_id,
+                    reviewer_id=reviewer_id,
+                    state="COMMENT_ONLY",
+                    observed_at=thread_observed_at,
+                    review_head=review_head,
+                    source_url=source_url,
+                    thread_records=thread_records,
+                    native_extra={
+                        "thread_evidence_only": True,
+                        "superseded_review_observation_id": observation_id,
+                        "superseded_recommendation_state": state,
+                    },
+                )
+            )
+            continue
+
         observations.append(
-            {
-                "observation_id": observation_id,
-                "reviewer_id": reviewer_id,
-                "source_id": "retained-review-evidence",
-                "observed_at": observed_at,
-                "subject_binding": {
-                    "status": binding_status,
-                    "repository": subject["repository"],
-                    "change_request": copy.deepcopy(subject["change_request"]),
-                    "head_commit": bound_head,
-                    "comparison": copy.deepcopy(subject["comparison"]),
-                },
-                "native": {
-                    "object_id": observation_id,
-                    "revision": 1,
-                    "provider": provider_id,
-                    "source_url": review.get("source_url"),
-                    "review_commit_id": review_head,
-                    "recommendation_state": state,
-                },
-                "findings": [],
-                "threads": {
-                    "state": aggregate_thread_state,
-                    "count": len(thread_records),
-                    "thread_ids": sorted(
-                        item["id"]
-                        for item in thread_records
-                        if isinstance(item.get("id"), str)
-                    ),
-                },
-            }
+            make_observation(
+                observation_id=observation_id,
+                reviewer_id=reviewer_id,
+                state=state,
+                observed_at=observed_at,
+                review_head=review_head,
+                source_url=source_url,
+                thread_records=thread_records,
+            )
         )
     return observations
 
