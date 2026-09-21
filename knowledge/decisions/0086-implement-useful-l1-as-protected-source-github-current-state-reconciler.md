@@ -134,16 +134,27 @@ is invalid normalized evidence and cannot be silently omitted from a
 Recommendation effectiveness and thread persistence are separate normalized
 concerns. A later provider-effective opinion may supersede an older
 `APPROVED|CHANGES_REQUESTED` recommendation, but it does not resolve threads
-rooted in that older review. If such a superseded review still owns an
-unresolved thread, the common reducer retains that discussion as a derived
-thread-only `COMMENT_ONLY` observation. This keeps unresolved-thread policy
-visible to existing R2A semantics without resurrecting the superseded
-recommendation for quorum, conflict or recommendation-blocker evaluation.
-Because that derived observation represents the thread's **current** resolved or
-unresolved state reacquired at the certified snapshot cut, its subject binding
-names the current exact change-request head. The older review/thread commit stays
-only as origin provenance; current binding must not rewrite or erase that native
-history.
+rooted in that older review. More generally, an unresolved thread is current
+thread-state evidence independently of whether its owning review is effective,
+superseded, exact-head, old-head or unbound.
+
+The common reducer therefore carries every unresolved thread through a derived
+thread-only `COMMENT_ONLY` observation. Recommendation observations retain only
+resolved thread associations, so unresolved state is represented exactly once
+and cannot inherit recommendation binding/freshness accidentally. The derived
+observation binds to the current exact change-request head and uses the certified
+snapshot cut as its `observed_at`, because that cut proves the reacquired
+resolved/unresolved state. The original review/thread timestamps, commits and
+review identity remain native provenance; current binding/freshness must not
+rewrite or erase that history. This keeps existing R2A unresolved-thread policy
+visible without resurrecting a superseded or old-head recommendation for quorum,
+conflict or recommendation-blocker evaluation.
+
+Normalized semantic evidence must also respect the certified temporal boundary.
+Review, review-thread and check observation timestamps may equal or precede the
+snapshot cut, but cannot be later than it. A future-dated normalized observation
+is invalid provider state and fails closed in the common reducer rather than
+participating in freshness or latest-state selection.
 
 Execution identity follows the same boundary. The shared projection core carries
 one opaque, non-empty `execution_id`; it does not parse, order or coerce that
