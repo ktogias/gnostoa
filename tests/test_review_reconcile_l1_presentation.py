@@ -61,9 +61,7 @@ class UsefulL1PresentationTests(unittest.TestCase):
                         environment["PYTHONPATH"] = value
                 if command.group(1) is not None:
                     environment["PYTHONPATH"] = command.group(1)
-                # B603 is intentionally suppressed: argv is fixed, shell=False,
-                # and no provider-controlled value reaches the executable or arguments.
-                completed = subprocess.run(  # nosec B603
+                completed = subprocess.run(
                     [sys.executable, "ci/review_github_current_state.py", "--help"],
                     cwd=_ROOT,
                     env=environment,
