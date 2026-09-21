@@ -596,6 +596,94 @@ class UsefulL1IndependentReviewRegressions(unittest.TestCase):
         client.post.assert_not_called()
         client.patch.assert_not_called()
 
+    def test_publish_refuses_projection_older_than_protected_freshness(
+        self,
+    ) -> None:
+        fixtures = _fixtures()
+        adapter = fixtures._adapter()
+        reducer = fixtures._reducer()
+        projection = reducer.build_projection(
+            fixtures._snapshot(),
+            protected_main_revision="e" * 40,
+            outer_consumer={
+                "runtime_image": "ghcr.io/ktogias/gnostoa@sha256:" + "f" * 64,
+                "runtime_revision": "9" * 40,
+            },
+            r2a_result={
+                "outcome": "PASS",
+                "reason": "REQUIREMENTS_SATISFIED",
+                "binding": False,
+            },
+            execution={
+                "execution_id": "github-actions:502:1",
+                "observed_at": "2026-09-19T16:41:10Z",
+            },
+        )
+        entry = {
+            "pull_number": 300,
+            "head_sha": "a" * 40,
+            "body": reducer.render_projection(projection),
+        }
+        current_pr = {
+            "state": "open",
+            "head_sha": "a" * 40,
+            "base_sha": "b" * 40,
+            "merge_base_sha": "c" * 40,
+        }
+        protected = SimpleNamespace(
+            protected_main_revision="e" * 40,
+            document={
+                "policy": {
+                    "subject": {
+                        "freshness": {"mode": "max_age", "seconds": 900}
+                    },
+                    "collection": {
+                        "freshness": {"mode": "max_age", "seconds": 900}
+                    },
+                }
+            },
+        )
+        consumer = SimpleNamespace(
+            protected_main_revision="e" * 40,
+            document={},
+        )
+        client = mock.Mock()
+
+        with (
+            mock.patch.object(adapter, "_current_pr", return_value=current_pr),
+            mock.patch.object(
+                adapter,
+                "_collect_pages",
+                return_value=([], {"status": "COMPLETE", "pages": 1, "count": 0}),
+            ),
+            mock.patch.object(
+                adapter,
+                "_protected_state",
+                return_value=(protected, consumer),
+            ),
+            mock.patch.object(
+                adapter,
+                "_now",
+                return_value="2026-09-19T17:00:00Z",
+            ),
+        ):
+            result = adapter.publish_entry(
+                client,
+                repository="ktogias/gnostoa",
+                entry=entry,
+            )
+
+        self.assertEqual(
+            {
+                "pull_number": 300,
+                "published": False,
+                "reason": "STALE_PROVIDER_OBSERVATION",
+            },
+            result,
+        )
+        client.post.assert_not_called()
+        client.patch.assert_not_called()
+
     def test_github_publication_rejects_unorderable_candidate_before_provider_io(
         self,
     ) -> None:
