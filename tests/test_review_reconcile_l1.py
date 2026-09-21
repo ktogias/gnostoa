@@ -1727,36 +1727,76 @@ class UsefulL1IdentityCollisionTests(unittest.TestCase):
 
     def test_probe_cardinality_boundary_checks_available_candidate(self) -> None:
         reducer = reducer_fixture()
-        origin_id = "provider-review-boundary"
+        snapshot = snapshot_fixture()
+        origin_id = snapshot["reviews"][0]["observation_id"]
         legacy_id = f"gnostoa-thread-evidence::{origin_id}"
         origin_digest = hashlib.sha256(origin_id.encode("utf-8")).hexdigest()
         stem = f"gnostoa-thread-evidence:v2:sha256:{origin_digest}"
         probes = [f"{stem}:p{probe:016x}" for probe in range(1, 4)]
-        occupied = {legacy_id, stem, probes[0], probes[1]}
+
+        snapshot["reviews"][1]["observation_id"] = legacy_id
+        for index, observation_id in enumerate([stem, *probes[:2]], start=1):
+            snapshot["reviews"].append(
+                {
+                    "observation_id": observation_id,
+                    "reviewer_id": f"boundary-collision-{index}",
+                    "recommendation_state": "COMMENTED",
+                    "observed_at": "2026-09-19T16:39:00Z",
+                    "head_commit": "d" * 40,
+                    "source_url": (
+                        snapshot["subject"]["source_url"]
+                        + f"#boundary-collision-{index}"
+                    ),
+                }
+            )
+        snapshot["coverage"]["reviews"]["count"] = len(snapshot["reviews"])
 
         with mock.patch.object(reducer, "_THREAD_EVIDENCE_MAX_PROBE", 3):
-            candidate = reducer._thread_evidence_observation_id(
-                origin_id,
-                occupied,
-            )
+            review_input = reducer.build_review_input(snapshot, _bundle())
 
-        self.assertEqual(probes[2], candidate)
+        thread_only = [
+            item
+            for item in review_input["evidence_set"]["observations"]
+            if item["native"].get("thread_evidence_only") is True
+        ]
+        self.assertEqual(1, len(thread_only))
+        self.assertEqual(probes[2], thread_only[0]["observation_id"])
 
     def test_probe_space_exhaustion_fails_closed(self) -> None:
         reducer = reducer_fixture()
-        origin_id = "provider-review-exhaustion"
+        snapshot = snapshot_fixture()
+        origin_id = snapshot["reviews"][0]["observation_id"]
         legacy_id = f"gnostoa-thread-evidence::{origin_id}"
         origin_digest = hashlib.sha256(origin_id.encode("utf-8")).hexdigest()
         stem = f"gnostoa-thread-evidence:v2:sha256:{origin_digest}"
-        probes = {f"{stem}:p{probe:016x}" for probe in range(1, 4)}
-        occupied = {legacy_id, stem, *probes}
+        probes = [f"{stem}:p{probe:016x}" for probe in range(1, 4)]
 
-        with mock.patch.object(reducer, "_THREAD_EVIDENCE_MAX_PROBE", 3):
-            with self.assertRaisesRegex(
-                reducer.ReconciliationInputError,
-                "unable to allocate a collision-free thread evidence observation ID",
-            ):
-                reducer._thread_evidence_observation_id(origin_id, occupied)
+        snapshot["reviews"][1]["observation_id"] = legacy_id
+        for index, observation_id in enumerate([stem, *probes], start=1):
+            snapshot["reviews"].append(
+                {
+                    "observation_id": observation_id,
+                    "reviewer_id": f"exhaustion-collision-{index}",
+                    "recommendation_state": "COMMENTED",
+                    "observed_at": "2026-09-19T16:39:00Z",
+                    "head_commit": "d" * 40,
+                    "source_url": (
+                        snapshot["subject"]["source_url"]
+                        + f"#exhaustion-collision-{index}"
+                    ),
+                }
+            )
+        snapshot["coverage"]["reviews"]["count"] = len(snapshot["reviews"])
+
+        with mock.patch.object(
+            reducer,
+            "_THREAD_EVIDENCE_MAX_PROBE",
+            3,
+        ), self.assertRaisesRegex(
+            reducer.ReconciliationInputError,
+            "unable to allocate a collision-free thread evidence observation ID",
+        ):
+            reducer.build_review_input(snapshot, _bundle())
 
     def test_collision_fallback_is_independent_of_provider_review_order(self) -> None:
         reducer = reducer_fixture()
