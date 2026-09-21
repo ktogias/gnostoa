@@ -25,6 +25,7 @@ _MAX_CHECK_NAMES = _MAX_RENDERED_CHECK_NAMES
 # by the strict bounded reconciler or its change request has closed.
 _PRE_BOUND_MAX_CHECK_NAMES = 32
 _MAX_CHECK_LABEL_BYTES = 128
+_THREAD_EVIDENCE_MAX_PROBE = (1 << 64) - 1
 
 
 class ReconciliationInputError(ValueError):
@@ -472,14 +473,9 @@ def _thread_evidence_observation_id(
     if stem not in occupied_observation_ids:
         return stem
 
-    max_probe = (1 << 64) - 1
     occupied_count = len(occupied_observation_ids)
-    if occupied_count >= max_probe:
-        raise ReconciliationInputError(
-            "occupied observation ID set exceeds the bounded collision-probe space"
-        )
-
-    for probe in range(1, occupied_count + 2):
+    probe_limit = min(occupied_count + 1, _THREAD_EVIDENCE_MAX_PROBE)
+    for probe in range(1, probe_limit + 1):
         candidate = f"{stem}:p{probe:016x}"
         if candidate not in occupied_observation_ids:
             return candidate
