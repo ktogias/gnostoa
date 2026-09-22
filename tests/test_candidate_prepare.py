@@ -18,17 +18,47 @@ GIT: str = shutil.which("git") or ""
 if not GIT:
     raise RuntimeError("git is required for candidate preparation tests")
 
+_GIT_ENVIRONMENT_VARIABLES = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_INDEX_FILE",
+    "GIT_CEILING_DIRECTORIES",
+    "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+)
+
+
+def _test_env() -> dict[str, str]:
+    env = dict(os.environ)
+    for name in _GIT_ENVIRONMENT_VARIABLES:
+        env.pop(name, None)
+    return env
+
 
 class CandidatePreparationContractTests(unittest.TestCase):
     @staticmethod
-    def _git(root: Path, *arguments: str) -> str:
-        completed = subprocess.run(  # nosemgrep  # nosec B603
-            [GIT, *arguments],
+    def _process(
+        root: Path,
+        command: list[str],
+        *,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(  # nosemgrep  # nosec B603
+            command,
             cwd=root,
-            env=candidate_prepare._base_env(),
-            check=True,
+            env=_test_env(),
+            check=check,
             capture_output=True,
             text=True,
+        )
+
+    @staticmethod
+    def _git(root: Path, *arguments: str) -> str:
+        completed = CandidatePreparationContractTests._process(
+            root,
+            [GIT, *arguments],
         )
         return completed.stdout.strip()
 
@@ -86,13 +116,10 @@ class CandidatePreparationContractTests(unittest.TestCase):
             root = Path(directory)
             self._repository(root)
             (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
-            style = subprocess.run(  # nosemgrep  # nosec B603
+            style = self._process(
+                root,
                 [str(root / "ci" / "style"), "--check"],
-                cwd=root,
-                env=candidate_prepare._base_env(),
                 check=False,
-                capture_output=True,
-                text=True,
             )
             self.assertNotEqual(0, style.returncode)
             self._git(root, "add", "candidate.py")
@@ -316,14 +343,23 @@ class CandidatePreparationContractTests(unittest.TestCase):
             )
 
     def test_prepare_scrubs_inherited_git_repository_overrides(self) -> None:
-        poisoned = {
-            name: "poisoned-by-caller"
-            for name in candidate_prepare._GIT_ENVIRONMENT_VARIABLES
-        }
-        with patch.dict(os.environ, poisoned, clear=False):
-            sanitized = candidate_prepare._base_env()
-        for name in candidate_prepare._GIT_ENVIRONMENT_VARIABLES:
-            self.assertNotIn(name, sanitized)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+            poisoned = {
+                name: "poisoned-by-caller" for name in _GIT_ENVIRONMENT_VARIABLES
+            }
+            with patch.dict(os.environ, poisoned, clear=False):
+                payload = self._prepare(
+                    root,
+                    parent,
+                    receipt,
+                    [sys.executable, "-c", "pass"],
+                )
+            self.assertEqual(parent, payload["parent_commit"])
+            self.assertEqual("PRE_CANDIDATE_RUFF_CATCH", payload["metric_event"])
 
     def test_ci_wrapper_routes_to_candidate_prepare_module(self) -> None:
         wrapper = ROOT / "ci" / "prepare-candidate"
@@ -332,9 +368,9 @@ class CandidatePreparationContractTests(unittest.TestCase):
         self.assertIn('cd "$(dirname "$0")/.."', text)
         self.assertIn("python -m tools.candidate_prepare", text)
         with tempfile.TemporaryDirectory() as directory:
-            completed = candidate_prepare._run(
+            completed = self._process(
+                Path(directory),
                 [str(wrapper), "--help"],
-                cwd=Path(directory),
                 check=False,
             )
         self.assertEqual(0, completed.returncode, completed.stderr)
