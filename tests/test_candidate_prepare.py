@@ -101,8 +101,12 @@ class CandidatePreparationContractTests(unittest.TestCase):
             'test "$1" = "fast"\n'
             'case "${GNOSTOA_TEST_FOCUSED_MODE:-pass}" in\n'
             "  mutate) printf 'changed\\n' > candidate.py ;;\n"
-            "  fail) exit 7 ;;\n"
+            "  fail) printf 'focused failure detail\\n'; exit 7 ;;\n"
             "  ignored-helper) test -f ignored-helper.txt ;;\n"
+            "  toolkit-root)\n"
+            '    test "${KNOWLEDGE_KIT_ROOT:-}" = "$PWD"\n'
+            '    test "${KNOWLEDGE_KIT_REVISION:-}" = "development"\n'
+            "    ;;\n"
             "  nested-git)\n"
             '    nested="$(mktemp -d)"\n'
             "    trap 'rm -rf \"$nested\"' EXIT\n"
