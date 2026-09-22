@@ -828,7 +828,10 @@ def evaluate(
         )
         if not _fresh(entry_cut, as_of, qualification_rule):
             continue
-        if matched_entry.get("owner_relation") == "owner" and not owner_reviews_count:
+        owner_relation = matched_entry.get("owner_relation")
+        if owner_relation == "unknown":
+            continue
+        if owner_relation == "owner" and not owner_reviews_count:
             continue
         capabilities = matched_entry.get("capability_ids")
         if not isinstance(capabilities, list) or not required_capabilities.issubset(

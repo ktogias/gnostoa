@@ -361,6 +361,12 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
                 ),
             ),
             (
+                "unknown-owner-relation",
+                lambda entries, qualification: entries[0].update(
+                    owner_relation="unknown"
+                ),
+            ),
+            (
                 "scope-mismatch",
                 lambda entries, qualification: entries[0].update(
                     scope={"repository": "other/repository"}
