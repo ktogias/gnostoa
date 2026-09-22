@@ -336,22 +336,23 @@ intermediate head:
 2. use only selected, currently available early-review routes whose expected
    value justifies reviewing a Draft or intermediate candidate;
 3. explicitly seal the exact head before final collection;
-4. before recommending Ready, perform **PRE_READY_RECONCILE** for every
-   provider that already has attributable activity on the exact head and whose
-   Ready path may auto-activate (automatic/configurable/unknown or otherwise not
-   proven non-automatic). For those conflict candidates, read back existing
-   provider/head activations, current `ready_activation_state` and
-   `provider_head_deduplication_state`. Missing/ambiguous state is
-   `REVALIDATION_REQUIRED`, with next permitted action
-   `REVALIDATE_CURRENT_STATE`. If a same-head activation already exists while
-   Ready auto-activation is enabled/unknown and provider-level deduplication is
-   not established, do not recommend Ready; require manual disposition. A
-   provider with no attributable same-head activation does not block Ready merely
-   because current Ready configuration/dedup state is unreadable; Ready may be
-   its first activation and step 5 reconciles it before any manual trigger.
-   Reserve providers whose Ready path may auto-activate from same-head early
-   review unless the Ready path is currently disabled/not-applicable or
-   provider-level deduplication is established;
+4. before recommending Ready, **PRE_READY_RECONCILE** first performs a
+   same-cut activation scan for every provider whose Ready path may auto-activate
+   (automatic/configurable/unknown or otherwise not proven non-automatic), plus
+   any provider already used for early review on the exact head. Absence of
+   same-head activity may be claimed only from current scan evidence. A provider
+   with no attributable same-head activation does not block Ready merely because
+   current Ready configuration/dedup state is unreadable; Ready may be its first
+   activation and step 5 reconciles it before any manual trigger. If same-head
+   activity exists and Ready automatic activation cannot be excluded, read back
+   current `ready_activation_state` and
+   `provider_head_deduplication_state`. Missing/ambiguous conflict-state facts
+   are `REVALIDATION_REQUIRED`, with next permitted action
+   `REVALIDATE_CURRENT_STATE`. Enabled/unknown Ready auto-activation with
+   provider-level deduplication not established blocks Ready and requires manual
+   disposition. Reserve providers whose Ready path may auto-activate from
+   same-head early review unless the Ready path is currently
+   disabled/not-applicable or provider-level deduplication is established;
 5. only after PRE_READY_RECONCILE is safe, transition to Ready and **read back
    current-head provider request/review state again before any manual trigger**,
    binding that post-transition read-back to the active planning `cut_id`; for
