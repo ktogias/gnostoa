@@ -91,7 +91,9 @@ Mechanical changes and emergency follow-up use the timing declared by
 `policy/change-control.yaml`.
 
 Before creating or pushing a candidate that changes Python source or Python
-verification surfaces, use the pre-candidate preparation boundary:
+verification surfaces, use the pre-candidate preparation boundary from the
+recommended Development Container. A direct host invocation is a native fallback
+only when the container route is unavailable; record that reason.
 
 ```bash
 ./ci/prepare-candidate prepare \
@@ -100,29 +102,35 @@ verification surfaces, use the pre-candidate preparation boundary:
   --focused-profile fast
 ```
 
-The preparation surface reuses `./ci/style --fix` and `./ci/style --check`,
-runs an allowlisted repository-owned `ci/verify` profile **after**
-normalization, invokes argv with no shell, rejects verifier mutation, runs
-`git diff --cached --check`, and binds the exact parent and prepared Git tree in
-a digest-protected receipt. The CLI does not accept an executable or arbitrary
-verification arguments; supported profiles are `policy`, `security-fast`,
-`fast`, `regression`, `smoke`, and `extended`. The preparation path
-fails closed if the candidate changes `ci/style` or `ci/verify` relative to
-the bound parent; authority evolution requires a separately admitted path rather
-than a self-authorizing receipt. Before a Git-data/API adapter advances a
-candidate ref, consume:
+Preparation captures the proposed delta as a Git tree, materializes it in a
+disposable detached worktree, runs `ci/style --fix`, restores the exact
+normalized tree, then runs the allowlisted `ci/verify` profile and final
+`ci/style --check`. Source-worktree-only ignored/untracked files and concurrent
+caller edits are not part of verification. The CLI never accepts an executable
+or arbitrary verification arguments; supported profiles are `policy`,
+`security-fast`, `fast`, `regression`, `smoke`, and `extended`.
+
+The receipt SHA-256 is integrity evidence, not authentication or bearer
+authority. `verify` may inspect an already trusted receipt, but an arbitrary
+self-consistent receipt must never authorize a provider write. For the
+project-owned Git-data route, publish in the same trusted process:
 
 ```bash
-./ci/prepare-candidate verify \
+./ci/prepare-candidate publish-git \
   --parent <exact-40-character-parent-sha> \
-  --tree <exact-40-character-tree-sha> \
-  --receipt <path-outside-the-worktree>
+  --ref refs/heads/<candidate-branch> \
+  --receipt <path-outside-the-worktree> \
+  --focused-profile fast \
+  --message "<candidate commit message>"
 ```
 
-with that exact parent, tree and receipt. Do not publish a different tree under
-a successful receipt.
-Ordinary hooks remain advisory early feedback; direct `ci/style --fix` alone is
-not a preparation receipt for non-hook authoring. Provider CI stays check-only
+That adapter runs preparation itself, creates the commit only after success, and
+advances the local branch ref with an exact-old-value compare-and-swap. Direct
+provider/API adapters must preserve the same boundary by running trusted
+preparation or consuming separately authenticated preparation provenance before
+the write. Ordinary hooks remain advisory early feedback; direct
+`ci/style --fix` alone is not a preparation receipt for non-hook authoring.
+Provider CI stays check-only
 and remains the non-bypassable verifier.
 
 After PR #272 is integrated, record any potentially eligible candidate before

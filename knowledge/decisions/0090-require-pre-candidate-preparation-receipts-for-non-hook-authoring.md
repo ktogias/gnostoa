@@ -51,16 +51,27 @@ an authoring route that never invokes them.
 
 ## Prior-art and reuse disposition
 
-Reuse the existing `ci/style` contract, Git's content-addressed tree identity,
-temporary-index primitives, and ordinary focused verification commands. The
-repository already reconstructs tree identities with a temporary
-`GIT_INDEX_FILE` in the Experiment Capsule implementation, which establishes the
-Git primitive without requiring that heavier workflow here.
+Reuse the existing `ci/style` contract, Git's content-addressed tree/worktree
+plumbing, temporary-index primitives, and ordinary focused verification commands.
+The repository already reconstructs tree identities with a temporary
+`GIT_INDEX_FILE` in the Experiment Capsule implementation.
 
-Do not reuse the Capsule state machine, retained-effect transaction machinery or
-a generic orchestration framework. Candidate preparation needs one bounded
-sequence before candidate publication, not experiment qualification or remote
-effect recovery.
+Concrete alternatives were evaluated before selecting the bounded implementation:
+
+- **pre-commit** (MIT) is license-compatible, but its enforcement point is a
+  local Git hook. Direct GitHub/Git-data/API authoring can bypass it, and it does
+  not produce a portable exact-parent/exact-tree preparation receipt.
+- **Lefthook** (MIT) is likewise license-compatible and useful for local hook
+  orchestration, but it has the same non-hook/API activation gap and would add a
+  new hook framework without closing the provider-neutral publication boundary.
+- **The existing Experiment Capsule** is already part of this repository and
+  therefore has no additional third-party license burden, but its state machine,
+  retained-effect transaction and recovery semantics are materially broader than
+  the one bounded pre-publication sequence required here.
+
+No third-party dependency is added by this Decision. The remaining unmet need is
+an exact-tree, provider-neutral preparation/publication boundary that works for
+non-hook authoring without importing a general orchestration subsystem.
 
 ## Decision
 
@@ -69,50 +80,55 @@ effect recovery.
    toolkit CLI. The wrapper resolves the repository root from its own location
    before importing the implementation so invocation does not depend on the
    caller's current working directory.
-2. Preparation binds one exact 40-character parent commit. The worktree `HEAD`
-   must equal that parent; stale-parent preparation fails closed. Repository
-   discovery and Git object access scrub inherited repository-routing,
-   worktree/object-store and index overrides before invoking Git; only the
-   preparation-owned temporary `GIT_INDEX_FILE` is reintroduced where needed.
-3. Preparation requires an existing proposed tree delta. Before any preparation
-   authority is executed, the proposed temporary-index view must show
-   `ci/style` and `ci/verify` unchanged from the exact parent; a candidate
-   that changes either authority fails closed rather than self-authorizing its
-   own formatter or verifier. Authority evolution requires a separately
-   admitted path. Preparation then runs `./ci/style --fix` and one
-   repository-owned focused verification profile with `shell=False`. The
-   external CLI accepts only the closed profile vocabulary `policy`,
-   `security-fast`, `fast`, `regression`, `smoke`, and `extended`;
-   each profile maps to a static `./ci/verify <suite>` argv. Caller input
-   cannot choose an executable or arbitrary verification arguments. The
-   implementation-private `prepare()` boundary accepts the same closed
-   profile vocabulary; no lower layer accepts a caller-supplied command vector.
-4. Focused verification must not mutate the candidate. The prepared tree after
-   normalization is measured before and after the focused command; any change
-   fails closed.
-5. Preparation then runs `./ci/style --check` and verifies the exact prepared
-   temporary index with `git diff --cached --check`.
-6. The successful receipt binds at least parent commit/tree, prepared tree,
+2. Preparation binds one exact 40-character parent commit. The source worktree
+   `HEAD` must equal that parent; stale-parent preparation fails closed.
+   Repository discovery and Git object access scrub inherited repository-routing,
+   worktree/object-store and index overrides before invoking Git.
+3. The proposed delta is first captured as an exact Git tree through a temporary
+   index. Before any preparation authority executes, that tree must leave
+   `ci/style` and `ci/verify` unchanged from the parent. The proposed tree is
+   then materialized in a disposable detached Git worktree; normalization and all
+   focused verification operate there rather than on the caller's live worktree.
+   This excludes ignored/untracked source-worktree files and concurrent caller
+   edits from the verified candidate.
+4. Preparation runs `./ci/style --fix` in that isolated worktree, stages the
+   normalized result, then cleans ignored/untracked residue and restores exactly
+   the normalized index before focused verification. The external CLI accepts
+   only `policy`, `security-fast`, `fast`, `regression`, `smoke`, and
+   `extended`; each maps to static `./ci/verify <suite>` argv with
+   `shell=False`. Caller input cannot choose an executable or arbitrary
+   verification arguments.
+5. Focused verification must not mutate the prepared tree or its index. Ignored
+   caches may be produced transiently, but they are removed before the final
+   style decision. Preparation then reruns `./ci/style --check` against the
+   restored exact normalized tree and executes `git diff --cached --check`.
+6. Run `ci/prepare-candidate` from the recommended Development Container by
+   default. The module intentionally invokes `ci/verify` directly inside the
+   environment that hosts the isolated worktree instead of launching nested
+   Docker. Direct host execution is the documented native fallback only when the
+   container route is unavailable; the caller records that reason. Provider CI
+   remains the authoritative independent check.
+7. The successful receipt binds at least parent commit/tree, prepared tree,
    prepared binary-diff SHA-256, changed paths, parent-bound `ci/style` and
    `ci/verify` SHA-256 identities, observed Ruff version, focused profile plus
-   its logical repository-owned command identity,
-   and zero exit status for every required step. The
-   receipt carries a canonical SHA-256 over its own payload and records
-   `PRE_CANDIDATE_RUFF_CATCH` when normalization changed the proposed tree,
-   otherwise `PRE_CANDIDATE_NO_RUFF_CHANGE`. Post-seal Ruff escapes remain a
-   separate Decision 0081 ledger classification.
-7. Receipts are evidence, not candidate source. The output path must be outside
-   the repository worktree so creating the receipt cannot change the prepared
-   tree it describes.
-8. A publishing adapter must compare the exact parent and exact tree it intends
-   to publish with a valid receipt before creating or advancing a candidate ref.
-   The implementation exposes both `verify_receipt()` and the
-   `ci/prepare-candidate verify` CLI for that provider-neutral consumption
-   boundary. Parent/tree mismatch, altered receipt, failed check, missing focused
-   command, or unsupported receipt version fails closed.
-9. GitHub API/Git-data authoring may still create the final provider objects; it
-   consumes prepared bytes/tree identity rather than generated text that has not
-   crossed the preparation boundary.
+   its logical repository-owned command identity, and zero exit status for every
+   required step. Its canonical SHA-256 is an integrity binding, not
+   authentication or bearer authority. It records `PRE_CANDIDATE_RUFF_CATCH`
+   when normalization changes the proposed tree, otherwise
+   `PRE_CANDIDATE_NO_RUFF_CHANGE`.
+8. Receipts are evidence, not candidate source. The output path must be outside
+   the source worktree. `verify_receipt()` and `ci/prepare-candidate verify`
+   validate receipt integrity and exact expected parent/tree under an already
+   trusted provenance channel; a self-consistent caller-supplied receipt alone
+   never authorizes publication.
+9. The project-owned `publish-git` adapter runs preparation in the same trusted
+   process, consumes the returned prepared tree in memory, creates the candidate
+   commit only after preparation succeeds, and advances a local branch ref with
+   an exact-old-value compare-and-swap. It never accepts a pre-existing receipt
+   as publication authority. A direct provider/API adapter must preserve the
+   same contract by running trusted preparation itself or consuming separately
+   authenticated preparation provenance before its write. Arbitrary external
+   clients are not made impossible to bypass by this repository-local control.
 10. Provider CI remains check-only and authoritative. A preparation receipt is
     neither semantic review, approval, merge authority nor a replacement for
     post-publication exact-head checks.
@@ -126,8 +142,9 @@ The change must retain executable evidence that:
 
 - ordinary Git can currently commit a Ruff-dirty tree without this new receipt,
   characterizing the API/non-hook escape;
-- successful preparation normalizes before focused verification, and the focused
-  verifier observes the normalized candidate;
+- successful preparation materializes the proposed tree in an isolated
+  disposable worktree, normalizes there, and verifies the exact normalized tree
+  without admitting source-worktree-only ignored/untracked state;
 - the external CLI rejects arbitrary command execution by accepting only the
   closed repository-owned focused-profile vocabulary;
 - a candidate that changes `ci/style` or `ci/verify` relative to the bound
@@ -137,18 +154,22 @@ The change must retain executable evidence that:
 - focused verification mutation is rejected;
 - stale parent, failed normalization/check, failed focused verification, and
   candidate-local receipt paths fail closed;
-- receipt verification rejects parent, tree, digest, schema or check-state
-  mismatch;
+- receipt inspection rejects parent, tree, digest, schema or check-state
+  mismatch without claiming authentication;
+- the project-owned Git-data publication adapter creates/advances a candidate ref
+  only after in-process preparation succeeds, and a failed preparation leaves the
+  ref unchanged;
 - the wrapper and Gnostoa agent route point to the same preparation surface; and
 - existing `ci/style` remains the single Ruff scope/command authority.
 
 ## Consequences
 
-API/agent authoring gains the same pre-candidate normalization boundary that
-ordinary Git users receive through local workflow practice, without making hooks
-mandatory or weakening provider CI. A prepared tree can be published through a
-provider adapter only after its exact identity is bound to successful local
-mechanical evidence.
+API/agent authoring gains an exact-tree pre-candidate normalization boundary
+without making hooks mandatory or weakening provider CI. The project-owned
+Git-data adapter demonstrates the fail-closed publication effect locally:
+preparation and publication share one process and ref advancement uses
+compare-and-swap. Provider-specific remote transports must preserve that trust
+boundary; a portable receipt remains evidence rather than authentication.
 
 This does not by itself establish cross-session writer uniqueness; #308 owns
 that separate fencing problem. It also does not establish effectiveness of

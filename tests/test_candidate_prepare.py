@@ -59,6 +59,10 @@ class CandidatePreparationContractTests(unittest.TestCase):
         CandidatePreparationContractTests._git(
             root, "config", "user.name", "Candidate Test"
         )
+        (root / ".gitignore").write_text(
+            "ignored-helper.txt\n",
+            encoding="utf-8",
+        )
         (root / "ci").mkdir()
         style = root / "ci" / "style"
         style.write_text(
@@ -80,6 +84,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
             'case "${GNOSTOA_TEST_FOCUSED_MODE:-pass}" in\n'
             "  mutate) printf 'changed\\n' > candidate.py ;;\n"
             "  fail) exit 7 ;;\n"
+            "  ignored-helper) test -f ignored-helper.txt ;;\n"
             "  pass) grep -q '^value = 1$' candidate.py ;;\n"
             "  *) exit 8 ;;\n"
             "esac\n",
@@ -145,6 +150,14 @@ class CandidatePreparationContractTests(unittest.TestCase):
             self.assertEqual(parent, payload["parent_commit"])
             self.assertEqual(["candidate.py"], payload["changed_paths"])
             self.assertEqual("PRE_CANDIDATE_RUFF_CATCH", payload["metric_event"])
+            self.assertEqual(
+                "value=1\n",
+                (root / "candidate.py").read_text(encoding="utf-8"),
+            )
+            self.assertEqual(
+                "value = 1",
+                self._git(root, "show", f'{payload["prepared_tree"]}:candidate.py'),
+            )
             self.assertRegex(payload["style_sha256"], r"^sha256:[0-9a-f]{64}$")
             self.assertRegex(payload["verify_sha256"], r"^sha256:[0-9a-f]{64}$")
             self.assertTrue(receipt.is_file())
@@ -227,6 +240,27 @@ class CandidatePreparationContractTests(unittest.TestCase):
                     self._prepare(root, parent, receipt)
                 self.assertFalse(receipt.exists())
 
+    def test_prepare_does_not_admit_ignored_source_worktree_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            (root / "ignored-helper.txt").write_text("source-only\n", encoding="utf-8")
+            receipt = self._receipt()
+            with (
+                patch.dict(
+                    os.environ,
+                    {"GNOSTOA_TEST_FOCUSED_MODE": "ignored-helper"},
+                    clear=False,
+                ),
+                self.assertRaisesRegex(
+                    candidate_prepare.PrepareError,
+                    r"focused verification failed \(1\)",
+                ),
+            ):
+                self._prepare(root, parent, receipt)
+            self.assertFalse(receipt.exists())
+
     def test_prepare_rejects_focused_verifier_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -292,6 +326,84 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 "receipt path must be outside",
             ):
                 self._prepare(root, parent, root / "receipt.json")
+
+    def test_publish_git_prepares_before_candidate_ref_effect(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+            receipt.write_text('{"forged": true}\n', encoding="utf-8")
+            with (
+                patch.object(candidate_prepare, "_repository_root", return_value=root),
+                patch.object(
+                    candidate_prepare,
+                    "_ruff_version",
+                    return_value="ruff 0.16.0",
+                ),
+            ):
+                result = candidate_prepare.publish_git(
+                    parent,
+                    "refs/heads/candidate",
+                    receipt,
+                    "fast",
+                    "prepared candidate",
+                )
+            self.assertEqual(
+                result["commit"],
+                self._git(root, "rev-parse", "refs/heads/candidate"),
+            )
+            self.assertEqual(
+                result["prepared_tree"],
+                self._git(root, "rev-parse", f'{result["commit"]}^{{tree}}'),
+            )
+            self.assertEqual(
+                "value = 1",
+                self._git(root, "show", f'{result["commit"]}:candidate.py'),
+            )
+            document = json.loads(receipt.read_text(encoding="utf-8"))
+            self.assertNotIn("forged", document)
+
+    def test_publish_git_failed_preparation_leaves_ref_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+            with (
+                patch.object(candidate_prepare, "_repository_root", return_value=root),
+                patch.object(
+                    candidate_prepare,
+                    "_ruff_version",
+                    return_value="ruff 0.16.0",
+                ),
+                patch.dict(
+                    os.environ,
+                    {"GNOSTOA_TEST_FOCUSED_MODE": "fail"},
+                    clear=False,
+                ),
+                self.assertRaisesRegex(
+                    candidate_prepare.PrepareError,
+                    r"focused verification failed \(7\)",
+                ),
+            ):
+                candidate_prepare.publish_git(
+                    parent,
+                    "refs/heads/candidate",
+                    receipt,
+                    "fast",
+                    "should not publish",
+                )
+            ref = subprocess.run(  # nosemgrep  # nosec B603
+                [GIT, "show-ref", "--verify", "refs/heads/candidate"],
+                cwd=root,
+                env=_test_env(),
+                check=False,
+                shell=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(0, ref.returncode)
 
     def test_receipt_verification_does_not_require_preparation_executable(
         self,

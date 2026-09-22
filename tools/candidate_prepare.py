@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+from contextlib import contextmanager
 import json
 import os
 import re
@@ -9,7 +10,7 @@ import shutil
 import subprocess  # nosec B404 -- audited subprocess boundary in _run
 import sys
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -194,30 +195,28 @@ def _stage_candidate(root: Path, parent: str, index: Path) -> tuple[str, list[st
     return tree, changed
 
 
-def _binary_diff(root: Path, parent: str, index: Path) -> bytes:
-    env = _base_env()
-    env["GIT_INDEX_FILE"] = str(index)
+def _binary_diff_between_trees(root: Path, parent: str, tree: str) -> bytes:
     return _run(
         [
             _git_executable(),
             "diff",
-            "--cached",
             "--binary",
             "--full-index",
             parent,
+            tree,
         ],
         cwd=root,
-        env=env,
     ).stdout
 
 
 def _assert_parent_preparation_authorities(
     root: Path,
     parent: str,
-    index: Path,
+    index: Path | None = None,
 ) -> None:
     env = _base_env()
-    env["GIT_INDEX_FILE"] = str(index)
+    if index is not None:
+        env["GIT_INDEX_FILE"] = str(index)
     changed_raw = _run(
         [
             _git_executable(),
@@ -237,6 +236,89 @@ def _assert_parent_preparation_authorities(
         raise PrepareError(
             "candidate modifies preparation authority: " + ", ".join(changed)
         )
+
+
+def _stage_workspace_candidate(root: Path, parent: str) -> tuple[str, list[str]]:
+    _git_text(root, "add", "-A")
+    tree = _git_text(root, "write-tree")
+    changed_raw = _run(
+        [_git_executable(), "diff", "--cached", "--name-only", "-z", parent],
+        cwd=root,
+    ).stdout
+    changed = sorted(os.fsdecode(item) for item in changed_raw.split(b"\0") if item)
+    return tree, changed
+
+
+def _assert_workspace_matches_tree(
+    root: Path,
+    expected_tree: str,
+    message: str,
+) -> None:
+    if _git_text(root, "write-tree") != expected_tree:
+        raise PrepareError(message)
+    tracked = _run(
+        [_git_executable(), "diff", "--quiet", "--"],
+        cwd=root,
+        check=False,
+    )
+    if tracked.returncode not in {0, 1}:
+        raise PrepareError("unable to inspect isolated candidate workspace")
+    untracked = _run(
+        [_git_executable(), "ls-files", "--others", "--exclude-standard", "-z"],
+        cwd=root,
+    ).stdout
+    if tracked.returncode != 0 or untracked:
+        raise PrepareError(message)
+
+
+def _reset_workspace_to_index(root: Path) -> None:
+    _run([_git_executable(), "clean", "-ffdx"], cwd=root)
+    _git_text(root, "checkout-index", "--all", "--force")
+
+
+@contextmanager
+def _candidate_workspace(
+    repository_root: Path,
+    parent: str,
+    tree: str,
+) -> Iterator[Path]:
+    with tempfile.TemporaryDirectory(
+        prefix="gnostoa-candidate-workspace-"
+    ) as directory:
+        workspace = Path(directory) / "worktree"
+        _run(
+            [
+                _git_executable(),
+                "worktree",
+                "add",
+                "--detach",
+                "--no-checkout",
+                str(workspace),
+                parent,
+            ],
+            cwd=repository_root,
+        )
+        try:
+            _git_text(workspace, "read-tree", tree)
+            _git_text(workspace, "checkout-index", "--all", "--force")
+            yield workspace
+        finally:
+            _run(
+                [
+                    _git_executable(),
+                    "worktree",
+                    "remove",
+                    "--force",
+                    str(workspace),
+                ],
+                cwd=repository_root,
+                check=False,
+            )
+            _run(
+                [_git_executable(), "worktree", "prune"],
+                cwd=repository_root,
+                check=False,
+            )
 
 
 def _write_receipt(path: Path, payload: dict[str, Any]) -> dict[str, Any]:
@@ -268,14 +350,10 @@ def prepare(
         raise PrepareError("parent must be an exact 40-character commit SHA")
 
     root = _repository_root()
-    focused_argv = _focused_profile_command(root, focused_profile)
     focused_receipt_argv = _focused_receipt_command(focused_profile)
     receipt = _assert_external_receipt(root, receipt_path)
     _assert_head(root, parent_commit)
     parent_tree = _git_text(root, "rev-parse", f"{parent_commit}^{{tree}}")
-    style = root / "ci" / "style"
-    if not style.is_file():
-        raise PrepareError("ci/style is unavailable")
 
     with tempfile.TemporaryDirectory(prefix="gnostoa-candidate-index-") as directory:
         index = Path(directory) / "index"
@@ -284,38 +362,63 @@ def prepare(
             raise PrepareError("candidate has no changes relative to parent")
         _assert_parent_preparation_authorities(root, parent_commit, index)
 
-        env = _base_env()
-        env["GIT_INDEX_FILE"] = str(index)
-        _run([str(style), "--fix"], cwd=root, env=env)
-        _assert_head(root, parent_commit)
-        normalized_tree, changed_paths = _stage_candidate(root, parent_commit, index)
+    with _candidate_workspace(root, parent_commit, proposed_tree) as workspace:
+        style = workspace / "ci" / "style"
+        if not style.is_file():
+            raise PrepareError("ci/style is unavailable")
+        focused_argv = _focused_profile_command(workspace, focused_profile)
+
+        _run([str(style), "--fix"], cwd=workspace)
+        _assert_head(workspace, parent_commit)
+        normalized_tree, changed_paths = _stage_workspace_candidate(
+            workspace,
+            parent_commit,
+        )
         if not changed_paths:
             raise PrepareError("candidate has no changes after normalization")
-        _assert_parent_preparation_authorities(root, parent_commit, index)
+        _assert_parent_preparation_authorities(workspace, parent_commit)
 
-        focused = _run(focused_argv, cwd=root, env=env, check=False)
+        # Verification must observe only bytes reachable from the prepared tree.
+        # Drop ignored/untracked formatter residue, then restore tracked bytes
+        # from the normalized index before executing the focused profile.
+        _reset_workspace_to_index(workspace)
+        focused = _run(focused_argv, cwd=workspace, check=False)
         if focused.returncode != 0:
             stderr = focused.stderr.decode("utf-8", errors="replace").strip()
             detail = f": {stderr}" if stderr else ""
             raise PrepareError(
                 f"focused verification failed ({focused.returncode}){detail}"
             )
-        _assert_head(root, parent_commit)
-        after_focused, _ = _stage_candidate(root, parent_commit, index)
-        if after_focused != normalized_tree:
-            raise PrepareError("focused verification mutated candidate")
+        _assert_head(workspace, parent_commit)
+        _assert_workspace_matches_tree(
+            workspace,
+            normalized_tree,
+            "focused verification mutated candidate",
+        )
 
-        _run([str(style), "--check"], cwd=root, env=env)
-        _assert_head(root, parent_commit)
-        after_check, changed_paths = _stage_candidate(root, parent_commit, index)
-        if after_check != normalized_tree:
-            raise PrepareError("style check mutated candidate")
+        # Focused verification may create ignored caches. Remove them before the
+        # final style decision so that it rechecks the exact normalized tree.
+        _reset_workspace_to_index(workspace)
+        _run([str(style), "--check"], cwd=workspace)
+        _assert_head(workspace, parent_commit)
+        _assert_workspace_matches_tree(
+            workspace,
+            normalized_tree,
+            "style check mutated candidate",
+        )
         _run(
             [_git_executable(), "diff", "--cached", "--check", parent_commit],
-            cwd=root,
-            env=env,
+            cwd=workspace,
         )
-        prepared_diff = _binary_diff(root, parent_commit, index)
+
+        prepared_diff = _binary_diff_between_trees(
+            root,
+            parent_commit,
+            normalized_tree,
+        )
+        style_sha256 = _sha256_bytes(style.read_bytes())
+        verify_sha256 = _sha256_bytes((workspace / "ci" / "verify").read_bytes())
+        ruff_version = _ruff_version(workspace)
 
     payload: dict[str, Any] = {
         "schema": RECEIPT_SCHEMA,
@@ -324,10 +427,10 @@ def prepare(
         "prepared_tree": normalized_tree,
         "prepared_diff_sha256": _sha256_bytes(prepared_diff),
         "changed_paths": changed_paths,
-        "style_sha256": _sha256_bytes(style.read_bytes()),
-        "verify_sha256": _sha256_bytes((root / "ci" / "verify").read_bytes()),
+        "style_sha256": style_sha256,
+        "verify_sha256": verify_sha256,
         "style_subject": ".",
-        "ruff_version": _ruff_version(root),
+        "ruff_version": ruff_version,
         "focused_profile": focused_profile,
         "focused_command": list(focused_receipt_argv),
         "checks": {
@@ -344,6 +447,77 @@ def prepare(
     }
     return _write_receipt(receipt, payload)
 
+
+def _current_ref(root: Path, ref: str) -> str | None:
+    completed = _run(
+        [_git_executable(), "show-ref", "--verify", "--hash", ref],
+        cwd=root,
+        check=False,
+    )
+    if completed.returncode == 1:
+        return None
+    if completed.returncode != 0:
+        raise PrepareError("unable to inspect candidate ref")
+    return completed.stdout.decode("utf-8", errors="strict").strip()
+
+
+def publish_git(
+    parent_commit: str,
+    ref: str,
+    receipt_path: Path,
+    focused_profile: str,
+    message: str,
+) -> dict[str, Any]:
+    """Prepare and publish one local Git-data candidate with a ref CAS."""
+
+    if not ref.startswith("refs/heads/"):
+        raise PrepareError("candidate ref must be under refs/heads")
+    root = _repository_root()
+    ref_check = _run(
+        [_git_executable(), "check-ref-format", ref],
+        cwd=root,
+        check=False,
+    )
+    if ref_check.returncode != 0:
+        raise PrepareError("candidate ref is invalid")
+    if not message.strip():
+        raise PrepareError("candidate commit message must not be empty")
+
+    current_ref = _current_ref(root, ref)
+    if current_ref is not None and current_ref != parent_commit:
+        raise PrepareError(
+            f"stale candidate ref: {ref} is {current_ref}, expected {parent_commit}"
+        )
+
+    # Publication never accepts an existing receipt as bearer authority. The
+    # trusted adapter runs preparation in-process and consumes its returned tree.
+    prepared = prepare(parent_commit, receipt_path, focused_profile)
+    commit = _git_text(
+        root,
+        "commit-tree",
+        prepared["prepared_tree"],
+        "-p",
+        parent_commit,
+        "-m",
+        message,
+    )
+    expected_old = current_ref if current_ref is not None else "0" * 40
+    update = _run(
+        [_git_executable(), "update-ref", ref, commit, expected_old],
+        cwd=root,
+        check=False,
+    )
+    if update.returncode != 0:
+        raise PrepareError("candidate ref changed before publication")
+
+    return {
+        "schema": "gnostoa-git-candidate-publication/v1",
+        "parent_commit": parent_commit,
+        "prepared_tree": prepared["prepared_tree"],
+        "commit": commit,
+        "ref": ref,
+        "receipt_sha256": prepared["receipt_sha256"],
+    }
 
 def _load_receipt(receipt_path: Path) -> dict[str, Any]:
     try:
@@ -403,11 +577,29 @@ def _validate_receipt_metric(document: dict[str, Any]) -> None:
         raise PrepareError("receipt metric event is invalid")
 
 
+def _validate_receipt_shape(document: dict[str, Any]) -> None:
+    changed_paths = document.get("changed_paths")
+    if (
+        not isinstance(changed_paths, list)
+        or not changed_paths
+        or changed_paths != sorted(set(changed_paths))
+        or not all(isinstance(path, str) and path for path in changed_paths)
+    ):
+        raise PrepareError("receipt changed paths are invalid")
+    if document.get("style_subject") != ".":
+        raise PrepareError("receipt style subject is invalid")
+    ruff_version = document.get("ruff_version")
+    if not isinstance(ruff_version, str) or not ruff_version.strip():
+        raise PrepareError("receipt Ruff version is invalid")
+
+
 def verify_receipt(
     receipt_path: Path,
     expected_parent: str,
     expected_tree: str,
 ) -> dict[str, Any]:
+    """Validate receipt integrity/identity under an already trusted provenance path."""
+
     document = _load_receipt(receipt_path)
     _validate_receipt_digest(document)
     if document.get("schema") != RECEIPT_SCHEMA:
@@ -424,12 +616,13 @@ def verify_receipt(
     _require_sha256(document, "style_sha256")
     _require_sha256(document, "verify_sha256")
     _validate_receipt_metric(document)
+    _validate_receipt_shape(document)
     return document
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Prepare or verify a normalized Gnostoa candidate tree."
+        description="Prepare, inspect, or publish a normalized Gnostoa candidate tree."
     )
     actions = parser.add_subparsers(dest="action", required=True)
 
@@ -446,6 +639,17 @@ def _parser() -> argparse.ArgumentParser:
     verify_parser.add_argument("--parent", required=True)
     verify_parser.add_argument("--tree", required=True)
     verify_parser.add_argument("--receipt", required=True, type=Path)
+
+    publish_parser = actions.add_parser("publish-git")
+    publish_parser.add_argument("--parent", required=True)
+    publish_parser.add_argument("--ref", required=True)
+    publish_parser.add_argument("--receipt", required=True, type=Path)
+    publish_parser.add_argument(
+        "--focused-profile",
+        required=True,
+        choices=_FOCUSED_PROFILES,
+    )
+    publish_parser.add_argument("--message", required=True)
     return parser
 
 
@@ -457,6 +661,14 @@ def main(argv: list[str] | None = None) -> int:
                 arguments.receipt,
                 arguments.parent,
                 arguments.tree,
+            )
+        elif arguments.action == "publish-git":
+            document = publish_git(
+                arguments.parent,
+                arguments.ref,
+                arguments.receipt,
+                arguments.focused_profile,
+                arguments.message,
             )
         else:
             document = prepare(
