@@ -341,7 +341,8 @@ intermediate head:
    for early review on that exact head. Read back existing provider/head
    activations, current `ready_activation_state` and
    `provider_head_deduplication_state`. Missing/ambiguous state is
-   `REVALIDATION_REQUIRED`. If a same-head activation already exists while Ready
+   `REVALIDATION_REQUIRED`, with next permitted action
+   `REVALIDATE_CURRENT_STATE`. If a same-head activation already exists while Ready
    auto-activation is enabled/unknown and provider-level deduplication is not
    established, do not recommend Ready; require manual disposition. Reserve
    automatic/configurable Ready providers from same-head early review unless the
