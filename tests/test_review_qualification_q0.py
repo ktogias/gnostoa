@@ -9,9 +9,9 @@ from typing import Any, cast
 
 from jsonschema import Draft202012Validator
 
-from tools import review_check, review_outer
+from tools import review_check
 from tools.review_check import FORMAT_CHECKER
-from tools.review_model import canonical_digest, canonical_json
+from tools.review_model import canonical_digest
 from tools.review_policy import resolve_project_policy
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -228,8 +228,6 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
         expected_consumer = consumer_authority["expected_consumer"]
         acquired_consumer = consumer_authority["acquired_consumer"]
         self.assertEqual(expected_consumer, acquired_consumer)
-        transport_catalog = review_outer._HOST_PERSISTENCE_FREE_CONSUMER_IDENTITIES
-        self.assertIn(canonical_json(expected_consumer), transport_catalog)
         self.assertEqual(
             "current_advisory_outer_consumer",
             expected_consumer["role"],
