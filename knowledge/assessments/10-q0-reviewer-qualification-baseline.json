@@ -1,7 +1,7 @@
 {
   "schema_version": "gnostoa-reviewer-qualification-baseline/v1",
   "status": "candidate",
-  "generated_at": "2026-09-22T05:50:00Z",
+  "generated_at": "2026-09-22T06:05:00Z",
   "qualifying_authority": "https://github.com/ktogias/gnostoa/issues/10#issuecomment-5771806967",
   "independence_semantics": {
     "domain_basis": "authenticated external reviewer execution/source boundary",
