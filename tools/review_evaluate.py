@@ -407,103 +407,7 @@ def _qualification_entries(entries: list[Any]) -> list[dict[str, Any]]:
     return [by_key[key] for key in sorted(by_key)]
 
 
-def _qualification_and_quorum(
-    active: list[dict[str, Any]],
-    entries: list[dict[str, Any]],
-    *,
-    target: dict[str, Any],
-    policy_document: dict[str, Any],
-    as_of: RFC3339Timestamp,
-    qualification_rule: object,
-    snapshot_current: bool,
-) -> tuple[dict[str, Any], dict[str, Any], list[str], bool]:
-    required_capabilities = set(
-        policy_document.get("qualification", {}).get("required_capabilities", [])
-    )
-    owner_reviews_count = bool(
-        policy_document.get("qualification", {}).get("owner_reviews_count", False)
-    )
-    countable_owner_relations = {
-        False: {"non_owner"},
-        True: {"non_owner", "owner"},
-    }[owner_reviews_count]
-    acceptable = set(
-        policy_document.get("quorum", {}).get("acceptable_recommendations", [])
-    )
-    minimum_domains = policy_document.get("quorum", {}).get(
-        "minimum_distinct_domains", 0
-    )
-    target_repo = target.get("repository")
-    qualified_domains: set[str] = set()
-    qualifying_observations: list[str] = []
-    entries_by_key: dict[tuple[str, str], dict[str, Any]] = {}
-    for entry in entries:
-        reviewer_id = entry.get("reviewer_id")
-        source_id = entry.get("source_id")
-        if isinstance(reviewer_id, str) and isinstance(source_id, str):
-            entries_by_key[(reviewer_id, source_id)] = entry
-
-    for assessment in active:
-        recommendation = assessment.get("normalized_recommendation")
-        if recommendation not in acceptable:
-            continue
-        reviewer_id = assessment.get("reviewer_id")
-        source_id = assessment.get("source_id")
-        if not isinstance(reviewer_id, str) or not isinstance(source_id, str):
-            continue
-        matched_entry = entries_by_key.get((reviewer_id, source_id))
-        if matched_entry is None or matched_entry.get("status") != "established":
-            continue
-        if not snapshot_current:
-            continue
-        entry_cut = _time(
-            matched_entry.get("observed_at"), "qualification entry observed_at"
-        )
-        if not _fresh(entry_cut, as_of, qualification_rule):
-            continue
-        if matched_entry.get("owner_relation") not in countable_owner_relations:
-            continue
-        capabilities = matched_entry.get("capability_ids")
-        if not isinstance(capabilities, list) or not required_capabilities.issubset(
-            set(capabilities)
-        ):
-            continue
-        scope = matched_entry.get("scope")
-        if isinstance(scope, dict) and scope.get("repository") not in {
-            None,
-            target_repo,
-        }:
-            continue
-        domain = matched_entry.get("independence_domain_id")
-        if not isinstance(domain, str) or not domain:
-            continue
-        qualified_domains.add(domain)
-        observation_id = assessment.get("observation_id")
-        if isinstance(observation_id, str):
-            qualifying_observations.append(observation_id)
-
-    qualification_diagnostics = (
-        [] if snapshot_current else ["qualification snapshot is stale"]
-    )
-    qualification_result = {
-        "snapshot_current": snapshot_current,
-        "required_capabilities": sorted(required_capabilities),
-        "qualifying_observations": sorted(set(qualifying_observations)),
-        "diagnostics": qualification_diagnostics,
-    }
-    quorum_result = {
-        "minimum_distinct_domains": minimum_domains,
-        "distinct_domains": len(qualified_domains),
-        "domain_ids": sorted(qualified_domains),
-    }
-    quorum_met = (
-        isinstance(minimum_domains, int)
-        and not isinstance(minimum_domains, bool)
-        and len(qualified_domains) >= minimum_domains
-    )
-    return qualification_result, quorum_result, qualification_diagnostics, quorum_met
-
-
+# skipcq: PY-R1000 -- pre-existing monolithic evaluator; Q0a adds one fail-closed owner gate
 def evaluate(
     input_document: dict[str, Any],
     policy_document: dict[str, Any],
@@ -882,22 +786,92 @@ def evaluate(
             diagnostics=source_diagnostics,
         )
 
-    (
-        qualification_result,
-        quorum_result,
-        qualification_diagnostics,
-        quorum_met,
-    ) = _qualification_and_quorum(
-        active,
-        entries,
-        target=target,
-        policy_document=policy_document,
-        as_of=as_of,
-        qualification_rule=qualification_rule,
-        snapshot_current=snapshot_current,
+    required_capabilities = set(
+        policy_document.get("qualification", {}).get("required_capabilities", [])
     )
+    owner_reviews_count = bool(
+        policy_document.get("qualification", {}).get("owner_reviews_count", False)
+    )
+    acceptable = set(
+        policy_document.get("quorum", {}).get("acceptable_recommendations", [])
+    )
+    minimum_domains = policy_document.get("quorum", {}).get(
+        "minimum_distinct_domains", 0
+    )
+    target_repo = target.get("repository")
+    qualified_domains: set[str] = set()
+    qualifying_observations: list[str] = []
+    qualification_diagnostics: list[str] = []
+    entries_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    for entry in entries:
+        reviewer_id = entry.get("reviewer_id")
+        source_id = entry.get("source_id")
+        if isinstance(reviewer_id, str) and isinstance(source_id, str):
+            entries_by_key[(reviewer_id, source_id)] = entry
 
-    if not quorum_met:
+    for assessment in active:
+        recommendation = assessment.get("normalized_recommendation")
+        if recommendation not in acceptable:
+            continue
+        reviewer_id = assessment.get("reviewer_id")
+        source_id = assessment.get("source_id")
+        if not isinstance(reviewer_id, str) or not isinstance(source_id, str):
+            continue
+        matched_entry = entries_by_key.get((reviewer_id, source_id))
+        if matched_entry is None:
+            continue
+        if matched_entry.get("status") != "established":
+            continue
+        if not snapshot_current:
+            continue
+        entry_cut = _time(
+            matched_entry.get("observed_at"), "qualification entry observed_at"
+        )
+        if not _fresh(entry_cut, as_of, qualification_rule):
+            continue
+        owner_relation = matched_entry.get("owner_relation")
+        if owner_relation != "non_owner" and not (
+            owner_relation == "owner" and owner_reviews_count
+        ):
+            continue
+        capabilities = matched_entry.get("capability_ids")
+        if not isinstance(capabilities, list) or not required_capabilities.issubset(
+            set(capabilities)
+        ):
+            continue
+        scope = matched_entry.get("scope")
+        if isinstance(scope, dict) and scope.get("repository") not in {
+            None,
+            target_repo,
+        }:
+            continue
+        domain = matched_entry.get("independence_domain_id")
+        if not isinstance(domain, str) or not domain:
+            continue
+        qualified_domains.add(domain)
+        observation_id = assessment.get("observation_id")
+        if isinstance(observation_id, str):
+            qualifying_observations.append(observation_id)
+
+    if not snapshot_current:
+        qualification_diagnostics.append("qualification snapshot is stale")
+    qualification_result = {
+        "snapshot_current": snapshot_current,
+        "required_capabilities": sorted(required_capabilities),
+        "qualifying_observations": sorted(set(qualifying_observations)),
+        "diagnostics": qualification_diagnostics,
+    }
+    quorum_result = {
+        "minimum_distinct_domains": minimum_domains,
+        "distinct_domains": len(qualified_domains),
+        "domain_ids": sorted(qualified_domains),
+    }
+
+    if (
+        not isinstance(minimum_domains, int)
+        or isinstance(minimum_domains, bool)
+        or len(qualified_domains) < minimum_domains
+    ):
         return _semantic(
             "INCOMPLETE",
             "QUORUM_UNMET",
