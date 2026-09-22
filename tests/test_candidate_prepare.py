@@ -1043,16 +1043,12 @@ class CandidatePreparationContractTests(unittest.TestCase):
             marker_path = template_root / "filter-executed"
             filter_script = template_root / "poison-filter"
             filter_script.write_text(
-                "#!/bin/sh\n"
-                f"printf executed > {marker_path}\n"
-                "cat\n",
+                f"#!/bin/sh\nprintf executed > {marker_path}\ncat\n",
                 encoding="utf-8",
             )
             filter_script.chmod(0o755)
             (template / "config").write_text(
-                '[filter "poison"]\n'
-                f"\tclean = {filter_script}\n"
-                "\trequired = true\n",
+                f'[filter "poison"]\n\tclean = {filter_script}\n\trequired = true\n',
                 encoding="utf-8",
             )
             (root / ".gitattributes").write_text(
