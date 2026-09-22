@@ -4,7 +4,7 @@ import copy
 import json
 import unittest
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from jsonschema import Draft202012Validator
 
@@ -107,9 +107,9 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
             },
             baseline["qualification_snapshot"],
         )
-        entries = baseline["qualification_snapshot"]["entries"]
-        self.assertIsInstance(entries, list)
-        assert isinstance(entries, list)
+        entries_value = baseline["qualification_snapshot"]["entries"]
+        self.assertIsInstance(entries_value, list)
+        entries = cast(list[object], entries_value)
         self.assertEqual(
             {"github-app:coderabbitai", "github-app:gitar-bot"},
             {
@@ -138,9 +138,9 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
         )
         progression = baseline["assurance_progression"]
         self.assertEqual("APPROVE", progression["acceptable_recommendation"])
-        surfaces = progression["observed_formal_review_surfaces"]
-        self.assertIsInstance(surfaces, list)
-        assert isinstance(surfaces, list)
+        surfaces_value = progression["observed_formal_review_surfaces"]
+        self.assertIsInstance(surfaces_value, list)
+        surfaces = cast(list[object], surfaces_value)
         advancing = [
             item
             for item in surfaces
