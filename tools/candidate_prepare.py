@@ -240,11 +240,86 @@ def _assert_safe_repository_git_configuration(root: Path) -> None:
         raise PrepareError("unable to inspect repository-local Git attributes") from exc
 
 
-def _stage_candidate(root: Path, parent: str, index: Path) -> tuple[str, list[str]]:
+def _source_object_directory(root: Path) -> Path:
+    common_text = _git_text(root, "rev-parse", "--git-common-dir")
+    common = Path(common_text)
+    if not common.is_absolute():
+        common = root / common
+    objects = (common / "objects").resolve()
+    if not objects.is_dir():
+        raise PrepareError("repository object directory is unavailable")
+    return objects
+
+
+def _isolated_git_env(git_dir: Path, worktree: Path) -> dict[str, str]:
     env = _base_env()
-    env["GIT_INDEX_FILE"] = str(index)
-    if not index.exists():
-        _git_text(root, "read-tree", parent, env=env)
+    env["GIT_DIR"] = str(git_dir)
+    env["GIT_WORK_TREE"] = str(worktree)
+    return env
+
+
+@contextmanager
+def _isolated_git_metadata(
+    repository_root: Path,
+    parent: str,
+) -> Iterator[Path]:
+    with tempfile.TemporaryDirectory(
+        prefix="gnostoa-candidate-git-"
+    ) as directory:
+        metadata_root = Path(directory)
+        git_dir = metadata_root / "git"
+        _run(
+            [_git_executable(), "init", "--bare", str(git_dir)],
+            cwd=metadata_root,
+        )
+
+        alternates = git_dir / "objects" / "info" / "alternates"
+        alternates.write_text(
+            str(_source_object_directory(repository_root)) + "\n",
+            encoding="utf-8",
+        )
+
+        env = _isolated_git_env(git_dir, repository_root)
+        _git_text(
+            repository_root,
+            "config",
+            "--local",
+            "core.bare",
+            "false",
+            env=env,
+        )
+        _git_text(
+            repository_root,
+            "config",
+            "--local",
+            "core.hooksPath",
+            os.devnull,
+            env=env,
+        )
+        _git_text(
+            repository_root,
+            "update-ref",
+            "refs/heads/preparation-parent",
+            parent,
+            env=env,
+        )
+        _git_text(
+            repository_root,
+            "symbolic-ref",
+            "HEAD",
+            "refs/heads/preparation-parent",
+            env=env,
+        )
+        yield git_dir
+
+
+def _stage_candidate(
+    root: Path,
+    parent: str,
+    git_dir: Path,
+) -> tuple[str, list[str]]:
+    env = _isolated_git_env(git_dir, root)
+    _git_text(root, "read-tree", parent, env=env)
     _git_text(root, "add", "-A", env=env)
     tree = _git_text(root, "write-tree", env=env)
     changed_raw = _run(
@@ -256,7 +331,12 @@ def _stage_candidate(root: Path, parent: str, index: Path) -> tuple[str, list[st
     return tree, changed
 
 
-def _binary_diff_between_trees(root: Path, parent: str, tree: str) -> bytes:
+def _binary_diff_between_trees(
+    root: Path,
+    parent: str,
+    tree: str,
+    git_dir: Path,
+) -> bytes:
     return _run(
         [
             _git_executable(),
@@ -267,17 +347,16 @@ def _binary_diff_between_trees(root: Path, parent: str, tree: str) -> bytes:
             tree,
         ],
         cwd=root,
+        env=_isolated_git_env(git_dir, root),
     ).stdout
 
 
 def _assert_parent_preparation_authorities(
     root: Path,
     parent: str,
-    index: Path | None = None,
+    git_dir: Path,
 ) -> None:
-    env = _base_env()
-    if index is not None:
-        env["GIT_INDEX_FILE"] = str(index)
+    env = _isolated_git_env(git_dir, root)
     changed_raw = _run(
         [
             _git_executable(),
@@ -299,21 +378,28 @@ def _assert_parent_preparation_authorities(
         )
 
 
-def _stage_workspace_candidate(root: Path, parent: str) -> tuple[str, list[str]]:
-    _git_text(root, "add", "-A")
-    tree = _git_text(root, "write-tree")
+def _stage_workspace_candidate(
+    root: Path,
+    parent: str,
+    git_dir: Path,
+) -> tuple[str, list[str]]:
+    env = _isolated_git_env(git_dir, root)
+    _git_text(root, "add", "-A", env=env)
+    tree = _git_text(root, "write-tree", env=env)
     changed_raw = _run(
         [_git_executable(), "diff", "--cached", "--name-only", "-z", parent],
         cwd=root,
+        env=env,
     ).stdout
     changed = sorted(os.fsdecode(item) for item in changed_raw.split(b"\0") if item)
     return tree, changed
 
 
-def _assert_no_candidate_symlinks(root: Path) -> None:
+def _assert_no_candidate_symlinks(root: Path, git_dir: Path) -> None:
     records = _run(
         [_git_executable(), "ls-files", "--stage", "-z"],
         cwd=root,
+        env=_isolated_git_env(git_dir, root),
     ).stdout
     symlinks: list[str] = []
     for record in records.split(b"\0"):
@@ -333,14 +419,17 @@ def _assert_no_candidate_symlinks(root: Path) -> None:
 
 def _assert_workspace_matches_tree(
     root: Path,
+    git_dir: Path,
     expected_tree: str,
     message: str,
 ) -> None:
-    if _git_text(root, "write-tree") != expected_tree:
+    env = _isolated_git_env(git_dir, root)
+    if _git_text(root, "write-tree", env=env) != expected_tree:
         raise PrepareError(message)
     tracked = _run(
         [_git_executable(), "diff", "--quiet", "--"],
         cwd=root,
+        env=env,
         check=False,
     )
     if tracked.returncode not in {0, 1}:
@@ -348,61 +437,37 @@ def _assert_workspace_matches_tree(
     untracked = _run(
         [_git_executable(), "ls-files", "--others", "--exclude-standard", "-z"],
         cwd=root,
+        env=env,
     ).stdout
     if tracked.returncode != 0 or untracked:
         raise PrepareError(message)
 
 
-def _reset_workspace_to_index(root: Path) -> None:
-    _run([_git_executable(), "clean", "-ffdx"], cwd=root)
-    _git_text(root, "checkout-index", "--all", "--force")
+def _reset_workspace_to_index(root: Path, git_dir: Path) -> None:
+    env = _isolated_git_env(git_dir, root)
+    _run([_git_executable(), "clean", "-ffdx"], cwd=root, env=env)
+    _git_text(root, "checkout-index", "--all", "--force", env=env)
 
 
 @contextmanager
 def _candidate_workspace(
-    repository_root: Path,
-    parent: str,
+    git_dir: Path,
     tree: str,
 ) -> Iterator[Path]:
     with tempfile.TemporaryDirectory(
         prefix="gnostoa-candidate-workspace-"
     ) as directory:
         workspace = Path(directory) / "worktree"
-        try:
-            _run(
-                [
-                    _git_executable(),
-                    "worktree",
-                    "add",
-                    "--detach",
-                    "--no-checkout",
-                    str(workspace),
-                    parent,
-                ],
-                cwd=repository_root,
-            )
-            _git_text(workspace, "read-tree", tree)
-            _git_text(workspace, "checkout-index", "--all", "--force")
-            _assert_no_candidate_symlinks(workspace)
-            yield workspace
-        finally:
-            _run(
-                [
-                    _git_executable(),
-                    "worktree",
-                    "remove",
-                    "--force",
-                    str(workspace),
-                ],
-                cwd=repository_root,
-                check=False,
-            )
-            _run(
-                [_git_executable(), "worktree", "prune"],
-                cwd=repository_root,
-                check=False,
-            )
-
+        workspace.mkdir()
+        env = _isolated_git_env(git_dir, workspace)
+        _git_text(workspace, "read-tree", tree, env=env)
+        _assert_no_candidate_symlinks(workspace, git_dir)
+        (workspace / ".git").write_text(
+            f"gitdir: {git_dir}\n",
+            encoding="utf-8",
+        )
+        _git_text(workspace, "checkout-index", "--all", "--force", env=env)
+        yield workspace
 
 def _write_receipt(path: Path, payload: dict[str, Any]) -> dict[str, Any]:
     document = dict(payload)
@@ -437,73 +502,94 @@ def prepare(
     receipt = _assert_external_receipt(root, receipt_path)
     _assert_head(root, parent_commit)
     _assert_safe_repository_git_configuration(root)
-    parent_tree = _git_text(root, "rev-parse", f"{parent_commit}^{{tree}}")
 
-    with tempfile.TemporaryDirectory(prefix="gnostoa-candidate-index-") as directory:
-        index = Path(directory) / "index"
-        proposed_tree, proposed_paths = _stage_candidate(root, parent_commit, index)
-        if not proposed_paths:
-            raise PrepareError("candidate has no changes relative to parent")
-        _assert_parent_preparation_authorities(root, parent_commit, index)
-
-    with _candidate_workspace(root, parent_commit, proposed_tree) as workspace:
-        style = workspace / "ci" / "style"
-        if not style.is_file():
-            raise PrepareError("ci/style is unavailable")
-        focused_argv = _focused_profile_command(workspace, focused_profile)
-
-        _run([str(style), "--fix"], cwd=workspace)
-        _assert_head(workspace, parent_commit)
-        normalized_tree, changed_paths = _stage_workspace_candidate(
-            workspace,
-            parent_commit,
+    with _isolated_git_metadata(root, parent_commit) as git_dir:
+        root_env = _isolated_git_env(git_dir, root)
+        parent_tree = _git_text(
+            root,
+            "rev-parse",
+            f"{parent_commit}^{{tree}}",
+            env=root_env,
         )
-        if not changed_paths:
-            raise PrepareError("candidate has no changes after normalization")
-        _assert_parent_preparation_authorities(workspace, parent_commit)
-        _assert_no_candidate_symlinks(workspace)
-
-        # Verification must observe only bytes reachable from the prepared tree.
-        # Drop ignored/untracked formatter residue, then restore tracked bytes
-        # from the normalized index before executing the focused profile.
-        _reset_workspace_to_index(workspace)
-        focused = _run(focused_argv, cwd=workspace, check=False)
-        if focused.returncode != 0:
-            stderr = focused.stderr.decode("utf-8", errors="replace").strip()
-            detail = f": {stderr}" if stderr else ""
-            raise PrepareError(
-                f"focused verification failed ({focused.returncode}){detail}"
-            )
-        _assert_head(workspace, parent_commit)
-        _assert_workspace_matches_tree(
-            workspace,
-            normalized_tree,
-            "focused verification mutated candidate",
-        )
-
-        # Focused verification may create ignored caches. Remove them before the
-        # final style decision so that it rechecks the exact normalized tree.
-        _reset_workspace_to_index(workspace)
-        _run([str(style), "--check"], cwd=workspace)
-        _assert_head(workspace, parent_commit)
-        _assert_workspace_matches_tree(
-            workspace,
-            normalized_tree,
-            "style check mutated candidate",
-        )
-        _run(
-            [_git_executable(), "diff", "--cached", "--check", parent_commit],
-            cwd=workspace,
-        )
-
-        prepared_diff = _binary_diff_between_trees(
+        proposed_tree, proposed_paths = _stage_candidate(
             root,
             parent_commit,
-            normalized_tree,
+            git_dir,
         )
-        style_sha256 = _sha256_bytes(style.read_bytes())
-        verify_sha256 = _sha256_bytes((workspace / "ci" / "verify").read_bytes())
-        ruff_version = _ruff_version(workspace)
+        if not proposed_paths:
+            raise PrepareError("candidate has no changes relative to parent")
+        _assert_parent_preparation_authorities(root, parent_commit, git_dir)
+
+        with _candidate_workspace(git_dir, proposed_tree) as workspace:
+            style = workspace / "ci" / "style"
+            if not style.is_file():
+                raise PrepareError("ci/style is unavailable")
+            focused_argv = _focused_profile_command(workspace, focused_profile)
+
+            _run([str(style), "--fix"], cwd=workspace)
+            _assert_head(workspace, parent_commit)
+            normalized_tree, changed_paths = _stage_workspace_candidate(
+                workspace,
+                parent_commit,
+                git_dir,
+            )
+            if not changed_paths:
+                raise PrepareError("candidate has no changes after normalization")
+            _assert_parent_preparation_authorities(
+                workspace,
+                parent_commit,
+                git_dir,
+            )
+            _assert_no_candidate_symlinks(workspace, git_dir)
+
+            # Verification must observe only bytes reachable from the prepared
+            # tree. Drop ignored/untracked formatter residue, then restore
+            # tracked bytes from the normalized index before verification.
+            _reset_workspace_to_index(workspace, git_dir)
+            focused = _run(focused_argv, cwd=workspace, check=False)
+            if focused.returncode != 0:
+                stderr = focused.stderr.decode("utf-8", errors="replace").strip()
+                detail = f": {stderr}" if stderr else ""
+                raise PrepareError(
+                    f"focused verification failed ({focused.returncode}){detail}"
+                )
+            _assert_head(workspace, parent_commit)
+            _assert_workspace_matches_tree(
+                workspace,
+                git_dir,
+                normalized_tree,
+                "focused verification mutated candidate",
+            )
+
+            # Focused verification may create ignored caches. Remove them before
+            # the final style decision so it rechecks the normalized tree.
+            _reset_workspace_to_index(workspace, git_dir)
+            _run([str(style), "--check"], cwd=workspace)
+            _assert_head(workspace, parent_commit)
+            _assert_workspace_matches_tree(
+                workspace,
+                git_dir,
+                normalized_tree,
+                "style check mutated candidate",
+            )
+            workspace_env = _isolated_git_env(git_dir, workspace)
+            _run(
+                [_git_executable(), "diff", "--cached", "--check", parent_commit],
+                cwd=workspace,
+                env=workspace_env,
+            )
+
+            prepared_diff = _binary_diff_between_trees(
+                workspace,
+                parent_commit,
+                normalized_tree,
+                git_dir,
+            )
+            style_sha256 = _sha256_bytes(style.read_bytes())
+            verify_sha256 = _sha256_bytes(
+                (workspace / "ci" / "verify").read_bytes()
+            )
+            ruff_version = _ruff_version(workspace)
 
     payload: dict[str, Any] = {
         "schema": RECEIPT_SCHEMA,
@@ -531,7 +617,6 @@ def prepare(
         ),
     }
     return _write_receipt(receipt, payload)
-
 
 def _load_receipt(receipt_path: Path) -> dict[str, Any]:
     try:

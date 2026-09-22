@@ -102,14 +102,17 @@ only when the container route is unavailable; record that reason.
   --focused-profile fast
 ```
 
-Preparation captures the proposed delta as a Git tree, materializes it in a
-disposable detached worktree, and rejects candidate changes to
-`ci/prepare-candidate`, `ci/style`, `ci/verify`, or
+Preparation captures the proposed delta through disposable Git metadata with
+trusted local configuration and an object-alternate link to the source object
+database. Candidate staging, tree creation, checkout and verification no longer
+consume the mutable source `.git/config` after admission, so concurrent local
+Git-config changes cannot inject filters into preparation. The path rejects
+candidate changes to `ci/prepare-candidate`, `ci/style`, `ci/verify`, or
 `tools/candidate_prepare.py` unless authority evolution is separately admitted.
-It runs `ci/style --fix`, restores the exact
-normalized tree, then runs the allowlisted `ci/verify` profile and final
-`ci/style --check`. Source-worktree-only ignored/untracked files and concurrent
-caller edits are not part of verification. Candidate symlinks are rejected
+It materializes the exact proposed tree into a disposable workspace, runs
+`ci/style --fix`, restores the normalized tree, then runs the allowlisted
+`ci/verify` profile and final `ci/style --check`. Source-worktree-only
+ignored/untracked files and concurrent caller edits are not part of verification. Candidate symlinks are rejected
 before style or focused verification because this bounded contract does not
 admit external target chains. The CLI never accepts an executable or arbitrary
 verification arguments; supported profiles are `policy`,

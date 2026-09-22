@@ -511,6 +511,40 @@ class CandidatePreparationContractTests(unittest.TestCase):
             self.assertEqual(parent, payload["parent_commit"])
             self.assertEqual("PRE_CANDIDATE_RUFF_CATCH", payload["metric_event"])
 
+    def test_prepare_isolates_source_config_mutated_after_safety_check(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            (root / ".gitattributes").write_text(
+                "candidate.py filter=poison\n",
+                encoding="utf-8",
+            )
+            receipt = self._receipt()
+            original = candidate_prepare._assert_safe_repository_git_configuration
+
+            def mutate_after_inspection(repository_root: Path) -> None:
+                original(repository_root)
+                self._git(
+                    repository_root,
+                    "config",
+                    "filter.poison.clean",
+                    "false",
+                )
+
+            with patch.object(
+                candidate_prepare,
+                "_assert_safe_repository_git_configuration",
+                side_effect=mutate_after_inspection,
+            ):
+                payload = self._prepare(root, parent, receipt)
+
+            self.assertEqual(parent, payload["parent_commit"])
+            self.assertEqual(
+                "value = 1",
+                self._git(root, "show", f'{payload["prepared_tree"]}:candidate.py'),
+            )
+
     def test_prepare_rejects_repository_local_git_execution_config(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

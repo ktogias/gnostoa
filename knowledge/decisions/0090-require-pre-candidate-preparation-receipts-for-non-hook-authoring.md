@@ -82,21 +82,24 @@ non-hook authoring without importing a general orchestration subsystem.
    caller's current working directory.
 2. Preparation binds one exact 40-character parent commit. The source worktree
    `HEAD` must equal that parent; stale-parent preparation fails closed.
-   Repository discovery and Git object access scrub inherited repository-routing,
-   worktree/object-store, index, external-diff, `GIT_CONFIG_PARAMETERS` and
-   other caller-supplied `GIT_CONFIG*` overrides. Global/system Git and
-   attributes configuration is disabled; an
-   executable repository-local filter/diff/fsmonitor configuration or non-empty
-   `.git/info/attributes` fails closed before staging.
-3. The proposed delta is first captured as an exact Git tree through a temporary
-   index. Before any preparation authority executes, that tree must leave
-   `ci/prepare-candidate`, `ci/style`, `ci/verify`, and
-   `tools/candidate_prepare.py` unchanged from the parent. Changes to those
-   authority surfaces require a separately admitted authority-evolution path.
-   The proposed tree is then materialized in a disposable detached Git worktree.
-   Worktree cleanup and pruning execute even if `git worktree add` fails after
-   partial registration. Normalization and all focused verification operate there
-   rather than on the caller's live worktree.
+   Repository discovery scrubs inherited repository-routing, external-diff,
+   `GIT_CONFIG_PARAMETERS` and other caller-supplied `GIT_CONFIG*`
+   overrides. Existing executable repository-local filter/diff/fsmonitor
+   configuration or non-empty `.git/info/attributes` fails closed at admission.
+   After that admission check, candidate Git operations no longer consume the
+   source repository's mutable local configuration.
+3. Preparation creates disposable Git metadata with a trusted local config and
+   an object-alternate link to the source repository's object database. Candidate
+   staging, tree creation, checkout, diffing and workspace Git commands all use
+   that disposable metadata, so a concurrent mutation of the source
+   `.git/config` or source-local attributes cannot affect the prepared bytes or
+   execute a newly injected filter. Before any preparation authority executes,
+   the proposed tree must leave `ci/prepare-candidate`, `ci/style`,
+   `ci/verify`, and `tools/candidate_prepare.py` unchanged from the parent.
+   Changes to those authority surfaces require a separately admitted
+   authority-evolution path. The proposed tree is materialized into a disposable
+   workspace backed only by the isolated Git metadata; normalization and focused
+   verification never use the caller's live Git metadata.
    This excludes ignored/untracked source-worktree files and concurrent caller
    edits from the verified candidate. Candidate trees containing symlinks fail
    closed before style or verification; the current contract does not attempt to
@@ -169,8 +172,9 @@ The change must retain executable evidence that:
   mismatch and requires a separately retained trusted receipt identity without
   claiming cryptographic producer authentication;
 - inherited Git configuration, including `GIT_CONFIG_PARAMETERS`, cannot inject
-  filter/diff/hook execution into staging, and executable repository-local Git
-  configuration fails closed;
+  filter/diff/hook execution into staging; existing executable repository-local
+  Git configuration fails closed and later source-local configuration races are
+  irrelevant because candidate Git operations use disposable metadata;
 - candidate symlinks are rejected before any preparation authority executes;
 - malformed receipt path lists fail closed as `PrepareError` rather than
   escaping the verifier with an implementation exception;
