@@ -29,12 +29,28 @@ _GIT_ENVIRONMENT_VARIABLES = (
     "GIT_CEILING_DIRECTORIES",
     "GIT_DISCOVERY_ACROSS_FILESYSTEM",
 )
+_GIT_CALLER_OVERRIDE_ENVIRONMENT_VARIABLES = (
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_CONFIG_SYSTEM",
+    "GIT_CONFIG_NOSYSTEM",
+    "GIT_ATTR_NOSYSTEM",
+    "GIT_EXTERNAL_DIFF",
+    "GIT_TEMPLATE_DIR",
+)
 
 
 def _test_env() -> dict[str, str]:
     env = dict(os.environ)
-    for name in _GIT_ENVIRONMENT_VARIABLES:
-        env.pop(name, None)
+    for name in tuple(env):
+        if (
+            name in _GIT_ENVIRONMENT_VARIABLES
+            or name in _GIT_CALLER_OVERRIDE_ENVIRONMENT_VARIABLES
+            or name == "GIT_CONFIG_COUNT"
+            or name.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))
+        ):
+            env.pop(name, None)
     return env
 
 
