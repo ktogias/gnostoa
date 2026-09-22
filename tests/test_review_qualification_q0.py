@@ -25,8 +25,7 @@ Q0_OBSERVED_AT = "2026-09-22T05:50:00Z"
 Q0_SNAPSHOT_ID = "gnostoa-r2a-qualification-q0-5771806967"
 Q0_REVISION = "5771806967"
 CURRENT_OUTER_RUNTIME_BINDING = (
-    "tasks/issue-11-r2a-current-advisory.json:"
-    "authority.expected_judge.source_revision"
+    "tasks/issue-11-r2a-current-advisory.json:authority.expected_judge.source_revision"
 )
 Q0_ENTRIES = [
     {
