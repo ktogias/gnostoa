@@ -465,7 +465,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
         # skipcq: PYL-W0212 -- intentional white-box environment regression
         seeded = candidate_prepare._base_env()
         for name in _GIT_ENVIRONMENT_VARIABLES:
-            seeded[name] = f"/tmp/gnostoa-{name.lower()}"
+            seeded[name] = f"gnostoa-sentinel-{name.lower()}"
         # skipcq: PYL-W0212 -- intentional white-box environment regression
         env = candidate_prepare._focused_verification_env(seeded)
         for name in _GIT_ENVIRONMENT_VARIABLES:
