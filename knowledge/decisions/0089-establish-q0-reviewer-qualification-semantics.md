@@ -142,16 +142,27 @@ Revocation or supersession is required when, for example:
 - the source can no longer provide the declared semantic-review capability;
 - the repository scope no longer applies.
 
-### 5. Owner reviews remain excluded and quorum semantics are unchanged
+### 5. Owner-review policy and quorum thresholds are unchanged; ownership eligibility fails closed
 
-Q0 does not change:
+Q0a preserves:
 
-- `owner_reviews_count: false`;
+- protected Gnostoa-self policy `owner_reviews_count: false`;
 - required capability `semantic-review`;
 - `minimum_distinct_domains: 2`;
 - acceptable recommendation `APPROVE`;
 - R2A recommendation normalization;
 - merge, provider-write or approval authority.
+
+Q0a also corrects the evaluator's interpretation of the existing owner-review
+exclusion. A qualification entry is ownership-eligible only when
+`owner_relation == "non_owner"`, or when `owner_relation == "owner"` and the
+effective policy explicitly enables owner reviews. `owner_relation == "unknown"`
+never contributes an independence domain until ownership is resolved. This is a
+live fail-closed evaluator hardening, not a change to quorum thresholds,
+recommendation semantics or owner authority.
+
+The bounded correction was explicitly retained inside Q0a by the accountable owner
+in #10 comment 5777647642 after review exposed the latent permissive path.
 
 A qualified reviewer that produces `COMMENT_ONLY`, `ABSTAIN`, stale evidence or
 a non-exact subject still does not advance quorum.

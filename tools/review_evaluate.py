@@ -407,7 +407,7 @@ def _qualification_entries(entries: list[Any]) -> list[dict[str, Any]]:
     return [by_key[key] for key in sorted(by_key)]
 
 
-# skipcq: PY-R1000 -- pre-existing monolithic evaluator; Q0a adds one fail-closed owner gate
+# skipcq: PY-R1000 -- pre-existing complexity; Q0a owner gate; removal tracked in #310
 def evaluate(
     input_document: dict[str, Any],
     policy_document: dict[str, Any],

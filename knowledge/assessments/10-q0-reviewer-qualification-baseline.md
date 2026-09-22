@@ -117,13 +117,19 @@ is a separate prior-integrated runtime and is not the non-empty-bundle blocker.
 Q0a therefore binds to the outer-consumer authority field rather than copying a Git
 revision into the candidate baseline.
 
-Therefore PR #305 is a **dormant capability preparation**, not the protected
-qualification effect:
+Therefore the **protected qualification activation** in PR #305 remains dormant,
+but the PR itself is no longer purely dormant capability preparation:
 
 - source schema gains the normalized non-empty qualification-entry shape;
 - tests prove the future shape is closed;
 - the candidate qualification data is retained;
-- the live protected bundle stays empty.
+- the production evaluator now fails closed on unresolved reviewer ownership:
+  `non_owner` may remain eligible, `owner` counts only when policy explicitly
+  enables owner reviews, and `unknown` never contributes a qualification domain;
+- the existing quorum threshold, acceptable recommendation and protected
+  `owner_reviews_count: false` policy remain unchanged;
+- the live protected bundle stays empty, so Q0a still performs no protected
+  qualification activation.
 
 After Q0a integration, a separately authorized outer-consumer
 publication/qualification/promotion sequence must make this schema prior-integrated
