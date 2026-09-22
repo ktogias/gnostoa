@@ -5,8 +5,8 @@
       "kind": "gnostoa-protected-main-record",
       "value": "tasks/issue-11-r2a-current-advisory.json:v1"
     },
-    "policy_digest": "sha256:6cd1e270ef49170dbfe839107d5e745d8f45b62f33ab4c9116f9846210095179",
-    "qualification_snapshot_digest": "sha256:db18242f682af42490369c85d2f0b770a46a133bfb69c4aba6f12ce6fa2f70a4",
+    "policy_digest": "sha256:29b1fc4dd05843ba7a71203c4c605272cb914a1f4f4da8b198d36a4a8b3803ad",
+    "qualification_snapshot_digest": "sha256:71e6472cb37443a4b60ed63456fbcb4c5da0cca1b5d2575c7d7321493ef9123f",
     "expected_judge": {
       "acquisition": "oci",
       "source_revision": "d66d1830d724d759db6ec87e1f8d5dcc0847f221",
@@ -48,8 +48,7 @@
       ],
       "owner_reviews_count": false,
       "snapshot_freshness": {
-        "mode": "max_age",
-        "seconds": 86400
+        "mode": "not_age_sensitive"
       }
     },
     "quorum": {
@@ -75,16 +74,69 @@
     "review_requirement": "required",
     "schema_version": "1.0",
     "id": "gnostoa-review-assurance",
-    "version": "1.0",
+    "version": "1.1",
     "abstract": false,
     "change_class": "critical"
   },
   "qualification_snapshot": {
-    "snapshot_id": "gnostoa-r2a-qualification-empty-5659481721",
-    "revision": "5659481721",
-    "qualifying_authority": "https://github.com/ktogias/gnostoa/issues/10#issuecomment-5659481721",
-    "observed_at": "2026-09-14T05:32:08Z",
-    "entries": []
+    "snapshot_id": "gnostoa-r2a-qualification-q0-5773362664",
+    "revision": "5773362664",
+    "qualifying_authority": "https://github.com/ktogias/gnostoa/issues/10#issuecomment-5773362664",
+    "observed_at": "2026-09-22T07:33:00Z",
+    "entries": [
+      {
+        "reviewer_id": "coderabbitai[bot]",
+        "source_id": "retained-review-evidence",
+        "independence_domain_id": "external-review-principal-coderabbit",
+        "capability_ids": [
+          "semantic-review"
+        ],
+        "status": "established",
+        "observed_at": "2026-09-22T07:33:00Z",
+        "owner_relation": "non_owner",
+        "scope": {
+          "repository": "ktogias/gnostoa"
+        },
+        "provenance": {
+          "basis": "distinct_authenticated_github_app_principal_and_repeated_semantic_review_evidence",
+          "evidence_urls": [
+            "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5765178931",
+            "https://github.com/ktogias/gnostoa/issues/15#issuecomment-5748791770"
+          ],
+          "independence_basis": "distinct external source principal and provider-operated review boundary",
+          "limitations": [
+            "does not establish distinct underlying model, hidden context, or orthogonal risk-perspective independence",
+            "qualification does not convert COMMENTED provider output into APPROVE"
+          ]
+        }
+      },
+      {
+        "reviewer_id": "qodo-code-review[bot]",
+        "source_id": "retained-review-evidence",
+        "independence_domain_id": "external-review-principal-qodo",
+        "capability_ids": [
+          "semantic-review"
+        ],
+        "status": "established",
+        "observed_at": "2026-09-22T07:33:00Z",
+        "owner_relation": "non_owner",
+        "scope": {
+          "repository": "ktogias/gnostoa"
+        },
+        "provenance": {
+          "basis": "distinct_authenticated_github_app_principal_and_repeated_semantic_review_evidence",
+          "evidence_urls": [
+            "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5765884271",
+            "https://github.com/ktogias/gnostoa/issues/15#issuecomment-5748791770"
+          ],
+          "independence_basis": "distinct external source principal and provider-operated review boundary",
+          "limitations": [
+            "does not establish distinct underlying model, hidden context, or orthogonal risk-perspective independence",
+            "qualification does not convert COMMENTED provider output into APPROVE"
+          ]
+        }
+      }
+    ]
   },
   "acquired_judge": {
     "acquisition": "oci",
