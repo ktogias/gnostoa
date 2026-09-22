@@ -23,7 +23,7 @@
     "snapshot_id": "gnostoa-r2a-qualification-q0-5771806967",
     "revision": "5771806967",
     "qualifying_authority": "https://github.com/ktogias/gnostoa/issues/10#issuecomment-5771806967",
-    "observed_at": "2026-09-22T05:50:00Z",
+    "observed_at": "2026-09-22T06:05:00Z",
     "entries": [
       {
         "reviewer_id": "coderabbitai[bot]",
@@ -85,6 +85,38 @@
             "model-runtime-diversity-unestablished"
           ]
         }
+      },
+      {
+        "reviewer_id": "bito-code-review[bot]",
+        "source_id": "retained-review-evidence",
+        "independence_domain_id": "github-app:bito-code-review",
+        "capability_ids": [
+          "semantic-review"
+        ],
+        "status": "established",
+        "observed_at": "2026-09-22T06:05:00Z",
+        "owner_relation": "non_owner",
+        "scope": {
+          "repository": "https://github.com/ktogias/gnostoa"
+        },
+        "provenance": {
+          "basis": "q0-source-bound-reviewer-execution",
+          "evidence": [
+            "https://github.com/ktogias/gnostoa/pull/303#pullrequestreview-5272522425",
+            "https://github.com/ktogias/gnostoa/pull/303#pullrequestreview-5272844144",
+            "https://github.com/ktogias/gnostoa/pull/303#pullrequestreview-5273057643"
+          ],
+          "independence_axes": [
+            "authenticated-external-github-app-principal",
+            "provider-controlled-review-execution",
+            "read-only-review-role-for-qualified-evidence",
+            "exact-head-attribution"
+          ],
+          "limitations": [
+            "model-runtime-diversity-unestablished",
+            "subject-size-fair-use-can-refuse-large-prs"
+          ]
+        }
       }
     ]
   },
@@ -121,11 +153,36 @@
     }
   ],
   "activation": {
-    "state": "BLOCKED_PENDING_PRIOR_INTEGRATED_RUNTIME_PROMOTION",
+    "state": "BLOCKED_PENDING_PRIOR_INTEGRATED_RUNTIME_PROMOTION_AND_SECOND_APPROVAL_DOMAIN",
     "protected_bundle": "tasks/issue-11-r2a-current-advisory.json",
     "current_outer_runtime_revision": "315487e7a67635ebf3ec3f70f666ef41646102e1",
     "target_snapshot_freshness": {
       "mode": "not_age_sensitive"
     }
+  },
+  "assurance_progression": {
+    "acceptable_recommendation": "APPROVE",
+    "observed_formal_review_surfaces": [
+      {
+        "reviewer_id": "coderabbitai[bot]",
+        "github_review_state": "COMMENTED",
+        "normalized_recommendation": "COMMENT_ONLY",
+        "currently_quorum_advancing": false
+      },
+      {
+        "reviewer_id": "gitar-bot[bot]",
+        "github_review_state": "COMMENTED",
+        "normalized_recommendation": "COMMENT_ONLY",
+        "currently_quorum_advancing": false
+      },
+      {
+        "reviewer_id": "bito-code-review[bot]",
+        "github_review_state": "APPROVED",
+        "normalized_recommendation": "APPROVE",
+        "currently_quorum_advancing": true
+      }
+    ],
+    "current_result": "SECOND_APPROVAL_CAPABLE_DOMAIN_UNESTABLISHED",
+    "rule": "Qualification never upgrades COMMENT_ONLY into APPROVE. Protected quorum still needs two distinct qualified domains with exact-head active APPROVE evidence."
   }
 }
