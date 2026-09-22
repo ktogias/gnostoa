@@ -352,10 +352,10 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 "#!/bin/sh\n"
                 "set -eu\n"
                 "python -c 'import importlib.util, pathlib; "
-                "spec = importlib.util.find_spec(\"ruff\"); "
+                'spec = importlib.util.find_spec("ruff"); '
                 "assert spec is None or spec.origin is None or "
                 "pathlib.Path(spec.origin).resolve() != "
-                "pathlib.Path(\"ruff.py\").resolve()'\n",
+                'pathlib.Path("ruff.py").resolve()\'\n',
                 encoding="utf-8",
             )
             probe.chmod(0o755)
