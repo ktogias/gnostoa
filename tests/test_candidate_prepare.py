@@ -407,6 +407,48 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 env = candidate_prepare._trusted_python_env()
             self.assertIn(str(git_dir), env["PATH"].split(os.pathsep))
 
+    def test_focused_verification_env_scrubs_inherited_pythonpath(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "candidate"
+            outside = Path(directory) / "outside"
+            root.mkdir()
+            outside.mkdir()
+            (root / "candidate_visible.py").write_text(
+                "VALUE = 1\n",
+                encoding="utf-8",
+            )
+            (outside / "outside_shadow.py").write_text(
+                "raise SystemExit(97)\n",
+                encoding="utf-8",
+            )
+            with patch.dict(
+                os.environ,
+                {"PYTHONPATH": str(outside)},
+                clear=False,
+            ):
+                # skipcq: PYL-W0212 -- intentional white-box focused-env regression
+                env = candidate_prepare._focused_verification_env()
+                # skipcq: PYL-W0212 -- intentional white-box subprocess regression
+                completed = candidate_prepare._run(
+                    [
+                        candidate_prepare.sys.executable,
+                        "-c",
+                        (
+                            "import importlib.util; "
+                            "assert importlib.util.find_spec('candidate_visible') "
+                            "is not None; "
+                            "assert importlib.util.find_spec('outside_shadow') "
+                            "is None"
+                        ),
+                    ],
+                    cwd=root,
+                    env=env,
+                    check=False,
+                )
+            self.assertEqual(0, completed.returncode, completed.stderr)
+
     def test_prepare_does_not_admit_ignored_source_worktree_state(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

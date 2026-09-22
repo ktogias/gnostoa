@@ -125,6 +125,16 @@ def _trusted_python_env(env: dict[str, str] | None = None) -> dict[str, str]:
     return trusted
 
 
+def _focused_verification_env(
+    env: dict[str, str] | None = None,
+) -> dict[str, str]:
+    focused = _trusted_python_env(env)
+    # Focused verification must import the exact candidate workspace, while
+    # inherited Python search paths and user-site state remain excluded.
+    focused.pop("PYTHONSAFEPATH", None)
+    return focused
+
+
 def _run(
     command: Sequence[str],
     *,
@@ -636,7 +646,9 @@ def prepare(
             if not style.is_file():
                 raise PrepareError("ci/style is unavailable")
             focused_argv = _focused_profile_command(workspace, focused_profile)
-            style_env = _trusted_python_env(_isolated_git_env(git_dir, workspace))
+            isolated_env = _isolated_git_env(git_dir, workspace)
+            style_env = _trusted_python_env(isolated_env)
+            focused_env = _focused_verification_env(isolated_env)
 
             _run([str(style), "--fix"], cwd=workspace, env=style_env)
             _assert_head(workspace, parent_commit)
@@ -658,7 +670,12 @@ def prepare(
             # tree. Drop ignored/untracked formatter residue, then restore
             # tracked bytes from the normalized index before verification.
             _reset_workspace_to_index(workspace, git_dir)
-            focused = _run(focused_argv, cwd=workspace, check=False)
+            focused = _run(
+                focused_argv,
+                cwd=workspace,
+                env=focused_env,
+                check=False,
+            )
             if focused.returncode != 0:
                 stderr = focused.stderr.decode("utf-8", errors="replace").strip()
                 detail = f": {stderr}" if stderr else ""

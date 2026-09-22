@@ -126,8 +126,14 @@ non-hook authoring without importing a general orchestration subsystem.
    `python -m ruff` bound to the installed Ruff distribution rather than a
    candidate-supplied `ruff.py` or `ruff` package. Preparation stages the
    normalized result, then cleans ignored/untracked residue and restores exactly
-   the normalized index before focused verification. The external CLI accepts
-   only `policy`, `security-fast`, `fast`, `regression`, `smoke`, and
+   the normalized index before focused verification. Focused verification uses a
+   separate scrubbed Python environment: inherited `PYTHONPATH`, `PYTHONHOME`,
+   `PYTHONUSERBASE`, caller safe-path state and user-site loading are removed,
+   and executable lookup stays on the restricted Python/Git/system `PATH`.
+   Unlike the style/Ruff phase, focused verification intentionally leaves the
+   isolated candidate workspace importable so tests can exercise candidate code
+   without importing caller-supplied paths. The external CLI accepts only
+   `policy`, `security-fast`, `fast`, `regression`, `smoke`, and
    `extended`; each maps to static `./ci/verify <suite>` argv with
    `shell=False`. Caller input cannot choose an executable or arbitrary
    verification arguments.

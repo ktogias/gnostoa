@@ -120,7 +120,11 @@ The active interpreter's unresolved directory stays first on `PATH`, preserving
 a virtualenv's Python/Ruff installation while preventing a candidate
 `ruff.py`/`ruff` package from shadowing it.
 It restores the normalized tree, then runs the allowlisted
-`ci/verify` profile and final `ci/style --check`. Source-worktree-only
+`ci/verify` profile under a separate scrubbed Python environment: inherited
+`PYTHONPATH`/`PYTHONHOME`/user-site state and arbitrary executable search
+paths are excluded, while the isolated candidate workspace remains intentionally
+importable for candidate tests. Final `ci/style --check` returns to the stricter
+safe-path style environment. Source-worktree-only
 ignored/untracked files and concurrent caller edits are not part of verification. Candidate symlinks are rejected
 before style or focused verification because this bounded contract does not
 admit external target chains. The CLI never accepts an executable or arbitrary
