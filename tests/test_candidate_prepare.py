@@ -39,26 +39,15 @@ def _test_env() -> dict[str, str]:
 
 class CandidatePreparationContractTests(unittest.TestCase):
     @staticmethod
-    def _process(
-        root: Path,
-        command: list[str],
-        *,
-        check: bool = True,
-    ) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(  # nosemgrep  # nosec B603
-            command,
+    def _git(root: Path, *arguments: str) -> str:
+        completed = subprocess.run(  # nosemgrep  # nosec B603
+            [GIT, *arguments],
             cwd=root,
             env=_test_env(),
-            check=check,
+            check=True,
+            shell=False,
             capture_output=True,
             text=True,
-        )
-
-    @staticmethod
-    def _git(root: Path, *arguments: str) -> str:
-        completed = CandidatePreparationContractTests._process(
-            root,
-            [GIT, *arguments],
         )
         return completed.stdout.strip()
 
@@ -116,10 +105,14 @@ class CandidatePreparationContractTests(unittest.TestCase):
             root = Path(directory)
             self._repository(root)
             (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
-            style = self._process(
-                root,
+            style = subprocess.run(  # nosemgrep  # nosec B603
                 [str(root / "ci" / "style"), "--check"],
+                cwd=root,
+                env=_test_env(),
                 check=False,
+                shell=False,
+                capture_output=True,
+                text=True,
             )
             self.assertNotEqual(0, style.returncode)
             self._git(root, "add", "candidate.py")
@@ -368,10 +361,14 @@ class CandidatePreparationContractTests(unittest.TestCase):
         self.assertIn('cd "$(dirname "$0")/.."', text)
         self.assertIn("python -m tools.candidate_prepare", text)
         with tempfile.TemporaryDirectory() as directory:
-            completed = self._process(
-                Path(directory),
+            completed = subprocess.run(  # nosemgrep  # nosec B603
                 [str(wrapper), "--help"],
+                cwd=Path(directory),
+                env=_test_env(),
                 check=False,
+                shell=False,
+                capture_output=True,
+                text=True,
             )
         self.assertEqual(0, completed.returncode, completed.stderr)
 
