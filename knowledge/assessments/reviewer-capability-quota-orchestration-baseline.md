@@ -5,7 +5,7 @@ description: Dated Gnostoa-self baseline separating reviewer capabilities, accou
 status: draft
 generated:
   by: openai/gpt-5.6-sol
-  at: "2026-09-22T01:47:00Z"
+  at: "2026-09-22T01:57:50Z"
 sources:
   - id: work-item
     resource: https://github.com/ktogias/gnostoa/issues/15
@@ -345,7 +345,7 @@ review could be requested in **13h03m**, retained as a
 `2026-09-21T21:26:00Z` retry prediction. A successful formal review was then
 observed at `2026-09-21T18:55:52Z`, proving historically that review capacity
 was usable by that later event. However, the retained account observations have
-`scope_identity=null`, so v0.14 deliberately forbids machine supersession or
+`scope_identity=null`, so v0.15 deliberately forbids machine supersession or
 current dispatch authorization from those records alone; current scheduling
 requires fresh account/provider read-back in the planning cut. The
 automatic-per-PR limit and rolling account availability remain separate quota
