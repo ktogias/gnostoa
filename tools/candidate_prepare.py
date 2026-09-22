@@ -82,12 +82,12 @@ def _run(
 ) -> subprocess.CompletedProcess[bytes]:
     if env is None:
         env = _base_env()
-    # Every command is passed as an argv vector with shell=False. Git and
-    # repository-owned verification commands are locally resolved. Candidate
-    # preparation accepts only a closed focused profile at both the CLI and
-    # implementation-private API boundaries; callers cannot supply executable
-    # paths or arbitrary subprocess arguments.
-    completed = subprocess.run(  # nosemgrep  # nosec B603
+    # Audited for command injection: no shell is involved. Git and
+    # repository-owned verification executables are locally resolved, argv is
+    # passed as a list, and candidate preparation accepts only a closed focused
+    # profile at both the CLI and implementation-private API boundaries.
+    # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
+    completed = subprocess.run(  # nosec B603
         list(command),
         cwd=cwd,
         env=env,
