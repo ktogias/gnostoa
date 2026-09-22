@@ -24,7 +24,10 @@ Q0_AUTHORITY = "https://github.com/ktogias/gnostoa/issues/10#issuecomment-577180
 Q0_OBSERVED_AT = "2026-09-22T05:50:00Z"
 Q0_SNAPSHOT_ID = "gnostoa-r2a-qualification-q0-5771806967"
 Q0_REVISION = "5771806967"
-CURRENT_OUTER_RUNTIME_REVISION = "315487e7a67635ebf3ec3f70f666ef41646102e1"  # pragma: allowlist secret -- public Git commit identity
+CURRENT_OUTER_RUNTIME_BINDING = (
+    "tasks/issue-11-r2a-current-advisory.json:"
+    "authority.expected_judge.source_revision"
+)
 Q0_ENTRIES = [
     {
         "reviewer_id": "coderabbitai[bot]",
@@ -116,15 +119,20 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
                 if isinstance(entry, dict)
             },
         )
+        live_bundle = _load(BUNDLE_PATH)
+        self.assertIsInstance(
+            live_bundle["authority"]["expected_judge"]["source_revision"], str
+        )
+        self.assertEqual(
+            CURRENT_OUTER_RUNTIME_BINDING,
+            baseline["activation"]["current_outer_runtime_binding"],
+        )
+
         self.assertEqual(
             {
                 "state": "BLOCKED_PENDING_PRIOR_INTEGRATED_RUNTIME_PROMOTION",
                 "protected_bundle": "tasks/issue-11-r2a-current-advisory.json",
-                "current_outer_runtime_revision": CURRENT_OUTER_RUNTIME_REVISION,
-                "_public_identity_note": (
-                    "# pragma: allowlist secret -- public Git commit identity "
-                    "retained for protected runtime binding"
-                ),
+                "current_outer_runtime_binding": CURRENT_OUTER_RUNTIME_BINDING,
                 "target_snapshot_freshness": {"mode": "not_age_sensitive"},
             },
             baseline["activation"],
