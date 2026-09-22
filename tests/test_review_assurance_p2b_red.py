@@ -21,17 +21,62 @@ P2A_OCI_IMAGE = (
     "ghcr.io/ktogias/gnostoa@"
     "sha256:adcf9ce060a382b47973bbd9848ba9dff3bc05985c17411c4b8a2adb9b0c6504"  # pragma: allowlist secret -- public registry identity
 )
-CRITICAL_POLICY_DIGEST = "sha256:6cd1e270ef49170dbfe839107d5e745d8f45b62f33ab4c9116f9846210095179"  # pragma: allowlist secret -- public policy digest
+CRITICAL_POLICY_DIGEST = "sha256:29b1fc4dd05843ba7a71203c4c605272cb914a1f4f4da8b198d36a4a8b3803ad"  # pragma: allowlist secret -- public policy digest
 QUALIFICATION_SNAPSHOT = {
-    "snapshot_id": "gnostoa-r2a-qualification-empty-5659481721",
-    "revision": "5659481721",
+    "snapshot_id": "gnostoa-r2a-qualification-q0-5773362664",
+    "revision": "5773362664",
     "qualifying_authority": (
-        "https://github.com/ktogias/gnostoa/issues/10#issuecomment-5659481721"
+        "https://github.com/ktogias/gnostoa/issues/10#issuecomment-5773362664"
     ),
-    "observed_at": "2026-09-14T05:32:08Z",
-    "entries": [],
+    "observed_at": "2026-09-22T07:33:00Z",
+    "entries": [
+        {
+            "reviewer_id": "coderabbitai[bot]",
+            "source_id": "retained-review-evidence",
+            "independence_domain_id": "external-review-principal-coderabbit",
+            "capability_ids": ["semantic-review"],
+            "status": "established",
+            "observed_at": "2026-09-22T07:33:00Z",
+            "owner_relation": "non_owner",
+            "scope": {"repository": "ktogias/gnostoa"},
+            "provenance": {
+                "basis": "distinct_authenticated_github_app_principal_and_repeated_semantic_review_evidence",
+                "evidence_urls": [
+                    "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5765178931",
+                    "https://github.com/ktogias/gnostoa/issues/15#issuecomment-5748791770",
+                ],
+                "independence_basis": "distinct external source principal and provider-operated review boundary",
+                "limitations": [
+                    "does not establish distinct underlying model, hidden context, or orthogonal risk-perspective independence",
+                    "qualification does not convert COMMENTED provider output into APPROVE",
+                ],
+            },
+        },
+        {
+            "reviewer_id": "qodo-code-review[bot]",
+            "source_id": "retained-review-evidence",
+            "independence_domain_id": "external-review-principal-qodo",
+            "capability_ids": ["semantic-review"],
+            "status": "established",
+            "observed_at": "2026-09-22T07:33:00Z",
+            "owner_relation": "non_owner",
+            "scope": {"repository": "ktogias/gnostoa"},
+            "provenance": {
+                "basis": "distinct_authenticated_github_app_principal_and_repeated_semantic_review_evidence",
+                "evidence_urls": [
+                    "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5765884271",
+                    "https://github.com/ktogias/gnostoa/issues/15#issuecomment-5748791770",
+                ],
+                "independence_basis": "distinct external source principal and provider-operated review boundary",
+                "limitations": [
+                    "does not establish distinct underlying model, hidden context, or orthogonal risk-perspective independence",
+                    "qualification does not convert COMMENTED provider output into APPROVE",
+                ],
+            },
+        },
+    ],
 }
-QUALIFICATION_DIGEST = "sha256:db18242f682af42490369c85d2f0b770a46a133bfb69c4aba6f12ce6fa2f70a4"  # pragma: allowlist secret -- public qualification snapshot digest
+QUALIFICATION_DIGEST = "sha256:71e6472cb37443a4b60ed63456fbcb4c5da0cca1b5d2575c7d7321493ef9123f"  # pragma: allowlist secret -- public qualification snapshot digest
 EXPECTED_JUDGE = {
     "acquisition": "oci",
     "source_revision": P2A_SOURCE_REVISION,
@@ -70,26 +115,18 @@ class ReviewAssuranceP2bAuthorityLandingTests(unittest.TestCase):
         unknown["candidate_claim"] = True
         self.assertNotEqual([], list(validator.iter_errors(unknown)))
 
-        nonempty_qualification = copy.deepcopy(bundle)
-        qualification = nonempty_qualification["qualification_snapshot"]
+        malformed_entry = copy.deepcopy(bundle)
+        qualification = malformed_entry["qualification_snapshot"]
         assert isinstance(qualification, dict)
-        qualification["entries"] = [
-            {
-                "reviewer_id": "unadmitted-reviewer",
-                "source_id": "unadmitted-source",
-                "independence_domain_id": "unadmitted-domain",
-                "capability_ids": ["semantic-review"],
-                "status": "established",
-                "observed_at": "2026-09-14T05:32:08Z",
-                "owner_relation": "non_owner",
-                "scope": {"candidate_claim": True},
-                "provenance": {"candidate_claim": True},
-            }
-        ]
+        entries = qualification["entries"]
+        assert isinstance(entries, list)
+        first = entries[0]
+        assert isinstance(first, dict)
+        first["scope"] = {"repository": "ktogias/gnostoa", "candidate_claim": True}
         self.assertNotEqual(
             [],
-            list(validator.iter_errors(nonempty_qualification)),
-            "P2b-A v1 must not admit qualification facts beyond the protected empty #10 snapshot",
+            list(validator.iter_errors(malformed_entry)),
+            "protected qualification entries must remain schema-closed",
         )
 
         malformed_timestamp = copy.deepcopy(bundle)
@@ -126,7 +163,11 @@ class ReviewAssuranceP2bAuthorityLandingTests(unittest.TestCase):
 
         qualification = bundle["qualification_snapshot"]
         self.assertEqual(QUALIFICATION_SNAPSHOT, qualification)
-        self.assertEqual([], qualification["entries"])
+        self.assertEqual(2, len(qualification["entries"]))
+        self.assertEqual(
+            {"coderabbitai[bot]", "qodo-code-review[bot]"},
+            {entry["reviewer_id"] for entry in qualification["entries"]},
+        )
         self.assertEqual(QUALIFICATION_DIGEST, canonical_digest(qualification))
 
         acquired_judge = bundle["acquired_judge"]
