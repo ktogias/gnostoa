@@ -83,9 +83,12 @@ non-hook authoring without importing a general orchestration subsystem.
 2. Preparation binds one exact 40-character parent commit. The source worktree
    `HEAD` must equal that parent; stale-parent preparation fails closed.
    Repository discovery scrubs inherited repository-routing, external-diff,
-   `GIT_CONFIG_PARAMETERS` and other caller-supplied `GIT_CONFIG*`
-   overrides. Existing executable repository-local filter/diff/fsmonitor
-   configuration or non-empty `.git/info/attributes` fails closed at admission.
+   `GIT_CONFIG_PARAMETERS`, `GIT_TEMPLATE_DIR` and other caller-supplied
+   `GIT_CONFIG*` overrides. Existing executable repository-local
+   filter/diff/fsmonitor configuration or non-empty `.git/info/attributes`
+   fails closed at admission. Disposable metadata is initialized against an
+   explicitly empty trusted template so caller Git templates cannot populate
+   executable configuration before admission.
    After that admission check, candidate Git operations no longer consume the
    source repository's mutable local configuration.
 3. Preparation creates disposable Git metadata with a trusted local config.
@@ -103,7 +106,11 @@ non-hook authoring without importing a general orchestration subsystem.
    patterns are copied once as immutable snapshots into the disposable metadata.
    Only the inert ignore-pattern bytes cross that boundary; caller global/system
    configuration is not retained. This keeps ignored scratch/secrets excluded
-   without reopening mutable source or caller configuration. Candidate staging,
+   without reopening mutable source or caller configuration. The resulting
+   candidate is intentionally relative to the caller's snapshotted ignore
+   patterns: callers with different effective global ignore policies can admit
+   different untracked sets, matching the files each caller exposes for staging.
+   Candidate staging,
    checkout, diffing and workspace Git commands never load the source
    repository's mutable local config or caller global/system config. A concurrent
    mutation of those configs or source-local attributes therefore cannot affect
@@ -135,7 +142,13 @@ non-hook authoring without importing a general orchestration subsystem.
    and executable lookup stays on the restricted Python/Git/system `PATH`.
    Unlike the style/Ruff phase, focused verification intentionally leaves the
    isolated candidate workspace importable so tests can exercise candidate code
-   without importing caller-supplied paths. The external CLI accepts only
+   without importing caller-supplied paths. A preparation-owned executable
+   directory shadows any installed `knowledge` console script with a trusted
+   shim that runs the active interpreter as `python -m tools.cli` from the
+   isolated workspace. `KNOWLEDGE_KIT_ROOT` is rebound to that workspace and
+   `KNOWLEDGE_KIT_REVISION` is reset to `development`; inherited source-checkout
+   or image routing cannot make a focused receipt validate different bytes.
+   The external CLI accepts only
    `policy`, `security-fast`, `fast`, `regression`, `smoke`, and
    `extended`; each maps to static `./ci/verify <suite>` argv with
    `shell=False`. Caller input cannot choose an executable or arbitrary
