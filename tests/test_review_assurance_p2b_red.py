@@ -83,7 +83,11 @@ class ReviewAssuranceP2bAuthorityLandingTests(unittest.TestCase):
                 "observed_at": "2026-09-14T05:32:08Z",
                 "owner_relation": "non_owner",
                 "scope": {"repository": "https://github.com/ktogias/gnostoa"},
-                "provenance": {"basis": "synthetic-schema-compatibility"},
+                "provenance": {
+                    "basis": "synthetic-schema-compatibility",
+                    "evidence": ["synthetic-evidence-ref"],
+                    "independence_axes": ["synthetic-independent-reviewer-boundary"],
+                },
             }
         ]
         self.assertEqual(
