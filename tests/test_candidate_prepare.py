@@ -208,16 +208,18 @@ class CandidatePreparationContractTests(unittest.TestCase):
             parent = self._repository(root)
             (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
             receipt = self._receipt()
-            with patch.dict(
-                os.environ,
-                {"GNOSTOA_TEST_FOCUSED_MODE": "mutate"},
-                clear=False,
-            ):
-                with self.assertRaisesRegex(
+            with (
+                patch.dict(
+                    os.environ,
+                    {"GNOSTOA_TEST_FOCUSED_MODE": "mutate"},
+                    clear=False,
+                ),
+                self.assertRaisesRegex(
                     candidate_prepare.PrepareError,
                     "focused verification mutated candidate",
-                ):
-                    self._prepare(root, parent, receipt)
+                ),
+            ):
+                self._prepare(root, parent, receipt)
             self.assertFalse(receipt.exists())
 
     def test_prepare_rejects_failed_focused_verification(self) -> None:
@@ -226,16 +228,18 @@ class CandidatePreparationContractTests(unittest.TestCase):
             parent = self._repository(root)
             (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
             receipt = self._receipt()
-            with patch.dict(
-                os.environ,
-                {"GNOSTOA_TEST_FOCUSED_MODE": "fail"},
-                clear=False,
-            ):
-                with self.assertRaisesRegex(
+            with (
+                patch.dict(
+                    os.environ,
+                    {"GNOSTOA_TEST_FOCUSED_MODE": "fail"},
+                    clear=False,
+                ),
+                self.assertRaisesRegex(
                     candidate_prepare.PrepareError,
                     r"focused verification failed \(7\)",
-                ):
-                    self._prepare(root, parent, receipt)
+                ),
+            ):
+                self._prepare(root, parent, receipt)
             self.assertFalse(receipt.exists())
 
     def test_prepare_rejects_unknown_focused_profile(self) -> None:
@@ -244,12 +248,14 @@ class CandidatePreparationContractTests(unittest.TestCase):
             parent = self._repository(root)
             (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
             receipt = self._receipt()
-            with patch.object(candidate_prepare, "_repository_root", return_value=root):
-                with self.assertRaisesRegex(
+            with (
+                patch.object(candidate_prepare, "_repository_root", return_value=root),
+                self.assertRaisesRegex(
                     candidate_prepare.PrepareError,
                     "unsupported focused verification profile",
-                ):
-                    candidate_prepare.prepare(parent, receipt, "unknown")
+                ),
+            ):
+                candidate_prepare.prepare(parent, receipt, "unknown")
 
     def test_prepare_rejects_candidate_local_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
