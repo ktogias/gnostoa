@@ -80,7 +80,11 @@ class CandidatePreparationContractTests(unittest.TestCase):
             'case "${GNOSTOA_TEST_FOCUSED_MODE:-pass}" in\n'
             "  mutate) printf 'changed\\n' > candidate.py ;;\n"
             "  fail) exit 7 ;;\n"
-            "  pass) grep -q '^value = 1
+            "  pass) grep -q '^value = 1$' candidate.py ;;\n"
+            "  *) exit 8 ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
         verify.chmod(0o755)
         (root / "base.txt").write_text("base\n", encoding="utf-8")
         CandidatePreparationContractTests._git(root, "add", ".")
@@ -619,7 +623,7 @@ if __name__ == "__main__":
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             parent = self._repository(root)
-            (root / "candidate.py").write_text("value=1\\n", encoding="utf-8")
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
             receipt = self._receipt()
             with (
                 patch.object(candidate_prepare, "_repository_root", return_value=root),
