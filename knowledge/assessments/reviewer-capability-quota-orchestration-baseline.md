@@ -5,7 +5,7 @@ description: Dated Gnostoa-self baseline separating reviewer capabilities, accou
 status: draft
 generated:
   by: openai/gpt-5.6-sol
-  at: "2026-09-22T01:57:50Z"
+  at: "2026-09-22T02:20:15Z"
 sources:
   - id: work-item
     resource: https://github.com/ktogias/gnostoa/issues/15
@@ -167,7 +167,7 @@ is the first implementation-private registry snapshot. It intentionally has no
 standalone lifecycle/promotion flag: the protected repository revision and
 Decision 0087 determine whether a registry revision is operative, and a
 standalone JSON status token must not manufacture review or integration
-authority. Version `v0.15` exposes one planner-facing shape rather than
+authority. Version `v0.16` exposes one planner-facing shape rather than
 provider-specific field names.
 
 Every provider has the same typed `capabilities.manual_trigger` contract:
@@ -189,7 +189,7 @@ configuration path or sentinel as GitHub comment syntax.
 Every volatile provider fact belongs in one `observations[]` array. Each
 observation has the same fields and an explicit `scope` of `account`,
 `repository` or `subject`; absent values are `null`, not alternate
-top-level keys. Version `v0.15` separates the operational dimensions inside every
+top-level keys. Version `v0.16` separates the operational dimensions inside every
 observation:
 
 - `status` records the observed provider event or outcome and may therefore be
@@ -227,7 +227,7 @@ instead of guessed precedence. A newer `FAILED` or `TIMED_OUT` attempt also
 stales older cached `AVAILABLE` for automatic dispatch without asserting
 `UNAVAILABLE`.
 
-Version `v0.15` keeps freshness deterministic by refusing to invent a TTL:
+Version `v0.16` keeps freshness deterministic by refusing to invent a TTL:
 retained registry observations are historical scheduling hints, not sufficient
 current provider truth for automatic dispatch. Before a scarce route is
 automatically dispatched, eligibility and the current non-sensitive scope identity
@@ -243,6 +243,20 @@ observations use the same subject shape with `change_request=null` and
 `head_commit=null`, while account-scoped observations use `subject=null`.
 This prevents a completed review on one PR head from becoming a completion
 signal for a successor head.
+
+For **current provider/head activation scans**, exact-head attribution is broader
+than formal GitHub review nodes but still evidence-bound. A provider-authored
+persistent summary/status, check/run record or source/evidence link counts as
+same-head activity only when it explicitly names the exact candidate (or an
+immutable provider/request identity already bound to it). A mutable
+`updated_at` timestamp, proximity to a push, generic success status or provider
+presence is never enough. Conversely, an explicit exact-head SHA in a provider
+summary/footer/source URL is attributable provider/head activity even when the
+specific retained `route_id` cannot be recovered; that provider-level activity
+still suppresses sibling activation. v0.16 represents this with a typed
+`provider_activation_scan` carrying provider, cut, exact subject, scan time,
+completeness and `PRESENT|ABSENT|AMBIGUOUS` state. Only a **COMPLETE ABSENT**
+scan may establish negative activation evidence.
 
 Provider entries still retain:
 
@@ -301,7 +315,7 @@ configuration paths and interactive/manual routes use their own fields.
 The registry therefore retains an explicit `instruction_mode` and optional
 `instruction_template`. CodeAnt's observed comment shape is represented as
 `{command}\n\n{instructions}`, where `instructions` is bounded,
-caller-supplied text rather than provider folklore. Version `v0.15` makes the
+caller-supplied text rather than provider folklore. Version `v0.16` makes the
 bound deterministic: normalize CRLF/CR to LF, allow HT/LF as the only control
 characters, reject other C0/C1 controls and the reserved caller literals
 `{command}` / `{instructions}`, and cap the normalized UTF-8 payload at
@@ -345,7 +359,7 @@ review could be requested in **13h03m**, retained as a
 `2026-09-21T21:26:00Z` retry prediction. A successful formal review was then
 observed at `2026-09-21T18:55:52Z`, proving historically that review capacity
 was usable by that later event. However, the retained account observations have
-`scope_identity=null`, so v0.15 deliberately forbids machine supersession or
+`scope_identity=null`, so v0.16 deliberately forbids machine supersession or
 current dispatch authorization from those records alone; current scheduling
 requires fresh account/provider read-back in the planning cut. The
 automatic-per-PR limit and rolling account availability remain separate quota
@@ -381,7 +395,7 @@ reviewed-line plans; reviewed-line usage resets with the billing period,
 incremental reviews count newly reviewed lines, and manual reruns count again.
 Gnostoa directly observed quota refusal at 40,037/40,000 reviewed lines and later
 at a higher account allowance. The later provider message supplied only the
-resume **date** `2026-10-15`, not an attributable instant, so v0.15 retains that
+resume **date** `2026-10-15`, not an attributable instant, so v0.16 retains that
 coarse value in observation details and keeps normalized `retry_after=null`.
 Current availability must still be reacquired before dispatch.
 
@@ -578,6 +592,36 @@ superseded. The baseline does not claim that every supersession was avoidable,
 but it proves that repeated exact-head review collection is a meaningful source
 of churn and should be scheduled deliberately.
 
+### PR #297 dogfood: shallow activation scan caused duplicate Ready work
+
+The v0.15 workflow was falsified on PR #297 itself. On exact head
+`096705e56342e27cb1cfaf69f7622097f2b12efe`, Qodo's persistent Draft review
+summary had been refreshed at `2026-09-22T02:00:54Z` and its provider-authored
+evidence links explicitly named that exact commit. A shallow pre-Ready scan
+looked for formal exact-head review nodes and failed to inspect the full mutable
+summary/footer/source links, so it incorrectly classified Qodo as having no
+same-head activation.
+
+The PR transitioned to Ready at `2026-09-22T02:18:12Z`. The transition
+immediately produced observable provider effects without any manual reviewer
+trigger: Sourcery attempted a review and hit its rolling budget at
+`02:18:15Z`, CodeAnt started an exact-head incremental review at
+`02:18:16Z`, and Qodo reported a new review in progress at `02:18:20Z`.
+Qodo later confirmed that the review was updated through the exact same
+`096705e...` commit. The PR was returned to Draft at
+`2026-09-22T02:19:10Z` before the repair changed the head.
+
+Two lessons are normative here:
+
+1. negative activation evidence needs a typed, complete provider/head scan;
+   absence cannot be inferred from missing formal review nodes or a truncated
+   summary read;
+2. the post-Ready read-back cannot recover quota already spent by the lifecycle
+   event. Immediately before Ready, the pre-Ready cut must be refreshed against
+   current provider and lifecycle state. A write-capable lifecycle dispatcher
+   additionally needs the separately admitted fencing/lease authority; the
+   read-only planner does not manufacture atomicity.
+
 The default policy should therefore be:
 
 1. deterministic normalization and focused tests before candidate creation;
@@ -590,17 +634,16 @@ The default policy should therefore be:
    provider-level same-head deduplication established;
 5. preserve quota-limited, Ready-only or full-review routes for the sealed
    candidate;
-6. before recommending Ready, **PRE_READY_RECONCILE** must first scan
-   providers whose Ready path may auto-activate for attributable same-head
-   activity; absence may be claimed only from current scan evidence. A provider
-   with no same-head activation does not block Ready merely because its current
-   Ready configuration/dedup state is unreadable. If same-head activity exists,
-   current Ready/dedup facts are required: missing/ambiguous conflict state is
-   `REVALIDATION_REQUIRED` with next action `REVALIDATE_CURRENT_STATE`, and
-   enabled/unknown Ready auto-activation plus unestablished/unknown provider
-   dedup blocks Ready. After a safe Ready transition, read provider state back
-   again before any manual trigger and reconcile any newly auto-started
-   current-head review;
+6. before recommending Ready, **PRE_READY_RECONCILE** consumes a
+   typed current provider/head scan for each in-scope provider. Only
+   `completeness=COMPLETE` plus `activation_state=ABSENT` proves no
+   same-head activation. `PRESENT` provider/head activity blocks sibling
+   activation even when its route is unknown; `INCOMPLETE`/`AMBIGUOUS`
+   requires revalidation. Immediately before the Ready effect, refresh the
+   exact head/lifecycle state and these scans; any new provider activity or
+   competing orchestration state invalidates the cut. After Ready, record the
+   lifecycle transition receipt and mint a **new POST_READY cut** before any
+   manual trigger;
 7. manually invoke only selected routes that still have no current-head
    activation and whose dispatch-safety/current-eligibility requirements are
    satisfied; if eligibility cannot be reacquired, surface
@@ -673,7 +716,7 @@ Accordingly:
 The next implementation should be a **read-only review planner**, not a
 dispatcher.
 
-Version `v0.15` makes freshness, activation, route identity and protected
+Version `v0.16` makes freshness, activation, route identity and protected
 assurance inputs explicit:
 
 - a planning cut carries `cut_id`, exact RFC3339 `as_of`, and the exact
