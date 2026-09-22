@@ -83,9 +83,13 @@ def _load(path: Path) -> dict[str, Any]:
 
 
 class ReviewerQualificationQ0Tests(unittest.TestCase):
-    def test_q0_candidate_baseline_names_exact_minimal_two_domain_cohort(self) -> None:
+    def test_q0_candidate_baseline_names_exact_minimal_two_domain_cohort(
+        self,
+    ) -> None:
         baseline = _load(BASELINE_PATH)
-        self.assertEqual("gnostoa-reviewer-qualification-baseline/v1", baseline["schema_version"])
+        self.assertEqual(
+            "gnostoa-reviewer-qualification-baseline/v1", baseline["schema_version"]
+        )
         self.assertEqual("candidate", baseline["status"])
         self.assertEqual(Q0_AUTHORITY, baseline["qualifying_authority"])
         self.assertEqual(
@@ -119,7 +123,9 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
             baseline["activation"],
         )
 
-    def test_q0_source_schema_can_validate_future_nonempty_protected_snapshot(self) -> None:
+    def test_q0_source_schema_can_validate_future_nonempty_protected_snapshot(
+        self,
+    ) -> None:
         schema = _load(BUNDLE_SCHEMA_PATH)
         Draft202012Validator.check_schema(schema)
         validator = Draft202012Validator(schema, format_checker=FORMAT_CHECKER)
@@ -129,7 +135,9 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
 
         future = copy.deepcopy(live_bundle)
         baseline = _load(BASELINE_PATH)
-        future["qualification_snapshot"] = copy.deepcopy(baseline["qualification_snapshot"])
+        future["qualification_snapshot"] = copy.deepcopy(
+            baseline["qualification_snapshot"]
+        )
         future["authority"]["qualification_snapshot_digest"] = canonical_digest(
             future["qualification_snapshot"]
         )
@@ -160,7 +168,9 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
             resolve_project_policy(POLICY_PATH, "critical"),
             live_bundle["policy"],
         )
-        self.assertFalse(live_bundle["policy"]["qualification"]["owner_reviews_count"])
+        self.assertFalse(
+            live_bundle["policy"]["qualification"]["owner_reviews_count"]
+        )
         self.assertEqual(
             ["APPROVE"], live_bundle["policy"]["quorum"]["acceptable_recommendations"]
         )
