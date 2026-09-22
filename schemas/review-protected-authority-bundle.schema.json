@@ -138,16 +138,18 @@
         },
         "provenance": {
           "type": "object",
-          "required": ["basis"],
+          "required": ["basis", "evidence", "independence_axes"],
           "properties": {
             "basis": {"$ref": "#/$defs/nonEmptyString"},
             "evidence": {
               "type": "array",
+              "minItems": 1,
               "uniqueItems": true,
               "items": {"$ref": "#/$defs/nonEmptyString"}
             },
             "independence_axes": {
               "type": "array",
+              "minItems": 1,
               "uniqueItems": true,
               "items": {"$ref": "#/$defs/nonEmptyString"}
             },
