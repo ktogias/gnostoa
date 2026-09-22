@@ -88,14 +88,14 @@ class CandidatePreparationContractTests(unittest.TestCase):
             "  fail) exit 7 ;;\n"
             "  ignored-helper) test -f ignored-helper.txt ;;\n"
             "  nested-git)\n"
-            "    nested=\"$(mktemp -d)\"\n"
+            '    nested="$(mktemp -d)"\n'
             "    trap 'rm -rf \"$nested\"' EXIT\n"
-            "    git -C \"$nested\" init --quiet\n"
-            "    git -C \"$nested\" config user.email nested@example.invalid\n"
+            '    git -C "$nested" init --quiet\n'
+            '    git -C "$nested" config user.email nested@example.invalid\n'
             "    git -C \"$nested\" config user.name 'Nested Test'\n"
             "    printf 'nested\\n' > \"$nested/nested.txt\"\n"
-            "    git -C \"$nested\" add nested.txt\n"
-            "    git -C \"$nested\" commit --quiet -m baseline\n"
+            '    git -C "$nested" add nested.txt\n'
+            '    git -C "$nested" commit --quiet -m baseline\n'
             "    ;;\n"
             "  pass) grep -q '^value = 1$' candidate.py ;;\n"
             "  *) exit 8 ;;\n"
