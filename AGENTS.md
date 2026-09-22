@@ -92,8 +92,11 @@ Mechanical changes and emergency follow-up use the timing declared by
 
 Before creating or pushing a candidate that changes Python source or Python
 verification surfaces, use the pre-candidate preparation boundary from the
-recommended Development Container. A direct host invocation is a native fallback
-only when the container route is unavailable; record that reason.
+recommended Development Container defined by `.devcontainer/devcontainer.json`.
+That route provides a writable workspace mount and remaps the container user to
+the checkout owner; do not reuse the read-only one-shot verification container
+shown later in this file for preparation. A direct host invocation is a native
+fallback only when the container route is unavailable; record that reason.
 
 ```bash
 ./ci/prepare-candidate prepare \
