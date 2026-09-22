@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib
 import json
 import shutil
 import subprocess
@@ -8,20 +7,18 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from types import ModuleType
+from typing import Any
 from unittest.mock import patch
 
+from tools import candidate_prepare
+
 ROOT = Path(__file__).resolve().parents[1]
-GIT = shutil.which("git")
-if GIT is None:
+GIT: str = shutil.which("git") or ""
+if not GIT:
     raise RuntimeError("git is required for candidate preparation tests")
 
 
 class CandidatePreparationContractTests(unittest.TestCase):
-    @staticmethod
-    def _module() -> ModuleType:
-        return importlib.import_module("tools.candidate_prepare")
-
     @staticmethod
     def _git(root: Path, *arguments: str) -> str:
         completed = subprocess.run(
@@ -47,7 +44,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
         style.write_text(
             "#!/bin/sh\n"
             "set -eu\n"
-            "case \"$1\" in\n"
+            'case "$1" in\n'
             "  --fix) sed -i 's/value=1/value = 1/' candidate.py ;;\n"
             "  --check) grep -q '^value = 1$' candidate.py ;;\n"
             "  *) exit 2 ;;\n"
@@ -57,15 +54,30 @@ class CandidatePreparationContractTests(unittest.TestCase):
         style.chmod(0o755)
         (root / "base.txt").write_text("base\n", encoding="utf-8")
         CandidatePreparationContractTests._git(root, "add", ".")
-        CandidatePreparationContractTests._git(
-            root, "commit", "--quiet", "-m", "base"
-        )
+        CandidatePreparationContractTests._git(root, "commit", "--quiet", "-m", "base")
         return CandidatePreparationContractTests._git(root, "rev-parse", "HEAD")
 
     def _receipt(self) -> Path:
         receipt_root = Path(tempfile.mkdtemp(prefix="gnostoa-receipt-test-"))
         self.addCleanup(shutil.rmtree, receipt_root, ignore_errors=True)
         return receipt_root / "receipt.json"
+
+    @staticmethod
+    def _prepare(
+        root: Path,
+        parent: str,
+        receipt: Path,
+        command: list[str],
+    ) -> dict[str, Any]:
+        with (
+            patch.object(candidate_prepare, "_repository_root", return_value=root),
+            patch.object(
+                candidate_prepare,
+                "_ruff_version",
+                return_value="ruff 0.16.0",
+            ),
+        ):
+            return candidate_prepare.prepare(parent, receipt, command)
 
     def test_raw_git_commit_characterizes_non_hook_escape(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -95,7 +107,6 @@ class CandidatePreparationContractTests(unittest.TestCase):
             )
 
     def test_prepare_binds_normalized_tree_and_receipt(self) -> None:
-        candidate_prepare = self._module()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             parent = self._repository(root)
@@ -107,20 +118,12 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 encoding="utf-8",
             )
             receipt = self._receipt()
-            with patch.object(
-                candidate_prepare,
-                "_repository_root",
-                return_value=root,
-            ), patch.object(
-                candidate_prepare,
-                "_ruff_version",
-                return_value="ruff 0.16.0",
-            ):
-                payload = candidate_prepare.prepare(
-                    parent,
-                    receipt,
-                    [sys.executable, str(focused)],
-                )
+            payload = self._prepare(
+                root,
+                parent,
+                receipt,
+                [sys.executable, str(focused)],
+            )
             self.assertEqual(parent, payload["parent_commit"])
             self.assertEqual(["candidate.py", "focused.py"], payload["changed_paths"])
             self.assertEqual("PRE_CANDIDATE_RUFF_CATCH", payload["metric_event"])
@@ -135,7 +138,6 @@ class CandidatePreparationContractTests(unittest.TestCase):
             )
 
     def test_prepare_rejects_stale_parent(self) -> None:
-        candidate_prepare = self._module()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             parent = self._repository(root)
@@ -143,39 +145,27 @@ class CandidatePreparationContractTests(unittest.TestCase):
             self._git(root, "add", "second.txt")
             self._git(root, "commit", "--quiet", "-m", "second")
             receipt = self._receipt()
-            with patch.object(candidate_prepare, "_repository_root", return_value=root):
-                with self.assertRaisesRegex(
-                    candidate_prepare.PrepareError,
-                    "stale parent",
-                ):
-                    candidate_prepare.prepare(
-                        parent,
-                        receipt,
-                        [sys.executable, "-c", "pass"],
-                    )
+            with self.assertRaisesRegex(candidate_prepare.PrepareError, "stale parent"):
+                self._prepare(
+                    root,
+                    parent,
+                    receipt,
+                    [sys.executable, "-c", "pass"],
+                )
             self.assertFalse(receipt.exists())
 
     def test_receipt_verification_is_exact(self) -> None:
-        candidate_prepare = self._module()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             parent = self._repository(root)
             (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
             receipt = self._receipt()
-            with patch.object(
-                candidate_prepare,
-                "_repository_root",
-                return_value=root,
-            ), patch.object(
-                candidate_prepare,
-                "_ruff_version",
-                return_value="ruff 0.16.0",
-            ):
-                payload = candidate_prepare.prepare(
-                    parent,
-                    receipt,
-                    [sys.executable, "-c", "pass"],
-                )
+            payload = self._prepare(
+                root,
+                parent,
+                receipt,
+                [sys.executable, "-c", "pass"],
+            )
             with self.assertRaisesRegex(
                 candidate_prepare.PrepareError,
                 "tree mismatch",
@@ -195,31 +185,21 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 )
 
     def test_prepare_includes_untracked_addition_and_deletion(self) -> None:
-        candidate_prepare = self._module()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             parent = self._repository(root)
             (root / "base.txt").unlink()
             (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
             receipt = self._receipt()
-            with patch.object(
-                candidate_prepare,
-                "_repository_root",
-                return_value=root,
-            ), patch.object(
-                candidate_prepare,
-                "_ruff_version",
-                return_value="ruff 0.16.0",
-            ):
-                payload = candidate_prepare.prepare(
-                    parent,
-                    receipt,
-                    [sys.executable, "-c", "pass"],
-                )
+            payload = self._prepare(
+                root,
+                parent,
+                receipt,
+                [sys.executable, "-c", "pass"],
+            )
             self.assertEqual(["base.txt", "candidate.py"], payload["changed_paths"])
 
     def test_prepare_rejects_focused_verifier_mutation(self) -> None:
-        candidate_prepare = self._module()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             parent = self._repository(root)
@@ -231,83 +211,72 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 "from pathlib import Path; "
                 "Path('candidate.py').write_text('changed\\n')",
             ]
-            with patch.object(
-                candidate_prepare,
-                "_repository_root",
-                return_value=root,
-            ), patch.object(
-                candidate_prepare,
-                "_ruff_version",
-                return_value="ruff 0.16.0",
+            with self.assertRaisesRegex(
+                candidate_prepare.PrepareError,
+                "focused verification mutated candidate",
             ):
-                with self.assertRaisesRegex(
-                    candidate_prepare.PrepareError,
-                    "focused verification mutated candidate",
-                ):
-                    candidate_prepare.prepare(parent, receipt, command)
+                self._prepare(root, parent, receipt, command)
             self.assertFalse(receipt.exists())
 
     def test_prepare_rejects_failed_focused_verification(self) -> None:
-        candidate_prepare = self._module()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             parent = self._repository(root)
             (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
             receipt = self._receipt()
-            with patch.object(
-                candidate_prepare,
-                "_repository_root",
-                return_value=root,
+            with self.assertRaisesRegex(
+                candidate_prepare.PrepareError,
+                r"focused verification failed \(7\)",
             ):
-                with self.assertRaisesRegex(
-                    candidate_prepare.PrepareError,
-                    r"focused verification failed \(7\)",
-                ):
-                    candidate_prepare.prepare(
-                        parent,
-                        receipt,
-                        [sys.executable, "-c", "raise SystemExit(7)"],
-                    )
+                self._prepare(
+                    root,
+                    parent,
+                    receipt,
+                    [sys.executable, "-c", "raise SystemExit(7)"],
+                )
+            self.assertFalse(receipt.exists())
+
+    def test_prepare_rejects_relative_focused_executable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+            with self.assertRaisesRegex(
+                candidate_prepare.PrepareError,
+                "focused verification executable must use an absolute path",
+            ):
+                self._prepare(root, parent, receipt, ["python", "-c", "pass"])
             self.assertFalse(receipt.exists())
 
     def test_prepare_rejects_candidate_local_receipt(self) -> None:
-        candidate_prepare = self._module()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             parent = self._repository(root)
             (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
-            with patch.object(candidate_prepare, "_repository_root", return_value=root):
-                with self.assertRaisesRegex(
-                    candidate_prepare.PrepareError,
-                    "receipt path must be outside",
-                ):
-                    candidate_prepare.prepare(
-                        parent,
-                        root / "receipt.json",
-                        [sys.executable, "-c", "pass"],
-                    )
+            with self.assertRaisesRegex(
+                candidate_prepare.PrepareError,
+                "receipt path must be outside",
+            ):
+                self._prepare(
+                    root,
+                    parent,
+                    root / "receipt.json",
+                    [sys.executable, "-c", "pass"],
+                )
 
     def test_cli_verify_consumes_exact_receipt(self) -> None:
-        candidate_prepare = self._module()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             parent = self._repository(root)
             (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
             receipt = self._receipt()
-            with patch.object(
-                candidate_prepare,
-                "_repository_root",
-                return_value=root,
-            ), patch.object(
-                candidate_prepare,
-                "_ruff_version",
-                return_value="ruff 0.16.0",
-            ):
-                payload = candidate_prepare.prepare(
-                    parent,
-                    receipt,
-                    [sys.executable, "-c", "pass"],
-                )
+            payload = self._prepare(
+                root,
+                parent,
+                receipt,
+                [sys.executable, "-c", "pass"],
+            )
             self.assertEqual(
                 0,
                 candidate_prepare.main(

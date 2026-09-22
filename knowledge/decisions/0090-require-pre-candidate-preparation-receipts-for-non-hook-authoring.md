@@ -71,7 +71,8 @@ effect recovery.
    must equal that parent; stale-parent preparation fails closed.
 3. Preparation requires an existing proposed tree delta, runs
    `./ci/style --fix`, then runs one caller-supplied focused verification command
-   as an argv vector without shell evaluation.
+   as an argv vector with `shell=False`. The executable path must be absolute and
+   resolve to an executable regular file before launch.
 4. Focused verification must not mutate the candidate. The prepared tree after
    normalization is measured before and after the focused command; any change
    fails closed.

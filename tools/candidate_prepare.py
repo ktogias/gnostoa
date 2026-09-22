@@ -9,11 +9,13 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 RECEIPT_SCHEMA = "gnostoa-candidate-preparation-receipt/v1"
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
+_SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 _GIT = shutil.which("git")
 
 
@@ -53,11 +55,17 @@ def _run(
     env: dict[str, str] | None = None,
     check: bool = True,
 ) -> subprocess.CompletedProcess[bytes]:
+    # Every command is passed as an argv vector with shell=False. Git, ci/style,
+    # and sys.executable are locally resolved. The only caller-provided executable
+    # crosses _validate_focused_command(), which requires an absolute executable
+    # file path. Quoting with shlex would corrupt argv because no shell is used.
+    # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
     completed = subprocess.run(
         list(command),
         cwd=cwd,
         env=env,
         check=False,
+        shell=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
@@ -102,6 +110,25 @@ def _assert_external_receipt(root: Path, receipt: Path) -> Path:
     return resolved
 
 
+def _validate_focused_command(command: Sequence[str]) -> tuple[str, ...]:
+    if not command or not all(isinstance(item, str) and item for item in command):
+        raise PrepareError(
+            "focused verification command must be a non-empty argv vector"
+        )
+    executable = Path(command[0])
+    if not executable.is_absolute():
+        raise PrepareError("focused verification executable must use an absolute path")
+    if not executable.is_file() or not os.access(executable, os.X_OK):
+        raise PrepareError("focused verification executable is unavailable")
+    return tuple(command)
+
+
+def _assert_head(root: Path, parent: str) -> None:
+    head = _git_text(root, "rev-parse", "HEAD")
+    if head != parent:
+        raise PrepareError(f"stale parent: HEAD is {head}, expected {parent}")
+
+
 def _stage_candidate(root: Path, parent: str, index: Path) -> tuple[str, list[str]]:
     env = dict(os.environ)
     env["GIT_INDEX_FILE"] = str(index)
@@ -114,11 +141,7 @@ def _stage_candidate(root: Path, parent: str, index: Path) -> tuple[str, list[st
         cwd=root,
         env=env,
     ).stdout
-    changed = sorted(
-        os.fsdecode(item)
-        for item in changed_raw.split(b"\0")
-        if item
-    )
+    changed = sorted(os.fsdecode(item) for item in changed_raw.split(b"\0") if item)
     return tree, changed
 
 
@@ -166,18 +189,11 @@ def prepare(
 ) -> dict[str, Any]:
     if _SHA40.fullmatch(parent_commit) is None:
         raise PrepareError("parent must be an exact 40-character commit SHA")
-    if not focused_command or not all(
-        isinstance(item, str) and item for item in focused_command
-    ):
-        raise PrepareError(
-            "focused verification command must be a non-empty argv vector"
-        )
+    focused_argv = _validate_focused_command(focused_command)
 
     root = _repository_root()
     receipt = _assert_external_receipt(root, receipt_path)
-    head = _git_text(root, "rev-parse", "HEAD")
-    if head != parent_commit:
-        raise PrepareError(f"stale parent: HEAD is {head}, expected {parent_commit}")
+    _assert_head(root, parent_commit)
     parent_tree = _git_text(root, "rev-parse", f"{parent_commit}^{{tree}}")
     style = root / "ci" / "style"
     if not style.is_file():
@@ -192,25 +208,27 @@ def prepare(
         env = dict(os.environ)
         env["GIT_INDEX_FILE"] = str(index)
         _run([str(style), "--fix"], cwd=root, env=env)
+        _assert_head(root, parent_commit)
         normalized_tree, changed_paths = _stage_candidate(root, parent_commit, index)
         if not changed_paths:
             raise PrepareError("candidate has no changes after normalization")
 
-        before_focused = normalized_tree
-        focused = _run(focused_command, cwd=root, env=env, check=False)
+        focused = _run(focused_argv, cwd=root, env=env, check=False)
         if focused.returncode != 0:
             stderr = focused.stderr.decode("utf-8", errors="replace").strip()
             detail = f": {stderr}" if stderr else ""
             raise PrepareError(
                 f"focused verification failed ({focused.returncode}){detail}"
             )
+        _assert_head(root, parent_commit)
         after_focused, _ = _stage_candidate(root, parent_commit, index)
-        if after_focused != before_focused:
+        if after_focused != normalized_tree:
             raise PrepareError("focused verification mutated candidate")
 
         _run([str(style), "--check"], cwd=root, env=env)
+        _assert_head(root, parent_commit)
         after_check, changed_paths = _stage_candidate(root, parent_commit, index)
-        if after_check != before_focused:
+        if after_check != normalized_tree:
             raise PrepareError("style check mutated candidate")
         _run(
             [_git_executable(), "diff", "--cached", "--check", parent_commit],
@@ -223,13 +241,13 @@ def prepare(
         "schema": RECEIPT_SCHEMA,
         "parent_commit": parent_commit,
         "parent_tree": parent_tree,
-        "prepared_tree": before_focused,
+        "prepared_tree": normalized_tree,
         "prepared_diff_sha256": _sha256_bytes(prepared_diff),
         "changed_paths": changed_paths,
         "style_sha256": _sha256_bytes(style.read_bytes()),
         "style_subject": ".",
         "ruff_version": _ruff_version(root),
-        "focused_command": list(focused_command),
+        "focused_command": list(focused_argv),
         "checks": {
             "style_fix": 0,
             "focused_verification": focused.returncode,
@@ -245,56 +263,83 @@ def prepare(
     return _write_receipt(receipt, payload)
 
 
-def verify_receipt(
-    receipt_path: Path,
-    expected_parent: str,
-    expected_tree: str,
-) -> dict[str, Any]:
+def _load_receipt(receipt_path: Path) -> dict[str, Any]:
     try:
         document = json.loads(receipt_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise PrepareError("receipt is unreadable or invalid JSON") from exc
     if not isinstance(document, dict):
         raise PrepareError("receipt must be a JSON object")
+    return document
+
+
+def _validate_receipt_digest(document: dict[str, Any]) -> None:
     digest = document.get("receipt_sha256")
     payload = {key: value for key, value in document.items() if key != "receipt_sha256"}
     if not isinstance(digest, str) or digest != _digest(payload):
         raise PrepareError("receipt digest mismatch")
+
+
+def _require_sha40(document: dict[str, Any], key: str) -> str:
+    value = document.get(key)
+    if not isinstance(value, str) or _SHA40.fullmatch(value) is None:
+        raise PrepareError(f"receipt {key} is invalid")
+    return value
+
+
+def _require_sha256(document: dict[str, Any], key: str) -> str:
+    value = document.get(key)
+    if not isinstance(value, str) or _SHA256.fullmatch(value) is None:
+        raise PrepareError(f"receipt {key} is invalid")
+    return value
+
+
+def _validate_receipt_checks(document: dict[str, Any]) -> None:
+    expected = {
+        "style_fix": 0,
+        "focused_verification": 0,
+        "style_check": 0,
+        "diff_check": 0,
+    }
+    if document.get("checks") != expected:
+        raise PrepareError("receipt check state is not successful")
+
+
+def _validate_receipt_focused_command(document: dict[str, Any]) -> None:
+    focused_command = document.get("focused_command")
+    if not isinstance(focused_command, list):
+        raise PrepareError("receipt focused command is invalid")
+    _validate_focused_command(focused_command)
+
+
+def _validate_receipt_metric(document: dict[str, Any]) -> None:
+    if document.get("metric_event") not in {
+        "PRE_CANDIDATE_RUFF_CATCH",
+        "PRE_CANDIDATE_NO_RUFF_CHANGE",
+    }:
+        raise PrepareError("receipt metric event is invalid")
+
+
+def verify_receipt(
+    receipt_path: Path,
+    expected_parent: str,
+    expected_tree: str,
+) -> dict[str, Any]:
+    document = _load_receipt(receipt_path)
+    _validate_receipt_digest(document)
     if document.get("schema") != RECEIPT_SCHEMA:
         raise PrepareError("receipt schema mismatch")
     if document.get("parent_commit") != expected_parent:
         raise PrepareError("parent mismatch")
     if document.get("prepared_tree") != expected_tree:
         raise PrepareError("tree mismatch")
-    checks = document.get("checks")
-    if checks != {
-        "style_fix": 0,
-        "focused_verification": 0,
-        "style_check": 0,
-        "diff_check": 0,
-    }:
-        raise PrepareError("receipt check state is not successful")
-    focused_command = document.get("focused_command")
-    if not isinstance(focused_command, list) or not focused_command or not all(
-        isinstance(item, str) and item for item in focused_command
-    ):
-        raise PrepareError("receipt focused command is invalid")
-    for key in ("parent_tree", "prepared_tree"):
-        value = document.get(key)
-        if not isinstance(value, str) or _SHA40.fullmatch(value) is None:
-            raise PrepareError(f"receipt {key} is invalid")
-    for key in ("prepared_diff_sha256", "style_sha256"):
-        value = document.get(key)
-        if (
-            not isinstance(value, str)
-            or re.fullmatch(r"sha256:[0-9a-f]{64}", value) is None
-        ):
-            raise PrepareError(f"receipt {key} is invalid")
-    if document.get("metric_event") not in {
-        "PRE_CANDIDATE_RUFF_CATCH",
-        "PRE_CANDIDATE_NO_RUFF_CHANGE",
-    }:
-        raise PrepareError("receipt metric event is invalid")
+    _validate_receipt_checks(document)
+    _validate_receipt_focused_command(document)
+    _require_sha40(document, "parent_tree")
+    _require_sha40(document, "prepared_tree")
+    _require_sha256(document, "prepared_diff_sha256")
+    _require_sha256(document, "style_sha256")
+    _validate_receipt_metric(document)
     return document
 
 

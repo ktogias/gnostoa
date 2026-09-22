@@ -97,13 +97,14 @@ verification surfaces, use the pre-candidate preparation boundary:
 ./ci/prepare-candidate prepare \
   --parent <exact-40-character-parent-sha> \
   --receipt <path-outside-the-worktree> \
-  -- <focused-verification-argv>
+  -- </absolute/path/to/focused-verifier> [args...]
 ```
 
 The preparation surface reuses `./ci/style --fix` and `./ci/style --check`,
-runs the focused verification **after** normalization, rejects verifier mutation,
-runs `git diff --cached --check`, and binds the exact parent and prepared Git
-tree in a digest-protected receipt. Before a Git-data/API adapter advances a
+runs the focused verification **after** normalization, requires its executable to
+use an absolute path, invokes argv with no shell, rejects verifier mutation, runs
+`git diff --cached --check`, and binds the exact parent and prepared Git tree in
+a digest-protected receipt. Before a Git-data/API adapter advances a
 candidate ref, consume `./ci/prepare-candidate verify` with that exact parent,
 tree and receipt. Do not publish a different tree under a successful receipt.
 Ordinary hooks remain advisory early feedback; direct `ci/style --fix` alone is
