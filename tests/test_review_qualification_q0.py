@@ -356,7 +356,7 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
         ] = [
             (
                 "owner-excluded",
-                lambda entries, qualification: entries[0].update(
+                lambda entries, _qualification: entries[0].update(
                     owner_relation="owner"
                 ),
             ),
@@ -366,17 +366,17 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
             ),
             (
                 "scope-mismatch",
-                lambda entries, qualification: entries[0].update(
+                lambda entries, _qualification: entries[0].update(
                     scope={"repository": "other/repository"}
                 ),
             ),
             (
                 "revoked",
-                lambda entries, qualification: entries[0].update(status="revoked"),
+                lambda entries, _qualification: entries[0].update(status="revoked"),
             ),
             (
                 "unestablished",
-                lambda entries, qualification: entries[0].update(
+                lambda entries, _qualification: entries[0].update(
                     status="unestablished"
                 ),
             ),
