@@ -8,6 +8,7 @@ from typing import Any, cast
 
 from jsonschema import Draft202012Validator
 
+from tools import review_check
 from tools.review_check import FORMAT_CHECKER
 from tools.review_model import canonical_digest
 from tools.review_policy import resolve_project_policy
@@ -19,6 +20,7 @@ BASELINE_PATH = (
     ROOT / "knowledge" / "assessments" / "10-q0-reviewer-qualification-baseline.json"
 )
 POLICY_PATH = ROOT / "policy" / "review-policy.yaml"
+REVIEW_CASES_PATH = ROOT / "tests" / "fixtures" / "review_check" / "cases.json"
 
 Q0_AUTHORITY = "https://github.com/ktogias/gnostoa/issues/10#issuecomment-5771806967"
 Q0_OBSERVED_AT = "2026-09-22T05:50:00Z"
@@ -85,6 +87,32 @@ def _load(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise AssertionError(f"{path} must contain a JSON object")
     return value
+
+
+
+def _review_case_documents() -> tuple[dict[str, Any], dict[str, Any]]:
+    fixture = _load(REVIEW_CASES_PATH)
+    base = fixture["base"]
+    if not isinstance(base, dict):
+        raise AssertionError("review-assurance fixture base must be an object")
+    input_document = copy.deepcopy(base["input"])
+    policy_document = copy.deepcopy(base["policy"])
+    if not isinstance(input_document, dict) or not isinstance(policy_document, dict):
+        raise AssertionError("review-assurance base documents must be objects")
+    context = input_document.get("evaluation_context")
+    if isinstance(context, dict) and context.get("mode") == "historical_replay":
+        context["fixture_only"] = True
+    return input_document, policy_document
+
+
+def _refresh_qualification_digest(input_document: dict[str, Any]) -> None:
+    qualification = input_document["qualification_snapshot"]
+    if not isinstance(qualification, dict):
+        raise AssertionError("qualification_snapshot must be an object")
+    authority = input_document["authority"]
+    if not isinstance(authority, dict):
+        raise AssertionError("authority must be an object")
+    authority["qualification_snapshot_digest"] = canonical_digest(qualification)
 
 
 class ReviewerQualificationQ0Tests(unittest.TestCase):
@@ -211,6 +239,88 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
             ["APPROVE"], live_bundle["policy"]["quorum"]["acceptable_recommendations"]
         )
         self.assertEqual(2, live_bundle["policy"]["quorum"]["minimum_distinct_domains"])
+
+
+    def test_q0_fail_closed_semantics_preserve_owner_scope_status_and_freshness_gates(
+        self,
+    ) -> None:
+        cases: list[tuple[str, Any]] = [
+            (
+                "owner-excluded",
+                lambda entries, qualification: entries[0].update(owner_relation="owner"),
+            ),
+            (
+                "scope-mismatch",
+                lambda entries, qualification: entries[0].update(
+                    scope={"repository": "other/repository"}
+                ),
+            ),
+            (
+                "revoked",
+                lambda entries, qualification: entries[0].update(status="revoked"),
+            ),
+            (
+                "unestablished",
+                lambda entries, qualification: entries[0].update(
+                    status="unestablished"
+                ),
+            ),
+            (
+                "stale-snapshot",
+                lambda entries, qualification: (
+                    qualification.update(observed_at="2026-09-10T00:00:00Z"),
+                    [
+                        entry.update(observed_at="2026-09-10T00:00:00Z")
+                        for entry in entries
+                    ],
+                ),
+            ),
+        ]
+
+        for name, mutate in cases:
+            input_document, policy_document = _review_case_documents()
+            qualification = input_document["qualification_snapshot"]
+            self.assertIsInstance(qualification, dict)
+            qualification = cast(dict[str, Any], qualification)
+            entries_value = qualification["entries"]
+            self.assertIsInstance(entries_value, list)
+            entries = cast(list[dict[str, Any]], entries_value)
+            mutate(entries, qualification)
+            _refresh_qualification_digest(input_document)
+
+            code, payload = review_check.evaluate_documents(
+                input_document, policy_document
+            )
+
+            with self.subTest(case=name):
+                self.assertEqual(3, code)
+                self.assertEqual("INCOMPLETE", payload["outcome"])
+                self.assertEqual("QUORUM_UNMET", payload["reason"])
+
+    def test_q0_duplicate_or_conflicting_qualification_identity_fails_closed(
+        self,
+    ) -> None:
+        for conflicting in (False, True):
+            input_document, policy_document = _review_case_documents()
+            qualification = input_document["qualification_snapshot"]
+            self.assertIsInstance(qualification, dict)
+            qualification = cast(dict[str, Any], qualification)
+            entries_value = qualification["entries"]
+            self.assertIsInstance(entries_value, list)
+            entries = cast(list[dict[str, Any]], entries_value)
+            duplicate = copy.deepcopy(entries[0])
+            if conflicting:
+                duplicate["status"] = "revoked"
+            entries.append(duplicate)
+            _refresh_qualification_digest(input_document)
+
+            code, payload = review_check.evaluate_documents(
+                input_document, policy_document
+            )
+
+            with self.subTest(conflicting=conflicting):
+                self.assertEqual(2, code)
+                self.assertIn("error", payload)
 
 
 if __name__ == "__main__":
