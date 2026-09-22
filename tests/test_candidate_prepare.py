@@ -521,6 +521,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 encoding="utf-8",
             )
             receipt = self._receipt()
+            # skipcq: PYL-W0212 -- intentional white-box config-race regression
             original = candidate_prepare._assert_safe_repository_git_configuration
 
             def mutate_after_inspection(repository_root: Path) -> None:
@@ -544,6 +545,34 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 "value = 1",
                 self._git(root, "show", f'{payload["prepared_tree"]}:candidate.py'),
             )
+
+    def test_prepare_snapshots_source_info_exclude(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            exclude = Path(
+                self._git(root, "rev-parse", "--git-path", "info/exclude")
+            )
+            if not exclude.is_absolute():
+                exclude = root / exclude
+            exclude.parent.mkdir(parents=True, exist_ok=True)
+            exclude.write_text("local-secret.txt\n", encoding="utf-8")
+            (root / "local-secret.txt").write_text(
+                "do not publish\n",
+                encoding="utf-8",
+            )
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+
+            payload = self._prepare(root, parent, receipt)
+
+            self.assertEqual(["candidate.py"], payload["changed_paths"])
+            with self.assertRaises(subprocess.CalledProcessError):
+                self._git(
+                    root,
+                    "show",
+                    f'{payload["prepared_tree"]}:local-secret.txt',
+                )
 
     def test_prepare_rejects_repository_local_git_execution_config(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

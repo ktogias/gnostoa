@@ -284,11 +284,20 @@ def _isolated_git_metadata(
             cwd=metadata_root,
         )
 
+        source_objects = _source_object_directory(repository_root)
         alternates = git_dir / "objects" / "info" / "alternates"
         alternates.write_text(
-            str(_source_object_directory(repository_root)) + "\n",
+            str(source_objects) + "\n",
             encoding="utf-8",
         )
+        source_exclude = source_objects.parent / "info" / "exclude"
+        isolated_exclude = git_dir / "info" / "exclude"
+        try:
+            if source_exclude.is_file():
+                isolated_exclude.parent.mkdir(parents=True, exist_ok=True)
+                isolated_exclude.write_bytes(source_exclude.read_bytes())
+        except OSError as exc:
+            raise PrepareError("repository exclude snapshot is unavailable") from exc
 
         env = _isolated_git_env(git_dir, repository_root)
         _git_text(

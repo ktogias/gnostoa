@@ -92,11 +92,13 @@ non-hook authoring without importing a general orchestration subsystem.
    Git object access is bound explicitly to the source repository's
    content-addressed object store: candidate blobs/trees are written there so a
    successful prepared-tree identity remains reachable after the disposable
-   metadata is removed, while candidate staging, checkout, diffing and workspace
-   Git commands never load the source repository's mutable local config. A
-   concurrent mutation of the source `.git/config` or source-local attributes
-   therefore cannot affect the prepared bytes or execute a newly injected
-   filter. Before any preparation authority executes,
+   metadata is removed. The source `.git/info/exclude` file is copied once as
+   an immutable snapshot into the disposable metadata so local scratch/secrets
+   remain excluded without reopening mutable source configuration. Candidate
+   staging, checkout, diffing and workspace Git commands never load the source
+   repository's mutable local config. A concurrent mutation of the source
+   `.git/config` or source-local attributes therefore cannot affect the
+   prepared bytes or execute a newly injected filter. Before any preparation authority executes,
    the proposed tree must leave `ci/prepare-candidate`, `ci/style`,
    `ci/verify`, and `tools/candidate_prepare.py` unchanged from the parent.
    Changes to those authority surfaces require a separately admitted
