@@ -336,35 +336,39 @@ intermediate head:
 2. use only selected, currently available early-review routes whose expected
    value justifies reviewing a Draft or intermediate candidate;
 3. explicitly seal the exact head before final collection;
-4. before recommending Ready, **PRE_READY_RECONCILE** first performs a
-   same-cut activation scan for every provider whose Ready path may auto-activate
-   (automatic/configurable/unknown or otherwise not proven non-automatic), plus
-   any provider already used for early review on the exact head. Absence of
-   same-head activity may be claimed only from current scan evidence. A provider
-   with no attributable same-head activation does not block Ready merely because
-   current Ready configuration/dedup state is unreadable; Ready may be its first
-   activation and step 5 reconciles it before any manual trigger. If same-head
-   activity exists and Ready automatic activation cannot be excluded, read back
-   current `ready_activation_state` and
-   `provider_head_deduplication_state`. Missing/ambiguous conflict-state facts
-   are `REVALIDATION_REQUIRED`, with next permitted action
-   `REVALIDATE_CURRENT_STATE`. Enabled/unknown Ready auto-activation with
-   provider-level deduplication not established blocks Ready and requires manual
-   disposition. Reserve providers whose Ready path may auto-activate from
-   same-head early review unless the Ready path is currently
-   disabled/not-applicable or provider-level deduplication is established;
-5. only after PRE_READY_RECONCILE is safe, transition to Ready and **read back
-   current-head provider request/review state again before any manual trigger**,
-   binding that post-transition read-back to the active planning `cut_id`; for
-   each selected reviewer use exactly one provider-level activation path: if
-   Ready auto-started or completed a current-head request/review, attribute it
-   to the retained Ready route identity, wait/reconcile it and suppress every
-   sibling manual route; otherwise consider exactly one manual route only after
-   dispatch-safety and current eligibility are established. If automatic Ready
-   activity cannot be attributed to a retained route identity, use
-   `REVALIDATION_REQUIRED` rather than aliasing it to a manual route. When
-   multiple same-head attempts exist and their provider/request identity or
-   ordering is ambiguous, use `REVALIDATION_REQUIRED` instead of guessing;
+4. before recommending Ready, **PRE_READY_RECONCILE** requires one
+   typed provider/head activation scan for every provider whose Ready path may
+   auto-activate (automatic/configurable/unknown or otherwise not proven
+   non-automatic), plus any provider already used for early review on the exact
+   head. A negative result is valid only when the scan is
+   `completeness=COMPLETE` and `activation_state=ABSENT` after inspecting all
+   provider-native review/request/summary/status/check surfaces available to the
+   adapter. Explicit exact-head SHA binding in a provider-authored mutable
+   summary/footer/source link counts as provider/head activity even when the
+   route identity is unknown; timestamps or generic green status alone do not.
+   `INCOMPLETE`/`AMBIGUOUS` is `REVALIDATION_REQUIRED`. If same-head
+   activity is `PRESENT` and Ready automatic activation cannot be excluded,
+   require current `ready_activation_state` and
+   `provider_head_deduplication_state`; enabled/unknown Ready auto-activation
+   without established provider-level deduplication blocks Ready and requires
+   manual disposition. Immediately before the Ready effect, refresh the exact
+   head/lifecycle state and all PRE_READY scans; any newer provider activity or
+   competing orchestration state invalidates the cut;
+5. only after PRE_READY_RECONCILE is safe, transition to Ready and retain
+   an attributable **Ready-transition receipt** bound to the exact head and
+   PRE_READY cut. Mint a **new POST_READY cut** with a new `cut_id` and
+   `as_of >= transitioned_at`; never reuse a PRE_READY cut to prove
+   post-transition ordering. Under that POST_READY cut, read current-head
+   provider request/review state before any manual trigger. For each selected
+   reviewer use exactly one provider-level activation path: if Ready
+   auto-started or completed a current-head request/review, wait/reconcile it and
+   suppress every sibling manual route; otherwise consider exactly one manual
+   route only after dispatch-safety and current eligibility are established.
+   Provider/head activity may suppress sibling activation even when its route is
+   unknown; route-specific reconciliation remains `REVALIDATION_REQUIRED`
+   until attribution is complete. When multiple same-head attempts exist and
+   their provider/request identity or ordering is ambiguous, use
+   `REVALIDATION_REQUIRED` instead of guessing;
 6. if current provider eligibility cannot be reacquired for an automatic
    dispatch decision, use `REVALIDATION_REQUIRED` and do not spend quota
    speculatively; retained dated registry observations are historical hints, not
