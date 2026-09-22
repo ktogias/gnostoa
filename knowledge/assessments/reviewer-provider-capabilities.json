@@ -1,0 +1,1572 @@
+{
+  "schema_version": "gnostoa-reviewer-capability-registry/v0.17",
+  "generated_at": "2026-09-22T02:27:49Z",
+  "research_date": "2026-09-22",
+  "subject": {
+    "repository": "ktogias/gnostoa",
+    "work_item": "https://github.com/ktogias/gnostoa/issues/15",
+    "base_ref": "main",
+    "snapshot_anchor": "The committed registry revision and PR #297 provider metadata define the exact historical snapshot; no raw Git object identity is required by the planner contract."
+  },
+  "authority": {
+    "purpose": "Advisory input for review planning and provider selection.",
+    "not_authority_for": [
+      "reviewer qualification or independence",
+      "semantic quorum",
+      "review convergence",
+      "owner approval",
+      "merge or provider-write authority"
+    ],
+    "runtime_rule": "Committed runtime/account observations are historical evidence and scheduling hints, not current dispatch authority. For any automatic scarce-review dispatch, the planner must use a current provider read-back acquired in the same planning cut; if that read-back is unavailable or ambiguous, surface REVALIDATION_REQUIRED/manual disposition rather than infer freshness from age alone.",
+    "unknown_rule": "Absence of an observed quota or limit MUST NOT be encoded as unlimited.",
+    "lifecycle_rule": "The registry has no standalone draft/promoted lifecycle authority. Only the protected repository revision and governing Decision determine whether a snapshot is operative; consumers MUST NOT infer review, integration, or promotion authority from a JSON lifecycle-status token."
+  },
+  "providers": [
+    {
+      "id": "coderabbit",
+      "kind": "semantic_reviewer",
+      "capabilities": {
+        "draft_auto_review": "normally_skipped",
+        "ready_review": "supported",
+        "manual_trigger": {
+          "channel": "github_issue_comment",
+          "command": "@coderabbitai review",
+          "isolation": "recommended",
+          "instruction_mode": "none",
+          "instruction_template": null,
+          "dispatch_safety": "safe_observed",
+          "alternatives": [
+            {
+              "purpose": "full_review",
+              "channel": "github_issue_comment",
+              "command": "@coderabbitai full review",
+              "isolation": "recommended",
+              "instruction_mode": "none",
+              "instruction_template": null,
+              "dispatch_safety": "safe_observed",
+              "dispatch_kind": "comment_command",
+              "action": null,
+              "configuration_path": null,
+              "route_id": "coderabbit:comment:full-review"
+            }
+          ],
+          "dispatch_kind": "comment_command",
+          "action": null,
+          "configuration_path": null,
+          "route_id": "coderabbit:comment:review"
+        },
+        "quota": {
+          "model": "per_developer_hourly_allowance_with_optional_usage_based_overage",
+          "pr_reviews_per_developer_per_hour_by_plan": {
+            "essentials": 5,
+            "team": 8,
+            "advanced": 10,
+            "enterprise": 12
+          },
+          "total_pr_or_repository_cap": "none_documented",
+          "fair_use": true,
+          "overage": "eligible reviews may continue through usage-based billing with a configurable monthly spending cap"
+        },
+        "ready_activation": {
+          "mode": "automatic_observed",
+          "readback_before_manual": true,
+          "route_id": "coderabbit:ready:auto-review"
+        }
+      },
+      "evidence": [
+        {
+          "type": "vendor_documentation",
+          "url": "https://kb.coderabbit.ai/articles/1442026547-troubleshoot-why-coderabbit-reviews-might-not-trigger",
+          "observed_at": "2026-09-21",
+          "note": "Drafts are not normally reviewed; manual review/full-review commands and rate limiting are documented."
+        },
+        {
+          "type": "vendor_documentation",
+          "url": "https://www.coderabbit.ai/faq",
+          "observed_at": "2026-09-21",
+          "note": "Paid subscriptions have per-developer hourly review allowances subject to fair use."
+        },
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5765178931",
+          "observed_at": "2026-09-21",
+          "note": "Natural Draft dogfood: CodeRabbit explicitly skipped automatic review and documented reviews.auto_review.drafts=true as the opt-in."
+        },
+        {
+          "type": "vendor_documentation",
+          "url": "https://www.coderabbit.ai/pricing",
+          "observed_at": "2026-09-21",
+          "note": "Current pricing publishes 5/8/10/12 PR reviews per developer per hour by plan; no total PR/repository cap, with fair-use and optional usage-based overage."
+        },
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5765178931",
+          "observed_at": "2026-09-21",
+          "note": "On exact head 562fc9a..., CodeRabbit automatically entered review-in-progress after the Ready transition."
+        }
+      ],
+      "observations": []
+    },
+    {
+      "id": "sourcery",
+      "kind": "semantic_reviewer",
+      "capabilities": {
+        "draft_auto_review": "configuration_dependent",
+        "ready_review": "observed_supported",
+        "manual_trigger": {
+          "channel": "github_issue_comment",
+          "command": "@sourcery-ai review",
+          "isolation": "required",
+          "instruction_mode": "none",
+          "instruction_template": null,
+          "dispatch_safety": "safe_observed",
+          "alternatives": [],
+          "dispatch_kind": "comment_command",
+          "action": null,
+          "configuration_path": null,
+          "route_id": "sourcery:comment:review"
+        },
+        "quota": {
+          "model": "automatic_rereview_cap_plus_rolling_diff_character_budget",
+          "automatic_reviews_per_pr": 5,
+          "rolling_budget_unit": "diff_characters",
+          "rolling_budget_window": "P7D",
+          "rolling_budget_amount": "account_specific"
+        },
+        "ready_activation": {
+          "mode": "automatic_observed",
+          "readback_before_manual": true,
+          "route_id": "sourcery:ready:auto-review"
+        }
+      },
+      "evidence": [
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/272#issuecomment-5711489476",
+          "observed_at": "2026-09-17",
+          "note": "Sourcery reports that it auto-reviews a PR 5 times, then asks for a standalone manual command."
+        },
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/272#issuecomment-5714172963",
+          "observed_at": "2026-09-17",
+          "note": "Standalone @sourcery-ai review reset the counter and produced a fresh exact-head approval."
+        },
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/285#issuecomment-5757528323",
+          "observed_at": "2026-09-20",
+          "note": "Observed rolling 2,500,000 diff-character / 7-day account budget with retry-after."
+        },
+        {
+          "type": "vendor_documentation",
+          "url": "https://docs.sourcery.ai/",
+          "observed_at": "2026-09-21",
+          "note": "Sourcery documents PR review as a product capability; account-specific limits remain separated from durable capability."
+        },
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/297",
+          "observed_at": "2026-09-21",
+          "note": "Formal Sourcery review PRR_kwDOToCF3c8AAAABOh_8SQ was submitted while PR #297 remained Draft and produced one actionable finding."
+        },
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/297#pullrequestreview-5270987018",
+          "observed_at": "2026-09-21T19:35:39Z",
+          "note": "Formal exact-head review proves the Sourcery route was actually available after the earlier rolling-budget refusal."
+        },
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5766939969",
+          "observed_at": "2026-09-21",
+          "note": "For exact head 562fc9a..., no automatic Sourcery review appeared in the observed interval after Ready before a standalone @sourcery-ai review comment was sent. This older negative observation is not a universal vendor invariant."
+        },
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/297#pullrequestreview-5273599145",
+          "observed_at": "2026-09-22T02:18:15Z",
+          "note": "On exact head 096705e..., changing PR #297 from Draft to Ready produced an automatic Sourcery review attempt without a manual Sourcery trigger. The attempt terminated at the rolling diff-character budget gate and supplied a retry forecast."
+        },
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/297#pullrequestreview-5270605827",
+          "observed_at": "2026-09-21T18:55:52Z",
+          "note": "Formal Sourcery COMMENTED review 5270605827 was submitted on the exact head retained by the matching subject observation after the standalone manual review trigger. This durable artifact verifies the review identity, exact-head binding and provider submission time for that COMPLETED route observation; route completion remains distinct from semantic acceptance or quorum."
+        }
+      ],
+      "observations": [
+        {
+          "scope": "account",
+          "status": "QUOTA_EXHAUSTED",
+          "observed_at": "2026-09-21T20:33:26Z",
+          "subject": null,
+          "retry_after": "2026-09-21T21:26:00Z",
+          "reason": "rolling_diff_character_budget",
+          "details": {
+            "observed_limit": 2500000,
+            "unit": "diff_characters",
+            "window": "P7D",
+            "provider_message_delay": "PT13H3M",
+            "source_comment_id": 5757528323,
+            "retry_after_basis": "provider message at 2026-09-21T08:23:00Z said another review could be requested in 13h03m"
+          },
+          "note": "Sourcery reported the rolling review budget exhausted and supplied a retry forecast. Because this retained snapshot does not carry a stable non-secret provider account/workspace identity, this account-scope observation is historical scheduling evidence only; it cannot machine-supersede or be superseded for automatic dispatch without current identity/read-back.",
+          "route_state": "QUOTA_EXHAUSTED",
+          "scope_identity": null,
+          "event_at": "2026-09-21T08:23:00Z",
+          "attempt_id": "github:issue-comment:5757528323",
+          "route_id": null
+        },
+        {
+          "scope": "repository",
+          "status": "FORMAL_REVIEW_SUBMITTED_ON_DRAFT",
+          "observed_at": "2026-09-21T20:33:26Z",
+          "subject": {
+            "repository": "ktogias/gnostoa",
+            "change_request": null,
+            "head_commit": null
+          },
+          "retry_after": null,
+          "reason": null,
+          "details": {
+            "review_id": "PRR_kwDOToCF3c8AAAABOh_8SQ",
+            "example_change_request": "pull/297",
+            "example_head_commit": null,
+            "source_event_date": "2026-09-21"
+          },
+          "note": "Current Gnostoa configuration submitted a formal Sourcery COMMENTED review while PR #297 was Draft. The example event is retained in the cited review evidence; this repository-scope observation establishes configuration behavior only, not current-head review completion.",
+          "route_state": "UNKNOWN",
+          "scope_identity": "github:ktogias/gnostoa",
+          "event_at": "2026-09-21T18:06:10Z",
+          "attempt_id": "github:pull-review:5270142025",
+          "route_id": null
+        },
+        {
+          "scope": "subject",
+          "status": "COMPLETED",
+          "observed_at": "2026-09-21T20:33:26Z",
+          "subject": {
+            "repository": "ktogias/gnostoa",
+            "change_request": "pull/297",
+            "head_commit": "716687d9b033efc5bba0f719ab183c177b91a11c", "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
+          },
+          "retry_after": null,
+          "reason": null,
+          "details": {
+            "trigger": "standalone_manual_final_review",
+            "review_id": "PRR_kwDOToCF3c8AAAABOicQAw",
+            "database_review_id": 5270605827,
+            "evidence_url": "https://github.com/ktogias/gnostoa/pull/297#pullrequestreview-5270605827"
+          },
+          "note": "A standalone @sourcery-ai review request produced a fresh formal review on the exact head retained in subject.head_commit. This observation is historical for any successor head and proves only that the route completed for that exact subject; event_at is bound to the cited GitHub review submission.",
+          "route_state": "COMPLETED",
+          "scope_identity": "github:ktogias/gnostoa:pull/297",
+          "event_at": "2026-09-21T18:55:52Z",
+          "attempt_id": "github:pull-review:5270605827",
+          "route_id": "sourcery:comment:review"
+        },
+        {
+          "scope": "account",
+          "status": "AVAILABLE",
+          "observed_at": "2026-09-21T20:33:26Z",
+          "subject": null,
+          "retry_after": null,
+          "reason": "successful_review_observed",
+          "details": {
+            "change_request": "pull/297",
+            "review_id": "PRR_kwDOToCF3c8AAAABOicQAw"
+          },
+          "note": "A later successful Sourcery review demonstrates availability in the observed Gnostoa context. Because a stable non-secret provider account/workspace identity is not retained, the planner must not use this record for machine precedence or current dispatch authorization; current read-back is required.",
+          "route_state": "AVAILABLE",
+          "scope_identity": null,
+          "event_at": "2026-09-21T18:55:52Z",
+          "attempt_id": "github:pull-review:5270605827",
+          "route_id": null
+        },
+        {
+          "scope": "account",
+          "status": "AVAILABLE",
+          "observed_at": "2026-09-21T20:33:26Z",
+          "subject": null,
+          "retry_after": null,
+          "reason": "successful_review_after_budget_refusal",
+          "details": {
+            "review_id": "PRR_kwDOToCF3c8AAAABOizhCg",
+            "evidence_url": "https://github.com/ktogias/gnostoa/pull/297#pullrequestreview-5270987018"
+          },
+          "note": "A later successful Sourcery review demonstrates availability in the observed Gnostoa context. Because a stable non-secret provider account/workspace identity is not retained, the planner must not use this record for machine precedence or current dispatch authorization; current read-back is required.",
+          "route_state": "AVAILABLE",
+          "scope_identity": null,
+          "event_at": "2026-09-21T19:35:39Z",
+          "attempt_id": "github:pull-review:5270987018",
+          "route_id": null
+        },
+        {
+          "scope": "subject",
+          "status": "QUOTA_EXHAUSTED",
+          "observed_at": "2026-09-22T02:20:15Z",
+          "subject": {
+            "repository": "ktogias/gnostoa",
+            "change_request": "pull/297",
+            "head_commit": "096705e56342e27cb1cfaf69f7622097f2b12efe", "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
+          },
+          "retry_after": "2026-09-22T10:47:15Z",
+          "reason": "rolling_diff_character_budget",
+          "details": {
+            "provider_message_delay": "PT8H29M",
+            "review_id": "PRR_kwDOToCF3c8AAAABOlS8qQ",
+            "database_review_id": 5273599145,
+            "evidence_url": "https://github.com/ktogias/gnostoa/pull/297#pullrequestreview-5273599145",
+            "activation_context": "automatic_ready_transition"
+          },
+          "note": "The Draft→Ready transition on the exact retained head automatically activated Sourcery without a manual trigger. The attempt terminated at the rolling account budget gate. This directly supersedes the earlier classification of Sourcery Ready activation as manual-observed, while remaining historical for successor heads.",
+          "route_state": "QUOTA_EXHAUSTED",
+          "scope_identity": "github:ktogias/gnostoa:pull/297",
+          "event_at": "2026-09-22T02:18:15Z",
+          "attempt_id": "github:pull-review:5273599145",
+          "route_id": "sourcery:ready:auto-review"
+        }
+      ]
+    },
+    {
+      "id": "qodo",
+      "kind": "semantic_reviewer",
+      "capabilities": {
+        "draft_auto_review": "disabled_by_default_configurable",
+        "ready_review": "supported",
+        "manual_trigger": {
+          "channel": "github_issue_comment",
+          "command": "/agentic_review",
+          "isolation": "required",
+          "instruction_mode": "manual_only",
+          "instruction_template": null,
+          "dispatch_safety": "manual_only_until_repository_validation",
+          "alternatives": [
+            {
+              "purpose": "legacy_review",
+              "channel": "github_issue_comment",
+              "command": "/review",
+              "isolation": "required",
+              "instruction_mode": "manual_only",
+              "instruction_template": null,
+              "dispatch_safety": "manual_only_until_collision_validation",
+              "dispatch_kind": "comment_command",
+              "action": null,
+              "configuration_path": null,
+              "route_id": "qodo:comment:legacy-review"
+            },
+            {
+              "purpose": "provider_chat",
+              "channel": "interactive_pr_agent",
+              "command": null,
+              "isolation": "not_applicable",
+              "instruction_mode": "none",
+              "instruction_template": null,
+              "dispatch_safety": "provider_scoped",
+              "dispatch_kind": "interactive_manual",
+              "action": "/agentic_review",
+              "configuration_path": null,
+              "route_id": "qodo:interactive:agentic-review"
+            }
+          ],
+          "dispatch_kind": "comment_command",
+          "action": null,
+          "configuration_path": null,
+          "route_id": "qodo:comment:agentic-review"
+        },
+        "quota": {
+          "model": "monthly_team_credit_pool_with_customer_overage_cap",
+          "rate_limit": "none_documented",
+          "unit": "credits_consumed_by_review_size_and_complexity",
+          "trial": "14-day full-platform trial advertised with unlimited reviews and credits",
+          "paid_behavior": "reviews draw from a pooled monthly credit pack; customer-set overage cap may stop further paid usage"
+        },
+        "ready_activation": {
+          "mode": "automatic_observed",
+          "readback_before_manual": true,
+          "route_id": "qodo:ready:auto-review"
+        }
+      },
+      "evidence": [
+        {
+          "type": "vendor_documentation",
+          "url": "https://www.qodo.ai/blog/configuring-qodo-code-review-for-your-teams-workflows/",
+          "observed_at": "2026-09-21",
+          "note": "Draft PR auto-review is off by default but configurable; auto review can be disabled for manual triggering."
+        },
+        {
+          "type": "vendor_documentation",
+          "url": "https://www.qodo.ai/pricing/",
+          "observed_at": "2026-09-21",
+          "note": "Current Qodo pricing describes usage-based team credits, pooled review volume and a customer-set overage cap; absence of a request-rate limit is not absence of a monthly usage budget."
+        },
+        {
+          "type": "vendor_documentation",
+          "url": "https://docs.qodo.ai/qodo-documentation/code-review/get-started/configuration-overview/configuration-file",
+          "observed_at": "2026-09-21",
+          "note": "Current Qodo GitHub App configuration documents /agentic_review as the PR review command. Because Gnostoa has not yet validated repository-specific manual command ownership/collision behavior, the retained GitHub-comment recipe is manual_only for planner dispatch until that validation exists."
+        },
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5766334368",
+          "observed_at": "2026-09-21",
+          "note": "On PR #297 the installed Qodo integration automatically began review after the Ready transition; this proves automatic Ready behavior, not a specific manual trigger string."
+        },
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5766935150",
+          "observed_at": "2026-09-21",
+          "note": "On exact head 562fc9a..., Qodo automatically began work immediately after the Ready transition; no manual trigger was sent."
+        },
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5765884271",
+          "observed_at": "2026-09-22T02:00:54Z",
+          "note": "While PR #297 was Draft, Qodo's persistent review summary was refreshed and its provider-authored evidence/source links explicitly named exact head 096705e.... This is attributable provider/head activity even though the mutable summary did not expose a retained route identity."
+        },
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5770288509",
+          "observed_at": "2026-09-22T02:18:20Z",
+          "note": "Immediately after the same head transitioned to Ready, Qodo reported that a new code review was in progress; no manual Qodo trigger was sent."
+        },
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5770301455",
+          "observed_at": "2026-09-22T02:20:15Z",
+          "note": "Qodo explicitly reported that its code review was updated through exact commit 096705e56342e27cb1cfaf69f7622097f2b12efe, confirming exact-head attribution for the Ready-triggered attempt."
+        }
+      ],
+      "observations": [
+        {
+          "scope": "subject",
+          "status": "SEMANTIC_REVIEW_COMMENT_ON_DRAFT",
+          "observed_at": "2026-09-22T02:20:15Z",
+          "subject": {
+            "repository": "ktogias/gnostoa",
+            "change_request": "pull/297",
+            "head_commit": "096705e56342e27cb1cfaf69f7622097f2b12efe", "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
+          },
+          "retry_after": null,
+          "reason": "provider_mutable_summary_exact_head_binding",
+          "details": {
+            "summary_comment_id": 5765884271,
+            "attribution": "provider_and_exact_head_only",
+            "route_identity": "not_exposed"
+          },
+          "note": "The provider-authored persistent Qodo summary explicitly linked findings/evidence to this exact Draft head. Updated-at timing alone would not be enough; the explicit exact-head links make the provider/head activation attributable. The route surface remains unknown, so route_id is null and no route-specific completion is inferred.",
+          "route_state": "UNKNOWN",
+          "scope_identity": "github:ktogias/gnostoa:pull/297",
+          "event_at": "2026-09-22T02:00:54Z",
+          "attempt_id": "github:issue-comment:5765884271",
+          "route_id": null
+        },
+        {
+          "scope": "subject",
+          "status": "REQUESTED",
+          "observed_at": "2026-09-22T02:20:15Z",
+          "subject": {
+            "repository": "ktogias/gnostoa",
+            "change_request": "pull/297",
+            "head_commit": "096705e56342e27cb1cfaf69f7622097f2b12efe", "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
+          },
+          "retry_after": null,
+          "reason": "automatic_ready_activation",
+          "details": {
+            "status_comment_id": 5770288509,
+            "evidence_url": "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5770288509"
+          },
+          "note": "The Ready transition caused Qodo to start another review on the same exact head after an attributable Draft Qodo activation already existed. No manual trigger was sent. This is direct evidence that post-Ready reconciliation cannot prevent quota already spent by the Ready event.",
+          "route_state": "REQUESTED",
+          "scope_identity": "github:ktogias/gnostoa:pull/297",
+          "event_at": "2026-09-22T02:18:20Z",
+          "attempt_id": "github:issue-comment:5770288509",
+          "route_id": "qodo:ready:auto-review"
+        },
+        {
+          "scope": "subject",
+          "status": "COMPLETED",
+          "observed_at": "2026-09-22T02:20:15Z",
+          "subject": {
+            "repository": "ktogias/gnostoa",
+            "change_request": "pull/297",
+            "head_commit": "096705e56342e27cb1cfaf69f7622097f2b12efe", "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
+          },
+          "retry_after": null,
+          "reason": "automatic_ready_review_completed",
+          "details": {
+            "review_id": "PRR_kwDOToCF3c8AAAABOlTgvw",
+            "database_review_id": 5273608383,
+            "exact_head_confirmation_comment_id": 5770301455,
+            "evidence_url": "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5770301455"
+          },
+          "note": "The Ready-triggered Qodo review completed and the provider explicitly confirmed it was updated through the exact retained commit. This is route-specific historical completion for the Ready auto-review surface; it does not establish semantic acceptance or quorum.",
+          "route_state": "COMPLETED",
+          "scope_identity": "github:ktogias/gnostoa:pull/297",
+          "event_at": "2026-09-22T02:20:11Z",
+          "attempt_id": "github:pull-review:5273608383",
+          "route_id": "qodo:ready:auto-review"
+        }
+      ]
+    },
+    {
+      "id": "codeant",
+      "kind": "semantic_reviewer",
+      "capabilities": {
+        "draft_auto_review": "unknown",
+        "ready_review": "observed_supported",
+        "manual_trigger": {
+          "channel": "github_issue_comment",
+          "command": "@codeant-ai: review",
+          "isolation": "recommended",
+          "instruction_mode": "optional_template",
+          "instruction_template": "{command}\n\n{instructions}",
+          "dispatch_safety": "safe_observed",
+          "alternatives": [],
+          "dispatch_kind": "comment_command",
+          "action": null,
+          "configuration_path": null,
+          "route_id": "codeant:comment:review"
+        },
+        "quota": {
+          "model": "plan_dependent",
+          "status": "unknown"
+        },
+        "ready_activation": {
+          "mode": "automatic_observed",
+          "readback_before_manual": true,
+          "route_id": "codeant:ready:auto-review"
+        }
+      },
+      "evidence": [
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/285#issuecomment-5763038978",
+          "observed_at": "2026-09-21",
+          "note": "Fresh exact-head command with attached instructions produced a bounded review result."
+        },
+        {
+          "type": "vendor_documentation",
+          "url": "https://codeant.ai/pricing",
+          "observed_at": "2026-09-21",
+          "note": "Plan-specific pricing exists; absence of an observed Gnostoa limit is not treated as unlimited."
+        },
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5765816608",
+          "observed_at": "2026-09-21",
+          "note": "On exact head 562fc9a..., CodeAnt automatically started and completed an incremental review after the Ready transition."
+        },
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5765816608",
+          "observed_at": "2026-09-22T02:18:16Z",
+          "note": "The persistent CodeAnt status recorded an automatic incremental review starting on exact head 096705e... immediately after the Ready transition, with no manual CodeAnt trigger."
+        }
+      ],
+      "observations": [
+        {
+          "scope": "subject",
+          "status": "IN_PROGRESS",
+          "observed_at": "2026-09-22T02:20:15Z",
+          "subject": {
+            "repository": "ktogias/gnostoa",
+            "change_request": "pull/297",
+            "head_commit": "096705e56342e27cb1cfaf69f7622097f2b12efe", "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
+          },
+          "retry_after": null,
+          "reason": "automatic_ready_activation",
+          "details": {
+            "status_comment_id": 5765816608,
+            "evidence_url": "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5765816608"
+          },
+          "note": "CodeAnt's provider-authored status bound an incremental review start to the exact retained head immediately after Ready. This is attributable Ready-auto route activity; no manual trigger was sent.",
+          "route_state": "IN_PROGRESS",
+          "scope_identity": "github:ktogias/gnostoa:pull/297",
+          "event_at": "2026-09-22T02:18:16Z",
+          "attempt_id": "github:issue-comment:5765816608",
+          "route_id": "codeant:ready:auto-review"
+        }
+      ]
+    },
+    {
+      "id": "cubic",
+      "kind": "semantic_reviewer",
+      "capabilities": {
+        "draft_auto_review": "unknown",
+        "ready_review": "observed_supported",
+        "manual_trigger": {
+          "channel": "github_issue_comment",
+          "command": "@cubic-dev-ai review",
+          "isolation": "recommended",
+          "instruction_mode": "none",
+          "instruction_template": null,
+          "dispatch_safety": "safe_observed",
+          "alternatives": [],
+          "dispatch_kind": "comment_command",
+          "action": null,
+          "configuration_path": null,
+          "route_id": "cubic:comment:review"
+        },
+        "quota": {
+          "model": "monthly_pr_or_reviewed_lines_by_plan",
+          "incremental_reviews_count_new_lines": true,
+          "manual_reruns_count_again": true,
+          "reset": "billing_period"
+        },
+        "ready_activation": {
+          "mode": "unknown",
+          "readback_before_manual": true,
+          "route_id": null
+        }
+      },
+      "evidence": [
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/272#issuecomment-5715456960",
+          "observed_at": "2026-09-17",
+          "note": "Workspace reached 40,037 / 40,000 reviewed lines; bot reported exact resume date."
+        },
+        {
+          "type": "vendor_documentation",
+          "url": "https://www.cubic.dev/pricing-plans",
+          "observed_at": "2026-09-21",
+          "note": "Starter and reviewed-line plan limits, billing-period reset, incremental and rerun accounting."
+        },
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/285#issuecomment-5744117247",
+          "observed_at": "2026-09-18",
+          "note": "Later Gnostoa observation: Cubic reported 60,991 of 60,000 reviewed lines used and a 15 October 2026 resume date after flex capacity was exhausted."
+        }
+      ],
+      "observations": [
+        {
+          "scope": "account",
+          "status": "QUOTA_EXHAUSTED",
+          "observed_at": "2026-09-21T20:33:26Z",
+          "subject": null,
+          "retry_after": null,
+          "reason": "monthly_reviewed_line_allowance",
+          "details": {
+            "observed_usage": 60991,
+            "observed_limit": 60000,
+            "unit": "reviewed_lines",
+            "source_event_date": "2026-09-18",
+            "provider_resume_date": "2026-10-15",
+            "retry_after_precision": "date_only"
+          },
+          "note": "Observed Gnostoa workspace reviewed-line quota exhausted at the cited GitHub event. The provider supplied only a date-level resume value (2026-10-15), retained in details.provider_resume_date; normalized retry_after remains null because no exact RFC3339 instant is attributable. Current availability still requires revalidation.",
+          "route_state": "QUOTA_EXHAUSTED",
+          "scope_identity": null,
+          "event_at": "2026-09-19T17:55:48Z",
+          "attempt_id": "github:issue-comment:5744117247",
+          "route_id": null
+        }
+      ]
+    },
+    {
+      "id": "bito",
+      "kind": "semantic_reviewer",
+      "capabilities": {
+        "draft_auto_review": "skipped_by_default_configurable",
+        "ready_review": "supported",
+        "manual_trigger": {
+          "channel": "github_issue_comment",
+          "command": "/review",
+          "isolation": "required",
+          "instruction_mode": "manual_only",
+          "instruction_template": null,
+          "dispatch_safety": "requires_repository_specific_collision_validation",
+          "alternatives": [],
+          "dispatch_kind": "comment_command",
+          "action": null,
+          "configuration_path": null,
+          "route_id": "bito:comment:review"
+        },
+        "quota": {
+          "model": "test_mode_or_full_integration",
+          "test_mode_reviews": 10,
+          "full_integration_vendor_claim": "unlimited_reviews",
+          "subject_size_fair_use": "observed_in_gnostoa_trial"
+        },
+        "ready_activation": {
+          "mode": "configurable",
+          "readback_before_manual": true,
+          "route_id": "bito:ready:auto-review"
+        }
+      },
+      "evidence": [
+        {
+          "type": "vendor_documentation",
+          "url": "https://docs.bito.ai/ai-code-reviews-in-git/excluding-files-folders-or-branches-with-filters",
+          "observed_at": "2026-09-21",
+          "note": "Draft auto-review is skipped by default and manual /review remains available."
+        },
+        {
+          "type": "vendor_documentation",
+          "url": "https://docs.bito.ai/ai-code-reviews-in-git/try-ai-code-reviews-using-test-mode",
+          "observed_at": "2026-09-21",
+          "note": "Test mode has 10 reviews; full Git integration is documented as unlimited reviews."
+        },
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/285#issuecomment-5763817612",
+          "observed_at": "2026-09-21",
+          "note": "Large PR exceeded Bito trial fair-usage size limit."
+        },
+        {
+          "type": "vendor_documentation",
+          "url": "https://docs.bito.ai/ai-code-reviews-in-git/available-commands",
+          "observed_at": "2026-09-21",
+          "note": "Bito documents bare /review and scoped /review arguments; no provider-targeted review command was found in the inspected current command reference."
+        }
+      ],
+      "observations": [
+        {
+          "scope": "subject",
+          "status": "UNSUPPORTED_FOR_SUBJECT",
+          "observed_at": "2026-09-21T20:33:26Z",
+          "subject": {
+            "repository": "ktogias/gnostoa",
+            "change_request": "pull/285",
+            "head_commit": null
+          },
+          "retry_after": null,
+          "reason": "trial_fair_usage_pr_size_limit_on_large_prs",
+          "details": {
+            "account_mode": "trial",
+            "source_event_date": "2026-09-21"
+          },
+          "note": "This refusal is PR/account-mode specific. The exact historical head is not retained, so head_commit=null makes the observation historical-only and forces revalidation for any current candidate.",
+          "route_state": "UNSUPPORTED_FOR_SUBJECT",
+          "scope_identity": "github:ktogias/gnostoa:pull/285",
+          "event_at": "2026-09-21T16:21:45Z",
+          "attempt_id": "github:issue-comment:5763817612",
+          "route_id": "bito:comment:review"
+        }
+      ]
+    },
+    {
+      "id": "codacy-ai-reviewer",
+      "kind": "hybrid_reviewer",
+      "capabilities": {
+        "draft_auto_review": "vendor_default_disabled_configuration_dependent",
+        "draft_manual_review": "supported",
+        "ready_review": "supported",
+        "manual_trigger": {
+          "channel": "provider_ui_or_public_api",
+          "command": null,
+          "isolation": "not_applicable",
+          "instruction_mode": "repository_configuration",
+          "instruction_template": null,
+          "dispatch_safety": "requires_provider_adapter",
+          "alternatives": [
+            {
+              "purpose": "repository_instructions",
+              "channel": "provider_ui_or_public_api",
+              "command": null,
+              "isolation": "not_applicable",
+              "instruction_mode": "repository_configuration",
+              "instruction_template": null,
+              "dispatch_safety": "configuration_only",
+              "dispatch_kind": "configuration_only",
+              "action": null,
+              "configuration_path": ".codacy/instructions/review.md",
+              "route_id": "codacy-ai-reviewer:configuration:review-instructions"
+            }
+          ],
+          "dispatch_kind": "provider_action",
+          "action": "Run Reviewer",
+          "configuration_path": null,
+          "route_id": "codacy-ai-reviewer:provider-action:run-reviewer"
+        },
+        "quota": {
+          "model": "plan_dependent",
+          "status": "unknown"
+        },
+        "ready_activation": {
+          "mode": "automatic_observed",
+          "readback_before_manual": true,
+          "route_id": "codacy-ai-reviewer:ready:auto-review"
+        }
+      },
+      "evidence": [
+        {
+          "type": "vendor_documentation",
+          "url": "https://docs.codacy.com/release-notes/cloud/cloud-2026-05/",
+          "observed_at": "2026-09-21",
+          "note": "AI Reviewer no longer auto-runs for draft PRs; manual trigger remains possible."
+        },
+        {
+          "type": "vendor_documentation",
+          "url": "https://docs.codacy.com/codacy-ai/codacy-ai/",
+          "observed_at": "2026-09-21",
+          "note": "Run Reviewer via summary or API; repository custom instructions path documented."
+        },
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5765187617",
+          "observed_at": "2026-09-21",
+          "note": "Draft dogfood showed Codacy static analysis clean and an AI Reviewer request reported as started; no completion is inferred from this request message."
+        },
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/297#pullrequestreview-5271436142",
+          "observed_at": "2026-09-21",
+          "note": "Separate later formal Codacy review after a Ready transition; it documents automatic Ready activation and is distinct from the historical subject-scoped completion observation retained elsewhere in this registry."
+        },
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/297#pullrequestreview-5270601975",
+          "observed_at": "2026-09-21",
+          "note": "Formal Codacy review submitted on exact head 716687d9... at 2026-09-21T18:55:26Z; retained as historical exact-head review evidence."
+        },
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/297#pullrequestreview-5271920924",
+          "observed_at": "2026-09-21",
+          "note": "Formal Codacy review submitted on exact head e304af4d... at 2026-09-21T21:14:36Z after the Ready transition; retained as historical exact-head review evidence once the head changes."
+        }
+      ],
+      "observations": [
+        {
+          "scope": "repository",
+          "status": "AI_REVIEW_REQUEST_REPORTED_ON_DRAFT",
+          "observed_at": "2026-09-21T20:33:26Z",
+          "subject": {
+            "repository": "ktogias/gnostoa",
+            "change_request": null,
+            "head_commit": null
+          },
+          "retry_after": null,
+          "reason": null,
+          "details": {
+            "result_surface": "request_status_only",
+            "example_change_request": "pull/297",
+            "example_head_commit": null,
+            "source_event_date": "2026-09-21"
+          },
+          "note": "Codacy reported that its first AI Reviewer review was requested successfully while PR #297 was Draft. The exact head of the mutable summary/request event is not retained, so this repository-scope observation is configuration evidence only and cannot satisfy subject completion.",
+          "route_state": "UNKNOWN",
+          "scope_identity": "github:ktogias/gnostoa",
+          "event_at": "2026-09-21T18:05:31Z",
+          "attempt_id": "github:issue-comment:5765187617",
+          "route_id": null
+        },
+        {
+          "scope": "subject",
+          "status": "COMPLETED",
+          "observed_at": "2026-09-21T20:33:26Z",
+          "subject": {
+            "repository": "ktogias/gnostoa",
+            "change_request": "pull/297",
+            "head_commit": "716687d9b033efc5bba0f719ab183c177b91a11c", "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
+          },
+          "retry_after": null,
+          "reason": null,
+          "details": {
+            "review_id": "PRR_kwDOToCF3c8AAAABOicA9w"
+          },
+          "note": "Codacy submitted a formal review result on the exact head retained in subject.head_commit. It is historical-only after any successor head is created; event_at is bound to the cited GitHub review submission.",
+          "route_state": "COMPLETED",
+          "scope_identity": "github:ktogias/gnostoa:pull/297",
+          "event_at": "2026-09-21T18:55:26Z",
+          "attempt_id": "github:pull-review:5270601975",
+          "route_id": null
+        },
+        {
+          "scope": "subject",
+          "status": "COMPLETED",
+          "observed_at": "2026-09-21T21:15:32Z",
+          "subject": {
+            "repository": "ktogias/gnostoa",
+            "change_request": "pull/297",
+            "head_commit": "562fc9a7f986665438528b599aa3e1a12633f76e", "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
+          },
+          "retry_after": null,
+          "reason": null,
+          "details": {
+            "review_id": "PRR_kwDOToCF3c8AAAABOjO7bg",
+            "result_surface": "formal_pull_request_review"
+          },
+          "note": "Codacy submitted a formal review on the exact head retained in subject.head_commit. This observation is separate from the older 716687d9... review and supports only that exact subject; route completion is not a clean-verdict or quorum claim.",
+          "route_state": "COMPLETED",
+          "scope_identity": "github:ktogias/gnostoa:pull/297",
+          "event_at": "2026-09-21T20:20:00Z",
+          "attempt_id": null,
+          "route_id": null
+        },
+        {
+          "scope": "subject",
+          "status": "COMPLETED",
+          "observed_at": "2026-09-21T21:15:32Z",
+          "subject": {
+            "repository": "ktogias/gnostoa",
+            "change_request": "pull/297",
+            "head_commit": "e304af4dcd5298e79b66e60a9ac3012643af24ea", "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
+          },
+          "retry_after": null,
+          "reason": null,
+          "details": {
+            "review_id": "PRR_kwDOToCF3c8AAAABOjshHA",
+            "result_surface": "formal_pull_request_review"
+          },
+          "note": "Codacy submitted a formal review on the exact head retained in subject.head_commit. After any successor head this remains historical exact-head evidence only; route completion is not a clean-verdict or quorum claim.",
+          "route_state": "COMPLETED",
+          "scope_identity": "github:ktogias/gnostoa:pull/297",
+          "event_at": "2026-09-21T21:14:36Z",
+          "attempt_id": null,
+          "route_id": null
+        }
+      ]
+    },
+    {
+      "id": "gitar",
+      "kind": "semantic_reviewer",
+      "capabilities": {
+        "draft_auto_review": "configuration_dependent",
+        "ready_review": "observed_supported",
+        "manual_trigger": {
+          "channel": "interactive_pr_agent",
+          "command": null,
+          "isolation": "not_applicable",
+          "instruction_mode": "manual_only",
+          "instruction_template": null,
+          "dispatch_safety": "requires_provider_adapter",
+          "alternatives": [],
+          "dispatch_kind": "interactive_manual",
+          "action": null,
+          "configuration_path": null,
+          "route_id": "gitar:interactive:pr-agent"
+        },
+        "quota": {
+          "model": "flat_plan_features",
+          "numeric_review_cap": "not_documented_in_pricing_source"
+        },
+        "ready_activation": {
+          "mode": "unknown",
+          "readback_before_manual": true,
+          "route_id": null
+        }
+      },
+      "evidence": [
+        {
+          "type": "vendor_documentation",
+          "url": "https://gitar.ai/pricing",
+          "observed_at": "2026-09-21",
+          "note": "Plans advertise customizable code reviews and an interactive PR agent without a published per-review numeric cap."
+        },
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5765282290",
+          "observed_at": "2026-09-21",
+          "note": "Automatic Draft issue-comment review reported no issues and medium risk."
+        },
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/297#pullrequestreview-5270699955",
+          "observed_at": "2026-09-21T19:05:45Z",
+          "note": "Formal Gitar COMMENTED review 5270699955 was submitted on the exact head retained by the matching subject observation at the provider-attributable timestamp. This durable artifact verifies the review identity, exact-head binding and event time for the subject-scoped COMPLETED observation; route completion remains distinct from semantic acceptance or quorum."
+        }
+      ],
+      "observations": [
+        {
+          "scope": "repository",
+          "status": "SEMANTIC_REVIEW_COMMENT_ON_DRAFT",
+          "observed_at": "2026-09-21T20:33:26Z",
+          "subject": {
+            "repository": "ktogias/gnostoa",
+            "change_request": null,
+            "head_commit": null
+          },
+          "retry_after": null,
+          "reason": null,
+          "details": {
+            "result_surface": "issue_comment",
+            "example_change_request": "pull/297",
+            "example_head_commit": null,
+            "source_event_date": "2026-09-21"
+          },
+          "note": "Gitar automatically posted semantic review activity while PR #297 was Draft. The event demonstrates repository/configuration behavior; without a retained exact source-event identity/time or exact head it remains non-comparable historical configuration evidence and cannot satisfy route completion.",
+          "route_state": "UNKNOWN",
+          "scope_identity": "github:ktogias/gnostoa",
+          "event_at": null,
+          "attempt_id": null,
+          "route_id": null
+        },
+        {
+          "scope": "subject",
+          "status": "COMPLETED",
+          "observed_at": "2026-09-21T20:33:26Z",
+          "subject": {
+            "repository": "ktogias/gnostoa",
+            "change_request": "pull/297",
+            "head_commit": "c9d04df74704d4de1138fa719d916a855f3b069f", "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
+          },
+          "retry_after": null,
+          "reason": null,
+          "details": {
+            "result_surface": "formal_pull_request_review",
+            "review_id": "PRR_kwDOToCF3c8AAAABOih_sw",
+            "database_review_id": 5270699955,
+            "evidence_url": "https://github.com/ktogias/gnostoa/pull/297#pullrequestreview-5270699955"
+          },
+          "note": "Gitar submitted a formal COMMENTED review on the exact head retained in subject.head_commit after its prior finding was addressed. This completion matches only that head; event_at is bound to the cited GitHub review submission.",
+          "route_state": "COMPLETED",
+          "scope_identity": "github:ktogias/gnostoa:pull/297",
+          "event_at": "2026-09-21T19:05:45Z",
+          "attempt_id": "github:pull-review:5270699955",
+          "route_id": null
+        }
+      ]
+    },
+    {
+      "id": "turingmind",
+      "kind": "semantic_reviewer",
+      "capabilities": {
+        "draft_auto_review": "unknown",
+        "ready_review": "observed_credit_gated",
+        "manual_trigger": {
+          "channel": "github_app",
+          "command": null,
+          "isolation": "unknown",
+          "instruction_mode": "manual_only",
+          "instruction_template": null,
+          "dispatch_safety": "manual_only_until_trigger_contract_known",
+          "alternatives": [],
+          "dispatch_kind": "unknown",
+          "action": null,
+          "configuration_path": null,
+          "route_id": "turingmind:github-app:unknown"
+        },
+        "quota": {
+          "model": "credit_gated"
+        },
+        "ready_activation": {
+          "mode": "unknown",
+          "readback_before_manual": true,
+          "route_id": null
+        }
+      },
+      "evidence": [
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/285#issuecomment-5758253881",
+          "observed_at": "2026-09-20",
+          "note": "Review skipped because account was out of review credits."
+        }
+      ],
+      "observations": [
+        {
+          "scope": "account",
+          "status": "CREDIT_REQUIRED",
+          "observed_at": "2026-09-21T20:33:26Z",
+          "subject": null,
+          "retry_after": null,
+          "reason": "no_pr_review_credits",
+          "details": {
+            "charged": false,
+            "source_event_date": "2026-09-20"
+          },
+          "note": "Gnostoa account had no PR review credits; bot reported skip and no charge.",
+          "route_state": "CREDIT_REQUIRED",
+          "scope_identity": null,
+          "event_at": "2026-09-21T09:25:20Z",
+          "attempt_id": "github:issue-comment:5758253881",
+          "route_id": null
+        }
+      ]
+    },
+    {
+      "id": "deepsource",
+      "kind": "analyzer_and_mutation_tool",
+      "capabilities": {
+        "semantic_reviewer_scheduler_class": "separate_lane",
+        "autofix": "provider_mutation",
+        "scheduling_note": "Do not count analyzer/autofix availability as semantic-review convergence.",
+        "draft_static_analysis": "observed_automatic",
+        "ai_review": {
+          "draft_behavior": "manual_on_demand_observed"
+        },
+        "manual_trigger": {
+          "channel": "github_issue_comment",
+          "command": "@deepsourcebot review",
+          "isolation": "recommended",
+          "instruction_mode": "none",
+          "instruction_template": null,
+          "dispatch_safety": "safe_observed",
+          "alternatives": [],
+          "dispatch_kind": "comment_command",
+          "action": null,
+          "configuration_path": null,
+          "route_id": "deepsource:comment:review"
+        },
+        "ready_activation": {
+          "mode": "manual_observed",
+          "readback_before_manual": true,
+          "route_id": null
+        }
+      },
+      "evidence": [
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/285#issuecomment-5761254096",
+          "observed_at": "2026-09-21",
+          "note": "A DeepSource autofix introduced syntax and contract regressions and was reverted; autofix must be treated as a new untrusted candidate mutation."
+        },
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5765181973",
+          "observed_at": "2026-09-21",
+          "note": "Natural Draft dogfood: static analyzers ran automatically while AI Review remained on-demand and advertised @deepsourcebot review."
+        }
+      ],
+      "observations": []
+    }
+  ],
+  "terminal_route_states": [
+    "COMPLETED",
+    "SKIPPED",
+    "QUOTA_EXHAUSTED",
+    "CREDIT_REQUIRED",
+    "UNAVAILABLE",
+    "UNSUPPORTED_FOR_SUBJECT",
+    "FAILED",
+    "TIMED_OUT",
+    "DESELECTED_OPTIONAL"
+  ],
+  "nonterminal_route_states": [
+    "UNKNOWN",
+    "AVAILABLE",
+    "REQUESTED",
+    "IN_PROGRESS",
+    "REVALIDATION_REQUIRED"
+  ],
+  "trigger_channel_vocabulary": [
+    "github_issue_comment",
+    "provider_ui_or_public_api",
+    "interactive_pr_agent",
+    "github_app"
+  ],
+  "dispatch_safety_vocabulary": [
+    "safe_observed",
+    "manual_only_until_repository_validation",
+    "manual_only_until_collision_validation",
+    "provider_scoped",
+    "requires_repository_specific_collision_validation",
+    "requires_provider_adapter",
+    "configuration_only",
+    "manual_only_until_trigger_contract_known"
+  ],
+  "planner_contract": {
+    "manual_trigger_fields": [
+      "route_id",
+      "channel",
+      "dispatch_kind",
+      "command",
+      "action",
+      "configuration_path",
+      "isolation",
+      "instruction_mode",
+      "instruction_template",
+      "dispatch_safety",
+      "alternatives"
+    ],
+    "dispatch_safety_rule": "Every primary and alternative manual trigger dispatch_safety MUST belong to the closed top-level dispatch_safety_vocabulary. Vocabulary membership is classification, not dispatch authority: safe_observed still requires every other dispatch, isolation, current-readback and lifecycle gate; manual_only_until_*, requires_*, provider_scoped and configuration_only values never become automatic merely because their dispatch_kind is otherwise automatic-capable. Unknown provider-specific safety labels are invalid rather than free-form extensions.",
+    "observation_fields": [
+      "scope",
+      "scope_identity",
+      "status",
+      "route_state",
+      "route_id",
+      "attempt_id",
+      "event_at",
+      "observed_at",
+      "subject",
+      "retry_after",
+      "reason",
+      "details",
+      "note"
+    ],
+    "observation_scopes": [
+      "account",
+      "repository",
+      "subject"
+    ],
+    "rule": "Planner-facing trigger and observation state uses only these normalized shapes. Every primary and alternative trigger carries a retained stable route_id; provider-specific trigger variants belong in manual_trigger.alternatives; volatile account/repository/subject facts belong in observations. Every observation.status must appear in observation_status_vocabulary. Subject-scoped observations are reusable only when subject.head_commit exactly matches the current candidate. Missing exact-head identity never matches and requires revalidation. Missing values are null, not provider-specific keys.",
+    "subject_fields": [
+      "repository",
+      "change_request",
+      "head_commit"
+    ],
+    "subject_rule": "This rule governs historical observations[] records. For scope=subject, subject MUST contain repository, change_request, and head_commit. A non-null head_commit matches only that exact candidate; null is historical-only and MUST force revalidation rather than match a current candidate. For scope=repository, subject uses the same shape with change_request=null and head_commit=null. For scope=account, subject=null. current_readback uses the separate current_readback_rule and always binds the exact planning target subject/head, even when provider availability was reacquired at account or repository scope.",
+    "public_identity_annotation_rule": "A non-null subject.head_commit is a public Git commit identity, not a credential. In retained JSON it carries a non-semantic _public_identity_note with the repository-standard detect-secrets pragma on the same physical line. The planner ignores annotation keys.",
+    "observation_status_rule": "observation_status_vocabulary is a closed superset of terminal_route_states, nonterminal_route_states, and descriptive_observation_statuses. Every observations[].status must belong to it, but status membership never determines terminality. Orchestration terminality is determined only from the separate mandatory observations[].route_state field.",
+    "route_failure_rule": "FAILED and TIMED_OUT are terminal for one invocation attempt only. They are never clean semantic-review evidence. DESELECTED_OPTIONAL likewise never represents a clean review. When protected assurance is not PASS, failure of a policy_eligible assurance-advancing route leaves assurance incomplete until a later successful exact-head result is re-evaluated by protected R2A or alternative qualified evidence changes the protected assurance result; retries remain effect-authorized/manual and require current revalidation.",
+    "availability_precedence_rule": "Availability is evaluated independently from invocation-attempt outcome. Historical precedence is permitted only for applicable observations with the same provider, scope, non-null scope_identity, and applicable subject, ordered by exact event_at. AVAILABLE, QUOTA_EXHAUSTED, CREDIT_REQUIRED, UNAVAILABLE, and UNSUPPORTED_FOR_SUBJECT are availability outcomes. FAILED/TIMED_OUT do not overwrite availability because they describe an invocation attempt. Null scope_identity or missing/coarse event_at prevents machine precedence and requires revalidation.",
+    "timestamp_rule": "event_at and retry_after use RFC3339 UTC only when exact source/provider timing is retained. observed_at records Gnostoa acquisition/retention time. Date-only source timing MUST remain explicit coarse metadata in details (for example provider_resume_date) with the normalized event_at/retry_after field null; no exact timestamp may be fabricated.",
+    "alternative_trigger_fields": [
+      "purpose",
+      "route_id",
+      "channel",
+      "dispatch_kind",
+      "command",
+      "action",
+      "configuration_path",
+      "isolation",
+      "instruction_mode",
+      "instruction_template",
+      "dispatch_safety"
+    ],
+    "instruction_modes": [
+      "none",
+      "optional_template",
+      "required_template",
+      "repository_configuration",
+      "manual_only"
+    ],
+    "instruction_template_placeholders": [
+      "{command}",
+      "{instructions}"
+    ],
+    "trigger_rule": "A planner may emit only the retained command, or render a retained instruction_template using the allowed placeholders and caller-supplied instructions. It MUST NOT invent provider syntax or instruction text. If instruction_mode=manual_only, the planner may describe the route but MUST NOT emit a dispatch recipe. Alternatives use the normalized alternative_trigger_fields contract.",
+    "observation_precedence_rule": "Historical interpretation may order observations only when provider, scope, non-null scope_identity, applicable subject, and exact RFC3339 event_at are comparable. observed_at records acquisition/retention and never substitutes for event_at ordering. retry_after is advisory forecast data and cannot override a later attributable event. Null identities, missing/coarse event times, ties, malformed values, or conflicts require REVALIDATION_REQUIRED rather than guessed precedence.",
+    "route_attempt_rule": "FAILED and TIMED_OUT are terminal for one invocation attempt, never clean review evidence. The read-only planner has zero automatic retries. After same-cut revalidation, failure of a policy_eligible assurance-advancing route produces MANUAL_ESCALATION_REQUIRED; an explicitly authorized external retry creates a new activation identity on the same stable route_id and exact head. Missing/ambiguous qualification binding yields QUALIFICATION_ROUTE_BINDING_REQUIRED. Optional routes may be deselected only under optional_route_disposition_rule.",
+    "route_state_rule": "Every observations[].route_state is required and must belong to terminal_route_states or nonterminal_route_states. observations[].status may be a descriptive provider-event label or a route-state label; orchestration terminality is determined only from route_state, never inferred from descriptive status. COMPLETED is route completion only and gains no semantic-review meaning without the separate subject/evidence/qualification gates.",
+    "attempt_failure_stales_availability_rule": "If an applicable observation with route_state FAILED or TIMED_OUT is newer than the latest applicable AVAILABLE observation, a planner must not auto-dispatch from that stale AVAILABLE state. It must reacquire availability/eligibility; absent a current read-back, use REVALIDATION_REQUIRED/manual disposition. The failure/timeout remains an attempt outcome, not a claim that the provider is unavailable.",
+    "descriptive_event_rule": "Statuses listed in descriptive_observation_statuses are provider-event evidence only. Repository-scoped descriptive observations MUST use route_state UNKNOWN because they establish configuration behavior without an exact route subject; they are intentionally unable to decide route terminality, semantic completion, availability, or quorum. Subject-scoped route outcomes use the exact-head rules separately.",
+    "attempt_state_precedence_rule": "Invocation-attempt state is evaluated independently from availability. Route-specific precedence requires the same provider, same applicable subject, the same non-null route_id, attributable attempt/order and comparable timestamps. The latest observation among REQUESTED, IN_PROGRESS, COMPLETED, SKIPPED, FAILED, and TIMED_OUT is then the latest known attempt state for that route. COMPLETED is the only attempt-terminal state that may carry successful review evidence; SKIPPED, FAILED, and TIMED_OUT never create semantic acceptance. Null/mismatched route identity or ambiguous attempt order requires revalidation instead of guessed precedence.",
+    "status_dimension_rule": "A single observation.status may belong to a route-state vocabulary or to descriptive_observation_statuses. Scheduling combines separate availability and attempt dimensions; no precedence rule may reinterpret an attempt failure as provider unavailability or a descriptive event as route completion.",
+    "availability_freshness_rule": "Availability has no implicit age-based TTL. For automatic scarce-review dispatch, freshness requires provider/account/subject availability read-back acquired in the same planning execution/cut. If no current read-back adapter/result exists, or the result is ambiguous, route_state is REVALIDATION_REQUIRED for automation purposes. Historical retry_after may guide when to reacquire but never substitutes for current dispatch authorization.",
+    "ready_activation_rule": "Ready transition and manual invocation are mutually exclusive provider-level activation paths for one reviewer/candidate generation. PRE_READY_RECONCILE runs before any Ready recommendation and blocks the transition when existing provider/head activity could be duplicated by Ready auto-activation without established provider-level deduplication. Provider/head attribution is sufficient for mutual exclusion even when route_id is unknown; a retained route_id adds route-specific reconciliation but is not required to suppress a sibling provider activation. After Ready, the planner MUST use a POST_READY cut bound to the Ready transition receipt before recommending any manual trigger. Automatic Ready activity uses ready_activation.route_id when attributable; manual activity uses its retained manual route_id. Ambiguous or merely suspected activity yields REVALIDATION_REQUIRED rather than being aliased to a route or treated as absence.",
+    "activation_identity_rule": "Activation suppression has two nested identities on one exact head. First, provider/head mutual exclusion: any provider-authored current-head review/request activation suppresses sibling activation for that provider even when the exact provider route is not attributable. Second, when a retained stable route_id is attributable — including non-null ready_activation.route_id for automatic Ready review — it is also used for surface-specific reconciliation and duplicate suppression. Different route_id values remain distinct surfaces for attribution and pre-activation selection, but never authorize duplicate provider activation on the same exact head.",
+    "provider_activation_attribution_rule": "A current provider/head activation may be attributed from a provider-native formal review/request record, provider-authored persistent summary/status marker, check/run metadata, or provider source/evidence link only when that surface explicitly binds the exact planning_subject head or exposes an immutable provider/request identity already bound to that head. A mutable updated_at timestamp, proximity to a push, generic success status, or provider presence alone is insufficient. An explicit current-head binding inside a mutable summary body/footer/source URL is sufficient for provider/head attribution even when route_id is unknown; in that case provider-level sibling activation is suppressed while route-specific state remains unattributed. Contradictory, partial, or head-ambiguous surfaces yield an AMBIGUOUS scan, never ABSENT.",
+    "provider_activation_scan_fields": [
+      "cut_id",
+      "provider_id",
+      "planning_subject",
+      "scanned_at",
+      "completeness",
+      "activation_state",
+      "activations",
+      "source_refs"
+    ],
+    "provider_activation_scan_completeness": [
+      "COMPLETE",
+      "INCOMPLETE",
+      "AMBIGUOUS"
+    ],
+    "provider_activation_scan_states": [
+      "PRESENT",
+      "ABSENT",
+      "AMBIGUOUS"
+    ],
+    "provider_activation_entry_fields": [
+      "route_id",
+      "attempt_id",
+      "event_at",
+      "source_ref",
+      "attribution_state"
+    ],
+    "provider_activation_attribution_states": [
+      "ATTRIBUTED_ROUTE",
+      "ATTRIBUTED_PROVIDER_HEAD",
+      "UNATTRIBUTED"
+    ],
+    "provider_activation_scan_rule": "PRE_READY_RECONCILE consumes one provider_activation_scan per in-scope provider for the active PRE_READY cut. ABSENT is valid only when completeness=COMPLETE, the scan covers every provider-native review/request/summary/status/check surface available to the adapter for that provider, and no attributable or ambiguous current-head activity exists. PRESENT may contain route_id=null when provider and exact head are attributable but the specific route surface is not; that still blocks duplicate provider activation. INCOMPLETE, AMBIGUOUS, an unattributed current-head-like surface, or a missing scan yields REVALIDATION_REQUIRED and no Ready recommendation.",
+    "ready_activation_fields": [
+      "mode",
+      "route_id",
+      "readback_before_manual"
+    ],
+    "ready_activation_modes": [
+      "automatic_observed",
+      "manual_observed",
+      "configurable",
+      "unknown",
+      "not_applicable"
+    ],
+    "planning_as_of_rule": "Planner input carries an exact RFC3339 planning as_of plus current provider read-back evidence and current non-secret scope identities. Historical committed observations may explain prior states but cannot by themselves authorize automatic scarce-review dispatch at as_of.",
+    "route_completion_scope_rule": "route_state=COMPLETED means only that an appropriately scoped provider attempt reached a terminal completed state. A non-null matching route_id is required before that observation can suppress or complete an orchestration route. A subject-scoped exact-head formal review with route_id=null may still be retained as semantic review evidence through existing reviewer/source R2A capture, but it is not route-specific activation evidence. COMPLETED does NOT by itself establish qualified reviewer/domain status, quorum, approval, or merge authority. Repository-scoped descriptive observations MUST use route_state UNKNOWN.",
+    "scope_identity_rule": "Every observation carries scope_identity as a non-secret stable identifier or null. Historical precedence and cross-observation comparison are allowed only when provider, scope, applicable subject, and a non-null scope_identity all match. A null scope_identity is historical-only and MUST force current revalidation before automatic dispatch; identities must never contain credentials, tokens, billing secrets, or private installation secrets.",
+    "event_time_rule": "event_at is the provider/source event time when an exact RFC3339 timestamp is attributable; observed_at is when Gnostoa acquired/retained the observation. Historical precedence uses event_at only when it is exact and scope_identity is non-null and matching. Missing/coarse event_at cannot be reconstructed from observed_at and requires revalidation for current-state selection.",
+    "instruction_render_rule": "Instructions are caller-supplied text, never provider folklore generated by the planner. Normalize CRLF/CR to LF, encode UTF-8, and reject payloads over instruction_policy.max_utf8_bytes. HT and LF are the only permitted control characters; other C0/C1 controls are rejected. Caller text containing reserved placeholder literals is rejected. Rendering is exactly one non-recursive substitution pass. For optional_template, empty instructions emit command-only; for required_template, empty instructions are invalid. When isolation is required/recommended, caller instructions MUST NOT contain any retained comment-command trigger from the registry. Any validation failure yields MANUAL_ONLY_NO_DISPATCH; no partial/fallback comment is emitted.",
+    "dispatch_kinds": [
+      "comment_command",
+      "provider_action",
+      "configuration_only",
+      "interactive_manual",
+      "unknown"
+    ],
+    "dispatch_kind_rule": "dispatch_kind disambiguates trigger payload semantics. comment_command requires command and null action/configuration_path; provider_action requires action and null command/configuration_path; configuration_only requires configuration_path and is never an invocation; interactive_manual and unknown are non-automatic and carry no executable command. A planner/dispatcher MUST NOT reinterpret UI labels, configuration paths, or sentinel text as comment syntax.",
+    "retry_time_rule": "retry_after is an exact RFC3339 instant or null. Date-only provider recovery/resume information is non-comparable coarse metadata retained in details and may guide when to revalidate, but it is never normalized into retry_after.",
+    "optional_route_disposition_rule": "DESELECTED_OPTIONAL is a terminal scheduling/disposition outcome only when protected assurance already reports PASS or an authority-produced route_binding has optional_for_current_assurance=true. It MUST record the reason and remains non-evidence: it never counts as a review and never advances protected assurance. When assurance is not PASS, a policy_eligible route that could add a not-yet-qualified authority-bound independence domain is not automatically optional. Missing or ambiguous route binding forbids automatic deselection and yields QUALIFICATION_ROUTE_BINDING_REQUIRED/manual disposition.",
+    "reconciliation_wait_rule": "Final collection waits for every route that remains selected. A REVALIDATION_REQUIRED route may be explicitly transitioned to DESELECTED_OPTIONAL only under optional_route_disposition_rule; this removes it from the active selected set without fabricating review evidence. A policy_eligible assurance-advancing route, or any route whose qualification binding is missing/ambiguous while protected assurance is not PASS, remains blocking for automatic convergence recommendations.",
+    "attempt_identity_rule": "attempt_id is an optional non-secret provider/request/review identity for one invocation or result. It participates in route-level activation de-duplication and attempt ordering only when observations[].route_id is non-null and matches the retained route identity. A route_id=null attempt remains historical provider evidence and cannot suppress a current route. If multiple same-route/same-head attempts exist and their identities/order cannot be distinguished, the planner MUST return REVALIDATION_REQUIRED rather than suppress or emit a trigger by guess.",
+    "planning_cut_fields": [
+      "cut_id",
+      "as_of",
+      "subject",
+      "phase",
+      "ready_transition_receipt_id"
+    ],
+    "planning_cut_phases": [
+      "PRE_READY",
+      "POST_READY",
+      "FINAL_RECONCILE"
+    ],
+    "ready_transition_receipt_fields": [
+      "receipt_id",
+      "pre_ready_cut_id",
+      "subject",
+      "transitioned_at",
+      "from_state",
+      "to_state",
+      "provider_event_id"
+    ],
+    "ready_transition_receipt_rule": "A Ready transition is a typed effect boundary, not an inference from current PR state. The receipt binds one PRE_READY cut and exact subject to an attributable provider lifecycle event with from_state=DRAFT and to_state=READY. After the effect, the planner MUST mint a new POST_READY planning cut with a new cut_id, the same exact subject, as_of not earlier than transitioned_at, and ready_transition_receipt_id equal to the receipt. Pre-Ready read-backs cannot satisfy post-Ready ordering.",
+    "current_readback_fields": [
+      "cut_id",
+      "provider_id",
+      "route_id",
+      "source",
+      "readback_at",
+      "planning_subject",
+      "scope",
+      "scope_identity",
+      "subject",
+      "availability_state",
+      "eligibility_state",
+      "attempt_state",
+      "activation_id",
+      "ready_activation_state",
+      "provider_head_deduplication_state"
+    ],
+    "current_readback_sources": [
+      "provider_current_readback"
+    ],
+    "current_readback_availability_states": [
+      "AVAILABLE",
+      "QUOTA_EXHAUSTED",
+      "CREDIT_REQUIRED",
+      "UNAVAILABLE",
+      "UNSUPPORTED_FOR_SUBJECT",
+      "REVALIDATION_REQUIRED"
+    ],
+    "current_readback_attempt_states": [
+      "UNKNOWN",
+      "REQUESTED",
+      "IN_PROGRESS",
+      "COMPLETED",
+      "SKIPPED",
+      "FAILED",
+      "TIMED_OUT",
+      "REVALIDATION_REQUIRED"
+    ],
+    "current_readback_rule": "Automatic scarce-review dispatch requires source=provider_current_readback, cut_id exactly equal to the active planning_cut.cut_id, route_id exactly equal to one retained manual primary/alternative route_id or one non-null ready_activation.route_id, planning_subject exactly equal to the planning-cut exact subject/head, availability_state=AVAILABLE, and eligibility_state=ELIGIBLE. PRE_READY_RECONCILE uses provider_activation_scan for provider/head presence/absence and uses route-bound current_readback only where route availability, eligibility, Ready configuration, deduplication, or attempt state must be evaluated. The fact-level subject MUST obey its declared scope semantics and may be null for account scope. scope_identity must be current and non-null where required. readback_at and planning_cut.as_of are exact RFC3339 timestamps from the same planner execution. A manual-trigger recommendation after Ready MUST consume only a POST_READY cut whose ready_transition_receipt_id is non-null and whose as_of/readback_at follow the referenced Ready receipt; a PRE_READY cut/read-back can never satisfy the post-transition ordering guard. Committed historical registry observations MUST NOT be promoted into current_readback or provider_activation_scan. Missing, stale-head, mismatched-cut, unknown-route, null-identity, incomplete availability-plus-eligibility proof, or invalid phase/receipt ordering yields state=REVALIDATION_REQUIRED and next_action=REVALIDATE_CURRENT_STATE.",
+    "final_review_cut_fields": [
+      "cut_id",
+      "head_commit",
+      "state",
+      "assurance_outcome",
+      "assurance_reason",
+      "minimum_distinct_domains",
+      "qualified_domain_ids",
+      "qualification_revision"
+    ],
+    "final_review_cut_states": [
+      "COLLECTING",
+      "COMPLETE",
+      "INCOMPLETE_ASSURANCE",
+      "INVALIDATED_HEAD_CHANGED"
+    ],
+    "final_review_cut_rule": "A final review cut is bound to one exact head_commit and one protected-assurance/qualification revision. If the candidate head differs from final_review_cut.head_commit, the entire cut becomes INVALIDATED_HEAD_CHANGED; no old-head review completion or qualified-domain result counts toward the successor cut. COMPLETE is possible only when exact-head protected assurance has completeness=COMPLETE and outcome=PASS. Otherwise the cut is COLLECTING or INCOMPLETE_ASSURANCE. The planner copies assurance_outcome, assurance_reason, minimum_distinct_domains and qualified_domain_ids from protected authority and never derives quorum itself.",
+    "dispatch_kind_constraints": {
+      "comment_command": {
+        "required_non_null": [
+          "command"
+        ],
+        "required_null": [
+          "action",
+          "configuration_path"
+        ],
+        "automatic_capable": true
+      },
+      "provider_action": {
+        "required_non_null": [
+          "action"
+        ],
+        "required_null": [
+          "command",
+          "configuration_path"
+        ],
+        "automatic_capable": true
+      },
+      "configuration_only": {
+        "required_non_null": [
+          "configuration_path"
+        ],
+        "required_null": [
+          "command",
+          "action"
+        ],
+        "automatic_capable": false
+      },
+      "interactive_manual": {
+        "required_non_null": [],
+        "required_null": [
+          "command",
+          "configuration_path"
+        ],
+        "optional": [
+          "action"
+        ],
+        "automatic_capable": false
+      },
+      "unknown": {
+        "required_non_null": [],
+        "required_null": [
+          "command",
+          "action",
+          "configuration_path"
+        ],
+        "automatic_capable": false
+      }
+    },
+    "dispatch_kind_constraint_rule": "Primary and alternative trigger entries MUST satisfy dispatch_kind_constraints exactly. required_non_null fields are non-empty strings; required_null fields are null. A kind with automatic_capable=false can be described but never emitted as an automatic dispatch recipe. dispatch_safety and instruction_mode may further restrict an otherwise automatic-capable kind.",
+    "instruction_policy": {
+      "max_utf8_bytes": 4096,
+      "newline_normalization": "CRLF_OR_CR_TO_LF",
+      "allowed_control_characters": [
+        "HT",
+        "LF"
+      ],
+      "reject_other_c0_c1_controls": true,
+      "reserved_caller_literals": [
+        "{command}",
+        "{instructions}"
+      ],
+      "render_passes": 1,
+      "invalid_input_disposition": "MANUAL_ONLY_NO_DISPATCH"
+    },
+    "null_event_time_rule": "event_at=null means the exact provider/source event instant is not attributable. Such an observation may be retained as historical context but is non-comparable for machine precedence, activation ordering, and current-state authorization. It MUST NOT override an exact-time current read-back or suppress a current-head activation.",
+    "current_readback_eligibility_states": [
+      "ELIGIBLE",
+      "INELIGIBLE",
+      "REVALIDATION_REQUIRED"
+    ],
+    "current_readback_subject_rule": "current_readback.planning_subject MUST exactly equal the active planning_cut.subject and identifies the exact PR/head being considered for dispatch. current_readback.subject retains the fact's scope semantics: account scope requires subject=null; repository scope uses repository with null change_request/head_commit; subject scope uses the exact subject. The planner MUST NOT rewrite account/repository facts into subject scope.",
+    "current_readback_composition_rule": "A current_readback is a route-target evaluation assembled from same-cut provider facts. availability_state reports capacity/availability at the declared scope; eligibility_state reports whether that route is eligible for planning_subject. An adapter may combine separately acquired account/workspace availability and exact-subject eligibility only when both were read in the same cut with attributable current scope identity. Otherwise eligibility_state is REVALIDATION_REQUIRED and the planner next action is REVALIDATE_CURRENT_STATE.",
+    "retry_policy": {
+      "automatic_retry": false,
+      "maximum_automatic_attempts_per_route_head": 0,
+      "backoff_rule": "The planner never invents a backoff interval. provider retry_after or coarse resume metadata may determine when revalidation becomes useful; otherwise timing remains manual.",
+      "optional_route_after_failed_or_timed_out": "DESELECT_OPTIONAL only when protected assurance is PASS or the authority route_binding says optional_for_current_assurance=true; otherwise MANUAL_ESCALATION_REQUIRED or QUALIFICATION_ROUTE_BINDING_REQUIRED when the binding is missing/ambiguous.",
+      "manual_retry_prerequisites": [
+        "the exact head is still current",
+        "current availability and eligibility are reacquired in the same planning cut",
+        "no REQUESTED or IN_PROGRESS attempt exists for the same route/head activation identity",
+        "the retained trigger/action is dispatch-eligible",
+        "explicit provider-write effect authorization is present"
+      ],
+      "retry_transition": "FAILED or TIMED_OUT -> REVALIDATE_CURRENT_STATE -> MANUAL_ESCALATION_REQUIRED. A separately authorized human/provider effect may create a new activation identity and then the planner may observe REQUESTED/IN_PROGRESS/COMPLETED on the same exact head. The read-only planner never performs or loops the retry itself.",
+      "assurance_advancing_route_after_failed_or_timed_out": "MANUAL_ESCALATION_REQUIRED"
+    },
+    "retry_recovery_rule": "Recovery from FAILED/TIMED_OUT is deterministic and effect-free: 1) move the route to REVALIDATION_REQUIRED; 2) reacquire same-cut current availability and eligibility for the same stable route_id and exact head; 3) if protected assurance is not PASS, require a complete authority route_binding before claiming the route can advance assurance; missing/ambiguous binding yields QUALIFICATION_ROUTE_BINDING_REQUIRED; 4) a policy_eligible assurance-advancing route yields MANUAL_ESCALATION_REQUIRED; 5) the planner performs no retry and invents no backoff; 6) only a separately authorized provider-write effect may create a new activation identity after manual_retry_prerequisites hold; 7) optional routes may be DESELECTED_OPTIONAL only under optional_route_disposition_rule.",
+    "next_action_vocabulary": [
+      "WAIT",
+      "REVALIDATE_CURRENT_STATE",
+      "QUALIFICATION_ROUTE_BINDING_REQUIRED",
+      "MANUAL_ESCALATION_REQUIRED",
+      "WAIT_FOR_ALTERNATIVE_QUALIFIED_EVIDENCE",
+      "DESELECT_OPTIONAL",
+      "RECONCILE"
+    ],
+    "failure_recovery_rule": "FAILED and TIMED_OUT terminate one invocation attempt. There is no automatic retry in the admitted read-only planner. After same-cut revalidation, a policy_eligible assurance-advancing route moves to MANUAL_ESCALATION_REQUIRED and remains non-converged until a new explicitly authorized attempt succeeds and protected R2A is recomputed, or alternative qualified evidence changes protected assurance. Missing/ambiguous route qualification binding yields QUALIFICATION_ROUTE_BINDING_REQUIRED. Optional routes may be DESELECTED_OPTIONAL only under optional_route_disposition_rule.",
+    "route_identity_rule": "route_id is a retained, stable, non-secret identity for one provider review surface. The route inventory is the union of every manual_trigger primary/alternative route_id and every non-null ready_activation.route_id. Identities are unique across that inventory and are never derived at runtime from command text, provider display labels or array position. A materially different invocation/lifecycle surface receives a new route_id. Route selection, current_readback, activation deduplication, protected route bindings and reconciliation MUST use this exact identity.",
+    "protected_assurance_fields": [
+      "subject_head_commit",
+      "outcome",
+      "reason",
+      "minimum_distinct_domains",
+      "qualified_domain_ids",
+      "required_capability_ids",
+      "qualification_revision",
+      "route_bindings",
+      "completeness"
+    ],
+    "protected_assurance_outcomes": [
+      "PASS",
+      "BLOCKED",
+      "INCOMPLETE",
+      "CONFLICTING"
+    ],
+    "protected_assurance_completeness": [
+      "COMPLETE",
+      "INCOMPLETE",
+      "AMBIGUOUS",
+      "MISSING"
+    ],
+    "route_binding_fields": [
+      "route_id",
+      "reviewer_id",
+      "source_id",
+      "independence_domain_id",
+      "capability_ids",
+      "qualification_status",
+      "policy_eligible",
+      "optional_for_current_assurance"
+    ],
+    "route_binding_qualification_status": [
+      "established",
+      "unestablished",
+      "revoked"
+    ],
+    "assurance_pass_through_rule": "protected_assurance is authority-produced input derived from the effective review policy, R2A result and accepted Issue #10 qualification snapshot. The planner MUST preserve outcome, reason, minimum_distinct_domains, qualified_domain_ids, required_capability_ids and qualification_revision without re-evaluating quorum or qualification. Owner-decision readiness is blocked unless completeness=COMPLETE, subject_head_commit equals the current exact head and outcome=PASS. Missing, ambiguous, differently-head-bound or incomplete protected assurance is blocking.",
+    "route_binding_rule": "Each protected route_binding joins one retained review route_id — manual/alternative or non-null Ready-auto surface — to authority-owned reviewer_id/source_id qualification identity and independence_domain_id. policy_eligible and optional_for_current_assurance are produced upstream by the protected qualification/policy adapter after applying qualification status, freshness, owner relation, scope and required-capability rules; the planner MUST NOT derive either value from provider identity, route count or registry capability claims. A binding whose route_id is absent from the retained route inventory, duplicated, ambiguous or not attributable to the accepted qualification revision is invalid protected input.",
+    "assurance_progression_rule": "When protected assurance is INCOMPLETE with reason=QUORUM_UNMET, the planner may prioritize only currently AVAILABLE+ELIGIBLE routes with policy_eligible=true whose authority-bound independence_domain_id is not already present in qualified_domain_ids. This is scheduling diversity, not a quorum decision. The planner MUST NOT claim that dispatching or completing such a route satisfies quorum; only a later protected R2A result may do so. If assurance is not PASS and no complete authority route binding exists for a route claimed to advance assurance, surface QUALIFICATION_ROUTE_BINDING_REQUIRED rather than spending scarce quota by guess. Unbound routes may still be described as exploratory/optional evidence but never as assurance-advancing final routes.",
+    "alternative_activation_rule": "Primary, alternative and Ready-auto routes of one provider are mutually exclusive activation choices for one exact candidate generation. A sibling route may replace a prior choice only when the earlier choice produced no attributable provider/head activation and a fresh same-cut provider read-back proves no REQUESTED, IN_PROGRESS or COMPLETED attempt exists. Once any provider/head activation is attributable, every sibling route is suppressed for that head. A failed or timed-out attempt follows retry_policy/manual escalation and cannot be bypassed by switching route.",
+    "ready_activation_route_rule": "ready_activation.route_id identifies the provider's Ready-triggered automatic/configurable review surface, not a manual trigger. mode=automatic_observed MUST have a non-null unique route_id. mode=manual_observed and not_applicable MUST use route_id=null. mode=configurable may retain a non-null route_id when the automatic surface is known even if current repository configuration must still be read back. mode=unknown uses null unless an attributable automatic surface identity is independently established. A non-null Ready route participates in the same provider/head mutual-exclusion rule as manual routes.",
+    "observation_route_identity_rule": "observations[].route_id is either one retained route identity from the provider's manual/Ready route inventory or null. Null means the historical fact/attempt cannot be attributed to one review surface and therefore MUST NOT suppress, deduplicate, satisfy or order a specific route activation. Provider/account availability facts may legitimately use route_id=null. Subject-scoped formal review evidence with route_id=null may still remain exact-head semantic evidence for R2A through its reviewer/source attribution, but it cannot be used as route-specific orchestration evidence.",
+    "current_readback_ready_activation_states": [
+      "ENABLED",
+      "DISABLED",
+      "NOT_APPLICABLE",
+      "UNKNOWN"
+    ],
+    "provider_head_deduplication_states": [
+      "ESTABLISHED",
+      "UNESTABLISHED",
+      "UNKNOWN"
+    ],
+    "pre_ready_reconciliation_rule": "Before recommending a Draft→Ready transition, the planner MUST consume a COMPLETE provider_activation_scan for every provider whose Ready behavior is automatic_observed, configurable, unknown, or otherwise not proven non-automatic, plus any provider already used for early review on the exact head. A COMPLETE ABSENT result permits Ready without provider configuration/dedup proof because Ready may be that provider's first activation. PRESENT with provider/head attribution blocks sibling activation even when route_id is null; if Ready automatic activation cannot be excluded, current read-back must establish ready_activation_state=DISABLED/NOT_APPLICABLE or provider_head_deduplication_state=ESTABLISHED. Missing, INCOMPLETE, AMBIGUOUS, or head-ambiguous scan results yield REVALIDATION_REQUIRED and no Ready recommendation. Immediately before any Ready effect, re-read the exact candidate/lifecycle state and repeat or refresh the PRE_READY scans; any new provider activity, head/base/lifecycle change, or competing orchestration receipt after the cut invalidates the recommendation and restarts PRE_READY_RECONCILE. If a same-head provider activation remains while Ready auto-activation is ENABLED or UNKNOWN and provider-level deduplication is not ESTABLISHED, Ready is blocked and the next permitted action is MANUAL_ESCALATION_REQUIRED. After a successful Ready effect, create a Ready transition receipt and a new POST_READY cut; only that cut may attribute/reconcile newly started automatic activity before any manual trigger.",
+    "early_review_ready_reservation_rule": "A provider whose Ready path is automatic_observed, configurable, or unknown where automatic activation cannot be excluded is reserved from same-head early review by default when that head may later be sealed unchanged and transitioned to Ready. Early use on that head is safe only when current provider state proves ready_activation_state=DISABLED/NOT_APPLICABLE or provider_head_deduplication_state=ESTABLISHED. If early review already occurred and those conditions are not proven, PRE_READY_RECONCILE blocks Ready rather than knowingly spending duplicate review quota. A provider may be treated as having no same-head activation only from a COMPLETE ABSENT provider_activation_scan; route-bound read-back is not required solely to prove absence.",
+    "state_action_mapping_rule": "Planner state/status tokens and next-action tokens are separate typed dimensions. REVALIDATION_REQUIRED is a state/disposition meaning current route/provider facts are insufficient for a safe decision. REVALIDATE_CURRENT_STATE is the corresponding next permitted action that asks the read-only planner/operator workflow to reacquire current facts. Whenever this contract says missing, stale or ambiguous state requires revalidation, the planner MUST expose state=REVALIDATION_REQUIRED and next_action=REVALIDATE_CURRENT_STATE; implementations MUST NOT substitute one token for the other."
+  },
+  "observation_status_vocabulary": [
+    "COMPLETED",
+    "SKIPPED",
+    "QUOTA_EXHAUSTED",
+    "CREDIT_REQUIRED",
+    "UNAVAILABLE",
+    "UNSUPPORTED_FOR_SUBJECT",
+    "FAILED",
+    "TIMED_OUT",
+    "UNKNOWN",
+    "AVAILABLE",
+    "REQUESTED",
+    "IN_PROGRESS",
+    "REVALIDATION_REQUIRED",
+    "FORMAL_REVIEW_SUBMITTED_ON_DRAFT",
+    "AI_REVIEW_REQUEST_REPORTED_ON_DRAFT",
+    "SEMANTIC_REVIEW_COMMENT_ON_DRAFT",
+    "DESELECTED_OPTIONAL"
+  ],
+  "descriptive_observation_statuses": [
+    "FORMAL_REVIEW_SUBMITTED_ON_DRAFT",
+    "AI_REVIEW_REQUEST_REPORTED_ON_DRAFT",
+    "SEMANTIC_REVIEW_COMMENT_ON_DRAFT"
+  ]
+}
