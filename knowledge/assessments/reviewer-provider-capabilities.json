@@ -1,5 +1,5 @@
 {
-  "schema_version": "gnostoa-reviewer-capability-registry/v0.16",
+  "schema_version": "gnostoa-reviewer-capability-registry/v0.17",
   "generated_at": "2026-09-22T02:27:49Z",
   "research_date": "2026-09-22",
   "subject": {
@@ -1150,6 +1150,16 @@
     "interactive_pr_agent",
     "github_app"
   ],
+  "dispatch_safety_vocabulary": [
+    "safe_observed",
+    "manual_only_until_repository_validation",
+    "manual_only_until_collision_validation",
+    "provider_scoped",
+    "requires_repository_specific_collision_validation",
+    "requires_provider_adapter",
+    "configuration_only",
+    "manual_only_until_trigger_contract_known"
+  ],
   "planner_contract": {
     "manual_trigger_fields": [
       "route_id",
@@ -1164,6 +1174,7 @@
       "dispatch_safety",
       "alternatives"
     ],
+    "dispatch_safety_rule": "Every primary and alternative manual trigger dispatch_safety MUST belong to the closed top-level dispatch_safety_vocabulary. Vocabulary membership is classification, not dispatch authority: safe_observed still requires every other dispatch, isolation, current-readback and lifecycle gate; manual_only_until_*, requires_*, provider_scoped and configuration_only values never become automatic merely because their dispatch_kind is otherwise automatic-capable. Unknown provider-specific safety labels are invalid rather than free-form extensions.",
     "observation_fields": [
       "scope",
       "scope_identity",
