@@ -2,23 +2,30 @@ from __future__ import annotations
 
 import importlib
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import ModuleType
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
+GIT = shutil.which("git")
+if GIT is None:
+    raise RuntimeError("git is required for candidate preparation tests")
 
 
 class CandidatePreparationContractTests(unittest.TestCase):
-    def _module(self):
+    @staticmethod
+    def _module() -> ModuleType:
         return importlib.import_module("tools.candidate_prepare")
 
-    def _git(self, root: Path, *arguments: str) -> str:
+    @staticmethod
+    def _git(root: Path, *arguments: str) -> str:
         completed = subprocess.run(
-            ["git", *arguments],
+            [GIT, *arguments],
             cwd=root,
             check=True,
             capture_output=True,
@@ -26,10 +33,15 @@ class CandidatePreparationContractTests(unittest.TestCase):
         )
         return completed.stdout.strip()
 
-    def _repository(self, root: Path) -> str:
-        self._git(root, "init", "--quiet")
-        self._git(root, "config", "user.email", "candidate@example.invalid")
-        self._git(root, "config", "user.name", "Candidate Test")
+    @staticmethod
+    def _repository(root: Path) -> str:
+        CandidatePreparationContractTests._git(root, "init", "--quiet")
+        CandidatePreparationContractTests._git(
+            root, "config", "user.email", "candidate@example.invalid"
+        )
+        CandidatePreparationContractTests._git(
+            root, "config", "user.name", "Candidate Test"
+        )
         (root / "ci").mkdir()
         style = root / "ci" / "style"
         style.write_text(
@@ -44,18 +56,33 @@ class CandidatePreparationContractTests(unittest.TestCase):
         )
         style.chmod(0o755)
         (root / "base.txt").write_text("base\n", encoding="utf-8")
-        self._git(root, "add", ".")
-        self._git(root, "commit", "--quiet", "-m", "base")
-        return self._git(root, "rev-parse", "HEAD")
+        CandidatePreparationContractTests._git(root, "add", ".")
+        CandidatePreparationContractTests._git(
+            root, "commit", "--quiet", "-m", "base"
+        )
+        return CandidatePreparationContractTests._git(root, "rev-parse", "HEAD")
+
+    def _receipt(self) -> Path:
+        receipt_root = Path(tempfile.mkdtemp(prefix="gnostoa-receipt-test-"))
+        self.addCleanup(shutil.rmtree, receipt_root, ignore_errors=True)
+        return receipt_root / "receipt.json"
 
     def test_raw_git_commit_characterizes_non_hook_escape(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._repository(root)
             (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            style = subprocess.run(
+                [str(root / "ci" / "style"), "--check"],
+                cwd=root,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(0, style.returncode)
             self._git(root, "add", "candidate.py")
             completed = subprocess.run(
-                ["git", "commit", "--quiet", "-m", "unprepared candidate"],
+                [GIT, "commit", "--quiet", "-m", "unprepared candidate"],
                 cwd=root,
                 check=False,
                 capture_output=True,
@@ -79,7 +106,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 'assert Path("candidate.py").read_text() == "value = 1\\n"\n',
                 encoding="utf-8",
             )
-            receipt = Path(directory).parent / f"{root.name}-receipt.json"
+            receipt = self._receipt()
             with patch.object(
                 candidate_prepare,
                 "_repository_root",
@@ -96,6 +123,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 )
             self.assertEqual(parent, payload["parent_commit"])
             self.assertEqual(["candidate.py", "focused.py"], payload["changed_paths"])
+            self.assertEqual("PRE_CANDIDATE_RUFF_CATCH", payload["metric_event"])
             self.assertTrue(receipt.is_file())
             self.assertEqual(
                 payload,
@@ -114,7 +142,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
             (root / "second.txt").write_text("second\n", encoding="utf-8")
             self._git(root, "add", "second.txt")
             self._git(root, "commit", "--quiet", "-m", "second")
-            receipt = Path(directory).parent / f"{root.name}-receipt.json"
+            receipt = self._receipt()
             with patch.object(candidate_prepare, "_repository_root", return_value=root):
                 with self.assertRaisesRegex(
                     candidate_prepare.PrepareError,
@@ -133,7 +161,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
             root = Path(directory)
             parent = self._repository(root)
             (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
-            receipt = Path(directory).parent / f"{root.name}-receipt.json"
+            receipt = self._receipt()
             with patch.object(
                 candidate_prepare,
                 "_repository_root",
@@ -165,6 +193,135 @@ class CandidatePreparationContractTests(unittest.TestCase):
                     parent,
                     payload["prepared_tree"],
                 )
+
+    def test_prepare_includes_untracked_addition_and_deletion(self) -> None:
+        candidate_prepare = self._module()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "base.txt").unlink()
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+            with patch.object(
+                candidate_prepare,
+                "_repository_root",
+                return_value=root,
+            ), patch.object(
+                candidate_prepare,
+                "_ruff_version",
+                return_value="ruff 0.16.0",
+            ):
+                payload = candidate_prepare.prepare(
+                    parent,
+                    receipt,
+                    [sys.executable, "-c", "pass"],
+                )
+            self.assertEqual(["base.txt", "candidate.py"], payload["changed_paths"])
+
+    def test_prepare_rejects_focused_verifier_mutation(self) -> None:
+        candidate_prepare = self._module()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+            command = [
+                sys.executable,
+                "-c",
+                "from pathlib import Path; "
+                "Path('candidate.py').write_text('changed\\n')",
+            ]
+            with patch.object(
+                candidate_prepare,
+                "_repository_root",
+                return_value=root,
+            ), patch.object(
+                candidate_prepare,
+                "_ruff_version",
+                return_value="ruff 0.16.0",
+            ):
+                with self.assertRaisesRegex(
+                    candidate_prepare.PrepareError,
+                    "focused verification mutated candidate",
+                ):
+                    candidate_prepare.prepare(parent, receipt, command)
+            self.assertFalse(receipt.exists())
+
+    def test_prepare_rejects_failed_focused_verification(self) -> None:
+        candidate_prepare = self._module()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+            with patch.object(
+                candidate_prepare,
+                "_repository_root",
+                return_value=root,
+            ):
+                with self.assertRaisesRegex(
+                    candidate_prepare.PrepareError,
+                    r"focused verification failed \(7\)",
+                ):
+                    candidate_prepare.prepare(
+                        parent,
+                        receipt,
+                        [sys.executable, "-c", "raise SystemExit(7)"],
+                    )
+            self.assertFalse(receipt.exists())
+
+    def test_prepare_rejects_candidate_local_receipt(self) -> None:
+        candidate_prepare = self._module()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            with patch.object(candidate_prepare, "_repository_root", return_value=root):
+                with self.assertRaisesRegex(
+                    candidate_prepare.PrepareError,
+                    "receipt path must be outside",
+                ):
+                    candidate_prepare.prepare(
+                        parent,
+                        root / "receipt.json",
+                        [sys.executable, "-c", "pass"],
+                    )
+
+    def test_cli_verify_consumes_exact_receipt(self) -> None:
+        candidate_prepare = self._module()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+            with patch.object(
+                candidate_prepare,
+                "_repository_root",
+                return_value=root,
+            ), patch.object(
+                candidate_prepare,
+                "_ruff_version",
+                return_value="ruff 0.16.0",
+            ):
+                payload = candidate_prepare.prepare(
+                    parent,
+                    receipt,
+                    [sys.executable, "-c", "pass"],
+                )
+            self.assertEqual(
+                0,
+                candidate_prepare.main(
+                    [
+                        "verify",
+                        "--parent",
+                        parent,
+                        "--tree",
+                        payload["prepared_tree"],
+                        "--receipt",
+                        str(receipt),
+                    ]
+                ),
+            )
 
     def test_ci_wrapper_routes_to_candidate_prepare_module(self) -> None:
         wrapper = ROOT / "ci" / "prepare-candidate"

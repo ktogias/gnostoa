@@ -37,9 +37,9 @@ x-project-knowledge:
 
 ## Context
 
-Decision 081 made `./ci/style` the repository-root Ruff decision surface and
+Decision 0081 made `./ci/style` the repository-root Ruff decision surface and
 requires normalization before a Python-affecting candidate is sealed. PR #305
-showed that the rule is not mechanically activated for Git-hub API/Git-data
+showed that the rule is not mechanically activated for GitHub API/Git-data
 authoring: blobs, trees, commits and refs can be created without a local Git
 hook or worktree preflight. Provider CI then detects deterministic formatting
 only after a candidate SHA exists, causing an avoidable successor SHA and stale
@@ -80,14 +80,19 @@ effect recovery.
 6. The successful receipt binds at least parent commit/tree, prepared tree,
    prepared binary-diff SHA-256, changed paths, `ci/style` SHA-256, observed Ruff
    version, focused command, and zero exit status for every required step. The
-   receipt carries a canonical SHA-256 over its own payload.
+   receipt carries a canonical SHA-256 over its own payload and records
+   `PRE_CANDIDATE_RUFF_CATCH` when normalization changed the proposed tree,
+   otherwise `PRE_CANDIDATE_NO_RUFF_CHANGE`. Post-seal Ruff escapes remain a
+   separate Decision 0081 ledger classification.
 7. Receipts are evidence, not candidate source. The output path must be outside
    the repository worktree so creating the receipt cannot change the prepared
    tree it describes.
 8. A publishing adapter must compare the exact parent and exact tree it intends
    to publish with a valid receipt before creating or advancing a candidate ref.
-   Parent/tree mismatch, altered receipt, failed check, missing focused command,
-   or unsupported receipt version fails closed.
+   The implementation exposes both `verify_receipt()` and the
+   `ci/prepare-candidate verify` CLI for that provider-neutral consumption
+   boundary. Parent/tree mismatch, altered receipt, failed check, missing focused
+   command, or unsupported receipt version fails closed.
 9. GitHub API/Git-data authoring may still create the final provider objects; it
    consumes prepared bytes/tree identity rather than generated text that has not
    crossed the preparation boundary.
