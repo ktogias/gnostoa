@@ -923,8 +923,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
             global_exclude = home / "custom-ignore"
             global_exclude.write_text("global-secret.txt\n", encoding="utf-8")
             (home / ".gitconfig").write_text(
-                "[core]\n"
-                f"\texcludesFile = {global_exclude}\n",
+                f"[core]\n\texcludesFile = {global_exclude}\n",
                 encoding="utf-8",
             )
             (root / "global-secret.txt").write_text(
