@@ -4,6 +4,7 @@ import copy
 import json
 import unittest
 from pathlib import Path
+from typing import Any
 
 from jsonschema import Draft202012Validator
 
@@ -74,7 +75,7 @@ Q0_ENTRIES = [
 ]
 
 
-def _load(path: Path) -> dict[str, object]:
+def _load(path: Path) -> dict[str, Any]:
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise AssertionError(f"{path} must contain a JSON object")
@@ -97,9 +98,16 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
             },
             baseline["qualification_snapshot"],
         )
+        entries = baseline["qualification_snapshot"]["entries"]
+        self.assertIsInstance(entries, list)
+        assert isinstance(entries, list)
         self.assertEqual(
             {"github-app:coderabbitai", "github-app:gitar-bot"},
-            {entry["independence_domain_id"] for entry in Q0_ENTRIES},
+            {
+                entry["independence_domain_id"]
+                for entry in entries
+                if isinstance(entry, dict)
+            },
         )
         self.assertEqual(
             {
