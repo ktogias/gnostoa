@@ -142,11 +142,15 @@ non-hook authoring without importing a general orchestration subsystem.
    style decision. Preparation then reruns `./ci/style --check` against the
    restored exact normalized tree and executes `git diff --cached --check`.
 6. Run `ci/prepare-candidate` from the recommended Development Container by
-   default. The module intentionally invokes `ci/verify` directly inside the
-   environment that hosts the isolated worktree instead of launching nested
-   Docker. Direct host execution is the documented native fallback only when the
-   container route is unavailable; the caller records that reason. Provider CI
-   remains the authoritative independent check.
+   default. The intended route is `.devcontainer/devcontainer.json`, whose
+   writable workspace mount and `updateRemoteUserUID` setting support preparation
+   writes without a `safe.directory` override. The read-only one-shot verification
+   container documented in `AGENTS.md` is not a preparation route. The module
+   intentionally invokes `ci/verify` directly inside the environment that hosts
+   the isolated worktree instead of launching nested Docker. Direct host execution
+   is the documented native fallback only when the container route is unavailable;
+   the caller records that reason. Provider CI remains the authoritative
+   independent check.
 7. The successful receipt binds at least parent commit/tree, prepared tree,
    its receipt-unique
    `refs/gnostoa/prepared/<parent-sha>/<tree-sha>/<receipt-nonce>` retention
@@ -173,7 +177,10 @@ non-hook authoring without importing a general orchestration subsystem.
    separately authenticated preparation provenance and the retained receipt
    identity before any ref effect. That effect/fencing boundary remains owned by
    #15/#308; arbitrary external API clients are not claimed impossible to bypass
-   by this repository-local preparation contract.
+   by this repository-local preparation contract. Preparation is also not a process
+   sandbox: focused verification executes candidate code with the invoking OS
+   identity, and the Git/Python environment isolation plus tree checks do not claim
+   to prevent side effects on other resources accessible to that identity.
 10. Provider CI remains check-only and authoritative. A preparation receipt is
     neither semantic review, approval, merge authority nor a replacement for
     post-publication exact-head checks.
