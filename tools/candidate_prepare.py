@@ -184,9 +184,7 @@ def _focused_tooling_directory(git_dir: Path) -> Path:
     tooling.mkdir(mode=0o700)
     knowledge = tooling / "knowledge"
     knowledge.write_text(
-        "#!/bin/sh\n"
-        "set -eu\n"
-        'exec "$GNOSTOA_PREPARE_PYTHON" -m tools.cli "$@"\n',
+        '#!/bin/sh\nset -eu\nexec "$GNOSTOA_PREPARE_PYTHON" -m tools.cli "$@"\n',
         encoding="utf-8",
     )
     knowledge.chmod(0o700)
