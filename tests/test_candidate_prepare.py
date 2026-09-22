@@ -511,6 +511,61 @@ class CandidatePreparationContractTests(unittest.TestCase):
             self.assertEqual(0, payload["checks"]["focused_verification"])
             self.assertTrue(receipt.is_file())
 
+    def test_focused_verification_uses_prepared_toolkit_root_and_source_cli(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+            with patch.dict(
+                os.environ,
+                {
+                    "GNOSTOA_TEST_FOCUSED_MODE": "toolkit-root",
+                    "KNOWLEDGE_KIT_ROOT": "/caller/source",
+                    "KNOWLEDGE_KIT_REVISION": "caller-revision",
+                },
+                clear=False,
+            ):
+                payload = self._prepare(root, parent, receipt)
+            self.assertEqual(0, payload["checks"]["focused_verification"])
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            tempfile.TemporaryDirectory() as metadata_directory,
+        ):
+            workspace = Path(directory)
+            tools_dir = workspace / "tools"
+            tools_dir.mkdir()
+            (tools_dir / "__init__.py").write_text("", encoding="utf-8")
+            (tools_dir / "cli.py").write_text(
+                "print('prepared-source-cli')\n",
+                encoding="utf-8",
+            )
+            git_dir = Path(metadata_directory) / "git"
+            git_dir.mkdir()
+            # skipcq: PYL-W0212 -- intentional white-box focused-tooling regression
+            tooling = candidate_prepare._focused_tooling_directory(git_dir)
+            # skipcq: PYL-W0212 -- intentional white-box focused-env regression
+            env = candidate_prepare._focused_verification_env(
+                candidate_prepare._base_env(),
+                workspace=workspace,
+                tooling=tooling,
+            )
+            # skipcq: PYL-W0212 -- intentional white-box subprocess regression
+            completed = candidate_prepare._run(
+                [str(tooling / "knowledge"), "--help"],
+                cwd=workspace,
+                env=env,
+                check=False,
+            )
+            self.assertEqual(0, completed.returncode, completed.stderr)
+            self.assertEqual(
+                "prepared-source-cli",
+                completed.stdout.decode("utf-8").strip(),
+            )
+
     def test_prepare_does_not_admit_ignored_source_worktree_state(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
