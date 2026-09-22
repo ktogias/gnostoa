@@ -269,6 +269,22 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 self._prepare(root, parent, receipt)
             self.assertFalse(receipt.exists())
 
+    def test_prepare_rejects_candidate_symlink_before_verification(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            outside = Path(directory).parent / f"{root.name}-outside.py"
+            outside.write_text("value = 1\n", encoding="utf-8")
+            self.addCleanup(outside.unlink, missing_ok=True)
+            (root / "candidate.py").symlink_to(outside)
+            receipt = self._receipt()
+            with self.assertRaisesRegex(
+                candidate_prepare.PrepareError,
+                "candidate symlinks are unsupported: candidate.py",
+            ):
+                self._prepare(root, parent, receipt)
+            self.assertFalse(receipt.exists())
+
     def test_prepare_rejects_focused_verifier_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -372,6 +388,46 @@ class CandidatePreparationContractTests(unittest.TestCase):
                     trusted_identity,
                 )
 
+    def test_receipt_verification_rejects_malformed_changed_paths_fail_closed(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+            payload = self._prepare(root, parent, receipt)
+
+            document = json.loads(receipt.read_text(encoding="utf-8"))
+            document["changed_paths"] = [["unhashable"]]
+            forged_payload = {
+                key: value
+                for key, value in document.items()
+                if key != "receipt_sha256"
+            }
+            encoded = json.dumps(
+                forged_payload,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            ).encode("utf-8")
+            document["receipt_sha256"] = (
+                "sha256:" + hashlib.sha256(encoded).hexdigest()
+            )
+            receipt.write_text(json.dumps(document), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                candidate_prepare.PrepareError,
+                "receipt changed paths are invalid",
+            ):
+                candidate_prepare.verify_receipt(
+                    receipt,
+                    parent,
+                    payload["prepared_tree"],
+                    document["receipt_sha256"],
+                )
+
     def test_receipt_verification_does_not_require_preparation_executable(
         self,
     ) -> None:
@@ -432,6 +488,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
             poisoned.update(
                 {
                     "GIT_CONFIG_COUNT": "1",
+                    "GIT_CONFIG_PARAMETERS": "'filter.poison.clean'='false'",
                     "GIT_CONFIG_KEY_0": "filter.poison.clean",
                     "GIT_CONFIG_VALUE_0": "false",
                     "GIT_CONFIG_KEY_7": "filter.extra.clean",

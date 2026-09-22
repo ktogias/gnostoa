@@ -28,6 +28,7 @@ _GIT_ENVIRONMENT_VARIABLES = (
     "GIT_CEILING_DIRECTORIES",
     "GIT_DISCOVERY_ACROSS_FILESYSTEM",
     "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
     "GIT_CONFIG_GLOBAL",
     "GIT_CONFIG_SYSTEM",
     "GIT_CONFIG_NOSYSTEM",
@@ -304,6 +305,27 @@ def _stage_workspace_candidate(root: Path, parent: str) -> tuple[str, list[str]]
     return tree, changed
 
 
+def _assert_no_candidate_symlinks(root: Path) -> None:
+    records = _run(
+        [_git_executable(), "ls-files", "--stage", "-z"],
+        cwd=root,
+    ).stdout
+    symlinks: list[str] = []
+    for record in records.split(b"\0"):
+        if not record:
+            continue
+        metadata, separator, raw_path = record.partition(b"\t")
+        if not separator:
+            raise PrepareError("unable to inspect candidate file modes")
+        mode = metadata.split(b" ", 1)[0]
+        if mode == b"120000":
+            symlinks.append(os.fsdecode(raw_path))
+    if symlinks:
+        raise PrepareError(
+            "candidate symlinks are unsupported: " + ", ".join(sorted(symlinks))
+        )
+
+
 def _assert_workspace_matches_tree(
     root: Path,
     expected_tree: str,
@@ -356,6 +378,7 @@ def _candidate_workspace(
         try:
             _git_text(workspace, "read-tree", tree)
             _git_text(workspace, "checkout-index", "--all", "--force")
+            _assert_no_candidate_symlinks(workspace)
             yield workspace
         finally:
             _run(
@@ -433,6 +456,7 @@ def prepare(
         if not changed_paths:
             raise PrepareError("candidate has no changes after normalization")
         _assert_parent_preparation_authorities(workspace, parent_commit)
+        _assert_no_candidate_symlinks(workspace)
 
         # Verification must observe only bytes reachable from the prepared tree.
         # Drop ignored/untracked formatter residue, then restore tracked bytes
@@ -567,9 +591,10 @@ def _validate_receipt_shape(document: dict[str, Any]) -> None:
     if (
         not isinstance(changed_paths, list)
         or not changed_paths
-        or changed_paths != sorted(set(changed_paths))
         or not all(isinstance(path, str) and path for path in changed_paths)
     ):
+        raise PrepareError("receipt changed paths are invalid")
+    if changed_paths != sorted(set(changed_paths)):
         raise PrepareError("receipt changed paths are invalid")
     if document.get("style_subject") != ".":
         raise PrepareError("receipt style subject is invalid")

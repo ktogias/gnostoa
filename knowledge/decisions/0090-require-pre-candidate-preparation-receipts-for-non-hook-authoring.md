@@ -83,8 +83,9 @@ non-hook authoring without importing a general orchestration subsystem.
 2. Preparation binds one exact 40-character parent commit. The source worktree
    `HEAD` must equal that parent; stale-parent preparation fails closed.
    Repository discovery and Git object access scrub inherited repository-routing,
-   worktree/object-store, index, external-diff and caller-supplied `GIT_CONFIG*`
-   overrides. Global/system Git and attributes configuration is disabled; an
+   worktree/object-store, index, external-diff, `GIT_CONFIG_PARAMETERS` and
+   other caller-supplied `GIT_CONFIG*` overrides. Global/system Git and
+   attributes configuration is disabled; an
    executable repository-local filter/diff/fsmonitor configuration or non-empty
    `.git/info/attributes` fails closed before staging.
 3. The proposed delta is first captured as an exact Git tree through a temporary
@@ -93,7 +94,9 @@ non-hook authoring without importing a general orchestration subsystem.
    then materialized in a disposable detached Git worktree; normalization and all
    focused verification operate there rather than on the caller's live worktree.
    This excludes ignored/untracked source-worktree files and concurrent caller
-   edits from the verified candidate.
+   edits from the verified candidate. Candidate trees containing symlinks fail
+   closed before style or verification; the current contract does not attempt to
+   authenticate external symlink target chains.
 4. Preparation runs `./ci/style --fix` in that isolated worktree, stages the
    normalized result, then cleans ignored/untracked residue and restores exactly
    the normalized index before focused verification. The external CLI accepts
@@ -160,8 +163,12 @@ The change must retain executable evidence that:
 - receipt inspection rejects parent, tree, digest, schema or check-state
   mismatch and requires a separately retained trusted receipt identity without
   claiming cryptographic producer authentication;
-- inherited Git configuration cannot inject filter/diff/hook execution into
-  staging, and executable repository-local Git configuration fails closed;
+- inherited Git configuration, including `GIT_CONFIG_PARAMETERS`, cannot inject
+  filter/diff/hook execution into staging, and executable repository-local Git
+  configuration fails closed;
+- candidate symlinks are rejected before any preparation authority executes;
+- malformed receipt path lists fail closed as `PrepareError` rather than
+  escaping the verifier with an implementation exception;
 - the wrapper and Gnostoa agent route point to the same preparation surface; and
 - existing `ci/style` remains the single Ruff scope/command authority.
 

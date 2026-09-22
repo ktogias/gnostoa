@@ -106,12 +106,15 @@ Preparation captures the proposed delta as a Git tree, materializes it in a
 disposable detached worktree, runs `ci/style --fix`, restores the exact
 normalized tree, then runs the allowlisted `ci/verify` profile and final
 `ci/style --check`. Source-worktree-only ignored/untracked files and concurrent
-caller edits are not part of verification. The CLI never accepts an executable
-or arbitrary verification arguments; supported profiles are `policy`,
+caller edits are not part of verification. Candidate symlinks are rejected
+before style or focused verification because this bounded contract does not
+admit external target chains. The CLI never accepts an executable or arbitrary
+verification arguments; supported profiles are `policy`,
 `security-fast`, `fast`, `regression`, `smoke`, and `extended`.
 
-The preparation command returns `receipt_sha256`; retain that identity outside
-the receipt bytes in the trusted preparation handoff. The digest is integrity
+The preparation command prints a JSON receipt object containing
+`receipt_sha256`; retain that identity outside the receipt bytes in the trusted
+preparation handoff. The digest is integrity
 evidence, not producer authentication or bearer authority. To inspect/consume a
 receipt, supply the separately retained identity:
 
