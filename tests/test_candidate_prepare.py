@@ -912,6 +912,50 @@ class CandidatePreparationContractTests(unittest.TestCase):
                     f"{payload['prepared_tree']}:local-secret.txt",
                 )
 
+    def test_prepare_snapshots_caller_global_excludes_file(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            tempfile.TemporaryDirectory() as home_directory,
+        ):
+            root = Path(directory)
+            parent = self._repository(root)
+            home = Path(home_directory)
+            global_exclude = home / "custom-ignore"
+            global_exclude.write_text("global-secret.txt\n", encoding="utf-8")
+            (home / ".gitconfig").write_text(
+                "[core]\n"
+                f"\texcludesFile = {global_exclude}\n",
+                encoding="utf-8",
+            )
+            (root / "global-secret.txt").write_text(
+                "do not publish\n",
+                encoding="utf-8",
+            )
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+
+            with patch.dict(
+                os.environ,
+                {
+                    "HOME": str(home),
+                    "XDG_CONFIG_HOME": str(home / ".config"),
+                },
+                clear=False,
+            ):
+                self.assertEqual(
+                    "global-secret.txt",
+                    self._git(root, "check-ignore", "global-secret.txt"),
+                )
+                payload = self._prepare(root, parent, receipt)
+
+            self.assertEqual(["candidate.py"], payload["changed_paths"])
+            with self.assertRaises(subprocess.CalledProcessError):
+                self._git(
+                    root,
+                    "show",
+                    f"{payload['prepared_tree']}:global-secret.txt",
+                )
+
     def test_prepare_rejects_repository_local_git_execution_config(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
