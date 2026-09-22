@@ -543,7 +543,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
             self.assertEqual(parent, payload["parent_commit"])
             self.assertEqual(
                 "value = 1",
-                self._git(root, "show", f'{payload["prepared_tree"]}:candidate.py'),
+                self._git(root, "show", f"{payload['prepared_tree']}:candidate.py"),
             )
 
     def test_prepare_snapshots_source_info_exclude(self) -> None:

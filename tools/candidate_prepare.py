@@ -274,9 +274,7 @@ def _isolated_git_metadata(
     repository_root: Path,
     parent: str,
 ) -> Iterator[Path]:
-    with tempfile.TemporaryDirectory(
-        prefix="gnostoa-candidate-git-"
-    ) as directory:
+    with tempfile.TemporaryDirectory(prefix="gnostoa-candidate-git-") as directory:
         metadata_root = Path(directory)
         git_dir = metadata_root / "git"
         _run(
@@ -606,9 +604,7 @@ def prepare(
                 git_dir,
             )
             style_sha256 = _sha256_bytes(style.read_bytes())
-            verify_sha256 = _sha256_bytes(
-                (workspace / "ci" / "verify").read_bytes()
-            )
+            verify_sha256 = _sha256_bytes((workspace / "ci" / "verify").read_bytes())
             ruff_version = _ruff_version(workspace)
 
     payload: dict[str, Any] = {
