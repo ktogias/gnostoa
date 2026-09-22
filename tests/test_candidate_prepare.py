@@ -637,7 +637,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 ),
                 self.assertRaisesRegex(
                     candidate_prepare.PrepareError,
-                    r"focused verification failed \(7\)",
+                    r"focused verification failed \(7\): focused failure detail",
                 ),
             ):
                 self._prepare(root, parent, receipt)
@@ -1029,6 +1029,48 @@ class CandidatePreparationContractTests(unittest.TestCase):
                     "show",
                     f"{payload['prepared_tree']}:global-secret.txt",
                 )
+
+    def test_prepare_ignores_caller_git_template_directory(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            tempfile.TemporaryDirectory() as template_directory,
+        ):
+            root = Path(directory)
+            parent = self._repository(root)
+            template_root = Path(template_directory)
+            template = template_root / "template"
+            template.mkdir()
+            marker_path = template_root / "filter-executed"
+            filter_script = template_root / "poison-filter"
+            filter_script.write_text(
+                "#!/bin/sh\n"
+                f"printf executed > {marker_path}\n"
+                "cat\n",
+                encoding="utf-8",
+            )
+            filter_script.chmod(0o755)
+            (template / "config").write_text(
+                '[filter "poison"]\n'
+                f"\tclean = {filter_script}\n"
+                "\trequired = true\n",
+                encoding="utf-8",
+            )
+            (root / ".gitattributes").write_text(
+                "candidate.py filter=poison\n",
+                encoding="utf-8",
+            )
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+
+            with patch.dict(
+                os.environ,
+                {"GIT_TEMPLATE_DIR": str(template)},
+                clear=False,
+            ):
+                payload = self._prepare(root, parent, receipt)
+
+            self.assertFalse(marker_path.exists())
+            self.assertIn("candidate.py", payload["changed_paths"])
 
     def test_prepare_rejects_repository_local_git_execution_config(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
