@@ -108,11 +108,12 @@ fallback only when the container route is unavailable; record that reason.
 Preparation captures the proposed delta through disposable Git metadata with
 trusted local configuration. Git object reads/writes are bound explicitly to
 the source content-addressed object store so the verified prepared-tree identity
-survives the disposable metadata. The source `.git/info/exclude` is copied once
-into that metadata so local ignored scratch/secrets remain excluded. Candidate
-staging, checkout and verification no longer consume the mutable source
-`.git/config` after admission, so concurrent local Git-config changes cannot
-inject filters into preparation. The source worktree is captured twice from the
+survives the disposable metadata. The source `.git/info/exclude` and the caller's effective `core.excludesFile`
+patterns are snapshotted once into that metadata so ignored scratch/secrets
+remain excluded without retaining caller Git configuration. Candidate staging,
+checkout and verification no longer consume the mutable source `.git/config`
+or caller global/system config after admission, so concurrent Git-config changes
+cannot inject filters into preparation. The source worktree is captured twice from the
 same exact parent; mismatched trees/path sets or any source-HEAD movement fail
 closed. The path rejects candidate changes to `ci/prepare-candidate`,
 `ci/style`, `ci/verify`, `tools/candidate_prepare.py`, or any
