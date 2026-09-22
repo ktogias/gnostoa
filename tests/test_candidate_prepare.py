@@ -265,6 +265,33 @@ class CandidatePreparationContractTests(unittest.TestCase):
                     [sys.executable, "-c", "pass"],
                 )
 
+    def test_receipt_verification_does_not_require_preparation_executable(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+            verifier = receipt.parent / "focused-verifier"
+            verifier.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            verifier.chmod(0o755)
+            payload = self._prepare(
+                root,
+                parent,
+                receipt,
+                [str(verifier)],
+            )
+            verifier.unlink()
+            self.assertEqual(
+                payload,
+                candidate_prepare.verify_receipt(
+                    receipt,
+                    parent,
+                    payload["prepared_tree"],
+                ),
+            )
+
     def test_cli_verify_consumes_exact_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

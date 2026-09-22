@@ -66,8 +66,7 @@ def _run(
         env=env,
         check=False,
         shell=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
     )
     if check and completed.returncode != 0:
         stderr = completed.stderr.decode("utf-8", errors="replace").strip()
@@ -110,17 +109,22 @@ def _assert_external_receipt(root: Path, receipt: Path) -> Path:
     return resolved
 
 
-def _validate_focused_command(command: Sequence[str]) -> tuple[str, ...]:
+def _focused_command_shape(command: Sequence[str]) -> tuple[str, ...]:
     if not command or not all(isinstance(item, str) and item for item in command):
         raise PrepareError(
             "focused verification command must be a non-empty argv vector"
         )
-    executable = Path(command[0])
+    return tuple(command)
+
+
+def _validate_focused_command(command: Sequence[str]) -> tuple[str, ...]:
+    argv = _focused_command_shape(command)
+    executable = Path(argv[0])
     if not executable.is_absolute():
         raise PrepareError("focused verification executable must use an absolute path")
     if not executable.is_file() or not os.access(executable, os.X_OK):
         raise PrepareError("focused verification executable is unavailable")
-    return tuple(command)
+    return argv
 
 
 def _assert_head(root: Path, parent: str) -> None:
@@ -309,7 +313,7 @@ def _validate_receipt_focused_command(document: dict[str, Any]) -> None:
     focused_command = document.get("focused_command")
     if not isinstance(focused_command, list):
         raise PrepareError("receipt focused command is invalid")
-    _validate_focused_command(focused_command)
+    _focused_command_shape(focused_command)
 
 
 def _validate_receipt_metric(document: dict[str, Any]) -> None:
