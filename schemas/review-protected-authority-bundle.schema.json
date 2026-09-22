@@ -128,8 +128,37 @@
         "status": {"enum": ["established", "unestablished", "revoked"]},
         "observed_at": {"$ref": "#/$defs/timestamp"},
         "owner_relation": {"enum": ["owner", "non_owner", "unknown"]},
-        "scope": {"type": "object"},
-        "provenance": {"type": "object"}
+        "scope": {
+          "type": "object",
+          "required": ["repository"],
+          "properties": {
+            "repository": {"$ref": "#/$defs/nonEmptyString"}
+          },
+          "additionalProperties": false
+        },
+        "provenance": {
+          "type": "object",
+          "required": ["basis"],
+          "properties": {
+            "basis": {"$ref": "#/$defs/nonEmptyString"},
+            "evidence": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {"$ref": "#/$defs/nonEmptyString"}
+            },
+            "independence_axes": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {"$ref": "#/$defs/nonEmptyString"}
+            },
+            "limitations": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {"$ref": "#/$defs/nonEmptyString"}
+            }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     },
