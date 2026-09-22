@@ -13,14 +13,14 @@ from tools.review_policy import resolve_project_policy
 
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLE_PATH = ROOT / "tasks" / "issue-11-r2a-current-advisory.json"
-SCHEMA_PATH = ROOT / "schemas" / "review-protected-authority-bundle.schema.json"
+BUNDLE_SCHEMA_PATH = ROOT / "schemas" / "review-protected-authority-bundle.schema.json"
+BASELINE_PATH = ROOT / "knowledge" / "assessments" / "10-q0-reviewer-qualification-baseline.json"
 POLICY_PATH = ROOT / "policy" / "review-policy.yaml"
 
 Q0_AUTHORITY = "https://github.com/ktogias/gnostoa/issues/10#issuecomment-5771806967"
 Q0_OBSERVED_AT = "2026-09-22T05:50:00Z"
 Q0_SNAPSHOT_ID = "gnostoa-r2a-qualification-q0-5771806967"
 Q0_REVISION = "5771806967"
-
 Q0_ENTRIES = [
     {
         "reviewer_id": "coderabbitai[bot]",
@@ -74,19 +74,19 @@ Q0_ENTRIES = [
 ]
 
 
-def _bundle() -> dict[str, object]:
-    value = json.loads(BUNDLE_PATH.read_text(encoding="utf-8"))
+def _load(path: Path) -> dict[str, object]:
+    value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
-        raise AssertionError("protected review-authority bundle must be an object")
+        raise AssertionError(f"{path} must contain a JSON object")
     return value
 
 
 class ReviewerQualificationQ0Tests(unittest.TestCase):
-    def test_q0_protected_snapshot_establishes_exact_minimal_two_domain_cohort(
-        self,
-    ) -> None:
-        bundle = _bundle()
-        qualification = bundle["qualification_snapshot"]
+    def test_q0_candidate_baseline_names_exact_minimal_two_domain_cohort(self) -> None:
+        baseline = _load(BASELINE_PATH)
+        self.assertEqual("gnostoa-reviewer-qualification-baseline/v1", baseline["schema_version"])
+        self.assertEqual("candidate", baseline["status"])
+        self.assertEqual(Q0_AUTHORITY, baseline["qualifying_authority"])
         self.assertEqual(
             {
                 "snapshot_id": Q0_SNAPSHOT_ID,
@@ -95,66 +95,68 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
                 "observed_at": Q0_OBSERVED_AT,
                 "entries": Q0_ENTRIES,
             },
-            qualification,
-        )
-        authority = bundle["authority"]
-        self.assertEqual(
-            canonical_digest(qualification),
-            authority["qualification_snapshot_digest"],
+            baseline["qualification_snapshot"],
         )
         self.assertEqual(
             {"github-app:coderabbitai", "github-app:gitar-bot"},
-            {entry["independence_domain_id"] for entry in qualification["entries"]},
+            {entry["independence_domain_id"] for entry in Q0_ENTRIES},
         )
-        self.assertTrue(
-            all(
-                entry["owner_relation"] == "non_owner"
-                for entry in qualification["entries"]
-            )
+        self.assertEqual(
+            {
+                "state": "BLOCKED_PENDING_PRIOR_INTEGRATED_RUNTIME_PROMOTION",
+                "protected_bundle": "tasks/issue-11-r2a-current-advisory.json",
+                "current_outer_runtime_revision": "315487e7a67635ebf3ec3f70f666ef41646102e1",
+                "target_snapshot_freshness": {"mode": "not_age_sensitive"},
+            },
+            baseline["activation"],
         )
 
-    def test_q0_activates_closed_existing_v1_qualification_entry_shape(self) -> None:
-        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    def test_q0_source_schema_can_validate_future_nonempty_protected_snapshot(self) -> None:
+        schema = _load(BUNDLE_SCHEMA_PATH)
         Draft202012Validator.check_schema(schema)
         validator = Draft202012Validator(schema, format_checker=FORMAT_CHECKER)
-        bundle = _bundle()
-        self.assertEqual([], list(validator.iter_errors(bundle)))
 
-        unknown = copy.deepcopy(bundle)
-        qualification = unknown["qualification_snapshot"]
-        qualification["entries"][0]["provider_brand_grants_independence"] = True
+        live_bundle = _load(BUNDLE_PATH)
+        self.assertEqual([], live_bundle["qualification_snapshot"]["entries"])
+
+        future = copy.deepcopy(live_bundle)
+        baseline = _load(BASELINE_PATH)
+        future["qualification_snapshot"] = copy.deepcopy(baseline["qualification_snapshot"])
+        future["authority"]["qualification_snapshot_digest"] = canonical_digest(
+            future["qualification_snapshot"]
+        )
+        self.assertEqual([], list(validator.iter_errors(future)))
+
+        unknown = copy.deepcopy(future)
+        unknown["qualification_snapshot"]["entries"][0][
+            "provider_brand_grants_independence"
+        ] = True
         self.assertNotEqual([], list(validator.iter_errors(unknown)))
 
-        missing_domain = copy.deepcopy(bundle)
-        qualification = missing_domain["qualification_snapshot"]
-        qualification["entries"][0].pop("independence_domain_id")
+        missing_domain = copy.deepcopy(future)
+        missing_domain["qualification_snapshot"]["entries"][0].pop(
+            "independence_domain_id"
+        )
         self.assertNotEqual([], list(validator.iter_errors(missing_domain)))
 
-    def test_q0_keeps_quorum_and_owner_exclusion_but_removes_daily_qualification_rewrite(
+    def test_q0_does_not_activate_candidate_qualification_before_runtime_promotion(
         self,
     ) -> None:
-        bundle = _bundle()
-        protected_policy = bundle["policy"]
+        live_bundle = _load(BUNDLE_PATH)
+        self.assertEqual([], live_bundle["qualification_snapshot"]["entries"])
         self.assertEqual(
-            resolve_project_policy(POLICY_PATH, "critical"), protected_policy
+            {"mode": "max_age", "seconds": 86400},
+            live_bundle["policy"]["qualification"]["snapshot_freshness"],
         )
         self.assertEqual(
-            ["semantic-review"],
-            protected_policy["qualification"]["required_capabilities"],
+            resolve_project_policy(POLICY_PATH, "critical"),
+            live_bundle["policy"],
         )
-        self.assertFalse(protected_policy["qualification"]["owner_reviews_count"])
+        self.assertFalse(live_bundle["policy"]["qualification"]["owner_reviews_count"])
         self.assertEqual(
-            {"mode": "not_age_sensitive"},
-            protected_policy["qualification"]["snapshot_freshness"],
+            ["APPROVE"], live_bundle["policy"]["quorum"]["acceptable_recommendations"]
         )
-        self.assertEqual(2, protected_policy["quorum"]["minimum_distinct_domains"])
-        self.assertEqual(
-            ["APPROVE"], protected_policy["quorum"]["acceptable_recommendations"]
-        )
-        self.assertEqual(
-            canonical_digest(protected_policy),
-            bundle["authority"]["policy_digest"],
-        )
+        self.assertEqual(2, live_bundle["policy"]["quorum"]["minimum_distinct_domains"])
 
 
 if __name__ == "__main__":
