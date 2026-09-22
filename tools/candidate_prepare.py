@@ -295,9 +295,7 @@ def _retention_ref_matches(ref: object, parent: str, tree: str) -> bool:
         return False
     match = _RETENTION_REF.fullmatch(ref)
     return bool(
-        match
-        and match.group("parent") == parent
-        and match.group("tree") == tree
+        match and match.group("parent") == parent and match.group("tree") == tree
     )
 
 
