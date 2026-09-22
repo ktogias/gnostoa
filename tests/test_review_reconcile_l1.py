@@ -78,6 +78,7 @@ def _valid_incomplete_result(input_document: dict[str, Any]) -> tuple[int, bytes
     trusted_cut = input_document["evaluation_context"]["as_of"]
     if not isinstance(trusted_cut, str):
         raise AssertionError("evaluation cut must be a string")
+    # skipcq: PYL-W0212 -- intentional white-box L1 test
     code, payload = review_live._semantic_incomplete(
         input_document,
         _bundle(),
@@ -189,9 +190,9 @@ class _PagedFake:
             raise RuntimeError(f"unexpected URL: {url}")
         return self.replies[url]
 
-    def graphql(self, query: str, variables: dict[str, Any]) -> Any:
-        del query
+    def graphql(self, _query: str, variables: dict[str, Any]) -> Any:
         cursor = variables.get("cursor")
+        # skipcq: PTC-W0063 -- explicit default prevents StopIteration
         first_url = next(
             (
                 url
@@ -1047,7 +1048,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
         self,
     ) -> None:
         adapter = _adapter()
-        base_subject = {
+        base_subject: dict[str, Any] = {
             "provider_id": "github",
             "repository": "https://github.com/ktogias/gnostoa",
             "change_request": {"kind": "github-pull-request", "id": "300"},
@@ -1133,6 +1134,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
         root = "https://api.github.com/repos/ktogias/gnostoa"
         fake = _PagedFake(_complete_replies(root))
 
+        # skipcq: PYL-W0212 -- intentional white-box L1 test
         current = adapter._current_pr(fake, "ktogias/gnostoa", 300)
 
         self.assertEqual(
@@ -1172,6 +1174,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
 
         self.assertEqual(
             list(range(1, 12)),
+            # skipcq: PYL-W0212 -- intentional white-box L1 test
             adapter._open_pull_numbers(fake, "ktogias/gnostoa"),
         )
 
@@ -1231,6 +1234,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
             adapter.ProviderWriteError,
             "multiple valid owned L1 projection comments",
         ):
+            # skipcq: PYL-W0212 -- intentional white-box L1 test
             adapter._existing_projection(
                 comments,
                 repository="ktogias/gnostoa",
@@ -1295,6 +1299,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
             },
         )
 
+        # skipcq: PYL-W0212 -- intentional white-box L1 test
         existing = adapter._existing_projection(
             [
                 {
@@ -1334,7 +1339,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
         )
 
         def run_bound(
-            input_document: object,
+            input_document: dict[str, Any],
             *,
             acquire_consumer: Any,
         ) -> tuple[int, bytes]:
@@ -1353,6 +1358,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
                 side_effect=run_bound,
             ) as runner,
         ):
+            # skipcq: PYL-W0212 -- intentional white-box L1 test
             entry = adapter._collect_entry(
                 _PagedFake(_complete_replies_without_review_comments(root)),
                 "ktogias/gnostoa",
@@ -1380,6 +1386,7 @@ class UsefulL1RedContractTests(unittest.TestCase):
             "_protected_state",
             side_effect=adapter.ProviderReadError("protected state unavailable"),
         ):
+            # skipcq: PYL-W0212 -- intentional white-box L1 test
             entry = adapter._collect_entry(
                 fake,
                 "ktogias/gnostoa",
@@ -1404,11 +1411,13 @@ class UsefulL1RedContractTests(unittest.TestCase):
         adapter = _adapter()
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "payload.json"
+            # skipcq: PYL-W0212 -- intentional white-box L1 test
             path.write_bytes(b"x" * (adapter._MAX_PUBLICATION_PAYLOAD_BYTES + 1))
             with self.assertRaisesRegex(
                 ValueError,
                 "publication payload exceeds bounded size",
             ):
+                # skipcq: PYL-W0212 -- intentional white-box L1 test
                 adapter._load_payload(path)
 
     def test_workflow_run_preserves_all_associated_pull_requests(self) -> None:
@@ -1422,14 +1431,18 @@ class UsefulL1RedContractTests(unittest.TestCase):
         )
         self.assertEqual(
             [301, 302],
+            # skipcq: PYL-W0212 -- intentional white-box L1 test
             adapter._workflow_run_pull_numbers(payload),
         )
+        # skipcq: PYL-W0212 -- intentional white-box L1 test
         self.assertEqual([], adapter._workflow_run_pull_numbers(""))
+        # skipcq: PYL-W0212 -- intentional white-box L1 test
         self.assertEqual([], adapter._workflow_run_pull_numbers("null"))
         with self.assertRaisesRegex(
             adapter.ProviderReadError,
             "workflow_run.pull_requests",
         ):
+            # skipcq: PYL-W0212 -- intentional white-box L1 test
             adapter._workflow_run_pull_numbers(json.dumps([{"number": 0}]))
 
     def test_l1_has_separate_guardrail_from_historical_r2a_promotion(self) -> None:
@@ -1437,12 +1450,17 @@ class UsefulL1RedContractTests(unittest.TestCase):
         self.assertIsInstance(loaded, dict)
         entries = loaded.get("guardrails")
         self.assertIsInstance(entries, list)
+        # skipcq: PTC-W0063 -- explicit default prevents StopIteration
         l1 = next(
-            item
-            for item in entries
-            if isinstance(item, dict)
-            and item.get("id") == "useful-l1-current-state-reconciliation"
+            (
+                item
+                for item in entries
+                if isinstance(item, dict)
+                and item.get("id") == "useful-l1-current-state-reconciliation"
+            ),
+            None,
         )
+        self.assertIsInstance(l1, dict)
         self.assertIn("tools/review_reconcile.py", l1.get("implementation", []))
         self.assertIn(
             "ci/review_github_current_state.py",
@@ -1454,11 +1472,17 @@ class UsefulL1RedContractTests(unittest.TestCase):
         )
         self.assertIn("tests/test_review_reconcile_l1.py", l1.get("tests", []))
 
+        # skipcq: PTC-W0063 -- explicit default prevents StopIteration
         semantic = next(
-            item
-            for item in entries
-            if isinstance(item, dict) and item.get("id") == "semantic-review-assurance"
+            (
+                item
+                for item in entries
+                if isinstance(item, dict)
+                and item.get("id") == "semantic-review-assurance"
+            ),
+            None,
         )
+        self.assertIsInstance(semantic, dict)
         self.assertNotIn(
             "ci/review_github_current_state.py",
             semantic.get("implementation", []),
@@ -1519,18 +1543,28 @@ class UsefulL1RedContractTests(unittest.TestCase):
         publish_steps = publish.get("steps")
         self.assertIsInstance(collect_steps, list)
         self.assertIsInstance(publish_steps, list)
+        # skipcq: PTC-W0063 -- explicit default prevents StopIteration
         upload = next(
-            item
-            for item in collect_steps
-            if isinstance(item, dict)
-            and str(item.get("uses", "")).startswith("actions/upload-artifact@")
+            (
+                item
+                for item in collect_steps
+                if isinstance(item, dict)
+                and str(item.get("uses", "")).startswith("actions/upload-artifact@")
+            ),
+            None,
         )
+        self.assertIsInstance(upload, dict)
+        # skipcq: PTC-W0063 -- explicit default prevents StopIteration
         download = next(
-            item
-            for item in publish_steps
-            if isinstance(item, dict)
-            and str(item.get("uses", "")).startswith("actions/download-artifact@")
+            (
+                item
+                for item in publish_steps
+                if isinstance(item, dict)
+                and str(item.get("uses", "")).startswith("actions/download-artifact@")
+            ),
+            None,
         )
+        self.assertIsInstance(download, dict)
         self.assertEqual(1, upload.get("with", {}).get("retention-days"))
         self.assertEqual(
             "gnostoa-l1-publication",
@@ -1565,12 +1599,17 @@ class UsefulL1RedContractTests(unittest.TestCase):
             self.assertIn("github.ref == 'refs/heads/main'", condition)
             steps = job.get("steps")
             self.assertIsInstance(steps, list)
+            # skipcq: PTC-W0063 -- explicit default prevents StopIteration
             checkout = next(
-                item
-                for item in steps
-                if isinstance(item, dict)
-                and str(item.get("uses", "")).startswith("actions/checkout@")
+                (
+                    item
+                    for item in steps
+                    if isinstance(item, dict)
+                    and str(item.get("uses", "")).startswith("actions/checkout@")
+                ),
+                None,
             )
+            self.assertIsInstance(checkout, dict)
             checkout_with = checkout.get("with")
             self.assertIsInstance(checkout_with, dict)
             self.assertEqual("main", checkout_with.get("ref"))
@@ -1675,6 +1714,11 @@ class UsefulL1IdentityCollisionTests(unittest.TestCase):
 
         self.assertEqual(1, len(thread_only))
         fallback_id = thread_only[0]["observation_id"]
+        expected_fallback = (
+            "gnostoa-thread-evidence:v2:sha256:"
+            + hashlib.sha256(large_origin_id.encode("utf-8")).hexdigest()
+        )
+        self.assertEqual(expected_fallback, fallback_id)
         self.assertLessEqual(len(fallback_id.encode("utf-8")), 128)
         self.assertEqual(
             large_origin_id,
@@ -1712,11 +1756,89 @@ class UsefulL1IdentityCollisionTests(unittest.TestCase):
         ]
 
         self.assertEqual(1, len(thread_only))
-        self.assertEqual(first_fallback + ":1", thread_only[0]["observation_id"])
+        second_fallback = f"{first_fallback}:p{1:016x}"
+        self.assertEqual(second_fallback, thread_only[0]["observation_id"])
+        self.assertLessEqual(len(second_fallback.encode("utf-8")), 128)
         self.assertIn(
             first_fallback,
             {item["observation_id"] for item in observations},
         )
+
+    def test_probe_cardinality_boundary_checks_available_candidate(self) -> None:
+        reducer = reducer_fixture()
+        snapshot = snapshot_fixture()
+        origin_id = snapshot["reviews"][0]["observation_id"]
+        legacy_id = f"gnostoa-thread-evidence::{origin_id}"
+        origin_digest = hashlib.sha256(origin_id.encode("utf-8")).hexdigest()
+        stem = f"gnostoa-thread-evidence:v2:sha256:{origin_digest}"
+        probes = [f"{stem}:p{probe:016x}" for probe in range(1, 4)]
+
+        snapshot["reviews"][1]["observation_id"] = legacy_id
+        for index, observation_id in enumerate([stem, *probes[:2]], start=1):
+            snapshot["reviews"].append(
+                {
+                    "observation_id": observation_id,
+                    "reviewer_id": f"boundary-collision-{index}",
+                    "recommendation_state": "COMMENTED",
+                    "observed_at": "2026-09-19T16:39:00Z",
+                    "head_commit": "d" * 40,
+                    "source_url": (
+                        snapshot["subject"]["source_url"]
+                        + f"#boundary-collision-{index}"
+                    ),
+                }
+            )
+        snapshot["coverage"]["reviews"]["count"] = len(snapshot["reviews"])
+
+        with mock.patch.object(reducer, "_THREAD_EVIDENCE_MAX_PROBE", 3):
+            review_input = reducer.build_review_input(snapshot, _bundle())
+
+        thread_only = [
+            item
+            for item in review_input["evidence_set"]["observations"]
+            if item["native"].get("thread_evidence_only") is True
+        ]
+        self.assertEqual(1, len(thread_only))
+        self.assertEqual(probes[2], thread_only[0]["observation_id"])
+
+    def test_probe_space_exhaustion_fails_closed(self) -> None:
+        reducer = reducer_fixture()
+        snapshot = snapshot_fixture()
+        origin_id = snapshot["reviews"][0]["observation_id"]
+        legacy_id = f"gnostoa-thread-evidence::{origin_id}"
+        origin_digest = hashlib.sha256(origin_id.encode("utf-8")).hexdigest()
+        stem = f"gnostoa-thread-evidence:v2:sha256:{origin_digest}"
+        probes = [f"{stem}:p{probe:016x}" for probe in range(1, 4)]
+
+        snapshot["reviews"][1]["observation_id"] = legacy_id
+        for index, observation_id in enumerate([stem, *probes], start=1):
+            snapshot["reviews"].append(
+                {
+                    "observation_id": observation_id,
+                    "reviewer_id": f"exhaustion-collision-{index}",
+                    "recommendation_state": "COMMENTED",
+                    "observed_at": "2026-09-19T16:39:00Z",
+                    "head_commit": "d" * 40,
+                    "source_url": (
+                        snapshot["subject"]["source_url"]
+                        + f"#exhaustion-collision-{index}"
+                    ),
+                }
+            )
+        snapshot["coverage"]["reviews"]["count"] = len(snapshot["reviews"])
+
+        with (
+            mock.patch.object(
+                reducer,
+                "_THREAD_EVIDENCE_MAX_PROBE",
+                3,
+            ),
+            self.assertRaisesRegex(
+                reducer.ReconciliationInputError,
+                "unable to allocate a collision-free thread evidence observation ID",
+            ),
+        ):
+            reducer.build_review_input(snapshot, _bundle())
 
     def test_collision_fallback_is_independent_of_provider_review_order(self) -> None:
         reducer = reducer_fixture()

@@ -27,6 +27,7 @@ TOOLKIT_ROOT_MARKERS = (
 )
 
 
+# skipcq: TYP-028 -- PyYAML loader is runtime-safe
 class KnowledgeLoader(yaml.SafeLoader):
     """Safe YAML loader that keeps ISO dates as strings."""
 
