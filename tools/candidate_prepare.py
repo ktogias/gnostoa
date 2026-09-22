@@ -43,7 +43,12 @@ _FOCUSED_PROFILES = (
     "smoke",
     "extended",
 )
-_PREPARATION_AUTHORITY_PATHS = ("ci/style", "ci/verify")
+_PREPARATION_AUTHORITY_PATHS = (
+    "ci/prepare-candidate",
+    "ci/style",
+    "ci/verify",
+    "tools/candidate_prepare.py",
+)
 
 
 class PrepareError(RuntimeError):
@@ -363,19 +368,19 @@ def _candidate_workspace(
         prefix="gnostoa-candidate-workspace-"
     ) as directory:
         workspace = Path(directory) / "worktree"
-        _run(
-            [
-                _git_executable(),
-                "worktree",
-                "add",
-                "--detach",
-                "--no-checkout",
-                str(workspace),
-                parent,
-            ],
-            cwd=repository_root,
-        )
         try:
+            _run(
+                [
+                    _git_executable(),
+                    "worktree",
+                    "add",
+                    "--detach",
+                    "--no-checkout",
+                    str(workspace),
+                    parent,
+                ],
+                cwd=repository_root,
+            )
             _git_text(workspace, "read-tree", tree)
             _git_text(workspace, "checkout-index", "--all", "--force")
             _assert_no_candidate_symlinks(workspace)

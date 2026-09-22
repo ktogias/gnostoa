@@ -90,9 +90,13 @@ non-hook authoring without importing a general orchestration subsystem.
    `.git/info/attributes` fails closed before staging.
 3. The proposed delta is first captured as an exact Git tree through a temporary
    index. Before any preparation authority executes, that tree must leave
-   `ci/style` and `ci/verify` unchanged from the parent. The proposed tree is
-   then materialized in a disposable detached Git worktree; normalization and all
-   focused verification operate there rather than on the caller's live worktree.
+   `ci/prepare-candidate`, `ci/style`, `ci/verify`, and
+   `tools/candidate_prepare.py` unchanged from the parent. Changes to those
+   authority surfaces require a separately admitted authority-evolution path.
+   The proposed tree is then materialized in a disposable detached Git worktree.
+   Worktree cleanup and pruning execute even if `git worktree add` fails after
+   partial registration. Normalization and all focused verification operate there
+   rather than on the caller's live worktree.
    This excludes ignored/untracked source-worktree files and concurrent caller
    edits from the verified candidate. Candidate trees containing symlinks fail
    closed before style or verification; the current contract does not attempt to
@@ -153,8 +157,9 @@ The change must retain executable evidence that:
   without admitting source-worktree-only ignored/untracked state;
 - the external CLI rejects arbitrary command execution by accepting only the
   closed repository-owned focused-profile vocabulary;
-- a candidate that changes `ci/style` or `ci/verify` relative to the bound
-  parent is rejected before either preparation authority executes;
+- a candidate that changes `ci/prepare-candidate`, `ci/style`,
+  `ci/verify`, or `tools/candidate_prepare.py` relative to the bound parent
+  is rejected before preparation authority executes;
 - successful receipts bind both preparation-authority SHA-256 identities;
 - untracked additions and deletions are included in the prepared tree/diff;
 - focused verification mutation is rejected;

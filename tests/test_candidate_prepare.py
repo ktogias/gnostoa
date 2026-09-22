@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess  # nosec B404 -- bounded fixture subprocess boundary
 import tempfile
@@ -92,6 +93,14 @@ class CandidatePreparationContractTests(unittest.TestCase):
             encoding="utf-8",
         )
         verify.chmod(0o755)
+        wrapper = root / "ci" / "prepare-candidate"
+        wrapper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        wrapper.chmod(0o755)
+        (root / "tools").mkdir()
+        (root / "tools" / "candidate_prepare.py").write_text(
+            "# parent preparation authority\n",
+            encoding="utf-8",
+        )
         (root / "base.txt").write_text("base\n", encoding="utf-8")
         CandidatePreparationContractTests._git(root, "add", ".")
         CandidatePreparationContractTests._git(root, "commit", "--quiet", "-m", "base")
@@ -226,7 +235,12 @@ class CandidatePreparationContractTests(unittest.TestCase):
             self.assertEqual(["base.txt", "candidate.py"], payload["changed_paths"])
 
     def test_prepare_rejects_candidate_modified_preparation_authority(self) -> None:
-        for authority in ("style", "verify"):
+        for authority in (
+            "ci/prepare-candidate",
+            "ci/style",
+            "ci/verify",
+            "tools/candidate_prepare.py",
+        ):
             with (
                 self.subTest(authority=authority),
                 tempfile.TemporaryDirectory() as directory,
@@ -234,7 +248,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 root = Path(directory)
                 parent = self._repository(root)
                 (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
-                authority_path = root / "ci" / authority
+                authority_path = root / authority
                 authority_path.write_text(
                     authority_path.read_text(encoding="utf-8")
                     + "\n# candidate authority override\n",
@@ -243,7 +257,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 receipt = self._receipt()
                 with self.assertRaisesRegex(
                     candidate_prepare.PrepareError,
-                    rf"candidate modifies preparation authority: ci/{authority}",
+                    rf"candidate modifies preparation authority: {re.escape(authority)}",
                 ):
                     self._prepare(root, parent, receipt)
                 self.assertFalse(receipt.exists())

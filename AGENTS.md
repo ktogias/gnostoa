@@ -103,7 +103,10 @@ only when the container route is unavailable; record that reason.
 ```
 
 Preparation captures the proposed delta as a Git tree, materializes it in a
-disposable detached worktree, runs `ci/style --fix`, restores the exact
+disposable detached worktree, and rejects candidate changes to
+`ci/prepare-candidate`, `ci/style`, `ci/verify`, or
+`tools/candidate_prepare.py` unless authority evolution is separately admitted.
+It runs `ci/style --fix`, restores the exact
 normalized tree, then runs the allowlisted `ci/verify` profile and final
 `ci/style --check`. Source-worktree-only ignored/untracked files and concurrent
 caller edits are not part of verification. Candidate symlinks are rejected
