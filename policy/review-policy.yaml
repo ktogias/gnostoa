@@ -1,9 +1,14 @@
 id: gnostoa-review-assurance
-version: "1.0"
+version: "1.1"
 owner: team:gnostoa-maintainers
 abstract: false
 extends:
   - ../core/review-policy.yaml
+
+defaults:
+  qualification:
+    snapshot_freshness:
+      mode: not_age_sensitive
 
 change_classes:
   mechanical:
