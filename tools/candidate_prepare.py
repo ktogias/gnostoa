@@ -44,6 +44,7 @@ _GIT_ENVIRONMENT_VARIABLES = (
     "GIT_CONFIG_NOSYSTEM",
     "GIT_ATTR_NOSYSTEM",
     "GIT_EXTERNAL_DIFF",
+    "GIT_TEMPLATE_DIR",
 )
 _FOCUSED_PROFILES = (
     "policy",
@@ -178,8 +179,25 @@ def _trusted_python_env(env: dict[str, str] | None = None) -> dict[str, str]:
     return trusted
 
 
+def _focused_tooling_directory(git_dir: Path) -> Path:
+    tooling = git_dir.parent / "focused-bin"
+    tooling.mkdir(mode=0o700)
+    knowledge = tooling / "knowledge"
+    knowledge.write_text(
+        "#!/bin/sh\n"
+        "set -eu\n"
+        'exec "$GNOSTOA_PREPARE_PYTHON" -m tools.cli "$@"\n',
+        encoding="utf-8",
+    )
+    knowledge.chmod(0o700)
+    return tooling
+
+
 def _focused_verification_env(
     env: dict[str, str] | None = None,
+    *,
+    workspace: Path | None = None,
+    tooling: Path | None = None,
 ) -> dict[str, str]:
     focused = _trusted_python_env(env)
     # Preparation-only Git routing must not leak into candidate verification:
@@ -188,6 +206,16 @@ def _focused_verification_env(
     # workspace's .git pointer supplies the intended isolated metadata instead.
     for name in _GIT_ROUTING_ENVIRONMENT_VARIABLES:
         focused.pop(name, None)
+    # Caller toolkit routing must not redirect repository-owned verification to
+    # the mutable source checkout or an installed image copy.
+    focused.pop("KNOWLEDGE_KIT_ROOT", None)
+    focused.pop("KNOWLEDGE_KIT_REVISION", None)
+    if workspace is not None:
+        focused["KNOWLEDGE_KIT_ROOT"] = str(workspace.resolve())
+        focused["KNOWLEDGE_KIT_REVISION"] = "development"
+    if tooling is not None:
+        focused["GNOSTOA_PREPARE_PYTHON"] = sys.executable
+        focused["PATH"] = os.pathsep.join((str(tooling), focused["PATH"]))
     # Focused verification must import the exact candidate workspace, while
     # inherited Python search paths and user-site state remain excluded.
     focused.pop("PYTHONSAFEPATH", None)
@@ -425,8 +453,16 @@ def _isolated_git_metadata(
     with tempfile.TemporaryDirectory(prefix="gnostoa-candidate-git-") as directory:
         metadata_root = Path(directory)
         git_dir = metadata_root / "git"
+        template_dir = metadata_root / "empty-template"
+        template_dir.mkdir(mode=0o700)
         _run(
-            [_git_executable(), "init", "--bare", str(git_dir)],
+            [
+                _git_executable(),
+                "init",
+                "--bare",
+                f"--template={template_dir}",
+                str(git_dir),
+            ],
             cwd=metadata_root,
         )
 
@@ -719,7 +755,12 @@ def prepare(
             focused_argv = _focused_profile_command(workspace, focused_profile)
             isolated_env = _isolated_git_env(git_dir, workspace)
             style_env = _trusted_python_env(isolated_env)
-            focused_env = _focused_verification_env(isolated_env)
+            focused_tooling = _focused_tooling_directory(git_dir)
+            focused_env = _focused_verification_env(
+                isolated_env,
+                workspace=workspace,
+                tooling=focused_tooling,
+            )
 
             _run([str(style), "--fix"], cwd=workspace, env=style_env)
             _assert_head(workspace, parent_commit)
@@ -749,7 +790,13 @@ def prepare(
             )
             if focused.returncode != 0:
                 stderr = focused.stderr.decode("utf-8", errors="replace").strip()
-                detail = f": {stderr}" if stderr else ""
+                stdout = focused.stdout.decode("utf-8", errors="replace").strip()
+                diagnostics = "\n".join(
+                    value for value in (stderr, stdout) if value
+                )
+                if len(diagnostics) > 4096:
+                    diagnostics = diagnostics[-4096:]
+                detail = f": {diagnostics}" if diagnostics else ""
                 raise PrepareError(
                     f"focused verification failed ({focused.returncode}){detail}"
                 )
