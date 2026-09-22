@@ -25,6 +25,7 @@ _MAX_CHECK_NAMES = _MAX_RENDERED_CHECK_NAMES
 # by the strict bounded reconciler or its change request has closed.
 _PRE_BOUND_MAX_CHECK_NAMES = 32
 _MAX_CHECK_LABEL_BYTES = 128
+_THREAD_EVIDENCE_MAX_PROBE = (1 << 64) - 1
 
 
 class ReconciliationInputError(ValueError):
@@ -469,12 +470,19 @@ def _thread_evidence_observation_id(
 
     origin_digest = hashlib.sha256(origin_observation_id.encode("utf-8")).hexdigest()
     stem = f"gnostoa-thread-evidence:v2:sha256:{origin_digest}"
-    candidate = stem
-    suffix = 0
-    while candidate in occupied_observation_ids:
-        suffix += 1
-        candidate = f"{stem}:{suffix}"
-    return candidate
+    if stem not in occupied_observation_ids:
+        return stem
+
+    occupied_count = len(occupied_observation_ids)
+    probe_limit = min(occupied_count + 1, _THREAD_EVIDENCE_MAX_PROBE)
+    for probe in range(1, probe_limit + 1):
+        candidate = f"{stem}:p{probe:016x}"
+        if candidate not in occupied_observation_ids:
+            return candidate
+
+    raise ReconciliationInputError(
+        "unable to allocate a collision-free thread evidence observation ID"
+    )
 
 
 def _derived_thread_observation(
@@ -702,7 +710,7 @@ def _classify_latest_check(
     if len(states) != 1:
         return key, name, "ambiguous"
 
-    _, status, conclusion = next(iter(states))
+    ((_, status, conclusion),) = states
     if status != "completed":
         return key, name, "pending"
     if conclusion not in {"success", "neutral", "skipped"}:
