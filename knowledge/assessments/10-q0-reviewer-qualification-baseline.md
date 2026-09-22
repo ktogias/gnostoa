@@ -17,7 +17,7 @@ sources:
     resource: ./10-q0-reviewer-qualification-baseline.json
     title: Machine-readable Q0 candidate baseline
   - id: decision
-    resource: ../decisions/0088-establish-q0-reviewer-qualification-semantics.md
+    resource: ../decisions/0089-establish-q0-reviewer-qualification-semantics.md
     title: Establish Q0 reviewer qualification semantics and stage protected activation
 x-project-knowledge:
   id: kit.assessment.10-q0-reviewer-qualification-baseline
@@ -27,7 +27,7 @@ x-project-knowledge:
     - gnostoa
   relations:
     - kind: governed-by
-      target: /decisions/0088-establish-q0-reviewer-qualification-semantics.md
+      target: /decisions/0089-establish-q0-reviewer-qualification-semantics.md
 ---
 
 # Q0 reviewer qualification and independence baseline

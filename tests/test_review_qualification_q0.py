@@ -260,12 +260,14 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
         missing_provenance_evidence["qualification_snapshot"]["entries"][0][
             "provenance"
         ].pop("evidence")
-        self.assertNotEqual([], list(validator.iter_errors(missing_provenance_evidence)))
+        self.assertNotEqual(
+            [], list(validator.iter_errors(missing_provenance_evidence))
+        )
 
         empty_provenance_evidence = copy.deepcopy(future)
-        empty_provenance_evidence["qualification_snapshot"]["entries"][0][
-            "provenance"
-        ]["evidence"] = []
+        empty_provenance_evidence["qualification_snapshot"]["entries"][0]["provenance"][
+            "evidence"
+        ] = []
         self.assertNotEqual([], list(validator.iter_errors(empty_provenance_evidence)))
 
         missing_independence_axes = copy.deepcopy(future)
@@ -275,9 +277,9 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
         self.assertNotEqual([], list(validator.iter_errors(missing_independence_axes)))
 
         empty_independence_axes = copy.deepcopy(future)
-        empty_independence_axes["qualification_snapshot"]["entries"][0][
-            "provenance"
-        ]["independence_axes"] = []
+        empty_independence_axes["qualification_snapshot"]["entries"][0]["provenance"][
+            "independence_axes"
+        ] = []
         self.assertNotEqual([], list(validator.iter_errors(empty_independence_axes)))
 
         unknown_scope_field = copy.deepcopy(future)

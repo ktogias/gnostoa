@@ -35,7 +35,7 @@ sources:
     resource: https://github.com/ktogias/gnostoa/pull/297#issuecomment-5771584848
     title: Gitar semantic review activity
 x-project-knowledge:
-  id: kit.decision.0088.establish-q0-reviewer-qualification-semantics
+  id: kit.decision.0089.establish-q0-reviewer-qualification-semantics
   owners:
     - team:gnostoa-maintainers
   scope:
