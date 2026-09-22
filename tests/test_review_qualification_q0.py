@@ -110,7 +110,6 @@ def _refresh_qualification_digest(input_document: dict[str, Any]) -> None:
         raise AssertionError("authority must be an object")
     authority["qualification_snapshot_digest"] = canonical_digest(qualification)
 
-
 def _stale_qualification(
     entries: list[dict[str, Any]],
     qualification: dict[str, Any],
@@ -255,7 +254,9 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
         ] = [
             (
                 "owner-excluded",
-                lambda entries, qualification: entries[0].update(\n                    owner_relation="owner"\n                ),
+                lambda entries, qualification: entries[0].update(
+                    owner_relation="owner"
+                ),
             ),
             (
                 "scope-mismatch",
