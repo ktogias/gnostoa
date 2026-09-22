@@ -122,6 +122,7 @@
         "independence_domain_id": {"$ref": "#/$defs/nonEmptyString"},
         "capability_ids": {
           "type": "array",
+          "minItems": 1,
           "uniqueItems": true,
           "items": {"$ref": "#/$defs/nonEmptyString"}
         },
