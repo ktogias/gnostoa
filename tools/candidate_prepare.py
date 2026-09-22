@@ -25,7 +25,7 @@ _RETENTION_REF = re.compile(
     r"(?P<nonce>[0-9a-f]{32})$"
 )
 _GIT = shutil.which("git")
-_GIT_ENVIRONMENT_VARIABLES = (
+_GIT_ROUTING_ENVIRONMENT_VARIABLES = (
     "GIT_DIR",
     "GIT_WORK_TREE",
     "GIT_COMMON_DIR",
@@ -34,6 +34,9 @@ _GIT_ENVIRONMENT_VARIABLES = (
     "GIT_INDEX_FILE",
     "GIT_CEILING_DIRECTORIES",
     "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+)
+_GIT_ENVIRONMENT_VARIABLES = (
+    *_GIT_ROUTING_ENVIRONMENT_VARIABLES,
     "GIT_CONFIG",
     "GIT_CONFIG_PARAMETERS",
     "GIT_CONFIG_GLOBAL",
@@ -129,6 +132,12 @@ def _focused_verification_env(
     env: dict[str, str] | None = None,
 ) -> dict[str, str]:
     focused = _trusted_python_env(env)
+    # Preparation-only Git routing must not leak into candidate verification:
+    # inherited GIT_DIR/GIT_WORK_TREE routing overrides ordinary discovery and
+    # hijacks nested repositories created by the verification suite. The
+    # workspace's .git pointer supplies the intended isolated metadata instead.
+    for name in _GIT_ROUTING_ENVIRONMENT_VARIABLES:
+        focused.pop(name, None)
     # Focused verification must import the exact candidate workspace, while
     # inherited Python search paths and user-site state remain excluded.
     focused.pop("PYTHONSAFEPATH", None)
