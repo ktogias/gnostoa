@@ -46,7 +46,7 @@ x-project-knowledge:
     - kind: references
       target: /decisions/0085-promote-current-advisory-restoration-runtime.md
     - kind: references
-      target: /assessments/10-q0-reviewer-qualification-baseline.json
+      target: /assessments/10-q0-reviewer-qualification-baseline.md
 ---
 
 # Establish Q0 reviewer qualification semantics and stage protected activation behind a prior-integrated runtime
@@ -108,6 +108,14 @@ The first candidate repository-scoped cohort is:
 
 Both are `non_owner`, require `semantic-review`, and retain source evidence plus
 the limitation `model-runtime-diversity-unestablished`.
+
+A later source read-back found that both current formal GitHub review surfaces are
+`COMMENTED`, which R2A correctly normalizes to `COMMENT_ONLY`. Bito has repeatedly
+emitted actual GitHub `APPROVED` reviews and is therefore retained as approval-capable
+source evidence, but it is **not added to this admitted qualification snapshot**.
+Qualification authority must not expand merely because a useful provider was
+discovered during implementation. A separate admitted update is required before Bito
+or another reviewer/source becomes an established qualification entry.
 
 This is a qualification candidate, not yet active protected R2A authority.
 
