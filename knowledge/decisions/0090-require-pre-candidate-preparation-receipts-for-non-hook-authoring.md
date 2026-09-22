@@ -155,7 +155,9 @@ non-hook authoring without importing a general orchestration subsystem.
    verification arguments.
 5. Focused verification must not mutate the prepared tree or its index. Ignored
    caches may be produced transiently, but they are removed before the final
-   style decision. Preparation then reruns `./ci/style --check` against the
+   style decision. A failed focused check reports only a bounded tail of captured
+   stderr/stdout so the operator can diagnose the gate without unbounded error
+   propagation. Preparation then reruns `./ci/style --check` against the
    restored exact normalized tree and executes `git diff --cached --check`.
 6. Run `ci/prepare-candidate` from the recommended Development Container by
    default. The intended route is `.devcontainer/devcontainer.json`, whose
