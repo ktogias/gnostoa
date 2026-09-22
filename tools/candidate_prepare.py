@@ -329,6 +329,7 @@ def _release_prepared_tree(
     if released.returncode != 0:
         raise PrepareError("unable to release prepared tree")
 
+
 def _isolated_git_env(git_dir: Path, worktree: Path) -> dict[str, str]:
     env = _base_env()
     env["GIT_DIR"] = str(git_dir)
