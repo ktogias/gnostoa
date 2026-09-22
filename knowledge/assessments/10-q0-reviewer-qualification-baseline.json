@@ -123,10 +123,10 @@
   "activation": {
     "state": "BLOCKED_PENDING_PRIOR_INTEGRATED_RUNTIME_PROMOTION",
     "protected_bundle": "tasks/issue-11-r2a-current-advisory.json",
-    "current_outer_runtime_revision": "315487e7a67635ebf3ec3f70f666ef41646102e1", "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for protected runtime binding",
     "target_snapshot_freshness": {
       "mode": "not_age_sensitive"
-    }
+    },
+    "current_outer_runtime_binding": "tasks/issue-11-r2a-current-advisory.json:authority.expected_judge.source_revision"
   },
   "assurance_progression": {
     "acceptable_recommendation": "APPROVE",
