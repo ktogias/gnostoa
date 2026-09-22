@@ -510,15 +510,16 @@ DRAFT_BUILD
   -> repeat preflight/CI/self-review
   -> SEAL_EXACT_HEAD
   -> PRE_READY_RECONCILE
-       identify providers with attributable same-head activation
-       for each whose Ready path may auto-activate (automatic/configurable/unknown):
+       scan providers whose Ready path may auto-activate for same-head activity
+       no attributable same-head activation:
+         do not block on unreadable Ready config/dedup;
+         Ready may be the provider's first activation
+       attributable same-head activation:
+         require current Ready/dedup facts
          Ready enabled/unknown + dedup not established
            -> block Ready / manual disposition
          Ready disabled/not-applicable | dedup established
            -> conflict cleared
-       providers with no same-head activation:
-         do not block on unreadable Ready config/dedup;
-         Ready may be their first activation
   -> READY_FINAL_COLLECTION
        transition to Ready only after PRE_READY_RECONCILE is safe
        reacquire current-head provider request/review state after Ready
@@ -589,16 +590,17 @@ The default policy should therefore be:
    provider-level same-head deduplication established;
 5. preserve quota-limited, Ready-only or full-review routes for the sealed
    candidate;
-6. before recommending Ready, perform **PRE_READY_RECONCILE** for each
-   provider that already has attributable same-head activity and whose Ready path
-   may auto-activate. Missing/ambiguous Ready/dedup state for such a conflict is
-   `REVALIDATION_REQUIRED` with next action `REVALIDATE_CURRENT_STATE`; a
-   same-head activation plus enabled/unknown Ready auto-activation and
-   unestablished/unknown provider dedup blocks Ready. A provider with no
-   same-head activation does not block Ready merely because its current Ready
-   configuration/dedup state is unreadable. After a safe Ready transition, read
-   provider state back again before any manual trigger and reconcile any newly
-   auto-started current-head review;
+6. before recommending Ready, **PRE_READY_RECONCILE** must first scan
+   providers whose Ready path may auto-activate for attributable same-head
+   activity; absence may be claimed only from current scan evidence. A provider
+   with no same-head activation does not block Ready merely because its current
+   Ready configuration/dedup state is unreadable. If same-head activity exists,
+   current Ready/dedup facts are required: missing/ambiguous conflict state is
+   `REVALIDATION_REQUIRED` with next action `REVALIDATE_CURRENT_STATE`, and
+   enabled/unknown Ready auto-activation plus unestablished/unknown provider
+   dedup blocks Ready. After a safe Ready transition, read provider state back
+   again before any manual trigger and reconcile any newly auto-started
+   current-head review;
 7. manually invoke only selected routes that still have no current-head
    activation and whose dispatch-safety/current-eligibility requirements are
    satisfied; if eligibility cannot be reacquired, surface
