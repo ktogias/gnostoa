@@ -132,7 +132,7 @@ provider availability/eligibility and current scope identity are revalidated.
 
 No fixed freshness TTL is invented. For automatic dispatch of an external
 review route, current availability/eligibility must be reacquired in the current
-orchestration observation cut. Version `v0.15` binds that proof explicitly:
+orchestration observation cut. Version `v0.16` binds that proof explicitly:
 the active planning input carries `cut_id`, exact `as_of` and exact subject.
 A provider `current_readback` is a **same-cut route-target evaluation**, not a
 raw retained observation. It must carry the same `cut_id` and a
@@ -194,7 +194,7 @@ and cannot override a `manual_only_until_*` dispatch-safety state.
 A planner may emit only a retained typed recipe whose fields satisfy the
 machine-readable `dispatch_kind_constraints`, or render a retained
 `instruction_template` using supported placeholders and bounded
-caller-supplied instructions. Version `v0.15` fixes a 4096-byte normalized
+caller-supplied instructions. Version `v0.16` fixes a 4096-byte normalized
 UTF-8 instruction maximum, CRLF/CR-to-LF normalization, HT/LF-only
 control-character allowance, reserved-placeholder rejection and one
 non-recursive substitution pass. Invalid input becomes
@@ -253,28 +253,36 @@ relevant deterministic and CI gates are clean.
 
 #### PRE_READY_RECONCILE
 
-Before recommending Draft→Ready, perform a same-cut provider/head activation
-scan for every provider whose Ready behavior is automatic, configurable, unknown,
-or otherwise not proven non-automatic, plus any provider already used for early
-review on the exact head. The scan determines whether attributable same-head
-activity exists; absence may be claimed only from current scan evidence.
+Before recommending Draft→Ready, consume one typed
+`provider_activation_scan` for every provider whose Ready behavior is
+automatic, configurable, unknown, or otherwise not proven non-automatic, plus
+any provider already used for early review on the exact head. Each scan is bound
+to the PRE_READY cut, provider, exact subject and scan time and reports
+`COMPLETE|INCOMPLETE|AMBIGUOUS` completeness plus
+`PRESENT|ABSENT|AMBIGUOUS` activation state.
 
-A provider with no attributable same-head activation does not block Ready merely
-because its current Ready configuration or provider-level deduplication state
-cannot be read: Ready may be that provider's first activation, and the mandatory
-post-transition read-back below determines whether automatic activity started
-before any manual route is considered.
+Negative evidence is strict: only `COMPLETE + ABSENT` establishes that the
+provider has no same-head activation. The scan must cover every provider-native
+review/request/summary/status/check surface available to that adapter. A
+provider-authored mutable summary/footer/source URL that explicitly names the
+exact head is current provider/head activity even if the specific route identity
+is unavailable. A mutable update timestamp or generic success status alone is
+not attribution. Incomplete or contradictory surfaces are
+`REVALIDATION_REQUIRED`, never safe absence.
 
-For a provider where the scan finds attributable same-head activation and Ready
-automatic activation cannot be excluded, preserve the provider's current
-Ready-activation state and whether provider-level same-head activation
-deduplication is established. Missing or ambiguous conflict-state facts set the
-planner state to `REVALIDATION_REQUIRED`, set the next permitted action to
-`REVALIDATE_CURRENT_STATE`, and block the Ready recommendation until current
-facts are reacquired. If Ready auto-activation is enabled or unknown and
-provider-level deduplication is not established, Ready remains blocked and the
-next action is manual disposition. Do not assume that a post-transition read-back
-can undo duplicate quota already spent by the Ready event.
+For `PRESENT` same-head activity, provider-level mutual exclusion applies even
+when `route_id=null`. If Ready automatic activation cannot be excluded, current
+Ready-activation and provider-level same-head deduplication facts are required.
+Ready is safe only when the Ready path is disabled/not applicable or
+provider-level same-head deduplication is established; otherwise the next action
+is manual disposition.
+
+Immediately before the Ready effect, refresh the exact head, lifecycle state and
+all PRE_READY scans. Any new provider activity, head/base/lifecycle change or
+competing orchestration receipt after the cut invalidates the recommendation and
+restarts PRE_READY_RECONCILE. This reduces TOCTOU risk but does not create an
+atomic provider lock; a future write-capable dispatcher requires separately
+admitted lease/fencing authority.
 
 Providers whose Ready path may auto-activate are therefore reserved from
 same-head early review by default unless current state proves the Ready path
@@ -282,14 +290,19 @@ disabled/not-applicable or provider-level same-head deduplication established.
 
 #### READY_FINAL_COLLECTION
 
-Transition the provider PR to Ready only after PRE_READY_RECONCILE is safe, then
-**reacquire current-head provider request/review state again before any manual
-trigger**. This post-transition read-back attributes any newly auto-started Ready
-review. For each selected reviewer and exact head, use exactly one activation
-path: if Ready already auto-started or completed a current-head request/review,
-wait for or reconcile that request and do not manually retrigger it. Only routes
-with no current-head activation may be considered for a manual trigger, and only
-after their dispatch-safety and current-eligibility requirements are satisfied.
+Transition the provider PR to Ready only after PRE_READY_RECONCILE is safe.
+Treat that lifecycle mutation as a typed effect boundary and retain a
+`ready_transition_receipt` bound to the PRE_READY cut and exact head. Then mint
+a **new POST_READY planning cut** whose `as_of` follows the transition receipt
+and reacquire current-head provider request/review state before any manual
+trigger. A PRE_READY read-back can never satisfy this ordering guard.
+
+For each selected reviewer and exact head, use exactly one activation path: if
+Ready already auto-started or completed a current-head request/review, wait for
+or reconcile that request and do not manually retrigger it. Only routes with no
+current-head activation may be considered for a manual trigger, and only after
+their dispatch-safety and current-eligibility requirements are satisfied under
+the POST_READY cut.
 
 Final collection is not "every integration at any cost." A
 `REVALIDATION_REQUIRED` route may leave the active selected set only through an
@@ -449,6 +462,9 @@ provider lifecycle state crosses a new write boundary.
 That dispatcher requires separate admission and must address:
 
 - exact-subject stale-state revalidation;
+- fresh PRE_READY cut consumption plus lifecycle/WorkLease fencing so a stale or
+  concurrently superseded recommendation cannot mutate Draft/Ready state;
+- typed Ready-transition receipts and POST_READY cut creation;
 - per-provider trigger adapters;
 - idempotence and duplicate-trigger prevention;
 - quota/retry coordination;
