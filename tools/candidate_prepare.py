@@ -87,8 +87,9 @@ def _run(
     # repository-owned verification executables are locally resolved, argv is
     # passed as a list, and candidate preparation accepts only a closed focused
     # profile at both the CLI and implementation-private API boundaries.
+    argv = list(command)
     completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
-        list(command),  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
+        argv,  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
         cwd=cwd,
         env=env,
         check=False,
