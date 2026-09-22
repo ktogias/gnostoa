@@ -1,0 +1,131 @@
+{
+  "schema_version": "gnostoa-reviewer-qualification-baseline/v1",
+  "status": "candidate",
+  "generated_at": "2026-09-22T05:50:00Z",
+  "qualifying_authority": "https://github.com/ktogias/gnostoa/issues/10#issuecomment-5771806967",
+  "independence_semantics": {
+    "domain_basis": "authenticated external reviewer execution/source boundary",
+    "required_axes": [
+      "authenticated-external-github-app-principal",
+      "provider-controlled-review-execution",
+      "read-only-review-role-for-qualified-evidence",
+      "exact-head-attribution"
+    ],
+    "non_claims": [
+      "provider or brand count alone establishes independence",
+      "distinct model families are established",
+      "internal model/runtime diversity is known",
+      "qualification grants provider-write, approval or merge authority"
+    ],
+    "currentness": "qualification assertions persist until explicit supersession, revocation or contradiction; volatile provider availability/quota remains separate current-readback state"
+  },
+  "qualification_snapshot": {
+    "snapshot_id": "gnostoa-r2a-qualification-q0-5771806967",
+    "revision": "5771806967",
+    "qualifying_authority": "https://github.com/ktogias/gnostoa/issues/10#issuecomment-5771806967",
+    "observed_at": "2026-09-22T05:50:00Z",
+    "entries": [
+      {
+        "reviewer_id": "coderabbitai[bot]",
+        "source_id": "retained-review-evidence",
+        "independence_domain_id": "github-app:coderabbitai",
+        "capability_ids": [
+          "semantic-review"
+        ],
+        "status": "established",
+        "observed_at": "2026-09-22T05:50:00Z",
+        "owner_relation": "non_owner",
+        "scope": {
+          "repository": "https://github.com/ktogias/gnostoa"
+        },
+        "provenance": {
+          "basis": "q0-source-bound-reviewer-execution",
+          "evidence": [
+            "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5765178931",
+            "https://github.com/ktogias/gnostoa/pull/297#pullrequestreview-5273613065"
+          ],
+          "independence_axes": [
+            "authenticated-external-github-app-principal",
+            "provider-controlled-review-execution",
+            "read-only-review-role-for-qualified-evidence",
+            "exact-head-attribution"
+          ],
+          "limitations": [
+            "model-runtime-diversity-unestablished"
+          ]
+        }
+      },
+      {
+        "reviewer_id": "gitar-bot[bot]",
+        "source_id": "retained-review-evidence",
+        "independence_domain_id": "github-app:gitar-bot",
+        "capability_ids": [
+          "semantic-review"
+        ],
+        "status": "established",
+        "observed_at": "2026-09-22T05:50:00Z",
+        "owner_relation": "non_owner",
+        "scope": {
+          "repository": "https://github.com/ktogias/gnostoa"
+        },
+        "provenance": {
+          "basis": "q0-source-bound-reviewer-execution",
+          "evidence": [
+            "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5771584848",
+            "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5771632564",
+            "https://github.com/ktogias/gnostoa/pull/297#pullrequestreview-5273039133"
+          ],
+          "independence_axes": [
+            "authenticated-external-github-app-principal",
+            "provider-controlled-review-execution",
+            "read-only-review-role-for-qualified-evidence",
+            "exact-head-attribution"
+          ],
+          "limitations": [
+            "model-runtime-diversity-unestablished"
+          ]
+        }
+      }
+    ]
+  },
+  "route_binding_candidates": [
+    {
+      "route_id": "coderabbit:comment:review",
+      "reviewer_id": "coderabbitai[bot]",
+      "source_id": "retained-review-evidence",
+      "independence_domain_id": "github-app:coderabbitai",
+      "capability_ids": [
+        "semantic-review"
+      ],
+      "status": "pending_pr297_registry_integration"
+    },
+    {
+      "route_id": "coderabbit:ready:auto-review",
+      "reviewer_id": "coderabbitai[bot]",
+      "source_id": "retained-review-evidence",
+      "independence_domain_id": "github-app:coderabbitai",
+      "capability_ids": [
+        "semantic-review"
+      ],
+      "status": "pending_pr297_registry_integration"
+    },
+    {
+      "route_id": "gitar:interactive:pr-agent",
+      "reviewer_id": "gitar-bot[bot]",
+      "source_id": "retained-review-evidence",
+      "independence_domain_id": "github-app:gitar-bot",
+      "capability_ids": [
+        "semantic-review"
+      ],
+      "status": "pending_pr297_registry_integration"
+    }
+  ],
+  "activation": {
+    "state": "BLOCKED_PENDING_PRIOR_INTEGRATED_RUNTIME_PROMOTION",
+    "protected_bundle": "tasks/issue-11-r2a-current-advisory.json",
+    "current_outer_runtime_revision": "315487e7a67635ebf3ec3f70f666ef41646102e1",
+    "target_snapshot_freshness": {
+      "mode": "not_age_sensitive"
+    }
+  }
+}
