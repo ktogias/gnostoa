@@ -349,7 +349,13 @@ class CandidatePreparationContractTests(unittest.TestCase):
             )
             probe = root / "probe-style"
             probe.write_text(
-                "#!/bin/sh\nset -eu\npython -m ruff --version >/dev/null\n",
+                "#!/bin/sh\n"
+                "set -eu\n"
+                "python -c 'import importlib.util, pathlib; "
+                "spec = importlib.util.find_spec(\"ruff\"); "
+                "assert spec is None or spec.origin is None or "
+                "pathlib.Path(spec.origin).resolve() != "
+                "pathlib.Path(\"ruff.py\").resolve()'\n",
                 encoding="utf-8",
             )
             probe.chmod(0o755)
