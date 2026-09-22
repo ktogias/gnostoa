@@ -5,7 +5,7 @@ description: Dated Gnostoa-self baseline separating reviewer capabilities, accou
 status: draft
 generated:
   by: openai/gpt-5.6-sol
-  at: "2026-09-21T23:58:39Z"
+  at: "2026-09-22T01:47:00Z"
 sources:
   - id: work-item
     resource: https://github.com/ktogias/gnostoa/issues/15
@@ -167,7 +167,7 @@ is the first implementation-private registry snapshot. It intentionally has no
 standalone lifecycle/promotion flag: the protected repository revision and
 Decision 0087 determine whether a registry revision is operative, and a
 standalone JSON status token must not manufacture review or integration
-authority. Version `v0.14` exposes one planner-facing shape rather than
+authority. Version `v0.15` exposes one planner-facing shape rather than
 provider-specific field names.
 
 Every provider has the same typed `capabilities.manual_trigger` contract:
@@ -189,7 +189,7 @@ configuration path or sentinel as GitHub comment syntax.
 Every volatile provider fact belongs in one `observations[]` array. Each
 observation has the same fields and an explicit `scope` of `account`,
 `repository` or `subject`; absent values are `null`, not alternate
-top-level keys. Version `v0.14` separates the operational dimensions inside every
+top-level keys. Version `v0.15` separates the operational dimensions inside every
 observation:
 
 - `status` records the observed provider event or outcome and may therefore be
@@ -227,7 +227,7 @@ instead of guessed precedence. A newer `FAILED` or `TIMED_OUT` attempt also
 stales older cached `AVAILABLE` for automatic dispatch without asserting
 `UNAVAILABLE`.
 
-Version `v0.14` keeps freshness deterministic by refusing to invent a TTL:
+Version `v0.15` keeps freshness deterministic by refusing to invent a TTL:
 retained registry observations are historical scheduling hints, not sufficient
 current provider truth for automatic dispatch. Before a scarce route is
 automatically dispatched, eligibility and the current non-sensitive scope identity
@@ -301,7 +301,7 @@ configuration paths and interactive/manual routes use their own fields.
 The registry therefore retains an explicit `instruction_mode` and optional
 `instruction_template`. CodeAnt's observed comment shape is represented as
 `{command}\n\n{instructions}`, where `instructions` is bounded,
-caller-supplied text rather than provider folklore. Version `v0.14` makes the
+caller-supplied text rather than provider folklore. Version `v0.15` makes the
 bound deterministic: normalize CRLF/CR to LF, allow HT/LF as the only control
 characters, reject other C0/C1 controls and the reserved caller literals
 `{command}` / `{instructions}`, and cap the normalized UTF-8 payload at
@@ -381,7 +381,7 @@ reviewed-line plans; reviewed-line usage resets with the billing period,
 incremental reviews count newly reviewed lines, and manual reruns count again.
 Gnostoa directly observed quota refusal at 40,037/40,000 reviewed lines and later
 at a higher account allowance. The later provider message supplied only the
-resume **date** `2026-10-15`, not an attributable instant, so v0.14 retains that
+resume **date** `2026-10-15`, not an attributable instant, so v0.15 retains that
 coarse value in observation details and keeps normalized `retry_after=null`.
 Current availability must still be reacquired before dispatch.
 
@@ -510,12 +510,15 @@ DRAFT_BUILD
   -> repeat preflight/CI/self-review
   -> SEAL_EXACT_HEAD
   -> PRE_READY_RECONCILE
-       read current provider/head activation state before Ready
-       for automatic/configurable Ready providers:
-         same-head activation + Ready enabled/unknown + dedup not established
+       identify providers with attributable same-head activation
+       for each whose Ready path may auto-activate (automatic/configurable/unknown):
+         Ready enabled/unknown + dedup not established
            -> block Ready / manual disposition
-         no conflict | Ready disabled/not-applicable | dedup established
-           -> Ready may be recommended
+         Ready disabled/not-applicable | dedup established
+           -> conflict cleared
+       providers with no same-head activation:
+         do not block on unreadable Ready config/dedup;
+         Ready may be their first activation
   -> READY_FINAL_COLLECTION
        transition to Ready only after PRE_READY_RECONCILE is safe
        reacquire current-head provider request/review state after Ready
@@ -580,19 +583,22 @@ The default policy should therefore be:
 2. authoritative CI before expensive final collection;
 3. self-review on every meaningful repair batch;
 4. early external review only from selected available routes whose expected
-   unique yield justifies the cost; reserve providers with automatic/configurable
-   Ready activation from same-head early review unless current state proves
-   Ready activation disabled or provider-level same-head deduplication established;
+   unique yield justifies the cost; reserve providers whose Ready path may
+   auto-activate (automatic/configurable/unknown) from same-head early review
+   unless current state proves Ready activation disabled/not-applicable or
+   provider-level same-head deduplication established;
 5. preserve quota-limited, Ready-only or full-review routes for the sealed
    candidate;
-6. before recommending Ready, perform **PRE_READY_RECONCILE** for automatic/
-   configurable Ready providers and any provider already activated on the exact
-   head. Missing/ambiguous pre-Ready state is `REVALIDATION_REQUIRED` and its
-   next permitted action is `REVALIDATE_CURRENT_STATE`; a same-head activation
-   plus enabled/unknown Ready auto-activation and unestablished/unknown provider
-   dedup blocks Ready. After a safe Ready transition, read provider state back
-   again before any manual trigger and reconcile any newly auto-started
-   current-head review;
+6. before recommending Ready, perform **PRE_READY_RECONCILE** for each
+   provider that already has attributable same-head activity and whose Ready path
+   may auto-activate. Missing/ambiguous Ready/dedup state for such a conflict is
+   `REVALIDATION_REQUIRED` with next action `REVALIDATE_CURRENT_STATE`; a
+   same-head activation plus enabled/unknown Ready auto-activation and
+   unestablished/unknown provider dedup blocks Ready. A provider with no
+   same-head activation does not block Ready merely because its current Ready
+   configuration/dedup state is unreadable. After a safe Ready transition, read
+   provider state back again before any manual trigger and reconcile any newly
+   auto-started current-head review;
 7. manually invoke only selected routes that still have no current-head
    activation and whose dispatch-safety/current-eligibility requirements are
    satisfied; if eligibility cannot be reacquired, surface
@@ -665,7 +671,7 @@ Accordingly:
 The next implementation should be a **read-only review planner**, not a
 dispatcher.
 
-Version `v0.14` makes freshness, activation, route identity and protected
+Version `v0.15` makes freshness, activation, route identity and protected
 assurance inputs explicit:
 
 - a planning cut carries `cut_id`, exact RFC3339 `as_of`, and the exact
@@ -674,10 +680,14 @@ assurance inputs explicit:
   stable retained `route_id`; current read-back, activation deduplication,
   protected qualification binding and reconciliation all use that same identity.
   Ready auto-activity is never aliased to a manual command route;
-- pre-Ready read-back additionally carries current `ready_activation_state` and
-  `provider_head_deduplication_state`. The planner cannot recommend Ready when
-  an existing same-head provider activation could be duplicated by an enabled or
-  unknown Ready-auto path without established provider-level deduplication;
+- for a provider with attributable same-head activity whose Ready path may
+  auto-activate, pre-Ready read-back additionally carries current
+  `ready_activation_state` and `provider_head_deduplication_state`. The
+  planner cannot recommend Ready when that existing activation could be
+  duplicated by an enabled or unknown Ready-auto path without established
+  provider-level deduplication. A provider with no same-head activation does not
+  require those two facts merely to permit Ready; post-Ready read-back still
+  precedes every manual trigger;
 - a provider `current_readback` is a same-cut route-target evaluation, not a
   raw historical observation. Its `planning_subject` must equal the active
   cut's exact PR/head, while its fact-level `subject` remains faithful to the
