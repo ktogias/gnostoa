@@ -105,6 +105,20 @@ def _review_case_documents() -> tuple[dict[str, Any], dict[str, Any]]:
     return input_document, policy_document
 
 
+def _qualification_entries(
+    input_document: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    qualification = input_document["qualification_snapshot"]
+    if not isinstance(qualification, dict):
+        raise AssertionError("qualification_snapshot must be an object")
+    entries_value = qualification["entries"]
+    if not isinstance(entries_value, list):
+        raise AssertionError("qualification entries must be an array")
+    if not all(isinstance(entry, dict) for entry in entries_value):
+        raise AssertionError("qualification entries must be objects")
+    return qualification, cast(list[dict[str, Any]], entries_value)
+
+
 def _refresh_qualification_digest(input_document: dict[str, Any]) -> None:
     qualification = input_document["qualification_snapshot"]
     if not isinstance(qualification, dict):
@@ -230,6 +244,28 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
         )
         self.assertNotEqual([], list(validator.iter_errors(missing_domain)))
 
+        missing_scope_repository = copy.deepcopy(future)
+        missing_scope_repository["qualification_snapshot"]["entries"][0]["scope"].pop(
+            "repository"
+        )
+        self.assertNotEqual(
+            [], list(validator.iter_errors(missing_scope_repository))
+        )
+
+        missing_provenance_basis = copy.deepcopy(future)
+        missing_provenance_basis["qualification_snapshot"]["entries"][0][
+            "provenance"
+        ].pop("basis")
+        self.assertNotEqual(
+            [], list(validator.iter_errors(missing_provenance_basis))
+        )
+
+        unknown_scope_field = copy.deepcopy(future)
+        unknown_scope_field["qualification_snapshot"]["entries"][0]["scope"][
+            "provider_brand"
+        ] = "must-not-grant-scope"
+        self.assertNotEqual([], list(validator.iter_errors(unknown_scope_field)))
+
     def test_q0_does_not_activate_candidate_qualification_before_runtime_promotion(
         self,
     ) -> None:
@@ -285,12 +321,7 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
 
         for name, mutate in cases:
             input_document, policy_document = _review_case_documents()
-            qualification = input_document["qualification_snapshot"]
-            self.assertIsInstance(qualification, dict)
-            qualification = cast(dict[str, Any], qualification)
-            entries_value = qualification["entries"]
-            self.assertIsInstance(entries_value, list)
-            entries = cast(list[dict[str, Any]], entries_value)
+            qualification, entries = _qualification_entries(input_document)
             mutate(entries, qualification)
             _refresh_qualification_digest(input_document)
 
@@ -308,12 +339,7 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
     ) -> None:
         for conflicting in (False, True):
             input_document, policy_document = _review_case_documents()
-            qualification = input_document["qualification_snapshot"]
-            self.assertIsInstance(qualification, dict)
-            qualification = cast(dict[str, Any], qualification)
-            entries_value = qualification["entries"]
-            self.assertIsInstance(entries_value, list)
-            entries = cast(list[dict[str, Any]], entries_value)
+            qualification, entries = _qualification_entries(input_document)
             duplicate = copy.deepcopy(entries[0])
             if conflicting:
                 duplicate["status"] = "revoked"
