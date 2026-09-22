@@ -88,12 +88,15 @@ non-hook authoring without importing a general orchestration subsystem.
    configuration or non-empty `.git/info/attributes` fails closed at admission.
    After that admission check, candidate Git operations no longer consume the
    source repository's mutable local configuration.
-3. Preparation creates disposable Git metadata with a trusted local config and
-   an object-alternate link to the source repository's object database. Candidate
-   staging, tree creation, checkout, diffing and workspace Git commands all use
-   that disposable metadata, so a concurrent mutation of the source
-   `.git/config` or source-local attributes cannot affect the prepared bytes or
-   execute a newly injected filter. Before any preparation authority executes,
+3. Preparation creates disposable Git metadata with a trusted local config.
+   Git object access is bound explicitly to the source repository's
+   content-addressed object store: candidate blobs/trees are written there so a
+   successful prepared-tree identity remains reachable after the disposable
+   metadata is removed, while candidate staging, checkout, diffing and workspace
+   Git commands never load the source repository's mutable local config. A
+   concurrent mutation of the source `.git/config` or source-local attributes
+   therefore cannot affect the prepared bytes or execute a newly injected
+   filter. Before any preparation authority executes,
    the proposed tree must leave `ci/prepare-candidate`, `ci/style`,
    `ci/verify`, and `tools/candidate_prepare.py` unchanged from the parent.
    Changes to those authority surfaces require a separately admitted

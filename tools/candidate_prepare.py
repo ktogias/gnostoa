@@ -255,6 +255,17 @@ def _isolated_git_env(git_dir: Path, worktree: Path) -> dict[str, str]:
     env = _base_env()
     env["GIT_DIR"] = str(git_dir)
     env["GIT_WORK_TREE"] = str(worktree)
+    alternates = git_dir / "objects" / "info" / "alternates"
+    try:
+        object_directory = alternates.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise PrepareError("isolated object binding is unavailable") from exc
+    if not object_directory:
+        raise PrepareError("isolated object binding is unavailable")
+    # Git metadata/config stays disposable, while content-addressed candidate
+    # objects are written to the source object store so the prepared tree
+    # remains reachable after this preparation process exits.
+    env["GIT_OBJECT_DIRECTORY"] = object_directory
     return env
 
 
