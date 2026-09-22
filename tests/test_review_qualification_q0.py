@@ -248,17 +248,13 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
         missing_scope_repository["qualification_snapshot"]["entries"][0]["scope"].pop(
             "repository"
         )
-        self.assertNotEqual(
-            [], list(validator.iter_errors(missing_scope_repository))
-        )
+        self.assertNotEqual([], list(validator.iter_errors(missing_scope_repository)))
 
         missing_provenance_basis = copy.deepcopy(future)
         missing_provenance_basis["qualification_snapshot"]["entries"][0][
             "provenance"
         ].pop("basis")
-        self.assertNotEqual(
-            [], list(validator.iter_errors(missing_provenance_basis))
-        )
+        self.assertNotEqual([], list(validator.iter_errors(missing_provenance_basis)))
 
         unknown_scope_field = copy.deepcopy(future)
         unknown_scope_field["qualification_snapshot"]["entries"][0]["scope"][
