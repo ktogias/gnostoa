@@ -311,7 +311,8 @@ typed `dispatch_kind` is authoritative for payload meaning:
 UI/API action, `configuration_only` is not an invocation, and
 `interactive_manual`/`unknown` are non-automatic. Treat a generic comment
 command as manual-only for future automation until repository-specific command
-ownership/collision behavior is verified. Treat any
+ownership/collision behavior is verified. Treat `dispatch_safety` as a closed registry vocabulary: reject an unknown
+value instead of inferring provider-specific semantics. Treat any
 `dispatch_safety: manual_only_until_*` route as ineligible for automatic
 dispatch regardless of `instruction_mode`.
 
