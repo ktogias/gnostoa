@@ -156,17 +156,26 @@ Q0 does not change:
 A qualified reviewer that produces `COMMENT_ONLY`, `ABSTAIN`, stale evidence or
 a non-exact subject still does not advance quorum.
 
-### 6. Protected activation is staged behind prior-integrated runtime support
+### 6. Protected activation is staged behind prior-integrated outer-consumer support
 
-The currently promoted outer current-advisory runtime is the revision named by
-the protected bundle's `authority.expected_judge.source_revision`. Its embedded
-protected-bundle schema requires `qualification_snapshot.entries.maxItems = 0`.
-Q0a records that authority path instead of copying the current Git revision into
-candidate-owned data.
+The currently promoted **outer current-advisory consumer** is the revision named by
+`tasks/issue-11-r2a-current-advisory-consumer.json:expected_consumer.source_revision`.
+That outer consumer owns the installed protected-bundle validation path; its embedded
+`review-protected-authority-bundle.schema.json` currently requires
+`qualification_snapshot.entries.maxItems = 0`.
+
+The separately pinned inner semantic judge at
+`tasks/issue-11-r2a-current-advisory.json:authority.expected_judge.source_revision`
+is **not** the blocker for non-empty protected qualification. It consumes the
+delegated review-check input after the outer consumer has accepted the protected
+authority bundle.
+
+Q0a records the outer-consumer authority path rather than copying a current Git
+revision into candidate-owned data.
 
 Therefore this Q0a source slice must **not** mutate the live protected qualification
-snapshot. Doing so would make the prior-integrated runtime reject protected
-authority before R2A evaluation.
+snapshot. Doing so before outer-consumer promotion would make the prior-integrated
+outer consumer reject protected authority before the inner R2A judge is invoked.
 
 The safe sequence is:
 
@@ -175,9 +184,12 @@ The safe sequence is:
 2. Q0a is integrated only after exact-head verification/review and owner merge
    authorization.
 3. A separately authorized publication/qualification/promotion sequence creates a
-   new prior-integrated outer runtime containing Q0a support.
-4. Q0b updates the protected bundle and critical qualification-currentness policy
-   to the admitted snapshot and re-runs protected R2A.
+   new prior-integrated **outer consumer** containing Q0a support and admits its
+   exact identity in
+   `tools/review_outer.py:_HOST_PERSISTENCE_FREE_CONSUMER_IDENTITIES`.
+4. Only after that promoted outer consumer is protected authority may Q0b update
+   the protected qualification bundle and critical qualification-currentness
+   policy, then re-run protected R2A.
 5. PR #297 then reconciles against the new protected main and collects acceptable
    exact-head review evidence.
 
@@ -225,8 +237,9 @@ qualifying evidence under the existing semantics.
 
 ### Update the live protected bundle in Q0a
 
-Rejected. The currently promoted prior-integrated runtime cannot validate non-empty
-qualification entries and would fail closed.
+Rejected. The currently promoted prior-integrated **outer consumer** cannot validate
+a non-empty protected qualification bundle and would fail closed before delegating
+to the inner semantic judge.
 
 ### Let the candidate runtime validate its own protected authority
 

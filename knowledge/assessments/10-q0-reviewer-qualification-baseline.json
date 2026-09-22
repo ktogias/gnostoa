@@ -126,7 +126,8 @@
     "target_snapshot_freshness": {
       "mode": "not_age_sensitive"
     },
-    "current_outer_runtime_binding": "tasks/issue-11-r2a-current-advisory.json:authority.expected_judge.source_revision"
+    "current_outer_runtime_binding": "tasks/issue-11-r2a-current-advisory-consumer.json:expected_consumer.source_revision",
+    "required_transport_catalog": "tools/review_outer.py:_HOST_PERSISTENCE_FREE_CONSUMER_IDENTITIES"
   },
   "assurance_progression": {
     "acceptable_recommendation": "APPROVE",

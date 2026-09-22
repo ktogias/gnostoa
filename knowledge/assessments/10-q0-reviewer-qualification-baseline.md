@@ -105,11 +105,17 @@ reacquired by the #15 orchestration layer.
 
 ## Protected-runtime activation boundary
 
-The live protected current-advisory outer runtime is identified by the current
-protected bundle at `authority.expected_judge.source_revision`. Its embedded
-protected-bundle schema accepts only an empty qualification array. Q0a therefore
-binds to that authority field rather than copying its Git revision into the
-candidate baseline.
+The live protected current-advisory **outer consumer** is identified by
+`tasks/issue-11-r2a-current-advisory-consumer.json:expected_consumer.source_revision`.
+That outer consumer validates the protected authority bundle with its installed
+`review-protected-authority-bundle.schema.json`, which currently accepts only an
+empty qualification array.
+
+The inner semantic judge at
+`tasks/issue-11-r2a-current-advisory.json:authority.expected_judge.source_revision`
+is a separate prior-integrated runtime and is not the non-empty-bundle blocker.
+Q0a therefore binds to the outer-consumer authority field rather than copying a Git
+revision into the candidate baseline.
 
 Therefore PR #305 is a **dormant capability preparation**, not the protected
 qualification effect:
@@ -119,9 +125,11 @@ qualification effect:
 - the candidate qualification data is retained;
 - the live protected bundle stays empty.
 
-After Q0a integration, a separately authorized runtime publication/qualification/
-promotion sequence must make this schema prior-integrated before Q0b can change the
-protected bundle.
+After Q0a integration, a separately authorized outer-consumer
+publication/qualification/promotion sequence must make this schema prior-integrated
+and admit the promoted identity in
+`tools/review_outer.py:_HOST_PERSISTENCE_FREE_CONSUMER_IDENTITIES` before Q0b can
+change the protected bundle.
 
 ## Relationship to PR #297
 

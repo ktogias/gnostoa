@@ -34,6 +34,9 @@ CURRENT_OUTER_RUNTIME_BINDING = (
     "tasks/issue-11-r2a-current-advisory-consumer.json:"
     "expected_consumer.source_revision"
 )
+OUTER_TRANSPORT_CATALOG_BINDING = (
+    "tools/review_outer.py:_HOST_PERSISTENCE_FREE_CONSUMER_IDENTITIES"
+)
 Q0_ENTRIES = [
     {
         "reviewer_id": "coderabbitai[bot]",
@@ -187,6 +190,7 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
                 "state": "BLOCKED_PENDING_PRIOR_INTEGRATED_RUNTIME_PROMOTION",
                 "protected_bundle": "tasks/issue-11-r2a-current-advisory.json",
                 "current_outer_runtime_binding": CURRENT_OUTER_RUNTIME_BINDING,
+                "required_transport_catalog": OUTER_TRANSPORT_CATALOG_BINDING,
                 "target_snapshot_freshness": {"mode": "not_age_sensitive"},
             },
             baseline["activation"],
