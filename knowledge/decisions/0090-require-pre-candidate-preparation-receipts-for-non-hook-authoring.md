@@ -98,13 +98,16 @@ non-hook authoring without importing a general orchestration subsystem.
    its own root under
    `refs/gnostoa/prepared/<parent-sha>/<tree-sha>/<receipt-nonce>` before the
    receipt is emitted. Separate receipts never share a GC root, so releasing one
-   cannot make another receipt's prepared tree unreachable. The source `.git/info/exclude` file is copied once as
-   an immutable snapshot into the disposable metadata so local scratch/secrets
-   remain excluded without reopening mutable source configuration. Candidate
-   staging, checkout, diffing and workspace Git commands never load the source
-   repository's mutable local config. A concurrent mutation of the source
-   `.git/config` or source-local attributes therefore cannot affect the
-   prepared bytes or execute a newly injected filter. Before any preparation
+   cannot make another receipt's prepared tree unreachable. The source
+   `.git/info/exclude` file and the caller's effective `core.excludesFile`
+   patterns are copied once as immutable snapshots into the disposable metadata.
+   Only the inert ignore-pattern bytes cross that boundary; caller global/system
+   configuration is not retained. This keeps ignored scratch/secrets excluded
+   without reopening mutable source or caller configuration. Candidate staging,
+   checkout, diffing and workspace Git commands never load the source
+   repository's mutable local config or caller global/system config. A concurrent
+   mutation of those configs or source-local attributes therefore cannot affect
+   the prepared bytes or execute a newly injected filter. Before any preparation
    authority executes, the proposed tree must leave `ci/prepare-candidate`,
    `ci/style`, `ci/verify`, `tools/candidate_prepare.py`, and every
    repository Ruff configuration input (`pyproject.toml`, `ruff.toml`,
