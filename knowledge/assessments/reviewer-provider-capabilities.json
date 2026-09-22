@@ -1,6 +1,6 @@
 {
-  "schema_version": "gnostoa-reviewer-capability-registry/v0.15",
-  "generated_at": "2026-09-22T01:57:50Z",
+  "schema_version": "gnostoa-reviewer-capability-registry/v0.16",
+  "generated_at": "2026-09-22T02:20:15Z",
   "research_date": "2026-09-21",
   "subject": {
     "repository": "ktogias/gnostoa",
@@ -134,9 +134,9 @@
           "rolling_budget_amount": "account_specific"
         },
         "ready_activation": {
-          "mode": "manual_observed",
+          "mode": "automatic_observed",
           "readback_before_manual": true,
-          "route_id": null
+          "route_id": "sourcery:ready:auto-review"
         }
       },
       "evidence": [
@@ -180,7 +180,13 @@
           "type": "repository_observation",
           "url": "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5766939969",
           "observed_at": "2026-09-21",
-          "note": "For exact head 562fc9a..., no automatic Sourcery review appeared after Ready before a standalone @sourcery-ai review comment was sent; current activation is therefore retained as manual-observed, not a universal vendor invariant."
+          "note": "For exact head 562fc9a..., no automatic Sourcery review appeared in the observed interval after Ready before a standalone @sourcery-ai review comment was sent. This older negative observation is not a universal vendor invariant."
+        },
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/297#pullrequestreview-5273599145",
+          "observed_at": "2026-09-22T02:18:15Z",
+          "note": "On exact head 096705e..., changing PR #297 from Draft to Ready produced an automatic Sourcery review attempt without a manual Sourcery trigger. The attempt terminated at the rolling diff-character budget gate and supplied a retry forecast."
         },
         {
           "type": "repository_observation",
@@ -295,6 +301,31 @@
           "event_at": "2026-09-21T19:35:39Z",
           "attempt_id": "github:pull-review:5270987018",
           "route_id": null
+        },
+        {
+          "scope": "subject",
+          "status": "QUOTA_EXHAUSTED",
+          "observed_at": "2026-09-22T02:20:15Z",
+          "subject": {
+            "repository": "ktogias/gnostoa",
+            "change_request": "pull/297",
+            "head_commit": "096705e56342e27cb1cfaf69f7622097f2b12efe", "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
+          },
+          "retry_after": "2026-09-22T10:47:15Z",
+          "reason": "rolling_diff_character_budget",
+          "details": {
+            "provider_message_delay": "PT8H29M",
+            "review_id": "PRR_kwDOToCF3c8AAAABOlS8qQ",
+            "database_review_id": 5273599145,
+            "evidence_url": "https://github.com/ktogias/gnostoa/pull/297#pullrequestreview-5273599145",
+            "activation_context": "automatic_ready_transition"
+          },
+          "note": "The Draft→Ready transition on the exact retained head automatically activated Sourcery without a manual trigger. The attempt terminated at the rolling account budget gate. This directly supersedes the earlier classification of Sourcery Ready activation as manual-observed, while remaining historical for successor heads.",
+          "route_state": "QUOTA_EXHAUSTED",
+          "scope_identity": "github:ktogias/gnostoa:pull/297",
+          "event_at": "2026-09-22T02:18:15Z",
+          "attempt_id": "github:pull-review:5273599145",
+          "route_id": "sourcery:ready:auto-review"
         }
       ]
     },
@@ -387,9 +418,97 @@
           "url": "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5766935150",
           "observed_at": "2026-09-21",
           "note": "On exact head 562fc9a..., Qodo automatically began work immediately after the Ready transition; no manual trigger was sent."
+        },
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5765884271",
+          "observed_at": "2026-09-22T02:00:54Z",
+          "note": "While PR #297 was Draft, Qodo's persistent review summary was refreshed and its provider-authored evidence/source links explicitly named exact head 096705e.... This is attributable provider/head activity even though the mutable summary did not expose a retained route identity."
+        },
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5770288509",
+          "observed_at": "2026-09-22T02:18:20Z",
+          "note": "Immediately after the same head transitioned to Ready, Qodo reported that a new code review was in progress; no manual Qodo trigger was sent."
+        },
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5770301455",
+          "observed_at": "2026-09-22T02:20:15Z",
+          "note": "Qodo explicitly reported that its code review was updated through exact commit 096705e56342e27cb1cfaf69f7622097f2b12efe, confirming exact-head attribution for the Ready-triggered attempt."
         }
       ],
-      "observations": []
+      "observations": [
+        {
+          "scope": "subject",
+          "status": "SEMANTIC_REVIEW_COMMENT_ON_DRAFT",
+          "observed_at": "2026-09-22T02:20:15Z",
+          "subject": {
+            "repository": "ktogias/gnostoa",
+            "change_request": "pull/297",
+            "head_commit": "096705e56342e27cb1cfaf69f7622097f2b12efe", "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
+          },
+          "retry_after": null,
+          "reason": "provider_mutable_summary_exact_head_binding",
+          "details": {
+            "summary_comment_id": 5765884271,
+            "attribution": "provider_and_exact_head_only",
+            "route_identity": "not_exposed"
+          },
+          "note": "The provider-authored persistent Qodo summary explicitly linked findings/evidence to this exact Draft head. Updated-at timing alone would not be enough; the explicit exact-head links make the provider/head activation attributable. The route surface remains unknown, so route_id is null and no route-specific completion is inferred.",
+          "route_state": "UNKNOWN",
+          "scope_identity": "github:ktogias/gnostoa:pull/297",
+          "event_at": "2026-09-22T02:00:54Z",
+          "attempt_id": "github:issue-comment:5765884271",
+          "route_id": null
+        },
+        {
+          "scope": "subject",
+          "status": "REQUESTED",
+          "observed_at": "2026-09-22T02:20:15Z",
+          "subject": {
+            "repository": "ktogias/gnostoa",
+            "change_request": "pull/297",
+            "head_commit": "096705e56342e27cb1cfaf69f7622097f2b12efe", "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
+          },
+          "retry_after": null,
+          "reason": "automatic_ready_activation",
+          "details": {
+            "status_comment_id": 5770288509,
+            "evidence_url": "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5770288509"
+          },
+          "note": "The Ready transition caused Qodo to start another review on the same exact head after an attributable Draft Qodo activation already existed. No manual trigger was sent. This is direct evidence that post-Ready reconciliation cannot prevent quota already spent by the Ready event.",
+          "route_state": "REQUESTED",
+          "scope_identity": "github:ktogias/gnostoa:pull/297",
+          "event_at": "2026-09-22T02:18:20Z",
+          "attempt_id": "github:issue-comment:5770288509",
+          "route_id": "qodo:ready:auto-review"
+        },
+        {
+          "scope": "subject",
+          "status": "COMPLETED",
+          "observed_at": "2026-09-22T02:20:15Z",
+          "subject": {
+            "repository": "ktogias/gnostoa",
+            "change_request": "pull/297",
+            "head_commit": "096705e56342e27cb1cfaf69f7622097f2b12efe", "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
+          },
+          "retry_after": null,
+          "reason": "automatic_ready_review_completed",
+          "details": {
+            "review_id": "PRR_kwDOToCF3c8AAAABOlTgvw",
+            "database_review_id": 5273608383,
+            "exact_head_confirmation_comment_id": 5770301455,
+            "evidence_url": "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5770301455"
+          },
+          "note": "The Ready-triggered Qodo review completed and the provider explicitly confirmed it was updated through the exact retained commit. This is route-specific historical completion for the Ready auto-review surface; it does not establish semantic acceptance or quorum.",
+          "route_state": "COMPLETED",
+          "scope_identity": "github:ktogias/gnostoa:pull/297",
+          "event_at": "2026-09-22T02:20:11Z",
+          "attempt_id": "github:pull-review:5273608383",
+          "route_id": "qodo:ready:auto-review"
+        }
+      ]
     },
     {
       "id": "codeant",
@@ -438,9 +557,38 @@
           "url": "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5765816608",
           "observed_at": "2026-09-21",
           "note": "On exact head 562fc9a..., CodeAnt automatically started and completed an incremental review after the Ready transition."
+        },
+        {
+          "type": "repository_observation",
+          "url": "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5765816608",
+          "observed_at": "2026-09-22T02:18:16Z",
+          "note": "The persistent CodeAnt status recorded an automatic incremental review starting on exact head 096705e... immediately after the Ready transition, with no manual CodeAnt trigger."
         }
       ],
-      "observations": []
+      "observations": [
+        {
+          "scope": "subject",
+          "status": "IN_PROGRESS",
+          "observed_at": "2026-09-22T02:20:15Z",
+          "subject": {
+            "repository": "ktogias/gnostoa",
+            "change_request": "pull/297",
+            "head_commit": "096705e56342e27cb1cfaf69f7622097f2b12efe", "_public_identity_note": "# pragma: allowlist secret -- public Git commit identity retained for exact-subject matching"
+          },
+          "retry_after": null,
+          "reason": "automatic_ready_activation",
+          "details": {
+            "status_comment_id": 5765816608,
+            "evidence_url": "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5765816608"
+          },
+          "note": "CodeAnt's provider-authored status bound an incremental review start to the exact retained head immediately after Ready. This is attributable Ready-auto route activity; no manual trigger was sent.",
+          "route_state": "IN_PROGRESS",
+          "scope_identity": "github:ktogias/gnostoa:pull/297",
+          "event_at": "2026-09-22T02:18:16Z",
+          "attempt_id": "github:issue-comment:5765816608",
+          "route_id": "codeant:ready:auto-review"
+        }
+      ]
     },
     {
       "id": "cubic",
@@ -1082,7 +1230,41 @@
     "status_dimension_rule": "A single observation.status may belong to a route-state vocabulary or to descriptive_observation_statuses. Scheduling combines separate availability and attempt dimensions; no precedence rule may reinterpret an attempt failure as provider unavailability or a descriptive event as route completion.",
     "availability_freshness_rule": "Availability has no implicit age-based TTL. For automatic scarce-review dispatch, freshness requires provider/account/subject availability read-back acquired in the same planning execution/cut. If no current read-back adapter/result exists, or the result is ambiguous, route_state is REVALIDATION_REQUIRED for automation purposes. Historical retry_after may guide when to reacquire but never substitutes for current dispatch authorization.",
     "ready_activation_rule": "Ready transition and manual invocation are mutually exclusive provider-level activation paths for one reviewer/candidate generation. PRE_READY_RECONCILE runs before any Ready recommendation and blocks the transition when an existing same-head activation could be duplicated by Ready auto-activation without established provider-level deduplication. After Ready, the planner MUST perform a second bounded current-state read-back before recommending any manual trigger. Automatic Ready activity is attributed to ready_activation.route_id; manual activity uses its retained manual route_id. If the selected provider has already started or completed on the exact head through any retained route surface, no sibling manual/Ready activation is permitted. Otherwise exactly one manual route may be selected only if dispatch-eligible; unattributed automatic activity yields REVALIDATION_REQUIRED rather than aliasing it to a manual route.",
-    "activation_identity_rule": "Activation suppression has two nested identities on one exact head. First, provider/head mutual exclusion: after Ready auto-starts or completes any current-head review for a provider, the planner MUST NOT recommend a manual activation through that provider's primary or alternative route. Second, every attributable activation uses its stable route_id — including non-null ready_activation.route_id for automatic Ready review — for surface-specific reconciliation and duplicate suppression. Different route_id values remain distinct surfaces for attribution and pre-activation selection, but never authorize duplicate provider activation on the same exact head.",
+    "activation_identity_rule": "Activation suppression has two nested identities on one exact head. First, provider/head mutual exclusion: any provider-authored current-head review/request activation suppresses sibling activation for that provider even when the exact provider route is not attributable. Second, when a retained stable route_id is attributable — including non-null ready_activation.route_id for automatic Ready review — it is also used for surface-specific reconciliation and duplicate suppression. Different route_id values remain distinct surfaces for attribution and pre-activation selection, but never authorize duplicate provider activation on the same exact head.",
+    "provider_activation_attribution_rule": "A current provider/head activation may be attributed from a provider-native formal review/request record, provider-authored persistent summary/status marker, check/run metadata, or provider source/evidence link only when that surface explicitly binds the exact planning_subject head or exposes an immutable provider/request identity already bound to that head. A mutable updated_at timestamp, proximity to a push, generic success status, or provider presence alone is insufficient. An explicit current-head binding inside a mutable summary body/footer/source URL is sufficient for provider/head attribution even when route_id is unknown; in that case provider-level sibling activation is suppressed while route-specific state remains unattributed. Contradictory, partial, or head-ambiguous surfaces yield an AMBIGUOUS scan, never ABSENT.",
+    "provider_activation_scan_fields": [
+      "cut_id",
+      "provider_id",
+      "planning_subject",
+      "scanned_at",
+      "completeness",
+      "activation_state",
+      "activations",
+      "source_refs"
+    ],
+    "provider_activation_scan_completeness": [
+      "COMPLETE",
+      "INCOMPLETE",
+      "AMBIGUOUS"
+    ],
+    "provider_activation_scan_states": [
+      "PRESENT",
+      "ABSENT",
+      "AMBIGUOUS"
+    ],
+    "provider_activation_entry_fields": [
+      "route_id",
+      "attempt_id",
+      "event_at",
+      "source_ref",
+      "attribution_state"
+    ],
+    "provider_activation_attribution_states": [
+      "ATTRIBUTED_ROUTE",
+      "ATTRIBUTED_PROVIDER_HEAD",
+      "UNATTRIBUTED"
+    ],
+    "provider_activation_scan_rule": "PRE_READY_RECONCILE consumes one provider_activation_scan per in-scope provider for the active PRE_READY cut. ABSENT is valid only when completeness=COMPLETE, the scan covers every provider-native review/request/summary/status/check surface available to the adapter for that provider, and no attributable or ambiguous current-head activity exists. PRESENT may contain route_id=null when provider and exact head are attributable but the specific route surface is not; that still blocks duplicate provider activation. INCOMPLETE, AMBIGUOUS, an unattributed current-head-like surface, or a missing scan yields REVALIDATION_REQUIRED and no Ready recommendation.",
     "ready_activation_fields": [
       "mode",
       "route_id",
@@ -1115,8 +1297,25 @@
     "planning_cut_fields": [
       "cut_id",
       "as_of",
-      "subject"
+      "subject",
+      "phase",
+      "ready_transition_receipt_id"
     ],
+    "planning_cut_phases": [
+      "PRE_READY",
+      "POST_READY",
+      "FINAL_RECONCILE"
+    ],
+    "ready_transition_receipt_fields": [
+      "receipt_id",
+      "pre_ready_cut_id",
+      "subject",
+      "transitioned_at",
+      "from_state",
+      "to_state",
+      "provider_event_id"
+    ],
+    "ready_transition_receipt_rule": "A Ready transition is a typed effect boundary, not an inference from current PR state. The receipt binds one PRE_READY cut and exact subject to an attributable provider lifecycle event with from_state=DRAFT and to_state=READY. After the effect, the planner MUST mint a new POST_READY planning cut with a new cut_id, the same exact subject, as_of not earlier than transitioned_at, and ready_transition_receipt_id equal to the receipt. Pre-Ready read-backs cannot satisfy post-Ready ordering.",
     "current_readback_fields": [
       "cut_id",
       "provider_id",
@@ -1155,7 +1354,7 @@
       "TIMED_OUT",
       "REVALIDATION_REQUIRED"
     ],
-    "current_readback_rule": "Automatic scarce-review dispatch requires source=provider_current_readback, cut_id exactly equal to the active planning_cut.cut_id, route_id exactly equal to one retained manual primary/alternative route_id or one non-null ready_activation.route_id, planning_subject exactly equal to the planning-cut exact subject/head, availability_state=AVAILABLE, and eligibility_state=ELIGIBLE. For PRE_READY_RECONCILE, ready_activation_state and provider_head_deduplication_state are additionally required only when an attributable same-head provider activation already exists and Ready automatic activation cannot be excluded; absent same-head activation, unreadable Ready configuration or deduplication state alone is not a pre-Ready blocker because the mandatory post-Ready read-back precedes every manual trigger. The fact-level subject MUST obey its declared scope semantics and may be null for account scope. scope_identity must be current and non-null where required. readback_at and planning_cut.as_of are exact RFC3339 timestamps from the same planner execution. Committed historical registry observations MUST NOT be promoted into this shape or satisfy the same-cut read-back requirement. Missing, stale-head, mismatched-cut, unknown-route, null-identity, or incomplete availability-plus-eligibility proof yields state=REVALIDATION_REQUIRED and next_action=REVALIDATE_CURRENT_STATE for dispatch decisions; ambiguous Ready/dedup state has the same result only for a pre-Ready same-head conflict candidate.",
+    "current_readback_rule": "Automatic scarce-review dispatch requires source=provider_current_readback, cut_id exactly equal to the active planning_cut.cut_id, route_id exactly equal to one retained manual primary/alternative route_id or one non-null ready_activation.route_id, planning_subject exactly equal to the planning-cut exact subject/head, availability_state=AVAILABLE, and eligibility_state=ELIGIBLE. PRE_READY_RECONCILE uses provider_activation_scan for provider/head presence/absence and uses route-bound current_readback only where route availability, eligibility, Ready configuration, deduplication, or attempt state must be evaluated. The fact-level subject MUST obey its declared scope semantics and may be null for account scope. scope_identity must be current and non-null where required. readback_at and planning_cut.as_of are exact RFC3339 timestamps from the same planner execution. A manual-trigger recommendation after Ready MUST consume only a POST_READY cut whose ready_transition_receipt_id is non-null and whose as_of/readback_at follow the referenced Ready receipt; a PRE_READY cut/read-back can never satisfy the post-transition ordering guard. Committed historical registry observations MUST NOT be promoted into current_readback or provider_activation_scan. Missing, stale-head, mismatched-cut, unknown-route, null-identity, incomplete availability-plus-eligibility proof, or invalid phase/receipt ordering yields state=REVALIDATION_REQUIRED and next_action=REVALIDATE_CURRENT_STATE.",
     "final_review_cut_fields": [
       "cut_id",
       "head_commit",
@@ -1331,8 +1530,8 @@
       "UNESTABLISHED",
       "UNKNOWN"
     ],
-    "pre_ready_reconciliation_rule": "Before recommending a Draft→Ready transition, the planner MUST perform a same-cut provider/head activation scan for every provider whose Ready behavior is automatic_observed, configurable, unknown, or otherwise not proven non-automatic, plus any provider already used for early review on the exact head. The scan determines whether an attributable same-head activation exists; absence may be claimed only from current scan evidence, never from historical silence. If no attributable same-head activation exists for a provider, unreadable Ready configuration or deduplication state alone does not block Ready: the Ready event may be that provider's first activation, and the mandatory post-Ready read-back determines whether an automatic activation occurred before any manual route is considered. If the scan finds an attributable same-head activation and Ready automatic activation cannot be excluded, same-cut read-back must additionally include ready_activation_state and provider_head_deduplication_state. Missing/ambiguous conflict-state facts yield state=REVALIDATION_REQUIRED, next_action=REVALIDATE_CURRENT_STATE, and no Ready recommendation. If that same-head activation exists while ready_activation_state is ENABLED or UNKNOWN and provider_head_deduplication_state is not ESTABLISHED, Ready is blocked and the next permitted action is MANUAL_ESCALATION_REQUIRED; the planner MUST NOT rely on post-Ready sibling suppression to prevent a duplicate activation. A conflicting same-head provider is safe only when current Ready auto-activation is DISABLED/NOT_APPLICABLE or provider-level same-head deduplication is explicitly ESTABLISHED. After the Ready transition, a second same-cut/current-head read-back is always required to attribute and reconcile any newly started automatic activation before any manual trigger.",
-    "early_review_ready_reservation_rule": "A provider whose Ready path is automatic_observed, configurable, or unknown where automatic activation cannot be excluded is reserved from same-head early review by default when that head may later be sealed unchanged and transitioned to Ready. Early use on that head is safe only when current provider state proves ready_activation_state=DISABLED/NOT_APPLICABLE or provider_head_deduplication_state=ESTABLISHED. If early review already occurred and those conditions are not proven, PRE_READY_RECONCILE blocks Ready rather than knowingly spending duplicate review quota. Providers with no attributable same-head activation do not need pre-Ready configuration read-back solely because a Ready path may exist; they are reconciled immediately after Ready before any manual trigger.",
+    "pre_ready_reconciliation_rule": "Before recommending a Draft→Ready transition, the planner MUST consume a COMPLETE provider_activation_scan for every provider whose Ready behavior is automatic_observed, configurable, unknown, or otherwise not proven non-automatic, plus any provider already used for early review on the exact head. A COMPLETE ABSENT result permits Ready without provider configuration/dedup proof because Ready may be that provider's first activation. PRESENT with provider/head attribution blocks sibling activation even when route_id is null; if Ready automatic activation cannot be excluded, current read-back must establish ready_activation_state=DISABLED/NOT_APPLICABLE or provider_head_deduplication_state=ESTABLISHED. Missing, INCOMPLETE, AMBIGUOUS, or head-ambiguous scan results yield REVALIDATION_REQUIRED and no Ready recommendation. Immediately before any Ready effect, re-read the exact candidate/lifecycle state and repeat or refresh the PRE_READY scans; any new provider activity, head/base/lifecycle change, or competing orchestration receipt after the cut invalidates the recommendation and restarts PRE_READY_RECONCILE. If a same-head provider activation remains while Ready auto-activation is ENABLED or UNKNOWN and provider-level deduplication is not ESTABLISHED, Ready is blocked and the next permitted action is MANUAL_ESCALATION_REQUIRED. After a successful Ready effect, create a Ready transition receipt and a new POST_READY cut; only that cut may attribute/reconcile newly started automatic activity before any manual trigger.",
+    "early_review_ready_reservation_rule": "A provider whose Ready path is automatic_observed, configurable, or unknown where automatic activation cannot be excluded is reserved from same-head early review by default when that head may later be sealed unchanged and transitioned to Ready. Early use on that head is safe only when current provider state proves ready_activation_state=DISABLED/NOT_APPLICABLE or provider_head_deduplication_state=ESTABLISHED. If early review already occurred and those conditions are not proven, PRE_READY_RECONCILE blocks Ready rather than knowingly spending duplicate review quota. A provider may be treated as having no same-head activation only from a COMPLETE ABSENT provider_activation_scan; route-bound read-back is not required solely to prove absence.",
     "state_action_mapping_rule": "Planner state/status tokens and next-action tokens are separate typed dimensions. REVALIDATION_REQUIRED is a state/disposition meaning current route/provider facts are insufficient for a safe decision. REVALIDATE_CURRENT_STATE is the corresponding next permitted action that asks the read-only planner/operator workflow to reacquire current facts. Whenever this contract says missing, stale or ambiguous state requires revalidation, the planner MUST expose state=REVALIDATION_REQUIRED and next_action=REVALIDATE_CURRENT_STATE; implementations MUST NOT substitute one token for the other."
   },
   "observation_status_vocabulary": [
