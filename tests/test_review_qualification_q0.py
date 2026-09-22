@@ -146,22 +146,18 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
             for item in surfaces
             if isinstance(item, dict) and item.get("currently_quorum_advancing") is True
         ]
+        self.assertEqual([], advancing)
+        approval_capable = [
+            item
+            for item in surfaces
+            if isinstance(item, dict) and item.get("recommendation_acceptable") is True
+        ]
+        self.assertEqual(1, len(approval_capable))
+        self.assertEqual("bito-code-review[bot]", approval_capable[0]["reviewer_id"])
+        self.assertFalse(approval_capable[0]["qualified_in_candidate_snapshot"])
+        self.assertFalse(approval_capable[0]["currently_quorum_advancing"])
         self.assertEqual(
-            [
-                {
-                    "reviewer_id": "bito-code-review[bot]",
-                    "github_review_state": "APPROVED",
-                    "normalized_recommendation": "APPROVE",
-                    "currently_quorum_advancing": True,
-                    "qualification_status": (
-                        "observed_approval_surface_not_in_admitted_q0_snapshot"
-                    ),
-                }
-            ],
-            advancing,
-        )
-        self.assertEqual(
-            "SECOND_APPROVAL_CAPABLE_QUALIFIED_DOMAIN_UNESTABLISHED",
+            "POLICY_ACCEPTABLE_TWO_DOMAIN_QUALIFIED_COHORT_UNESTABLISHED",
             progression["current_result"],
         )
 
