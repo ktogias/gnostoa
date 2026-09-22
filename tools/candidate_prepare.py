@@ -83,9 +83,10 @@ def _run(
     if env is None:
         env = _base_env()
     # Every command is passed as an argv vector with shell=False. Git and
-    # repository-owned verification commands are locally resolved. The external
-    # CLI accepts only a closed focused profile; it cannot supply an executable or
-    # argv. Internal callers must still cross _validate_focused_command().
+    # repository-owned verification commands are locally resolved. Candidate
+    # preparation accepts only a closed focused profile at both the CLI and
+    # implementation-private API boundaries; callers cannot supply executable
+    # paths or arbitrary subprocess arguments.
     completed = subprocess.run(  # nosemgrep  # nosec B603
         list(command),
         cwd=cwd,
@@ -154,22 +155,20 @@ def _focused_profile_command(root: Path, profile: str) -> tuple[str, ...]:
     raise PrepareError("unsupported focused verification profile")
 
 
-def _focused_command_shape(command: Sequence[str]) -> tuple[str, ...]:
-    if not command or not all(isinstance(item, str) and item for item in command):
-        raise PrepareError(
-            "focused verification command must be a non-empty argv vector"
-        )
-    return tuple(command)
-
-
-def _validate_focused_command(command: Sequence[str]) -> tuple[str, ...]:
-    argv = _focused_command_shape(command)
-    executable = Path(argv[0])
-    if not executable.is_absolute():
-        raise PrepareError("focused verification executable must use an absolute path")
-    if not executable.is_file() or not os.access(executable, os.X_OK):
-        raise PrepareError("focused verification executable is unavailable")
-    return argv
+def _focused_receipt_command(profile: str) -> tuple[str, ...]:
+    if profile == "policy":
+        return ("ci/verify", "policy")
+    if profile == "security-fast":
+        return ("ci/verify", "security-fast")
+    if profile == "fast":
+        return ("ci/verify", "fast")
+    if profile == "regression":
+        return ("ci/verify", "regression")
+    if profile == "smoke":
+        return ("ci/verify", "smoke")
+    if profile == "extended":
+        return ("ci/verify", "extended")
+    raise PrepareError("unsupported focused verification profile")
 
 
 def _assert_head(root: Path, parent: str) -> None:
@@ -234,13 +233,14 @@ def _write_receipt(path: Path, payload: dict[str, Any]) -> dict[str, Any]:
 def prepare(
     parent_commit: str,
     receipt_path: Path,
-    focused_command: Sequence[str],
+    focused_profile: str,
 ) -> dict[str, Any]:
     if _SHA40.fullmatch(parent_commit) is None:
         raise PrepareError("parent must be an exact 40-character commit SHA")
-    focused_argv = _validate_focused_command(focused_command)
 
     root = _repository_root()
+    focused_argv = _focused_profile_command(root, focused_profile)
+    focused_receipt_argv = _focused_receipt_command(focused_profile)
     receipt = _assert_external_receipt(root, receipt_path)
     _assert_head(root, parent_commit)
     parent_tree = _git_text(root, "rev-parse", f"{parent_commit}^{{tree}}")
@@ -296,7 +296,8 @@ def prepare(
         "style_sha256": _sha256_bytes(style.read_bytes()),
         "style_subject": ".",
         "ruff_version": _ruff_version(root),
-        "focused_command": list(focused_argv),
+        "focused_profile": focused_profile,
+        "focused_command": list(focused_receipt_argv),
         "checks": {
             "style_fix": 0,
             "focused_verification": focused.returncode,
@@ -355,10 +356,11 @@ def _validate_receipt_checks(document: dict[str, Any]) -> None:
 
 
 def _validate_receipt_focused_command(document: dict[str, Any]) -> None:
-    focused_command = document.get("focused_command")
-    if not isinstance(focused_command, list):
+    profile = document.get("focused_profile")
+    if not isinstance(profile, str):
+        raise PrepareError("receipt focused profile is invalid")
+    if document.get("focused_command") != list(_focused_receipt_command(profile)):
         raise PrepareError("receipt focused command is invalid")
-    _focused_command_shape(focused_command)
 
 
 def _validate_receipt_metric(document: dict[str, Any]) -> None:
@@ -424,9 +426,11 @@ def main(argv: list[str] | None = None) -> int:
                 arguments.tree,
             )
         else:
-            root = _repository_root()
-            focused = _focused_profile_command(root, arguments.focused_profile)
-            document = prepare(arguments.parent, arguments.receipt, focused)
+            document = prepare(
+                arguments.parent,
+                arguments.receipt,
+                arguments.focused_profile,
+            )
     except PrepareError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2

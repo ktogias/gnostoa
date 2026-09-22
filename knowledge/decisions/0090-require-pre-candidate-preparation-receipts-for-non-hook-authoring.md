@@ -80,8 +80,8 @@ effect recovery.
    vocabulary `policy`, `security-fast`, `fast`, `regression`, `smoke`,
    and `extended`; each profile maps to a static `./ci/verify <suite>` argv.
    Caller input cannot choose an executable or arbitrary verification arguments.
-   The lower-level `prepare()` function remains implementation-private and
-   validates any internally supplied executable before launch.
+   The implementation-private `prepare()` boundary accepts the same closed
+   profile vocabulary; no lower layer accepts a caller-supplied command vector.
 4. Focused verification must not mutate the candidate. The prepared tree after
    normalization is measured before and after the focused command; any change
    fails closed.
@@ -89,7 +89,8 @@ effect recovery.
    temporary index with `git diff --cached --check`.
 6. The successful receipt binds at least parent commit/tree, prepared tree,
    prepared binary-diff SHA-256, changed paths, `ci/style` SHA-256, observed Ruff
-   version, focused command, and zero exit status for every required step. The
+   version, focused profile plus its logical repository-owned command identity,
+   and zero exit status for every required step. The
    receipt carries a canonical SHA-256 over its own payload and records
    `PRE_CANDIDATE_RUFF_CATCH` when normalization changed the proposed tree,
    otherwise `PRE_CANDIDATE_NO_RUFF_CHANGE`. Post-seal Ruff escapes remain a
