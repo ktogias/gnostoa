@@ -59,7 +59,7 @@ def _git_executable() -> str:
 
 
 def _base_env() -> dict[str, str]:
-    env = _base_env()
+    env = dict(os.environ)
     for name in _GIT_ENVIRONMENT_VARIABLES:
         env.pop(name, None)
     return env
