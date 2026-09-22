@@ -15,13 +15,18 @@ from tools.review_policy import resolve_project_policy
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLE_PATH = ROOT / "tasks" / "issue-11-r2a-current-advisory.json"
 BUNDLE_SCHEMA_PATH = ROOT / "schemas" / "review-protected-authority-bundle.schema.json"
-BASELINE_PATH = ROOT / "knowledge" / "assessments" / "10-q0-reviewer-qualification-baseline.json"
+BASELINE_PATH = (
+    ROOT / "knowledge" / "assessments" / "10-q0-reviewer-qualification-baseline.json"
+)
 POLICY_PATH = ROOT / "policy" / "review-policy.yaml"
 
 Q0_AUTHORITY = "https://github.com/ktogias/gnostoa/issues/10#issuecomment-5771806967"
 Q0_OBSERVED_AT = "2026-09-22T05:50:00Z"
 Q0_SNAPSHOT_ID = "gnostoa-r2a-qualification-q0-5771806967"
 Q0_REVISION = "5771806967"
+CURRENT_OUTER_RUNTIME_REVISION = (
+    "315487e7a67635ebf3ec3f70f666ef41646102e1"  # pragma: allowlist secret -- public Git commit identity
+)
 Q0_ENTRIES = [
     {
         "reviewer_id": "coderabbitai[bot]",
@@ -72,34 +77,7 @@ Q0_ENTRIES = [
             "limitations": ["model-runtime-diversity-unestablished"],
         },
     },
-    {
-        "reviewer_id": "bito-code-review[bot]",
-        "source_id": "retained-review-evidence",
-        "independence_domain_id": "github-app:bito-code-review",
-        "capability_ids": ["semantic-review"],
-        "status": "established",
-        "observed_at": "2026-09-22T06:05:00Z",
-        "owner_relation": "non_owner",
-        "scope": {"repository": "https://github.com/ktogias/gnostoa"},
-        "provenance": {
-            "basis": "q0-source-bound-reviewer-execution",
-            "evidence": [
-                "https://github.com/ktogias/gnostoa/pull/303#pullrequestreview-5272522425",
-                "https://github.com/ktogias/gnostoa/pull/303#pullrequestreview-5272844144",
-                "https://github.com/ktogias/gnostoa/pull/303#pullrequestreview-5273057643",
-            ],
-            "independence_axes": [
-                "authenticated-external-github-app-principal",
-                "provider-controlled-review-execution",
-                "read-only-review-role-for-qualified-evidence",
-                "exact-head-attribution",
-            ],
-            "limitations": [
-                "model-runtime-diversity-unestablished",
-                "subject-size-fair-use-can-refuse-large-prs",
-            ],
-        },
-    },
+
 ]
 
 
@@ -125,7 +103,7 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
                 "snapshot_id": Q0_SNAPSHOT_ID,
                 "revision": Q0_REVISION,
                 "qualifying_authority": Q0_AUTHORITY,
-                "observed_at": "2026-09-22T06:05:00Z",
+                "observed_at": Q0_OBSERVED_AT,
                 "entries": Q0_ENTRIES,
             },
             baseline["qualification_snapshot"],
@@ -134,11 +112,7 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
         self.assertIsInstance(entries, list)
         assert isinstance(entries, list)
         self.assertEqual(
-            {
-                "github-app:coderabbitai",
-                "github-app:gitar-bot",
-                "github-app:bito-code-review",
-            },
+            {"github-app:coderabbitai", "github-app:gitar-bot"},
             {
                 entry["independence_domain_id"]
                 for entry in entries
@@ -147,12 +121,13 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
         )
         self.assertEqual(
             {
-                "state": (
-                    "BLOCKED_PENDING_PRIOR_INTEGRATED_RUNTIME_PROMOTION_"
-                    "AND_SECOND_APPROVAL_DOMAIN"
-                ),
+                "state": "BLOCKED_PENDING_PRIOR_INTEGRATED_RUNTIME_PROMOTION",
                 "protected_bundle": "tasks/issue-11-r2a-current-advisory.json",
-                "current_outer_runtime_revision": "315487e7a67635ebf3ec3f70f666ef41646102e1",
+                "current_outer_runtime_revision": CURRENT_OUTER_RUNTIME_REVISION,
+                "_public_identity_note": (
+                    "# pragma: allowlist secret -- public Git commit identity "
+                    "retained for protected runtime binding"
+                ),
                 "target_snapshot_freshness": {"mode": "not_age_sensitive"},
             },
             baseline["activation"],
@@ -174,12 +149,15 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
                     "github_review_state": "APPROVED",
                     "normalized_recommendation": "APPROVE",
                     "currently_quorum_advancing": True,
+                    "qualification_status": (
+                        "observed_approval_surface_not_in_admitted_q0_snapshot"
+                    ),
                 }
             ],
             advancing,
         )
         self.assertEqual(
-            "SECOND_APPROVAL_CAPABLE_DOMAIN_UNESTABLISHED",
+            "SECOND_APPROVAL_CAPABLE_QUALIFIED_DOMAIN_UNESTABLISHED",
             progression["current_result"],
         )
 
@@ -228,9 +206,7 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
             resolve_project_policy(POLICY_PATH, "critical"),
             live_bundle["policy"],
         )
-        self.assertFalse(
-            live_bundle["policy"]["qualification"]["owner_reviews_count"]
-        )
+        self.assertFalse(live_bundle["policy"]["qualification"]["owner_reviews_count"])
         self.assertEqual(
             ["APPROVE"], live_bundle["policy"]["quorum"]["acceptable_recommendations"]
         )
