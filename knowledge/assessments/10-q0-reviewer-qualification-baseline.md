@@ -66,6 +66,14 @@ provider-authored semantic review artifacts on Gnostoa, expose distinct authenti
 GitHub application principals, and have exact-head review behavior. The qualifying
 evidence used here does not include candidate mutation.
 
+A later provider-state read-back exposed a separate recommendation-surface fact:
+CodeRabbit and Gitar currently submit formal GitHub `COMMENTED` reviews, while Bito
+has repeatedly submitted formal GitHub `APPROVED` reviews. This does not silently
+expand the admitted Q0 qualification cohort. The JSON retains Bito only as observed
+approval-capable source evidence; qualification of Bito or another source requires a
+separate admitted authority update. Consequently Q0 qualification activation alone
+does not promise R2A `PASS`.
+
 ## What qualification does not mean
 
 An established entry does not mean that the provider:
