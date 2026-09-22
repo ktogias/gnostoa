@@ -75,21 +75,25 @@ class ReviewAssuranceP2bAuthorityLandingTests(unittest.TestCase):
         assert isinstance(qualification, dict)
         qualification["entries"] = [
             {
-                "reviewer_id": "unadmitted-reviewer",
-                "source_id": "unadmitted-source",
-                "independence_domain_id": "unadmitted-domain",
+                "reviewer_id": "future-qualified-reviewer",
+                "source_id": "retained-review-evidence",
+                "independence_domain_id": "future-domain",
                 "capability_ids": ["semantic-review"],
                 "status": "established",
                 "observed_at": "2026-09-14T05:32:08Z",
                 "owner_relation": "non_owner",
-                "scope": {"candidate_claim": True},
-                "provenance": {"candidate_claim": True},
+                "scope": {"repository": "https://github.com/ktogias/gnostoa"},
+                "provenance": {
+                    "basis": "synthetic-schema-compatibility",
+                    "evidence": ["synthetic-evidence-ref"],
+                    "independence_axes": ["synthetic-independent-reviewer-boundary"],
+                },
             }
         ]
-        self.assertNotEqual(
+        self.assertEqual(
             [],
             list(validator.iter_errors(nonempty_qualification)),
-            "P2b-A v1 must not admit qualification facts beyond the protected empty #10 snapshot",
+            "The protected bundle schema must admit the normalized qualification-entry shape even while the live protected snapshot remains empty.",
         )
 
         malformed_timestamp = copy.deepcopy(bundle)

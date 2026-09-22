@@ -407,6 +407,7 @@ def _qualification_entries(entries: list[Any]) -> list[dict[str, Any]]:
     return [by_key[key] for key in sorted(by_key)]
 
 
+# skipcq: PY-R1000 -- pre-existing complexity; Q0a owner gate; removal tracked in #310
 def evaluate(
     input_document: dict[str, Any],
     policy_document: dict[str, Any],
@@ -828,7 +829,10 @@ def evaluate(
         )
         if not _fresh(entry_cut, as_of, qualification_rule):
             continue
-        if matched_entry.get("owner_relation") == "owner" and not owner_reviews_count:
+        owner_relation = matched_entry.get("owner_relation")
+        if owner_relation != "non_owner" and not (
+            owner_relation == "owner" and owner_reviews_count
+        ):
             continue
         capabilities = matched_entry.get("capability_ids")
         if not isinstance(capabilities, list) or not required_capabilities.issubset(

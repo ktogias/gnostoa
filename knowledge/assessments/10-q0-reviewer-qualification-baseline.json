@@ -1,0 +1,166 @@
+{
+  "schema_version": "gnostoa-reviewer-qualification-baseline/v1",
+  "status": "candidate",
+  "generated_at": "2026-09-22T06:05:00Z",
+  "qualifying_authority": "https://github.com/ktogias/gnostoa/issues/10#issuecomment-5771806967",
+  "independence_semantics": {
+    "domain_basis": "authenticated external reviewer execution/source boundary",
+    "required_axes": [
+      "authenticated-external-github-app-principal",
+      "provider-controlled-review-execution",
+      "read-only-review-role-for-qualified-evidence",
+      "exact-head-attribution"
+    ],
+    "non_claims": [
+      "provider or brand count alone establishes independence",
+      "distinct model families are established",
+      "internal model/runtime diversity is known",
+      "qualification grants provider-write, approval or merge authority"
+    ],
+    "currentness": "qualification assertions persist until explicit supersession, revocation or contradiction; volatile provider availability/quota remains separate current-readback state"
+  },
+  "qualification_snapshot": {
+    "snapshot_id": "gnostoa-r2a-qualification-q0-5771806967",
+    "revision": "5771806967",
+    "qualifying_authority": "https://github.com/ktogias/gnostoa/issues/10#issuecomment-5771806967",
+    "observed_at": "2026-09-22T05:50:00Z",
+    "entries": [
+      {
+        "reviewer_id": "coderabbitai[bot]",
+        "source_id": "retained-review-evidence",
+        "independence_domain_id": "github-app:coderabbitai",
+        "capability_ids": [
+          "semantic-review"
+        ],
+        "status": "established",
+        "observed_at": "2026-09-22T05:50:00Z",
+        "owner_relation": "non_owner",
+        "scope": {
+          "repository": "https://github.com/ktogias/gnostoa"
+        },
+        "provenance": {
+          "basis": "q0-source-bound-reviewer-execution",
+          "evidence": [
+            "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5765178931",
+            "https://github.com/ktogias/gnostoa/pull/297#pullrequestreview-5273613065"
+          ],
+          "independence_axes": [
+            "authenticated-external-github-app-principal",
+            "provider-controlled-review-execution",
+            "read-only-review-role-for-qualified-evidence",
+            "exact-head-attribution"
+          ],
+          "limitations": [
+            "model-runtime-diversity-unestablished"
+          ]
+        }
+      },
+      {
+        "reviewer_id": "gitar-bot[bot]",
+        "source_id": "retained-review-evidence",
+        "independence_domain_id": "github-app:gitar-bot",
+        "capability_ids": [
+          "semantic-review"
+        ],
+        "status": "established",
+        "observed_at": "2026-09-22T05:50:00Z",
+        "owner_relation": "non_owner",
+        "scope": {
+          "repository": "https://github.com/ktogias/gnostoa"
+        },
+        "provenance": {
+          "basis": "q0-source-bound-reviewer-execution",
+          "evidence": [
+            "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5771584848",
+            "https://github.com/ktogias/gnostoa/pull/297#issuecomment-5771632564",
+            "https://github.com/ktogias/gnostoa/pull/297#pullrequestreview-5273039133"
+          ],
+          "independence_axes": [
+            "authenticated-external-github-app-principal",
+            "provider-controlled-review-execution",
+            "read-only-review-role-for-qualified-evidence",
+            "exact-head-attribution"
+          ],
+          "limitations": [
+            "model-runtime-diversity-unestablished"
+          ]
+        }
+      }
+    ]
+  },
+  "route_binding_candidates": [
+    {
+      "route_id": "coderabbit:comment:review",
+      "reviewer_id": "coderabbitai[bot]",
+      "source_id": "retained-review-evidence",
+      "independence_domain_id": "github-app:coderabbitai",
+      "capability_ids": [
+        "semantic-review"
+      ],
+      "status": "pending_pr297_registry_integration"
+    },
+    {
+      "route_id": "coderabbit:ready:auto-review",
+      "reviewer_id": "coderabbitai[bot]",
+      "source_id": "retained-review-evidence",
+      "independence_domain_id": "github-app:coderabbitai",
+      "capability_ids": [
+        "semantic-review"
+      ],
+      "status": "pending_pr297_registry_integration"
+    },
+    {
+      "route_id": "gitar:interactive:pr-agent",
+      "reviewer_id": "gitar-bot[bot]",
+      "source_id": "retained-review-evidence",
+      "independence_domain_id": "github-app:gitar-bot",
+      "capability_ids": [
+        "semantic-review"
+      ],
+      "status": "pending_pr297_registry_integration"
+    }
+  ],
+  "activation": {
+    "state": "BLOCKED_PENDING_PRIOR_INTEGRATED_RUNTIME_PROMOTION",
+    "protected_bundle": "tasks/issue-11-r2a-current-advisory.json",
+    "target_snapshot_freshness": {
+      "mode": "not_age_sensitive"
+    },
+    "current_outer_runtime_binding": "tasks/issue-11-r2a-current-advisory-consumer.json:expected_consumer.source_revision",
+    "required_transport_catalog": "tools/review_outer.py:_HOST_PERSISTENCE_FREE_CONSUMER_IDENTITIES"
+  },
+  "assurance_progression": {
+    "acceptable_recommendation": "APPROVE",
+    "observed_formal_review_surfaces": [
+      {
+        "reviewer_id": "coderabbitai[bot]",
+        "github_review_state": "COMMENTED",
+        "normalized_recommendation": "COMMENT_ONLY",
+        "currently_quorum_advancing": false,
+        "qualification_status": "candidate_in_admitted_q0_snapshot",
+        "recommendation_acceptable": false,
+        "qualified_in_candidate_snapshot": true
+      },
+      {
+        "reviewer_id": "gitar-bot[bot]",
+        "github_review_state": "COMMENTED",
+        "normalized_recommendation": "COMMENT_ONLY",
+        "currently_quorum_advancing": false,
+        "qualification_status": "candidate_in_admitted_q0_snapshot",
+        "recommendation_acceptable": false,
+        "qualified_in_candidate_snapshot": true
+      },
+      {
+        "reviewer_id": "bito-code-review[bot]",
+        "github_review_state": "APPROVED",
+        "normalized_recommendation": "APPROVE",
+        "currently_quorum_advancing": false,
+        "qualification_status": "observed_approval_surface_not_in_admitted_q0_snapshot",
+        "recommendation_acceptable": true,
+        "qualified_in_candidate_snapshot": false
+      }
+    ],
+    "current_result": "POLICY_ACCEPTABLE_TWO_DOMAIN_QUALIFIED_COHORT_UNESTABLISHED",
+    "rule": "Qualification and recommendation eligibility are conjunctive. CodeRabbit and Gitar are in the admitted Q0 candidate snapshot but their observed formal GitHub COMMENTED reviews normalize to COMMENT_ONLY; Bito has an observed policy-acceptable APPROVE surface but is not in the admitted qualification snapshot. Therefore none of these observed surfaces currently advances protected quorum, and two distinct qualified domains with exact-head active APPROVE evidence are still required."
+  }
+}
