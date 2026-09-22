@@ -27,6 +27,12 @@ _GIT_ENVIRONMENT_VARIABLES = (
     "GIT_INDEX_FILE",
     "GIT_CEILING_DIRECTORIES",
     "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+    "GIT_CONFIG",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_CONFIG_SYSTEM",
+    "GIT_CONFIG_NOSYSTEM",
+    "GIT_ATTR_NOSYSTEM",
+    "GIT_EXTERNAL_DIFF",
 )
 _FOCUSED_PROFILES = (
     "policy",
@@ -70,8 +76,21 @@ def _git_executable() -> str:
 
 def _base_env() -> dict[str, str]:
     env = dict(os.environ)
-    for name in _GIT_ENVIRONMENT_VARIABLES:
-        env.pop(name, None)
+    for name in tuple(env):
+        if (
+            name in _GIT_ENVIRONMENT_VARIABLES
+            or name == "GIT_CONFIG_COUNT"
+            or name.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))
+        ):
+            env.pop(name, None)
+    env["GIT_CONFIG_GLOBAL"] = os.devnull
+    env["GIT_CONFIG_SYSTEM"] = os.devnull
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    env["GIT_ATTR_NOSYSTEM"] = "1"
+    # Disable repository/default hooks without inheriting caller command config.
+    env["GIT_CONFIG_COUNT"] = "1"
+    env["GIT_CONFIG_KEY_0"] = "core.hooksPath"
+    env["GIT_CONFIG_VALUE_0"] = os.devnull
     return env
 
 
@@ -177,6 +196,42 @@ def _assert_head(root: Path, parent: str) -> None:
     head = _git_text(root, "rev-parse", "HEAD")
     if head != parent:
         raise PrepareError(f"stale parent: HEAD is {head}, expected {parent}")
+
+
+def _assert_safe_repository_git_configuration(root: Path) -> None:
+    pattern = (
+        r"^(filter\..*\.(clean|smudge|process|required)"
+        r"|diff\.external|diff\..*\.(command|textconv)"
+        r"|core\.(attributesfile|hookspath|fsmonitor))$"
+    )
+    configured = _run(
+        [
+            _git_executable(),
+            "config",
+            "--local",
+            "--includes",
+            "--get-regexp",
+            pattern,
+        ],
+        cwd=root,
+        check=False,
+    )
+    if configured.returncode not in {0, 1}:
+        raise PrepareError("unable to inspect repository-local Git configuration")
+    if configured.returncode == 0 and configured.stdout.strip():
+        raise PrepareError(
+            "repository-local Git execution configuration is unsupported"
+        )
+
+    attributes_text = _git_text(root, "rev-parse", "--git-path", "info/attributes")
+    attributes = Path(attributes_text)
+    if not attributes.is_absolute():
+        attributes = root / attributes
+    try:
+        if attributes.is_file() and attributes.read_bytes().strip():
+            raise PrepareError("repository-local Git attributes are unsupported")
+    except OSError as exc:
+        raise PrepareError("unable to inspect repository-local Git attributes") from exc
 
 
 def _stage_candidate(root: Path, parent: str, index: Path) -> tuple[str, list[str]]:
@@ -353,6 +408,7 @@ def prepare(
     focused_receipt_argv = _focused_receipt_command(focused_profile)
     receipt = _assert_external_receipt(root, receipt_path)
     _assert_head(root, parent_commit)
+    _assert_safe_repository_git_configuration(root)
     parent_tree = _git_text(root, "rev-parse", f"{parent_commit}^{{tree}}")
 
     with tempfile.TemporaryDirectory(prefix="gnostoa-candidate-index-") as directory:
@@ -448,76 +504,6 @@ def prepare(
     return _write_receipt(receipt, payload)
 
 
-def _current_ref(root: Path, ref: str) -> str | None:
-    completed = _run(
-        [_git_executable(), "show-ref", "--verify", "--hash", ref],
-        cwd=root,
-        check=False,
-    )
-    if completed.returncode == 1:
-        return None
-    if completed.returncode != 0:
-        raise PrepareError("unable to inspect candidate ref")
-    return completed.stdout.decode("utf-8", errors="strict").strip()
-
-
-def publish_git(
-    parent_commit: str,
-    ref: str,
-    receipt_path: Path,
-    focused_profile: str,
-    message: str,
-) -> dict[str, Any]:
-    """Prepare and publish one local Git-data candidate with a ref CAS."""
-
-    if not ref.startswith("refs/heads/"):
-        raise PrepareError("candidate ref must be under refs/heads")
-    root = _repository_root()
-    ref_check = _run(
-        [_git_executable(), "check-ref-format", ref],
-        cwd=root,
-        check=False,
-    )
-    if ref_check.returncode != 0:
-        raise PrepareError("candidate ref is invalid")
-    if not message.strip():
-        raise PrepareError("candidate commit message must not be empty")
-
-    current_ref = _current_ref(root, ref)
-    if current_ref is not None and current_ref != parent_commit:
-        raise PrepareError(
-            f"stale candidate ref: {ref} is {current_ref}, expected {parent_commit}"
-        )
-
-    # Publication never accepts an existing receipt as bearer authority. The
-    # trusted adapter runs preparation in-process and consumes its returned tree.
-    prepared = prepare(parent_commit, receipt_path, focused_profile)
-    commit = _git_text(
-        root,
-        "commit-tree",
-        prepared["prepared_tree"],
-        "-p",
-        parent_commit,
-        "-m",
-        message,
-    )
-    expected_old = current_ref if current_ref is not None else "0" * 40
-    update = _run(
-        [_git_executable(), "update-ref", ref, commit, expected_old],
-        cwd=root,
-        check=False,
-    )
-    if update.returncode != 0:
-        raise PrepareError("candidate ref changed before publication")
-
-    return {
-        "schema": "gnostoa-git-candidate-publication/v1",
-        "parent_commit": parent_commit,
-        "prepared_tree": prepared["prepared_tree"],
-        "commit": commit,
-        "ref": ref,
-        "receipt_sha256": prepared["receipt_sha256"],
-    }
 
 def _load_receipt(receipt_path: Path) -> dict[str, Any]:
     try:
@@ -597,10 +583,15 @@ def verify_receipt(
     receipt_path: Path,
     expected_parent: str,
     expected_tree: str,
+    trusted_receipt_sha256: str,
 ) -> dict[str, Any]:
-    """Validate receipt integrity/identity under an already trusted provenance path."""
+    """Validate a receipt against identity retained by a trusted preparation path."""
 
+    if _SHA256.fullmatch(trusted_receipt_sha256) is None:
+        raise PrepareError("trusted receipt identity is invalid")
     document = _load_receipt(receipt_path)
+    if document.get("receipt_sha256") != trusted_receipt_sha256:
+        raise PrepareError("trusted receipt identity mismatch")
     _validate_receipt_digest(document)
     if document.get("schema") != RECEIPT_SCHEMA:
         raise PrepareError("receipt schema mismatch")
@@ -622,7 +613,7 @@ def verify_receipt(
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Prepare, inspect, or publish a normalized Gnostoa candidate tree."
+        description="Prepare or verify a normalized Gnostoa candidate tree."
     )
     actions = parser.add_subparsers(dest="action", required=True)
 
@@ -639,17 +630,7 @@ def _parser() -> argparse.ArgumentParser:
     verify_parser.add_argument("--parent", required=True)
     verify_parser.add_argument("--tree", required=True)
     verify_parser.add_argument("--receipt", required=True, type=Path)
-
-    publish_parser = actions.add_parser("publish-git")
-    publish_parser.add_argument("--parent", required=True)
-    publish_parser.add_argument("--ref", required=True)
-    publish_parser.add_argument("--receipt", required=True, type=Path)
-    publish_parser.add_argument(
-        "--focused-profile",
-        required=True,
-        choices=_FOCUSED_PROFILES,
-    )
-    publish_parser.add_argument("--message", required=True)
+    verify_parser.add_argument("--receipt-sha256", required=True)
     return parser
 
 
@@ -661,14 +642,7 @@ def main(argv: list[str] | None = None) -> int:
                 arguments.receipt,
                 arguments.parent,
                 arguments.tree,
-            )
-        elif arguments.action == "publish-git":
-            document = publish_git(
-                arguments.parent,
-                arguments.ref,
-                arguments.receipt,
-                arguments.focused_profile,
-                arguments.message,
+                arguments.receipt_sha256,
             )
         else:
             document = prepare(

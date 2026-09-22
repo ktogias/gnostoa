@@ -83,7 +83,10 @@ non-hook authoring without importing a general orchestration subsystem.
 2. Preparation binds one exact 40-character parent commit. The source worktree
    `HEAD` must equal that parent; stale-parent preparation fails closed.
    Repository discovery and Git object access scrub inherited repository-routing,
-   worktree/object-store and index overrides before invoking Git.
+   worktree/object-store, index, external-diff and caller-supplied `GIT_CONFIG*`
+   overrides. Global/system Git and attributes configuration is disabled; an
+   executable repository-local filter/diff/fsmonitor configuration or non-empty
+   `.git/info/attributes` fails closed before staging.
 3. The proposed delta is first captured as an exact Git tree through a temporary
    index. Before any preparation authority executes, that tree must leave
    `ci/style` and `ci/verify` unchanged from the parent. The proposed tree is
@@ -117,18 +120,18 @@ non-hook authoring without importing a general orchestration subsystem.
    when normalization changes the proposed tree, otherwise
    `PRE_CANDIDATE_NO_RUFF_CHANGE`.
 8. Receipts are evidence, not candidate source. The output path must be outside
-   the source worktree. `verify_receipt()` and `ci/prepare-candidate verify`
-   validate receipt integrity and exact expected parent/tree under an already
-   trusted provenance channel; a self-consistent caller-supplied receipt alone
-   never authorizes publication.
-9. The project-owned `publish-git` adapter runs preparation in the same trusted
-   process, consumes the returned prepared tree in memory, creates the candidate
-   commit only after preparation succeeds, and advances a local branch ref with
-   an exact-old-value compare-and-swap. It never accepts a pre-existing receipt
-   as publication authority. A direct provider/API adapter must preserve the
-   same contract by running trusted preparation itself or consuming separately
-   authenticated preparation provenance before its write. Arbitrary external
-   clients are not made impossible to bypass by this repository-local control.
+   the source worktree. The trusted preparation step must retain the emitted
+   `receipt_sha256` separately from the receipt bytes. `verify_receipt()` and
+   `ci/prepare-candidate verify` require that externally retained identity in
+   addition to the expected parent/tree, then recompute the receipt digest. A
+   self-consistent caller-supplied receipt and self-chosen digest therefore do
+   not satisfy the trusted handoff.
+9. This slice intentionally acquires no provider-write authority. A future
+   Git-data/API publishing adapter must run trusted preparation itself or consume
+   separately authenticated preparation provenance and the retained receipt
+   identity before any ref effect. That effect/fencing boundary remains owned by
+   #15/#308; arbitrary external API clients are not claimed impossible to bypass
+   by this repository-local preparation contract.
 10. Provider CI remains check-only and authoritative. A preparation receipt is
     neither semantic review, approval, merge authority nor a replacement for
     post-publication exact-head checks.
@@ -155,21 +158,21 @@ The change must retain executable evidence that:
 - stale parent, failed normalization/check, failed focused verification, and
   candidate-local receipt paths fail closed;
 - receipt inspection rejects parent, tree, digest, schema or check-state
-  mismatch without claiming authentication;
-- the project-owned Git-data publication adapter creates/advances a candidate ref
-  only after in-process preparation succeeds, and a failed preparation leaves the
-  ref unchanged;
+  mismatch and requires a separately retained trusted receipt identity without
+  claiming cryptographic producer authentication;
+- inherited Git configuration cannot inject filter/diff/hook execution into
+  staging, and executable repository-local Git configuration fails closed;
 - the wrapper and Gnostoa agent route point to the same preparation surface; and
 - existing `ci/style` remains the single Ruff scope/command authority.
 
 ## Consequences
 
 API/agent authoring gains an exact-tree pre-candidate normalization boundary
-without making hooks mandatory or weakening provider CI. The project-owned
-Git-data adapter demonstrates the fail-closed publication effect locally:
-preparation and publication share one process and ref advancement uses
-compare-and-swap. Provider-specific remote transports must preserve that trust
-boundary; a portable receipt remains evidence rather than authentication.
+without making hooks mandatory or weakening provider CI. Receipt consumption is
+bound to a separately retained trusted identity, but the portable receipt is
+still evidence rather than producer authentication. Provider-specific write
+effects and writer fencing remain deliberately outside this slice under
+#15/#308 and must preserve the preparation trust boundary when implemented.
 
 This does not by itself establish cross-session writer uniqueness; #308 owns
 that separate fencing problem. It also does not establish effectiveness of

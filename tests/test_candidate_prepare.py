@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -167,6 +168,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
                     receipt,
                     parent,
                     payload["prepared_tree"],
+                    payload["receipt_sha256"],
                 ),
             )
 
@@ -193,7 +195,12 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 candidate_prepare.PrepareError,
                 "tree mismatch",
             ):
-                candidate_prepare.verify_receipt(receipt, parent, "0" * 40)
+                candidate_prepare.verify_receipt(
+                    receipt,
+                    parent,
+                    "0" * 40,
+                    payload["receipt_sha256"],
+                )
             document = json.loads(receipt.read_text(encoding="utf-8"))
             document["prepared_tree"] = "0" * 40
             receipt.write_text(json.dumps(document), encoding="utf-8")
@@ -205,6 +212,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
                     receipt,
                     parent,
                     payload["prepared_tree"],
+                    payload["receipt_sha256"],
                 )
 
     def test_prepare_includes_untracked_addition_and_deletion(self) -> None:
@@ -327,83 +335,46 @@ class CandidatePreparationContractTests(unittest.TestCase):
             ):
                 self._prepare(root, parent, root / "receipt.json")
 
-    def test_publish_git_prepares_before_candidate_ref_effect(self) -> None:
+    def test_receipt_verification_rejects_recomputed_untrusted_identity(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             parent = self._repository(root)
             (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
             receipt = self._receipt()
-            receipt.write_text('{"forged": true}\n', encoding="utf-8")
-            with (
-                patch.object(candidate_prepare, "_repository_root", return_value=root),
-                patch.object(
-                    candidate_prepare,
-                    "_ruff_version",
-                    return_value="ruff 0.16.0",
-                ),
-            ):
-                result = candidate_prepare.publish_git(
-                    parent,
-                    "refs/heads/candidate",
-                    receipt,
-                    "fast",
-                    "prepared candidate",
-                )
-            self.assertEqual(
-                result["commit"],
-                self._git(root, "rev-parse", "refs/heads/candidate"),
-            )
-            self.assertEqual(
-                result["prepared_tree"],
-                self._git(root, "rev-parse", f'{result["commit"]}^{{tree}}'),
-            )
-            self.assertEqual(
-                "value = 1",
-                self._git(root, "show", f'{result["commit"]}:candidate.py'),
-            )
-            document = json.loads(receipt.read_text(encoding="utf-8"))
-            self.assertNotIn("forged", document)
+            payload = self._prepare(root, parent, receipt)
+            trusted_identity = payload["receipt_sha256"]
 
-    def test_publish_git_failed_preparation_leaves_ref_absent(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            parent = self._repository(root)
-            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
-            receipt = self._receipt()
-            with (
-                patch.object(candidate_prepare, "_repository_root", return_value=root),
-                patch.object(
-                    candidate_prepare,
-                    "_ruff_version",
-                    return_value="ruff 0.16.0",
-                ),
-                patch.dict(
-                    os.environ,
-                    {"GNOSTOA_TEST_FOCUSED_MODE": "fail"},
-                    clear=False,
-                ),
-                self.assertRaisesRegex(
-                    candidate_prepare.PrepareError,
-                    r"focused verification failed \(7\)",
-                ),
-            ):
-                candidate_prepare.publish_git(
-                    parent,
-                    "refs/heads/candidate",
-                    receipt,
-                    "fast",
-                    "should not publish",
-                )
-            ref = subprocess.run(  # nosemgrep  # nosec B603
-                [GIT, "show-ref", "--verify", "refs/heads/candidate"],
-                cwd=root,
-                env=_test_env(),
-                check=False,
-                shell=False,
-                capture_output=True,
-                text=True,
+            document = json.loads(receipt.read_text(encoding="utf-8"))
+            document["changed_paths"] = ["forged.py"]
+            forged_payload = {
+                key: value
+                for key, value in document.items()
+                if key != "receipt_sha256"
+            }
+            encoded = json.dumps(
+                forged_payload,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            ).encode("utf-8")
+            document["receipt_sha256"] = (
+                "sha256:" + hashlib.sha256(encoded).hexdigest()
             )
-            self.assertNotEqual(0, ref.returncode)
+            receipt.write_text(json.dumps(document), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                candidate_prepare.PrepareError,
+                "trusted receipt identity mismatch",
+            ):
+                candidate_prepare.verify_receipt(
+                    receipt,
+                    parent,
+                    payload["prepared_tree"],
+                    trusted_identity,
+                )
 
     def test_receipt_verification_does_not_require_preparation_executable(
         self,
@@ -421,6 +392,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
                     receipt,
                     parent,
                     payload["prepared_tree"],
+                    payload["receipt_sha256"],
                 ),
             )
 
@@ -442,6 +414,8 @@ class CandidatePreparationContractTests(unittest.TestCase):
                         payload["prepared_tree"],
                         "--receipt",
                         str(receipt),
+                        "--receipt-sha256",
+                        payload["receipt_sha256"],
                     ]
                 ),
             )
@@ -451,14 +425,60 @@ class CandidatePreparationContractTests(unittest.TestCase):
             root = Path(directory)
             parent = self._repository(root)
             (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            (root / ".gitattributes").write_text(
+                "candidate.py filter=poison\n",
+                encoding="utf-8",
+            )
             receipt = self._receipt()
             poisoned = {
                 name: "poisoned-by-caller" for name in _GIT_ENVIRONMENT_VARIABLES
             }
+            poisoned.update(
+                {
+                    "GIT_CONFIG_COUNT": "1",
+                    "GIT_CONFIG_KEY_0": "filter.poison.clean",
+                    "GIT_CONFIG_VALUE_0": "false",
+                    "GIT_CONFIG_KEY_7": "filter.extra.clean",
+                    "GIT_CONFIG_VALUE_7": "false",
+                    "GIT_EXTERNAL_DIFF": "false",
+                }
+            )
             with patch.dict(os.environ, poisoned, clear=False):
                 payload = self._prepare(root, parent, receipt)
             self.assertEqual(parent, payload["parent_commit"])
             self.assertEqual("PRE_CANDIDATE_RUFF_CATCH", payload["metric_event"])
+
+    def test_prepare_rejects_repository_local_git_execution_config(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            self._git(root, "config", "filter.poison.clean", "cat")
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+            with self.assertRaisesRegex(
+                candidate_prepare.PrepareError,
+                "repository-local Git execution configuration is unsupported",
+            ):
+                self._prepare(root, parent, receipt)
+            self.assertFalse(receipt.exists())
+
+    def test_prepare_rejects_repository_local_git_attributes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            attributes = Path(self._git(root, "rev-parse", "--git-path", "info/attributes"))
+            if not attributes.is_absolute():
+                attributes = root / attributes
+            attributes.parent.mkdir(parents=True, exist_ok=True)
+            attributes.write_text("*.py text\n", encoding="utf-8")
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+            with self.assertRaisesRegex(
+                candidate_prepare.PrepareError,
+                "repository-local Git attributes are unsupported",
+            ):
+                self._prepare(root, parent, receipt)
+            self.assertFalse(receipt.exists())
 
     def test_cli_prepare_uses_allowlisted_focused_profile(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -110,26 +110,25 @@ caller edits are not part of verification. The CLI never accepts an executable
 or arbitrary verification arguments; supported profiles are `policy`,
 `security-fast`, `fast`, `regression`, `smoke`, and `extended`.
 
-The receipt SHA-256 is integrity evidence, not authentication or bearer
-authority. `verify` may inspect an already trusted receipt, but an arbitrary
-self-consistent receipt must never authorize a provider write. For the
-project-owned Git-data route, publish in the same trusted process:
+The preparation command returns `receipt_sha256`; retain that identity outside
+the receipt bytes in the trusted preparation handoff. The digest is integrity
+evidence, not producer authentication or bearer authority. To inspect/consume a
+receipt, supply the separately retained identity:
 
 ```bash
-./ci/prepare-candidate publish-git \
+./ci/prepare-candidate verify \
   --parent <exact-40-character-parent-sha> \
-  --ref refs/heads/<candidate-branch> \
+  --tree <exact-40-character-prepared-tree-sha> \
   --receipt <path-outside-the-worktree> \
-  --focused-profile fast \
-  --message "<candidate commit message>"
+  --receipt-sha256 <trusted-sha256-from-prepare>
 ```
 
-That adapter runs preparation itself, creates the commit only after success, and
-advances the local branch ref with an exact-old-value compare-and-swap. Direct
-provider/API adapters must preserve the same boundary by running trusted
-preparation or consuming separately authenticated preparation provenance before
-the write. Ordinary hooks remain advisory early feedback; direct
-`ci/style --fix` alone is not a preparation receipt for non-hook authoring.
+A self-consistent receipt with a caller-chosen digest must never authorize a
+provider write. This slice intentionally has no provider-write adapter; Git-data
+or API ref effects remain governed by #15/#308 and must run trusted preparation
+or consume separately authenticated preparation provenance before writing.
+Ordinary hooks remain advisory early feedback; direct `ci/style --fix` alone
+is not a preparation receipt for non-hook authoring.
 Provider CI stays check-only
 and remains the non-bypassable verifier.
 
