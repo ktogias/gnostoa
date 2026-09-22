@@ -81,14 +81,11 @@ Q0_ENTRIES = [
     },
 ]
 
-
 def _load(path: Path) -> dict[str, Any]:
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise AssertionError(f"{path} must contain a JSON object")
     return value
-
-
 
 def _review_case_documents() -> tuple[dict[str, Any], dict[str, Any]]:
     fixture = _load(REVIEW_CASES_PATH)
@@ -104,7 +101,6 @@ def _review_case_documents() -> tuple[dict[str, Any], dict[str, Any]]:
         context["fixture_only"] = True
     return input_document, policy_document
 
-
 def _refresh_qualification_digest(input_document: dict[str, Any]) -> None:
     qualification = input_document["qualification_snapshot"]
     if not isinstance(qualification, dict):
@@ -113,7 +109,6 @@ def _refresh_qualification_digest(input_document: dict[str, Any]) -> None:
     if not isinstance(authority, dict):
         raise AssertionError("authority must be an object")
     authority["qualification_snapshot_digest"] = canonical_digest(qualification)
-
 
 class ReviewerQualificationQ0Tests(unittest.TestCase):
     def test_q0_candidate_baseline_names_exact_minimal_two_domain_cohort(
@@ -240,14 +235,13 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
         )
         self.assertEqual(2, live_bundle["policy"]["quorum"]["minimum_distinct_domains"])
 
-
     def test_q0_fail_closed_semantics_preserve_owner_scope_status_and_freshness_gates(
         self,
     ) -> None:
         cases: list[tuple[str, Any]] = [
             (
                 "owner-excluded",
-                lambda entries, qualification: entries[0].update(owner_relation="owner"),
+                lambda entries, qualification: entries[0].update(\n                    owner_relation="owner"\n                ),
             ),
             (
                 "scope-mismatch",
@@ -321,7 +315,6 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
             with self.subTest(conflicting=conflicting):
                 self.assertEqual(2, code)
                 self.assertIn("error", payload)
-
 
 if __name__ == "__main__":
     unittest.main()
