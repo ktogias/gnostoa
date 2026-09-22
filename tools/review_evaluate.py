@@ -791,6 +791,10 @@ def evaluate(
     owner_reviews_count = bool(
         policy_document.get("qualification", {}).get("owner_reviews_count", False)
     )
+    countable_owner_relations = {
+        False: {"non_owner"},
+        True: {"non_owner", "owner"},
+    }[owner_reviews_count]
     acceptable = set(
         policy_document.get("quorum", {}).get("acceptable_recommendations", [])
     )
@@ -828,10 +832,7 @@ def evaluate(
         )
         if not _fresh(entry_cut, as_of, qualification_rule):
             continue
-        owner_relation = matched_entry.get("owner_relation")
-        if owner_relation != "non_owner" and not (
-            owner_relation == "owner" and owner_reviews_count
-        ):
+        if matched_entry.get("owner_relation") not in countable_owner_relations:
             continue
         capabilities = matched_entry.get("capability_ids")
         if not isinstance(capabilities, list) or not required_capabilities.issubset(
