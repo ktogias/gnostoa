@@ -72,6 +72,34 @@ Q0_ENTRIES = [
             "limitations": ["model-runtime-diversity-unestablished"],
         },
     },
+    {
+        "reviewer_id": "bito-code-review[bot]",
+        "source_id": "retained-review-evidence",
+        "independence_domain_id": "github-app:bito-code-review",
+        "capability_ids": ["semantic-review"],
+        "status": "established",
+        "observed_at": "2026-09-22T06:05:00Z",
+        "owner_relation": "non_owner",
+        "scope": {"repository": "https://github.com/ktogias/gnostoa"},
+        "provenance": {
+            "basis": "q0-source-bound-reviewer-execution",
+            "evidence": [
+                "https://github.com/ktogias/gnostoa/pull/303#pullrequestreview-5272522425",
+                "https://github.com/ktogias/gnostoa/pull/303#pullrequestreview-5272844144",
+                "https://github.com/ktogias/gnostoa/pull/303#pullrequestreview-5273057643",
+            ],
+            "independence_axes": [
+                "authenticated-external-github-app-principal",
+                "provider-controlled-review-execution",
+                "read-only-review-role-for-qualified-evidence",
+                "exact-head-attribution",
+            ],
+            "limitations": [
+                "model-runtime-diversity-unestablished",
+                "subject-size-fair-use-can-refuse-large-prs",
+            ],
+        },
+    },
 ]
 
 
@@ -97,7 +125,7 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
                 "snapshot_id": Q0_SNAPSHOT_ID,
                 "revision": Q0_REVISION,
                 "qualifying_authority": Q0_AUTHORITY,
-                "observed_at": Q0_OBSERVED_AT,
+                "observed_at": "2026-09-22T06:05:00Z",
                 "entries": Q0_ENTRIES,
             },
             baseline["qualification_snapshot"],
@@ -106,7 +134,11 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
         self.assertIsInstance(entries, list)
         assert isinstance(entries, list)
         self.assertEqual(
-            {"github-app:coderabbitai", "github-app:gitar-bot"},
+            {
+                "github-app:coderabbitai",
+                "github-app:gitar-bot",
+                "github-app:bito-code-review",
+            },
             {
                 entry["independence_domain_id"]
                 for entry in entries
@@ -115,12 +147,40 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
         )
         self.assertEqual(
             {
-                "state": "BLOCKED_PENDING_PRIOR_INTEGRATED_RUNTIME_PROMOTION",
+                "state": (
+                    "BLOCKED_PENDING_PRIOR_INTEGRATED_RUNTIME_PROMOTION_"
+                    "AND_SECOND_APPROVAL_DOMAIN"
+                ),
                 "protected_bundle": "tasks/issue-11-r2a-current-advisory.json",
                 "current_outer_runtime_revision": "315487e7a67635ebf3ec3f70f666ef41646102e1",
                 "target_snapshot_freshness": {"mode": "not_age_sensitive"},
             },
             baseline["activation"],
+        )
+        progression = baseline["assurance_progression"]
+        self.assertEqual("APPROVE", progression["acceptable_recommendation"])
+        surfaces = progression["observed_formal_review_surfaces"]
+        self.assertIsInstance(surfaces, list)
+        assert isinstance(surfaces, list)
+        advancing = [
+            item
+            for item in surfaces
+            if isinstance(item, dict) and item.get("currently_quorum_advancing") is True
+        ]
+        self.assertEqual(
+            [
+                {
+                    "reviewer_id": "bito-code-review[bot]",
+                    "github_review_state": "APPROVED",
+                    "normalized_recommendation": "APPROVE",
+                    "currently_quorum_advancing": True,
+                }
+            ],
+            advancing,
+        )
+        self.assertEqual(
+            "SECOND_APPROVAL_CAPABLE_DOMAIN_UNESTABLISHED",
+            progression["current_result"],
         )
 
     def test_q0_source_schema_can_validate_future_nonempty_protected_snapshot(
