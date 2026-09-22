@@ -155,7 +155,7 @@ a non-exact subject still does not advance quorum.
 ### 6. Protected activation is staged behind prior-integrated runtime support
 
 The currently promoted outer current-advisory runtime is
-`315487e7a67635ebf3ec3f70f666ef41646102e1`. Its embedded protected-bundle schema
+`315487e7a67635ebf3ec3f70f666ef41646102e1` <!-- pragma: allowlist secret -- public Git commit identity retained for protected runtime binding -->. Its embedded protected-bundle schema
 requires `qualification_snapshot.entries.maxItems = 0`.
 
 Therefore this Q0a source slice must **not** mutate the live protected qualification
