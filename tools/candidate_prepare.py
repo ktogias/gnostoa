@@ -791,9 +791,7 @@ def prepare(
             if focused.returncode != 0:
                 stderr = focused.stderr.decode("utf-8", errors="replace").strip()
                 stdout = focused.stdout.decode("utf-8", errors="replace").strip()
-                diagnostics = "\n".join(
-                    value for value in (stderr, stdout) if value
-                )
+                diagnostics = "\n".join(value for value in (stderr, stdout) if value)
                 if len(diagnostics) > 4096:
                     diagnostics = diagnostics[-4096:]
                 detail = f": {diagnostics}" if diagnostics else ""
