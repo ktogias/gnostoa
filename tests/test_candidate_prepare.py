@@ -157,7 +157,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
             )
             self.assertEqual(
                 "value = 1",
-                self._git(root, "show", f'{payload["prepared_tree"]}:candidate.py'),
+                self._git(root, "show", f"{payload['prepared_tree']}:candidate.py"),
             )
             self.assertRegex(payload["style_sha256"], r"^sha256:[0-9a-f]{64}$")
             self.assertRegex(payload["verify_sha256"], r"^sha256:[0-9a-f]{64}$")
@@ -349,9 +349,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
             document = json.loads(receipt.read_text(encoding="utf-8"))
             document["changed_paths"] = ["forged.py"]
             forged_payload = {
-                key: value
-                for key, value in document.items()
-                if key != "receipt_sha256"
+                key: value for key, value in document.items() if key != "receipt_sha256"
             }
             encoded = json.dumps(
                 forged_payload,
@@ -360,9 +358,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 ensure_ascii=True,
                 allow_nan=False,
             ).encode("utf-8")
-            document["receipt_sha256"] = (
-                "sha256:" + hashlib.sha256(encoded).hexdigest()
-            )
+            document["receipt_sha256"] = "sha256:" + hashlib.sha256(encoded).hexdigest()
             receipt.write_text(json.dumps(document), encoding="utf-8")
 
             with self.assertRaisesRegex(
@@ -466,7 +462,9 @@ class CandidatePreparationContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             parent = self._repository(root)
-            attributes = Path(self._git(root, "rev-parse", "--git-path", "info/attributes"))
+            attributes = Path(
+                self._git(root, "rev-parse", "--git-path", "info/attributes")
+            )
             if not attributes.is_absolute():
                 attributes = root / attributes
             attributes.parent.mkdir(parents=True, exist_ok=True)

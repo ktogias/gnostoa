@@ -504,7 +504,6 @@ def prepare(
     return _write_receipt(receipt, payload)
 
 
-
 def _load_receipt(receipt_path: Path) -> dict[str, Any]:
     try:
         document = json.loads(receipt_path.read_text(encoding="utf-8"))
