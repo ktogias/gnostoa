@@ -401,9 +401,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
             document = json.loads(receipt.read_text(encoding="utf-8"))
             document["changed_paths"] = [["unhashable"]]
             forged_payload = {
-                key: value
-                for key, value in document.items()
-                if key != "receipt_sha256"
+                key: value for key, value in document.items() if key != "receipt_sha256"
             }
             encoded = json.dumps(
                 forged_payload,
@@ -412,9 +410,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 ensure_ascii=True,
                 allow_nan=False,
             ).encode("utf-8")
-            document["receipt_sha256"] = (
-                "sha256:" + hashlib.sha256(encoded).hexdigest()
-            )
+            document["receipt_sha256"] = "sha256:" + hashlib.sha256(encoded).hexdigest()
             receipt.write_text(json.dumps(document), encoding="utf-8")
 
             with self.assertRaisesRegex(
