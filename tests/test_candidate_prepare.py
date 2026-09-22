@@ -73,6 +73,319 @@ class CandidatePreparationContractTests(unittest.TestCase):
             encoding="utf-8",
         )
         style.chmod(0o755)
+        verify = root / "ci" / "verify"
+        verify.write_text(
+            "#!/bin/sh\n"
+            "set -eu\n"
+            "case \"$1\" in\n"
+            "  fast) grep -q '^value = 1        CandidatePreparationContractTests._git(root, "add", ".")
+        CandidatePreparationContractTests._git(root, "commit", "--quiet", "-m", "base")
+        return CandidatePreparationContractTests._git(root, "rev-parse", "HEAD")
+
+    def _receipt(self) -> Path:
+        receipt_root = Path(tempfile.mkdtemp(prefix="gnostoa-receipt-test-"))
+        self.addCleanup(shutil.rmtree, receipt_root, ignore_errors=True)
+        return receipt_root / "receipt.json"
+
+    @staticmethod
+    def _prepare(
+        root: Path,
+        parent: str,
+        receipt: Path,
+        command: list[str],
+    ) -> dict[str, Any]:
+        with (
+            patch.object(candidate_prepare, "_repository_root", return_value=root),
+            patch.object(
+                candidate_prepare,
+                "_ruff_version",
+                return_value="ruff 0.16.0",
+            ),
+        ):
+            return candidate_prepare.prepare(parent, receipt, command)
+
+    def test_raw_git_commit_characterizes_non_hook_escape(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._repository(root)
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            style = subprocess.run(  # nosemgrep  # nosec B603
+                [str(root / "ci" / "style"), "--check"],
+                cwd=root,
+                env=_test_env(),
+                check=False,
+                shell=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(0, style.returncode)
+            self._git(root, "add", "candidate.py")
+            self._git(root, "commit", "--quiet", "-m", "unprepared candidate")
+            self.assertEqual(
+                "value=1\n",
+                (root / "candidate.py").read_text(encoding="utf-8"),
+            )
+
+    def test_prepare_binds_normalized_tree_and_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            focused = root / "focused.py"
+            focused.write_text(
+                "from pathlib import Path\n"
+                'assert Path("candidate.py").read_text() == "value = 1\\n"\n',
+                encoding="utf-8",
+            )
+            receipt = self._receipt()
+            payload = self._prepare(
+                root,
+                parent,
+                receipt,
+                [sys.executable, str(focused)],
+            )
+            self.assertEqual(parent, payload["parent_commit"])
+            self.assertEqual(["candidate.py", "focused.py"], payload["changed_paths"])
+            self.assertEqual("PRE_CANDIDATE_RUFF_CATCH", payload["metric_event"])
+            self.assertTrue(receipt.is_file())
+            self.assertEqual(
+                payload,
+                candidate_prepare.verify_receipt(
+                    receipt,
+                    parent,
+                    payload["prepared_tree"],
+                ),
+            )
+
+    def test_prepare_rejects_stale_parent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "second.txt").write_text("second\n", encoding="utf-8")
+            self._git(root, "add", "second.txt")
+            self._git(root, "commit", "--quiet", "-m", "second")
+            receipt = self._receipt()
+            with self.assertRaisesRegex(candidate_prepare.PrepareError, "stale parent"):
+                self._prepare(
+                    root,
+                    parent,
+                    receipt,
+                    [sys.executable, "-c", "pass"],
+                )
+            self.assertFalse(receipt.exists())
+
+    def test_receipt_verification_is_exact(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+            payload = self._prepare(
+                root,
+                parent,
+                receipt,
+                [sys.executable, "-c", "pass"],
+            )
+            with self.assertRaisesRegex(
+                candidate_prepare.PrepareError,
+                "tree mismatch",
+            ):
+                candidate_prepare.verify_receipt(receipt, parent, "0" * 40)
+            document = json.loads(receipt.read_text(encoding="utf-8"))
+            document["prepared_tree"] = "0" * 40
+            receipt.write_text(json.dumps(document), encoding="utf-8")
+            with self.assertRaisesRegex(
+                candidate_prepare.PrepareError,
+                "digest mismatch",
+            ):
+                candidate_prepare.verify_receipt(
+                    receipt,
+                    parent,
+                    payload["prepared_tree"],
+                )
+
+    def test_prepare_includes_untracked_addition_and_deletion(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "base.txt").unlink()
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+            payload = self._prepare(
+                root,
+                parent,
+                receipt,
+                [sys.executable, "-c", "pass"],
+            )
+            self.assertEqual(["base.txt", "candidate.py"], payload["changed_paths"])
+
+    def test_prepare_rejects_focused_verifier_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+            command = [
+                sys.executable,
+                "-c",
+                "from pathlib import Path; "
+                "Path('candidate.py').write_text('changed\\n')",
+            ]
+            with self.assertRaisesRegex(
+                candidate_prepare.PrepareError,
+                "focused verification mutated candidate",
+            ):
+                self._prepare(root, parent, receipt, command)
+            self.assertFalse(receipt.exists())
+
+    def test_prepare_rejects_failed_focused_verification(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+            with self.assertRaisesRegex(
+                candidate_prepare.PrepareError,
+                r"focused verification failed \(7\)",
+            ):
+                self._prepare(
+                    root,
+                    parent,
+                    receipt,
+                    [sys.executable, "-c", "raise SystemExit(7)"],
+                )
+            self.assertFalse(receipt.exists())
+
+    def test_prepare_rejects_relative_focused_executable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+            with self.assertRaisesRegex(
+                candidate_prepare.PrepareError,
+                "focused verification executable must use an absolute path",
+            ):
+                self._prepare(root, parent, receipt, ["python", "-c", "pass"])
+            self.assertFalse(receipt.exists())
+
+    def test_prepare_rejects_candidate_local_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            with self.assertRaisesRegex(
+                candidate_prepare.PrepareError,
+                "receipt path must be outside",
+            ):
+                self._prepare(
+                    root,
+                    parent,
+                    root / "receipt.json",
+                    [sys.executable, "-c", "pass"],
+                )
+
+    def test_receipt_verification_does_not_require_preparation_executable(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+            verifier = receipt.parent / "focused-verifier"
+            verifier.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            verifier.chmod(0o755)
+            payload = self._prepare(
+                root,
+                parent,
+                receipt,
+                [str(verifier)],
+            )
+            verifier.unlink()
+            self.assertEqual(
+                payload,
+                candidate_prepare.verify_receipt(
+                    receipt,
+                    parent,
+                    payload["prepared_tree"],
+                ),
+            )
+
+    def test_cli_verify_consumes_exact_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+            payload = self._prepare(
+                root,
+                parent,
+                receipt,
+                [sys.executable, "-c", "pass"],
+            )
+            self.assertEqual(
+                0,
+                candidate_prepare.main(
+                    [
+                        "verify",
+                        "--parent",
+                        parent,
+                        "--tree",
+                        payload["prepared_tree"],
+                        "--receipt",
+                        str(receipt),
+                    ]
+                ),
+            )
+
+    def test_prepare_scrubs_inherited_git_repository_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+            poisoned = {
+                name: "poisoned-by-caller" for name in _GIT_ENVIRONMENT_VARIABLES
+            }
+            with patch.dict(os.environ, poisoned, clear=False):
+                payload = self._prepare(
+                    root,
+                    parent,
+                    receipt,
+                    [sys.executable, "-c", "pass"],
+                )
+            self.assertEqual(parent, payload["parent_commit"])
+            self.assertEqual("PRE_CANDIDATE_RUFF_CATCH", payload["metric_event"])
+
+    def test_ci_wrapper_routes_to_candidate_prepare_module(self) -> None:
+        wrapper = ROOT / "ci" / "prepare-candidate"
+        self.assertTrue(wrapper.is_file())
+        text = wrapper.read_text(encoding="utf-8")
+        self.assertIn('cd "$(dirname "$0")/.."', text)
+        self.assertIn("python -m tools.candidate_prepare", text)
+        with tempfile.TemporaryDirectory() as directory:
+            completed = subprocess.run(  # nosemgrep  # nosec B603
+                [str(wrapper), "--help"],
+                cwd=Path(directory),
+                env=_test_env(),
+                check=False,
+                shell=False,
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()
+ candidate.py ;;\n"
+            "  policy|security-fast|regression|smoke|extended) exit 0 ;;\n"
+            "  *) exit 2 ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        verify.chmod(0o755)
         (root / "base.txt").write_text("base\n", encoding="utf-8")
         CandidatePreparationContractTests._git(root, "add", ".")
         CandidatePreparationContractTests._git(root, "commit", "--quiet", "-m", "base")
@@ -353,6 +666,38 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 )
             self.assertEqual(parent, payload["parent_commit"])
             self.assertEqual("PRE_CANDIDATE_RUFF_CATCH", payload["metric_event"])
+
+    def test_cli_prepare_uses_allowlisted_focused_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+            with (
+                patch.object(candidate_prepare, "_repository_root", return_value=root),
+                patch.object(
+                    candidate_prepare,
+                    "_ruff_version",
+                    return_value="ruff 0.16.0",
+                ),
+            ):
+                result = candidate_prepare.main(
+                    [
+                        "prepare",
+                        "--parent",
+                        parent,
+                        "--receipt",
+                        str(receipt),
+                        "--focused-profile",
+                        "fast",
+                    ]
+                )
+            self.assertEqual(0, result)
+            document = json.loads(receipt.read_text(encoding="utf-8"))
+            self.assertEqual(
+                [str((root / "ci" / "verify").resolve()), "fast"],
+                document["focused_command"],
+            )
 
     def test_ci_wrapper_routes_to_candidate_prepare_module(self) -> None:
         wrapper = ROOT / "ci" / "prepare-candidate"

@@ -75,9 +75,13 @@ effect recovery.
    worktree/object-store and index overrides before invoking Git; only the
    preparation-owned temporary `GIT_INDEX_FILE` is reintroduced where needed.
 3. Preparation requires an existing proposed tree delta, runs
-   `./ci/style --fix`, then runs one caller-supplied focused verification command
-   as an argv vector with `shell=False`. The executable path must be absolute and
-   resolve to an executable regular file before launch.
+   `./ci/style --fix`, then runs one repository-owned focused verification
+   profile with `shell=False`. The external CLI accepts only the closed profile
+   vocabulary `policy`, `security-fast`, `fast`, `regression`, `smoke`,
+   and `extended`; each profile maps to a static `./ci/verify <suite>` argv.
+   Caller input cannot choose an executable or arbitrary verification arguments.
+   The lower-level `prepare()` function remains implementation-private and
+   validates any internally supplied executable before launch.
 4. Focused verification must not mutate the candidate. The prepared tree after
    normalization is measured before and after the focused command; any change
    fails closed.
@@ -117,6 +121,8 @@ The change must retain executable evidence that:
   characterizing the API/non-hook escape;
 - successful preparation normalizes before focused verification, and the focused
   verifier observes the normalized candidate;
+- the external CLI rejects arbitrary command execution by accepting only the
+  closed repository-owned focused-profile vocabulary;
 - untracked additions and deletions are included in the prepared tree/diff;
 - focused verification mutation is rejected;
 - stale parent, failed normalization/check, failed focused verification, and

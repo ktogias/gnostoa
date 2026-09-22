@@ -27,6 +27,14 @@ _GIT_ENVIRONMENT_VARIABLES = (
     "GIT_CEILING_DIRECTORIES",
     "GIT_DISCOVERY_ACROSS_FILESYSTEM",
 )
+_FOCUSED_PROFILES = (
+    "policy",
+    "security-fast",
+    "fast",
+    "regression",
+    "smoke",
+    "extended",
+)
 
 
 class PrepareError(RuntimeError):
@@ -74,10 +82,10 @@ def _run(
 ) -> subprocess.CompletedProcess[bytes]:
     if env is None:
         env = _base_env()
-    # Every command is passed as an argv vector with shell=False. Git, ci/style,
-    # and sys.executable are locally resolved. The only caller-provided executable
-    # crosses _validate_focused_command(), which requires an absolute executable
-    # file path. Quoting with shlex would corrupt argv because no shell is used.
+    # Every command is passed as an argv vector with shell=False. Git and
+    # repository-owned verification commands are locally resolved. The external
+    # CLI accepts only a closed focused profile; it cannot supply an executable or
+    # argv. Internal callers must still cross _validate_focused_command().
     completed = subprocess.run(  # nosemgrep  # nosec B603
         list(command),
         cwd=cwd,
@@ -125,6 +133,25 @@ def _assert_external_receipt(root: Path, receipt: Path) -> Path:
         raise PrepareError("receipt path must be outside the repository worktree")
     resolved.parent.mkdir(parents=True, exist_ok=True)
     return resolved
+
+
+def _focused_profile_command(root: Path, profile: str) -> tuple[str, ...]:
+    verify = (root / "ci" / "verify").resolve()
+    if not verify.is_file():
+        raise PrepareError("ci/verify is unavailable")
+    if profile == "policy":
+        return (str(verify), "policy")
+    if profile == "security-fast":
+        return (str(verify), "security-fast")
+    if profile == "fast":
+        return (str(verify), "fast")
+    if profile == "regression":
+        return (str(verify), "regression")
+    if profile == "smoke":
+        return (str(verify), "smoke")
+    if profile == "extended":
+        return (str(verify), "extended")
+    raise PrepareError("unsupported focused verification profile")
 
 
 def _focused_command_shape(command: Sequence[str]) -> tuple[str, ...]:
@@ -374,7 +401,11 @@ def _parser() -> argparse.ArgumentParser:
     prepare_parser = actions.add_parser("prepare")
     prepare_parser.add_argument("--parent", required=True)
     prepare_parser.add_argument("--receipt", required=True, type=Path)
-    prepare_parser.add_argument("focused", nargs=argparse.REMAINDER)
+    prepare_parser.add_argument(
+        "--focused-profile",
+        required=True,
+        choices=_FOCUSED_PROFILES,
+    )
 
     verify_parser = actions.add_parser("verify")
     verify_parser.add_argument("--parent", required=True)
@@ -393,9 +424,8 @@ def main(argv: list[str] | None = None) -> int:
                 arguments.tree,
             )
         else:
-            focused = list(arguments.focused)
-            if focused[:1] == ["--"]:
-                focused = focused[1:]
+            root = _repository_root()
+            focused = _focused_profile_command(root, arguments.focused_profile)
             document = prepare(arguments.parent, arguments.receipt, focused)
     except PrepareError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
