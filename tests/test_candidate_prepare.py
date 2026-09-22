@@ -310,6 +310,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
             candidate = root / "candidate.py"
             candidate.write_text("value=1\n", encoding="utf-8")
             receipt = self._receipt()
+            # skipcq: PYL-W0212 -- intentional white-box capture-race regression
             original_stage = candidate_prepare._stage_candidate
             calls = 0
 
@@ -357,10 +358,13 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 {"PYTHONPATH": str(root)},
                 clear=False,
             ):
+                # skipcq: PYL-W0212 -- intentional white-box trusted-env regression
+                trusted_env = candidate_prepare._trusted_python_env()
+                # skipcq: PYL-W0212 -- intentional white-box subprocess regression
                 completed = candidate_prepare._run(
                     [str(probe)],
                     cwd=root,
-                    env=candidate_prepare._trusted_python_env(),
+                    env=trusted_env,
                     check=False,
                 )
             self.assertEqual(0, completed.returncode, completed.stderr)
@@ -377,6 +381,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 "executable",
                 str(python_link),
             ):
+                # skipcq: PYL-W0212 -- intentional white-box venv-path regression
                 env = candidate_prepare._trusted_python_env()
             self.assertEqual(
                 str(venv_bin),
