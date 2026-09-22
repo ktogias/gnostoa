@@ -96,7 +96,7 @@ def _git_executable() -> str:
     return _GIT
 
 
-def _base_env() -> dict[str, str]:
+def _git_env_without_caller_overrides() -> dict[str, str]:
     env = dict(os.environ)
     for name in tuple(env):
         if (
@@ -105,6 +105,56 @@ def _base_env() -> dict[str, str]:
             or name.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))
         ):
             env.pop(name, None)
+    return env
+
+
+def _caller_excludes_snapshot(root: Path) -> bytes:
+    lookup_env = _git_env_without_caller_overrides()
+    configured = _run(
+        [
+            _git_executable(),
+            "config",
+            "--includes",
+            "--path",
+            "--get",
+            "core.excludesFile",
+        ],
+        cwd=root,
+        env=lookup_env,
+        check=False,
+    )
+    if configured.returncode not in {0, 1}:
+        raise PrepareError("unable to inspect caller Git exclude configuration")
+
+    if configured.returncode == 0:
+        configured_path = configured.stdout.decode("utf-8", errors="strict").strip()
+        if not configured_path:
+            return b""
+        excludes = Path(configured_path).expanduser()
+        if not excludes.is_absolute():
+            excludes = root / excludes
+    else:
+        config_home = lookup_env.get("XDG_CONFIG_HOME")
+        if config_home:
+            excludes = Path(config_home).expanduser() / "git" / "ignore"
+        else:
+            home = lookup_env.get("HOME")
+            if not home:
+                return b""
+            excludes = Path(home).expanduser() / ".config" / "git" / "ignore"
+
+    try:
+        if not excludes.exists():
+            return b""
+        if not excludes.is_file():
+            raise PrepareError("caller Git exclude file is not a regular file")
+        return excludes.read_bytes()
+    except OSError as exc:
+        raise PrepareError("caller Git exclude snapshot is unavailable") from exc
+
+
+def _base_env() -> dict[str, str]:
+    env = _git_env_without_caller_overrides()
     env["GIT_CONFIG_GLOBAL"] = os.devnull
     env["GIT_CONFIG_SYSTEM"] = os.devnull
     env["GIT_CONFIG_NOSYSTEM"] = "1"
@@ -370,6 +420,7 @@ def _isolated_git_env(git_dir: Path, worktree: Path) -> dict[str, str]:
 def _isolated_git_metadata(
     repository_root: Path,
     parent: str,
+    caller_excludes: bytes,
 ) -> Iterator[Path]:
     with tempfile.TemporaryDirectory(prefix="gnostoa-candidate-git-") as directory:
         metadata_root = Path(directory)
@@ -387,12 +438,14 @@ def _isolated_git_metadata(
         )
         source_exclude = source_objects.parent / "info" / "exclude"
         isolated_exclude = git_dir / "info" / "exclude"
+        caller_exclude = git_dir / "info" / "caller-exclude"
         try:
+            isolated_exclude.parent.mkdir(parents=True, exist_ok=True)
             if source_exclude.is_file():
-                isolated_exclude.parent.mkdir(parents=True, exist_ok=True)
                 isolated_exclude.write_bytes(source_exclude.read_bytes())
+            caller_exclude.write_bytes(caller_excludes)
         except OSError as exc:
-            raise PrepareError("repository exclude snapshot is unavailable") from exc
+            raise PrepareError("Git exclude snapshot is unavailable") from exc
 
         env = _isolated_git_env(git_dir, repository_root)
         _git_text(
@@ -409,6 +462,14 @@ def _isolated_git_metadata(
             "--local",
             "core.hooksPath",
             os.devnull,
+            env=env,
+        )
+        _git_text(
+            repository_root,
+            "config",
+            "--local",
+            "core.excludesFile",
+            str(caller_exclude),
             env=env,
         )
         _git_text(
@@ -631,9 +692,10 @@ def prepare(
     focused_receipt_argv = _focused_receipt_command(focused_profile)
     receipt = _assert_external_receipt(root, receipt_path)
     _assert_head(root, parent_commit)
+    caller_excludes = _caller_excludes_snapshot(root)
     _assert_safe_repository_git_configuration(root)
 
-    with _isolated_git_metadata(root, parent_commit) as git_dir:
+    with _isolated_git_metadata(root, parent_commit, caller_excludes) as git_dir:
         root_env = _isolated_git_env(git_dir, root)
         parent_tree = _git_text(
             root,
