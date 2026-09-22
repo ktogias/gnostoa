@@ -16,9 +16,7 @@ BUNDLE_PATH = ROOT / "tasks" / "issue-11-r2a-current-advisory.json"
 SCHEMA_PATH = ROOT / "schemas" / "review-protected-authority-bundle.schema.json"
 POLICY_PATH = ROOT / "policy" / "review-policy.yaml"
 
-Q0_AUTHORITY = (
-    "https://github.com/ktogias/gnostoa/issues/10#issuecomment-5771806967"
-)
+Q0_AUTHORITY = "https://github.com/ktogias/gnostoa/issues/10#issuecomment-5771806967"
 Q0_OBSERVED_AT = "2026-09-22T05:50:00Z"
 Q0_SNAPSHOT_ID = "gnostoa-r2a-qualification-q0-5771806967"
 Q0_REVISION = "5771806967"
@@ -84,7 +82,9 @@ def _bundle() -> dict[str, object]:
 
 
 class ReviewerQualificationQ0Tests(unittest.TestCase):
-    def test_q0_protected_snapshot_establishes_exact_minimal_two_domain_cohort(self) -> None:
+    def test_q0_protected_snapshot_establishes_exact_minimal_two_domain_cohort(
+        self,
+    ) -> None:
         bundle = _bundle()
         qualification = bundle["qualification_snapshot"]
         self.assertEqual(
@@ -107,7 +107,10 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
             {entry["independence_domain_id"] for entry in qualification["entries"]},
         )
         self.assertTrue(
-            all(entry["owner_relation"] == "non_owner" for entry in qualification["entries"])
+            all(
+                entry["owner_relation"] == "non_owner"
+                for entry in qualification["entries"]
+            )
         )
 
     def test_q0_activates_closed_existing_v1_qualification_entry_shape(self) -> None:
@@ -127,18 +130,27 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
         qualification["entries"][0].pop("independence_domain_id")
         self.assertNotEqual([], list(validator.iter_errors(missing_domain)))
 
-    def test_q0_keeps_quorum_and_owner_exclusion_but_removes_daily_qualification_rewrite(self) -> None:
+    def test_q0_keeps_quorum_and_owner_exclusion_but_removes_daily_qualification_rewrite(
+        self,
+    ) -> None:
         bundle = _bundle()
         protected_policy = bundle["policy"]
-        self.assertEqual(resolve_project_policy(POLICY_PATH, "critical"), protected_policy)
-        self.assertEqual(["semantic-review"], protected_policy["qualification"]["required_capabilities"])
+        self.assertEqual(
+            resolve_project_policy(POLICY_PATH, "critical"), protected_policy
+        )
+        self.assertEqual(
+            ["semantic-review"],
+            protected_policy["qualification"]["required_capabilities"],
+        )
         self.assertFalse(protected_policy["qualification"]["owner_reviews_count"])
         self.assertEqual(
             {"mode": "not_age_sensitive"},
             protected_policy["qualification"]["snapshot_freshness"],
         )
         self.assertEqual(2, protected_policy["quorum"]["minimum_distinct_domains"])
-        self.assertEqual(["APPROVE"], protected_policy["quorum"]["acceptable_recommendations"])
+        self.assertEqual(
+            ["APPROVE"], protected_policy["quorum"]["acceptable_recommendations"]
+        )
         self.assertEqual(
             canonical_digest(protected_policy),
             bundle["authority"]["policy_digest"],
