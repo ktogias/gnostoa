@@ -550,9 +550,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             parent = self._repository(root)
-            exclude = Path(
-                self._git(root, "rev-parse", "--git-path", "info/exclude")
-            )
+            exclude = Path(self._git(root, "rev-parse", "--git-path", "info/exclude"))
             if not exclude.is_absolute():
                 exclude = root / exclude
             exclude.parent.mkdir(parents=True, exist_ok=True)
@@ -571,7 +569,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 self._git(
                     root,
                     "show",
-                    f'{payload["prepared_tree"]}:local-secret.txt',
+                    f"{payload['prepared_tree']}:local-secret.txt",
                 )
 
     def test_prepare_rejects_repository_local_git_execution_config(self) -> None:
