@@ -335,7 +335,7 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
     ) -> None:
         for conflicting in (False, True):
             input_document, policy_document = _review_case_documents()
-            qualification, entries = _qualification_entries(input_document)
+            _, entries = _qualification_entries(input_document)
             duplicate = copy.deepcopy(entries[0])
             if conflicting:
                 duplicate["status"] = "revoked"
