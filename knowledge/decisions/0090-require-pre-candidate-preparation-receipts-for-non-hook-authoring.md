@@ -112,8 +112,10 @@ non-hook authoring without importing a general orchestration subsystem.
    authority surfaces require a separately admitted authority-evolution path. The proposed tree is materialized into a disposable
    workspace backed only by the isolated Git metadata; normalization and focused
    verification never use the caller's live Git metadata.
-   This excludes ignored/untracked source-worktree files and concurrent caller
-   edits from the verified candidate. Candidate trees containing symlinks fail
+   This excludes ignored files and source-worktree-only state from the verified
+   candidate; intended untracked additions are staged and included in the
+   prepared tree and diff. Concurrent caller edits remain excluded. Candidate
+   trees containing symlinks fail
    closed before style or verification; the current contract does not attempt to
    authenticate external symlink target chains.
 4. Preparation runs `./ci/style --fix` in that isolated worktree under a

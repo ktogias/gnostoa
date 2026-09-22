@@ -120,7 +120,8 @@ def _trusted_python_env(env: dict[str, str] | None = None) -> dict[str, str]:
     trusted["PYTHONSAFEPATH"] = "1"
     trusted["PYTHONNOUSERSITE"] = "1"
     python_dir = str(Path(sys.executable).parent)
-    trusted["PATH"] = os.pathsep.join((python_dir, os.defpath))
+    git_dir = str(Path(_git_executable()).parent)
+    trusted["PATH"] = os.pathsep.join((python_dir, git_dir, os.defpath))
     return trusted
 
 

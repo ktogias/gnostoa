@@ -394,6 +394,19 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 env["PATH"].split(os.pathsep)[0],
             )
 
+    def test_trusted_python_env_includes_git_executable_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            git_dir = root / "custom-git-bin"
+            git_dir.mkdir()
+            git_executable = git_dir / "git"
+            git_executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            git_executable.chmod(0o755)
+            with patch.object(candidate_prepare, "_GIT", str(git_executable)):
+                # skipcq: PYL-W0212 -- intentional white-box trusted-env regression
+                env = candidate_prepare._trusted_python_env()
+            self.assertIn(str(git_dir), env["PATH"].split(os.pathsep))
+
     def test_prepare_does_not_admit_ignored_source_worktree_state(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
