@@ -68,11 +68,14 @@ evidence used here does not include candidate mutation.
 
 A later provider-state read-back exposed a separate recommendation-surface fact:
 CodeRabbit and Gitar currently submit formal GitHub `COMMENTED` reviews, while Bito
-has repeatedly submitted formal GitHub `APPROVED` reviews. This does not silently
-expand the admitted Q0 qualification cohort. The JSON retains Bito only as observed
-approval-capable source evidence; qualification of Bito or another source requires a
-separate admitted authority update. Consequently Q0 qualification activation alone
-does not promise R2A `PASS`.
+has repeatedly submitted formal GitHub `APPROVED` reviews. These are separate axes:
+CodeRabbit/Gitar are candidate-qualified but their observed recommendation is not
+policy-acceptable for quorum; Bito has an observed policy-acceptable recommendation
+surface but is not candidate-qualified. Therefore **none of the three observed
+surfaces currently advances protected quorum**. This does not silently expand the
+admitted Q0 qualification cohort. Qualification of Bito or another source requires a
+separate admitted authority update, and Q0 activation alone does not promise R2A
+`PASS`.
 
 ## What qualification does not mean
 
