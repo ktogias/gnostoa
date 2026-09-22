@@ -48,6 +48,12 @@ _PREPARATION_AUTHORITY_PATHS = (
     "ci/style",
     "ci/verify",
     "tools/candidate_prepare.py",
+    "pyproject.toml",
+    "ruff.toml",
+    ".ruff.toml",
+    ":(glob)**/pyproject.toml",
+    ":(glob)**/ruff.toml",
+    ":(glob)**/.ruff.toml",
 )
 
 
@@ -100,6 +106,17 @@ def _base_env() -> dict[str, str]:
     return env
 
 
+def _trusted_python_env(env: dict[str, str] | None = None) -> dict[str, str]:
+    trusted = dict(_base_env() if env is None else env)
+    for name in ("PYTHONHOME", "PYTHONPATH", "PYTHONSAFEPATH", "PYTHONUSERBASE"):
+        trusted.pop(name, None)
+    trusted["PYTHONSAFEPATH"] = "1"
+    trusted["PYTHONNOUSERSITE"] = "1"
+    python_dir = str(Path(sys.executable).resolve().parent)
+    trusted["PATH"] = os.pathsep.join((python_dir, os.defpath))
+    return trusted
+
+
 def _run(
     command: Sequence[str],
     *,
@@ -146,10 +163,15 @@ def _repository_root() -> Path:
     return Path(completed.stdout.decode("utf-8", errors="strict").strip()).resolve()
 
 
-def _ruff_version(root: Path) -> str:
+def _ruff_version(
+    root: Path,
+    *,
+    env: dict[str, str] | None = None,
+) -> str:
     completed = _run(
-        [sys.executable, "-m", "ruff", "--version"],
+        [sys.executable, "-P", "-m", "ruff", "--version"],
         cwd=root,
+        env=_trusted_python_env(env),
     )
     return completed.stdout.decode("utf-8", errors="strict").strip()
 
@@ -251,6 +273,55 @@ def _source_object_directory(root: Path) -> Path:
     return objects
 
 
+def _prepared_tree_ref(tree: str) -> str:
+    if _SHA40.fullmatch(tree) is None:
+        raise PrepareError("prepared tree identity is invalid")
+    return f"refs/gnostoa/prepared/{tree}"
+
+
+def _read_ref(root: Path, ref: str) -> str | None:
+    completed = _run(
+        [_git_executable(), "show-ref", "--verify", "--hash", ref],
+        cwd=root,
+        check=False,
+    )
+    if completed.returncode == 1:
+        return None
+    if completed.returncode != 0:
+        raise PrepareError("unable to inspect prepared-tree retention ref")
+    return completed.stdout.decode("utf-8", errors="strict").strip()
+
+
+def _retain_prepared_tree(root: Path, tree: str) -> str:
+    ref = _prepared_tree_ref(tree)
+    current = _read_ref(root, ref)
+    if current is None:
+        created = _run(
+            [_git_executable(), "update-ref", ref, tree, "0" * 40],
+            cwd=root,
+            check=False,
+        )
+        if created.returncode != 0:
+            current = _read_ref(root, ref)
+            if current != tree:
+                raise PrepareError("unable to retain prepared tree")
+    elif current != tree:
+        raise PrepareError("prepared-tree retention ref mismatch")
+    return ref
+
+
+def _release_prepared_tree(root: Path, ref: str, tree: str) -> None:
+    if ref != _prepared_tree_ref(tree):
+        raise PrepareError("prepared-tree retention ref is invalid")
+    released = _run(
+        [_git_executable(), "update-ref", "-d", ref, tree],
+        cwd=root,
+        check=False,
+    )
+    if released.returncode != 0:
+        raise PrepareError("unable to release prepared tree")
+
+
 def _isolated_git_env(git_dir: Path, worktree: Path) -> dict[str, str]:
     env = _base_env()
     env["GIT_DIR"] = str(git_dir)
@@ -347,6 +418,20 @@ def _stage_candidate(
     ).stdout
     changed = sorted(os.fsdecode(item) for item in changed_raw.split(b"\0") if item)
     return tree, changed
+
+
+def _capture_stable_candidate(
+    root: Path,
+    parent: str,
+    git_dir: Path,
+) -> tuple[str, list[str]]:
+    first_tree, first_paths = _stage_candidate(root, parent, git_dir)
+    _assert_head(root, parent)
+    second_tree, second_paths = _stage_candidate(root, parent, git_dir)
+    _assert_head(root, parent)
+    if first_tree != second_tree or first_paths != second_paths:
+        raise PrepareError("source candidate changed during capture")
+    return second_tree, second_paths
 
 
 def _binary_diff_between_trees(
@@ -530,7 +615,7 @@ def prepare(
             f"{parent_commit}^{{tree}}",
             env=root_env,
         )
-        proposed_tree, proposed_paths = _stage_candidate(
+        proposed_tree, proposed_paths = _capture_stable_candidate(
             root,
             parent_commit,
             git_dir,
@@ -544,8 +629,9 @@ def prepare(
             if not style.is_file():
                 raise PrepareError("ci/style is unavailable")
             focused_argv = _focused_profile_command(workspace, focused_profile)
+            style_env = _trusted_python_env(_isolated_git_env(git_dir, workspace))
 
-            _run([str(style), "--fix"], cwd=workspace)
+            _run([str(style), "--fix"], cwd=workspace, env=style_env)
             _assert_head(workspace, parent_commit)
             normalized_tree, changed_paths = _stage_workspace_candidate(
                 workspace,
@@ -583,7 +669,7 @@ def prepare(
             # Focused verification may create ignored caches. Remove them before
             # the final style decision so it rechecks the normalized tree.
             _reset_workspace_to_index(workspace, git_dir)
-            _run([str(style), "--check"], cwd=workspace)
+            _run([str(style), "--check"], cwd=workspace, env=style_env)
             _assert_head(workspace, parent_commit)
             _assert_workspace_matches_tree(
                 workspace,
@@ -606,13 +692,19 @@ def prepare(
             )
             style_sha256 = _sha256_bytes(style.read_bytes())
             verify_sha256 = _sha256_bytes((workspace / "ci" / "verify").read_bytes())
-            ruff_version = _ruff_version(workspace)
+            ruff_version = _ruff_version(workspace, env=style_env)
+
+        # The source parent must remain stable for the full capture/verification
+        # interval. Later source-worktree edits cannot affect the isolated tree.
+        _assert_head(root, parent_commit)
+        retention_ref = _retain_prepared_tree(root, normalized_tree)
 
     payload: dict[str, Any] = {
         "schema": RECEIPT_SCHEMA,
         "parent_commit": parent_commit,
         "parent_tree": parent_tree,
         "prepared_tree": normalized_tree,
+        "retention_ref": retention_ref,
         "prepared_diff_sha256": _sha256_bytes(prepared_diff),
         "changed_paths": changed_paths,
         "style_sha256": style_sha256,
@@ -633,7 +725,11 @@ def prepare(
             else "PRE_CANDIDATE_NO_RUFF_CHANGE"
         ),
     }
-    return _write_receipt(receipt, payload)
+    try:
+        return _write_receipt(receipt, payload)
+    except (OSError, TypeError, ValueError):
+        _release_prepared_tree(root, retention_ref, normalized_tree)
+        raise
 
 
 def _load_receipt(receipt_path: Path) -> dict[str, Any]:
@@ -734,13 +830,42 @@ def verify_receipt(
     _validate_receipt_checks(document)
     _validate_receipt_focused_command(document)
     _require_sha40(document, "parent_tree")
-    _require_sha40(document, "prepared_tree")
+    prepared_tree = _require_sha40(document, "prepared_tree")
+    if document.get("retention_ref") != _prepared_tree_ref(prepared_tree):
+        raise PrepareError("receipt retention ref is invalid")
     _require_sha256(document, "prepared_diff_sha256")
     _require_sha256(document, "style_sha256")
     _require_sha256(document, "verify_sha256")
     _validate_receipt_metric(document)
     _validate_receipt_shape(document)
     return document
+
+
+def release_receipt(
+    receipt_path: Path,
+    expected_parent: str,
+    expected_tree: str,
+    trusted_receipt_sha256: str,
+) -> dict[str, Any]:
+    document = verify_receipt(
+        receipt_path,
+        expected_parent,
+        expected_tree,
+        trusted_receipt_sha256,
+    )
+    root = _repository_root()
+    retention_ref = document.get("retention_ref")
+    if not isinstance(retention_ref, str):
+        raise PrepareError("receipt retention ref is invalid")
+    _release_prepared_tree(root, retention_ref, expected_tree)
+    return {
+        "schema": "gnostoa-candidate-preparation-release/v1",
+        "parent_commit": expected_parent,
+        "prepared_tree": expected_tree,
+        "retention_ref": retention_ref,
+        "receipt_sha256": trusted_receipt_sha256,
+        "released": True,
+    }
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -763,6 +888,12 @@ def _parser() -> argparse.ArgumentParser:
     verify_parser.add_argument("--tree", required=True)
     verify_parser.add_argument("--receipt", required=True, type=Path)
     verify_parser.add_argument("--receipt-sha256", required=True)
+
+    release_parser = actions.add_parser("release")
+    release_parser.add_argument("--parent", required=True)
+    release_parser.add_argument("--tree", required=True)
+    release_parser.add_argument("--receipt", required=True, type=Path)
+    release_parser.add_argument("--receipt-sha256", required=True)
     return parser
 
 
@@ -771,6 +902,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if arguments.action == "verify":
             document = verify_receipt(
+                arguments.receipt,
+                arguments.parent,
+                arguments.tree,
+                arguments.receipt_sha256,
+            )
+        elif arguments.action == "release":
+            document = release_receipt(
                 arguments.receipt,
                 arguments.parent,
                 arguments.tree,

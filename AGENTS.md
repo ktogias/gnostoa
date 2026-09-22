@@ -109,11 +109,15 @@ survives the disposable metadata. The source `.git/info/exclude` is copied once
 into that metadata so local ignored scratch/secrets remain excluded. Candidate
 staging, checkout and verification no longer consume the mutable source
 `.git/config` after admission, so concurrent local Git-config changes cannot
-inject filters into preparation. The path rejects
-candidate changes to `ci/prepare-candidate`, `ci/style`, `ci/verify`, or
-`tools/candidate_prepare.py` unless authority evolution is separately admitted.
-It materializes the exact proposed tree into a disposable workspace, runs
-`ci/style --fix`, restores the normalized tree, then runs the allowlisted
+inject filters into preparation. The source worktree is captured twice from the
+same exact parent; mismatched trees/path sets or any source-HEAD movement fail
+closed. The path rejects candidate changes to `ci/prepare-candidate`,
+`ci/style`, `ci/verify`, `tools/candidate_prepare.py`, or any
+`pyproject.toml`/`ruff.toml`/`.ruff.toml` unless authority evolution is
+separately admitted. It materializes the exact proposed tree into a disposable
+workspace and runs `ci/style --fix` with unsafe Python path injection disabled,
+so a candidate `ruff.py`/`ruff` package cannot shadow the installed Ruff.
+It restores the normalized tree, then runs the allowlisted
 `ci/verify` profile and final `ci/style --check`. Source-worktree-only
 ignored/untracked files and concurrent caller edits are not part of verification. Candidate symlinks are rejected
 before style or focused verification because this bounded contract does not
@@ -122,8 +126,10 @@ verification arguments; supported profiles are `policy`,
 `security-fast`, `fast`, `regression`, `smoke`, and `extended`.
 
 The preparation command prints a JSON receipt object containing
-`receipt_sha256`; retain that identity outside the receipt bytes in the trusted
-preparation handoff. The digest is integrity
+`receipt_sha256` and a namespaced `retention_ref`; retain the digest identity
+outside the receipt bytes in the trusted preparation handoff. The retention ref
+keeps the prepared tree reachable through Git garbage collection until
+publication or explicit receipt expiry. The digest is integrity
 evidence, not producer authentication or bearer authority. To inspect/consume a
 receipt, supply the separately retained identity:
 
@@ -136,9 +142,20 @@ receipt, supply the separately retained identity:
 ```
 
 A self-consistent receipt with a caller-chosen digest must never authorize a
-provider write. This slice intentionally has no provider-write adapter; Git-data
-or API ref effects remain governed by #15/#308 and must run trusted preparation
-or consume separately authenticated preparation provenance before writing.
+provider write. After publication or explicit receipt expiry, release the exact
+retained tree only through:
+
+```bash
+./ci/prepare-candidate release \
+  --parent <exact-40-character-parent-sha> \
+  --tree <exact-40-character-prepared-tree-sha> \
+  --receipt <path-outside-the-worktree> \
+  --receipt-sha256 <trusted-sha256-from-prepare>
+```
+
+This slice intentionally has no provider-write adapter; Git-data or API ref
+effects remain governed by #15/#308 and must run trusted preparation or consume
+separately authenticated preparation provenance before writing.
 Ordinary hooks remain advisory early feedback; direct `ci/style --fix` alone
 is not a preparation receipt for non-hook authoring.
 Provider CI stays check-only

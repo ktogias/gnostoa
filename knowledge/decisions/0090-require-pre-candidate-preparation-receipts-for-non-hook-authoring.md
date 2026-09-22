@@ -90,26 +90,36 @@ non-hook authoring without importing a general orchestration subsystem.
    source repository's mutable local configuration.
 3. Preparation creates disposable Git metadata with a trusted local config.
    Git object access is bound explicitly to the source repository's
-   content-addressed object store: candidate blobs/trees are written there so a
-   successful prepared-tree identity remains reachable after the disposable
-   metadata is removed. The source `.git/info/exclude` file is copied once as
+   content-addressed object store. The mutable source worktree is captured twice
+   from the exact parent through the isolated index; both tree identities and
+   changed-path sets must match, and source `HEAD` is revalidated after each
+   capture and again after isolated verification. Candidate blobs/trees are
+   written to the source object store, but a successful normalized tree is also
+   rooted under `refs/gnostoa/prepared/<tree-sha>` before the receipt is
+   emitted so repository garbage collection cannot prune the receipt's tree. The source `.git/info/exclude` file is copied once as
    an immutable snapshot into the disposable metadata so local scratch/secrets
    remain excluded without reopening mutable source configuration. Candidate
    staging, checkout, diffing and workspace Git commands never load the source
    repository's mutable local config. A concurrent mutation of the source
    `.git/config` or source-local attributes therefore cannot affect the
-   prepared bytes or execute a newly injected filter. Before any preparation authority executes,
-   the proposed tree must leave `ci/prepare-candidate`, `ci/style`,
-   `ci/verify`, and `tools/candidate_prepare.py` unchanged from the parent.
-   Changes to those authority surfaces require a separately admitted
-   authority-evolution path. The proposed tree is materialized into a disposable
+   prepared bytes or execute a newly injected filter. Before any preparation
+   authority executes, the proposed tree must leave `ci/prepare-candidate`,
+   `ci/style`, `ci/verify`, `tools/candidate_prepare.py`, and every
+   repository Ruff configuration input (`pyproject.toml`, `ruff.toml`,
+   `.ruff.toml` at any depth) unchanged from the parent. Changes to those
+   authority surfaces require a separately admitted authority-evolution path. The proposed tree is materialized into a disposable
    workspace backed only by the isolated Git metadata; normalization and focused
    verification never use the caller's live Git metadata.
    This excludes ignored/untracked source-worktree files and concurrent caller
    edits from the verified candidate. Candidate trees containing symlinks fail
    closed before style or verification; the current contract does not attempt to
    authenticate external symlink target chains.
-4. Preparation runs `./ci/style --fix` in that isolated worktree, stages the
+4. Preparation runs `./ci/style --fix` in that isolated worktree under a
+   trusted Python environment: inherited `PYTHONPATH`/`PYTHONHOME` are
+   removed, unsafe-path insertion is disabled, user-site loading is disabled,
+   and the active interpreter directory is placed first on `PATH`. This keeps
+   `python -m ruff` bound to the installed Ruff distribution rather than a
+   candidate-supplied `ruff.py` or `ruff` package. Preparation stages the
    normalized result, then cleans ignored/untracked residue and restores exactly
    the normalized index before focused verification. The external CLI accepts
    only `policy`, `security-fast`, `fast`, `regression`, `smoke`, and
@@ -127,7 +137,8 @@ non-hook authoring without importing a general orchestration subsystem.
    container route is unavailable; the caller records that reason. Provider CI
    remains the authoritative independent check.
 7. The successful receipt binds at least parent commit/tree, prepared tree,
-   prepared binary-diff SHA-256, changed paths, parent-bound `ci/style` and
+   its persistent `refs/gnostoa/prepared/<tree-sha>` retention root, prepared
+   binary-diff SHA-256, changed paths, parent-bound `ci/style` and
    `ci/verify` SHA-256 identities, observed Ruff version, focused profile plus
    its logical repository-owned command identity, and zero exit status for every
    required step. Its canonical SHA-256 is an integrity binding, not
@@ -140,7 +151,10 @@ non-hook authoring without importing a general orchestration subsystem.
    `ci/prepare-candidate verify` require that externally retained identity in
    addition to the expected parent/tree, then recompute the receipt digest. A
    self-consistent caller-supplied receipt and self-chosen digest therefore do
-   not satisfy the trusted handoff.
+   not satisfy the trusted handoff. The retained prepared-tree ref stays live
+   until publication or explicit receipt expiry; `ci/prepare-candidate release`
+   verifies the same trusted receipt identity and exact parent/tree, then deletes
+   only that exact retention ref.
 9. This slice intentionally acquires no provider-write authority. A future
    Git-data/API publishing adapter must run trusted preparation itself or consume
    separately authenticated preparation provenance and the retained receipt
@@ -160,15 +174,21 @@ The change must retain executable evidence that:
 
 - ordinary Git can currently commit a Ruff-dirty tree without this new receipt,
   characterizing the API/non-hook escape;
-- successful preparation materializes the proposed tree in an isolated
-  disposable worktree, normalizes there, and verifies the exact normalized tree
-  without admitting source-worktree-only ignored/untracked state;
+- successful preparation captures the mutable source worktree twice, rejects
+  mismatched captures or a source-HEAD change, then materializes the stable
+  proposed tree in an isolated disposable worktree, normalizes there, and
+  verifies the exact normalized tree without admitting source-worktree-only
+  ignored/untracked state;
 - the external CLI rejects arbitrary command execution by accepting only the
   closed repository-owned focused-profile vocabulary;
 - a candidate that changes `ci/prepare-candidate`, `ci/style`,
-  `ci/verify`, or `tools/candidate_prepare.py` relative to the bound parent
-  is rejected before preparation authority executes;
-- successful receipts bind both preparation-authority SHA-256 identities;
+  `ci/verify`, `tools/candidate_prepare.py`, or any repository Ruff
+  configuration input relative to the bound parent is rejected before
+  preparation authority executes;
+- successful receipts bind both preparation-authority SHA-256 identities and a
+  deterministic prepared-tree retention ref; the retained tree survives
+  repository garbage collection until explicit trusted release;
+- trusted style execution cannot import a candidate-shadowed Ruff module;
 - untracked additions and deletions are included in the prepared tree/diff;
 - focused verification mutation is rejected;
 - stale parent, failed normalization/check, failed focused verification, and
@@ -191,7 +211,9 @@ The change must retain executable evidence that:
 API/agent authoring gains an exact-tree pre-candidate normalization boundary
 without making hooks mandatory or weakening provider CI. Receipt consumption is
 bound to a separately retained trusted identity, but the portable receipt is
-still evidence rather than producer authentication. Provider-specific write
+still evidence rather than producer authentication. Preparation also creates one
+namespaced local retention ref per prepared tree; consumers release that ref only
+after publication or explicit receipt expiry. Provider-specific write
 effects and writer fencing remain deliberately outside this slice under
 #15/#308 and must preserve the preparation trust boundary when implemented.
 

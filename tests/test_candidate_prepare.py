@@ -170,6 +170,14 @@ class CandidatePreparationContractTests(unittest.TestCase):
             )
             self.assertRegex(payload["style_sha256"], r"^sha256:[0-9a-f]{64}$")
             self.assertRegex(payload["verify_sha256"], r"^sha256:[0-9a-f]{64}$")
+            self.assertEqual(
+                f"refs/gnostoa/prepared/{payload['prepared_tree']}",
+                payload["retention_ref"],
+            )
+            self.assertEqual(
+                payload["prepared_tree"],
+                self._git(root, "rev-parse", payload["retention_ref"]),
+            )
             self.assertTrue(receipt.is_file())
             self.assertEqual(
                 payload,
@@ -261,6 +269,98 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 ):
                     self._prepare(root, parent, receipt)
                 self.assertFalse(receipt.exists())
+
+    def test_prepare_rejects_candidate_ruff_configuration_authority(self) -> None:
+        for configuration in (
+            "pyproject.toml",
+            "ruff.toml",
+            ".ruff.toml",
+            "nested/pyproject.toml",
+        ):
+            with (
+                self.subTest(configuration=configuration),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                parent = self._repository(root)
+                (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+                config_path = root / configuration
+                config_path.parent.mkdir(parents=True, exist_ok=True)
+                config_path.write_text(
+                    "[tool.ruff]\nline-length = 100\n"
+                    if config_path.name == "pyproject.toml"
+                    else "line-length = 100\n",
+                    encoding="utf-8",
+                )
+                receipt = self._receipt()
+                with self.assertRaisesRegex(
+                    candidate_prepare.PrepareError,
+                    rf"candidate modifies preparation authority: {re.escape(configuration)}",
+                ):
+                    self._prepare(root, parent, receipt)
+                self.assertFalse(receipt.exists())
+
+    def test_prepare_rejects_source_candidate_change_during_capture(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            candidate = root / "candidate.py"
+            candidate.write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+            original_stage = candidate_prepare._stage_candidate
+            calls = 0
+
+            def stage_then_mutate(
+                repository_root: Path,
+                exact_parent: str,
+                git_dir: Path,
+            ) -> tuple[str, list[str]]:
+                nonlocal calls
+                result = original_stage(repository_root, exact_parent, git_dir)
+                calls += 1
+                if calls == 1:
+                    candidate.write_text("value=2\n", encoding="utf-8")
+                return result
+
+            with (
+                patch.object(
+                    candidate_prepare,
+                    "_stage_candidate",
+                    side_effect=stage_then_mutate,
+                ),
+                self.assertRaisesRegex(
+                    candidate_prepare.PrepareError,
+                    "source candidate changed during capture",
+                ),
+            ):
+                self._prepare(root, parent, receipt)
+            self.assertFalse(receipt.exists())
+
+    def test_trusted_python_env_blocks_candidate_ruff_shadow(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "ruff.py").write_text(
+                "raise SystemExit(97)\n",
+                encoding="utf-8",
+            )
+            probe = root / "probe-style"
+            probe.write_text(
+                "#!/bin/sh\nset -eu\npython -m ruff --version >/dev/null\n",
+                encoding="utf-8",
+            )
+            probe.chmod(0o755)
+            with patch.dict(
+                os.environ,
+                {"PYTHONPATH": str(root)},
+                clear=False,
+            ):
+                completed = candidate_prepare._run(
+                    [str(probe)],
+                    cwd=root,
+                    env=candidate_prepare._trusted_python_env(),
+                    check=False,
+                )
+            self.assertEqual(0, completed.returncode, completed.stderr)
 
     def test_prepare_does_not_admit_ignored_source_worktree_state(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -458,6 +558,46 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 ),
             )
 
+    def test_prepared_tree_survives_gc_until_explicit_release(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+            payload = self._prepare(root, parent, receipt)
+            retention_ref = payload["retention_ref"]
+
+            self._git(root, "reflog", "expire", "--expire=now", "--all")
+            self._git(root, "gc", "--prune=now")
+            self._git(root, "cat-file", "-e", payload["prepared_tree"])
+            self.assertEqual(
+                payload["prepared_tree"],
+                self._git(root, "rev-parse", retention_ref),
+            )
+
+            with patch.object(
+                candidate_prepare,
+                "_repository_root",
+                return_value=root,
+            ):
+                released = candidate_prepare.release_receipt(
+                    receipt,
+                    parent,
+                    payload["prepared_tree"],
+                    payload["receipt_sha256"],
+                )
+            self.assertTrue(released["released"])
+            ref = subprocess.run(  # nosemgrep  # nosec B603
+                [GIT, "show-ref", "--verify", retention_ref],
+                cwd=root,
+                env=_test_env(),
+                check=False,
+                shell=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(0, ref.returncode)
+
     def test_cli_verify_consumes_exact_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -481,6 +621,33 @@ class CandidatePreparationContractTests(unittest.TestCase):
                     ]
                 ),
             )
+
+    def test_cli_release_consumes_exact_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+            payload = self._prepare(root, parent, receipt)
+            with patch.object(
+                candidate_prepare,
+                "_repository_root",
+                return_value=root,
+            ):
+                result = candidate_prepare.main(
+                    [
+                        "release",
+                        "--parent",
+                        parent,
+                        "--tree",
+                        payload["prepared_tree"],
+                        "--receipt",
+                        str(receipt),
+                        "--receipt-sha256",
+                        payload["receipt_sha256"],
+                    ]
+                )
+            self.assertEqual(0, result)
 
     def test_prepare_scrubs_inherited_git_repository_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
