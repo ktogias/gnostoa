@@ -16,9 +16,7 @@ from tools.review_policy import resolve_project_policy
 
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLE_PATH = ROOT / "tasks" / "issue-11-r2a-current-advisory.json"
-CONSUMER_AUTHORITY_PATH = (
-    ROOT / "tasks" / "issue-11-r2a-current-advisory-consumer.json"
-)
+CONSUMER_AUTHORITY_PATH = ROOT / "tasks" / "issue-11-r2a-current-advisory-consumer.json"
 BUNDLE_SCHEMA_PATH = ROOT / "schemas" / "review-protected-authority-bundle.schema.json"
 BASELINE_PATH = (
     ROOT / "knowledge" / "assessments" / "10-q0-reviewer-qualification-baseline.json"
