@@ -132,7 +132,7 @@ provider availability/eligibility and current scope identity are revalidated.
 
 No fixed freshness TTL is invented. For automatic dispatch of an external
 review route, current availability/eligibility must be reacquired in the current
-orchestration observation cut. Version `v0.16` binds that proof explicitly:
+orchestration observation cut. Version `v0.17` binds that proof explicitly:
 the active planning input carries `cut_id`, exact `as_of` and exact subject.
 A provider `current_readback` is a **same-cut route-target evaluation**, not a
 raw retained observation. It must carry the same `cut_id` and a
@@ -188,13 +188,16 @@ name, command text or array position. Typed
 `dispatch_kind` separates `comment_command`, `provider_action`,
 `configuration_only`, `interactive_manual` and `unknown`; a UI action,
 configuration path or manual sentinel may never be reinterpreted as GitHub
-comment syntax. An `instruction_mode` such as `none` describes syntax only
-and cannot override a `manual_only_until_*` dispatch-safety state.
+comment syntax. `dispatch_safety` is a closed registry vocabulary rather than
+free-form provider metadata; every primary and alternative route must use a
+retained vocabulary value. Membership alone never grants dispatch authority.
+An `instruction_mode` such as `none` describes syntax only and cannot override
+a `manual_only_until_*` dispatch-safety state.
 
 A planner may emit only a retained typed recipe whose fields satisfy the
 machine-readable `dispatch_kind_constraints`, or render a retained
 `instruction_template` using supported placeholders and bounded
-caller-supplied instructions. Version `v0.16` fixes a 4096-byte normalized
+caller-supplied instructions. Version `v0.17` fixes a 4096-byte normalized
 UTF-8 instruction maximum, CRLF/CR-to-LF normalization, HT/LF-only
 control-character allowance, reserved-placeholder rejection and one
 non-recursive substitution pass. Invalid input becomes
