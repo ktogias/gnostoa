@@ -400,6 +400,24 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
                 self.assertEqual("INCOMPLETE", payload["outcome"])
                 self.assertEqual("QUORUM_UNMET", payload["reason"])
 
+    def test_q0_unknown_owner_relation_never_qualifies(
+        self,
+    ) -> None:
+        input_document, policy_document = _review_case_documents()
+        qualification, entries = _qualification_entries(input_document)
+        entries[0]["owner_relation"] = "unknown"
+        policy_document["qualification"]["owner_reviews_count"] = True
+        input_document["authority"]["policy_digest"] = canonical_digest(policy_document)
+        _refresh_qualification_digest(input_document)
+
+        code, payload = review_check.evaluate_documents(
+            input_document, policy_document
+        )
+
+        self.assertEqual(3, code)
+        self.assertEqual("INCOMPLETE", payload["outcome"])
+        self.assertEqual("QUORUM_UNMET", payload["reason"])
+
     def test_q0_duplicate_or_conflicting_qualification_identity_fails_closed(
         self,
     ) -> None:
