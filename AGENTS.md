@@ -110,9 +110,11 @@ trusted local configuration. Git object reads/writes are bound explicitly to
 the source content-addressed object store so the verified prepared-tree identity
 survives the disposable metadata. The source `.git/info/exclude` and the caller's effective `core.excludesFile`
 patterns are snapshotted once into that metadata so ignored scratch/secrets
-remain excluded without retaining caller Git configuration. Candidate staging,
-checkout and verification no longer consume the mutable source `.git/config`
-or caller global/system config after admission, so concurrent Git-config changes
+remain excluded without retaining caller Git configuration. Disposable Git
+metadata is initialized with an explicitly empty trusted template, and inherited
+`GIT_TEMPLATE_DIR` is ignored. Candidate staging, checkout and verification no
+longer consume the mutable source `.git/config`, caller global/system config or
+caller Git templates after admission, so concurrent or inherited Git configuration
 cannot inject filters into preparation. The source worktree is captured twice from the
 same exact parent; mismatched trees/path sets or any source-HEAD movement fail
 closed. The path rejects candidate changes to `ci/prepare-candidate`,
@@ -127,7 +129,11 @@ It restores the normalized tree, then runs the allowlisted
 `ci/verify` profile under a separate scrubbed Python environment: inherited
 `PYTHONPATH`/`PYTHONHOME`/user-site state and arbitrary executable search
 paths are excluded, while the isolated candidate workspace remains intentionally
-importable for candidate tests. Final `ci/style --check` returns to the stricter
+importable for candidate tests. A preparation-owned `knowledge` shim precedes
+the executable search path and executes `python -m tools.cli` from that workspace;
+`KNOWLEDGE_KIT_ROOT` is rebound to the isolated workspace and its revision label
+is reset to `development`, so installed-image or source-worktree toolkit routing
+cannot satisfy a focused receipt. Final `ci/style --check` returns to the stricter
 safe-path style environment. Source-worktree-only
 ignored/untracked files and concurrent caller edits are not part of verification. Candidate symlinks are rejected
 before style or focused verification because this bounded contract does not
