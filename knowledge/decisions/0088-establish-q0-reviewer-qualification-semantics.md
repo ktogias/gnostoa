@@ -113,6 +113,10 @@ A later source read-back found that both current formal GitHub review surfaces a
 `COMMENTED`, which R2A correctly normalizes to `COMMENT_ONLY`. Bito has repeatedly
 emitted actual GitHub `APPROVED` reviews and is therefore retained as approval-capable
 source evidence, but it is **not added to this admitted qualification snapshot**.
+Qualification and recommendation eligibility are conjunctive: CodeRabbit/Gitar are
+candidate-qualified but their observed recommendation is not quorum-acceptable, while
+Bito's observed recommendation is quorum-acceptable but Bito is not candidate-qualified.
+None of those observed surfaces therefore advances protected quorum at this stage.
 Qualification authority must not expand merely because a useful provider was
 discovered during implementation. A separate admitted update is required before Bito
 or another reviewer/source becomes an established qualification entry.
