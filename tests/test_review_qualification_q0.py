@@ -245,7 +245,9 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
         self.assertNotEqual([], list(validator.iter_errors(missing_domain)))
 
         empty_capabilities = copy.deepcopy(future)
-        empty_capabilities["qualification_snapshot"]["entries"][0]["capability_ids"] = []
+        empty_capabilities["qualification_snapshot"]["entries"][0][
+            "capability_ids"
+        ] = []
         self.assertNotEqual([], list(validator.iter_errors(empty_capabilities)))
 
         missing_scope_repository = copy.deepcopy(future)
