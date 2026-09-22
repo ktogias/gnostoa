@@ -35,6 +35,7 @@ _FOCUSED_PROFILES = (
     "smoke",
     "extended",
 )
+_PREPARATION_AUTHORITY_PATHS = ("ci/style", "ci/verify")
 
 
 class PrepareError(RuntimeError):
@@ -209,6 +210,34 @@ def _binary_diff(root: Path, parent: str, index: Path) -> bytes:
     ).stdout
 
 
+def _assert_parent_preparation_authorities(
+    root: Path,
+    parent: str,
+    index: Path,
+) -> None:
+    env = _base_env()
+    env["GIT_INDEX_FILE"] = str(index)
+    changed_raw = _run(
+        [
+            _git_executable(),
+            "diff",
+            "--cached",
+            "--name-only",
+            "-z",
+            parent,
+            "--",
+            *_PREPARATION_AUTHORITY_PATHS,
+        ],
+        cwd=root,
+        env=env,
+    ).stdout
+    changed = sorted(os.fsdecode(item) for item in changed_raw.split(b"\0") if item)
+    if changed:
+        raise PrepareError(
+            "candidate modifies preparation authority: " + ", ".join(changed)
+        )
+
+
 def _write_receipt(path: Path, payload: dict[str, Any]) -> dict[str, Any]:
     document = dict(payload)
     document["receipt_sha256"] = _digest(payload)
@@ -252,6 +281,7 @@ def prepare(
         proposed_tree, proposed_paths = _stage_candidate(root, parent_commit, index)
         if not proposed_paths:
             raise PrepareError("candidate has no changes relative to parent")
+        _assert_parent_preparation_authorities(root, parent_commit, index)
 
         env = _base_env()
         env["GIT_INDEX_FILE"] = str(index)
@@ -260,6 +290,7 @@ def prepare(
         normalized_tree, changed_paths = _stage_candidate(root, parent_commit, index)
         if not changed_paths:
             raise PrepareError("candidate has no changes after normalization")
+        _assert_parent_preparation_authorities(root, parent_commit, index)
 
         focused = _run(focused_argv, cwd=root, env=env, check=False)
         if focused.returncode != 0:
@@ -293,6 +324,7 @@ def prepare(
         "prepared_diff_sha256": _sha256_bytes(prepared_diff),
         "changed_paths": changed_paths,
         "style_sha256": _sha256_bytes(style.read_bytes()),
+        "verify_sha256": _sha256_bytes((root / "ci" / "verify").read_bytes()),
         "style_subject": ".",
         "ruff_version": _ruff_version(root),
         "focused_profile": focused_profile,
@@ -389,6 +421,7 @@ def verify_receipt(
     _require_sha40(document, "prepared_tree")
     _require_sha256(document, "prepared_diff_sha256")
     _require_sha256(document, "style_sha256")
+    _require_sha256(document, "verify_sha256")
     _validate_receipt_metric(document)
     return document
 

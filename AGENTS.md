@@ -106,7 +106,10 @@ normalization, invokes argv with no shell, rejects verifier mutation, runs
 `git diff --cached --check`, and binds the exact parent and prepared Git tree in
 a digest-protected receipt. The CLI does not accept an executable or arbitrary
 verification arguments; supported profiles are `policy`, `security-fast`,
-`fast`, `regression`, `smoke`, and `extended`. Before a Git-data/API adapter advances a
+`fast`, `regression`, `smoke`, and `extended`. The preparation path
+fails closed if the candidate changes `ci/style` or `ci/verify` relative to
+the bound parent; authority evolution requires a separately admitted path rather
+than a self-authorizing receipt. Before a Git-data/API adapter advances a
 candidate ref, consume:
 
 ```bash

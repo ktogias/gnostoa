@@ -145,6 +145,8 @@ class CandidatePreparationContractTests(unittest.TestCase):
             self.assertEqual(parent, payload["parent_commit"])
             self.assertEqual(["candidate.py"], payload["changed_paths"])
             self.assertEqual("PRE_CANDIDATE_RUFF_CATCH", payload["metric_event"])
+            self.assertRegex(payload["style_sha256"], r"^sha256:[0-9a-f]{64}$")
+            self.assertRegex(payload["verify_sha256"], r"^sha256:[0-9a-f]{64}$")
             self.assertTrue(receipt.is_file())
             self.assertEqual(
                 payload,
@@ -201,6 +203,29 @@ class CandidatePreparationContractTests(unittest.TestCase):
             receipt = self._receipt()
             payload = self._prepare(root, parent, receipt)
             self.assertEqual(["base.txt", "candidate.py"], payload["changed_paths"])
+
+    def test_prepare_rejects_candidate_modified_preparation_authority(self) -> None:
+        for authority in ("style", "verify"):
+            with (
+                self.subTest(authority=authority),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                parent = self._repository(root)
+                (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+                authority_path = root / "ci" / authority
+                authority_path.write_text(
+                    authority_path.read_text(encoding="utf-8")
+                    + "\n# candidate authority override\n",
+                    encoding="utf-8",
+                )
+                receipt = self._receipt()
+                with self.assertRaisesRegex(
+                    candidate_prepare.PrepareError,
+                    rf"candidate modifies preparation authority: ci/{authority}",
+                ):
+                    self._prepare(root, parent, receipt)
+                self.assertFalse(receipt.exists())
 
     def test_prepare_rejects_focused_verifier_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

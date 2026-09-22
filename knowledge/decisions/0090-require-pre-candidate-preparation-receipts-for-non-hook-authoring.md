@@ -74,13 +74,18 @@ effect recovery.
    discovery and Git object access scrub inherited repository-routing,
    worktree/object-store and index overrides before invoking Git; only the
    preparation-owned temporary `GIT_INDEX_FILE` is reintroduced where needed.
-3. Preparation requires an existing proposed tree delta, runs
-   `./ci/style --fix`, then runs one repository-owned focused verification
-   profile with `shell=False`. The external CLI accepts only the closed profile
-   vocabulary `policy`, `security-fast`, `fast`, `regression`, `smoke`,
-   and `extended`; each profile maps to a static `./ci/verify <suite>` argv.
-   Caller input cannot choose an executable or arbitrary verification arguments.
-   The implementation-private `prepare()` boundary accepts the same closed
+3. Preparation requires an existing proposed tree delta. Before any preparation
+   authority is executed, the proposed temporary-index view must show
+   `ci/style` and `ci/verify` unchanged from the exact parent; a candidate
+   that changes either authority fails closed rather than self-authorizing its
+   own formatter or verifier. Authority evolution requires a separately
+   admitted path. Preparation then runs `./ci/style --fix` and one
+   repository-owned focused verification profile with `shell=False`. The
+   external CLI accepts only the closed profile vocabulary `policy`,
+   `security-fast`, `fast`, `regression`, `smoke`, and `extended`;
+   each profile maps to a static `./ci/verify <suite>` argv. Caller input
+   cannot choose an executable or arbitrary verification arguments. The
+   implementation-private `prepare()` boundary accepts the same closed
    profile vocabulary; no lower layer accepts a caller-supplied command vector.
 4. Focused verification must not mutate the candidate. The prepared tree after
    normalization is measured before and after the focused command; any change
@@ -88,8 +93,9 @@ effect recovery.
 5. Preparation then runs `./ci/style --check` and verifies the exact prepared
    temporary index with `git diff --cached --check`.
 6. The successful receipt binds at least parent commit/tree, prepared tree,
-   prepared binary-diff SHA-256, changed paths, `ci/style` SHA-256, observed Ruff
-   version, focused profile plus its logical repository-owned command identity,
+   prepared binary-diff SHA-256, changed paths, parent-bound `ci/style` and
+   `ci/verify` SHA-256 identities, observed Ruff version, focused profile plus
+   its logical repository-owned command identity,
    and zero exit status for every required step. The
    receipt carries a canonical SHA-256 over its own payload and records
    `PRE_CANDIDATE_RUFF_CATCH` when normalization changed the proposed tree,
@@ -124,6 +130,9 @@ The change must retain executable evidence that:
   verifier observes the normalized candidate;
 - the external CLI rejects arbitrary command execution by accepting only the
   closed repository-owned focused-profile vocabulary;
+- a candidate that changes `ci/style` or `ci/verify` relative to the bound
+  parent is rejected before either preparation authority executes;
+- successful receipts bind both preparation-authority SHA-256 identities;
 - untracked additions and deletions are included in the prepared tree/diff;
 - focused verification mutation is rejected;
 - stale parent, failed normalization/check, failed focused verification, and
