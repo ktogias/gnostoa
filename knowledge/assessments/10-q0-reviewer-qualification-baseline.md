@@ -103,7 +103,7 @@ reacquired by the #15 orchestration layer.
 ## Protected-runtime activation boundary
 
 The live protected current-advisory outer runtime is revision
-`315487e7a67635ebf3ec3f70f666ef41646102e1`. Its embedded protected-bundle schema
+`315487e7a67635ebf3ec3f70f666ef41646102e1` <!-- pragma: allowlist secret -- public Git commit identity retained for protected runtime binding -->. Its embedded protected-bundle schema
 accepts only an empty qualification array.
 
 Therefore PR #305 is a **dormant capability preparation**, not the protected
