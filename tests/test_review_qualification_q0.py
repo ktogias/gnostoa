@@ -410,9 +410,7 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
         input_document["authority"]["policy_digest"] = canonical_digest(policy_document)
         _refresh_qualification_digest(input_document)
 
-        code, payload = review_check.evaluate_documents(
-            input_document, policy_document
-        )
+        code, payload = review_check.evaluate_documents(input_document, policy_document)
 
         self.assertEqual(3, code)
         self.assertEqual("INCOMPLETE", payload["outcome"])
