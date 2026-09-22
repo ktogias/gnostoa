@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-from contextlib import contextmanager
 import json
 import os
 import re
@@ -11,6 +10,7 @@ import subprocess  # nosec B404 -- audited subprocess boundary in _run
 import sys
 import tempfile
 from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
