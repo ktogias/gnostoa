@@ -3,8 +3,9 @@ from __future__ import annotations
 import copy
 import json
 import unittest
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, cast
+from typing import Any, cast
 
 from jsonschema import Draft202012Validator
 
