@@ -102,9 +102,11 @@ reacquired by the #15 orchestration layer.
 
 ## Protected-runtime activation boundary
 
-The live protected current-advisory outer runtime is revision
-`315487e7a67635ebf3ec3f70f666ef41646102e1` <!-- pragma: allowlist secret -- public Git commit identity retained for protected runtime binding -->. Its embedded protected-bundle schema
-accepts only an empty qualification array.
+The live protected current-advisory outer runtime is identified by the current
+protected bundle at `authority.expected_judge.source_revision`. Its embedded
+protected-bundle schema accepts only an empty qualification array. Q0a therefore
+binds to that authority field rather than copying its Git revision into the
+candidate baseline.
 
 Therefore PR #305 is a **dormant capability preparation**, not the protected
 qualification effect:
