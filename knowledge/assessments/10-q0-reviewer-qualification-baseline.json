@@ -136,24 +136,30 @@
         "github_review_state": "COMMENTED",
         "normalized_recommendation": "COMMENT_ONLY",
         "currently_quorum_advancing": false,
-        "qualification_status": "candidate_in_admitted_q0_snapshot"
+        "qualification_status": "candidate_in_admitted_q0_snapshot",
+        "recommendation_acceptable": false,
+        "qualified_in_candidate_snapshot": true
       },
       {
         "reviewer_id": "gitar-bot[bot]",
         "github_review_state": "COMMENTED",
         "normalized_recommendation": "COMMENT_ONLY",
         "currently_quorum_advancing": false,
-        "qualification_status": "candidate_in_admitted_q0_snapshot"
+        "qualification_status": "candidate_in_admitted_q0_snapshot",
+        "recommendation_acceptable": false,
+        "qualified_in_candidate_snapshot": true
       },
       {
         "reviewer_id": "bito-code-review[bot]",
         "github_review_state": "APPROVED",
         "normalized_recommendation": "APPROVE",
-        "currently_quorum_advancing": true,
-        "qualification_status": "observed_approval_surface_not_in_admitted_q0_snapshot"
+        "currently_quorum_advancing": false,
+        "qualification_status": "observed_approval_surface_not_in_admitted_q0_snapshot",
+        "recommendation_acceptable": true,
+        "qualified_in_candidate_snapshot": false
       }
     ],
-    "current_result": "SECOND_APPROVAL_CAPABLE_QUALIFIED_DOMAIN_UNESTABLISHED",
-    "rule": "Qualification never upgrades COMMENT_ONLY into APPROVE. The admitted Q0 candidate snapshot remains CodeRabbit + Gitar; Bito's observed APPROVED surface is retained as source evidence only and does not become qualification authority without a separate admitted update. Protected quorum still needs two distinct qualified domains with exact-head active APPROVE evidence."
+    "current_result": "POLICY_ACCEPTABLE_TWO_DOMAIN_QUALIFIED_COHORT_UNESTABLISHED",
+    "rule": "Qualification and recommendation eligibility are conjunctive. CodeRabbit and Gitar are in the admitted Q0 candidate snapshot but their observed formal GitHub COMMENTED reviews normalize to COMMENT_ONLY; Bito has an observed policy-acceptable APPROVE surface but is not in the admitted qualification snapshot. Therefore none of these observed surfaces currently advances protected quorum, and two distinct qualified domains with exact-head active APPROVE evidence are still required."
   }
 }
