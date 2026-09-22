@@ -77,8 +77,16 @@ class CandidatePreparationContractTests(unittest.TestCase):
         verify.write_text(
             "#!/bin/sh\n"
             "set -eu\n"
-            "case \"$1\" in\n"
-            "  fast) grep -q '^value = 1        CandidatePreparationContractTests._git(root, "add", ".")
+            'case "$1" in\n'
+            "  fast) grep -q '^value = 1$' candidate.py ;;\n"
+            "  policy|security-fast|regression|smoke|extended) exit 0 ;;\n"
+            "  *) exit 2 ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        verify.chmod(0o755)
+        (root / "base.txt").write_text("base\n", encoding="utf-8")
+        CandidatePreparationContractTests._git(root, "add", ".")
         CandidatePreparationContractTests._git(root, "commit", "--quiet", "-m", "base")
         return CandidatePreparationContractTests._git(root, "rev-parse", "HEAD")
 
