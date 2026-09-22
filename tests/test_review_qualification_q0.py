@@ -4,7 +4,7 @@ import copy
 import json
 import unittest
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Callable, cast
 
 from jsonschema import Draft202012Validator
 
@@ -109,6 +109,15 @@ def _refresh_qualification_digest(input_document: dict[str, Any]) -> None:
     if not isinstance(authority, dict):
         raise AssertionError("authority must be an object")
     authority["qualification_snapshot_digest"] = canonical_digest(qualification)
+
+
+def _stale_qualification(
+    entries: list[dict[str, Any]],
+    qualification: dict[str, Any],
+) -> None:
+    qualification["observed_at"] = "2026-09-10T00:00:00Z"
+    for entry in entries:
+        entry["observed_at"] = "2026-09-10T00:00:00Z"
 
 class ReviewerQualificationQ0Tests(unittest.TestCase):
     def test_q0_candidate_baseline_names_exact_minimal_two_domain_cohort(
@@ -238,7 +247,12 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
     def test_q0_fail_closed_semantics_preserve_owner_scope_status_and_freshness_gates(
         self,
     ) -> None:
-        cases: list[tuple[str, Any]] = [
+        cases: list[
+            tuple[
+                str,
+                Callable[[list[dict[str, Any]], dict[str, Any]], None],
+            ]
+        ] = [
             (
                 "owner-excluded",
                 lambda entries, qualification: entries[0].update(\n                    owner_relation="owner"\n                ),
@@ -259,16 +273,7 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
                     status="unestablished"
                 ),
             ),
-            (
-                "stale-snapshot",
-                lambda entries, qualification: (
-                    qualification.update(observed_at="2026-09-10T00:00:00Z"),
-                    [
-                        entry.update(observed_at="2026-09-10T00:00:00Z")
-                        for entry in entries
-                    ],
-                ),
-            ),
+            ("stale-snapshot", _stale_qualification),
         ]
 
         for name, mutate in cases:
