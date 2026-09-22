@@ -16,6 +16,9 @@ from tools.review_policy import resolve_project_policy
 
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLE_PATH = ROOT / "tasks" / "issue-11-r2a-current-advisory.json"
+CONSUMER_AUTHORITY_PATH = (
+    ROOT / "tasks" / "issue-11-r2a-current-advisory-consumer.json"
+)
 BUNDLE_SCHEMA_PATH = ROOT / "schemas" / "review-protected-authority-bundle.schema.json"
 BASELINE_PATH = (
     ROOT / "knowledge" / "assessments" / "10-q0-reviewer-qualification-baseline.json"
@@ -28,7 +31,8 @@ Q0_OBSERVED_AT = "2026-09-22T05:50:00Z"
 Q0_SNAPSHOT_ID = "gnostoa-r2a-qualification-q0-5771806967"
 Q0_REVISION = "5771806967"
 CURRENT_OUTER_RUNTIME_BINDING = (
-    "tasks/issue-11-r2a-current-advisory.json:authority.expected_judge.source_revision"
+    "tasks/issue-11-r2a-current-advisory-consumer.json:"
+    "expected_consumer.source_revision"
 )
 Q0_ENTRIES = [
     {
@@ -210,6 +214,29 @@ class ReviewerQualificationQ0Tests(unittest.TestCase):
         self.assertEqual(
             "POLICY_ACCEPTABLE_TWO_DOMAIN_QUALIFIED_COHORT_UNESTABLISHED",
             progression["current_result"],
+        )
+
+    def test_q0_activation_binding_targets_outer_consumer_not_inner_judge(
+        self,
+    ) -> None:
+        baseline = _load(BASELINE_PATH)
+        live_bundle = _load(BUNDLE_PATH)
+        consumer_authority = _load(CONSUMER_AUTHORITY_PATH)
+
+        expected_consumer = consumer_authority["expected_consumer"]
+        acquired_consumer = consumer_authority["acquired_consumer"]
+        self.assertEqual(expected_consumer, acquired_consumer)
+        self.assertEqual(
+            "current_advisory_outer_consumer",
+            expected_consumer["role"],
+        )
+        self.assertNotEqual(
+            live_bundle["authority"]["expected_judge"]["source_revision"],
+            expected_consumer["source_revision"],
+        )
+        self.assertEqual(
+            CURRENT_OUTER_RUNTIME_BINDING,
+            baseline["activation"]["current_outer_runtime_binding"],
         )
 
     def test_q0_source_schema_can_validate_future_nonempty_protected_snapshot(
