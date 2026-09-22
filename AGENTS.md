@@ -115,8 +115,10 @@ closed. The path rejects candidate changes to `ci/prepare-candidate`,
 `ci/style`, `ci/verify`, `tools/candidate_prepare.py`, or any
 `pyproject.toml`/`ruff.toml`/`.ruff.toml` unless authority evolution is
 separately admitted. It materializes the exact proposed tree into a disposable
-workspace and runs `ci/style --fix` with unsafe Python path injection disabled,
-so a candidate `ruff.py`/`ruff` package cannot shadow the installed Ruff.
+workspace and runs `ci/style --fix` with unsafe Python path injection disabled.
+The active interpreter's unresolved directory stays first on `PATH`, preserving
+a virtualenv's Python/Ruff installation while preventing a candidate
+`ruff.py`/`ruff` package from shadowing it.
 It restores the normalized tree, then runs the allowlisted
 `ci/verify` profile and final `ci/style --check`. Source-worktree-only
 ignored/untracked files and concurrent caller edits are not part of verification. Candidate symlinks are rejected
@@ -126,10 +128,12 @@ verification arguments; supported profiles are `policy`,
 `security-fast`, `fast`, `regression`, `smoke`, and `extended`.
 
 The preparation command prints a JSON receipt object containing
-`receipt_sha256` and a namespaced `retention_ref`; retain the digest identity
-outside the receipt bytes in the trusted preparation handoff. The retention ref
-keeps the prepared tree reachable through Git garbage collection until
-publication or explicit receipt expiry. The digest is integrity
+`receipt_sha256` and a receipt-unique namespaced `retention_ref`; retain the
+digest identity outside the receipt bytes in the trusted preparation handoff.
+Each receipt gets its own
+`refs/gnostoa/prepared/<parent>/<tree>/<nonce>` GC root, so releasing one
+receipt cannot unroot another receipt for the same tree. The ref keeps the
+prepared tree reachable until publication or explicit receipt expiry. The digest is integrity
 evidence, not producer authentication or bearer authority. To inspect/consume a
 receipt, supply the separately retained identity:
 

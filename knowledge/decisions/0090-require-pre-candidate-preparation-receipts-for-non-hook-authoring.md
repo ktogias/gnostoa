@@ -94,9 +94,11 @@ non-hook authoring without importing a general orchestration subsystem.
    from the exact parent through the isolated index; both tree identities and
    changed-path sets must match, and source `HEAD` is revalidated after each
    capture and again after isolated verification. Candidate blobs/trees are
-   written to the source object store, but a successful normalized tree is also
-   rooted under `refs/gnostoa/prepared/<tree-sha>` before the receipt is
-   emitted so repository garbage collection cannot prune the receipt's tree. The source `.git/info/exclude` file is copied once as
+   written to the source object store, but every successful receipt also gets
+   its own root under
+   `refs/gnostoa/prepared/<parent-sha>/<tree-sha>/<receipt-nonce>` before the
+   receipt is emitted. Separate receipts never share a GC root, so releasing one
+   cannot make another receipt's prepared tree unreachable. The source `.git/info/exclude` file is copied once as
    an immutable snapshot into the disposable metadata so local scratch/secrets
    remain excluded without reopening mutable source configuration. Candidate
    staging, checkout, diffing and workspace Git commands never load the source
@@ -117,7 +119,8 @@ non-hook authoring without importing a general orchestration subsystem.
 4. Preparation runs `./ci/style --fix` in that isolated worktree under a
    trusted Python environment: inherited `PYTHONPATH`/`PYTHONHOME` are
    removed, unsafe-path insertion is disabled, user-site loading is disabled,
-   and the active interpreter directory is placed first on `PATH`. This keeps
+   and the active interpreter's **unresolved** directory (including a virtualenv
+   `bin` directory) is placed first on `PATH`. This keeps
    `python -m ruff` bound to the installed Ruff distribution rather than a
    candidate-supplied `ruff.py` or `ruff` package. Preparation stages the
    normalized result, then cleans ignored/untracked residue and restores exactly
@@ -137,7 +140,9 @@ non-hook authoring without importing a general orchestration subsystem.
    container route is unavailable; the caller records that reason. Provider CI
    remains the authoritative independent check.
 7. The successful receipt binds at least parent commit/tree, prepared tree,
-   its persistent `refs/gnostoa/prepared/<tree-sha>` retention root, prepared
+   its receipt-unique
+   `refs/gnostoa/prepared/<parent-sha>/<tree-sha>/<receipt-nonce>` retention
+   root, prepared
    binary-diff SHA-256, changed paths, parent-bound `ci/style` and
    `ci/verify` SHA-256 identities, observed Ruff version, focused profile plus
    its logical repository-owned command identity, and zero exit status for every
@@ -186,9 +191,11 @@ The change must retain executable evidence that:
   configuration input relative to the bound parent is rejected before
   preparation authority executes;
 - successful receipts bind both preparation-authority SHA-256 identities and a
-  deterministic prepared-tree retention ref; the retained tree survives
-  repository garbage collection until explicit trusted release;
-- trusted style execution cannot import a candidate-shadowed Ruff module;
+  receipt-unique prepared-tree retention ref; two receipts for the same tree
+  remain independently rooted, and the retained tree survives repository
+  garbage collection until each receipt's explicit trusted release;
+- trusted style execution cannot import a candidate-shadowed Ruff module and
+  preserves the active virtualenv interpreter/Ruff installation;
 - untracked additions and deletions are included in the prepared tree/diff;
 - focused verification mutation is rejected;
 - stale parent, failed normalization/check, failed focused verification, and
@@ -212,8 +219,8 @@ API/agent authoring gains an exact-tree pre-candidate normalization boundary
 without making hooks mandatory or weakening provider CI. Receipt consumption is
 bound to a separately retained trusted identity, but the portable receipt is
 still evidence rather than producer authentication. Preparation also creates one
-namespaced local retention ref per prepared tree; consumers release that ref only
-after publication or explicit receipt expiry. Provider-specific write
+namespaced local retention ref per **receipt**; consumers release only that
+receipt's ref after publication or explicit receipt expiry. Provider-specific write
 effects and writer fencing remain deliberately outside this slice under
 #15/#308 and must preserve the preparation trust boundary when implemented.
 

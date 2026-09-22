@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess  # nosec B404 -- audited subprocess boundary in _run
 import sys
@@ -17,6 +18,12 @@ from typing import Any
 RECEIPT_SCHEMA = "gnostoa-candidate-preparation-receipt/v1"
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
+_RETENTION_REF = re.compile(
+    r"^refs/gnostoa/prepared/"
+    r"(?P<parent>[0-9a-f]{40})/"
+    r"(?P<tree>[0-9a-f]{40})/"
+    r"(?P<nonce>[0-9a-f]{32})$"
+)
 _GIT = shutil.which("git")
 _GIT_ENVIRONMENT_VARIABLES = (
     "GIT_DIR",
@@ -112,7 +119,7 @@ def _trusted_python_env(env: dict[str, str] | None = None) -> dict[str, str]:
         trusted.pop(name, None)
     trusted["PYTHONSAFEPATH"] = "1"
     trusted["PYTHONNOUSERSITE"] = "1"
-    python_dir = str(Path(sys.executable).resolve().parent)
+    python_dir = str(Path(sys.executable).parent)
     trusted["PATH"] = os.pathsep.join((python_dir, os.defpath))
     return trusted
 
@@ -273,45 +280,46 @@ def _source_object_directory(root: Path) -> Path:
     return objects
 
 
-def _prepared_tree_ref(tree: str) -> str:
+def _prepared_tree_ref(parent: str, tree: str, nonce: str) -> str:
+    if _SHA40.fullmatch(parent) is None:
+        raise PrepareError("prepared-tree parent identity is invalid")
     if _SHA40.fullmatch(tree) is None:
         raise PrepareError("prepared tree identity is invalid")
-    return f"refs/gnostoa/prepared/{tree}"
+    if re.fullmatch(r"[0-9a-f]{32}", nonce) is None:
+        raise PrepareError("prepared-tree retention nonce is invalid")
+    return f"refs/gnostoa/prepared/{parent}/{tree}/{nonce}"
 
 
-def _read_ref(root: Path, ref: str) -> str | None:
-    completed = _run(
-        [_git_executable(), "show-ref", "--verify", "--hash", ref],
+def _retention_ref_matches(ref: object, parent: str, tree: str) -> bool:
+    if not isinstance(ref, str):
+        return False
+    match = _RETENTION_REF.fullmatch(ref)
+    return bool(
+        match
+        and match.group("parent") == parent
+        and match.group("tree") == tree
+    )
+
+
+def _retain_prepared_tree(root: Path, parent: str, tree: str) -> str:
+    ref = _prepared_tree_ref(parent, tree, secrets.token_hex(16))
+    created = _run(
+        [_git_executable(), "update-ref", ref, tree, "0" * 40],
         cwd=root,
         check=False,
     )
-    if completed.returncode == 1:
-        return None
-    if completed.returncode != 0:
-        raise PrepareError("unable to inspect prepared-tree retention ref")
-    return completed.stdout.decode("utf-8", errors="strict").strip()
-
-
-def _retain_prepared_tree(root: Path, tree: str) -> str:
-    ref = _prepared_tree_ref(tree)
-    current = _read_ref(root, ref)
-    if current is None:
-        created = _run(
-            [_git_executable(), "update-ref", ref, tree, "0" * 40],
-            cwd=root,
-            check=False,
-        )
-        if created.returncode != 0:
-            current = _read_ref(root, ref)
-            if current != tree:
-                raise PrepareError("unable to retain prepared tree")
-    elif current != tree:
-        raise PrepareError("prepared-tree retention ref mismatch")
+    if created.returncode != 0:
+        raise PrepareError("unable to retain prepared tree")
     return ref
 
 
-def _release_prepared_tree(root: Path, ref: str, tree: str) -> None:
-    if ref != _prepared_tree_ref(tree):
+def _release_prepared_tree(
+    root: Path,
+    ref: str,
+    parent: str,
+    tree: str,
+) -> None:
+    if not _retention_ref_matches(ref, parent, tree):
         raise PrepareError("prepared-tree retention ref is invalid")
     released = _run(
         [_git_executable(), "update-ref", "-d", ref, tree],
@@ -320,7 +328,6 @@ def _release_prepared_tree(root: Path, ref: str, tree: str) -> None:
     )
     if released.returncode != 0:
         raise PrepareError("unable to release prepared tree")
-
 
 def _isolated_git_env(git_dir: Path, worktree: Path) -> dict[str, str]:
     env = _base_env()
@@ -697,7 +704,11 @@ def prepare(
         # The source parent must remain stable for the full capture/verification
         # interval. Later source-worktree edits cannot affect the isolated tree.
         _assert_head(root, parent_commit)
-        retention_ref = _retain_prepared_tree(root, normalized_tree)
+        retention_ref = _retain_prepared_tree(
+            root,
+            parent_commit,
+            normalized_tree,
+        )
 
     payload: dict[str, Any] = {
         "schema": RECEIPT_SCHEMA,
@@ -728,7 +739,12 @@ def prepare(
     try:
         return _write_receipt(receipt, payload)
     except (OSError, TypeError, ValueError):
-        _release_prepared_tree(root, retention_ref, normalized_tree)
+        _release_prepared_tree(
+            root,
+            retention_ref,
+            parent_commit,
+            normalized_tree,
+        )
         raise
 
 
@@ -831,7 +847,11 @@ def verify_receipt(
     _validate_receipt_focused_command(document)
     _require_sha40(document, "parent_tree")
     prepared_tree = _require_sha40(document, "prepared_tree")
-    if document.get("retention_ref") != _prepared_tree_ref(prepared_tree):
+    if not _retention_ref_matches(
+        document.get("retention_ref"),
+        expected_parent,
+        prepared_tree,
+    ):
         raise PrepareError("receipt retention ref is invalid")
     _require_sha256(document, "prepared_diff_sha256")
     _require_sha256(document, "style_sha256")
@@ -857,7 +877,12 @@ def release_receipt(
     retention_ref = document.get("retention_ref")
     if not isinstance(retention_ref, str):
         raise PrepareError("receipt retention ref is invalid")
-    _release_prepared_tree(root, retention_ref, expected_tree)
+    _release_prepared_tree(
+        root,
+        retention_ref,
+        expected_parent,
+        expected_tree,
+    )
     return {
         "schema": "gnostoa-candidate-preparation-release/v1",
         "parent_commit": expected_parent,

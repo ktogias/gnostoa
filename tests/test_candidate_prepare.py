@@ -170,9 +170,12 @@ class CandidatePreparationContractTests(unittest.TestCase):
             )
             self.assertRegex(payload["style_sha256"], r"^sha256:[0-9a-f]{64}$")
             self.assertRegex(payload["verify_sha256"], r"^sha256:[0-9a-f]{64}$")
-            self.assertEqual(
-                f"refs/gnostoa/prepared/{payload['prepared_tree']}",
+            self.assertRegex(
                 payload["retention_ref"],
+                (
+                    rf"^refs/gnostoa/prepared/{parent}/"
+                    rf"{payload['prepared_tree']}/[0-9a-f]{{32}}$"
+                ),
             )
             self.assertEqual(
                 payload["prepared_tree"],
@@ -361,6 +364,24 @@ class CandidatePreparationContractTests(unittest.TestCase):
                     check=False,
                 )
             self.assertEqual(0, completed.returncode, completed.stderr)
+
+    def test_trusted_python_env_keeps_virtualenv_bin_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            venv_bin = root / "venv" / "bin"
+            venv_bin.mkdir(parents=True)
+            python_link = venv_bin / "python"
+            python_link.symlink_to(Path(candidate_prepare.sys.executable))
+            with patch.object(
+                candidate_prepare.sys,
+                "executable",
+                str(python_link),
+            ):
+                env = candidate_prepare._trusted_python_env()
+            self.assertEqual(
+                str(venv_bin),
+                env["PATH"].split(os.pathsep)[0],
+            )
 
     def test_prepare_does_not_admit_ignored_source_worktree_state(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -597,6 +618,50 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 text=True,
             )
             self.assertNotEqual(0, ref.returncode)
+
+    def test_same_tree_receipts_hold_independent_retention_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            first_receipt = self._receipt()
+            second_receipt = self._receipt()
+            first = self._prepare(root, parent, first_receipt)
+            second = self._prepare(root, parent, second_receipt)
+
+            self.assertEqual(first["prepared_tree"], second["prepared_tree"])
+            self.assertNotEqual(first["retention_ref"], second["retention_ref"])
+
+            with patch.object(
+                candidate_prepare,
+                "_repository_root",
+                return_value=root,
+            ):
+                candidate_prepare.release_receipt(
+                    first_receipt,
+                    parent,
+                    first["prepared_tree"],
+                    first["receipt_sha256"],
+                )
+            self.assertEqual(
+                second["prepared_tree"],
+                self._git(root, "rev-parse", second["retention_ref"]),
+            )
+            self._git(root, "reflog", "expire", "--expire=now", "--all")
+            self._git(root, "gc", "--prune=now")
+            self._git(root, "cat-file", "-e", second["prepared_tree"])
+
+            with patch.object(
+                candidate_prepare,
+                "_repository_root",
+                return_value=root,
+            ):
+                candidate_prepare.release_receipt(
+                    second_receipt,
+                    parent,
+                    second["prepared_tree"],
+                    second["receipt_sha256"],
+                )
 
     def test_cli_verify_consumes_exact_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
