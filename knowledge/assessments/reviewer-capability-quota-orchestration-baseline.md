@@ -167,13 +167,17 @@ is the first implementation-private registry snapshot. It intentionally has no
 standalone lifecycle/promotion flag: the protected repository revision and
 Decision 0087 determine whether a registry revision is operative, and a
 standalone JSON status token must not manufacture review or integration
-authority. Version `v0.16` exposes one planner-facing shape rather than
+authority. Version `v0.17` exposes one planner-facing shape rather than
 provider-specific field names.
 
 Every provider has the same typed `capabilities.manual_trigger` contract:
 `channel`, `dispatch_kind`, `command`, `action`,
 `configuration_path`, `isolation`, `instruction_mode`,
 `instruction_template`, `dispatch_safety`, stable `route_id` and `alternatives`.
+`dispatch_safety` belongs to the registry's closed top-level
+`dispatch_safety_vocabulary`; arbitrary provider-specific labels are invalid.
+Vocabulary membership classifies a route but never grants dispatch authority:
+all dispatch-kind, isolation, current-readback and lifecycle gates still apply.
 Alternatives use the same normalized dispatch payload plus a `purpose` and their
 own stable `route_id`. Ready-triggered automatic/configurable review is a
 separate lifecycle surface and, when attributable, has its own stable
@@ -189,7 +193,7 @@ configuration path or sentinel as GitHub comment syntax.
 Every volatile provider fact belongs in one `observations[]` array. Each
 observation has the same fields and an explicit `scope` of `account`,
 `repository` or `subject`; absent values are `null`, not alternate
-top-level keys. Version `v0.16` separates the operational dimensions inside every
+top-level keys. Version `v0.17` separates the operational dimensions inside every
 observation:
 
 - `status` records the observed provider event or outcome and may therefore be
@@ -227,7 +231,7 @@ instead of guessed precedence. A newer `FAILED` or `TIMED_OUT` attempt also
 stales older cached `AVAILABLE` for automatic dispatch without asserting
 `UNAVAILABLE`.
 
-Version `v0.16` keeps freshness deterministic by refusing to invent a TTL:
+Version `v0.17` keeps freshness deterministic by refusing to invent a TTL:
 retained registry observations are historical scheduling hints, not sufficient
 current provider truth for automatic dispatch. Before a scarce route is
 automatically dispatched, eligibility and the current non-sensitive scope identity
@@ -253,7 +257,7 @@ immutable provider/request identity already bound to it). A mutable
 presence is never enough. Conversely, an explicit exact-head SHA in a provider
 summary/footer/source URL is attributable provider/head activity even when the
 specific retained `route_id` cannot be recovered; that provider-level activity
-still suppresses sibling activation. v0.16 represents this with a typed
+still suppresses sibling activation. v0.17 represents this with a typed
 `provider_activation_scan` carrying provider, cut, exact subject, scan time,
 completeness and `PRESENT|ABSENT|AMBIGUOUS` state. Only a **COMPLETE ABSENT**
 scan may establish negative activation evidence.
@@ -315,7 +319,7 @@ configuration paths and interactive/manual routes use their own fields.
 The registry therefore retains an explicit `instruction_mode` and optional
 `instruction_template`. CodeAnt's observed comment shape is represented as
 `{command}\n\n{instructions}`, where `instructions` is bounded,
-caller-supplied text rather than provider folklore. Version `v0.16` makes the
+caller-supplied text rather than provider folklore. Version `v0.17` makes the
 bound deterministic: normalize CRLF/CR to LF, allow HT/LF as the only control
 characters, reject other C0/C1 controls and the reserved caller literals
 `{command}` / `{instructions}`, and cap the normalized UTF-8 payload at
@@ -359,7 +363,7 @@ review could be requested in **13h03m**, retained as a
 `2026-09-21T21:26:00Z` retry prediction. A successful formal review was then
 observed at `2026-09-21T18:55:52Z`, proving historically that review capacity
 was usable by that later event. However, the retained account observations have
-`scope_identity=null`, so v0.16 deliberately forbids machine supersession or
+`scope_identity=null`, so v0.17 deliberately forbids machine supersession or
 current dispatch authorization from those records alone; current scheduling
 requires fresh account/provider read-back in the planning cut. The
 automatic-per-PR limit and rolling account availability remain separate quota
@@ -395,7 +399,7 @@ reviewed-line plans; reviewed-line usage resets with the billing period,
 incremental reviews count newly reviewed lines, and manual reruns count again.
 Gnostoa directly observed quota refusal at 40,037/40,000 reviewed lines and later
 at a higher account allowance. The later provider message supplied only the
-resume **date** `2026-10-15`, not an attributable instant, so v0.16 retains that
+resume **date** `2026-10-15`, not an attributable instant, so v0.17 retains that
 coarse value in observation details and keeps normalized `retry_after=null`.
 Current availability must still be reacquired before dispatch.
 
@@ -716,7 +720,7 @@ Accordingly:
 The next implementation should be a **read-only review planner**, not a
 dispatcher.
 
-Version `v0.16` makes freshness, activation, route identity and protected
+Version `v0.17` makes freshness, activation, route identity and protected
 assurance inputs explicit:
 
 - a planning cut carries `cut_id`, exact RFC3339 `as_of`, and the exact
