@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
-import subprocess
+import subprocess  # nosec B404 -- bounded fixture subprocess boundary
 import sys
 import tempfile
 import unittest
@@ -21,9 +22,10 @@ if not GIT:
 class CandidatePreparationContractTests(unittest.TestCase):
     @staticmethod
     def _git(root: Path, *arguments: str) -> str:
-        completed = subprocess.run(
+        completed = subprocess.run(  # nosemgrep  # nosec B603
             [GIT, *arguments],
             cwd=root,
+            env=candidate_prepare._base_env(),
             check=True,
             capture_output=True,
             text=True,
@@ -84,23 +86,17 @@ class CandidatePreparationContractTests(unittest.TestCase):
             root = Path(directory)
             self._repository(root)
             (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
-            style = subprocess.run(
+            style = subprocess.run(  # nosemgrep  # nosec B603
                 [str(root / "ci" / "style"), "--check"],
                 cwd=root,
+                env=candidate_prepare._base_env(),
                 check=False,
                 capture_output=True,
                 text=True,
             )
             self.assertNotEqual(0, style.returncode)
             self._git(root, "add", "candidate.py")
-            completed = subprocess.run(
-                [GIT, "commit", "--quiet", "-m", "unprepared candidate"],
-                cwd=root,
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-            self.assertEqual(0, completed.returncode, completed.stderr)
+            self._git(root, "commit", "--quiet", "-m", "unprepared candidate")
             self.assertEqual(
                 "value=1\n",
                 (root / "candidate.py").read_text(encoding="utf-8"),
@@ -319,13 +315,29 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 ),
             )
 
+    def test_prepare_scrubs_inherited_git_repository_overrides(self) -> None:
+        poisoned = {
+            name: "poisoned-by-caller"
+            for name in candidate_prepare._GIT_ENVIRONMENT_VARIABLES
+        }
+        with patch.dict(os.environ, poisoned, clear=False):
+            sanitized = candidate_prepare._base_env()
+        for name in candidate_prepare._GIT_ENVIRONMENT_VARIABLES:
+            self.assertNotIn(name, sanitized)
+
     def test_ci_wrapper_routes_to_candidate_prepare_module(self) -> None:
         wrapper = ROOT / "ci" / "prepare-candidate"
         self.assertTrue(wrapper.is_file())
-        self.assertIn(
-            "python -m tools.candidate_prepare",
-            wrapper.read_text(encoding="utf-8"),
-        )
+        text = wrapper.read_text(encoding="utf-8")
+        self.assertIn('cd "$(dirname "$0")/.."', text)
+        self.assertIn("python -m tools.candidate_prepare", text)
+        with tempfile.TemporaryDirectory() as directory:
+            completed = candidate_prepare._run(
+                [str(wrapper), "--help"],
+                cwd=Path(directory),
+                check=False,
+            )
+        self.assertEqual(0, completed.returncode, completed.stderr)
 
 
 if __name__ == "__main__":

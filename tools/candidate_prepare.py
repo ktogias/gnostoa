@@ -6,7 +6,7 @@ import json
 import os
 import re
 import shutil
-import subprocess
+import subprocess  # nosec B404 -- audited subprocess boundary in _run
 import sys
 import tempfile
 from collections.abc import Sequence
@@ -17,6 +17,16 @@ RECEIPT_SCHEMA = "gnostoa-candidate-preparation-receipt/v1"
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 _GIT = shutil.which("git")
+_GIT_ENVIRONMENT_VARIABLES = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_INDEX_FILE",
+    "GIT_CEILING_DIRECTORIES",
+    "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+)
 
 
 class PrepareError(RuntimeError):
@@ -48,6 +58,13 @@ def _git_executable() -> str:
     return _GIT
 
 
+def _base_env() -> dict[str, str]:
+    env = _base_env()
+    for name in _GIT_ENVIRONMENT_VARIABLES:
+        env.pop(name, None)
+    return env
+
+
 def _run(
     command: Sequence[str],
     *,
@@ -55,12 +72,13 @@ def _run(
     env: dict[str, str] | None = None,
     check: bool = True,
 ) -> subprocess.CompletedProcess[bytes]:
+    if env is None:
+        env = _base_env()
     # Every command is passed as an argv vector with shell=False. Git, ci/style,
     # and sys.executable are locally resolved. The only caller-provided executable
     # crosses _validate_focused_command(), which requires an absolute executable
     # file path. Quoting with shlex would corrupt argv because no shell is used.
-    # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
-    completed = subprocess.run(
+    completed = subprocess.run(  # nosemgrep  # nosec B603
         list(command),
         cwd=cwd,
         env=env,
@@ -134,7 +152,7 @@ def _assert_head(root: Path, parent: str) -> None:
 
 
 def _stage_candidate(root: Path, parent: str, index: Path) -> tuple[str, list[str]]:
-    env = dict(os.environ)
+    env = _base_env()
     env["GIT_INDEX_FILE"] = str(index)
     if not index.exists():
         _git_text(root, "read-tree", parent, env=env)
@@ -150,7 +168,7 @@ def _stage_candidate(root: Path, parent: str, index: Path) -> tuple[str, list[st
 
 
 def _binary_diff(root: Path, parent: str, index: Path) -> bytes:
-    env = dict(os.environ)
+    env = _base_env()
     env["GIT_INDEX_FILE"] = str(index)
     return _run(
         [
@@ -209,7 +227,7 @@ def prepare(
         if not proposed_paths:
             raise PrepareError("candidate has no changes relative to parent")
 
-        env = dict(os.environ)
+        env = _base_env()
         env["GIT_INDEX_FILE"] = str(index)
         _run([str(style), "--fix"], cwd=root, env=env)
         _assert_head(root, parent_commit)

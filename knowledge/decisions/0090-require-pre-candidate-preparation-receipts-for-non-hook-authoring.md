@@ -66,9 +66,14 @@ effect recovery.
 
 1. Add one Gnostoa-self `ci/prepare-candidate` surface backed by a small Python
    implementation. It is implementation-private and does not extend the public
-   toolkit CLI.
+   toolkit CLI. The wrapper resolves the repository root from its own location
+   before importing the implementation so invocation does not depend on the
+   caller's current working directory.
 2. Preparation binds one exact 40-character parent commit. The worktree `HEAD`
-   must equal that parent; stale-parent preparation fails closed.
+   must equal that parent; stale-parent preparation fails closed. Repository
+   discovery and Git object access scrub inherited repository-routing,
+   worktree/object-store and index overrides before invoking Git; only the
+   preparation-owned temporary `GIT_INDEX_FILE` is reintroduced where needed.
 3. Preparation requires an existing proposed tree delta, runs
    `./ci/style --fix`, then runs one caller-supplied focused verification command
    as an argv vector with `shell=False`. The executable path must be absolute and

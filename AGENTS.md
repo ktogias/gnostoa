@@ -105,8 +105,17 @@ runs the focused verification **after** normalization, requires its executable t
 use an absolute path, invokes argv with no shell, rejects verifier mutation, runs
 `git diff --cached --check`, and binds the exact parent and prepared Git tree in
 a digest-protected receipt. Before a Git-data/API adapter advances a
-candidate ref, consume `./ci/prepare-candidate verify` with that exact parent,
-tree and receipt. Do not publish a different tree under a successful receipt.
+candidate ref, consume:
+
+```bash
+./ci/prepare-candidate verify \
+  --parent <exact-40-character-parent-sha> \
+  --tree <exact-40-character-tree-sha> \
+  --receipt <path-outside-the-worktree>
+```
+
+with that exact parent, tree and receipt. Do not publish a different tree under
+a successful receipt.
 Ordinary hooks remain advisory early feedback; direct `ci/style --fix` alone is
 not a preparation receipt for non-hook authoring. Provider CI stays check-only
 and remains the non-bypassable verifier.
