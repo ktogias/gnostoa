@@ -487,6 +487,7 @@ def _candidate_workspace(
         _git_text(workspace, "checkout-index", "--all", "--force", env=env)
         yield workspace
 
+
 def _write_receipt(path: Path, payload: dict[str, Any]) -> dict[str, Any]:
     document = dict(payload)
     document["receipt_sha256"] = _digest(payload)
@@ -633,6 +634,7 @@ def prepare(
         ),
     }
     return _write_receipt(receipt, payload)
+
 
 def _load_receipt(receipt_path: Path) -> dict[str, Any]:
     try:
