@@ -116,10 +116,13 @@ git show "${parent}:ci/prepare-candidate" | \
 If the bound parent does not contain this authority, no trusted preparation
 receipt can be issued through this route; authority evolution/bootstrap must be
 handled by its separately admitted path rather than executing candidate bytes.
-When the documented host fallback needs a virtualenv or other trusted Python to
-supply Ruff, pass `--trusted-python /absolute/path/to/python`. The wrapper
-resolves the path, requires an executable outside the repository worktree, and
-still launches it with isolated mode (`-I`); it never reopens caller `PATH`.
+When the documented host fallback needs a virtualenv or other trusted
+interpreter environment with Ruff installed, pass
+`--trusted-python /absolute/path/to/python`. The wrapper validates both the
+resolved target and resolved containing directory outside the repository
+worktree, then invokes the supplied leaf through that validated directory so
+virtualenv discovery is preserved while still launching with isolated mode
+(`-I`); it never reopens caller `PATH` or user-site packages.
 
 Preparation captures the proposed delta through disposable Git metadata with
 trusted local configuration. Git object reads/writes are bound explicitly to

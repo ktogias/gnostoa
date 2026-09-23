@@ -90,7 +90,10 @@ if [ -n "$trusted_python" ]; then
   resolved_python="$("$bootstrap_python" -I -c \
     'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve(strict=True))' \
     "$trusted_python" 2>/dev/null || true)"
-  if [ -z "$resolved_python" ] || [ ! -f "$resolved_python" ] || [ ! -x "$resolved_python" ]; then
+  resolved_directory="$("$bootstrap_python" -I -c \
+    'from pathlib import Path; import sys; print(Path(sys.argv[1]).parent.resolve(strict=True))' \
+    "$trusted_python" 2>/dev/null || true)"
+  if [ -z "$resolved_python" ] || [ -z "$resolved_directory" ] || [ ! -f "$resolved_python" ] || [ ! -x "$resolved_python" ]; then
     echo "ERROR: --trusted-python must identify an executable file" >&2
     exit 2
   fi
@@ -100,7 +103,15 @@ if [ -n "$trusted_python" ]; then
       exit 2
       ;;
   esac
-  python_executable="$resolved_python"
+  case "$resolved_directory" in
+    "$root"|"$root"/*)
+      echo "ERROR: --trusted-python must be outside the repository worktree" >&2
+      exit 2
+      ;;
+  esac
+  # Validate the real target, but keep the invoked leaf in its validated
+  # directory so CPython can still discover a virtualenv's pyvenv.cfg.
+  python_executable="$resolved_directory/${trusted_python##*/}"
 fi
 
 temporary="$("$mktemp_executable" "${TMPDIR:-/tmp}/gnostoa-candidate-prepare.XXXXXX.py")"

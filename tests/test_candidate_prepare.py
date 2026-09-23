@@ -1310,6 +1310,72 @@ class CandidatePreparationContractTests(unittest.TestCase):
             )
         self.assertEqual(2, raised.exception.code)
 
+    def test_parent_wrapper_preserves_external_virtualenv_interpreter(self) -> None:
+        wrapper_text = (ROOT / "ci" / "prepare-candidate").read_text(
+            encoding="utf-8"
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "repo"
+            root.mkdir()
+            self._git(root, "init", "--quiet")
+            self._git(root, "config", "user.email", "candidate@example.invalid")
+            self._git(root, "config", "user.name", "Candidate Test")
+            (root / "ci").mkdir()
+            (root / "tools").mkdir()
+            (root / "ci" / "prepare-candidate").write_text(
+                wrapper_text,
+                encoding="utf-8",
+            )
+            (root / "tools" / "candidate_prepare.py").write_text(
+                "import sys\n"
+                "print(f'executable={sys.executable}')\n"
+                "print(f'in_venv={sys.prefix != sys.base_prefix}')\n",
+                encoding="utf-8",
+            )
+            self._git(root, "add", ".")
+            self._git(root, "commit", "--quiet", "-m", "trusted parent")
+            parent = self._git(root, "rev-parse", "HEAD")
+
+            trusted_venv = base / "trusted-venv"
+            trusted_bin = trusted_venv / "bin"
+            trusted_bin.mkdir(parents=True)
+            trusted_python = trusted_bin / "python"
+            trusted_python.symlink_to(candidate_prepare.sys.executable)
+            (trusted_venv / "pyvenv.cfg").write_text(
+                "home = "
+                + str(Path(candidate_prepare.sys.executable).resolve().parent)
+                + "\ninclude-system-site-packages = false\n",
+                encoding="utf-8",
+            )
+
+            parent_wrapper = base / "prepare-candidate"
+            parent_wrapper.write_text(wrapper_text, encoding="utf-8")
+            parent_wrapper.chmod(0o700)
+            # Audited: the executable is a private 0700 wrapper copy; the
+            # trusted interpreter is an external symlinked virtualenv leaf,
+            # argv is fixed, and shell parsing is disabled.
+            completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
+                [
+                    str(parent_wrapper),
+                    "verify",
+                    "--parent",
+                    parent,
+                    "--trusted-python",
+                    str(trusted_python),
+                ],
+                cwd=root,
+                env=_test_env(),
+                check=False,
+                shell=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(0, completed.returncode, completed.stderr)
+            self.assertIn(f"executable={trusted_python}", completed.stdout)
+            self.assertIn("in_venv=True", completed.stdout)
+
     def test_parent_wrapper_executes_parent_preparation_authority(self) -> None:
         wrapper = ROOT / "ci" / "prepare-candidate"
         self.assertTrue(wrapper.is_file())

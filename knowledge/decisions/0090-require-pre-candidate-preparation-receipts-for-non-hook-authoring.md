@@ -195,11 +195,15 @@ non-hook authoring without importing a general orchestration subsystem.
    intentionally invokes `ci/verify` directly inside the environment that hosts
    the isolated worktree instead of launching nested Docker. Direct host execution
    is the documented native fallback only when the container route is unavailable;
-   the caller records that reason. A host fallback that needs a virtualenv/user
-   installation for Ruff may supply `--trusted-python` explicitly. The wrapper
-   accepts only an absolute executable whose resolved path lies outside the
-   repository worktree, then still uses `-I`; the Python implementation merely
-   accepts the forwarded private option and cannot select its own interpreter.
+   the caller records that reason. A host fallback that needs a virtualenv or
+   other trusted interpreter environment with Ruff installed may supply
+   `--trusted-python` explicitly. The wrapper accepts only an absolute
+   executable, validates both its resolved target and resolved containing
+   directory outside the repository worktree, then invokes the supplied leaf
+   through that validated directory so virtualenv discovery remains intact while
+   still using `-I`. User-site packages remain disabled. The Python
+   implementation merely accepts the forwarded private option and cannot select
+   its own interpreter.
    Provider CI remains the authoritative independent check.
 7. The successful receipt binds at least parent commit/tree, prepared tree,
    its receipt-unique
