@@ -1,5 +1,5 @@
 ---
-type: Assessment
+type: Source
 title: Issues 309/313 analyzer-readback RED-first execution contract
 description: Predeclare failing contracts for the paired DeepSource and Codacy authenticated readback slice before production implementation.
 status: draft
