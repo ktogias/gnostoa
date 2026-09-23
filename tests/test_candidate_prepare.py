@@ -1370,7 +1370,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
             environment["PYTHONPATH"] = str(root)
             environment["PATH"] = str(poison_bin) + os.pathsep + environment["PATH"]
             environment["TMPDIR"] = str(bootstrap_tmp)
-            completed = subprocess.run(  # nosemgrep  # nosec B603
+            completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
                 [  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
                     "sh",
                     "-s",
