@@ -1,0 +1,66 @@
+name: Publish PR 314 hardening v2
+
+on:
+  push:
+    branches:
+      - ops/pr314-hardening-v2-2631
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pr314-hardening-v2-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout transport branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify and publish prepared tree
+        shell: bash
+        env:
+          PARENT: 2631a18b6c990a2c15f51526393e4162549463ce
+          EXPECTED_TREE: 454e1976fb553f0fea9b3777adb0fe2998d51bb4
+          EXPECTED_PATCH_SHA256: 7a253645ade2b46b1064183d780aefbbc7ace92297de0659b069f56e1259ce52
+          TARGET_BRANCH: analyzer-readback-309-313
+        run: |
+          set -euo pipefail
+
+          payload=.gnostoa-ops/pr314-hardening-v2.patch.gz.b64
+          patch_gz="${RUNNER_TEMP}/pr314-hardening-v2.patch.gz"
+          patch="${RUNNER_TEMP}/pr314-hardening-v2.patch"
+
+          test -f "${payload}"
+          base64 -d "${payload}" > "${patch_gz}"
+          gzip -dc "${patch_gz}" > "${patch}"
+          test "$(sha256sum "${patch}" | cut -d' ' -f1)" = "${EXPECTED_PATCH_SHA256}"
+
+          remote_head="$(git ls-remote origin "refs/heads/${TARGET_BRANCH}" | cut -f1)"
+          test "${remote_head}" = "${PARENT}"
+
+          git checkout --detach "${PARENT}"
+          git apply --index --binary "${patch}"
+          test "$(git write-tree)" = "${EXPECTED_TREE}"
+          git diff --cached --check "${PARENT}"
+
+          export GIT_AUTHOR_NAME="Gnostoa preparation"
+          export GIT_AUTHOR_EMAIL="noreply@invalid"
+          export GIT_COMMITTER_NAME="${GIT_AUTHOR_NAME}"
+          export GIT_COMMITTER_EMAIL="${GIT_AUTHOR_EMAIL}"
+
+          new_commit="$(
+            printf '%s\n\n%s\n'               'fix: complete analyzer readback hardening (#309 #313)'               'Refs #309, #313.'               | git commit-tree "${EXPECTED_TREE}" -p "${PARENT}"
+          )"
+          test "$(git rev-parse "${new_commit}^{tree}")" = "${EXPECTED_TREE}"
+          test "$(git rev-parse "${new_commit}^")" = "${PARENT}"
+
+          git push origin             "${new_commit}:refs/heads/${TARGET_BRANCH}"             --force-with-lease="refs/heads/${TARGET_BRANCH}:${PARENT}"
+
+          printf 'published_commit=%s\n' "${new_commit}"
