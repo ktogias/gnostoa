@@ -1,0 +1,90 @@
+diff --git a/knowledge/decisions/0091-add-authenticated-provider-neutral-analyzer-readback.md b/knowledge/decisions/0091-add-authenticated-provider-neutral-analyzer-readback.md
+index 2bd8f86..116da74 100644
+--- a/knowledge/decisions/0091-add-authenticated-provider-neutral-analyzer-readback.md
++++ b/knowledge/decisions/0091-add-authenticated-provider-neutral-analyzer-readback.md
+@@ -209,7 +209,7 @@ Any later provider mutation requires separate admission and Decision coverage.
+ 
+ ### 8. One bounded read-only execution surface
+ 
+-The repository-secret-backed live path is one implementation-private runner and
++The Environment-secret-backed live path is one implementation-private runner and
+ one manual GitHub Actions workflow, not provider-specific workflows.
+ 
+ The runner:
+diff --git a/tests/test_analyzer_readback.py b/tests/test_analyzer_readback.py
+index 0a608ec..9a501dc 100644
+--- a/tests/test_analyzer_readback.py
++++ b/tests/test_analyzer_readback.py
+@@ -1156,6 +1156,45 @@ class DeepSourceAnalyzerReadbackTests(unittest.TestCase):
+         self.assertEqual(RUN_UID, document["analysis_id"])
+         self.assertEqual("SUCCESS", document["run_state"])
+ 
++    def test_commit_status_and_check_run_disagreement_is_ambiguous(self) -> None:
++        check_run = "11111111-1111-1111-1111-111111111111"
++        statuses = [
++            {
++                "context": "DeepSource: Python",
++                "source_kind": "commit_status",
++                "creator_login": "deepsource-io[bot]",
++                "creator_type": "Bot",
++                "state": "success",
++                "target_url": (
++                    "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
++                    f"{RUN_UID}/python/"
++                ),
++            },
++            {
++                "context": "DeepSource: Python",
++                "source_kind": "check_run",
++                "app_slug": "deepsource-io",
++                "state": "failure",
++                "target_url": (
++                    "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
++                    f"{check_run}/python/"
++                ),
++            },
++        ]
++        document = analyzer_deepsource.diff_local_from_github(
++            repository="ktogias/gnostoa",
++            pull_number=312,
++            requested_head=HEAD,
++            observed_head=HEAD,
++            statuses=statuses,
++            comments=[],
++            observed_at=OBSERVED,
++        )
++        self.assertEqual("AMBIGUOUS", document["completeness"])
++        self.assertEqual("INCOMPLETE", document["coverage"]["status"])
++        self.assertEqual("RUN_ASSOCIATION_AMBIGUOUS", document["coverage"]["reason"])
++        self.assertNotIn("analysis_id", document)
++
+     def test_multiple_latest_github_run_ids_across_analyzers_are_ambiguous(
+         self,
+     ) -> None:
+diff --git a/tools/analyzer_deepsource.py b/tools/analyzer_deepsource.py
+index 0562116..8b6a12f 100644
+--- a/tools/analyzer_deepsource.py
++++ b/tools/analyzer_deepsource.py
+@@ -806,6 +806,7 @@ def _github_status_summary(
+     owner, name = normalized.split("/", 1)
+     run_ids: set[str] = set()
+     analyzer_states: dict[str, str] = {}
++    seen_sources: set[tuple[str, str]] = set()
+     for status in statuses:
+         if not _trusted_github_status(status):
+             continue
+@@ -827,10 +828,12 @@ def _github_status_summary(
+         ):
+             continue
+         analyzer = match.group("analyzer")
+-        if analyzer in analyzer_states:
++        source_key = (str(status.get("source_kind")), analyzer)
++        if source_key in seen_sources:
+             continue
++        seen_sources.add(source_key)
+         run_ids.add(match.group("run"))
+-        analyzer_states[analyzer] = str(state)
++        analyzer_states.setdefault(analyzer, str(state))
+     return run_ids, analyzer_states
+ 
+ 
