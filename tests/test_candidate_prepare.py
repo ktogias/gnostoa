@@ -1335,9 +1335,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
             for executable in ("git", "python", "python3", "mktemp"):
                 fake = poison_bin / executable
                 fake.write_text(
-                    "#!/bin/sh\n"
-                    f"printf poisoned > {marker}\n"
-                    "exit 99\n",
+                    f"#!/bin/sh\nprintf poisoned > {marker}\nexit 99\n",
                     encoding="utf-8",
                 )
                 fake.chmod(0o755)
