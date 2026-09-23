@@ -51,10 +51,25 @@ def _test_env() -> dict[str, str]:
             or name.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))
         ):
             env.pop(name, None)
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
     return env
 
 
 class CandidatePreparationContractTests(unittest.TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        home = Path(tempfile.mkdtemp(prefix="gnostoa-candidate-test-home-"))
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        environment = patch.dict(
+            os.environ,
+            {
+                "HOME": str(home),
+                "XDG_CONFIG_HOME": str(home / ".config"),
+            },
+            clear=False,
+        )
+        environment.start()
+        self.addCleanup(environment.stop)
     @staticmethod
     def _git(root: Path, *arguments: str) -> str:
         completed = subprocess.run(  # nosemgrep  # nosec B603
