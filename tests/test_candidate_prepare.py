@@ -1297,6 +1297,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
         wrapper_text = wrapper.read_text(encoding="utf-8")
         self.assertNotIn("python -m tools.candidate_prepare", wrapper_text)
         self.assertIn('show "${parent}:tools/candidate_prepare.py"', wrapper_text)
+        self.assertIn('exec "$python_executable" -I "$temporary"', wrapper_text)
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1310,7 +1311,9 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 encoding="utf-8",
             )
             (root / "tools" / "candidate_prepare.py").write_text(
-                "import sys\nprint('trusted-parent', sys.argv[1])\n",
+                "import importlib.util, sys\n"
+                "assert importlib.util.find_spec('candidate_shadow') is None\n"
+                "print('trusted-parent', sys.argv[1])\n",
                 encoding="utf-8",
             )
             self._git(root, "add", ".")
@@ -1321,11 +1324,31 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 "raise SystemExit(97)\n",
                 encoding="utf-8",
             )
+            (root / "candidate_shadow.py").write_text(
+                "raise SystemExit(98)\n",
+                encoding="utf-8",
+            )
+            poison_bin = root / "poison-bin"
+            poison_bin.mkdir()
+            marker = root / "poisoned-bootstrap"
+            for executable in ("git", "python", "python3", "mktemp"):
+                fake = poison_bin / executable
+                fake.write_text(
+                    "#!/bin/sh\n"
+                    f"printf poisoned > {marker}\n"
+                    "exit 99\n",
+                    encoding="utf-8",
+                )
+                fake.chmod(0o755)
+
             trusted_wrapper = self._git(
                 root,
                 "show",
                 f"{parent}:ci/prepare-candidate",
             )
+            environment = _test_env()
+            environment["PYTHONPATH"] = str(root)
+            environment["PATH"] = str(poison_bin) + os.pathsep + environment["PATH"]
             completed = subprocess.run(  # nosemgrep  # nosec B603
                 [
                     "sh",
@@ -1336,7 +1359,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
                     parent,
                 ],
                 cwd=root,
-                env=_test_env(),
+                env=environment,
                 input=trusted_wrapper,
                 check=False,
                 shell=False,
@@ -1345,6 +1368,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
             )
             self.assertEqual(0, completed.returncode, completed.stderr)
             self.assertIn("trusted-parent verify", completed.stdout)
+            self.assertFalse(marker.exists())
 
 
 if __name__ == "__main__":
