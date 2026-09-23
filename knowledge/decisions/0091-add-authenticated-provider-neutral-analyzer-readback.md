@@ -126,7 +126,8 @@ must not silently promote `DIFF_LOCAL` to `FULL_RUN`.
 ### 4. Completeness is explicit and independently validated
 
 Every collection records `status`, `pages` and `count`. Supported statuses
-are `COMPLETE`, `PARTIAL`, `RATE_LIMITED`, `UNAVAILABLE` and `ERROR`.
+are `COMPLETE`, `INCOMPLETE`, `PARTIAL`, `RATE_LIMITED`, `UNAVAILABLE` and
+`ERROR`, where `INCOMPLETE` denotes unproven or mismatched exact-subject binding.
 
 `COMPLETE` is valid only when pagination termination and retained cardinality
 are both established. Truncation, server pagination that cannot be completed,
