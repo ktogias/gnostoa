@@ -73,7 +73,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
 
     @staticmethod
     def _git(root: Path, *arguments: str) -> str:
-        completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+        completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
             [GIT, *arguments],
             cwd=root,
             env=_test_env(),
@@ -1379,8 +1379,8 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 # repository wrapper whose bytes were matched to the exact parent
                 # above; argv is a fixed test shape, shell parsing is disabled, and
                 # hostile PATH/PYTHONPATH values are the subject under test.
-                completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
-                    [  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
+                completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
+                    [
                         str(parent_wrapper),
                         "verify",
                         "--parent",
@@ -1402,8 +1402,8 @@ class CandidatePreparationContractTests(unittest.TestCase):
 
                 # Same audited boundary as the successful probe above; this
                 # invocation only substitutes the deliberately rejected interpreter.
-                rejected = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
-                    [  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
+                rejected = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
+                    [
                         str(parent_wrapper),
                         "verify",
                         "--parent",
