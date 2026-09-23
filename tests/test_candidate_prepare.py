@@ -1248,7 +1248,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
             hooks.mkdir()
             hook = hooks / "post-checkout"
             hook.write_text(
-                '#!/bin/sh\n' 'printf executed > "$GNOSTOA_TEST_HOOK_MARKER"\n',
+                '#!/bin/sh\nprintf executed > "$GNOSTOA_TEST_HOOK_MARKER"\n',
                 encoding="utf-8",
             )
             hook.chmod(0o755)
