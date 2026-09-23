@@ -187,9 +187,10 @@ The runner:
   non-secret inputs;
 - re-reads the GitHub Pull Request before and after provider acquisition and
   refuses to attribute evidence when its head changes;
-- reads exact-head GitHub commit statuses and inline review comments through a
-  read-only GitHub token, retaining DeepSource GitHub evidence only when the
-  status subject and inline `commit_id` bind to the requested head;
+- reads exact-head GitHub commit statuses, check runs/annotations and inline
+  review comments through a read-only GitHub token, retaining DeepSource GitHub
+  evidence only when the provider subject and inline `commit_id` bind to the
+  requested head;
 - uses the uniquely discovered DeepSource run UUID for authenticated
   `FULL_RUN` acquisition;
 - invokes the Codacy adapter for the same Pull Request/head and requires a
@@ -199,7 +200,8 @@ The runner:
   it can be retained.
 
 The workflow is `workflow_dispatch` only and grants at most
-`contents: read`, `pull-requests: read` and `statuses: read`. Provider
+`contents: read`, `pull-requests: read`, `statuses: read` and `checks: read`.
+Provider
 credentials are injected only into the acquisition step as
 `DEEPSOURCE_API_TOKEN` and `CODACY_API_TOKEN`; the GitHub token is likewise
 read-only. The workflow may upload only the already validated non-secret
