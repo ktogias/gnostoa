@@ -1,0 +1,222 @@
+name: Prepare and publish final PR 314 hardening
+
+on:
+  push:
+    branches:
+      - ops/pr314-final-security-652a
+
+concurrency:
+  group: pr314-final-security-publish
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  PARENT: 652a21b4eefb6e53a88ac823edad95ba089e55f8
+  PARENT_TREE: 1f8fa2e0e46ab67ae1a4e197eddb41a4041dddde
+  TARGET_BRANCH: analyzer-readback-309-313
+  INPUT_PATCH_SHA256: 903e1086c9a0b7f686ffa10f43d7d6a96876a510d915d93e29327ee08b120d56
+  INPUT_GZIP_SHA256: b42eebbfad2bf8aa86dea2da29ac8b01ce8c269e6f2c5017fd7c228cbc9d21e6
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout helper inputs
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Reconstruct and bind candidate patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          gzip_file="${RUNNER_TEMP}/candidate.patch.gz"
+          patch_file="${RUNNER_TEMP}/candidate.patch"
+          base64 --decode .gnostoa-ops/pr314-final.patch.gz.b64 > "${gzip_file}"
+          echo "${INPUT_GZIP_SHA256}  ${gzip_file}" | sha256sum -c -
+          gzip -dc "${gzip_file}" > "${patch_file}"
+          echo "${INPUT_PATCH_SHA256}  ${patch_file}" | sha256sum -c -
+
+          git checkout --detach "${PARENT}"
+          test "$(git rev-parse HEAD)" = "${PARENT}"
+          test "$(git rev-parse 'HEAD^{tree}')" = "${PARENT_TREE}"
+          test -z "$(git status --porcelain)"
+
+          git apply --binary "${patch_file}"
+          test "$(git diff --binary --full-index "${PARENT}" | sha256sum | awk '{print $1}')" = "${INPUT_PATCH_SHA256}"
+          git diff --check "${PARENT}"
+
+          git diff --name-only "${PARENT}" > "${RUNNER_TEMP}/changed-paths"
+          cat > "${RUNNER_TEMP}/expected-paths" <<'EOF'
+          .github/workflows/analyzer-readback.yml
+          knowledge/assessments/309-313-analyzer-readback-red-contract.md
+          knowledge/decisions/0091-add-authenticated-provider-neutral-analyzer-readback.md
+          tests/test_analyzer_readback.py
+          tests/test_analyzer_readback_runner.py
+          tools/analyzer_deepsource.py
+          EOF
+          diff -u "${RUNNER_TEMP}/expected-paths" "${RUNNER_TEMP}/changed-paths"
+
+      - name: Set up trusted Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/development.lock
+
+      - name: Install exact development tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install             --only-binary=:all:             --require-hashes             -r requirements/development.lock
+          python -m ruff --version
+          command -v docker
+          docker --version
+
+      - name: Run Decision 0090 preparation
+        shell: bash
+        run: |
+          set -euo pipefail
+          receipt="${RUNNER_TEMP}/receipt.json"
+          ./ci/prepare-candidate prepare             --parent "${PARENT}"             --receipt "${receipt}"             --focused-profile fast             --trusted-python "$(command -v python)"
+
+          python - "${receipt}" "${RUNNER_TEMP}/expected-paths" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          receipt = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          expected = Path(sys.argv[2]).read_text(encoding="utf-8").splitlines()
+          assert receipt["parent_commit"] == "652a21b4eefb6e53a88ac823edad95ba089e55f8"
+          assert receipt["parent_tree"] == "1f8fa2e0e46ab67ae1a4e197eddb41a4041dddde"
+          assert receipt["changed_paths"] == expected
+          assert receipt["focused_profile"] == "fast"
+          assert receipt["checks"] == {
+              "style_fix": 0,
+              "focused_verification": 0,
+              "style_check": 0,
+              "diff_check": 0,
+          }
+          assert receipt["ruff_version"] == "ruff 0.16.0"
+          PY
+
+          tree="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["prepared_tree"])' "${receipt}")"
+          receipt_sha="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["receipt_sha256"])' "${receipt}")"
+
+          ./ci/prepare-candidate verify             --parent "${PARENT}"             --tree "${tree}"             --receipt "${receipt}"             --receipt-sha256 "${receipt_sha}"             --trusted-python "$(command -v python)"
+
+          artifact_dir="${RUNNER_TEMP}/prepared"
+          mkdir -p "${artifact_dir}"
+          git diff --binary --full-index "${PARENT}" "${tree}" > "${artifact_dir}/normalized.patch"
+          cp "${receipt}" "${artifact_dir}/receipt.json"
+          patch_sha="$(sha256sum "${artifact_dir}/normalized.patch" | awk '{print $1}')"
+
+          python - "${artifact_dir}/metadata.json" "${tree}" "${receipt_sha}" "${patch_sha}" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          Path(sys.argv[1]).write_text(
+              json.dumps(
+                  {
+                      "parent": "652a21b4eefb6e53a88ac823edad95ba089e55f8",
+                      "parent_tree": "1f8fa2e0e46ab67ae1a4e197eddb41a4041dddde",
+                      "prepared_tree": sys.argv[2],
+                      "receipt_sha256": sys.argv[3],
+                      "normalized_patch_sha256": sys.argv[4],
+                  },
+                  sort_keys=True,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Upload prepared candidate receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr314-final-security-prepared
+          path: ${{ runner.temp }}/prepared
+          if-no-files-found: error
+          retention-days: 2
+
+  publish:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Checkout exact parent with publication credential
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 652a21b4eefb6e53a88ac823edad95ba089e55f8
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set up verifier Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+
+      - name: Download prepared candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: pr314-final-security-prepared
+          path: ${{ runner.temp }}/prepared
+
+      - name: Verify and atomically publish prepared tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_dir="${RUNNER_TEMP}/prepared"
+          receipt="${artifact_dir}/receipt.json"
+          metadata="${artifact_dir}/metadata.json"
+          patch="${artifact_dir}/normalized.patch"
+
+          test "$(git rev-parse HEAD)" = "${PARENT}"
+          test "$(git rev-parse 'HEAD^{tree}')" = "${PARENT_TREE}"
+          test -z "$(git status --porcelain)"
+
+          tree="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["prepared_tree"])' "${metadata}")"
+          receipt_sha="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["receipt_sha256"])' "${metadata}")"
+          patch_sha="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["normalized_patch_sha256"])' "${metadata}")"
+          test "$(sha256sum "${patch}" | awk '{print $1}')" = "${patch_sha}"
+
+          ./ci/prepare-candidate verify             --parent "${PARENT}"             --tree "${tree}"             --receipt "${receipt}"             --receipt-sha256 "${receipt_sha}"             --trusted-python "$(command -v python)"
+
+          git apply --binary "${patch}"
+          git add -A
+          test "$(git write-tree)" = "${tree}"
+          git diff --cached --check "${PARENT}"
+
+          git diff --cached --name-only > "${RUNNER_TEMP}/changed-paths"
+          cat > "${RUNNER_TEMP}/expected-paths" <<'EOF'
+          .github/workflows/analyzer-readback.yml
+          knowledge/assessments/309-313-analyzer-readback-red-contract.md
+          knowledge/decisions/0091-add-authenticated-provider-neutral-analyzer-readback.md
+          tests/test_analyzer_readback.py
+          tests/test_analyzer_readback_runner.py
+          tools/analyzer_deepsource.py
+          EOF
+          diff -u "${RUNNER_TEMP}/expected-paths" "${RUNNER_TEMP}/changed-paths"
+
+          remote_head="$(git ls-remote origin "refs/heads/${TARGET_BRANCH}" | awk '{print $1}')"
+          test "${remote_head}" = "${PARENT}"
+
+          commit="$(
+            printf '%s\n\n%s\n'               'fix: secure analyzer readback execution and counts (#309 #313)'               'Refs #309, #313.'               | git -c user.name='Gnostoa preparation'                     -c user.email='noreply@invalid'                     commit-tree "${tree}" -p "${PARENT}"
+          )"
+          test "$(git rev-parse "${commit}^")" = "${PARENT}"
+          test "$(git rev-parse "${commit}^{tree}")" = "${tree}"
+
+          git push             --force-with-lease="refs/heads/${TARGET_BRANCH}:${PARENT}"             origin "${commit}:refs/heads/${TARGET_BRANCH}"
+
+          echo "published_commit=${commit}"
+          echo "published_tree=${tree}"
