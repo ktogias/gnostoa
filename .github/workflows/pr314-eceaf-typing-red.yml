@@ -1,0 +1,64 @@
+name: PR314 exact-head typing RED
+
+on:
+  push:
+    branches:
+      - transport/pr314-eceaf-typing-red
+
+permissions:
+  contents: read
+
+jobs:
+  prove-red:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TARGET_SHA: eceafbfdbdaed2aa3a076b250cf277bd06d7526b
+      TARGET_TREE: 4aa72ceca940a89aa7594f08814fabd269418705
+    steps:
+      - name: Checkout exact pre-fix subject
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          path: source
+          persist-credentials: false
+      - name: Verify exact subject identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}/source"
+          test "$(git rev-parse HEAD)" = "${TARGET_SHA}"
+          test "$(git rev-parse 'HEAD^{tree}')" = "${TARGET_TREE}"
+          test -z "$(git status --porcelain)"
+      - name: Set up trusted Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: source/requirements/development.lock
+      - name: Install exact development dependencies
+        shell: bash
+        run: |
+          python -m pip install             --only-binary=:all:             --require-hashes             -r "${GITHUB_WORKSPACE}/source/requirements/development.lock"
+      - name: Prove strict-mypy RED on exact head
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}/source"
+          set +e
+          python -m mypy --output json tools ci > "${RUNNER_TEMP}/mypy.jsonl" 2>&1
+          rc=$?
+          set -e
+          cat "${RUNNER_TEMP}/mypy.jsonl"
+          test "${rc}" -ne 0
+          grep -F 'tools/analyzer_deepsource.py' "${RUNNER_TEMP}/mypy.jsonl"
+          grep -F 'incompatible type' "${RUNNER_TEMP}/mypy.jsonl"
+          grep -F 'tuple[str, ...]' "${RUNNER_TEMP}/mypy.jsonl"
+          grep -F 'tuple[str, str]' "${RUNNER_TEMP}/mypy.jsonl"
+      - name: Upload RED evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr314-eceaf-typing-red
+          path: ${{ runner.temp }}/mypy.jsonl
+          retention-days: 1
+          if-no-files-found: error
