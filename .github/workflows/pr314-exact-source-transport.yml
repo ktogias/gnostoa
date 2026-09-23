@@ -1,0 +1,57 @@
+name: PR314 exact-source transport
+
+on:
+  push:
+    branches:
+      - transport/pr314-exact-source-09afa312
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TARGET_SHA: 09afa312a980cfa4334f9322be46d0ecec0349fa
+      TARGET_TREE: f8cfdc41ecb8b0db2e092b1d957e48cc06ee0040
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${TARGET_SHA}"
+          test "$(git rev-parse 'HEAD^{tree}')" = "${TARGET_TREE}"
+          test -z "$(git status --porcelain)"
+
+      - name: Build and verify exact-source bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="${RUNNER_TEMP}/pr314-exact-source.bundle"
+          git update-ref refs/heads/gnostoa-exact-source-export "${TARGET_SHA}"
+          git bundle create "${bundle}" refs/heads/gnostoa-exact-source-export
+          git bundle verify "${bundle}"
+          sha256sum "${bundle}" > "${bundle}.sha256"
+          {
+            printf 'commit=%s\n' "${TARGET_SHA}"
+            printf 'tree=%s\n' "${TARGET_TREE}"
+          } > "${RUNNER_TEMP}/pr314-exact-source.identity"
+
+      - name: Upload exact-source transport
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr314-exact-source-09afa312
+          path: |
+            ${{ runner.temp }}/pr314-exact-source.bundle
+            ${{ runner.temp }}/pr314-exact-source.bundle.sha256
+            ${{ runner.temp }}/pr314-exact-source.identity
+          retention-days: 1
+          if-no-files-found: error
