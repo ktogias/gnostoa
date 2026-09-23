@@ -1049,6 +1049,39 @@ class DeepSourceAnalyzerReadbackTests(unittest.TestCase):
         self.assertEqual("INCOMPLETE", document["coverage"]["status"])
         self.assertEqual("RUN_ASSOCIATION_AMBIGUOUS", document["coverage"]["reason"])
 
+    def test_pending_or_error_github_analyzer_state_is_partial(self) -> None:
+        for state, run_state in (("pending", "PENDING"), ("error", "FAILURE")):
+            with self.subTest(state=state):
+                statuses = [
+                    {
+                        "context": "DeepSource: Python",
+                        "source_kind": "commit_status",
+                        "creator_login": "deepsource-io[bot]",
+                        "creator_type": "Bot",
+                        "state": state,
+                        "target_url": (
+                            "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
+                            f"{RUN_UID}/python/"
+                        ),
+                    }
+                ]
+                document = analyzer_deepsource.diff_local_from_github(
+                    repository="ktogias/gnostoa",
+                    pull_number=312,
+                    requested_head=HEAD,
+                    observed_head=HEAD,
+                    statuses=statuses,
+                    comments=[],
+                    observed_at=OBSERVED,
+                )
+                self.assertEqual("DIFF_LOCAL", document["completeness"])
+                self.assertEqual("PARTIAL", document["coverage"]["status"])
+                self.assertEqual(
+                    "ANALYZER_STATE_UNAVAILABLE", document["coverage"]["reason"]
+                )
+                self.assertEqual(run_state, document["run_state"])
+                self.assertEqual([], document["findings"])
+
     def test_unknown_github_analyzer_state_is_partial_not_success(self) -> None:
         statuses = [
             {

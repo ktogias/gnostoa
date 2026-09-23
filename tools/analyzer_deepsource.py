@@ -943,6 +943,30 @@ def _diff_local_from_github(
     native = {"analyzers": dict(sorted(analyzer_states.items()))}
     if carried_forward_comments:
         native["carried_forward_comments_excluded"] = carried_forward_comments
+    if state_values & {"pending", "error"}:
+        return build_readback(
+            provider="deepsource",
+            adapter="deepsource-github/v1",
+            repository=repository,
+            pull_number=pull_number,
+            requested_head=requested_head,
+            observed_head=requested_head,
+            analysis_id=next(iter(run_ids)),
+            scope="DIFF",
+            completeness="DIFF_LOCAL",
+            native_mode="DIFF_LOCAL",
+            observed_at=observed_at,
+            run_state=run_state,
+            coverage_record=coverage(
+                "PARTIAL",
+                pages=1,
+                count=len(retained),
+                reason="ANALYZER_STATE_UNAVAILABLE",
+            ),
+            findings=retained,
+            native=native,
+        )
+    if carried_forward_comments:
         return build_readback(
             provider="deepsource",
             adapter="deepsource-github/v1",
