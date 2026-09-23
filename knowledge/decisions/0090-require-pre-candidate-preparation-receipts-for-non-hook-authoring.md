@@ -155,10 +155,15 @@ non-hook authoring without importing a general orchestration subsystem.
    verification arguments.
 5. Focused verification must not mutate the prepared tree or its index. Ignored
    caches may be produced transiently, but they are removed before the final
-   style decision. A failed focused check reports only a bounded tail of captured
-   stderr/stdout so the operator can diagnose the gate without unbounded error
-   propagation. Preparation then reruns `./ci/style --check` against the
-   restored exact normalized tree and executes `git diff --cached --check`.
+   style decision. The focused child runs under a 900-second deadline; stdout
+   and stderr are drained incrementally while retaining at most 65536 bytes from
+   each stream, and timeout cleanup terminates the full preparation-owned process
+   group even if its leader has already exited. A failed focused check reports
+   only a bounded tail of captured stderr/stdout so the operator can diagnose the
+   gate without unbounded error propagation. Verbose successful checks are not
+   rejected merely for exceeding the retained diagnostic window. Preparation then
+   reruns `./ci/style --check` against the restored exact normalized tree and
+   executes `git diff --cached --check`.
 6. Run `ci/prepare-candidate` from the recommended Development Container by
    default. The intended route is `.devcontainer/devcontainer.json`, whose
    writable workspace mount and `updateRemoteUserUID` setting support preparation
@@ -181,7 +186,9 @@ non-hook authoring without importing a general orchestration subsystem.
    when normalization changes the proposed tree, otherwise
    `PRE_CANDIDATE_NO_RUFF_CHANGE`.
 8. Receipts are evidence, not candidate source. The output path must be outside
-   the source worktree. The trusted preparation step must retain the emitted
+   the source worktree and must not already exist. Receipt publication is
+   create-only: a colliding destination fails closed rather than replacing prior
+   evidence. The trusted preparation step must retain the emitted
    `receipt_sha256` separately from the receipt bytes. `verify_receipt()` and
    `ci/prepare-candidate verify` require that externally retained identity in
    addition to the expected parent/tree, then recompute the receipt digest. A
