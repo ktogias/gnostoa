@@ -1,0 +1,118 @@
+diff --git a/tests/test_analyzer_readback.py b/tests/test_analyzer_readback.py
+index ce4325e785dcceca0aa32993db9906b73d7189e2..e604a3ca990451ba13e03b432c8a003071c5b67a 100644
+--- a/tests/test_analyzer_readback.py
++++ b/tests/test_analyzer_readback.py
+@@ -1156,6 +1156,45 @@ class DeepSourceAnalyzerReadbackTests(unittest.TestCase):
+         self.assertEqual(RUN_UID, document["analysis_id"])
+         self.assertEqual("SUCCESS", document["run_state"])
+ 
++    def test_unbound_newest_commit_status_does_not_fall_back_to_older_run(
++        self,
++    ) -> None:
++        older_run = "11111111-1111-1111-1111-111111111111"
++        statuses = [
++            {
++                "context": "DeepSource: Python",
++                "source_kind": "commit_status",
++                "creator_login": "deepsource-io[bot]",
++                "creator_type": "Bot",
++                "state": "pending",
++                "target_url": None,
++            },
++            {
++                "context": "DeepSource: Python",
++                "source_kind": "commit_status",
++                "creator_login": "deepsource-io[bot]",
++                "creator_type": "Bot",
++                "state": "success",
++                "target_url": (
++                    "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
++                    f"{older_run}/python/"
++                ),
++            },
++        ]
++        document = analyzer_deepsource.diff_local_from_github(
++            repository="ktogias/gnostoa",
++            pull_number=312,
++            requested_head=HEAD,
++            observed_head=HEAD,
++            statuses=statuses,
++            comments=[],
++            observed_at=OBSERVED,
++        )
++        self.assertEqual("AMBIGUOUS", document["completeness"])
++        self.assertEqual("INCOMPLETE", document["coverage"]["status"])
++        self.assertEqual("RUN_ASSOCIATION_AMBIGUOUS", document["coverage"]["reason"])
++        self.assertNotIn("analysis_id", document)
++
+     def test_commit_status_and_check_run_disagreement_is_ambiguous(self) -> None:
+         check_run = "11111111-1111-1111-1111-111111111111"
+         statuses = [
+diff --git a/tools/analyzer_deepsource.py b/tools/analyzer_deepsource.py
+index 7d6df9de3ad5fe9ec72af12030c93862153b6d92..a824103d722650e02d65cb89a4224cf74c45bcd0 100644
+--- a/tools/analyzer_deepsource.py
++++ b/tools/analyzer_deepsource.py
+@@ -813,12 +813,26 @@ def _github_status_summary(
+         context = status.get("context")
+         target = status.get("target_url")
+         state = status.get("state")
+-        if (
+-            not isinstance(context, str)
+-            or _DEEPSOURCE_STATUS.fullmatch(context) is None
+-        ):
++        if not isinstance(context, str):
++            continue
++        context_match = _DEEPSOURCE_STATUS.fullmatch(context)
++        if context_match is None:
+             continue
++        source_kind = str(status.get("source_kind"))
++        is_commit_status = source_kind == "commit_status"
++        if is_commit_status:
++            # GitHub commit statuses are newest-first. Fence off the analyzer
++            # before run-URL validation so an unusable newest status cannot
++            # silently fall back to an older status for the same context.
++            source_key = ("commit_status_context", context)
++            if source_key in seen_sources:
++                continue
++            seen_sources.add(source_key)
+         if not isinstance(target, str):
++            if is_commit_status:
++                analyzer_states.setdefault(
++                    context_match.group("analyzer").lower(), "unbound"
++                )
+             continue
+         match = _RUN_URL.fullmatch(target)
+         if (
+@@ -826,21 +840,20 @@ def _github_status_summary(
+             or match.group("owner") != owner
+             or match.group("repo") != name
+         ):
++            if is_commit_status:
++                analyzer_states.setdefault(
++                    context_match.group("analyzer").lower(), "unbound"
++                )
+             continue
+         analyzer = match.group("analyzer")
+-        source_kind = str(status.get("source_kind"))
+         run_id = match.group("run")
+-        # GitHub commit statuses are newest-first, so select the first status
+-        # per analyzer. Check-run reads already request GitHub's latest filter,
+-        # but multiple distinct latest runs still make exact association ambiguous.
+-        source_key: tuple[str, ...] = (
+-            (source_kind, analyzer)
+-            if source_kind == "commit_status"
+-            else (source_kind, analyzer, run_id)
+-        )
+-        if source_key in seen_sources:
+-            continue
+-        seen_sources.add(source_key)
++        # Check-run reads request GitHub's latest filter, but multiple distinct
++        # latest runs still make exact association ambiguous.
++        if not is_commit_status:
++            source_key = (source_kind, analyzer, run_id)
++            if source_key in seen_sources:
++                continue
++            seen_sources.add(source_key)
+         run_ids.add(run_id)
+         analyzer_states.setdefault(analyzer, str(state))
+     return run_ids, analyzer_states

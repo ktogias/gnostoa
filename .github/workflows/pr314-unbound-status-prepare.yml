@@ -1,0 +1,132 @@
+name: PR314 newest-unbound-status GREEN preparation
+
+on:
+  push:
+    branches:
+      - transport/pr314-unbound-status-846c641
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PARENT_SHA: 846c641f95558f82ecda6095be07a185d7ec779c
+      PARENT_TREE: df0fc523a331264e49e0340dd8f321b006560743
+      INPUT_PATCH_SHA256: 19b69b22c3185116c439bd53378bccb473725f3714a920a807336aa502c4e17c
+    steps:
+      - name: Checkout immutable helper control
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.sha }}
+          path: control
+          persist-credentials: false
+
+      - name: Verify immutable patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          patch="${GITHUB_WORKSPACE}/control/recovery/pr314-unbound-status.patch"
+          test -f "${patch}"
+          test "$(sha256sum "${patch}" | awk '{print $1}')" = "${INPUT_PATCH_SHA256}"
+
+      - name: Checkout exact parent
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ env.PARENT_SHA }}
+          fetch-depth: 0
+          path: source
+          persist-credentials: false
+
+      - name: Bind parent and apply candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}/source"
+          test "$(git rev-parse HEAD)" = "${PARENT_SHA}"
+          test "$(git rev-parse 'HEAD^{tree}')" = "${PARENT_TREE}"
+          test -z "$(git status --porcelain)"
+          patch="${GITHUB_WORKSPACE}/control/recovery/pr314-unbound-status.patch"
+          git apply --check "${patch}"
+          git apply "${patch}"
+          printf '%s\n'             tests/test_analyzer_readback.py             tools/analyzer_deepsource.py             > "${RUNNER_TEMP}/expected-paths"
+          git diff --name-only | LC_ALL=C sort > "${RUNNER_TEMP}/observed-paths"
+          LC_ALL=C sort -o "${RUNNER_TEMP}/expected-paths" "${RUNNER_TEMP}/expected-paths"
+          diff -u "${RUNNER_TEMP}/expected-paths" "${RUNNER_TEMP}/observed-paths"
+          git diff --check
+
+      - name: Set up trusted Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: source/requirements/development.lock
+
+      - name: Install exact development dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install             --only-binary=:all:             --require-hashes             -r "${GITHUB_WORKSPACE}/source/requirements/development.lock"
+
+      - name: Prove strict mypy and behavioral GREEN
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}/source"
+          python -m mypy tools/analyzer_deepsource.py
+          PYTHONPATH=. python -m unittest             tests.test_analyzer_readback.DeepSourceAnalyzerReadbackTests.test_unbound_newest_commit_status_does_not_fall_back_to_older_run             tests.test_analyzer_readback.DeepSourceAnalyzerReadbackTests.test_newest_github_run_status_wins_for_same_analyzer             tests.test_analyzer_readback.DeepSourceAnalyzerReadbackTests.test_commit_status_and_check_run_disagreement_is_ambiguous             tests.test_analyzer_readback.DeepSourceAnalyzerReadbackTests.test_multiple_check_run_ids_for_same_analyzer_are_ambiguous
+          PYTHONPATH=. python -m unittest tests.test_analyzer_readback
+          python -m py_compile tools/analyzer_deepsource.py tests/test_analyzer_readback.py
+
+      - name: Execute exact-parent Decision 0090 preparation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}/source"
+          wrapper="${RUNNER_TEMP}/parent-prepare-candidate"
+          git show "${PARENT_SHA}:ci/prepare-candidate" > "${wrapper}"
+          sh "${wrapper}" prepare             --parent "${PARENT_SHA}"             --receipt "${RUNNER_TEMP}/pr314-unbound-receipt.json"             --focused-profile fast             --trusted-python "$(command -v python)"             > "${RUNNER_TEMP}/pr314-unbound-preparation-output.json"
+
+      - name: Verify receipt and materialize prepared tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}/source"
+          receipt="${RUNNER_TEMP}/pr314-unbound-receipt.json"
+          prepared_tree="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["prepared_tree"])' "${receipt}")"
+          receipt_sha="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["receipt_sha256"])' "${receipt}")"
+          prepared_diff_sha="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["prepared_diff_sha256"])' "${receipt}")"
+          retention_ref="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["retention_ref"])' "${receipt}")"
+          wrapper="${RUNNER_TEMP}/parent-prepare-candidate"
+          sh "${wrapper}" verify             --parent "${PARENT_SHA}"             --tree "${prepared_tree}"             --receipt "${receipt}"             --receipt-sha256 "${receipt_sha}"             --trusted-python "$(command -v python)"             > "${RUNNER_TEMP}/pr314-unbound-receipt-verify.json"
+          git diff --binary --full-index "${PARENT_SHA}" "${prepared_tree}" > "${RUNNER_TEMP}/pr314-unbound-prepared.patch"
+          actual="sha256:$(sha256sum "${RUNNER_TEMP}/pr314-unbound-prepared.patch" | awk '{print $1}')"
+          test "${actual}" = "${prepared_diff_sha}"
+          git bundle create "${RUNNER_TEMP}/pr314-unbound-prepared.bundle" "${retention_ref}"
+          git bundle verify "${RUNNER_TEMP}/pr314-unbound-prepared.bundle"
+          sha256sum "${RUNNER_TEMP}/pr314-unbound-prepared.bundle" > "${RUNNER_TEMP}/pr314-unbound-prepared.bundle.sha256"
+          {
+            printf 'parent_commit=%s\n' "${PARENT_SHA}"
+            printf 'parent_tree=%s\n' "${PARENT_TREE}"
+            printf 'input_patch_sha256=%s\n' "${INPUT_PATCH_SHA256}"
+            printf 'prepared_tree=%s\n' "${prepared_tree}"
+            printf 'receipt_sha256=%s\n' "${receipt_sha}"
+            printf 'prepared_diff_sha256=%s\n' "${prepared_diff_sha}"
+          } > "${RUNNER_TEMP}/pr314-unbound-preparation.identity"
+
+      - name: Upload bounded preparation evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr314-unbound-status-decision0090-preparation
+          path: |
+            ${{ runner.temp }}/pr314-unbound-receipt.json
+            ${{ runner.temp }}/pr314-unbound-preparation-output.json
+            ${{ runner.temp }}/pr314-unbound-receipt-verify.json
+            ${{ runner.temp }}/pr314-unbound-prepared.patch
+            ${{ runner.temp }}/pr314-unbound-prepared.bundle
+            ${{ runner.temp }}/pr314-unbound-prepared.bundle.sha256
+            ${{ runner.temp }}/pr314-unbound-preparation.identity
+          retention-days: 1
+          if-no-files-found: error
