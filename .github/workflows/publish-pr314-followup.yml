@@ -1,0 +1,81 @@
+name: Publish PR 314 prepared follow-up
+
+on:
+  push:
+    branches:
+      - ops/pr314-followup-publish
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pr314-followup-prepared-publication
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PARENT: abd968b47ddb74a0998b06d5b2f47834e979a0fa
+      PREPARED_TREE: 7b22a1d6d161ea725b3dc12cfece89a3a9a5c300
+      B64_SHA256: 6e55d758dcf29a1546203cc8512080f9793f2c26d5f6cf8f522ff3e8d6e4d338
+      GZIP_SHA256: b483f3521ac9b1eb47745a90bb5dd1ab64ee13e9913ebecd0fc2955cccab829b
+      PATCH_SHA256: fcc471ea63e288e91c9fcf89642f24f69903b651cbbf74f7584e62d791a94626
+      TARGET_BRANCH: analyzer-readback-309-313
+    steps:
+      - name: Checkout bounded publication transport
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify exact prepared payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          payload="${RUNNER_TEMP}/followup.patch.gz.b64"
+          archive="${RUNNER_TEMP}/followup.patch.gz"
+          patch="${RUNNER_TEMP}/followup.patch"
+          cp ops/pr314-followup-prepared.patch.gz.b64 "${payload}"
+          echo "${B64_SHA256}  ${payload}" | sha256sum --check --strict
+          base64 --decode "${payload}" > "${archive}"
+          echo "${GZIP_SHA256}  ${archive}" | sha256sum --check --strict
+          gzip --decompress --stdout "${archive}" > "${patch}"
+          echo "${PATCH_SHA256}  ${patch}" | sha256sum --check --strict
+          grep '^diff --git ' "${patch}" | sed 's#diff --git a/##;s# b/.*##' > "${RUNNER_TEMP}/paths"
+          printf '%s\n'             'ci/analyzer_readback.py'             'tests/test_analyzer_readback.py'             'tests/test_analyzer_readback_runner.py'             'tools/analyzer_codacy.py'             'tools/analyzer_deepsource.py'             'tools/analyzer_readback.py'             > "${RUNNER_TEMP}/expected-paths"
+          cmp "${RUNNER_TEMP}/expected-paths" "${RUNNER_TEMP}/paths"
+
+      - name: Bind exact parent and prepared tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          patch="${RUNNER_TEMP}/followup.patch"
+          git fetch --no-tags origin "refs/heads/${TARGET_BRANCH}:refs/remotes/origin/${TARGET_BRANCH}"
+          observed="$(git rev-parse "refs/remotes/origin/${TARGET_BRANCH}")"
+          test "${observed}" = "${PARENT}"
+          git checkout --detach "${PARENT}"
+          git reset --hard "${PARENT}"
+          git clean -ffdx
+          git apply --binary --index "${patch}"
+          git diff --cached --check "${PARENT}"
+          test "$(git write-tree)" = "${PREPARED_TREE}"
+
+      - name: Create exact-parent prepared follow-up
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Gnostoa preparation"
+          git config user.email "noreply@invalid"
+          git -c core.hooksPath=/dev/null commit             -m "fix: harden analyzer readback follow-up (#309 #313)"
+          test "$(git rev-parse HEAD^)" = "${PARENT}"
+          test "$(git rev-parse 'HEAD^{tree}')" = "${PREPARED_TREE}"
+
+      - name: CAS publish exact prepared follow-up
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote_head="$(git ls-remote origin "refs/heads/${TARGET_BRANCH}" | cut -f1)"
+          test "${remote_head}" = "${PARENT}"
+          git push origin             --force-with-lease="refs/heads/${TARGET_BRANCH}:${PARENT}"             "HEAD:refs/heads/${TARGET_BRANCH}"
