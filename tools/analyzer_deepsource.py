@@ -683,6 +683,47 @@ def _read_full_run(
             findings=findings,
         )
 
+    raw_issue_count = len(findings)
+    if provider_total_known and provider_total != raw_issue_count:
+        return build_readback(
+            provider="deepsource",
+            adapter="deepsource-graphql/v1",
+            repository=repository,
+            pull_number=pull_number,
+            requested_head=requested_head,
+            observed_head=commit,
+            analysis_id=run_uid,
+            scope="FULL",
+            completeness="READBACK_UNAVAILABLE",
+            native_mode="FULL_RUN",
+            observed_at=observed,
+            run_state=run_state,
+            coverage_record=coverage(
+                "ERROR",
+                pages=pages,
+                count=0,
+                reason="COUNT_TOTAL_MISMATCH",
+            ),
+            findings=[],
+            native={
+                "checks": len(checks),
+                "raw_issue_count": raw_issue_count,
+                "provider_total": provider_total,
+            },
+        )
+
+    retained = deduplicate_findings(findings)
+    native = {
+        "checks": len(checks),
+        "raw_issue_count": raw_issue_count,
+    }
+    if provider_total_known:
+        native["provider_total"] = provider_total
+    normalized_total = (
+        provider_total
+        if provider_total_known and provider_total == len(retained)
+        else None
+    )
     return build_readback(
         provider="deepsource",
         adapter="deepsource-graphql/v1",
@@ -699,11 +740,11 @@ def _read_full_run(
         coverage_record=coverage(
             "COMPLETE",
             pages=pages,
-            count=len(findings),
-            total=provider_total if provider_total_known else None,
+            count=len(retained),
+            total=normalized_total,
         ),
-        findings=findings,
-        native={"checks": len(checks)},
+        findings=retained,
+        native=native,
     )
 
 

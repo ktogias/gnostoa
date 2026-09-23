@@ -227,8 +227,12 @@ The runner:
 
 The workflow is `workflow_dispatch` only and grants at most
 `contents: read`, `pull-requests: read`, `statuses: read` and `checks: read`.
-Provider
-credentials are injected only into the acquisition step as
+The credential-bearing job is admitted only when the dispatch ref is
+`refs/heads/main`; checkout is pinned to that dispatch event's exact
+`github.sha`, and a secret-free binding step verifies both the main ref and
+`HEAD == github.sha` before any analyzer credential is injected. A moving branch
+name is therefore not an executable-code selector for the credentialed step.
+Provider credentials are injected only into the acquisition step as
 `DEEPSOURCE_API_TOKEN` and `CODACY_API_TOKEN`; the GitHub token is likewise
 read-only. The workflow may upload only the already validated non-secret
 readback bundle as an evidence artifact. It has no provider mutation command,

@@ -328,8 +328,16 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
         self.assertNotIn("pull-requests: write", workflow)
         self.assertIn("timeout-minutes: 15", workflow)
         self.assertIn("if: github.ref == 'refs/heads/main'", workflow)
-        self.assertIn("ref: main", workflow)
+        self.assertIn("ref: ${{ github.sha }}", workflow)
         self.assertIn("persist-credentials: false", workflow)
+        self.assertIn("Bind trusted main execution source", workflow)
+        self.assertIn("EXECUTOR_REF: ${{ github.ref }}", workflow)
+        self.assertIn("EXECUTOR_SHA: ${{ github.sha }}", workflow)
+        self.assertIn('test "${EXECUTOR_REF}" = "refs/heads/main"', workflow)
+        self.assertIn('test "$(git rev-parse HEAD)" = "${EXECUTOR_SHA}"', workflow)
+        bind = workflow.index("Bind trusted main execution source")
+        secrets = workflow.index("DEEPSOURCE_API_TOKEN")
+        self.assertLess(bind, secrets)
         self.assertIn(
             "DEEPSOURCE_API_TOKEN: ${{ secrets.DEEPSOURCE_API_TOKEN }}", workflow
         )
