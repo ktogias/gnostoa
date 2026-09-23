@@ -828,11 +828,20 @@ def _github_status_summary(
         ):
             continue
         analyzer = match.group("analyzer")
-        source_key = (str(status.get("source_kind")), analyzer)
+        source_kind = str(status.get("source_kind"))
+        run_id = match.group("run")
+        # GitHub commit statuses are newest-first, so select the first status
+        # per analyzer. Check-run reads already request GitHub's latest filter,
+        # but multiple distinct latest runs still make exact association ambiguous.
+        source_key: tuple[str, ...] = (
+            (source_kind, analyzer)
+            if source_kind == "commit_status"
+            else (source_kind, analyzer, run_id)
+        )
         if source_key in seen_sources:
             continue
         seen_sources.add(source_key)
-        run_ids.add(match.group("run"))
+        run_ids.add(run_id)
         analyzer_states.setdefault(analyzer, str(state))
     return run_ids, analyzer_states
 

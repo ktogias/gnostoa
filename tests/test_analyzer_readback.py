@@ -1195,6 +1195,44 @@ class DeepSourceAnalyzerReadbackTests(unittest.TestCase):
         self.assertEqual("RUN_ASSOCIATION_AMBIGUOUS", document["coverage"]["reason"])
         self.assertNotIn("analysis_id", document)
 
+    def test_multiple_check_run_ids_for_same_analyzer_are_ambiguous(self) -> None:
+        other_run = "22222222-2222-2222-2222-222222222222"
+        statuses = [
+            {
+                "context": "DeepSource: Python",
+                "source_kind": "check_run",
+                "app_slug": "deepsource-io",
+                "state": "success",
+                "target_url": (
+                    "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
+                    f"{RUN_UID}/python/"
+                ),
+            },
+            {
+                "context": "DeepSource: Python",
+                "source_kind": "check_run",
+                "app_slug": "deepsource-io",
+                "state": "failure",
+                "target_url": (
+                    "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
+                    f"{other_run}/python/"
+                ),
+            },
+        ]
+        document = analyzer_deepsource.diff_local_from_github(
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            observed_head=HEAD,
+            statuses=statuses,
+            comments=[],
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("AMBIGUOUS", document["completeness"])
+        self.assertEqual("INCOMPLETE", document["coverage"]["status"])
+        self.assertEqual("RUN_ASSOCIATION_AMBIGUOUS", document["coverage"]["reason"])
+        self.assertNotIn("analysis_id", document)
+
     def test_multiple_latest_github_run_ids_across_analyzers_are_ambiguous(
         self,
     ) -> None:
