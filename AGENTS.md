@@ -100,7 +100,9 @@ fallback only when the container route is unavailable; record that reason.
 
 The preparation authority must come from the exact bound parent, never from the
 editable candidate checkout. Execute the parent wrapper bytes; that trusted
-wrapper in turn loads `tools/candidate_prepare.py` from the same parent:
+wrapper restricts executable lookup to trusted system locations, scrubs inherited
+Git/Python routing, disables Git replacement objects, and runs the extracted
+parent `tools/candidate_prepare.py` with isolated Python (`-I`):
 
 ```bash
 parent=<exact-40-character-parent-sha>
