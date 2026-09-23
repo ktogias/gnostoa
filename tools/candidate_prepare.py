@@ -227,22 +227,22 @@ def _focused_verification_env(
 
 
 def _terminate_focused_process(process: subprocess.Popen[bytes]) -> None:
-    if process.poll() is not None:
-        process.wait()
-        return
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        process.wait()
-        return
-    try:
-        process.wait(timeout=_FOCUSED_TERMINATE_GRACE_SECONDS)
-    except subprocess.TimeoutExpired:
+    # A verification leader may exit while one of its descendants keeps an
+    # inherited pipe open. Timeout cleanup must therefore target the process
+    # group even when the leader has already been reaped.
+    for sig in (signal.SIGTERM, signal.SIGKILL):
         try:
-            os.killpg(process.pid, signal.SIGKILL)
+            os.killpg(process.pid, sig)
         except ProcessLookupError:
-            pass
-        process.wait()
+            break
+        try:
+            process.wait(timeout=_FOCUSED_TERMINATE_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            continue
+        if sig == signal.SIGTERM:
+            continue
+        break
+    process.wait()
 
 
 def _append_bounded(buffer: bytearray, chunk: bytes, limit: int) -> None:
