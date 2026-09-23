@@ -10,6 +10,9 @@ sources:
   - id: delivery-practice-work-item
     resource: https://github.com/ktogias/gnostoa/issues/80
     title: Canonicalize bounded self-hosted delivery practice
+  - id: agent-execution-recovery-work-item
+    resource: https://github.com/ktogias/gnostoa/issues/308
+    title: Enforce a single active implementation identity per Work Item across sessions
 x-project-knowledge:
   id: kit.runbook.deliver-bounded-self-hosted-slice
   owners:
@@ -35,6 +38,8 @@ x-project-knowledge:
       target: /requirements/bounded-behavioral-traceability.md
     - kind: references
       target: /decisions/0024-separate-stable-navigation-from-volatile-state.md
+    - kind: references
+      target: /decisions/0090-require-pre-candidate-preparation-receipts-for-non-hook-authoring.md
     - kind: references
       target: /runbooks/maintain-the-kit.md
     - kind: references
@@ -206,6 +211,220 @@ The existing emergency route retains its declared timing and follow-up.
 16. **Close the Work Item last.** Close only after integrated/provider read-back,
     subject re-binding, reconciliation and the micro-retrospective succeed; then
     record the next owner decision without starting it automatically.
+
+
+## Conditional agent execution recovery playbook
+
+This section records the recovery route used when an agent/cloud execution
+environment cannot use the shorter ordinary path. It is **not** a general
+delivery workflow and does not replace the procedure above, Decision 0090 or the
+recommended Development Container.
+
+### Capability preflight and route selection
+
+Choose the shortest trustworthy route that the current environment actually
+supports. In order of preference:
+
+1. Reuse or create a normal exact Git checkout and use the repository's
+   Development Container/local tooling, exact-parent `ci/prepare-candidate` and
+   an ordinary guarded Git push.
+2. Reuse an already materialized exact checkout from the current runtime only
+   after verifying its `HEAD`, `HEAD^{tree}` and clean status against provider
+   read-back.
+3. Use the recovery mechanisms below only for a measured missing capability.
+   A prior session's limitation is not evidence that the limitation still
+   exists.
+
+The recovery route became useful under combinations of these observed
+constraints:
+
+- the execution shell could not resolve or connect to `github.com`, even though
+  the GitHub provider connector could read repository metadata;
+- the connector could read UTF-8 files but could not materialize non-UTF-8 Git
+  blobs or a complete repository archive directly;
+- no exact local checkout existed for the current PR head;
+- the local runtime temporarily lacked Docker, Ruff, mypy or the complete
+  development environment required by the parent-owned preparation path;
+- the available provider connector exposed Git-data/ref primitives but not every
+  convenient transport operation, such as a directly usable binary archive or
+  workflow-dispatch action;
+- a long-running local process could outlive or be terminated independently of
+  the visible chat execution, so detached work could not be treated as exclusive
+  writer ownership.
+
+If none of those constraints applies, do **not** create helper branches,
+source-export workflows or provider-side preparation jobs merely to reproduce
+this recovery route.
+
+### Reuse local state only after identity checks
+
+Before exporting source, inspect already materialized workspaces and retained
+receipts. A directory name, previous chat statement or apparent clean tree is
+not identity evidence. Require:
+
+- exact provider PR/branch head read-back;
+- `git rev-parse HEAD` equal to the required 40-character parent;
+- `git rev-parse 'HEAD^{tree}'` equal to the provider-observed tree;
+- an empty `git status --porcelain`;
+- for a retained preparation receipt, successful parent-owned receipt
+  verification against the exact parent, prepared tree and separately retained
+  receipt digest.
+
+A tree-equivalent checkout with a different commit SHA is useful for byte
+comparison but is **not** an exact parent for Decision 0090 preparation. Acquire
+the real commit object before issuing a parent-bound receipt.
+
+### Exact-source acquisition fallback
+
+When direct clone/fetch/archive materialization is unavailable but GitHub Actions
+can check out the repository, use a temporary helper branch only as a transport
+surface:
+
+1. Start it at the exact required commit. Do not create a second implementation
+   PR or treat the helper branch as implementation authority.
+2. Use a pinned `actions/checkout`, `contents: read`,
+   `persist-credentials: false`, and an explicit exact SHA.
+3. Assert exact `HEAD`, exact `HEAD^{tree}` and a clean checkout before export.
+4. Create a `git bundle`, run `git bundle verify`, retain its SHA-256 and upload
+   it as a short-lived artifact.
+5. After download, verify the artifact digest and bundle again, clone from it,
+   check out the exact commit and repeat the head/tree/clean assertions.
+
+Use this route because the direct transport is unavailable, not because bundles
+are intrinsically preferable to `git clone` or an existing exact checkout.
+
+### Local RED/GREEN and candidate shaping
+
+Work from the exact parent checkout and keep provider state read-only while the
+candidate is still local. Reproduce the declared RED/characterization on the
+clean parent, apply only the admitted delta, then run the focused GREEN suite.
+Before preparation, run the cheap deterministic checks available in the
+environment: focused unit tests, `git diff --check`, Python compilation, Ruff
+format/lint and strict mypy for affected trust domains where applicable.
+
+Run permission-sensitive tests as the ordinary non-root development user.
+Executing them as `root` can invalidate tests that intentionally rely on
+filesystem permissions such as `chmod 000`.
+
+Treat unpublished work left by another execution as an input candidate, not as
+trusted completion. Compare it with the exact parent, inspect the diff, run the
+same checks and keep only the selected canonical variant.
+
+### Decision 0090 preparation
+
+For a Python-affecting candidate, the ordinary preferred route remains the
+exact-parent wrapper in the Development Container as documented in `AGENTS.md`
+and Decision 0090.
+
+If the local environment cannot provide the required Docker/development tooling,
+a provider-side preparation fallback may be used with the same trust boundary:
+
+- reconstruct one immutable candidate patch against the exact parent and bind
+  its SHA-256 and exact changed-path set;
+- run candidate code only in a **read-only** preparation job with the exact
+  parent checkout and exact development dependencies;
+- execute the parent-owned `ci/prepare-candidate`, retain the external receipt,
+  receipt digest, prepared tree, normalized patch digest and changed paths;
+- upload only the non-secret preparation evidence/artifact needed by the
+  publication step;
+- keep any write-capable job separate from the candidate-executing job.
+
+The write-capable job must not execute candidate code. It may verify the
+parent-owned receipt, apply the already prepared normalized patch, reconstruct
+the exact prepared tree, inspect Git identity and perform the bounded Git
+effect. If a normal local preparation environment is available, use it instead
+of creating this provider-side fallback.
+
+### Secret-bearing execution boundary
+
+Never give provider secrets or an effect-capable credential to code checked out
+from a mutable PR branch or a dispatch-selected arbitrary ref. A manual
+credentialed workflow must execute its runner from protected/trusted integrated
+source (for example current `main` or a separately prior-effective immutable
+runtime). The PR number, requested candidate head and provider subject are data
+inputs to that trusted runner, not the source from which the secret-bearing code
+is loaded.
+
+Pre-merge tests of a new credentialed adapter therefore use fakes/non-secret
+paths. Real secret-backed dogfood waits until a trusted runner is available, or
+uses an already prior-effective trusted runner. This rule is independent of
+whether the repository is private or whether the dispatching actor has write
+access.
+
+### Atomic publication and concurrent-writer fencing
+
+Immediately before any branch/ref mutation, re-read the implementation branch
+head. Publish the prepared tree as one commit with the expected exact parent and
+use an atomic guarded effect: an ordinary non-force fast-forward when possible,
+or `git push --force-with-lease=<ref>:<expected-parent>` when a provider-side
+transport requires it.
+
+Do not publish a Python candidate through a sequence of per-file Contents API
+commits: that exposes intermediate unprepared candidate states and breaks the
+prepared-tree identity.
+
+If the guarded effect fails because the branch moved, stop. Read the new head
+and compare it with the prepared result:
+
+- if another execution already published the **same prepared tree**, adopt that
+  provider state and continue from the observed head;
+- if the bytes differ, re-bind/reconcile and prepare a successor from the new
+  exact parent rather than force-writing over it.
+
+A same-tree no-op writer-epoch commit is an incident-recovery fence, not an
+ordinary publication technique. Use it only when the owner explicitly directs a
+takeover after observed concurrent-writer behavior and every participant is
+expected to perform pre-write head checks. Do not create ping-pong no-op commits
+as a liveness probe.
+
+Chat/UI interruption is not evidence that an earlier execution stopped. On
+resume, provider head/activity read-back comes before mutation. Unexpected head
+movement is a blocking `CONCURRENT_WRITER` observation until reconciled.
+
+### Exact-head review and CI reconciliation
+
+After publication, verify branch and PR head equality and changed paths. Before
+fresh external review, post the canonical unedited top-level seal whose first
+line is:
+
+`Exact review candidate: <40-character SHA>`
+
+Trigger reviewers separately when their integration requires an isolated
+trigger comment; do not combine multiple trigger commands into one comment.
+Resolve findings against the exact reviewed head. Prefer one coherent prepared
+follow-up for related findings over a stream of single-finding micro-commits.
+
+A Decision 0090 receipt binds its prepared **tree** and parent. A later same-tree
+no-op child can preserve tree-level preparation evidence, but it does not make
+exact-head CI or external review results from an older commit apply to the new
+commit automatically. Re-run/re-read the head-bound evidence.
+
+Inspect the authoritative CI jobs individually. `SKIPPED`, `CANCELED` and
+`SUCCESS` are distinct states. In particular, the repository's branch advisory
+uses `cancel-in-progress: true`; older advisory jobs canceled after a newer push
+to the same helper branch are stale-work cancellation, not test failures.
+
+A PR branch update performed by a GitHub Actions job using `GITHUB_TOKEN` can
+cause subsequent PR checks to require explicit owner approval in the GitHub UI.
+Treat that approval as a provider safety checkpoint, not as evidence that the
+candidate failed. Prefer an ordinary direct user/provider ref effect when it is
+already available and safe; do not route through `GITHUB_TOKEN` merely to create
+this approval step.
+
+### Cleanup and restart
+
+Keep helper branches and artifacts narrowly named, short-lived and free of
+secrets. Do not delete the only copy of a source bundle, receipt or normalized
+patch until its exact identities have been recorded and the intended provider
+effect has been read back. After integration/reconciliation, remove obsolete
+helper branches/artifacts according to provider capability and retention policy.
+
+After a session interruption, reconstruct state in this order: provider PR/ref
+head and current checks/reviews; exact local workspaces and any still-running
+processes; retained receipts/artifacts; then the next safe effect. Never infer
+completion from a chat transcript, a helper branch name or a detached process
+alone.
+
 
 ## Supplied agent reviews
 

@@ -90,6 +90,18 @@ establish the applicable failing or characterization evidence before editing.
 Mechanical changes and emergency follow-up use the timing declared by
 `policy/change-control.yaml`.
 
+Before choosing a cloud/provider recovery route for candidate preparation or
+publication, use the
+[conditional agent execution recovery playbook](knowledge/runbooks/deliver-bounded-self-hosted-slice.md#conditional-agent-execution-recovery-playbook).
+That route is **not** the default workflow. Prefer a direct exact checkout,
+Development Container, local trusted preparation and direct guarded Git effect
+whenever the current execution environment actually provides them. Helper
+branches, source-bundle artifacts and provider-side preparation/publish jobs are
+fallbacks for measured capability gaps such as missing repository network access,
+unavailable binary materialization, missing Docker/Ruff/development tooling, or
+lack of an atomic prepared-tree publication primitive. Do not manufacture those
+constraints for consistency with an earlier constrained session.
+
 Before creating or pushing a candidate that changes Python source or Python
 verification surfaces, use the pre-candidate preparation boundary from the
 recommended Development Container defined by `.devcontainer/devcontainer.json`.
