@@ -70,6 +70,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
         )
         environment.start()
         self.addCleanup(environment.stop)
+
     @staticmethod
     def _git(root: Path, *arguments: str) -> str:
         completed = subprocess.run(  # nosemgrep  # nosec B603
