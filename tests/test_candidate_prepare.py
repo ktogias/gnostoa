@@ -117,6 +117,10 @@ class CandidatePreparationContractTests(unittest.TestCase):
             'test "$1" = "fast"\n'
             'case "${GNOSTOA_TEST_FOCUSED_MODE:-pass}" in\n'
             "  mutate) printf 'changed\\n' > candidate.py ;;\n"
+            "  mutate-skip-worktree)\n"
+            "    printf 'changed\\n' > candidate.py\n"
+            "    git update-index --skip-worktree candidate.py\n"
+            "    ;;\n"
             "  fail) printf 'focused failure detail\\n'; exit 7 ;;\n"
             "  ignored-helper) test -f ignored-helper.txt ;;\n"
             "  toolkit-root)\n"
@@ -624,6 +628,28 @@ class CandidatePreparationContractTests(unittest.TestCase):
                     max_output_bytes=128,
                 )
 
+    def test_focused_success_cleans_process_group(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(
+                candidate_prepare,
+                "_terminate_focused_process",
+            ) as terminate:
+                # skipcq: PYL-W0212 -- intentional white-box process cleanup regression
+                completed = candidate_prepare._run_focused(
+                    [
+                        candidate_prepare.sys.executable,
+                        "-c",
+                        "print('ok')",
+                    ],
+                    cwd=root,
+                    env=_test_env(),
+                    timeout_seconds=5,
+                    max_output_bytes=128,
+                )
+            self.assertEqual(0, completed.returncode)
+            self.assertGreaterEqual(terminate.call_count, 1)
+
     def test_focused_timeout_kills_group_after_leader_exit(self) -> None:
         class CompletedLeader:
             pid = 424242
@@ -676,6 +702,26 @@ class CandidatePreparationContractTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 candidate_prepare.PrepareError,
                 "candidate symlinks are unsupported: candidate.py",
+            ):
+                self._prepare(root, parent, receipt)
+            self.assertFalse(receipt.exists())
+
+    def test_prepare_rejects_skip_worktree_hidden_verifier_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+            with (
+                patch.dict(
+                    os.environ,
+                    {"GNOSTOA_TEST_FOCUSED_MODE": "mutate-skip-worktree"},
+                    clear=False,
+                ),
+                self.assertRaisesRegex(
+                    candidate_prepare.PrepareError,
+                    "focused verification mutated candidate",
+                ),
             ):
                 self._prepare(root, parent, receipt)
             self.assertFalse(receipt.exists())
