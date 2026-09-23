@@ -1,0 +1,28 @@
+name: Read Codacy PR 314 annotations
+
+on:
+  push:
+    branches:
+      - ops/analyzer-readback-publish-314
+
+permissions:
+  contents: read
+  checks: read
+
+jobs:
+  read:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fetch exact Codacy annotations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ANNOTATIONS_URL: https://api.github.com/repos/ktogias/gnostoa/check-runs/107267422406/annotations
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${ANNOTATIONS_URL}" \
+            | jq -c '.[] | {path,start_line,end_line,annotation_level,title,message,raw_details}'
