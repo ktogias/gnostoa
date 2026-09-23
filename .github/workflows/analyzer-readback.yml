@@ -48,7 +48,11 @@ jobs:
           REQUESTED_HEAD: ${{ inputs.head }}
         run: |
           set -eu
-          PYTHONPATH=. python ci/analyzer_readback.py             --repository "${GITHUB_REPOSITORY}"             --pull-number "${PULL_NUMBER}"             --head "${REQUESTED_HEAD}"             --output "${RUNNER_TEMP}/gnostoa-analyzer-readback.json"
+          PYTHONPATH=. python ci/analyzer_readback.py \
+            --repository "${GITHUB_REPOSITORY}" \
+            --pull-number "${PULL_NUMBER}" \
+            --head "${REQUESTED_HEAD}" \
+            --output "${RUNNER_TEMP}/gnostoa-analyzer-readback.json"
       - name: Upload non-secret analyzer readback
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
