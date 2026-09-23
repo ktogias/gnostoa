@@ -1,0 +1,89 @@
+name: Prepare PR 314 final analyzer follow-up
+
+on:
+  push:
+    branches:
+      - ops/pr314-final-two-fixes-e33a
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Reconstruct exact candidate
+        shell: bash
+        env:
+          PARENT: e33ab8a629cf78da9ad35543ec2ffa912137614a
+          PARENT_TREE: 1aba3cbe6f84c22383623db18edf4e538caa2412
+          PATCH_SHA256: 0294c97531e5bec1dbf92c52671cb330b1ba32750ffece52175ff0b1fe89aced
+          GZIP_SHA256: 940114f315c50c3fed29a348a1caf727340762e6658e473c2933b8d1c9d3f37a
+        run: |
+          set -euo pipefail
+          gzip_file="${RUNNER_TEMP}/candidate.patch.gz"
+          patch_file="${RUNNER_TEMP}/candidate.patch"
+          base64 --decode .gnostoa-ops/pr314-final-two-fixes.patch.gz.b64 > "${gzip_file}"
+          echo "${GZIP_SHA256}  ${gzip_file}" | sha256sum -c -
+          gzip -dc "${gzip_file}" > "${patch_file}"
+          echo "${PATCH_SHA256}  ${patch_file}" | sha256sum -c -
+          git checkout --detach "${PARENT}"
+          test "$(git rev-parse HEAD)" = "${PARENT}"
+          test "$(git rev-parse 'HEAD^{tree}')" = "${PARENT_TREE}"
+          test -z "$(git status --porcelain)"
+          git apply --binary "${patch_file}"
+          test "$(git diff --binary --full-index "${PARENT}" -- ci/analyzer_readback.py tests/test_analyzer_readback.py tests/test_analyzer_readback_runner.py tools/analyzer_codacy.py tools/analyzer_deepsource.py | sha256sum | awk '{print $1}')" = "${PATCH_SHA256}"
+          git diff --check "${PARENT}"
+          printf '%s\n' ci/analyzer_readback.py tests/test_analyzer_readback.py tests/test_analyzer_readback_runner.py tools/analyzer_codacy.py tools/analyzer_deepsource.py > "${RUNNER_TEMP}/expected-paths"
+          git diff --name-only "${PARENT}" > "${RUNNER_TEMP}/actual-paths"
+          diff -u "${RUNNER_TEMP}/expected-paths" "${RUNNER_TEMP}/actual-paths"
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/development.lock
+
+      - name: Install exact development tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --only-binary=:all: --require-hashes -r requirements/development.lock
+          python -m ruff --version
+          command -v docker
+          docker --version
+
+      - name: Run Decision 0090 preparation
+        shell: bash
+        env:
+          PARENT: e33ab8a629cf78da9ad35543ec2ffa912137614a
+        run: |
+          set -euo pipefail
+          receipt="${RUNNER_TEMP}/receipt.json"
+          ./ci/prepare-candidate prepare --parent "${PARENT}" --receipt "${receipt}" --focused-profile fast --trusted-python "$(command -v python)"
+          tree="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["prepared_tree"])' "${receipt}")"
+          receipt_sha="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["receipt_sha256"])' "${receipt}")"
+          ./ci/prepare-candidate verify --parent "${PARENT}" --tree "${tree}" --receipt "${receipt}" --receipt-sha256 "${receipt_sha}" --trusted-python "$(command -v python)"
+          out="${RUNNER_TEMP}/prepared"
+          mkdir -p "${out}"
+          git diff --binary --full-index "${PARENT}" "${tree}" > "${out}/normalized.patch"
+          cp "${receipt}" "${out}/receipt.json"
+          patch_sha="$(sha256sum "${out}/normalized.patch" | awk '{print $1}')"
+          python - "${out}/metadata.json" "${tree}" "${receipt_sha}" "${patch_sha}" <<'PY'
+          import json, sys
+          from pathlib import Path
+          Path(sys.argv[1]).write_text(json.dumps({"parent":"e33ab8a629cf78da9ad35543ec2ffa912137614a","prepared_tree":sys.argv[2],"receipt_sha256":sys.argv[3],"normalized_patch_sha256":sys.argv[4]}, sort_keys=True)+"\n", encoding="utf-8")
+          PY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr314-final-two-fixes-prepared
+          path: ${{ runner.temp }}/prepared
+          if-no-files-found: error
+          retention-days: 2
