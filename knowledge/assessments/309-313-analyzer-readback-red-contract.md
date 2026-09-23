@@ -53,7 +53,7 @@ behaviours:
 | R9 | Malformed provider payloads fail closed without fabricating zero findings. |
 | R10 | Finding identity, severity, rule, message, location and native reference survive normalization without provider vocabulary entering the common reducer. |
 | R11 | Analyzer readback has no mutation route: no trigger, comment, dismissal, configuration or Git/provider write method is exposed. |
-| R12 | PR #312 dogfood can retain exact-head provider evidence or an explicit incomplete limitation without guessing from GitHub check counts. |
+| R12 | PR #312 dogfood can retain exact-head provider evidence or an explicit incomplete limitation without guessing from GitHub check counts. |\n| R13 | The runner rejects GitHub PR head movement across acquisition and stale DeepSource inline `commit_id` evidence. |\n| R14 | The manual workflow has read-only GitHub permissions, step-scoped analyzer secrets, no automatic PR trigger and uploads only a validated non-secret bundle. |
 
 ## Intended implementation shape
 
@@ -63,7 +63,12 @@ Keep the first slice flat and auditable:
   serialization only;
 - `tools/analyzer_deepsource.py`: DeepSource authenticated acquisition;
 - `tools/analyzer_codacy.py`: Codacy authenticated acquisition;
-- focused tests in `tests/test_analyzer_readback.py`;
+- `ci/analyzer_readback.py`: exact-head GitHub readback, provider orchestration,
+  secret-output check and bounded bundle creation;
+- `.github/workflows/analyzer-readback.yml`: manual read-only secret-backed
+  dogfood/execution surface;
+- focused tests in `tests/test_analyzer_readback.py` plus runner/workflow
+  contract coverage;
 - guardrail ownership and this Decision/index update.
 
 Do not modify R2A semantic evaluation or the useful-L1 reducer merely to host
