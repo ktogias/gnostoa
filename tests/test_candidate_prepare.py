@@ -590,6 +590,27 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 completed.stdout.decode("utf-8").strip(),
             )
 
+    def test_run_failure_preserves_bounded_stdout_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with self.assertRaisesRegex(
+                candidate_prepare.PrepareError,
+                r"command failed \(7\): .*stdout diagnostic tail$",
+            ):
+                candidate_prepare._run(
+                    [
+                        candidate_prepare.sys.executable,
+                        "-c",
+                        (
+                            "import sys; "
+                            "sys.stdout.write('x' * 5000 + 'stdout diagnostic tail'); "
+                            "sys.exit(7)"
+                        ),
+                    ],
+                    cwd=root,
+                    env=_test_env(),
+                )
+
     def test_focused_runner_bounds_output_and_times_out(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
