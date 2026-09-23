@@ -11,8 +11,15 @@ this page preserves the fuller roadmap and historical results below.
 
 The detailed post-P2b ascent order is retained in the provider-side
 [consolidated Ariadne v9 roadmap checkpoint](https://github.com/ktogias/gnostoa/issues/14#issuecomment-5706634917).
-That checkpoint links the owning #10, #11 and #15 records; provider labels remain
-authoritative for the one currently selected Work Item.
+The current execution cursor also has a bounded
+[VF0 verification-first safety addendum](https://github.com/ktogias/gnostoa/issues/14#issuecomment-5803835134):
+after PR #314 and the PR #315 recovery/RCA integration, #15 inserts one
+deterministic pre-implementation-evidence gate before the next critical
+outer-consumer/Q0 activation, PR #297 reconciliation or broader planner work.
+This is a late A1b safety closure reusing Decision 0090; it does not renumber or
+replace Ariadne v9. That checkpoint and its addenda link the owning #10, #11 and
+#15 records; provider labels remain authoritative for the one currently selected
+Work Item.
 
 The categories are priorities, not acceptance or effectiveness states. Open
 Work Items remain open until their own lifecycle completes. Closed historical
