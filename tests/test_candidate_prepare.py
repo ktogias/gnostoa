@@ -1291,23 +1291,61 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 document["focused_command"],
             )
 
-    def test_ci_wrapper_routes_to_candidate_prepare_module(self) -> None:
+    def test_parent_wrapper_executes_parent_preparation_authority(self) -> None:
         wrapper = ROOT / "ci" / "prepare-candidate"
         self.assertTrue(wrapper.is_file())
-        text = wrapper.read_text(encoding="utf-8")
-        self.assertIn('cd "$(dirname "$0")/.."', text)
-        self.assertIn("python -m tools.candidate_prepare", text)
+        wrapper_text = wrapper.read_text(encoding="utf-8")
+        self.assertNotIn("python -m tools.candidate_prepare", wrapper_text)
+        self.assertIn('show "${parent}:tools/candidate_prepare.py"', wrapper_text)
+
         with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._git(root, "init", "--quiet")
+            self._git(root, "config", "user.email", "candidate@example.invalid")
+            self._git(root, "config", "user.name", "Candidate Test")
+            (root / "ci").mkdir()
+            (root / "tools").mkdir()
+            (root / "ci" / "prepare-candidate").write_text(
+                wrapper_text,
+                encoding="utf-8",
+            )
+            (root / "tools" / "candidate_prepare.py").write_text(
+                "import sys\n"
+                "print('trusted-parent', sys.argv[1])\n",
+                encoding="utf-8",
+            )
+            self._git(root, "add", ".")
+            self._git(root, "commit", "--quiet", "-m", "trusted parent")
+            parent = self._git(root, "rev-parse", "HEAD")
+
+            (root / "tools" / "candidate_prepare.py").write_text(
+                "raise SystemExit(97)\n",
+                encoding="utf-8",
+            )
+            trusted_wrapper = self._git(
+                root,
+                "show",
+                f"{parent}:ci/prepare-candidate",
+            )
             completed = subprocess.run(  # nosemgrep  # nosec B603
-                [str(wrapper), "--help"],
-                cwd=Path(directory),
+                [
+                    "sh",
+                    "-s",
+                    "--",
+                    "verify",
+                    "--parent",
+                    parent,
+                ],
+                cwd=root,
                 env=_test_env(),
+                input=trusted_wrapper,
                 check=False,
                 shell=False,
                 capture_output=True,
                 text=True,
             )
-        self.assertEqual(0, completed.returncode, completed.stderr)
+            self.assertEqual(0, completed.returncode, completed.stderr)
+            self.assertIn("trusted-parent verify", completed.stdout)
 
 
 if __name__ == "__main__":
