@@ -6,10 +6,13 @@ import json
 import os
 import re
 import secrets
+import selectors
 import shutil
+import signal
 import subprocess  # nosec B404 -- audited subprocess boundary in _run
 import sys
 import tempfile
+import time
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
@@ -54,6 +57,9 @@ _FOCUSED_PROFILES = (
     "smoke",
     "extended",
 )
+_FOCUSED_TIMEOUT_SECONDS = 900
+_FOCUSED_OUTPUT_BYTES = 65_536
+_FOCUSED_TERMINATE_GRACE_SECONDS = 2
 _PREPARATION_AUTHORITY_PATHS = (
     "ci/prepare-candidate",
     "ci/style",
@@ -220,6 +226,117 @@ def _focused_verification_env(
     return focused
 
 
+def _terminate_focused_process(process: subprocess.Popen[bytes]) -> None:
+    if process.poll() is not None:
+        process.wait()
+        return
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        process.wait()
+        return
+    try:
+        process.wait(timeout=_FOCUSED_TERMINATE_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait()
+
+
+def _append_bounded(buffer: bytearray, chunk: bytes, limit: int) -> None:
+    if len(chunk) >= limit:
+        buffer[:] = chunk[-limit:]
+        return
+    buffer.extend(chunk)
+    excess = len(buffer) - limit
+    if excess > 0:
+        del buffer[:excess]
+
+
+def _run_focused(
+    command: Sequence[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    timeout_seconds: float = _FOCUSED_TIMEOUT_SECONDS,
+    max_output_bytes: int = _FOCUSED_OUTPUT_BYTES,
+) -> subprocess.CompletedProcess[bytes]:
+    if timeout_seconds <= 0 or max_output_bytes <= 0:
+        raise PrepareError("focused verification bounds must be positive")
+
+    argv = list(command)
+    deadline = time.monotonic() + timeout_seconds
+    try:
+        process: subprocess.Popen[bytes] = subprocess.Popen(  # nosec B603
+            argv,
+            cwd=cwd,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=False,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        raise PrepareError("focused verification could not start") from exc
+
+    assert process.stdout is not None
+    assert process.stderr is not None
+    selector = selectors.DefaultSelector()
+    output = {"stdout": bytearray(), "stderr": bytearray()}
+    timed_out = False
+    try:
+        selector.register(process.stdout, selectors.EVENT_READ, "stdout")
+        selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+        while selector.get_map():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                break
+            events = selector.select(remaining)
+            if not events:
+                timed_out = True
+                break
+            for key, _mask in events:
+                chunk = os.read(key.fd, 8192)
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    continue
+                _append_bounded(output[key.data], chunk, max_output_bytes)
+
+        if timed_out:
+            _terminate_focused_process(process)
+            raise PrepareError(
+                f"focused verification timed out after {timeout_seconds:g}s"
+            )
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            _terminate_focused_process(process)
+            raise PrepareError(
+                f"focused verification timed out after {timeout_seconds:g}s"
+            )
+        try:
+            returncode = process.wait(timeout=remaining)
+        except subprocess.TimeoutExpired as exc:
+            _terminate_focused_process(process)
+            raise PrepareError(
+                f"focused verification timed out after {timeout_seconds:g}s"
+            ) from exc
+        return subprocess.CompletedProcess(
+            argv,
+            returncode,
+            bytes(output["stdout"]),
+            bytes(output["stderr"]),
+        )
+    finally:
+        selector.close()
+        process.stdout.close()
+        process.stderr.close()
+
+
 def _run(
     command: Sequence[str],
     *,
@@ -281,7 +398,10 @@ def _ruff_version(
 
 def _assert_external_receipt(root: Path, receipt: Path) -> Path:
     resolved_root = root.resolve()
-    resolved = receipt.expanduser().resolve()
+    expanded = receipt.expanduser()
+    if expanded.exists() or expanded.is_symlink():
+        raise PrepareError("receipt path already exists")
+    resolved = expanded.resolve()
     if resolved == resolved_root or resolved_root in resolved.parents:
         raise PrepareError("receipt path must be outside the repository worktree")
     resolved.parent.mkdir(parents=True, exist_ok=True)
@@ -708,7 +828,10 @@ def _write_receipt(path: Path, payload: dict[str, Any]) -> dict[str, Any]:
         stream.flush()
         os.fsync(stream.fileno())
     try:
-        os.replace(temporary, path)
+        try:
+            os.link(temporary, path)
+        except FileExistsError as exc:
+            raise PrepareError("receipt path already exists") from exc
     finally:
         temporary.unlink(missing_ok=True)
     return document
@@ -780,11 +903,10 @@ def prepare(
             # tree. Drop ignored/untracked formatter residue, then restore
             # tracked bytes from the normalized index before verification.
             _reset_workspace_to_index(workspace, git_dir)
-            focused = _run(
+            focused = _run_focused(
                 focused_argv,
                 cwd=workspace,
                 env=focused_env,
-                check=False,
             )
             if focused.returncode != 0:
                 stderr = focused.stderr.decode("utf-8", errors="replace").strip()
@@ -869,7 +991,7 @@ def prepare(
     }
     try:
         return _write_receipt(receipt, payload)
-    except (OSError, TypeError, ValueError):
+    except (OSError, TypeError, ValueError, PrepareError):
         _release_prepared_tree(
             root,
             retention_ref,
