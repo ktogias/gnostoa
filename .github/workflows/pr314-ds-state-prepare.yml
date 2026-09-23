@@ -24,14 +24,10 @@ jobs:
           PARENT: ad11788e70ead72be115cb692c5de000cb934168
           PARENT_TREE: a6cd72aab81a14f58281df7e44f200cca2504b83
           PATCH_SHA256: 288d378edaabfa46168da94bc90f9a3d10296a18ed3fe3e5aedc09e2fd11a424
-          GZIP_SHA256: 7bd4ade2fcbefb3dc81a0d7ad074e4099ba03b492fb06f8b13093468ba784534
         run: |
           set -euo pipefail
-          gzip_file="${RUNNER_TEMP}/candidate.patch.gz"
           patch_file="${RUNNER_TEMP}/candidate.patch"
-          base64 --decode .gnostoa-ops/pr314-ds-state.patch.gz.b64 > "${gzip_file}"
-          echo "${GZIP_SHA256}  ${gzip_file}" | sha256sum -c -
-          gzip -dc "${gzip_file}" > "${patch_file}"
+          cp .gnostoa-ops/pr314-ds-state.patch "${patch_file}"
           echo "${PATCH_SHA256}  ${patch_file}" | sha256sum -c -
 
           git checkout --detach "${PARENT}"

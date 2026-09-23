@@ -1,0 +1,106 @@
+diff --git a/tests/test_analyzer_readback.py b/tests/test_analyzer_readback.py
+index a45ff664a5cbe2a7e54b42cdb649c94a368b23c6..873f0a33fdc8f66cf1fd30e5e9cc0db935773c75 100644
+--- a/tests/test_analyzer_readback.py
++++ b/tests/test_analyzer_readback.py
+@@ -812,6 +812,66 @@ class DeepSourceAnalyzerReadbackTests(unittest.TestCase):
+         self.assertEqual("TYPECHECK", document["findings"][0]["category"])
+         self.assertEqual("MAJOR", document["findings"][0]["severity"])
+ 
++    def test_github_native_projection_pending_state_is_partial_not_clean(
++        self,
++    ) -> None:
++        statuses = [
++            {
++                "context": "DeepSource: Python",
++                "source_kind": "commit_status",
++                "creator_login": "deepsource-io[bot]",
++                "creator_type": "Bot",
++                "state": "pending",
++                "target_url": (
++                    "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
++                    f"{RUN_UID}/python/"
++                ),
++            }
++        ]
++        document = analyzer_deepsource.diff_local_from_github(
++            repository="ktogias/gnostoa",
++            pull_number=312,
++            requested_head=HEAD,
++            observed_head=HEAD,
++            statuses=statuses,
++            comments=[],
++            observed_at=OBSERVED,
++        )
++        self.assertEqual("DIFF_LOCAL", document["completeness"])
++        self.assertEqual("PENDING", document["run_state"])
++        self.assertEqual("PARTIAL", document["coverage"]["status"])
++        self.assertEqual("ANALYZER_STATE_UNAVAILABLE", document["coverage"]["reason"])
++        self.assertEqual([], document["findings"])
++
++    def test_github_native_projection_error_state_is_partial_not_clean(self) -> None:
++        statuses = [
++            {
++                "context": "DeepSource: Python",
++                "source_kind": "commit_status",
++                "creator_login": "deepsource-io[bot]",
++                "creator_type": "Bot",
++                "state": "error",
++                "target_url": (
++                    "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
++                    f"{RUN_UID}/python/"
++                ),
++            }
++        ]
++        document = analyzer_deepsource.diff_local_from_github(
++            repository="ktogias/gnostoa",
++            pull_number=312,
++            requested_head=HEAD,
++            observed_head=HEAD,
++            statuses=statuses,
++            comments=[],
++            observed_at=OBSERVED,
++        )
++        self.assertEqual("DIFF_LOCAL", document["completeness"])
++        self.assertEqual("FAILURE", document["run_state"])
++        self.assertEqual("PARTIAL", document["coverage"]["status"])
++        self.assertEqual("ANALYZER_STATE_UNAVAILABLE", document["coverage"]["reason"])
++        self.assertEqual([], document["findings"])
++
+     def test_github_native_projection_keeps_latest_status_per_analyzer(self) -> None:
+         statuses = [
+             {
+diff --git a/tools/analyzer_deepsource.py b/tools/analyzer_deepsource.py
+index 32ba41c893bee00e1699ab38b59047853abce97d..a7bfbd6d013a44b6c7f7340144373feb43499509 100644
+--- a/tools/analyzer_deepsource.py
++++ b/tools/analyzer_deepsource.py
+@@ -943,6 +943,30 @@ def _diff_local_from_github(
+     native = {"analyzers": dict(sorted(analyzer_states.items()))}
+     if carried_forward_comments:
+         native["carried_forward_comments_excluded"] = carried_forward_comments
++    if state_values & {"pending", "error"}:
++        return build_readback(
++            provider="deepsource",
++            adapter="deepsource-github/v1",
++            repository=repository,
++            pull_number=pull_number,
++            requested_head=requested_head,
++            observed_head=requested_head,
++            analysis_id=next(iter(run_ids)),
++            scope="DIFF",
++            completeness="DIFF_LOCAL",
++            native_mode="DIFF_LOCAL",
++            observed_at=observed_at,
++            run_state=run_state,
++            coverage_record=coverage(
++                "PARTIAL",
++                pages=1,
++                count=len(retained),
++                reason="ANALYZER_STATE_UNAVAILABLE",
++            ),
++            findings=retained,
++            native=native,
++        )
++    if carried_forward_comments:
+         return build_readback(
+             provider="deepsource",
+             adapter="deepsource-github/v1",
