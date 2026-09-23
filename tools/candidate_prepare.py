@@ -1235,11 +1235,12 @@ def release_receipt(
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Prepare or verify a normalized Gnostoa candidate tree."
+        description="Prepare or verify a normalized Gnostoa candidate tree.",
+        allow_abbrev=False,
     )
     actions = parser.add_subparsers(dest="action", required=True)
 
-    prepare_parser = actions.add_parser("prepare")
+    prepare_parser = actions.add_parser("prepare", allow_abbrev=False)
     prepare_parser.add_argument("--parent", required=True)
     prepare_parser.add_argument("--receipt", required=True, type=Path)
     prepare_parser.add_argument(
@@ -1248,13 +1249,13 @@ def _parser() -> argparse.ArgumentParser:
         choices=_FOCUSED_PROFILES,
     )
 
-    verify_parser = actions.add_parser("verify")
+    verify_parser = actions.add_parser("verify", allow_abbrev=False)
     verify_parser.add_argument("--parent", required=True)
     verify_parser.add_argument("--tree", required=True)
     verify_parser.add_argument("--receipt", required=True, type=Path)
     verify_parser.add_argument("--receipt-sha256", required=True)
 
-    release_parser = actions.add_parser("release")
+    release_parser = actions.add_parser("release", allow_abbrev=False)
     release_parser.add_argument("--parent", required=True)
     release_parser.add_argument("--tree", required=True)
     release_parser.add_argument("--receipt", required=True, type=Path)
