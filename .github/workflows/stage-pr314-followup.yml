@@ -1,0 +1,71 @@
+name: Stage PR 314 prepared follow-up
+
+on:
+  push:
+    branches:
+      - ops/analyzer-readback-followup-publish-314
+
+permissions:
+  contents: write
+
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout helper branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+
+      - name: Reconstruct and stage exact prepared tree
+        shell: bash
+        env:
+          EXPECTED_PARENT: abd968b47ddb74a0998b06d5b2f47834e979a0fa
+          EXPECTED_PARENT_TREE: 63c7cd1b498e35e1facef2cf22db355945134e46
+          EXPECTED_PREPARED_TREE: 7b22a1d6d161ea725b3dc12cfece89a3a9a5c300
+          EXPECTED_PAYLOAD_BLOB: f40b0485c692ab278dab03a705644e9102ecfb95
+          EXPECTED_GZIP_SHA256: 06b7091ac03094a4fae3434c0df8af5e2a6a61522593c9d007d51413776722ff
+          EXPECTED_PATCH_SHA256: fcc471ea63e288e91c9fcf89642f24f69903b651cbbf74f7584e62d791a94626
+          STAGING_BRANCH: ops/analyzer-readback-followup-ready-314
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REPOSITORY}" = "ktogias/gnostoa"
+          test "${GITHUB_REF_NAME}" = "ops/analyzer-readback-followup-publish-314"
+
+          payload=ops/pr314-followup.patch.gz.b64
+          test "$(git hash-object "${payload}")" = "${EXPECTED_PAYLOAD_BLOB}"
+
+          gzip_path="${RUNNER_TEMP}/pr314-followup.patch.gz"
+          patch_path="${RUNNER_TEMP}/pr314-followup.patch"
+          base64 -d < "${payload}" > "${gzip_path}"
+          test "$(sha256sum "${gzip_path}" | cut -d' ' -f1)" = "${EXPECTED_GZIP_SHA256}"
+          gzip -dc "${gzip_path}" > "${patch_path}"
+          test "$(sha256sum "${patch_path}" | cut -d' ' -f1)" = "${EXPECTED_PATCH_SHA256}"
+
+          git checkout --detach "${EXPECTED_PARENT}"
+          test "$(git rev-parse HEAD)" = "${EXPECTED_PARENT}"
+          test "$(git rev-parse 'HEAD^{tree}')" = "${EXPECTED_PARENT_TREE}"
+
+          git apply --index --binary "${patch_path}"
+          git diff --cached --check
+          test "$(git write-tree)" = "${EXPECTED_PREPARED_TREE}"
+
+          cat > "${RUNNER_TEMP}/expected-paths" <<'EOF'
+          ci/analyzer_readback.py
+          tests/test_analyzer_readback.py
+          tests/test_analyzer_readback_runner.py
+          tools/analyzer_codacy.py
+          tools/analyzer_deepsource.py
+          tools/analyzer_readback.py
+          EOF
+          git diff --cached --name-only "${EXPECTED_PARENT}" > "${RUNNER_TEMP}/actual-paths"
+          diff -u "${RUNNER_TEMP}/expected-paths" "${RUNNER_TEMP}/actual-paths"
+
+          git config user.name "Gnostoa preparation"
+          git config user.email "noreply@invalid"
+          git commit -m "fix: harden authenticated analyzer readback (#309 #313)" -m "Refs #309, #313."
+          test "$(git rev-parse 'HEAD^')" = "${EXPECTED_PARENT}"
+          test "$(git rev-parse 'HEAD^{tree}')" = "${EXPECTED_PREPARED_TREE}"
+
+          git push origin "HEAD:refs/heads/${STAGING_BRANCH}"
