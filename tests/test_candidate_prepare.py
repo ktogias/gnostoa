@@ -75,11 +75,20 @@ class CandidatePreparationContractTests(unittest.TestCase):
     def _git(root: Path, *arguments: str) -> str:
         # Reuse the audited shell-free subprocess boundary from the implementation
         # so this fixture helper does not duplicate a tainted-command SAST sink.
+        command = [GIT, *arguments]
         completed = candidate_prepare._run(
-            [GIT, *arguments],
+            command,
             cwd=root,
             env=_test_env(),
+            check=False,
         )
+        if completed.returncode != 0:
+            raise subprocess.CalledProcessError(
+                completed.returncode,
+                command,
+                output=completed.stdout,
+                stderr=completed.stderr,
+            )
         return completed.stdout.decode("utf-8", errors="strict").strip()
 
     @staticmethod
