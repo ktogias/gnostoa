@@ -88,7 +88,15 @@ Before implementation, follow
 `guidance/workflows/develop-verification-first.md`; record expected behavior and
 establish the applicable failing or characterization evidence before editing.
 Mechanical changes and emergency follow-up use the timing declared by
-`policy/change-control.yaml`.
+`policy/change-control.yaml`. Recovery from missing source transport, tooling,
+provider access or an interrupted session does **not** relax this chronology.
+Before the first semantic edit, record which pre-change evidence mode applies:
+failing RED/reproducer, green characterization, non-executable structural
+criterion, or the explicitly admitted emergency post-event path. If an edit is
+discovered to have preceded required evidence, stop, record the chronology
+violation and reconstruct the pre-change evidence against the exact prior
+subject before continuing; do not relabel the reconstructed evidence as
+test-first chronology.
 
 Before choosing a cloud/provider recovery route for candidate preparation or
 publication, use the

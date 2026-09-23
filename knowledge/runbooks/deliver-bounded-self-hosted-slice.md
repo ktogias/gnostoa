@@ -295,6 +295,34 @@ are intrinsically preferable to `git clone` or an existing exact checkout.
 
 ### Local RED/GREEN and candidate shaping
 
+Recovery may acquire exact source, inspect provider state and restore missing
+tooling before behavioral evidence exists, because those operations do not
+themselves mutate the semantic candidate. Before the **first semantic edit**,
+record one compact chronology checkpoint:
+
+- exact parent/head and change class;
+- evidence mode: `RED`/reproducer, `CHARACTERIZATION`, non-executable
+  `STRUCTURAL`, or an explicitly admitted `EMERGENCY_POST_EVENT` path;
+- exact command or criterion and the expected pre-change result; and
+- the observed pre-change result and why it distinguishes the intended change
+  from a false positive.
+
+For a reproduced defect or new executable/conformance behavior where failing
+evidence is applicable, do not start the fix until RED has been observed on the
+exact pre-change subject. A behavior-preserving refactor uses a green
+characterization baseline instead; prose-only knowledge uses an unmet
+structural/semantic criterion plus accountable review rather than a ceremonial
+unit test.
+
+If an agent discovers that a semantic candidate was already edited before the
+required checkpoint, stop shaping the candidate. Preserve the intended
+regression test separately, restore the affected production bytes to the exact
+pre-change subject, and run that same evidence to establish a **late RED
+reconstruction**. Then restore the candidate and prove GREEN. Record both the
+late reconstruction and the chronology violation: reconstructed RED repairs the
+evidence gap but does **not** retroactively make the original authoring sequence
+verification-first.
+
 Work from the exact parent checkout and keep provider state read-only while the
 candidate is still local. Reproduce the declared RED/characterization on the
 clean parent, apply only the admitted delta, then run the focused GREEN suite.
