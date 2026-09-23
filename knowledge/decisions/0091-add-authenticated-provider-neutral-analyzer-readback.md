@@ -176,7 +176,42 @@ modify Pull Requests, write Git refs or grant lifecycle/merge authority.
 
 Any later provider mutation requires separate admission and Decision coverage.
 
-### 8. Dogfood and Q0 handoff
+### 8. One bounded read-only execution surface
+
+The repository-secret-backed live path is one implementation-private runner and
+one manual GitHub Actions workflow, not provider-specific workflows.
+
+The runner:
+
+- accepts repository, Pull Request number and exact requested head as ordinary
+  non-secret inputs;
+- re-reads the GitHub Pull Request before and after provider acquisition and
+  refuses to attribute evidence when its head changes;
+- reads exact-head GitHub commit statuses and inline review comments through a
+  read-only GitHub token, retaining DeepSource GitHub evidence only when the
+  status subject and inline `commit_id` bind to the requested head;
+- uses the uniquely discovered DeepSource run UUID for authenticated
+  `FULL_RUN` acquisition;
+- invokes the Codacy adapter for the same Pull Request/head and requires a
+  stable Codacy subject across issue pagination;
+- emits one bounded non-secret bundle of normalized readbacks and checks that
+  none of the injected credential values occur in the serialized output before
+  it can be retained.
+
+The workflow is `workflow_dispatch` only and grants at most
+`contents: read`, `pull-requests: read` and `statuses: read`. Provider
+credentials are injected only into the acquisition step as
+`DEEPSOURCE_API_TOKEN` and `CODACY_API_TOKEN`; the GitHub token is likewise
+read-only. The workflow may upload only the already validated non-secret
+readback bundle as an evidence artifact. It has no provider mutation command,
+Git write permission or automatic Pull Request trigger.
+
+This dedicated manual surface is preferred to adding analyzer secrets to the
+ordinary verification workflow: analyzer availability must not become a
+candidate correctness gate, and fork/PR secret semantics must not alter the
+meaning of repository CI.
+
+### 9. Dogfood and Q0 handoff
 
 The first dogfood target is PR #312 because it exercised both analyzer visibility
 gaps and has a known exact-head history.
@@ -190,7 +225,7 @@ either:
 
 No Q0 qualification is inferred merely from analyzer availability.
 
-### 9. Candidate preparation remains mandatory
+### 10. Candidate preparation remains mandatory
 
 Any Python-affecting implementation candidate under this Decision must pass the
 integrated Decision 0090 exact-parent preparation boundary before publication.
