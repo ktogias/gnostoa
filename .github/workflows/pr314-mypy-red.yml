@@ -1,0 +1,38 @@
+name: PR314 strict mypy RED probe
+
+on:
+  push:
+    branches:
+      - transport/pr314-mypy-eceafb
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: eceafbfdbdaed2aa3a076b250cf277bd06d7526b
+          persist-credentials: false
+      - name: Verify exact candidate identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "eceafbfdbdaed2aa3a076b250cf277bd06d7526b"
+          test "$(git rev-parse 'HEAD^{tree}')" = "4aa72ceca940a89aa7594f08814fabd269418705"
+          test -z "$(git status --porcelain)"
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/development.lock
+      - name: Install exact development dependencies
+        run: |
+          python -m pip install --only-binary=:all: --require-hashes -r requirements/development.lock
+      - name: Strict mypy RED probe
+        run: python -m mypy tools/analyzer_deepsource.py
