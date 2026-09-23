@@ -183,7 +183,12 @@ provenance object.
 
 Tokens enter only through explicit environment variables at execution time.
 They are never accepted as CLI arguments, serialized into retained evidence,
-included in exception text, request URLs or debug output.
+included in exception text, request URLs or debug output. The GitHub-hosted live
+route stores the provider token values only as secrets of the
+`analyzer-readback` GitHub Environment, not as repository or organization
+secrets available to arbitrary same-repository workflow refs. That Environment
+must admit only the `main` branch through its deployment branch policy before
+the live route is enabled.
 
 Adapters use fixed HTTPS origins and reject credential-bearing redirects outside
 the admitted provider origin. Authorization headers are attached only after URL
@@ -227,16 +232,20 @@ The runner:
 
 The workflow is `workflow_dispatch` only and grants at most
 `contents: read`, `pull-requests: read`, `statuses: read` and `checks: read`.
-The credential-bearing job is admitted only when the dispatch ref is
-`refs/heads/main`; checkout is pinned to that dispatch event's exact
-`github.sha`, and a secret-free binding step verifies both the main ref and
-`HEAD == github.sha` before any analyzer credential is injected. A moving branch
-name is therefore not an executable-code selector for the credentialed step.
-Provider credentials are injected only into the acquisition step as
-`DEEPSOURCE_API_TOKEN` and `CODACY_API_TOKEN`; the GitHub token is likewise
-read-only. The workflow may upload only the already validated non-secret
-readback bundle as an evidence artifact. It has no provider mutation command,
-Git write permission or automatic Pull Request trigger.
+The credential-bearing job references the `analyzer-readback` GitHub
+Environment. Provider configuration must restrict that Environment to the
+`main` branch and store `DEEPSOURCE_API_TOKEN` and `CODACY_API_TOKEN` only as
+Environment secrets. The job also admits only dispatch ref `refs/heads/main`;
+checkout is pinned to that dispatch event's exact `github.sha`, and a
+secret-free binding step verifies both the main ref and `HEAD == github.sha`
+before any analyzer credential is injected. The provider-level Environment
+policy is the non-bypassable secret-admission boundary; the in-workflow checks
+are defense in depth because a workflow dispatched from another ref can use the
+workflow bytes from that ref. Provider credentials are injected only into the
+acquisition step; the GitHub token is likewise read-only. The workflow may
+upload only the already validated non-secret readback bundle as an evidence
+artifact. It has no provider mutation command, Git write permission or automatic
+Pull Request trigger.
 
 This dedicated manual surface is preferred to adding analyzer secrets to the
 ordinary verification workflow: analyzer availability must not become a

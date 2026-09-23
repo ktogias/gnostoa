@@ -21,6 +21,7 @@ permissions:
 jobs:
   readback:
     if: github.ref == 'refs/heads/main'
+    environment: analyzer-readback
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

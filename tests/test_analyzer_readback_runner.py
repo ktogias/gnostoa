@@ -447,6 +447,7 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
         self.assertNotIn("pull-requests: write", workflow)
         self.assertIn("timeout-minutes: 15", workflow)
         self.assertIn("if: github.ref == 'refs/heads/main'", workflow)
+        self.assertIn("environment: analyzer-readback", workflow)
         self.assertIn("ref: ${{ github.sha }}", workflow)
         self.assertIn("persist-credentials: false", workflow)
         self.assertIn("Bind trusted main execution source", workflow)
