@@ -1,0 +1,12 @@
+diff --git a/tools/analyzer_deepsource.py b/tools/analyzer_deepsource.py
+--- a/tools/analyzer_deepsource.py
++++ b/tools/analyzer_deepsource.py
+@@ -806,7 +806,7 @@ def _github_status_summary(
+     owner, name = normalized.split("/", 1)
+     run_ids: set[str] = set()
+     analyzer_states: dict[str, str] = {}
+-    seen_sources: set[tuple[str, str]] = set()
++    seen_sources: set[tuple[str, ...]] = set()
+     for status in statuses:
+         if not _trusted_github_status(status):
+             continue
