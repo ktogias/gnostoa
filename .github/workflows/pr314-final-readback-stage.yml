@@ -1,0 +1,62 @@
+name: Materialize PR 314 prepared readback tree
+
+on:
+  push:
+    branches:
+      - ops/pr314-final-readback-stage-control
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Materialize verified prepared commit on staging ref
+        shell: bash
+        env:
+          PARENT: e33ab8a629cf78da9ad35543ec2ffa912137614a
+          PARENT_TREE: 1aba3cbe6f84c22383623db18edf4e538caa2412
+          PREPARED_TREE: 103cffbd0d51fe9e54fb3e2b4a48dbc29ecae733
+          PATCH_SHA256: 0294c97531e5bec1dbf92c52671cb330b1ba32750ffece52175ff0b1fe89aced
+          GZIP_SHA256: f0746414becfe67622752cfddc73ec5b2411babab39002dd2c664a887a7524aa
+          STAGING_REF: refs/heads/ops/pr314-final-readback-prepared-tree
+        run: |
+          set -euo pipefail
+          gzip_file="${RUNNER_TEMP}/candidate.patch.gz"
+          patch_file="${RUNNER_TEMP}/candidate.patch"
+          base64 --decode .gnostoa-ops/pr314-final-readback.patch.gz.b64 > "${gzip_file}"
+          echo "${GZIP_SHA256}  ${gzip_file}" | sha256sum -c -
+          gzip -dc "${gzip_file}" > "${patch_file}"
+          echo "${PATCH_SHA256}  ${patch_file}" | sha256sum -c -
+
+          git checkout --detach "${PARENT}"
+          test "$(git rev-parse HEAD)" = "${PARENT}"
+          test "$(git rev-parse 'HEAD^{tree}')" = "${PARENT_TREE}"
+          test -z "$(git status --porcelain)"
+
+          git apply --binary "${patch_file}"
+          git add -A
+          tree="$(git write-tree)"
+          test "${tree}" = "${PREPARED_TREE}"
+          git diff --cached --check "${PARENT}"
+
+          remote_head="$(git ls-remote origin "${STAGING_REF}" | awk '{print $1}')"
+          test "${remote_head}" = "${PARENT}"
+
+          commit="$(
+            printf '%s\n\n%s\n'               'fix: bind analyzer evidence to stable provider state (#309 #313)'               'Refs #309, #313.'               | git -c user.name='Gnostoa preparation'                     -c user.email='noreply@invalid'                     commit-tree "${tree}" -p "${PARENT}"
+          )"
+          test "$(git rev-parse "${commit}^")" = "${PARENT}"
+          test "$(git rev-parse "${commit}^{tree}")" = "${PREPARED_TREE}"
+
+          git push             --force-with-lease="${STAGING_REF}:${PARENT}"             origin "${commit}:${STAGING_REF}"
+
+          echo "staged_commit=${commit}"
+          echo "staged_tree=${tree}"
