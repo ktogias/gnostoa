@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import re
@@ -111,7 +112,7 @@ class GitHubReadClient:
                 }
         except urllib.error.HTTPError as exc:
             raise RunnerError(f"GitHub API HTTP {exc.code}") from exc
-        except (urllib.error.URLError, OSError) as exc:
+        except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
             raise RunnerError("GitHub API unavailable") from exc
         if len(raw) > _MAX_RESPONSE_BYTES:
             raise RunnerError("GitHub API response exceeds bounded size")

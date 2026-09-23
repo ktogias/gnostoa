@@ -264,6 +264,10 @@ def build_readback(
         raise AnalyzerReadbackError("FULL_RUN requires COMPLETE coverage")
     if normalized_completeness == "AMBIGUOUS" and coverage_status != "INCOMPLETE":
         raise AnalyzerReadbackError("AMBIGUOUS requires INCOMPLETE coverage")
+    if coverage_status == "INCOMPLETE" and normalized_completeness != "AMBIGUOUS":
+        raise AnalyzerReadbackError(
+            "INCOMPLETE coverage requires AMBIGUOUS completeness"
+        )
     if (
         normalized_completeness == "AUTH_UNAVAILABLE"
         and coverage_status != "UNAVAILABLE"

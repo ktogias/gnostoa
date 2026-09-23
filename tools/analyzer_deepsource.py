@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import http.client
 import json
 import os
 import re
@@ -221,7 +222,7 @@ class DeepSourceGraphQLClient:
             raise ProviderReadFailure(
                 "UNAVAILABLE", f"DeepSource API HTTP {exc.code}", status=exc.code
             ) from exc
-        except (urllib.error.URLError, OSError) as exc:
+        except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
             raise ProviderReadFailure(
                 "UNAVAILABLE", "DeepSource API unavailable"
             ) from exc
@@ -798,40 +799,11 @@ def _trusted_github_comment(value: Mapping[str, Any]) -> bool:
     )
 
 
-def _diff_local_from_github(
-    *,
-    repository: str,
-    pull_number: int,
-    requested_head: str,
-    observed_head: str,
-    statuses: list[Mapping[str, Any]],
-    comments: list[Mapping[str, Any]],
-    observed_at: str,
-) -> dict[str, Any]:
-    repository = normalize_repository(repository)
-    owner, name = repository.split("/", 1)
-    if observed_head != requested_head:
-        return build_readback(
-            provider="deepsource",
-            adapter="deepsource-github/v1",
-            repository=repository,
-            pull_number=pull_number,
-            requested_head=requested_head,
-            observed_head=observed_head,
-            analysis_id=None,
-            scope="DIFF",
-            completeness="AMBIGUOUS",
-            native_mode="DIFF_LOCAL",
-            observed_at=observed_at,
-            run_state="UNKNOWN",
-            coverage_record=coverage(
-                "INCOMPLETE",
-                pages=1,
-                count=0,
-                reason="SUBJECT_MISMATCH",
-            ),
-            findings=[],
-        )
+def _github_status_summary(
+    repository: str, statuses: list[Mapping[str, Any]]
+) -> tuple[set[str], dict[str, str]]:
+    normalized = normalize_repository(repository)
+    owner, name = normalized.split("/", 1)
     run_ids: set[str] = set()
     analyzer_states: dict[str, str] = {}
     for status in statuses:
@@ -855,10 +827,44 @@ def _diff_local_from_github(
         ):
             continue
         run_ids.add(match.group("run"))
-        # GitHub returns commit statuses newest-first. Keep the first status for
-        # each analyzer so an older pending state cannot overwrite the latest
-        # success/failure result later in the paginated response.
         analyzer_states.setdefault(match.group("analyzer"), str(state))
+    return run_ids, analyzer_states
+
+
+def _diff_local_from_github(
+    *,
+    repository: str,
+    pull_number: int,
+    requested_head: str,
+    observed_head: str,
+    statuses: list[Mapping[str, Any]],
+    comments: list[Mapping[str, Any]],
+    observed_at: str,
+) -> dict[str, Any]:
+    repository = normalize_repository(repository)
+    if observed_head != requested_head:
+        return build_readback(
+            provider="deepsource",
+            adapter="deepsource-github/v1",
+            repository=repository,
+            pull_number=pull_number,
+            requested_head=requested_head,
+            observed_head=observed_head,
+            analysis_id=None,
+            scope="DIFF",
+            completeness="AMBIGUOUS",
+            native_mode="DIFF_LOCAL",
+            observed_at=observed_at,
+            run_state="UNKNOWN",
+            coverage_record=coverage(
+                "INCOMPLETE",
+                pages=1,
+                count=0,
+                reason="SUBJECT_MISMATCH",
+            ),
+            findings=[],
+        )
+    run_ids, analyzer_states = _github_status_summary(repository, statuses)
     if len(run_ids) != 1:
         return build_readback(
             provider="deepsource",
@@ -1098,6 +1104,11 @@ def diff_local_from_github(
             observed_at=observed_at,
         )
     except AnalyzerReadbackError:
+        try:
+            run_ids, _ = _github_status_summary(repository, statuses)
+        except AnalyzerReadbackError:
+            run_ids = set()
+        run_uid = next(iter(run_ids)) if len(run_ids) == 1 else None
         return build_readback(
             provider="deepsource",
             adapter="deepsource-github/v1",
@@ -1105,7 +1116,7 @@ def diff_local_from_github(
             pull_number=pull_number,
             requested_head=requested_head,
             observed_head=None,
-            analysis_id=None,
+            analysis_id=run_uid,
             scope="DIFF",
             completeness="READBACK_UNAVAILABLE",
             native_mode="DIFF_LOCAL",

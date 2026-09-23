@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import http.client
 import inspect
 import io
 import json
@@ -468,6 +469,30 @@ class AnalyzerReadbackModelTests(unittest.TestCase):
                 run_state="SUCCESS",
                 coverage_record=analyzer_readback.coverage(
                     "ERROR", pages=1, count=0, reason="MISMATCH"
+                ),
+                findings=[],
+            )
+
+    def test_incomplete_coverage_requires_ambiguous_completeness(self) -> None:
+        with self.assertRaisesRegex(
+            analyzer_readback.AnalyzerReadbackError,
+            "INCOMPLETE coverage requires AMBIGUOUS completeness",
+        ):
+            analyzer_readback.build_readback(
+                provider="synthetic",
+                adapter="fixture/v1",
+                repository="example/project",
+                pull_number=1,
+                requested_head=HEAD,
+                observed_head=HEAD,
+                analysis_id="run",
+                scope="DIFF",
+                completeness="DIFF_LOCAL",
+                native_mode="DIFF_LOCAL",
+                observed_at=OBSERVED,
+                run_state="UNKNOWN",
+                coverage_record=analyzer_readback.coverage(
+                    "INCOMPLETE", pages=1, count=0, reason="SUBJECT_UNCERTAIN"
                 ),
                 findings=[],
             )
@@ -1038,6 +1063,58 @@ class DeepSourceAnalyzerReadbackTests(unittest.TestCase):
         self.assertEqual("ERROR", document["coverage"]["status"])
         self.assertEqual("NORMALIZATION_ERROR", document["coverage"]["reason"])
         self.assertNotIn("observed_head", document)
+
+    def test_diff_local_normalization_error_preserves_unique_run_association(
+        self,
+    ) -> None:
+        statuses = [
+            {
+                "context": "DeepSource: Python",
+                "source_kind": "commit_status",
+                "creator_login": "deepsource-io[bot]",
+                "creator_type": "Bot",
+                "state": "success",
+                "target_url": (
+                    "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
+                    f"{RUN_UID}/python/"
+                ),
+            }
+        ]
+        comments = [
+            {
+                "body": "<!-- DeepSource: id=conflict -->\n<h3>First title</h3>",
+                "path": "tools/example.py",
+                "line": 7,
+                "commit_id": HEAD,
+                "original_commit_id": HEAD,
+                "url": "https://github.com/ktogias/gnostoa/pull/312#discussion_1",
+                "author_login": "deepsource-io[bot]",
+                "author_type": "Bot",
+            },
+            {
+                "body": "<!-- DeepSource: id=conflict -->\n<h3>Different title</h3>",
+                "path": "tools/other.py",
+                "line": 7,
+                "commit_id": HEAD,
+                "original_commit_id": HEAD,
+                "url": "https://github.com/ktogias/gnostoa/pull/312#discussion_2",
+                "author_login": "deepsource-io[bot]",
+                "author_type": "Bot",
+            },
+        ]
+        document = analyzer_deepsource.diff_local_from_github(
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            observed_head=HEAD,
+            statuses=statuses,
+            comments=comments,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("READBACK_UNAVAILABLE", document["completeness"])
+        self.assertEqual("ERROR", document["coverage"]["status"])
+        self.assertEqual("NORMALIZATION_ERROR", document["coverage"]["reason"])
+        self.assertEqual(RUN_UID, document["analysis_id"])
 
     def test_multiple_github_run_ids_are_ambiguous(self) -> None:
         statuses = []
@@ -1660,6 +1737,26 @@ class CodacyAnalyzerReadbackTests(unittest.TestCase):
         ) as raised:
             analyzer_codacy.CodacyRestClient("")
         self.assertNotIn("api-token", str(raised.exception).lower())
+
+    def test_provider_clients_map_http_protocol_failures_to_unavailable(self) -> None:
+        class _IncompleteReadOpener:
+            def open(self, *_args: object, **_kwargs: object) -> object:
+                raise http.client.IncompleteRead(b"")
+
+        deep = analyzer_deepsource.DeepSourceGraphQLClient("test-token")
+        deep._opener = _IncompleteReadOpener()  # type: ignore[assignment]
+        with self.assertRaises(analyzer_deepsource.ProviderReadFailure) as deep_error:
+            deep.graphql(
+                analyzer_deepsource._RUN_QUERY,
+                {"runUid": RUN_UID, "cursor": None},
+            )
+        self.assertEqual("UNAVAILABLE", deep_error.exception.kind)
+
+        codacy = analyzer_codacy.CodacyRestClient("test-token")
+        codacy._opener = _IncompleteReadOpener()  # type: ignore[assignment]
+        with self.assertRaises(analyzer_codacy.ProviderReadFailure) as codacy_error:
+            codacy.get("https://app.codacy.com/api/v3/user")
+        self.assertEqual("UNAVAILABLE", codacy_error.exception.kind)
 
     def test_adapters_expose_no_provider_mutation_methods(self) -> None:
         for cls in (

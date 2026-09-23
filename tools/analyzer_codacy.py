@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import urllib.error
@@ -120,7 +121,7 @@ class CodacyRestClient:
             raise ProviderReadFailure(
                 "UNAVAILABLE", f"Codacy API HTTP {exc.code}", status=exc.code
             ) from exc
-        except (urllib.error.URLError, OSError) as exc:
+        except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
             raise ProviderReadFailure("UNAVAILABLE", "Codacy API unavailable") from exc
         if len(raw) > _MAX_RESPONSE_BYTES:
             raise ProviderReadFailure(

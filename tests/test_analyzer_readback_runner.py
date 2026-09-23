@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import http.client
 import importlib.util
 import tempfile
 import unittest
@@ -135,6 +136,17 @@ class _CodacyReader:
 
 
 class AnalyzerReadbackRunnerTests(unittest.TestCase):
+    def test_github_client_maps_http_protocol_failure_to_runner_error(self) -> None:
+        client = runner.GitHubReadClient("test-token")
+
+        class _IncompleteReadOpener:
+            def open(self, *_args: object, **_kwargs: object) -> object:
+                raise http.client.IncompleteRead(b"")
+
+        client._opener = _IncompleteReadOpener()  # type: ignore[assignment]
+        with self.assertRaisesRegex(runner.RunnerError, "GitHub API unavailable"):
+            client.get("https://api.github.com/repos/ktogias/gnostoa/pulls/312")
+
     def test_repository_segments_reject_path_and_query_injection(self) -> None:
         class _NoNetwork:
             def get(self, url: str) -> tuple[Any, Mapping[str, str]]:
@@ -257,6 +269,68 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
             "FULL_RUN",
             readbacks["codacy-api-v3/v1"]["completeness"],
         )
+
+    def test_projection_normalization_failure_still_drives_full_run_readback(
+        self,
+    ) -> None:
+        urls = _github_urls()
+        github = _GitHubFake(
+            {
+                urls["pr"]: [_pr(), _pr()],
+                urls["statuses"]: [
+                    {
+                        "context": "DeepSource: Python",
+                        "state": "success",
+                        "target_url": (
+                            "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
+                            f"{RUN_UID}/python/"
+                        ),
+                        "creator": {
+                            "login": "deepsource-io[bot]",
+                            "type": "Bot",
+                        },
+                    }
+                ],
+                urls["checks"]: {"check_runs": []},
+                urls["comments"]: [
+                    {
+                        "body": "<!-- DeepSource: id=conflict -->\n<h3>First title</h3>",
+                        "path": "tools/example.py",
+                        "line": 7,
+                        "commit_id": HEAD,
+                        "original_commit_id": HEAD,
+                        "html_url": "https://github.com/ktogias/gnostoa/pull/312#discussion_1",
+                        "user": {"login": "deepsource-io[bot]", "type": "Bot"},
+                    },
+                    {
+                        "body": "<!-- DeepSource: id=conflict -->\n<h3>Different title</h3>",
+                        "path": "tools/other.py",
+                        "line": 7,
+                        "commit_id": HEAD,
+                        "original_commit_id": HEAD,
+                        "html_url": "https://github.com/ktogias/gnostoa/pull/312#discussion_2",
+                        "user": {"login": "deepsource-io[bot]", "type": "Bot"},
+                    },
+                ],
+            }
+        )
+        bundle = runner.collect_bundle(
+            github,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            deepsource=_deepsource_fake(),
+            codacy=_CodacyReader(),
+            observed_at=OBSERVED,
+        )
+        readbacks = {item["adapter"]: item for item in bundle["readbacks"]}
+        diff_local = readbacks["deepsource-github/v1"]
+        full = readbacks["deepsource-graphql/v1"]
+        self.assertEqual("READBACK_UNAVAILABLE", diff_local["completeness"])
+        self.assertEqual("NORMALIZATION_ERROR", diff_local["coverage"]["reason"])
+        self.assertEqual(RUN_UID, diff_local["analysis_id"])
+        self.assertEqual("FULL_RUN", full["completeness"])
+        self.assertEqual("COMPLETE", full["coverage"]["status"])
 
     def test_missing_provider_tokens_are_explicit_not_clean(self) -> None:
         urls = _github_urls()
