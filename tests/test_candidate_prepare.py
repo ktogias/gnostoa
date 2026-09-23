@@ -581,6 +581,48 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 completed.stdout.decode("utf-8").strip(),
             )
 
+    def test_focused_runner_bounds_output_and_times_out(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            # skipcq: PYL-W0212 -- intentional white-box bounded-runner regression
+            completed = candidate_prepare._run_focused(
+                [
+                    candidate_prepare.sys.executable,
+                    "-c",
+                    (
+                        "import sys; "
+                        "sys.stdout.write('x' * 10000); "
+                        "sys.stderr.write('y' * 10000)"
+                    ),
+                ],
+                cwd=root,
+                env=_test_env(),
+                timeout_seconds=5,
+                max_output_bytes=128,
+            )
+            self.assertEqual(0, completed.returncode)
+            self.assertEqual(128, len(completed.stdout))
+            self.assertEqual(128, len(completed.stderr))
+            self.assertEqual(b"x" * 128, completed.stdout)
+            self.assertEqual(b"y" * 128, completed.stderr)
+
+            with self.assertRaisesRegex(
+                candidate_prepare.PrepareError,
+                "focused verification timed out",
+            ):
+                # skipcq: PYL-W0212 -- intentional white-box timeout regression
+                candidate_prepare._run_focused(
+                    [
+                        candidate_prepare.sys.executable,
+                        "-c",
+                        "import time; time.sleep(5)",
+                    ],
+                    cwd=root,
+                    env=_test_env(),
+                    timeout_seconds=0.1,
+                    max_output_bytes=128,
+                )
+
     def test_prepare_does_not_admit_ignored_source_worktree_state(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -683,6 +725,40 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 "receipt path must be outside",
             ):
                 self._prepare(root, parent, root / "receipt.json")
+
+    def test_receipt_writer_never_replaces_existing_evidence(self) -> None:
+        receipt = self._receipt()
+        receipt.write_text("original evidence\n", encoding="utf-8")
+        with self.assertRaisesRegex(
+            candidate_prepare.PrepareError,
+            "receipt path already exists",
+        ):
+            # skipcq: PYL-W0212 -- intentional white-box atomic-publication regression
+            candidate_prepare._write_receipt(
+                receipt,
+                {"schema": candidate_prepare.RECEIPT_SCHEMA},
+            )
+        self.assertEqual(
+            "original evidence\n",
+            receipt.read_text(encoding="utf-8"),
+        )
+
+    def test_prepare_rejects_existing_receipt_without_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+            receipt.write_text("original evidence\n", encoding="utf-8")
+            with self.assertRaisesRegex(
+                candidate_prepare.PrepareError,
+                "receipt path already exists",
+            ):
+                self._prepare(root, parent, receipt)
+            self.assertEqual(
+                "original evidence\n",
+                receipt.read_text(encoding="utf-8"),
+            )
 
     def test_receipt_verification_rejects_recomputed_untrusted_identity(
         self,
