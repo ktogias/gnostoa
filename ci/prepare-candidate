@@ -1,4 +1,52 @@
 #!/bin/sh
 set -eu
-cd "$(dirname "$0")/.."
-exec python -m tools.candidate_prepare "$@"
+
+parent=""
+need_parent_value=0
+for argument in "$@"; do
+  if [ "$need_parent_value" -eq 1 ]; then
+    parent="$argument"
+    need_parent_value=0
+    continue
+  fi
+  case "$argument" in
+    --parent)
+      need_parent_value=1
+      ;;
+    --parent=*)
+      parent="${argument#--parent=}"
+      ;;
+  esac
+done
+
+if ! printf '%s\n' "$parent" | grep -Eq '^[0-9a-f]{40}$'; then
+  echo "ERROR: --parent must be an exact 40-character commit SHA" >&2
+  exit 2
+fi
+
+# The authoritative invocation executes this wrapper from the exact parent
+# commit. Scrub caller Git routing/config overrides before locating that parent.
+unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY
+unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_INDEX_FILE GIT_CEILING_DIRECTORIES
+unset GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_CONFIG GIT_CONFIG_PARAMETERS
+unset GIT_EXTERNAL_DIFF GIT_TEMPLATE_DIR
+export GIT_CONFIG_COUNT=0
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_SYSTEM=/dev/null
+export GIT_CONFIG_NOSYSTEM=1
+export GIT_ATTR_NOSYSTEM=1
+export GIT_PAGER=cat
+export PAGER=cat
+
+root="$(git -c core.hooksPath=/dev/null rev-parse --show-toplevel)"
+cd "$root"
+
+temporary="$(mktemp "${TMPDIR:-/tmp}/gnostoa-candidate-prepare.XXXXXX.py")"
+trap 'rm -f -- "$temporary"' EXIT HUP INT TERM
+
+if ! git -c core.hooksPath=/dev/null show "${parent}:tools/candidate_prepare.py" > "$temporary"; then
+  echo "ERROR: trusted parent does not provide candidate preparation authority" >&2
+  exit 2
+fi
+
+python -P "$temporary" "$@"
