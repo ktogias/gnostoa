@@ -83,9 +83,10 @@ non-hook authoring without importing a general orchestration subsystem.
    scrubs caller Git/Python routing/config overrides, disables Git replacement
    objects, locates the repository, extracts `tools/candidate_prepare.py` from
    the same parent into a temporary file, and executes it with isolated Python
-   (`-I`). Candidate `PYTHONPATH`, user-site modules, worktree executables and
-   changes to either authority file therefore cannot execute before the parent
-   authority rejects them.
+   (`-I`). The shell remains alive until that process returns so its exit trap
+   removes the temporary authority copy. Candidate `PYTHONPATH`, user-site
+   modules, worktree executables and changes to either authority file therefore
+   cannot execute before the parent authority rejects them.
    The change introducing this Decision is necessarily a bootstrap exception:
    its own pre-Decision parent does not contain this authority, so it cannot
    manufacture a trusted preparation receipt for itself. Activation begins for
@@ -194,8 +195,12 @@ non-hook authoring without importing a general orchestration subsystem.
    intentionally invokes `ci/verify` directly inside the environment that hosts
    the isolated worktree instead of launching nested Docker. Direct host execution
    is the documented native fallback only when the container route is unavailable;
-   the caller records that reason. Provider CI remains the authoritative
-   independent check.
+   the caller records that reason. A host fallback that needs a virtualenv/user
+   installation for Ruff may supply `--trusted-python` explicitly. The wrapper
+   accepts only an absolute executable whose resolved path lies outside the
+   repository worktree, then still uses `-I`; the Python implementation merely
+   accepts the forwarded private option and cannot select its own interpreter.
+   Provider CI remains the authoritative independent check.
 7. The successful receipt binds at least parent commit/tree, prepared tree,
    its receipt-unique
    `refs/gnostoa/prepared/<parent-sha>/<tree-sha>/<receipt-nonce>` retention
