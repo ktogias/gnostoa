@@ -269,8 +269,13 @@ def _run_focused(
     argv = list(command)
     deadline = time.monotonic() + timeout_seconds
     try:
+        # Audited for command injection: the executable is the repository-owned
+        # ci/verify resolved by _focused_profile_command(), the profile is from a
+        # closed allowlist, shell parsing is disabled, cwd is the isolated
+        # prepared workspace, and env is the preparation-owned scrubbed mapping.
+        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
         process: subprocess.Popen[bytes] = subprocess.Popen(  # nosec B603
-            argv,
+            argv,  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
             cwd=cwd,
             env=env,
             stdin=subprocess.DEVNULL,
