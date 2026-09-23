@@ -287,8 +287,8 @@ def _run_focused(
         # closed allowlist, shell parsing is disabled, cwd is the isolated
         # prepared workspace, and env is the preparation-owned scrubbed mapping.
         # ast-grep-ignore: os-system-unsanitized-data, subprocess-from-request
-        process: subprocess.Popen[bytes] = subprocess.Popen(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
-            argv,  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
+        process: subprocess.Popen[bytes] = subprocess.Popen(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
+            argv,
             cwd=cwd,
             env=env,
             stdin=subprocess.DEVNULL,
@@ -386,7 +386,7 @@ def _run(
     # passed as a list, and candidate preparation accepts only a closed focused
     # profile at both the CLI and implementation-private API boundaries.
     argv = list(command)
-    completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+    completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
         argv,  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
         cwd=cwd,
         env=env,
