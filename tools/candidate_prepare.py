@@ -1259,6 +1259,16 @@ def _parser() -> argparse.ArgumentParser:
     release_parser.add_argument("--tree", required=True)
     release_parser.add_argument("--receipt", required=True, type=Path)
     release_parser.add_argument("--receipt-sha256", required=True)
+
+    # Consumed and validated by the exact-parent shell wrapper. Keeping the
+    # option in the private parser lets the trusted wrapper forward argv
+    # unchanged without giving the Python implementation authority to select an
+    # interpreter.
+    for action_parser in (prepare_parser, verify_parser, release_parser):
+        action_parser.add_argument(
+            "--trusted-python",
+            help=argparse.SUPPRESS,
+        )
     return parser
 
 
