@@ -1,4 +1,4 @@
-name: Publish prepared PR 314 candidate
+name: Validate PR 314 publication transport
 
 on:
   push:
@@ -8,81 +8,9 @@ on:
 permissions:
   contents: write
 
-concurrency:
-  group: publish-prepared-pr314
-  cancel-in-progress: false
-
 jobs:
-  publish:
+  validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    env:
-      PARENT: 099163e35bf0e4934b3e2c0d33baf88ac3802cf8
-      PREPARED_TREE: 63c7cd1b498e35e1facef2cf22db355945134e46
-      PATCH_SHA256: ace095621bdf0d501ae562a096fcd142ef6f716df6369c96de068d95373e6c7f
-      TARGET_BRANCH: analyzer-readback-309-313
     steps:
-      - name: Checkout publish transport
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          fetch-depth: 0
-          persist-credentials: true
-
-      - name: Reconstruct and verify prepared patch
-        shell: bash
-        run: |
-          set -euo pipefail
-          payload="${RUNNER_TEMP}/pr314.patch.gz.b64"
-          archive="${RUNNER_TEMP}/pr314.patch.gz"
-          patch="${RUNNER_TEMP}/pr314.patch"
-          cp ops/pr314-prepared.patch.gz.b64 "${payload}"
-          base64 --decode "${payload}" > "${archive}"
-          gzip --decompress --stdout "${archive}" > "${patch}"
-          echo "${PATCH_SHA256}  ${patch}" | sha256sum --check --strict
-          grep '^diff --git ' "${patch}" | sed 's#diff --git a/##;s# b/.*##' > "${RUNNER_TEMP}/paths"
-          cat > "${RUNNER_TEMP}/expected-paths" <<'EOF'
-.github/workflows/analyzer-readback.yml
-ci/analyzer_readback.py
-policy/guardrails.yaml
-tests/test_analyzer_readback.py
-tests/test_analyzer_readback_runner.py
-tools/analyzer_codacy.py
-tools/analyzer_deepsource.py
-tools/analyzer_readback.py
-EOF
-          cmp "${RUNNER_TEMP}/expected-paths" "${RUNNER_TEMP}/paths"
-
-      - name: Bind exact target and prepared tree
-        shell: bash
-        run: |
-          set -euo pipefail
-          patch="${RUNNER_TEMP}/pr314.patch"
-          git fetch --no-tags origin "refs/heads/${TARGET_BRANCH}:refs/remotes/origin/${TARGET_BRANCH}"
-          observed="$(git rev-parse "refs/remotes/origin/${TARGET_BRANCH}")"
-          test "${observed}" = "${PARENT}"
-          git checkout --detach "${PARENT}"
-          git reset --hard "${PARENT}"
-          git clean -ffdx
-          git apply --index "${patch}"
-          git diff --cached --check
-          observed_tree="$(git write-tree)"
-          test "${observed_tree}" = "${PREPARED_TREE}"
-          git diff --cached --binary --full-index "${PARENT}" | sha256sum | awk '{print $1}' | grep -Fx "${PATCH_SHA256}"
-
-      - name: Create exact-parent prepared candidate
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "gnostoa-candidate-publisher"
-          git config user.email "gnostoa-candidate-publisher@users.noreply.github.com"
-          git -c core.hooksPath=/dev/null commit -m "feat: add authenticated analyzer readback (#309 #313)"
-          candidate="$(git rev-parse HEAD)"
-          test "$(git rev-parse HEAD^)" = "${PARENT}"
-          test "$(git rev-parse 'HEAD^{tree}')" = "${PREPARED_TREE}"
-          printf 'candidate=%s\n' "${candidate}"
-
-      - name: CAS publish prepared candidate
-        shell: bash
-        run: |
-          set -euo pipefail
-          git push             --force-with-lease="refs/heads/${TARGET_BRANCH}:${PARENT}"             origin             "HEAD:refs/heads/${TARGET_BRANCH}"
+      - name: Confirm Actions admission
+        run: echo "transport-admission-ok"
