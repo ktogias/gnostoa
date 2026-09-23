@@ -101,8 +101,12 @@ non-hook authoring without importing a general orchestration subsystem.
    fails closed at admission. Disposable metadata is initialized against an
    explicitly empty trusted template so caller Git templates cannot populate
    executable configuration before admission.
-   After that admission check, candidate Git operations no longer consume the
-   source repository's mutable local configuration.
+   Source-index entries marked `skip-worktree` or `assume-unchanged`
+   fail closed before capture; sparse-checkout state is therefore rejected
+   rather than allowing the isolated index to reinterpret caller-hidden tracked
+   paths as candidate changes. After that admission check, candidate Git
+   operations no longer consume the source repository's mutable local
+   configuration.
 3. Preparation creates disposable Git metadata with a trusted local config.
    Git object access is bound explicitly to the source repository's
    content-addressed object store. The mutable source worktree is captured twice
