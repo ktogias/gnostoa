@@ -524,7 +524,6 @@ def _assert_safe_repository_git_configuration(root: Path) -> None:
         raise PrepareError("unable to inspect repository-local Git attributes") from exc
 
 
-
 def _assert_source_index_hides_no_worktree_state(root: Path) -> None:
     listed = _run(
         [_git_executable(), "ls-files", "-v", "-z"],
