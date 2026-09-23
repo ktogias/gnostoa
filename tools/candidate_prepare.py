@@ -273,8 +273,8 @@ def _run_focused(
         # ci/verify resolved by _focused_profile_command(), the profile is from a
         # closed allowlist, shell parsing is disabled, cwd is the isolated
         # prepared workspace, and env is the preparation-owned scrubbed mapping.
-        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
-        process: subprocess.Popen[bytes] = subprocess.Popen(  # nosec B603
+        # ast-grep-ignore: os-system-unsanitized-data, subprocess-from-request
+        process: subprocess.Popen[bytes] = subprocess.Popen(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
             argv,  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
             cwd=cwd,
             env=env,
