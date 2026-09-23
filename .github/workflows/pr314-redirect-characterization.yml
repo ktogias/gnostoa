@@ -1,0 +1,98 @@
+name: PR314 redirect characterization 846c641
+
+on:
+  push:
+    branches:
+      - transport/pr314-redirect-characterization-846c641
+
+permissions:
+  contents: read
+
+jobs:
+  characterize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TARGET_SHA: 846c641f95558f82ecda6095be07a185d7ec779c
+      TARGET_TREE: df0fc523a331264e49e0340dd8f321b006560743
+    steps:
+      - name: Checkout exact current head
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          persist-credentials: false
+      - name: Bind exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${TARGET_SHA}"
+          test "$(git rev-parse 'HEAD^{tree}')" = "${TARGET_TREE}"
+          test -z "$(git status --porcelain)"
+      - name: Set up Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Characterize actual urllib redirect path
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=. python - <<'PY'
+          from email.message import Message
+          import urllib.request
+          from tools import analyzer_codacy, analyzer_deepsource
+
+          class FP:
+              def read(self):
+                  return b""
+              def close(self):
+                  pass
+
+          class Parent:
+              def __init__(self):
+                  self.request = None
+              def open(self, request, timeout=None):
+                  self.request = request
+                  return request
+
+          def redirected(handler, request, location):
+              parent = Parent()
+              handler.parent = parent
+              request.timeout = 5
+              headers = Message()
+              headers["Location"] = location
+              result = handler.http_error_302(request, FP(), 302, "Found", headers)
+              assert result is parent.request
+              assert parent.request is not None
+              return parent.request
+
+          ds = urllib.request.Request(
+              "https://api.deepsource.com/graphql/",
+              data=b"{}",
+              method="POST",
+          )
+          ds.add_unredirected_header("Authorization", "Bearer secret-value")
+          assert ds.get_header("Authorization") == "Bearer secret-value"
+          ds2 = redirected(
+              analyzer_deepsource._DeepSourceRedirectHandler(),
+              ds,
+              "https://api.deepsource.com/graphql/?page=2",
+          )
+          assert ds2.get_header("Authorization") == "Bearer secret-value"
+          assert ds2.unredirected_hdrs.get("Authorization") == "Bearer secret-value"
+
+          cod = urllib.request.Request(
+              "https://app.codacy.com/api/v3/user",
+              method="GET",
+          )
+          cod.add_unredirected_header("api-token", "secret-value")
+          items = {k.lower(): v for k, v in cod.header_items()}
+          assert items["api-token"] == "secret-value"
+          cod2 = redirected(
+              analyzer_codacy._CodacyRedirectHandler(),
+              cod,
+              "https://app.codacy.com/api/v3/user?cursor=next",
+          )
+          assert cod2.get_header("Api-token") == "secret-value"
+          assert {k.lower(): v for k, v in cod2.header_items()}["api-token"] == "secret-value"
+          print("same-origin redirect credentials preserved for both providers")
+          PY
