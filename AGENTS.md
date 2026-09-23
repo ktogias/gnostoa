@@ -98,12 +98,22 @@ the checkout owner; do not reuse the read-only one-shot verification container
 shown later in this file for preparation. A direct host invocation is a native
 fallback only when the container route is unavailable; record that reason.
 
+The preparation authority must come from the exact bound parent, never from the
+editable candidate checkout. Execute the parent wrapper bytes; that trusted
+wrapper in turn loads `tools/candidate_prepare.py` from the same parent:
+
 ```bash
-./ci/prepare-candidate prepare \
-  --parent <exact-40-character-parent-sha> \
-  --receipt <new-path-outside-the-worktree> \
-  --focused-profile fast
+parent=<exact-40-character-parent-sha>
+git show "${parent}:ci/prepare-candidate" | \
+  sh -s -- prepare \
+    --parent "${parent}" \
+    --receipt <new-path-outside-the-worktree> \
+    --focused-profile fast
 ```
+
+If the bound parent does not contain this authority, no trusted preparation
+receipt can be issued through this route; authority evolution/bootstrap must be
+handled by its separately admitted path rather than executing candidate bytes.
 
 Preparation captures the proposed delta through disposable Git metadata with
 trusted local configuration. Git object reads/writes are bound explicitly to
@@ -130,8 +140,12 @@ It restores the normalized tree, then runs the allowlisted
 `PYTHONPATH`/`PYTHONHOME`/user-site state and arbitrary executable search
 paths are excluded, while the isolated candidate workspace remains intentionally
 importable for candidate tests. Focused verification has a 900-second deadline
-and bounded retained stdout/stderr; timeout cleanup terminates the full
-preparation-owned process group. A preparation-owned `knowledge` shim precedes
+and bounded retained stdout/stderr; cleanup terminates the full
+preparation-owned process group on success, timeout, or collection failure.
+Focused candidate code runs with separate disposable Git metadata/worktree; all
+post-focused mutation/style evidence is rebuilt from trusted normalization
+metadata, so candidate-controlled index/config/skip-worktree state cannot hide a
+mutation. A preparation-owned `knowledge` shim precedes
 the executable search path and executes `python -m tools.cli` from that workspace;
 `KNOWLEDGE_KIT_ROOT` is rebound to the isolated workspace and its revision label
 is reset to `development`, so installed-image or source-worktree toolkit routing
@@ -154,11 +168,13 @@ evidence, not producer authentication or bearer authority. To inspect/consume a
 receipt, supply the separately retained identity:
 
 ```bash
-./ci/prepare-candidate verify \
-  --parent <exact-40-character-parent-sha> \
-  --tree <exact-40-character-prepared-tree-sha> \
-  --receipt <path-outside-the-worktree> \
-  --receipt-sha256 <trusted-sha256-from-prepare>
+parent=<exact-40-character-parent-sha>
+git show "${parent}:ci/prepare-candidate" | \
+  sh -s -- verify \
+    --parent "${parent}" \
+    --tree <exact-40-character-prepared-tree-sha> \
+    --receipt <path-outside-the-worktree> \
+    --receipt-sha256 <trusted-sha256-from-prepare>
 ```
 
 A self-consistent receipt with a caller-chosen digest must never authorize a
@@ -166,11 +182,13 @@ provider write. After publication or explicit receipt expiry, release the exact
 retained tree only through:
 
 ```bash
-./ci/prepare-candidate release \
-  --parent <exact-40-character-parent-sha> \
-  --tree <exact-40-character-prepared-tree-sha> \
-  --receipt <path-outside-the-worktree> \
-  --receipt-sha256 <trusted-sha256-from-prepare>
+parent=<exact-40-character-parent-sha>
+git show "${parent}:ci/prepare-candidate" | \
+  sh -s -- release \
+    --parent "${parent}" \
+    --tree <exact-40-character-prepared-tree-sha> \
+    --receipt <path-outside-the-worktree> \
+    --receipt-sha256 <trusted-sha256-from-prepare>
 ```
 
 This slice intentionally has no provider-write adapter; Git-data or API ref
