@@ -1,0 +1,51 @@
+name: Export exact source for PR 314 recovery
+
+on:
+  push:
+    branches:
+      - transport/314-exact-source-09afa312
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact PR 314 parent
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 09afa312a980cfa4334f9322be46d0ecec0349fa
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_head=09afa312a980cfa4334f9322be46d0ecec0349fa
+          expected_tree=f8cfdc41ecb8b0db2e092b1d957e48cc06ee0040
+          test "$(git rev-parse HEAD)" = "$expected_head"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$expected_tree"
+          test -z "$(git status --porcelain)"
+
+      - name: Create and verify exact-source bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/gnostoa-314-09afa312.bundle"
+          git bundle create "$bundle" 09afa312a980cfa4334f9322be46d0ecec0349fa
+          git bundle verify "$bundle"
+          sha256sum "$bundle" > "$bundle.sha256"
+
+      - name: Upload exact-source bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gnostoa-314-exact-source-09afa312
+          path: |
+            ${{ runner.temp }}/gnostoa-314-09afa312.bundle
+            ${{ runner.temp }}/gnostoa-314-09afa312.bundle.sha256
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
