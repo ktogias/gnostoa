@@ -1,0 +1,54 @@
+name: Export exact PR 314 follow-up source
+
+on:
+  push:
+    branches:
+      - ops/pr314-source-export-2631-sol1803
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact follow-up parent
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 2631a18b6c990a2c15f51526393e4162549463ce
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Bind exact source identity
+        shell: bash
+        env:
+          EXPECTED_SHA: 2631a18b6c990a2c15f51526393e4162549463ce
+          EXPECTED_TREE: 7b22a1d6d161ea725b3dc12cfece89a3a9a5c300
+        run: |
+          set -eu
+          test "$(git rev-parse HEAD)" = "${EXPECTED_SHA}"
+          test "$(git rev-parse 'HEAD^{tree}')" = "${EXPECTED_TREE}"
+          test -z "$(git status --porcelain)"
+
+      - name: Create verified Git bundle
+        shell: bash
+        env:
+          EXPECTED_SHA: 2631a18b6c990a2c15f51526393e4162549463ce
+        run: |
+          set -eu
+          git branch --force gnostoa-export-source "${EXPECTED_SHA}"
+          bundle="${RUNNER_TEMP}/gnostoa-pr314-2631a18b6c990a2c15f51526393e4162549463ce.bundle"
+          git bundle create "${bundle}" refs/heads/gnostoa-export-source
+          git bundle verify "${bundle}"
+          sha256sum "${bundle}" > "${bundle}.sha256"
+
+      - name: Upload exact source bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gnostoa-pr314-source-2631a18b6c990a2c15f51526393e4162549463ce
+          path: |
+            ${{ runner.temp }}/gnostoa-pr314-2631a18b6c990a2c15f51526393e4162549463ce.bundle
+            ${{ runner.temp }}/gnostoa-pr314-2631a18b6c990a2c15f51526393e4162549463ce.bundle.sha256
+          if-no-files-found: error
+          retention-days: 1
