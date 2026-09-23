@@ -1,0 +1,123 @@
+name: PR314 Qodo follow-up preparation
+
+on:
+  push:
+    branches:
+      - transport/pr314-qodo-checkrun-47369ba
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TARGET_SHA: 47369ba6a95a48fb0b2ba765c6c478564b95850c
+      TARGET_TREE: b1e8db204139ab22a477fb3a037773471ad7b938
+      CANDIDATE_PATCH_SHA256: f870e4254b43bf77b0427c705f1ac974a6a8694e37e0c97626d67ac878b6e410
+      CANDIDATE_PATCH_B64: ZGlmZiAtLWdpdCBhL3Rlc3RzL3Rlc3RfYW5hbHl6ZXJfcmVhZGJhY2sucHkgYi90ZXN0cy90ZXN0X2FuYWx5emVyX3JlYWRiYWNrLnB5CmluZGV4IDlhNTAxZGMuLmNlNDMyNWUgMTAwNjQ0Ci0tLSBhL3Rlc3RzL3Rlc3RfYW5hbHl6ZXJfcmVhZGJhY2sucHkKKysrIGIvdGVzdHMvdGVzdF9hbmFseXplcl9yZWFkYmFjay5weQpAQCAtMTE5NSw2ICsxMTk1LDQ0IEBAIGNsYXNzIERlZXBTb3VyY2VBbmFseXplclJlYWRiYWNrVGVzdHModW5pdHRlc3QuVGVzdENhc2UpOgogICAgICAgICBzZWxmLmFzc2VydEVxdWFsKCJSVU5fQVNTT0NJQVRJT05fQU1CSUdVT1VTIiwgZG9jdW1lbnRbImNvdmVyYWdlIl1bInJlYXNvbiJdKQogICAgICAgICBzZWxmLmFzc2VydE5vdEluKCJhbmFseXNpc19pZCIsIGRvY3VtZW50KQogCisgICAgZGVmIHRlc3RfbXVsdGlwbGVfY2hlY2tfcnVuX2lkc19mb3Jfc2FtZV9hbmFseXplcl9hcmVfYW1iaWd1b3VzKHNlbGYpIC0+IE5vbmU6CisgICAgICAgIG90aGVyX3J1biA9ICIyMjIyMjIyMi0yMjIyLTIyMjItMjIyMi0yMjIyMjIyMjIyMjIiCisgICAgICAgIHN0YXR1c2VzID0gWworICAgICAgICAgICAgeworICAgICAgICAgICAgICAgICJjb250ZXh0IjogIkRlZXBTb3VyY2U6IFB5dGhvbiIsCisgICAgICAgICAgICAgICAgInNvdXJjZV9raW5kIjogImNoZWNrX3J1biIsCisgICAgICAgICAgICAgICAgImFwcF9zbHVnIjogImRlZXBzb3VyY2UtaW8iLAorICAgICAgICAgICAgICAgICJzdGF0ZSI6ICJzdWNjZXNzIiwKKyAgICAgICAgICAgICAgICAidGFyZ2V0X3VybCI6ICgKKyAgICAgICAgICAgICAgICAgICAgImh0dHBzOi8vYXBwLmRlZXBzb3VyY2UuY29tL2doL2t0b2dpYXMvZ25vc3RvYS9ydW4vIgorICAgICAgICAgICAgICAgICAgICBmIntSVU5fVUlEfS9weXRob24vIgorICAgICAgICAgICAgICAgICksCisgICAgICAgICAgICB9LAorICAgICAgICAgICAgeworICAgICAgICAgICAgICAgICJjb250ZXh0IjogIkRlZXBTb3VyY2U6IFB5dGhvbiIsCisgICAgICAgICAgICAgICAgInNvdXJjZV9raW5kIjogImNoZWNrX3J1biIsCisgICAgICAgICAgICAgICAgImFwcF9zbHVnIjogImRlZXBzb3VyY2UtaW8iLAorICAgICAgICAgICAgICAgICJzdGF0ZSI6ICJmYWlsdXJlIiwKKyAgICAgICAgICAgICAgICAidGFyZ2V0X3VybCI6ICgKKyAgICAgICAgICAgICAgICAgICAgImh0dHBzOi8vYXBwLmRlZXBzb3VyY2UuY29tL2doL2t0b2dpYXMvZ25vc3RvYS9ydW4vIgorICAgICAgICAgICAgICAgICAgICBmIntvdGhlcl9ydW59L3B5dGhvbi8iCisgICAgICAgICAgICAgICAgKSwKKyAgICAgICAgICAgIH0sCisgICAgICAgIF0KKyAgICAgICAgZG9jdW1lbnQgPSBhbmFseXplcl9kZWVwc291cmNlLmRpZmZfbG9jYWxfZnJvbV9naXRodWIoCisgICAgICAgICAgICByZXBvc2l0b3J5PSJrdG9naWFzL2dub3N0b2EiLAorICAgICAgICAgICAgcHVsbF9udW1iZXI9MzEyLAorICAgICAgICAgICAgcmVxdWVzdGVkX2hlYWQ9SEVBRCwKKyAgICAgICAgICAgIG9ic2VydmVkX2hlYWQ9SEVBRCwKKyAgICAgICAgICAgIHN0YXR1c2VzPXN0YXR1c2VzLAorICAgICAgICAgICAgY29tbWVudHM9W10sCisgICAgICAgICAgICBvYnNlcnZlZF9hdD1PQlNFUlZFRCwKKyAgICAgICAgKQorICAgICAgICBzZWxmLmFzc2VydEVxdWFsKCJBTUJJR1VPVVMiLCBkb2N1bWVudFsiY29tcGxldGVuZXNzIl0pCisgICAgICAgIHNlbGYuYXNzZXJ0RXF1YWwoIklOQ09NUExFVEUiLCBkb2N1bWVudFsiY292ZXJhZ2UiXVsic3RhdHVzIl0pCisgICAgICAgIHNlbGYuYXNzZXJ0RXF1YWwoIlJVTl9BU1NPQ0lBVElPTl9BTUJJR1VPVVMiLCBkb2N1bWVudFsiY292ZXJhZ2UiXVsicmVhc29uIl0pCisgICAgICAgIHNlbGYuYXNzZXJ0Tm90SW4oImFuYWx5c2lzX2lkIiwgZG9jdW1lbnQpCisKICAgICBkZWYgdGVzdF9tdWx0aXBsZV9sYXRlc3RfZ2l0aHViX3J1bl9pZHNfYWNyb3NzX2FuYWx5emVyc19hcmVfYW1iaWd1b3VzKAogICAgICAgICBzZWxmLAogICAgICkgLT4gTm9uZToKZGlmZiAtLWdpdCBhL3Rvb2xzL2FuYWx5emVyX2RlZXBzb3VyY2UucHkgYi90b29scy9hbmFseXplcl9kZWVwc291cmNlLnB5CmluZGV4IDhiNmExMmYuLjc3NTUwZTcgMTAwNjQ0Ci0tLSBhL3Rvb2xzL2FuYWx5emVyX2RlZXBzb3VyY2UucHkKKysrIGIvdG9vbHMvYW5hbHl6ZXJfZGVlcHNvdXJjZS5weQpAQCAtODI4LDExICs4MjgsMjAgQEAgZGVmIF9naXRodWJfc3RhdHVzX3N1bW1hcnkoCiAgICAgICAgICk6CiAgICAgICAgICAgICBjb250aW51ZQogICAgICAgICBhbmFseXplciA9IG1hdGNoLmdyb3VwKCJhbmFseXplciIpCi0gICAgICAgIHNvdXJjZV9rZXkgPSAoc3RyKHN0YXR1cy5nZXQoInNvdXJjZV9raW5kIikpLCBhbmFseXplcikKKyAgICAgICAgc291cmNlX2tpbmQgPSBzdHIoc3RhdHVzLmdldCgic291cmNlX2tpbmQiKSkKKyAgICAgICAgcnVuX2lkID0gbWF0Y2guZ3JvdXAoInJ1biIpCisgICAgICAgICMgR2l0SHViIGNvbW1pdCBzdGF0dXNlcyBhcmUgbmV3ZXN0LWZpcnN0LCBzbyBzZWxlY3QgdGhlIGZpcnN0IHN0YXR1cworICAgICAgICAjIHBlciBhbmFseXplci4gQ2hlY2stcnVuIHJlYWRzIGFscmVhZHkgcmVxdWVzdCBHaXRIdWIncyBsYXRlc3QgZmlsdGVyLAorICAgICAgICAjIGJ1dCBtdWx0aXBsZSBkaXN0aW5jdCBsYXRlc3QgcnVucyBzdGlsbCBtYWtlIGV4YWN0IGFzc29jaWF0aW9uIGFtYmlndW91cy4KKyAgICAgICAgc291cmNlX2tleTogdHVwbGVbc3RyLCAuLi5dID0gKAorICAgICAgICAgICAgKHNvdXJjZV9raW5kLCBhbmFseXplcikKKyAgICAgICAgICAgIGlmIHNvdXJjZV9raW5kID09ICJjb21taXRfc3RhdHVzIgorICAgICAgICAgICAgZWxzZSAoc291cmNlX2tpbmQsIGFuYWx5emVyLCBydW5faWQpCisgICAgICAgICkKICAgICAgICAgaWYgc291cmNlX2tleSBpbiBzZWVuX3NvdXJjZXM6CiAgICAgICAgICAgICBjb250aW51ZQogICAgICAgICBzZWVuX3NvdXJjZXMuYWRkKHNvdXJjZV9rZXkpCi0gICAgICAgIHJ1bl9pZHMuYWRkKG1hdGNoLmdyb3VwKCJydW4iKSkKKyAgICAgICAgcnVuX2lkcy5hZGQocnVuX2lkKQogICAgICAgICBhbmFseXplcl9zdGF0ZXMuc2V0ZGVmYXVsdChhbmFseXplciwgc3RyKHN0YXRlKSkKICAgICByZXR1cm4gcnVuX2lkcywgYW5hbHl6ZXJfc3RhdGVzCiAK
+    steps:
+      - name: Checkout exact parent
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact parent and apply immutable candidate patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${TARGET_SHA}"
+          test "$(git rev-parse 'HEAD^{tree}')" = "${TARGET_TREE}"
+          test -z "$(git status --porcelain)"
+          patch="${RUNNER_TEMP}/candidate.patch"
+          printf '%s' "${CANDIDATE_PATCH_B64}" | base64 -d > "${patch}"
+          test "$(sha256sum "${patch}" | awk '{print $1}')" = "${CANDIDATE_PATCH_SHA256}"
+          git apply --check "${patch}"
+          git apply "${patch}"
+          git diff --check
+          mapfile -t changed < <(git diff --name-only | sort)
+          expected=(tests/test_analyzer_readback.py tools/analyzer_deepsource.py)
+          test "${#changed[@]}" -eq "${#expected[@]}"
+          for i in "${!expected[@]}"; do test "${changed[$i]}" = "${expected[$i]}"; done
+          git diff --binary > "${RUNNER_TEMP}/candidate-observed.patch"
+          test "$(sha256sum "${RUNNER_TEMP}/candidate-observed.patch" | awk '{print $1}')" = "${CANDIDATE_PATCH_SHA256}"
+
+      - name: Set up trusted Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/development.lock
+
+      - name: Install exact development dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --only-binary=:all: --require-hashes -r requirements/development.lock
+
+      - name: Run focused candidate verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=. python -m unittest tests.test_analyzer_readback.DeepSourceAnalyzerReadbackTests.test_multiple_check_run_ids_for_same_analyzer_are_ambiguous
+          PYTHONPATH=. python -m unittest tests.test_analyzer_readback
+          python -m py_compile tools/analyzer_deepsource.py tests/test_analyzer_readback.py
+
+      - name: Run exact-parent Decision 0090 preparation
+        shell: bash
+        run: |
+          set -euo pipefail
+          wrapper="${RUNNER_TEMP}/parent-prepare"
+          git show "${TARGET_SHA}:ci/prepare-candidate" > "${wrapper}"
+          receipt="${RUNNER_TEMP}/pr314-qodo-receipt.json"
+          sh "${wrapper}" prepare             --parent "${TARGET_SHA}"             --receipt "${receipt}"             --focused-profile fast             --trusted-python "$(command -v python)"             > "${RUNNER_TEMP}/prepare-result.json"
+
+          prepared_tree="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["prepared_tree"])' "${receipt}")"
+          receipt_sha="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["receipt_sha256"])' "${receipt}")"
+          prepared_diff_sha="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["prepared_diff_sha256"])' "${receipt}")"
+          retention_ref="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["retention_ref"])' "${receipt}")"
+
+          sh "${wrapper}" verify             --parent "${TARGET_SHA}"             --tree "${prepared_tree}"             --receipt "${receipt}"             --receipt-sha256 "${receipt_sha}"             --trusted-python "$(command -v python)"             > "${RUNNER_TEMP}/receipt-verify.json"
+
+          git diff --binary --full-index "${TARGET_SHA}" "${prepared_tree}" > "${RUNNER_TEMP}/prepared.patch"
+          test "sha256:$(sha256sum "${RUNNER_TEMP}/prepared.patch" | awk '{print $1}')" = "${prepared_diff_sha}"
+          git bundle create "${RUNNER_TEMP}/prepared.bundle" "${retention_ref}"
+          git bundle verify "${RUNNER_TEMP}/prepared.bundle"
+          sha256sum "${RUNNER_TEMP}/prepared.bundle" > "${RUNNER_TEMP}/prepared.bundle.sha256"
+
+          python - "${receipt}" "${RUNNER_TEMP}" <<'PY'
+          import json, sys
+          from pathlib import Path
+          receipt=Path(sys.argv[1])
+          out=Path(sys.argv[2])
+          doc=json.loads(receipt.read_text(encoding="utf-8"))
+          assert doc["parent_commit"] == "47369ba6a95a48fb0b2ba765c6c478564b95850c", doc
+          assert doc["parent_tree"] == "b1e8db204139ab22a477fb3a037773471ad7b938", doc
+          assert doc["changed_paths"] == ["tests/test_analyzer_readback.py","tools/analyzer_deepsource.py"], doc
+          assert doc["focused_profile"] == "fast", doc
+          assert all(v == 0 for v in doc["checks"].values()), doc
+          for key in ("prepared_tree","receipt_sha256","prepared_diff_sha256","retention_ref"):
+              (out / f"{key}.txt").write_text(str(doc[key])+"\n",encoding="utf-8")
+          PY
+
+      - name: Upload non-secret preparation evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr314-qodo-decision0090-preparation
+          path: |
+            ${{ runner.temp }}/candidate-observed.patch
+            ${{ runner.temp }}/pr314-qodo-receipt.json
+            ${{ runner.temp }}/prepare-result.json
+            ${{ runner.temp }}/receipt-verify.json
+            ${{ runner.temp }}/prepared.patch
+            ${{ runner.temp }}/prepared.bundle
+            ${{ runner.temp }}/prepared.bundle.sha256
+            ${{ runner.temp }}/prepared_tree.txt
+            ${{ runner.temp }}/receipt_sha256.txt
+            ${{ runner.temp }}/prepared_diff_sha256.txt
+            ${{ runner.temp }}/retention_ref.txt
+          retention-days: 1
+          if-no-files-found: error
