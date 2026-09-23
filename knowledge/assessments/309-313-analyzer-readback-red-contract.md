@@ -45,17 +45,18 @@ behaviours:
 | R1 | A normalized readback with a non-exact or malformed requested head is rejected. |
 | R2 | `COMPLETE` coverage cannot disagree with retained count or provider total. |
 | R3 | Partial pagination cannot become an empty clean report. |
-| R4 | DeepSource `FULL_RUN` rejects a returned commit that differs from the requested exact head. |
+| R4 | DeepSource exact-head mismatch yields top-level `AMBIGUOUS` with `INCOMPLETE` subject coverage and can never yield `FULL_RUN`. |
 | R5 | DeepSource `DIFF_LOCAL` cannot be promoted to authenticated `FULL_RUN`. |
-| R6 | Codacy readback is `INCOMPLETE` when exact PR-head binding cannot be proven. |
-| R7 | Provider tokens never appear in normalized output, retained URLs or bounded exceptions. |
-| R8 | Off-origin redirects are rejected before an Authorization header can cross origins. |
+| R6 | Codacy unproven PR-head binding yields top-level `AMBIGUOUS` with `INCOMPLETE` subject coverage. |
+| R7 | Missing or rejected provider credentials yield top-level `AUTH_UNAVAILABLE`, and token bytes never appear in normalized output, retained URLs or bounded exceptions. |
+| R8 | Network/protocol/unavailable full-readback paths yield `READBACK_UNAVAILABLE`; off-origin redirects are rejected before an Authorization header can cross origins. |
 | R9 | Malformed provider payloads fail closed without fabricating zero findings. |
 | R10 | Finding identity, severity, rule, message, location and native reference survive normalization without provider vocabulary entering the common reducer. |
 | R11 | Analyzer readback has no mutation route: no trigger, comment, dismissal, configuration or Git/provider write method is exposed. |
 | R12 | PR #312 dogfood can retain exact-head provider evidence or an explicit incomplete limitation without guessing from GitHub check counts. |
 | R13 | The runner rejects GitHub PR head movement across acquisition and stale DeepSource inline `commit_id` evidence. |
 | R14 | The manual workflow has read-only GitHub permissions, step-scoped analyzer secrets, no automatic PR trigger and uploads only a validated non-secret bundle. |
+| R15 | The common validator rejects contradictory completeness/coverage pairs such as `FULL_RUN` with `PARTIAL`, `AMBIGUOUS` without `INCOMPLETE`, or `AUTH_UNAVAILABLE` with `COMPLETE`. |
 
 ## Intended implementation shape
 
