@@ -35,7 +35,7 @@ jobs:
         run: |
           set -euo pipefail
           bundle="$RUNNER_TEMP/gnostoa-314-09afa312.bundle"
-          git bundle create "$bundle" 09afa312a980cfa4334f9322be46d0ecec0349fa
+          git update-ref refs/heads/export-exact-314 09afa312a980cfa4334f9322be46d0ecec0349fa\n          git bundle create "$bundle" refs/heads/export-exact-314
           git bundle verify "$bundle"
           sha256sum "$bundle" > "$bundle.sha256"
 
