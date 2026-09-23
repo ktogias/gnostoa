@@ -236,6 +236,7 @@ def _issue_finding(item: Mapping[str, Any]) -> dict[str, Any]:
             "ERROR", "Codacy pull request resultDataId is malformed"
         )
     message = commit_issue.get("message") or pattern.get("title") or pattern.get("id")
+    delta_type = _text(item.get("deltaType"), "pull request issue.deltaType")
     native: dict[str, Any] = {"issue_id": issue_id}
     if result_data_id is not None:
         native["result_data_id"] = result_data_id
@@ -244,7 +245,7 @@ def _issue_finding(item: Mapping[str, Any]) -> dict[str, Any]:
         "message": _text(message, "pull request issue message"),
         "rule": _text(pattern.get("id"), "pull request issue pattern id"),
         "native_ref": issue_id,
-        "state": str(item.get("deltaType") or "unknown").lower(),
+        "state": delta_type.lower(),
         "provenance": [{"surface": "codacy-api-v3", "reference": issue_id}],
         "native": native,
     }

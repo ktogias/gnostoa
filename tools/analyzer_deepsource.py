@@ -345,13 +345,16 @@ def _issue_finding(
     title = (
         issue.get("title") or definition_map.get("title") or rule or "DeepSource issue"
     )
+    is_suppressed = issue.get("isSuppressed")
+    if type(is_suppressed) is not bool:
+        raise ProviderReadFailure("ERROR", "DeepSource issue.isSuppressed is malformed")
     finding: dict[str, Any] = {
         "id": _text(issue.get("id"), "issue.id"),
         "message": _text(title, "issue.title"),
         "severity": _text(issue.get("severity"), "issue.severity"),
         "category": _text(issue.get("category"), "issue.category"),
         "path": _text(issue.get("path"), "issue.path"),
-        "state": "suppressed" if issue.get("isSuppressed") is True else "open",
+        "state": "suppressed" if is_suppressed else "open",
         "native_ref": _text(issue.get("id"), "issue.id"),
         "provenance": [
             {
@@ -859,6 +862,7 @@ def _diff_local_from_github(
             findings=[],
         )
     findings: list[dict[str, Any]] = []
+    carried_forward_comments = 0
     for comment in comments:
         if not _trusted_github_comment(comment):
             continue
@@ -870,7 +874,10 @@ def _diff_local_from_github(
             continue
         comment_head = comment.get("commit_id")
         original_comment_head = comment.get("original_commit_id")
-        if comment_head != requested_head or original_comment_head != requested_head:
+        if comment_head != requested_head:
+            continue
+        if original_comment_head != requested_head:
+            carried_forward_comments += 1
             continue
         finding: dict[str, Any] = {
             "id": marker.group("id"),
@@ -933,6 +940,31 @@ def _diff_local_from_github(
         run_state = "PENDING"
     else:
         run_state = "SUCCESS"
+    native = {"analyzers": dict(sorted(analyzer_states.items()))}
+    if carried_forward_comments:
+        native["carried_forward_comments_excluded"] = carried_forward_comments
+        return build_readback(
+            provider="deepsource",
+            adapter="deepsource-github/v1",
+            repository=repository,
+            pull_number=pull_number,
+            requested_head=requested_head,
+            observed_head=requested_head,
+            analysis_id=next(iter(run_ids)),
+            scope="DIFF",
+            completeness="DIFF_LOCAL",
+            native_mode="DIFF_LOCAL",
+            observed_at=observed_at,
+            run_state=run_state,
+            coverage_record=coverage(
+                "PARTIAL",
+                pages=1,
+                count=len(retained),
+                reason="CARRIED_FORWARD_COMMENTS_EXCLUDED",
+            ),
+            findings=retained,
+            native=native,
+        )
     return build_readback(
         provider="deepsource",
         adapter="deepsource-github/v1",
@@ -950,7 +982,7 @@ def _diff_local_from_github(
             "COMPLETE", pages=1, count=len(retained), total=len(retained)
         ),
         findings=retained,
-        native={"analyzers": dict(sorted(analyzer_states.items()))},
+        native=native,
     )
 
 

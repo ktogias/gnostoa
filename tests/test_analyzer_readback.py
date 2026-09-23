@@ -654,6 +654,28 @@ class DeepSourceAnalyzerReadbackTests(unittest.TestCase):
         self.assertNotIn("observed_head", document)
         self.assertEqual([], document["findings"])
 
+    def test_full_run_rejects_malformed_suppression_state(self) -> None:
+        issue = _issue("issue-bad-suppression", 10)
+        issue["isSuppressed"] = "false"
+        client = _DeepSourceFake(
+            {
+                ("run", None): _run_page(),
+                ("check-python", None): _check_page([issue], total=1, cursor=None),
+            }
+        )
+        document = analyzer_deepsource.read_full_run(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            run_uid=RUN_UID,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("READBACK_UNAVAILABLE", document["completeness"])
+        self.assertEqual("ERROR", document["coverage"]["status"])
+        self.assertEqual("PROVIDER_ERROR", document["coverage"]["reason"])
+        self.assertEqual([], document["findings"])
+
     def test_full_run_malformed_provider_head_fallback_does_not_bind_head(
         self,
     ) -> None:
@@ -697,7 +719,6 @@ class DeepSourceAnalyzerReadbackTests(unittest.TestCase):
             run_uid=RUN_UID,
             observed_at=OBSERVED,
         )
-        self.assertEqual("AMBIGUOUS", document["completeness"])
         self.assertEqual("AMBIGUOUS", document["completeness"])
         self.assertEqual("INCOMPLETE", document["coverage"]["status"])
         self.assertEqual("SUBJECT_MISMATCH", document["coverage"]["reason"])
@@ -903,7 +924,12 @@ class DeepSourceAnalyzerReadbackTests(unittest.TestCase):
             comments=comments,
             observed_at=OBSERVED,
         )
-        self.assertEqual("COMPLETE", document["coverage"]["status"])
+        self.assertEqual("PARTIAL", document["coverage"]["status"])
+        self.assertEqual(
+            "CARRIED_FORWARD_COMMENTS_EXCLUDED",
+            document["coverage"]["reason"],
+        )
+        self.assertEqual(1, document["native"]["carried_forward_comments_excluded"])
         self.assertEqual([], document["findings"])
 
     def test_github_native_projection_rejects_spoofed_run_status_producer(self) -> None:
@@ -1262,6 +1288,37 @@ class CodacyAnalyzerReadbackTests(unittest.TestCase):
         self.assertEqual("ERROR", document["coverage"]["status"])
         self.assertEqual("NORMALIZATION_ERROR", document["coverage"]["reason"])
         self.assertNotIn("observed_head", document)
+        self.assertEqual([], document["findings"])
+
+    def test_codacy_rejects_malformed_delta_type(self) -> None:
+        root = _codacy_root()
+        issue = _codacy_issue("codacy-bad-delta", 4)
+        issue["deltaType"] = {"unexpected": True}
+        client = _CodacyFake(
+            {
+                f"{root}/pull-requests/312": _codacy_pr(),
+                _codacy_issues_url(potential=False): {
+                    "analyzed": True,
+                    "data": [issue],
+                    "pagination": {"total": 1},
+                },
+                _codacy_issues_url(potential=True): {
+                    "analyzed": True,
+                    "data": [],
+                    "pagination": {"total": 0},
+                },
+            }
+        )
+        document = analyzer_codacy.read_pull_request(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("READBACK_UNAVAILABLE", document["completeness"])
+        self.assertEqual("ERROR", document["coverage"]["status"])
+        self.assertEqual("PROVIDER_ERROR", document["coverage"]["reason"])
         self.assertEqual([], document["findings"])
 
     def test_codacy_single_page_without_pagination_is_complete(self) -> None:
