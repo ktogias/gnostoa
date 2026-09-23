@@ -1,6 +1,20 @@
 #!/bin/sh
 set -eu
 
+# Bootstrap from a fixed trusted executable search path before touching the
+# candidate repository. The default Development Container provides Python in
+# /usr/local/bin and Git/coreutils in /usr/bin.
+PATH=/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin
+export PATH
+
+git_executable="$(command -v git || true)"
+python_executable="$(command -v python || command -v python3 || true)"
+mktemp_executable="$(command -v mktemp || true)"
+if [ -z "$git_executable" ] || [ -z "$python_executable" ] || [ -z "$mktemp_executable" ]; then
+  echo "ERROR: trusted preparation bootstrap executables are unavailable" >&2
+  exit 2
+fi
+
 parent=""
 need_parent_value=0
 for argument in "$@"; do
@@ -19,34 +33,44 @@ for argument in "$@"; do
   esac
 done
 
-if ! printf '%s\n' "$parent" | grep -Eq '^[0-9a-f]{40}$'; then
+if [ "${#parent}" -ne 40 ]; then
   echo "ERROR: --parent must be an exact 40-character commit SHA" >&2
   exit 2
 fi
+case "$parent" in
+  *[!0-9a-f]*)
+    echo "ERROR: --parent must be an exact 40-character commit SHA" >&2
+    exit 2
+    ;;
+esac
 
 # The authoritative invocation executes this wrapper from the exact parent
-# commit. Scrub caller Git routing/config overrides before locating that parent.
+# commit. Scrub caller Git/Python routing before locating or loading authority.
 unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY
 unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_INDEX_FILE GIT_CEILING_DIRECTORIES
 unset GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_CONFIG GIT_CONFIG_PARAMETERS
-unset GIT_EXTERNAL_DIFF GIT_TEMPLATE_DIR
+unset GIT_EXTERNAL_DIFF GIT_TEMPLATE_DIR GIT_REPLACE_REF_BASE
+unset PYTHONHOME PYTHONPATH PYTHONUSERBASE PYTHONSAFEPATH
 export GIT_CONFIG_COUNT=0
 export GIT_CONFIG_GLOBAL=/dev/null
 export GIT_CONFIG_SYSTEM=/dev/null
 export GIT_CONFIG_NOSYSTEM=1
 export GIT_ATTR_NOSYSTEM=1
+export GIT_NO_REPLACE_OBJECTS=1
 export GIT_PAGER=cat
 export PAGER=cat
+export PYTHONNOUSERSITE=1
 
-root="$(git -c core.hooksPath=/dev/null rev-parse --show-toplevel)"
+root="$("$git_executable" -c core.hooksPath=/dev/null rev-parse --show-toplevel)"
 cd "$root"
 
-temporary="$(mktemp "${TMPDIR:-/tmp}/gnostoa-candidate-prepare.XXXXXX.py")"
+temporary="$("$mktemp_executable" "${TMPDIR:-/tmp}/gnostoa-candidate-prepare.XXXXXX.py")"
 trap 'rm -f -- "$temporary"' EXIT HUP INT TERM
 
-if ! git -c core.hooksPath=/dev/null show "${parent}:tools/candidate_prepare.py" > "$temporary"; then
+if ! "$git_executable" -c core.hooksPath=/dev/null \
+  show "${parent}:tools/candidate_prepare.py" > "$temporary"; then
   echo "ERROR: trusted parent does not provide candidate preparation authority" >&2
   exit 2
 fi
 
-python -P "$temporary" "$@"
+exec "$python_executable" -I "$temporary" "$@"
