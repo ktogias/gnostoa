@@ -190,8 +190,11 @@ metadata is initialized with an explicitly empty trusted template, and inherited
 `GIT_TEMPLATE_DIR` is ignored. Candidate staging, checkout and verification no
 longer consume the mutable source `.git/config`, caller global/system config or
 caller Git templates after admission, so concurrent or inherited Git configuration
-cannot inject filters into preparation. The source worktree is captured twice from the
-same exact parent; mismatched trees/path sets or any source-HEAD movement fail
+cannot inject filters into preparation. Source-index entries marked
+`skip-worktree` or `assume-unchanged` fail closed before capture; this also
+rejects sparse-checkout index state rather than reinterpreting caller-hidden
+tracked paths as candidate changes. The source worktree is captured twice from
+the same exact parent; mismatched trees/path sets or any source-HEAD movement fail
 closed. The path rejects candidate changes to `ci/prepare-candidate`,
 `ci/style`, `ci/verify`, `tools/candidate_prepare.py`, or any
 `pyproject.toml`/`ruff.toml`/`.ruff.toml` unless authority evolution is
