@@ -27,9 +27,8 @@ jobs:
           GZIP_SHA256: 81d88d5a6c48f5e0fea7afc435abf8a33e073ffcd57bc7cf0ad10669fae04527
         run: |
           set -euo pipefail
-          gzip_file="${RUNNER_TEMP}/candidate.patch.gz"
+          gzip_file=".gnostoa-ops/pr314-empty-checks.patch.gz"
           patch_file="${RUNNER_TEMP}/candidate.patch"
-          base64 --decode .gnostoa-ops/pr314-empty-checks.patch.gz.b64 > "${gzip_file}"
           echo "${GZIP_SHA256}  ${gzip_file}" | sha256sum -c -
           gzip -dc "${gzip_file}" > "${patch_file}"
           echo "${PATCH_SHA256}  ${patch_file}" | sha256sum -c -
