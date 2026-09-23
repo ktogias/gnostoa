@@ -1,0 +1,98 @@
+name: PR314 newest-unbound-status RED
+
+on:
+  push:
+    branches:
+      - transport/pr314-unbound-status-846c641
+
+permissions:
+  contents: read
+
+jobs:
+  red:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact pre-change subject
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 846c641f95558f82ecda6095be07a185d7ec779c
+          persist-credentials: false
+
+      - name: Bind exact pre-change identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "846c641f95558f82ecda6095be07a185d7ec779c"
+          test "$(git rev-parse 'HEAD^{tree}')" = "df0fc523a331264e49e0340dd8f321b006560743"
+          test -z "$(git status --porcelain)"
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+
+      - name: Prove newest-unbound commit-status RED
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=. python - <<'PY'
+          from tools import analyzer_deepsource
+
+          head = "0123456789abcdef0123456789abcdef01234567"
+          run_uid = "00000000-0000-0000-0000-000000000001"
+          statuses = [
+              {
+                  "context": "DeepSource: Python",
+                  "source_kind": "commit_status",
+                  "creator_login": "deepsource-io[bot]",
+                  "creator_type": "Bot",
+                  "state": "pending",
+                  "target_url": None,
+              },
+              {
+                  "context": "DeepSource: Python",
+                  "source_kind": "commit_status",
+                  "creator_login": "deepsource-io[bot]",
+                  "creator_type": "Bot",
+                  "state": "success",
+                  "target_url": (
+                      "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
+                      f"{run_uid}/python/"
+                  ),
+              },
+          ]
+          document = analyzer_deepsource.diff_local_from_github(
+              repository="ktogias/gnostoa",
+              pull_number=314,
+              requested_head=head,
+              observed_head=head,
+              statuses=statuses,
+              comments=[],
+              observed_at="2026-09-23T23:00:00Z",
+          )
+
+          # Future contract: the unusable newest trusted status must fence off
+          # the older run rather than allowing stale exact-run association.
+          expected = (
+              document["completeness"] == "AMBIGUOUS"
+              and document["coverage"]["status"] == "INCOMPLETE"
+              and document["coverage"]["reason"] == "RUN_ASSOCIATION_AMBIGUOUS"
+              and "analysis_id" not in document
+          )
+          if expected:
+              raise SystemExit(
+                  "RED invalid: exact pre-change subject already satisfies the future contract"
+              )
+
+          # Non-vacuity: prove the exact escaped behavior rather than accepting
+          # any arbitrary failure.
+          assert document["completeness"] == "DIFF_LOCAL", document
+          assert document["coverage"]["status"] == "COMPLETE", document
+          assert document["analysis_id"] == run_uid, document
+          assert document["run_state"] == "SUCCESS", document
+          print(
+              "EXPECTED_RED: newest unbound trusted status was skipped and "
+              "older success was incorrectly selected"
+          )
+          PY
