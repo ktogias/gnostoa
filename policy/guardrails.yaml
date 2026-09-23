@@ -621,6 +621,21 @@ guardrails:
     tests:
       - tests/test_tools.py::ContinuousIntegrationTests.test_repository_hooks_are_advisory_shared_command_adapters
 
+  - id: pre-candidate-preparation-receipts
+    title: Python-affecting self-candidates are normalized and tree-bound before publication
+    applies_to: [kit]
+    enforcement: hybrid
+    owner: team:gnostoa-maintainers
+    guidance: knowledge/decisions/0090-require-pre-candidate-preparation-receipts-for-non-hook-authoring.md#decision
+    implementation:
+      - AGENTS.md
+      - ci/prepare-candidate
+      - ci/style
+      - tools/candidate_prepare.py
+      - knowledge/decisions/0090-require-pre-candidate-preparation-receipts-for-non-hook-authoring.md
+    tests:
+      - tests/test_candidate_prepare.py
+
   - id: immutable-provider-ci-adapters
     title: Provider adapters cover candidate events with immutable dependencies
     applies_to: [kit, adopting-projects]

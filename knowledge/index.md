@@ -98,6 +98,7 @@ inherited, copied or loaded by adopting projects.
 - [Promote the exact restoration runtime into protected current-advisory transport authority](decisions/0085-promote-current-advisory-restoration-runtime.md)
 - [Implement useful L1 as provider-neutral current-state reconciliation with a GitHub adapter](decisions/0086-implement-useful-l1-as-protected-source-github-current-state-reconciler.md)
 - [Establish Q0 reviewer qualification semantics and stage protected activation behind a prior-integrated runtime](decisions/0089-establish-q0-reviewer-qualification-semantics.md)
+- [Require pre-candidate preparation receipts for non-hook authoring](decisions/0090-require-pre-candidate-preparation-receipts-for-non-hook-authoring.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Require explicit admission for retrospective findings](requirements/retrospective-findings-require-explicit-admission.md)

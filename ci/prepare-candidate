@@ -1,0 +1,128 @@
+#!/bin/sh
+set -eu
+
+# Bootstrap from a fixed trusted executable search path before touching the
+# candidate repository. The default Development Container provides Python in
+# /usr/local/bin and Git/coreutils in /usr/bin.
+PATH=/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin
+export PATH
+
+git_executable="$(command -v git || true)"
+bootstrap_python="$(command -v python || command -v python3 || true)"
+mktemp_executable="$(command -v mktemp || true)"
+if [ -z "$git_executable" ] || [ -z "$bootstrap_python" ] || [ -z "$mktemp_executable" ]; then
+  echo "ERROR: trusted preparation bootstrap executables are unavailable" >&2
+  exit 2
+fi
+
+parent=""
+trusted_python=""
+need_parent_value=0
+need_trusted_python_value=0
+for argument in "$@"; do
+  if [ "$need_parent_value" -eq 1 ]; then
+    parent="$argument"
+    need_parent_value=0
+    continue
+  fi
+  if [ "$need_trusted_python_value" -eq 1 ]; then
+    trusted_python="$argument"
+    need_trusted_python_value=0
+    continue
+  fi
+  case "$argument" in
+    --parent)
+      need_parent_value=1
+      ;;
+    --parent=*)
+      parent="${argument#--parent=}"
+      ;;
+    --trusted-python)
+      need_trusted_python_value=1
+      ;;
+    --trusted-python=*)
+      trusted_python="${argument#--trusted-python=}"
+      ;;
+  esac
+done
+
+if [ "${#parent}" -ne 40 ]; then
+  echo "ERROR: --parent must be an exact 40-character commit SHA" >&2
+  exit 2
+fi
+case "$parent" in
+  *[!0-9a-f]*)
+    echo "ERROR: --parent must be an exact 40-character commit SHA" >&2
+    exit 2
+    ;;
+esac
+
+# The authoritative invocation executes this wrapper from the exact parent
+# commit. Scrub caller Git/Python routing before locating or loading authority.
+unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY
+unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_INDEX_FILE GIT_CEILING_DIRECTORIES
+unset GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_CONFIG GIT_CONFIG_PARAMETERS
+unset GIT_EXTERNAL_DIFF GIT_TEMPLATE_DIR GIT_REPLACE_REF_BASE
+unset PYTHONHOME PYTHONPATH PYTHONUSERBASE PYTHONSAFEPATH
+export GIT_CONFIG_COUNT=0
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_SYSTEM=/dev/null
+export GIT_CONFIG_NOSYSTEM=1
+export GIT_ATTR_NOSYSTEM=1
+export GIT_NO_REPLACE_OBJECTS=1
+export GIT_PAGER=cat
+export PAGER=cat
+export PYTHONNOUSERSITE=1
+
+root="$("$git_executable" -c core.hooksPath=/dev/null rev-parse --show-toplevel)"
+cd "$root"
+
+python_executable="$bootstrap_python"
+if [ -n "$trusted_python" ]; then
+  case "$trusted_python" in
+    /*)
+      ;;
+    *)
+      echo "ERROR: --trusted-python must be an absolute path" >&2
+      exit 2
+      ;;
+  esac
+  resolved_python="$("$bootstrap_python" -I -c \
+    'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve(strict=True))' \
+    "$trusted_python" 2>/dev/null || true)"
+  resolved_directory="$("$bootstrap_python" -I -c \
+    'from pathlib import Path; import sys; print(Path(sys.argv[1]).parent.resolve(strict=True))' \
+    "$trusted_python" 2>/dev/null || true)"
+  if [ -z "$resolved_python" ] || [ -z "$resolved_directory" ] || [ ! -f "$resolved_python" ] || [ ! -x "$resolved_python" ]; then
+    echo "ERROR: --trusted-python must identify an executable file" >&2
+    exit 2
+  fi
+  case "$resolved_python" in
+    "$root"|"$root"/*)
+      echo "ERROR: --trusted-python must be outside the repository worktree" >&2
+      exit 2
+      ;;
+  esac
+  case "$resolved_directory" in
+    "$root"|"$root"/*)
+      echo "ERROR: --trusted-python must be outside the repository worktree" >&2
+      exit 2
+      ;;
+  esac
+  # Validate the real target, but keep the invoked leaf in its validated
+  # directory so CPython can still discover a virtualenv's pyvenv.cfg.
+  python_executable="$resolved_directory/${trusted_python##*/}"
+fi
+
+temporary="$("$mktemp_executable" "${TMPDIR:-/tmp}/gnostoa-candidate-prepare.XXXXXX")"
+trap 'rm -f -- "$temporary"' EXIT HUP INT TERM
+
+if ! "$git_executable" -c core.hooksPath=/dev/null \
+  show "${parent}:tools/candidate_prepare.py" > "$temporary"; then
+  echo "ERROR: trusted parent does not provide candidate preparation authority" >&2
+  exit 2
+fi
+
+status=0
+"$python_executable" -I "$temporary" "$@" || status=$?
+exit "$status"

@@ -91,12 +91,179 @@ Mechanical changes and emergency follow-up use the timing declared by
 `policy/change-control.yaml`.
 
 Before creating or pushing a candidate that changes Python source or Python
-verification surfaces, run `./ci/style --fix` over the Git-candidate-aware
-repository-root Ruff scope. The command fails if a tracked Ruff input is matched
-by Git or other Ruff-recognized ignore rules. Then rerun the focused contracts
-affected by the change **after** formatting, inspect the resulting diff, and only
-then treat the SHA as a review candidate. Do not use unsafe Ruff fixes implicitly.
-Provider CI stays check-only and remains the non-bypassable verifier.
+verification surfaces, use the pre-candidate preparation boundary from the
+recommended Development Container defined by `.devcontainer/devcontainer.json`.
+That route provides a writable workspace mount and remaps the container user to
+the checkout owner; do not reuse the read-only one-shot verification container
+shown later in this file for preparation. A direct host invocation is a native
+fallback only when the container route is unavailable; record that reason.
+
+The preparation authority must come from the exact bound parent, never from the
+editable candidate checkout. Retrieve the parent wrapper before executing it;
+the retrieval itself is part of the trust boundary, so it must use trusted
+system executable lookup, scrub caller Git routing/configuration, disable Git
+replacement objects, and check `git show` success instead of piping directly
+into a shell. Define this helper once in the shell session. Its body runs in a
+subshell, so failures and signal traps cannot terminate or reconfigure the
+caller's interactive shell:
+
+```bash
+run_parent_prepare_candidate() (
+  parent=$1
+  action=$2
+  shift 2
+
+  if [ "${#parent}" -ne 40 ]; then
+    echo "ERROR: parent must be an exact 40-character commit SHA" >&2
+    exit 2
+  fi
+  case "${parent}" in
+    *[!0-9a-f]*)
+      echo "ERROR: parent must be an exact 40-character commit SHA" >&2
+      exit 2
+      ;;
+  esac
+
+  PATH=/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin
+  export PATH
+  git_executable="$(command -v git || true)"
+  mktemp_executable="$(command -v mktemp || true)"
+  if [ -z "${git_executable}" ] || [ -z "${mktemp_executable}" ]; then
+    echo "ERROR: trusted wrapper-retrieval executables are unavailable" >&2
+    exit 2
+  fi
+
+  parent_wrapper="$("${mktemp_executable}" /tmp/gnostoa-parent-wrapper.XXXXXX)"
+  trap 'rm -f -- "$parent_wrapper"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
+  if ! (
+    unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY
+    unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_INDEX_FILE GIT_CEILING_DIRECTORIES
+    unset GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_CONFIG GIT_CONFIG_PARAMETERS
+    unset GIT_EXTERNAL_DIFF GIT_TEMPLATE_DIR GIT_REPLACE_REF_BASE
+    export GIT_CONFIG_COUNT=0
+    export GIT_CONFIG_GLOBAL=/dev/null
+    export GIT_CONFIG_SYSTEM=/dev/null
+    export GIT_CONFIG_NOSYSTEM=1
+    export GIT_ATTR_NOSYSTEM=1
+    export GIT_NO_REPLACE_OBJECTS=1
+    "${git_executable}" -c core.hooksPath=/dev/null \
+      show "${parent}:ci/prepare-candidate"
+  ) > "${parent_wrapper}"; then
+    echo "ERROR: unable to retrieve exact-parent preparation wrapper" >&2
+    exit 2
+  fi
+
+  sh "${parent_wrapper}" "${action}" --parent "${parent}" "$@"
+)
+
+parent=<exact-40-character-parent-sha>
+run_parent_prepare_candidate "${parent}" prepare \
+  --receipt <new-path-outside-the-worktree> \
+  --focused-profile fast
+```
+
+The retrieved wrapper then restricts executable lookup again, scrubs inherited
+Git/Python routing, disables Git replacement objects, and runs the extracted
+parent `tools/candidate_prepare.py` with isolated Python (`-I`).
+
+If the bound parent does not contain this authority, no trusted preparation
+receipt can be issued through this route; authority evolution/bootstrap must be
+handled by its separately admitted path rather than executing candidate bytes.
+When the documented host fallback needs a virtualenv or other trusted
+interpreter environment with Ruff installed, pass
+`--trusted-python /absolute/path/to/python`. The wrapper validates both the
+resolved target and resolved containing directory outside the repository
+worktree, then invokes the supplied leaf through that validated directory so
+virtualenv discovery is preserved while still launching with isolated mode
+(`-I`); it never reopens caller `PATH` or user-site packages.
+
+Preparation captures the proposed delta through disposable Git metadata with
+trusted local configuration. Git object reads/writes are bound explicitly to
+the source content-addressed object store so the verified prepared-tree identity
+survives the disposable metadata. The source `.git/info/exclude` and the caller's effective `core.excludesFile`
+patterns are snapshotted once into that metadata so ignored scratch/secrets
+remain excluded without retaining caller Git configuration. Disposable Git
+metadata is initialized with an explicitly empty trusted template, and inherited
+`GIT_TEMPLATE_DIR` is ignored. Candidate staging, checkout and verification no
+longer consume the mutable source `.git/config`, caller global/system config or
+caller Git templates after admission, so concurrent or inherited Git configuration
+cannot inject filters into preparation. Source-index entries marked
+`skip-worktree` or `assume-unchanged` fail closed before capture; this also
+rejects sparse-checkout index state rather than reinterpreting caller-hidden
+tracked paths as candidate changes. The source worktree is captured twice from
+the same exact parent; mismatched trees/path sets or any source-HEAD movement fail
+closed. The path rejects candidate changes to `ci/prepare-candidate`,
+`ci/style`, `ci/verify`, `tools/candidate_prepare.py`, or any
+`pyproject.toml`/`ruff.toml`/`.ruff.toml` unless authority evolution is
+separately admitted. It materializes the exact proposed tree into a disposable
+workspace and runs `ci/style --fix` with unsafe Python path injection disabled.
+The active interpreter's unresolved directory stays first on `PATH`, preserving
+a virtualenv's Python/Ruff installation while preventing a candidate
+`ruff.py`/`ruff` package from shadowing it.
+It restores the normalized tree, then runs the allowlisted
+`ci/verify` profile under a separate scrubbed Python environment: inherited
+`PYTHONPATH`/`PYTHONHOME`/user-site state and arbitrary executable search
+paths are excluded, while the isolated candidate workspace remains intentionally
+importable for candidate tests. Focused verification has a 900-second deadline
+and bounded retained stdout/stderr; cleanup terminates the full
+preparation-owned process group on success, timeout, or collection failure.
+Focused candidate code runs with separate disposable Git metadata/worktree; all
+post-focused mutation/style evidence is rebuilt from trusted normalization
+metadata, so candidate-controlled index/config/skip-worktree state cannot hide a
+mutation. A preparation-owned `knowledge` shim precedes
+the executable search path and executes `python -m tools.cli` from that workspace;
+`KNOWLEDGE_KIT_ROOT` is rebound to the isolated workspace and its revision label
+is reset to `development`, so installed-image or source-worktree toolkit routing
+cannot satisfy a focused receipt. Final `ci/style --check` returns to the stricter
+safe-path style environment. Source-worktree-only
+ignored/untracked files and concurrent caller edits are not part of verification. Candidate symlinks are rejected
+before style or focused verification because this bounded contract does not
+admit external target chains. The CLI never accepts an executable or arbitrary
+verification arguments; supported profiles are `policy`,
+`security-fast`, `fast`, `regression`, `smoke`, and `extended`.
+
+The preparation command prints a JSON receipt object containing
+`receipt_sha256` and a receipt-unique namespaced `retention_ref`; retain the
+digest identity outside the receipt bytes in the trusted preparation handoff.
+Each receipt gets its own
+`refs/gnostoa/prepared/<parent>/<tree>/<nonce>` GC root, so releasing one
+receipt cannot unroot another receipt for the same tree. The ref keeps the
+prepared tree reachable until publication or explicit receipt expiry. The digest is integrity
+evidence, not producer authentication or bearer authority. To inspect/consume a
+receipt, supply the separately retained identity:
+
+Using the same trusted helper for this exact `parent`:
+
+```bash
+run_parent_prepare_candidate "${parent}" verify \
+  --tree <exact-40-character-prepared-tree-sha> \
+  --receipt <path-outside-the-worktree> \
+  --receipt-sha256 <trusted-sha256-from-prepare>
+```
+
+A self-consistent receipt with a caller-chosen digest must never authorize a
+provider write. After publication or explicit receipt expiry, release the exact
+retained tree only through:
+
+Using the same trusted helper for this exact `parent`:
+
+```bash
+run_parent_prepare_candidate "${parent}" release \
+  --tree <exact-40-character-prepared-tree-sha> \
+  --receipt <path-outside-the-worktree> \
+  --receipt-sha256 <trusted-sha256-from-prepare>
+```
+
+This slice intentionally has no provider-write adapter; Git-data or API ref
+effects remain governed by #15/#308 and must run trusted preparation or consume
+separately authenticated preparation provenance before writing.
+Ordinary hooks remain advisory early feedback; direct `ci/style --fix` alone
+is not a preparation receipt for non-hook authoring.
+Provider CI stays check-only
+and remains the non-bypassable verifier.
 
 After PR #272 is integrated, record any potentially eligible candidate before
 fresh external review with an unedited top-level comment whose first line is
