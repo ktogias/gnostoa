@@ -73,16 +73,14 @@ class CandidatePreparationContractTests(unittest.TestCase):
 
     @staticmethod
     def _git(root: Path, *arguments: str) -> str:
-        completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
+        # Reuse the audited shell-free subprocess boundary from the implementation
+        # so this fixture helper does not duplicate a tainted-command SAST sink.
+        completed = candidate_prepare._run(  # noqa: SLF001
             [GIT, *arguments],
             cwd=root,
             env=_test_env(),
-            check=True,
-            shell=False,
-            capture_output=True,
-            text=True,
         )
-        return completed.stdout.strip()
+        return completed.stdout.decode("utf-8", errors="strict").strip()
 
     @staticmethod
     def _repository(root: Path) -> str:
@@ -1443,7 +1441,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 # repository wrapper whose bytes were matched to the exact parent
                 # above; argv is a fixed test shape, shell parsing is disabled, and
                 # hostile PATH/PYTHONPATH values are the subject under test.
-                completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
+                completed = candidate_prepare._run(  # noqa: SLF001
                     [
                         str(parent_wrapper),
                         "verify",
@@ -1455,18 +1453,15 @@ class CandidatePreparationContractTests(unittest.TestCase):
                     cwd=root,
                     env=environment,
                     check=False,
-                    shell=False,
-                    capture_output=True,
-                    text=True,
                 )
                 self.assertEqual(0, completed.returncode, completed.stderr)
-                self.assertIn("trusted-parent verify", completed.stdout)
+                self.assertIn(b"trusted-parent verify", completed.stdout)
                 self.assertFalse(marker.exists())
                 self.assertEqual([], list(bootstrap_tmp.iterdir()))
 
                 # Same audited boundary as the successful probe above; this
                 # invocation only substitutes the deliberately rejected interpreter.
-                rejected = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
+                rejected = candidate_prepare._run(  # noqa: SLF001
                     [
                         str(parent_wrapper),
                         "verify",
@@ -1478,12 +1473,9 @@ class CandidatePreparationContractTests(unittest.TestCase):
                     cwd=root,
                     env=environment,
                     check=False,
-                    shell=False,
-                    capture_output=True,
-                    text=True,
                 )
                 self.assertEqual(2, rejected.returncode)
-                self.assertIn("outside the repository worktree", rejected.stderr)
+                self.assertIn(b"outside the repository worktree", rejected.stderr)
                 self.assertFalse(marker.exists())
 
 

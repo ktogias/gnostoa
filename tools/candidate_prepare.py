@@ -300,15 +300,19 @@ def _run_focused(
     except OSError as exc:
         raise PrepareError("focused verification could not start") from exc
 
-    assert process.stdout is not None
-    assert process.stderr is not None
+    stdout = process.stdout
+    stderr = process.stderr
+    if stdout is None or stderr is None:
+        _terminate_focused_process(process)
+        raise PrepareError("focused verification pipes are unavailable")
+
     group_terminated = False
     selector = selectors.DefaultSelector()
     output = {"stdout": bytearray(), "stderr": bytearray()}
     timed_out = False
     try:
-        selector.register(process.stdout, selectors.EVENT_READ, "stdout")
-        selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+        selector.register(stdout, selectors.EVENT_READ, "stdout")
+        selector.register(stderr, selectors.EVENT_READ, "stderr")
         while selector.get_map():
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -368,8 +372,8 @@ def _run_focused(
                 if not active_exception:
                     raise
         selector.close()
-        process.stdout.close()
-        process.stderr.close()
+        stdout.close()
+        stderr.close()
 
 
 def _run(
