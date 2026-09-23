@@ -1,0 +1,57 @@
+name: Export exact PR 314 source bundle
+
+on:
+  push:
+    branches:
+      - ops/analyzer-readback-source-export-314
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact implementation parent
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 099163e35bf0e4934b3e2c0d33baf88ac3802cf8
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Bind exact source identity
+        shell: bash
+        env:
+          EXPECTED_SHA: 099163e35bf0e4934b3e2c0d33baf88ac3802cf8
+          EXPECTED_TREE: 1acb848bf4bf8ab276ad5fd0960ac41f9211073b
+        run: |
+          set -eu
+          test "$(git rev-parse HEAD)" = "${EXPECTED_SHA}"
+          test "$(git rev-parse 'HEAD^{tree}')" = "${EXPECTED_TREE}"
+          git status --short
+          test -z "$(git status --porcelain)"
+
+      - name: Create verified Git bundle
+        shell: bash
+        env:
+          EXPECTED_SHA: 099163e35bf0e4934b3e2c0d33baf88ac3802cf8
+        run: |
+          set -eu
+          git branch --force gnostoa-export-source "${EXPECTED_SHA}"
+          bundle="${RUNNER_TEMP}/gnostoa-pr314-099163e35bf0e4934b3e2c0d33baf88ac3802cf8.bundle"
+          git bundle create "${bundle}" refs/heads/gnostoa-export-source
+          git bundle verify "${bundle}"
+          sha256sum "${bundle}" > "${bundle}.sha256"
+          test -s "${bundle}"
+          test -s "${bundle}.sha256"
+
+      - name: Upload exact source bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gnostoa-pr314-source-099163e35bf0e4934b3e2c0d33baf88ac3802cf8
+          path: |
+            ${{ runner.temp }}/gnostoa-pr314-099163e35bf0e4934b3e2c0d33baf88ac3802cf8.bundle
+            ${{ runner.temp }}/gnostoa-pr314-099163e35bf0e4934b3e2c0d33baf88ac3802cf8.bundle.sha256
+          if-no-files-found: error
+          retention-days: 1
