@@ -75,6 +75,32 @@ def _deepsource_fake() -> Any:
                                 },
                             },
                             "checks": {
+                                "totalCount": 1,
+                                "edges": [
+                                    {
+                                        "node": {
+                                            "id": "check-python",
+                                            "status": "SUCCESS",
+                                            "analyzer": {"shortcode": "python"},
+                                        }
+                                    }
+                                ],
+                                "pageInfo": {
+                                    "hasNextPage": False,
+                                    "endCursor": None,
+                                },
+                            },
+                        }
+                    }
+                }
+            if "AnalyzerCheckIssues" in query:
+                return {
+                    "data": {
+                        "node": {
+                            "id": "check-python",
+                            "status": "SUCCESS",
+                            "analyzer": {"shortcode": "python"},
+                            "issues": {
                                 "totalCount": 0,
                                 "edges": [],
                                 "pageInfo": {

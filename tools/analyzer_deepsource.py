@@ -564,6 +564,26 @@ def _read_full_run(
             findings=[],
         )
 
+    if not checks:
+        return build_readback(
+            provider="deepsource",
+            adapter="deepsource-graphql/v1",
+            repository=repository,
+            pull_number=pull_number,
+            requested_head=requested_head,
+            observed_head=commit,
+            analysis_id=run_uid,
+            scope="FULL",
+            completeness="READBACK_UNAVAILABLE",
+            native_mode="FULL_RUN",
+            observed_at=observed,
+            run_state=run_state,
+            coverage_record=coverage(
+                "PARTIAL", pages=pages, count=0, reason="NO_ANALYZER_CHECKS"
+            ),
+            findings=[],
+        )
+
     check_states = {
         _text(check.get("id"), "check.id"): _text(check.get("status"), "check.status")
         for check in checks

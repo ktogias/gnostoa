@@ -595,6 +595,25 @@ class DeepSourceAnalyzerReadbackTests(unittest.TestCase):
         self.assertNotIn("total", document["coverage"])
         self.assertEqual(["issue-1"], [item["id"] for item in document["findings"]])
 
+    def test_full_run_without_analyzer_checks_is_partial(self) -> None:
+        run_page = _run_page(run_status="SUCCESS")
+        checks = run_page["data"]["run"]["checks"]
+        checks["totalCount"] = 0
+        checks["edges"] = []
+        client = _DeepSourceFake({("run", None): run_page})
+        document = analyzer_deepsource.read_full_run(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            run_uid=RUN_UID,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("READBACK_UNAVAILABLE", document["completeness"])
+        self.assertEqual("PARTIAL", document["coverage"]["status"])
+        self.assertEqual("NO_ANALYZER_CHECKS", document["coverage"]["reason"])
+        self.assertEqual([], document["findings"])
+
     def test_full_run_pending_analysis_is_not_complete(self) -> None:
         client = _DeepSourceFake(
             {
