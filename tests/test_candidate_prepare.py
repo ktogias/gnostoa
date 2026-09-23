@@ -1240,6 +1240,38 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 self._prepare(root, parent, receipt)
             self.assertFalse(receipt.exists())
 
+    def test_prepare_allows_local_hooks_path_without_running_hooks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = self._repository(root)
+            hooks = root / ".githooks"
+            hooks.mkdir()
+            hook = hooks / "post-checkout"
+            hook.write_text(
+                "#!/bin/sh\n"
+                'printf executed > "$GNOSTOA_TEST_HOOK_MARKER"\n',
+                encoding="utf-8",
+            )
+            hook.chmod(0o755)
+            self._git(root, "add", ".githooks/post-checkout")
+            self._git(root, "commit", "--quiet", "-m", "add documented hooks path")
+            parent = self._git(root, "rev-parse", "HEAD")
+            self._git(root, "config", "--local", "core.hooksPath", ".githooks")
+            (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+            receipt = self._receipt()
+            marker = Path(directory).parent / f"{root.name}-hook-executed"
+            self.addCleanup(marker.unlink, missing_ok=True)
+
+            with patch.dict(
+                os.environ,
+                {"GNOSTOA_TEST_HOOK_MARKER": str(marker)},
+                clear=False,
+            ):
+                payload = self._prepare(root, parent, receipt)
+
+            self.assertEqual(["candidate.py"], payload["changed_paths"])
+            self.assertFalse(marker.exists())
+
     def test_prepare_rejects_repository_local_git_attributes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
