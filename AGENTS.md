@@ -101,7 +101,7 @@ fallback only when the container route is unavailable; record that reason.
 ```bash
 ./ci/prepare-candidate prepare \
   --parent <exact-40-character-parent-sha> \
-  --receipt <path-outside-the-worktree> \
+  --receipt <new-path-outside-the-worktree> \
   --focused-profile fast
 ```
 
@@ -129,7 +129,9 @@ It restores the normalized tree, then runs the allowlisted
 `ci/verify` profile under a separate scrubbed Python environment: inherited
 `PYTHONPATH`/`PYTHONHOME`/user-site state and arbitrary executable search
 paths are excluded, while the isolated candidate workspace remains intentionally
-importable for candidate tests. A preparation-owned `knowledge` shim precedes
+importable for candidate tests. Focused verification has a 900-second deadline
+and bounded retained stdout/stderr; timeout cleanup terminates the full
+preparation-owned process group. A preparation-owned `knowledge` shim precedes
 the executable search path and executes `python -m tools.cli` from that workspace;
 `KNOWLEDGE_KIT_ROOT` is rebound to the isolated workspace and its revision label
 is reset to `development`, so installed-image or source-worktree toolkit routing
