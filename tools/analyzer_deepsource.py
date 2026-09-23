@@ -806,6 +806,7 @@ def _github_status_summary(
     owner, name = normalized.split("/", 1)
     run_ids: set[str] = set()
     analyzer_states: dict[str, str] = {}
+    seen_sources: set[tuple[str, str]] = set()
     for status in statuses:
         if not _trusted_github_status(status):
             continue
@@ -827,10 +828,12 @@ def _github_status_summary(
         ):
             continue
         analyzer = match.group("analyzer")
-        if analyzer in analyzer_states:
+        source_key = (str(status.get("source_kind")), analyzer)
+        if source_key in seen_sources:
             continue
+        seen_sources.add(source_key)
         run_ids.add(match.group("run"))
-        analyzer_states[analyzer] = str(state)
+        analyzer_states.setdefault(analyzer, str(state))
     return run_ids, analyzer_states
 
 

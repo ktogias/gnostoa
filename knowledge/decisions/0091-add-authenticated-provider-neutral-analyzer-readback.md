@@ -209,7 +209,7 @@ Any later provider mutation requires separate admission and Decision coverage.
 
 ### 8. One bounded read-only execution surface
 
-The repository-secret-backed live path is one implementation-private runner and
+The Environment-secret-backed live path is one implementation-private runner and
 one manual GitHub Actions workflow, not provider-specific workflows.
 
 The runner:
