@@ -8,19 +8,26 @@ PATH=/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin
 export PATH
 
 git_executable="$(command -v git || true)"
-python_executable="$(command -v python || command -v python3 || true)"
+bootstrap_python="$(command -v python || command -v python3 || true)"
 mktemp_executable="$(command -v mktemp || true)"
-if [ -z "$git_executable" ] || [ -z "$python_executable" ] || [ -z "$mktemp_executable" ]; then
+if [ -z "$git_executable" ] || [ -z "$bootstrap_python" ] || [ -z "$mktemp_executable" ]; then
   echo "ERROR: trusted preparation bootstrap executables are unavailable" >&2
   exit 2
 fi
 
 parent=""
+trusted_python=""
 need_parent_value=0
+need_trusted_python_value=0
 for argument in "$@"; do
   if [ "$need_parent_value" -eq 1 ]; then
     parent="$argument"
     need_parent_value=0
+    continue
+  fi
+  if [ "$need_trusted_python_value" -eq 1 ]; then
+    trusted_python="$argument"
+    need_trusted_python_value=0
     continue
   fi
   case "$argument" in
@@ -29,6 +36,12 @@ for argument in "$@"; do
       ;;
     --parent=*)
       parent="${argument#--parent=}"
+      ;;
+    --trusted-python)
+      need_trusted_python_value=1
+      ;;
+    --trusted-python=*)
+      trusted_python="${argument#--trusted-python=}"
       ;;
   esac
 done
@@ -64,6 +77,32 @@ export PYTHONNOUSERSITE=1
 root="$("$git_executable" -c core.hooksPath=/dev/null rev-parse --show-toplevel)"
 cd "$root"
 
+python_executable="$bootstrap_python"
+if [ -n "$trusted_python" ]; then
+  case "$trusted_python" in
+    /*)
+      ;;
+    *)
+      echo "ERROR: --trusted-python must be an absolute path" >&2
+      exit 2
+      ;;
+  esac
+  resolved_python="$("$bootstrap_python" -I -c \
+    'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve(strict=True))' \
+    "$trusted_python" 2>/dev/null || true)"
+  if [ -z "$resolved_python" ] || [ ! -f "$resolved_python" ] || [ ! -x "$resolved_python" ]; then
+    echo "ERROR: --trusted-python must identify an executable file" >&2
+    exit 2
+  fi
+  case "$resolved_python" in
+    "$root"|"$root"/*)
+      echo "ERROR: --trusted-python must be outside the repository worktree" >&2
+      exit 2
+      ;;
+  esac
+  python_executable="$resolved_python"
+fi
+
 temporary="$("$mktemp_executable" "${TMPDIR:-/tmp}/gnostoa-candidate-prepare.XXXXXX.py")"
 trap 'rm -f -- "$temporary"' EXIT HUP INT TERM
 
@@ -73,4 +112,6 @@ if ! "$git_executable" -c core.hooksPath=/dev/null \
   exit 2
 fi
 
-exec "$python_executable" -I "$temporary" "$@"
+status=0
+"$python_executable" -I "$temporary" "$@" || status=$?
+exit "$status"
