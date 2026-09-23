@@ -15,6 +15,7 @@ import tempfile
 import time
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -76,6 +77,13 @@ _PREPARATION_AUTHORITY_PATHS = (
 
 class PrepareError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class _FocusedResult:
+    returncode: int
+    stdout: bytes
+    stderr: bytes
 
 
 def _canonical_json(value: object) -> str:
@@ -228,8 +236,8 @@ def _focused_verification_env(
 
 def _terminate_focused_process(process: subprocess.Popen[bytes]) -> None:
     # A verification leader may exit while one of its descendants keeps an
-    # inherited pipe open. Timeout cleanup must therefore target the process
-    # group even when the leader has already been reaped.
+    # inherited pipe open. Cleanup therefore targets the whole process group,
+    # even after the leader itself has already been reaped.
     for sig in (signal.SIGTERM, signal.SIGKILL):
         try:
             os.killpg(process.pid, sig)
@@ -242,7 +250,10 @@ def _terminate_focused_process(process: subprocess.Popen[bytes]) -> None:
         if sig == signal.SIGTERM:
             continue
         break
-    process.wait()
+    try:
+        process.wait(timeout=_FOCUSED_TERMINATE_GRACE_SECONDS)
+    except subprocess.TimeoutExpired as exc:
+        raise PrepareError("focused verification process could not be reaped") from exc
 
 
 def _append_bounded(buffer: bytearray, chunk: bytes, limit: int) -> None:
@@ -262,7 +273,7 @@ def _run_focused(
     env: dict[str, str],
     timeout_seconds: float = _FOCUSED_TIMEOUT_SECONDS,
     max_output_bytes: int = _FOCUSED_OUTPUT_BYTES,
-) -> subprocess.CompletedProcess[bytes]:
+) -> _FocusedResult:
     if timeout_seconds <= 0 or max_output_bytes <= 0:
         raise PrepareError("focused verification bounds must be positive")
 
@@ -332,13 +343,24 @@ def _run_focused(
             raise PrepareError(
                 f"focused verification timed out after {timeout_seconds:g}s"
             ) from exc
-        return subprocess.CompletedProcess(
-            argv,
-            returncode,
-            bytes(output["stdout"]),
-            bytes(output["stderr"]),
+
+        # A successful leader may leave descendants alive. End the complete
+        # preparation-owned process group before mutation/style evidence is read.
+        _terminate_focused_process(process)
+        return _FocusedResult(
+            returncode=returncode,
+            stdout=bytes(output["stdout"]),
+            stderr=bytes(output["stderr"]),
         )
     finally:
+        # Exceptions while collecting output must not leak candidate processes.
+        # Preserve an already-active primary exception if cleanup itself fails.
+        active_exception = sys.exc_info()[0] is not None
+        try:
+            _terminate_focused_process(process)
+        except PrepareError:
+            if not active_exception:
+                raise
         selector.close()
         process.stdout.close()
         process.stderr.close()
@@ -800,6 +822,35 @@ def _reset_workspace_to_index(root: Path, git_dir: Path) -> None:
     _git_text(root, "checkout-index", "--all", "--force", env=env)
 
 
+def _assert_worktree_matches_tree_with_trusted_metadata(
+    root: Path,
+    trusted_git_dir: Path,
+    expected_tree: str,
+    message: str,
+) -> None:
+    # Focused verification receives different disposable Git metadata. Build a
+    # fresh index from the trusted normalized tree so candidate-controlled
+    # skip-worktree bits, config, excludes or index bytes cannot hide mutations.
+    with tempfile.TemporaryDirectory(prefix="gnostoa-candidate-inspect-") as directory:
+        env = _isolated_git_env(trusted_git_dir, root)
+        # Keep any blobs created solely for comparison inside disposable trusted
+        # metadata instead of publishing them into the source object store.
+        env.pop("GIT_OBJECT_DIRECTORY", None)
+        env["GIT_INDEX_FILE"] = str(Path(directory) / "index")
+        _git_text(root, "read-tree", expected_tree, env=env)
+        staged = _run(
+            [_git_executable(), "add", "-A"],
+            cwd=root,
+            env=env,
+            check=False,
+        )
+        if staged.returncode != 0:
+            raise PrepareError(message)
+        observed_tree = _git_text(root, "write-tree", env=env)
+        if observed_tree != expected_tree:
+            raise PrepareError(message)
+
+
 @contextmanager
 def _candidate_workspace(
     git_dir: Path,
@@ -880,15 +931,8 @@ def prepare(
             style = workspace / "ci" / "style"
             if not style.is_file():
                 raise PrepareError("ci/style is unavailable")
-            focused_argv = _focused_profile_command(workspace, focused_profile)
             isolated_env = _isolated_git_env(git_dir, workspace)
             style_env = _trusted_python_env(isolated_env)
-            focused_tooling = _focused_tooling_directory(git_dir)
-            focused_env = _focused_verification_env(
-                isolated_env,
-                workspace=workspace,
-                tooling=focused_tooling,
-            )
 
             _run([str(style), "--fix"], cwd=workspace, env=style_env)
             _assert_head(workspace, parent_commit)
@@ -906,35 +950,65 @@ def prepare(
             )
             _assert_no_candidate_symlinks(workspace, git_dir)
 
-            # Verification must observe only bytes reachable from the prepared
-            # tree. Drop ignored/untracked formatter residue, then restore
-            # tracked bytes from the normalized index before verification.
+            # Focused candidate code receives separate disposable Git metadata
+            # and a separate worktree. It never gets the normalization index or
+            # config used by trusted post-checks.
             _reset_workspace_to_index(workspace, git_dir)
-            focused = _run_focused(
-                focused_argv,
-                cwd=workspace,
-                env=focused_env,
-            )
-            if focused.returncode != 0:
-                stderr = focused.stderr.decode("utf-8", errors="replace").strip()
-                stdout = focused.stdout.decode("utf-8", errors="replace").strip()
-                diagnostics = "\n".join(value for value in (stderr, stdout) if value)
-                if len(diagnostics) > 4096:
-                    diagnostics = diagnostics[-4096:]
-                detail = f": {diagnostics}" if diagnostics else ""
-                raise PrepareError(
-                    f"focused verification failed ({focused.returncode}){detail}"
-                )
-            _assert_head(workspace, parent_commit)
-            _assert_workspace_matches_tree(
-                workspace,
-                git_dir,
-                normalized_tree,
-                "focused verification mutated candidate",
-            )
+            with _isolated_git_metadata(
+                root,
+                parent_commit,
+                caller_excludes,
+            ) as focused_git_dir:
+                with _candidate_workspace(
+                    focused_git_dir,
+                    normalized_tree,
+                ) as focused_workspace:
+                    focused_argv = _focused_profile_command(
+                        focused_workspace,
+                        focused_profile,
+                    )
+                    focused_isolated_env = _isolated_git_env(
+                        focused_git_dir,
+                        focused_workspace,
+                    )
+                    focused_tooling = _focused_tooling_directory(focused_git_dir)
+                    focused_env = _focused_verification_env(
+                        focused_isolated_env,
+                        workspace=focused_workspace,
+                        tooling=focused_tooling,
+                    )
+                    focused = _run_focused(
+                        focused_argv,
+                        cwd=focused_workspace,
+                        env=focused_env,
+                    )
+                    if focused.returncode != 0:
+                        stderr = focused.stderr.decode(
+                            "utf-8", errors="replace"
+                        ).strip()
+                        stdout = focused.stdout.decode(
+                            "utf-8", errors="replace"
+                        ).strip()
+                        diagnostics = "\n".join(
+                            value for value in (stderr, stdout) if value
+                        )
+                        if len(diagnostics) > 4096:
+                            diagnostics = diagnostics[-4096:]
+                        detail = f": {diagnostics}" if diagnostics else ""
+                        raise PrepareError(
+                            "focused verification failed "
+                            f"({focused.returncode}){detail}"
+                        )
+                    _assert_worktree_matches_tree_with_trusted_metadata(
+                        focused_workspace,
+                        git_dir,
+                        normalized_tree,
+                        "focused verification mutated candidate",
+                    )
 
-            # Focused verification may create ignored caches. Remove them before
-            # the final style decision so it rechecks the normalized tree.
+            _assert_head(root, parent_commit)
+            # The normalization workspace was never exposed to focused candidate
+            # code. Restore it from the trusted index before final evidence.
             _reset_workspace_to_index(workspace, git_dir)
             _run([str(style), "--check"], cwd=workspace, env=style_env)
             _assert_head(workspace, parent_commit)
