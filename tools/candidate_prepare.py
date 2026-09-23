@@ -524,6 +524,26 @@ def _assert_safe_repository_git_configuration(root: Path) -> None:
         raise PrepareError("unable to inspect repository-local Git attributes") from exc
 
 
+
+def _assert_source_index_hides_no_worktree_state(root: Path) -> None:
+    listed = _run(
+        [_git_executable(), "ls-files", "-v", "-z"],
+        cwd=root,
+    ).stdout
+    hidden: list[str] = []
+    for record in listed.split(b"\0"):
+        if not record:
+            continue
+        if len(record) < 3 or record[1:2] != b" ":
+            raise PrepareError("unable to inspect source index worktree state")
+        tag = record[:1]
+        if tag == b"S" or tag.islower():
+            hidden.append(os.fsdecode(record[2:]))
+    if hidden:
+        raise PrepareError(
+            "source index hides worktree state: " + ", ".join(sorted(hidden))
+        )
+
 def _source_object_directory(root: Path) -> Path:
     common_text = _git_text(root, "rev-parse", "--git-common-dir")
     common = Path(common_text)
@@ -919,6 +939,7 @@ def prepare(
     _assert_head(root, parent_commit)
     caller_excludes = _caller_excludes_snapshot(root)
     _assert_safe_repository_git_configuration(root)
+    _assert_source_index_hides_no_worktree_state(root)
 
     with _isolated_git_metadata(root, parent_commit, caller_excludes) as git_dir:
         root_env = _isolated_git_env(git_dir, root)
