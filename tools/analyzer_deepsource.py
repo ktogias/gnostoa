@@ -940,7 +940,7 @@ def _diff_local_from_github(
         run_state = "PENDING"
     else:
         run_state = "SUCCESS"
-    native = {"analyzers": dict(sorted(analyzer_states.items()))}
+    native: dict[str, Any] = {"analyzers": dict(sorted(analyzer_states.items()))}
     if carried_forward_comments:
         native["carried_forward_comments_excluded"] = carried_forward_comments
     if state_values & {"pending", "error"}:
