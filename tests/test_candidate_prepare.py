@@ -1291,6 +1291,25 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 document["focused_command"],
             )
 
+    def test_cli_rejects_abbreviated_trusted_python_option(self) -> None:
+        # skipcq: PYL-W0212 -- intentional white-box CLI parsing regression
+        parser = candidate_prepare._parser()
+        with self.assertRaises(SystemExit) as raised:
+            parser.parse_args(
+                [
+                    "prepare",
+                    "--parent",
+                    "0" * 40,
+                    "--receipt",
+                    "/tmp/receipt.json",
+                    "--focused-profile",
+                    "fast",
+                    "--trusted-py",
+                    "/usr/bin/python3",
+                ]
+            )
+        self.assertEqual(2, raised.exception.code)
+
     def test_parent_wrapper_executes_parent_preparation_authority(self) -> None:
         wrapper = ROOT / "ci" / "prepare-candidate"
         self.assertTrue(wrapper.is_file())
