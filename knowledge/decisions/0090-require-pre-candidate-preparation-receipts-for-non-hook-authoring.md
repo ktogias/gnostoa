@@ -77,9 +77,17 @@ non-hook authoring without importing a general orchestration subsystem.
 
 1. Add one Gnostoa-self `ci/prepare-candidate` surface backed by a small Python
    implementation. It is implementation-private and does not extend the public
-   toolkit CLI. The wrapper resolves the repository root from its own location
-   before importing the implementation so invocation does not depend on the
-   caller's current working directory.
+   toolkit CLI. The authoritative invocation executes the wrapper bytes from the
+   exact bound parent commit, not the editable candidate checkout. That trusted
+   wrapper scrubs caller Git routing/config overrides, locates the repository,
+   extracts `tools/candidate_prepare.py` from the same parent into a temporary
+   file, and executes it with `python -P`. Candidate changes to either authority
+   file therefore cannot execute before the parent authority rejects them.
+   The change introducing this Decision is necessarily a bootstrap exception:
+   its own pre-Decision parent does not contain this authority, so it cannot
+   manufacture a trusted preparation receipt for itself. Activation begins for
+   descendants after this authority is integrated; later authority evolution
+   requires a separately admitted path.
 2. Preparation binds one exact 40-character parent commit. The source worktree
    `HEAD` must equal that parent; stale-parent preparation fails closed.
    Repository discovery scrubs inherited repository-routing, external-diff,
@@ -120,8 +128,11 @@ non-hook authoring without importing a general orchestration subsystem.
    repository Ruff configuration input (`pyproject.toml`, `ruff.toml`,
    `.ruff.toml` at any depth) unchanged from the parent. Changes to those
    authority surfaces require a separately admitted authority-evolution path. The proposed tree is materialized into a disposable
-   workspace backed only by the isolated Git metadata; normalization and focused
-   verification never use the caller's live Git metadata.
+   workspace backed only by isolated trusted Git metadata. Focused verification
+   runs in a second disposable worktree with separate disposable Git metadata;
+   candidate code never receives the normalization index/config used by trusted
+   post-checks. Normalization and focused verification never use the caller's
+   live Git metadata.
    This excludes ignored files and source-worktree-only state from the verified
    candidate; intended untracked additions are staged and included in the
    prepared tree and diff. Concurrent caller edits remain excluded. Candidate
@@ -153,19 +164,27 @@ non-hook authoring without importing a general orchestration subsystem.
    `extended`; each maps to static `./ci/verify <suite>` argv with
    `shell=False`. Caller input cannot choose an executable or arbitrary
    verification arguments.
-5. Focused verification must not mutate the prepared tree or its index. Ignored
-   caches may be produced transiently, but they are removed before the final
-   style decision. The focused child runs under a 900-second deadline; stdout
-   and stderr are drained incrementally while retaining at most 65536 bytes from
-   each stream, and timeout cleanup terminates the full preparation-owned process
-   group even if its leader has already exited. A failed focused check reports
-   only a bounded tail of captured stderr/stdout so the operator can diagnose the
-   gate without unbounded error propagation. Verbose successful checks are not
-   rejected merely for exceeding the retained diagnostic window. Preparation then
-   reruns `./ci/style --check` against the restored exact normalized tree and
+5. Focused verification must not mutate the prepared tree or its trusted
+   metadata. Ignored caches may be produced transiently. After focused execution,
+   preparation rebuilds a fresh index from `normalized_tree` using trusted
+   metadata that focused candidate code never received, stages the focused
+   worktree through that fresh index, and requires the observed tree to equal the
+   normalized tree. Candidate-controlled skip-worktree bits, index/config edits,
+   or hidden non-ignored files therefore cannot falsify mutation evidence. The
+   focused child runs under a 900-second deadline; stdout and stderr are drained
+   incrementally while retaining at most 65536 bytes from each stream, and the
+   full preparation-owned process group is terminated on success, timeout, or
+   output-collection failure even if its leader has already exited. A failed
+   focused check reports only a bounded tail of captured stderr/stdout so the
+   operator can diagnose the gate without unbounded error propagation. Verbose
+   successful checks are not rejected merely for exceeding the retained
+   diagnostic window. Preparation then restores the untouched normalization
+   workspace, reruns `./ci/style --check` against the exact normalized tree and
    executes `git diff --cached --check`.
-6. Run `ci/prepare-candidate` from the recommended Development Container by
-   default. The intended route is `.devcontainer/devcontainer.json`, whose
+6. Run the exact-parent `ci/prepare-candidate` wrapper bytes from the
+   recommended Development Container by default (for example, `git show
+   "$parent:ci/prepare-candidate" | sh -s -- prepare ...`). The intended route is
+   `.devcontainer/devcontainer.json`, whose
    writable workspace mount and `updateRemoteUserUID` setting support preparation
    writes without a `safe.directory` override. The read-only one-shot verification
    container documented in `AGENTS.md` is not a preparation route. The module
