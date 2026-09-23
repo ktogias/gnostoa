@@ -40,6 +40,8 @@ jobs:
           patch="${RUNNER_TEMP}/followup.patch"
           cp ops/pr314-followup-prepared.patch.gz.b64 "${raw_payload}"
           tr -d '[:space:]' < "${raw_payload}" > "${payload}"
+          printf 'normalized-bytes=%s\n' "$(wc -c < "${payload}")"
+          sha256sum "${payload}"
           echo "${B64_SHA256}  ${payload}" | sha256sum --check --strict
           base64 --decode "${payload}" > "${archive}"
           echo "${GZIP_SHA256}  ${archive}" | sha256sum --check --strict
@@ -70,7 +72,7 @@ jobs:
           set -euo pipefail
           git config user.name "Gnostoa preparation"
           git config user.email "noreply@invalid"
-          git -c core.hooksPath=/dev/null commit             -m "fix: harden analyzer readback follow-up (#309 #313)"
+          git -c core.hooksPath=/dev/null commit -m "fix: harden analyzer readback follow-up (#309 #313)"
           test "$(git rev-parse HEAD^)" = "${PARENT}"
           test "$(git rev-parse 'HEAD^{tree}')" = "${PREPARED_TREE}"
 
