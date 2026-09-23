@@ -1246,13 +1246,13 @@ class CandidatePreparationContractTests(unittest.TestCase):
             parent = self._repository(root)
             hooks = root / ".githooks"
             hooks.mkdir()
-            hook = hooks / "post-checkout"
+            hook = hooks / "reference-transaction"
             hook.write_text(
                 '#!/bin/sh\nprintf executed > "$GNOSTOA_TEST_HOOK_MARKER"\n',
                 encoding="utf-8",
             )
             hook.chmod(0o755)
-            self._git(root, "add", ".githooks/post-checkout")
+            self._git(root, "add", ".githooks/reference-transaction")
             self._git(root, "commit", "--quiet", "-m", "add documented hooks path")
             parent = self._git(root, "rev-parse", "HEAD")
             self._git(root, "config", "--local", "core.hooksPath", ".githooks")
