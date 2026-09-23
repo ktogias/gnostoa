@@ -268,7 +268,7 @@ class AnalyzerReadbackModelTests(unittest.TestCase):
             native_mode="COMPLETE_SCAN",
             observed_at=OBSERVED,
             run_state="SUCCESS",
-            coverage_record=analyzer_readback.coverage("COMPLETE", pages=1, count=2),
+            coverage_record=analyzer_readback.coverage("COMPLETE", pages=1, count=1),
             findings=[
                 {
                     **common,
@@ -282,6 +282,30 @@ class AnalyzerReadbackModelTests(unittest.TestCase):
         )
         self.assertEqual(1, document["coverage"]["count"])
         self.assertEqual(1, len(document["findings"]))
+
+    def test_complete_coverage_rejects_count_above_retained_without_total(self) -> None:
+        with self.assertRaisesRegex(
+            analyzer_readback.AnalyzerReadbackError,
+            "complete coverage count must match retained finding population",
+        ):
+            analyzer_readback.build_readback(
+                provider="synthetic-analyzer",
+                adapter="fixture/v1",
+                repository="example/project",
+                pull_number=9,
+                requested_head=HEAD,
+                observed_head=HEAD,
+                analysis_id="run-9",
+                scope="FULL",
+                completeness="FULL_RUN",
+                native_mode="COMPLETE_SCAN",
+                observed_at=OBSERVED,
+                run_state="SUCCESS",
+                coverage_record=analyzer_readback.coverage(
+                    "COMPLETE", pages=1, count=2
+                ),
+                findings=[{"id": "provider-1", "message": "retained issue"}],
+            )
 
     def test_build_readback_keeps_provider_total_strict_after_deduplication(
         self,
@@ -304,9 +328,12 @@ class AnalyzerReadbackModelTests(unittest.TestCase):
                 native_mode="COMPLETE_SCAN",
                 observed_at=OBSERVED,
                 run_state="SUCCESS",
-                coverage_record=analyzer_readback.coverage(
-                    "COMPLETE", pages=1, count=2, total=2
-                ),
+                coverage_record={
+                    "status": "COMPLETE",
+                    "pages": 1,
+                    "count": 1,
+                    "total": 2,
+                },
                 findings=[common, common],
             )
 
@@ -345,7 +372,7 @@ class AnalyzerReadbackModelTests(unittest.TestCase):
             coverage_record={
                 "status": "COMPLETE",
                 "pages": 1,
-                "count": 2,
+                "count": 1,
                 "total": 1,
             },
             findings=[

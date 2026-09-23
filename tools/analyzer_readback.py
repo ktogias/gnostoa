@@ -232,12 +232,17 @@ def build_readback(
     normalized_findings = deduplicate_findings(findings)
     retained_count = len(normalized_findings)
     observed_count = _nonnegative_int(coverage_record.get("count"), "coverage count")
+    coverage_status = _required_text(coverage_record.get("status"), "coverage status")
     if observed_count < retained_count:
         raise AnalyzerReadbackError(
             "coverage count is smaller than retained finding population"
         )
+    if coverage_status == "COMPLETE" and observed_count != retained_count:
+        raise AnalyzerReadbackError(
+            "complete coverage count must match retained finding population"
+        )
     normalized_coverage = coverage(
-        _required_text(coverage_record.get("status"), "coverage status"),
+        coverage_status,
         pages=_nonnegative_int(coverage_record.get("pages"), "coverage pages"),
         count=retained_count,
         total=(
