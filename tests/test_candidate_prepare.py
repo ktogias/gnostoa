@@ -1364,17 +1364,16 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 "show",
                 f"{parent}:ci/prepare-candidate",
             )
+            self.assertEqual(wrapper_text, trusted_wrapper)
             with tempfile.TemporaryDirectory() as wrapper_directory:
                 parent_wrapper = Path(wrapper_directory) / "prepare-candidate"
-                parent_wrapper.write_text(trusted_wrapper, encoding="utf-8")
+                shutil.copyfile(wrapper, parent_wrapper)
                 parent_wrapper.chmod(0o700)
                 bootstrap_tmp = root / "bootstrap-tmp"
                 bootstrap_tmp.mkdir()
                 environment = _test_env()
                 environment["PYTHONPATH"] = str(root)
-                environment["PATH"] = (
-                    str(poison_bin) + os.pathsep + environment["PATH"]
-                )
+                environment["PATH"] = str(poison_bin) + os.pathsep + environment["PATH"]
                 environment["TMPDIR"] = str(bootstrap_tmp)
                 completed = subprocess.run(  # nosec B603
                     [
