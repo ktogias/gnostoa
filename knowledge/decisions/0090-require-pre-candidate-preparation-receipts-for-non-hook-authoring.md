@@ -246,7 +246,7 @@ non-hook authoring without importing a general orchestration subsystem.
    Git-data/API publishing adapter must run trusted preparation itself or consume
    separately authenticated preparation provenance and the retained receipt
    identity before any ref effect. That effect/fencing boundary remains owned by
-   #15/#308; arbitrary external API clients are not claimed impossible to bypass
+   issues `#15`/`#308`; arbitrary external API clients are not claimed impossible to bypass
    by this repository-local preparation contract. Preparation is also not a process
    sandbox: focused verification executes candidate code with the invoking OS
    identity, and the Git/Python environment isolation plus tree checks do not claim
