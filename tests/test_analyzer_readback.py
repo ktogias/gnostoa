@@ -1412,6 +1412,24 @@ class CodacyAnalyzerReadbackTests(unittest.TestCase):
         self.assertEqual(OTHER_HEAD, document["observed_head"])
         self.assertEqual([], document["findings"])
 
+    def test_codacy_missing_git_href_fails_closed(self) -> None:
+        root = _codacy_root()
+        pr = _codacy_pr()
+        del pr["pullRequest"]["gitHref"]
+        client = _CodacyFake({f"{root}/pull-requests/312": pr})
+        document = analyzer_codacy.read_pull_request(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("READBACK_UNAVAILABLE", document["completeness"])
+        self.assertEqual("ERROR", document["coverage"]["status"])
+        self.assertEqual("PROVIDER_ERROR", document["coverage"]["reason"])
+        self.assertNotIn("observed_head", document)
+        self.assertEqual([], document["findings"])
+
     def test_codacy_stale_pr_head_is_incomplete_without_guessing_findings(self) -> None:
         root = _codacy_root()
         client = _CodacyFake({f"{root}/pull-requests/312": _codacy_pr(OTHER_HEAD)})

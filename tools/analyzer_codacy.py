@@ -206,9 +206,9 @@ def _pull_subject(
     if pull.get("repository") != name:
         raise ProviderReadFailure("ERROR", "Codacy repository identity changed")
     head = _text(pull.get("headCommitSha"), "pullRequest.headCommitSha")
-    href = pull.get("gitHref")
+    href = _text(pull.get("gitHref"), "pullRequest.gitHref")
     expected_href = f"https://github.com/{owner}/{name}/pull/{pull_number}"
-    if isinstance(href, str) and href and href.rstrip("/") != expected_href:
+    if href.rstrip("/") != expected_href:
         raise ProviderReadFailure(
             "ERROR", "Codacy Git provider Pull Request identity changed"
         )
