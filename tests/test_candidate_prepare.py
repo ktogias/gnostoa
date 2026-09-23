@@ -1375,8 +1375,12 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 environment["PYTHONPATH"] = str(root)
                 environment["PATH"] = str(poison_bin) + os.pathsep + environment["PATH"]
                 environment["TMPDIR"] = str(bootstrap_tmp)
-                completed = subprocess.run(  # nosec B603
-                    [
+                # Audited: the executable is a private 0700 copy of the
+                # repository wrapper whose bytes were matched to the exact parent
+                # above; argv is a fixed test shape, shell parsing is disabled, and
+                # hostile PATH/PYTHONPATH values are the subject under test.
+                completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                    [  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
                         str(parent_wrapper),
                         "verify",
                         "--parent",
@@ -1396,8 +1400,10 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 self.assertFalse(marker.exists())
                 self.assertEqual([], list(bootstrap_tmp.iterdir()))
 
-                rejected = subprocess.run(  # nosec B603
-                    [
+                # Same audited boundary as the successful probe above; this
+                # invocation only substitutes the deliberately rejected interpreter.
+                rejected = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                    [  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
                         str(parent_wrapper),
                         "verify",
                         "--parent",
