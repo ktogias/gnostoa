@@ -682,7 +682,10 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 root = Path(directory)
                 parent = self._repository(root)
                 self._git(root, "update-index", index_flag, "base.txt")
-                (root / "base.txt").write_text("hidden local edit\n", encoding="utf-8")
+                (root / "base.txt").write_text(
+                    "hidden local edit\n",
+                    encoding="utf-8",
+                )
                 (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
                 receipt = self._receipt()
 
