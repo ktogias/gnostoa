@@ -1395,7 +1395,9 @@ class CandidatePreparationContractTests(unittest.TestCase):
         self.assertIn(') > "${parent_wrapper}"; then', agents_text)
         self.assertIn("trap 'rm -f -- \"$parent_wrapper\"' EXIT", agents_text)
         self.assertIn("trap 'exit 130' INT", agents_text)
-        self.assertNotIn("trap 'rm -f -- \"$parent_wrapper\"' EXIT HUP INT TERM", agents_text)
+        self.assertNotIn(
+            "trap 'rm -f -- \"$parent_wrapper\"' EXIT HUP INT TERM", agents_text
+        )
 
     def test_parent_wrapper_executes_parent_preparation_authority(self) -> None:
         wrapper = ROOT / "ci" / "prepare-candidate"
