@@ -1,0 +1,13 @@
+diff --git a/tools/analyzer_deepsource.py b/tools/analyzer_deepsource.py
+index a7bfbd6d013a44b6c7f7340144373feb43499509..9f1fd3328e523ebf746c97e3621c27f174b1a739 100644
+--- a/tools/analyzer_deepsource.py
++++ b/tools/analyzer_deepsource.py
+@@ -940,7 +940,7 @@ def _diff_local_from_github(
+         run_state = "PENDING"
+     else:
+         run_state = "SUCCESS"
+-    native = {"analyzers": dict(sorted(analyzer_states.items()))}
++    native: dict[str, Any] = {"analyzers": dict(sorted(analyzer_states.items()))}
+     if carried_forward_comments:
+         native["carried_forward_comments_excluded"] = carried_forward_comments
+     if state_values & {"pending", "error"}:
