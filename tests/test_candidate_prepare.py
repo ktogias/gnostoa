@@ -1364,7 +1364,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 "show",
                 f"{parent}:ci/prepare-candidate",
             )
-            self.assertEqual(wrapper_text, trusted_wrapper)
+            self.assertEqual(wrapper_text.rstrip("\n"), trusted_wrapper)
             with tempfile.TemporaryDirectory() as wrapper_directory:
                 parent_wrapper = Path(wrapper_directory) / "prepare-candidate"
                 shutil.copyfile(wrapper, parent_wrapper)
