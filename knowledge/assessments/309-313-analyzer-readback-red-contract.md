@@ -53,7 +53,9 @@ behaviours:
 | R9 | Malformed provider payloads fail closed without fabricating zero findings. |
 | R10 | Finding identity, severity, rule, message, location and native reference survive normalization without provider vocabulary entering the common reducer. |
 | R11 | Analyzer readback has no mutation route: no trigger, comment, dismissal, configuration or Git/provider write method is exposed. |
-| R12 | PR #312 dogfood can retain exact-head provider evidence or an explicit incomplete limitation without guessing from GitHub check counts. |\n| R13 | The runner rejects GitHub PR head movement across acquisition and stale DeepSource inline `commit_id` evidence. |\n| R14 | The manual workflow has read-only GitHub permissions, step-scoped analyzer secrets, no automatic PR trigger and uploads only a validated non-secret bundle. |
+| R12 | PR #312 dogfood can retain exact-head provider evidence or an explicit incomplete limitation without guessing from GitHub check counts. |
+| R13 | The runner rejects GitHub PR head movement across acquisition and stale DeepSource inline `commit_id` evidence. |
+| R14 | The manual workflow has read-only GitHub permissions, step-scoped analyzer secrets, no automatic PR trigger and uploads only a validated non-secret bundle. |
 
 ## Intended implementation shape
 
