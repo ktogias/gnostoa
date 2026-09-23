@@ -1,0 +1,72 @@
+name: Stage prepared PR 314 non-workflow tree
+
+on:
+  push:
+    branches:
+      - ops/pr314-stage-5dbf-final
+
+permissions:
+  actions: read
+  contents: write
+
+env:
+  PARENT: 5dbfdede874359fd894156923448ded28e38846f
+  TARGET_BRANCH: ops/pr314-staging-tree-5dbf-final
+  PREPARED_TREE: 1aba3cbe6f84c22383623db18edf4e538caa2412
+  PREPARE_RUN_ID: "35901066089"
+
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 5dbfdede874359fd894156923448ded28e38846f
+          fetch-depth: 0
+          persist-credentials: true
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Download verified prepared artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: pr314-final-from-5dbf-prepared
+          path: ${{ runner.temp }}/prepared
+          github-token: ${{ github.token }}
+          run-id: ${{ env.PREPARE_RUN_ID }}
+      - name: Stage non-workflow prepared files
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact="${RUNNER_TEMP}/prepared"
+          receipt="${artifact}/receipt.json"
+          metadata="${artifact}/metadata.json"
+          patch="${artifact}/normalized.patch"
+
+          test "$(git rev-parse HEAD)" = "${PARENT}"
+          tree="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["prepared_tree"])' "${metadata}")"
+          receipt_sha="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["receipt_sha256"])' "${metadata}")"
+          test "${tree}" = "${PREPARED_TREE}"
+          ./ci/prepare-candidate verify             --parent "${PARENT}"             --tree "${tree}"             --receipt "${receipt}"             --receipt-sha256 "${receipt_sha}"             --trusted-python "$(command -v python)"
+
+          git apply --binary "${patch}"
+          git checkout "${PARENT}" -- .github/workflows/analyzer-readback.yml
+          git add -A
+          git diff --cached --check "${PARENT}"
+          git diff --cached --name-only > "${RUNNER_TEMP}/changed"
+          cat > "${RUNNER_TEMP}/expected" <<'EOF'
+          knowledge/assessments/309-313-analyzer-readback-red-contract.md
+          knowledge/decisions/0091-add-authenticated-provider-neutral-analyzer-readback.md
+          tests/test_analyzer_readback.py
+          tests/test_analyzer_readback_runner.py
+          tools/analyzer_deepsource.py
+          EOF
+          diff -u "${RUNNER_TEMP}/expected" "${RUNNER_TEMP}/changed"
+
+          commit="$(
+            printf '%s\n' 'ops: stage prepared PR 314 non-workflow files'               | git -c user.name='Gnostoa staging' -c user.email='noreply@invalid'                 commit-tree "$(git write-tree)" -p "${PARENT}"
+          )"
+          remote="$(git ls-remote origin "refs/heads/${TARGET_BRANCH}" | awk '{print $1}')"
+          test "${remote}" = "${PARENT}"
+          git push --force-with-lease="refs/heads/${TARGET_BRANCH}:${PARENT}"             origin "${commit}:refs/heads/${TARGET_BRANCH}"
