@@ -87,6 +87,8 @@ readback contains:
 - requested exact 40-character head commit;
 - observed exact provider subject and native run/analysis identity;
 - normalized scope `DIFF` or `FULL`;
+- explicit completeness: `DIFF_LOCAL`, `FULL_RUN`, `AUTH_UNAVAILABLE`,
+  `READBACK_UNAVAILABLE` or `AMBIGUOUS`;
 - provider-native mode as provenance;
 - observation timestamp and run state;
 - explicit coverage status, page count and retained count;
@@ -103,14 +105,15 @@ the requested exact candidate.
 For DeepSource, authenticated `FULL_RUN` acquisition selects the run for the
 requested exact commit and requires the returned commit identity to equal it.
 Run UID, base commit, status and report/check identity remain native provenance.
-Missing, mismatched or ambiguous run identity is `INCOMPLETE`, never a clean
-report.
+Missing, mismatched or ambiguous run identity is top-level `AMBIGUOUS` with
+`INCOMPLETE` exact-subject coverage, never a clean report.
 
 For Codacy, the adapter reads the requested repository and pull request and must
 establish that the provider's PR analysis is bound to the requested exact head.
-If the available Codacy response cannot prove that exact binding, the result is
-`INCOMPLETE`; matching PR number, repository name or GitHub check state does not
-substitute for exact-head proof.
+If the available Codacy response cannot prove that exact binding, the top-level
+result is `AMBIGUOUS` with `INCOMPLETE` exact-subject coverage; matching PR
+number, repository name or GitHub check state does not substitute for exact-head
+proof.
 
 ### 3. Preserve DeepSource mode semantics
 
@@ -123,16 +126,39 @@ DeepSource retains the owner-selected distinction:
 The common model normalizes scope while preserving the native mode. Consumers
 must not silently promote `DIFF_LOCAL` to `FULL_RUN`.
 
-### 4. Completeness is explicit and independently validated
+### 4. Completeness and collection coverage are separate, closed dimensions
 
-Every collection records `status`, `pages` and `count`. Supported statuses
-are `COMPLETE`, `INCOMPLETE`, `PARTIAL`, `RATE_LIMITED`, `UNAVAILABLE` and
-`ERROR`, where `INCOMPLETE` denotes unproven or mismatched exact-subject binding.
+The top-level `completeness` field preserves the #309 evidence boundary:
 
-`COMPLETE` is valid only when pagination termination and retained cardinality
-are both established. Truncation, server pagination that cannot be completed,
-rate limiting, malformed payloads, unsupported provider state or subject
-ambiguity cannot be represented as zero findings.
+- `DIFF_LOCAL` — a bounded GitHub-native/diff projection only;
+- `FULL_RUN` — authenticated provider readback whose exact subject and complete
+  required pagination are established;
+- `AUTH_UNAVAILABLE` — the required credential is missing or rejected;
+- `READBACK_UNAVAILABLE` — authenticated/full readback cannot be completed
+  because the provider/network/protocol surface is unavailable;
+- `AMBIGUOUS` — repository, Pull Request, head, run or analysis association
+  cannot be established exactly.
+
+Every retained collection separately records `status`, `pages` and `count`.
+Supported collection statuses are `COMPLETE`, `INCOMPLETE`, `PARTIAL`,
+`RATE_LIMITED`, `UNAVAILABLE` and `ERROR`, where `INCOMPLETE` denotes an
+unproven or mismatched exact-subject collection.
+
+These dimensions are not aliases. In particular:
+
+- `FULL_RUN` requires every required collection to be `COMPLETE`;
+- `DIFF_LOCAL` may be `COMPLETE` for the bounded GitHub projection while still
+  not claiming complete provider evidence;
+- `AUTH_UNAVAILABLE` maps the affected authenticated collection to
+  `UNAVAILABLE`;
+- `READBACK_UNAVAILABLE` maps to `UNAVAILABLE`, `RATE_LIMITED`, `PARTIAL`
+  or `ERROR` according to the measured failure;
+- `AMBIGUOUS` requires `INCOMPLETE` exact-subject coverage.
+
+`COMPLETE` collection coverage is valid only when pagination termination and
+retained cardinality are both established. Truncation, server pagination that
+cannot be completed, rate limiting, malformed payloads, unsupported provider
+state or subject ambiguity cannot be represented as zero findings.
 
 The adapters retain provider-reported totals when available and the common core
 rejects contradictions between totals, retained findings and coverage claims.
