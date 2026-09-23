@@ -266,7 +266,9 @@ def _run_focused(
     if timeout_seconds <= 0 or max_output_bytes <= 0:
         raise PrepareError("focused verification bounds must be positive")
 
-    argv = list(command)  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
+    argv = list(
+        command
+    )  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
     deadline = time.monotonic() + timeout_seconds
     try:
         # Audited for command injection: the executable is the repository-owned
