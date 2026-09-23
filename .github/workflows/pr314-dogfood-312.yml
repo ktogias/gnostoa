@@ -1,0 +1,80 @@
+name: Dogfood analyzer readback on PR 312
+
+on:
+  push:
+    branches:
+      - ops/pr314-analyzer-dogfood-312-3fae
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: read
+  checks: read
+
+jobs:
+  dogfood:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact analyzer-readback implementation
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 3fae0d6e2210a0ffe49f3b95ecc51b48f67c8c3b
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Bind implementation identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "3fae0d6e2210a0ffe49f3b95ecc51b48f67c8c3b"
+          test "$(git rev-parse 'HEAD^{tree}')" = "454e1976fb553f0fea9b3777adb0fe2998d51bb4"
+          test -z "$(git status --porcelain)"
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+
+      - name: Read exact-head analyzer evidence
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DEEPSOURCE_API_TOKEN: ${{ secrets.DEEPSOURCE_API_TOKEN }}
+          CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          PYTHONPATH=. python ci/analyzer_readback.py             --repository "ktogias/gnostoa"             --pull-number 312             --head "b71dcd1f3ff9069ecc827317b084991ba4891d41"             --output "${RUNNER_TEMP}/gnostoa-analyzer-readback.json"
+          python - "${RUNNER_TEMP}/gnostoa-analyzer-readback.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          doc = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          assert doc["schema"] == "gnostoa-analyzer-readback-bundle/v1"
+          assert doc["repository"] == "ktogias/gnostoa"
+          assert doc["pull_number"] == 312
+          assert doc["requested_head"] == "b71dcd1f3ff9069ecc827317b084991ba4891d41"
+          assert doc["subject_binding"] in {"BOUND", "INCOMPLETE"}
+          print(json.dumps({
+              "subject_binding": doc["subject_binding"],
+              "reason": doc.get("reason"),
+              "providers": [
+                  {
+                      "provider": item.get("provider"),
+                      "scope": item.get("scope"),
+                      "completeness": item.get("completeness"),
+                      "coverage": item.get("coverage"),
+                      "findings": len(item.get("findings", [])),
+                  }
+                  for item in doc.get("readbacks", [])
+              ],
+          }, sort_keys=True))
+          PY
+
+      - name: Upload non-secret dogfood evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr314-dogfood-pr312-3fae0d6
+          path: ${{ runner.temp }}/gnostoa-analyzer-readback.json
+          if-no-files-found: error
+          retention-days: 7
