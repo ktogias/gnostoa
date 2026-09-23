@@ -673,6 +673,27 @@ class CandidatePreparationContractTests(unittest.TestCase):
         killpg.assert_any_call(424242, candidate_prepare.signal.SIGTERM)
         killpg.assert_any_call(424242, candidate_prepare.signal.SIGKILL)
 
+    def test_prepare_rejects_source_index_hidden_worktree_state(self) -> None:
+        for index_flag in ("--skip-worktree", "--assume-unchanged"):
+            with (
+                self.subTest(index_flag=index_flag),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                parent = self._repository(root)
+                self._git(root, "update-index", index_flag, "base.txt")
+                (root / "base.txt").write_text("hidden local edit\n", encoding="utf-8")
+                (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
+                receipt = self._receipt()
+
+                with self.assertRaisesRegex(
+                    candidate_prepare.PrepareError,
+                    "source index hides worktree state: base.txt",
+                ):
+                    self._prepare(root, parent, receipt)
+
+                self.assertFalse(receipt.exists())
+
     def test_prepare_does_not_admit_ignored_source_worktree_state(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
