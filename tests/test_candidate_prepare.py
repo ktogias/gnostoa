@@ -190,14 +190,11 @@ class CandidatePreparationContractTests(unittest.TestCase):
             root = Path(directory)
             self._repository(root)
             (root / "candidate.py").write_text("value=1\n", encoding="utf-8")
-            style = subprocess.run(  # nosemgrep  # nosec B603
+            style = candidate_prepare._run(
                 [str(root / "ci" / "style"), "--check"],
                 cwd=root,
                 env=_test_env(),
                 check=False,
-                shell=False,
-                capture_output=True,
-                text=True,
             )
             self.assertNotEqual(0, style.returncode)
             self._git(root, "add", "candidate.py")
@@ -955,14 +952,11 @@ class CandidatePreparationContractTests(unittest.TestCase):
                     payload["receipt_sha256"],
                 )
             self.assertTrue(released["released"])
-            ref = subprocess.run(  # nosemgrep  # nosec B603
+            ref = candidate_prepare._run(
                 [GIT, "show-ref", "--verify", retention_ref],
                 cwd=root,
                 env=_test_env(),
                 check=False,
-                shell=False,
-                capture_output=True,
-                text=True,
             )
             self.assertNotEqual(0, ref.returncode)
 
@@ -1361,7 +1355,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
             # Audited: the executable is a private 0700 wrapper copy; the
             # trusted interpreter is an external symlinked virtualenv leaf,
             # argv is fixed, and shell parsing is disabled.
-            completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
+            completed = candidate_prepare._run(
                 [
                     str(parent_wrapper),
                     "verify",
@@ -1373,13 +1367,10 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 cwd=root,
                 env=_test_env(),
                 check=False,
-                shell=False,
-                capture_output=True,
-                text=True,
             )
             self.assertEqual(0, completed.returncode, completed.stderr)
-            self.assertIn(f"executable={trusted_python}", completed.stdout)
-            self.assertIn("in_venv=True", completed.stdout)
+            self.assertIn(f"executable={trusted_python}".encode(), completed.stdout)
+            self.assertIn(b"in_venv=True", completed.stdout)
 
     def test_parent_wrapper_executes_parent_preparation_authority(self) -> None:
         wrapper = ROOT / "ci" / "prepare-candidate"
