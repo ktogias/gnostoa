@@ -9,11 +9,16 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-from .analyzer_readback import build_readback, coverage
+from .analyzer_readback import (
+    AnalyzerReadbackError,
+    build_readback,
+    coverage,
+    normalize_repository,
+)
 
 _API_ROOT = "https://app.codacy.com"
 _API_V3 = f"{_API_ROOT}/api/v3"
-_TOKEN_ENV = "CODACY_API_TOKEN"
+_TOKEN_ENV = "CODACY_API_TOKEN"  # nosec B105 -- environment variable name, not a credential
 _TIMEOUT_SECONDS = 30
 _MAX_RESPONSE_BYTES = 4_194_304
 _MAX_PAGES = 100
@@ -173,11 +178,11 @@ def _failure_completeness(error: ProviderReadFailure) -> str:
 
 
 def _root(repository: str, provider: str) -> tuple[str, str, str]:
-    if "/" not in repository:
-        raise ProviderReadFailure("ERROR", "repository must use owner/name form")
-    owner, name = repository.split("/", 1)
-    if not owner or not name:
-        raise ProviderReadFailure("ERROR", "repository must use owner/name form")
+    try:
+        normalized = normalize_repository(repository)
+    except AnalyzerReadbackError as exc:
+        raise ProviderReadFailure("ERROR", "repository identity is unsafe") from exc
+    owner, name = normalized.split("/", 1)
     encoded_owner = urllib.parse.quote(owner, safe="")
     encoded_name = urllib.parse.quote(name, safe="")
     encoded_provider = urllib.parse.quote(provider, safe="")
@@ -262,7 +267,42 @@ def _issue_finding(item: Mapping[str, Any]) -> dict[str, Any]:
     return finding
 
 
-def read_pull_request(
+def _merge_issue_findings(values: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse Codacy's overlapping potential/all issue surfaces by native ID."""
+
+    by_id: dict[str, dict[str, Any]] = {}
+    comparable: dict[str, dict[str, Any]] = {}
+    for value in values:
+        finding = dict(value)
+        identity = finding.get("id")
+        if not isinstance(identity, str) or not identity:
+            raise AnalyzerReadbackError("Codacy finding identity is unavailable")
+        native = dict(finding.get("native", {}))
+        potential = native.pop("potential", False)
+        comparison = dict(finding)
+        comparison["native"] = native
+        existing = by_id.get(identity)
+        if existing is None:
+            retained = dict(finding)
+            retained_native = dict(retained.get("native", {}))
+            retained_native["potential"] = bool(potential)
+            retained["native"] = retained_native
+            by_id[identity] = retained
+            comparable[identity] = comparison
+            continue
+        if comparable[identity] != comparison:
+            raise AnalyzerReadbackError(
+                f"Codacy finding identity {identity!r} is conflicting"
+            )
+        retained_native = dict(existing.get("native", {}))
+        retained_native["potential"] = bool(
+            retained_native.get("potential") or potential
+        )
+        existing["native"] = retained_native
+    return [by_id[key] for key in sorted(by_id)]
+
+
+def _read_pull_request(
     client: JsonReader,
     *,
     repository: str,
@@ -321,8 +361,7 @@ def read_pull_request(
         )
 
     findings: list[Mapping[str, Any]] = []
-    provider_total = 0
-    provider_total_known = True
+    surface_totals: dict[str, int] = {}
     try:
         for only_potential in (False, True):
             cursor: str | None = None
@@ -347,6 +386,7 @@ def read_pull_request(
                         "ERROR", "Codacy analyzed flag is malformed"
                     )
                 if not analyzed:
+                    retained = _merge_issue_findings(findings)
                     return build_readback(
                         provider="codacy",
                         adapter="codacy-api-v3/v1",
@@ -363,10 +403,10 @@ def read_pull_request(
                         coverage_record=coverage(
                             "PARTIAL",
                             pages=pages,
-                            count=len(findings),
+                            count=len(retained),
                             reason="LATEST_COMMIT_NOT_ANALYZED",
                         ),
-                        findings=findings,
+                        findings=retained,
                     )
                 data = document.get("data")
                 if not isinstance(data, list):
@@ -412,6 +452,7 @@ def read_pull_request(
 
             if surface_total is not None:
                 if surface_count != surface_total:
+                    retained = _merge_issue_findings(findings)
                     return build_readback(
                         provider="codacy",
                         adapter="codacy-api-v3/v1",
@@ -428,15 +469,14 @@ def read_pull_request(
                         coverage_record=coverage(
                             "ERROR",
                             pages=pages,
-                            count=len(findings),
+                            count=len(retained),
                             reason="COUNT_TOTAL_MISMATCH",
                         ),
-                        findings=findings,
+                        findings=retained,
                     )
-                provider_total += surface_total
-            else:
-                provider_total_known = False
+                surface_totals["potential" if only_potential else "all"] = surface_total
     except ProviderReadFailure as exc:
+        retained = _merge_issue_findings(findings)
         return build_readback(
             provider="codacy",
             adapter="codacy-api-v3/v1",
@@ -450,8 +490,8 @@ def read_pull_request(
             native_mode="PULL_REQUEST",
             observed_at=observed,
             run_state="OBSERVED",
-            coverage_record=_failure_coverage(exc, pages=pages, count=len(findings)),
-            findings=findings,
+            coverage_record=_failure_coverage(exc, pages=pages, count=len(retained)),
+            findings=retained,
         )
     try:
         final_pr_document = client.get(f"{root}/pull-requests/{pull_number}")
@@ -463,6 +503,7 @@ def read_pull_request(
             pull_number=pull_number,
         )
     except ProviderReadFailure as exc:
+        retained = _merge_issue_findings(findings)
         return build_readback(
             provider="codacy",
             adapter="codacy-api-v3/v1",
@@ -476,8 +517,8 @@ def read_pull_request(
             native_mode="PULL_REQUEST",
             observed_at=observed,
             run_state="OBSERVED",
-            coverage_record=_failure_coverage(exc, pages=pages, count=len(findings)),
-            findings=findings,
+            coverage_record=_failure_coverage(exc, pages=pages, count=len(retained)),
+            findings=retained,
         )
     if final_head != head:
         return build_readback(
@@ -502,6 +543,7 @@ def read_pull_request(
             findings=[],
         )
     if final_analysing:
+        retained = _merge_issue_findings(findings)
         return build_readback(
             provider="codacy",
             adapter="codacy-api-v3/v1",
@@ -518,17 +560,17 @@ def read_pull_request(
             coverage_record=coverage(
                 "PARTIAL",
                 pages=pages,
-                count=len(findings),
+                count=len(retained),
                 reason="ANALYSIS_IN_PROGRESS",
             ),
-            findings=findings,
+            findings=retained,
         )
 
+    retained = _merge_issue_findings(findings)
     complete = coverage(
         "COMPLETE",
         pages=pages,
-        count=len(findings),
-        total=provider_total if provider_total_known else None,
+        count=len(retained),
     )
     return build_readback(
         provider="codacy",
@@ -544,6 +586,54 @@ def read_pull_request(
         observed_at=observed,
         run_state="COMPLETE",
         coverage_record=complete,
-        findings=findings,
-        native={"is_up_to_standards": final_pr_document.get("isUpToStandards")},
+        findings=retained,
+        native={
+            "is_up_to_standards": final_pr_document.get("isUpToStandards"),
+            "issue_surface_totals": dict(sorted(surface_totals.items())),
+        },
     )
+
+
+def read_pull_request(
+    client: JsonReader,
+    *,
+    repository: str,
+    pull_number: int,
+    requested_head: str,
+    observed_at: str | None = None,
+    provider: str = "gh",
+) -> dict[str, Any]:
+    """Read one Codacy PR without letting normalization conflicts abort the bundle."""
+
+    try:
+        return _read_pull_request(
+            client,
+            repository=repository,
+            pull_number=pull_number,
+            requested_head=requested_head,
+            observed_at=observed_at,
+            provider=provider,
+        )
+    except AnalyzerReadbackError:
+        observed = observed_at or _now()
+        return build_readback(
+            provider="codacy",
+            adapter="codacy-api-v3/v1",
+            repository=repository,
+            pull_number=pull_number,
+            requested_head=requested_head,
+            observed_head=requested_head,
+            analysis_id=f"pr:{pull_number}",
+            scope="DIFF",
+            completeness="READBACK_UNAVAILABLE",
+            native_mode="PULL_REQUEST",
+            observed_at=observed,
+            run_state="UNKNOWN",
+            coverage_record=coverage(
+                "ERROR",
+                pages=0,
+                count=0,
+                reason="NORMALIZATION_ERROR",
+            ),
+            findings=[],
+        )

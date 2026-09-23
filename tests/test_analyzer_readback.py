@@ -247,6 +247,128 @@ class AnalyzerReadbackModelTests(unittest.TestCase):
             [item["surface"] for item in findings[0]["provenance"]],
         )
 
+    def test_build_readback_derives_count_after_deduplication(self) -> None:
+        common = {
+            "id": "provider-1",
+            "message": "same issue",
+            "path": "a.py",
+        }
+        document = analyzer_readback.build_readback(
+            provider="synthetic-analyzer",
+            adapter="fixture/v1",
+            repository="example/project",
+            pull_number=9,
+            requested_head=HEAD,
+            observed_head=HEAD,
+            analysis_id="run-9",
+            scope="FULL",
+            completeness="FULL_RUN",
+            native_mode="COMPLETE_SCAN",
+            observed_at=OBSERVED,
+            run_state="SUCCESS",
+            coverage_record=analyzer_readback.coverage("COMPLETE", pages=1, count=2),
+            findings=[
+                {
+                    **common,
+                    "provenance": [{"surface": "provider-a", "reference": "finding:1"}],
+                },
+                {
+                    **common,
+                    "provenance": [{"surface": "provider-b", "reference": "finding:1"}],
+                },
+            ],
+        )
+        self.assertEqual(1, document["coverage"]["count"])
+        self.assertEqual(1, len(document["findings"]))
+
+    def test_build_readback_keeps_provider_total_strict_after_deduplication(
+        self,
+    ) -> None:
+        common = {"id": "provider-1", "message": "same issue"}
+        with self.assertRaisesRegex(
+            analyzer_readback.AnalyzerReadbackError,
+            "coverage count disagrees with provider total",
+        ):
+            analyzer_readback.build_readback(
+                provider="synthetic-analyzer",
+                adapter="fixture/v1",
+                repository="example/project",
+                pull_number=9,
+                requested_head=HEAD,
+                observed_head=HEAD,
+                analysis_id="run-9",
+                scope="FULL",
+                completeness="FULL_RUN",
+                native_mode="COMPLETE_SCAN",
+                observed_at=OBSERVED,
+                run_state="SUCCESS",
+                coverage_record=analyzer_readback.coverage(
+                    "COMPLETE", pages=1, count=2, total=2
+                ),
+                findings=[common, common],
+            )
+
+    def test_repository_identity_rejects_path_and_query_segments(self) -> None:
+        for repository in (
+            "owner/../repo",
+            "owner/repo?tab=issues",
+            "owner/repo#fragment",
+            "owner/repo%2Fother",
+        ):
+            with (
+                self.subTest(repository=repository),
+                self.assertRaises(analyzer_readback.AnalyzerReadbackError),
+            ):
+                analyzer_readback.normalize_repository(repository)
+
+    def test_build_readback_counts_deduplicated_retained_findings(self) -> None:
+        common = {
+            "id": "provider-1",
+            "message": "same issue",
+            "path": "a.py",
+        }
+        document = analyzer_readback.build_readback(
+            provider="synthetic",
+            adapter="fixture/v1",
+            repository="example/project",
+            pull_number=1,
+            requested_head=HEAD,
+            observed_head=HEAD,
+            analysis_id="run",
+            scope="FULL",
+            completeness="FULL_RUN",
+            native_mode="COMPLETE_SCAN",
+            observed_at=OBSERVED,
+            run_state="SUCCESS",
+            coverage_record={
+                "status": "COMPLETE",
+                "pages": 1,
+                "count": 2,
+                "total": 1,
+            },
+            findings=[
+                {
+                    **common,
+                    "provenance": [
+                        {"surface": "provider-page-1", "reference": "issue:1"}
+                    ],
+                },
+                {
+                    **common,
+                    "provenance": [
+                        {"surface": "provider-page-2", "reference": "issue:1"}
+                    ],
+                },
+            ],
+        )
+        self.assertEqual(1, document["coverage"]["count"])
+        self.assertEqual(1, document["coverage"]["total"])
+        self.assertEqual(1, len(document["findings"]))
+        self.assertEqual(
+            ["provider-page-1", "provider-page-2"],
+            [item["surface"] for item in document["findings"][0]["provenance"]],
+        )
+
     def test_synthetic_third_provider_uses_common_model_without_provider_branch(
         self,
     ) -> None:
@@ -896,6 +1018,70 @@ class CodacyAnalyzerReadbackTests(unittest.TestCase):
         self.assertEqual("Ruff", finding["native"]["tool_name"])
         self.assertEqual("ruff-tool", finding["native"]["tool_uuid"])
 
+    def test_codacy_overlapping_potential_surface_collapses_by_native_id(self) -> None:
+        root = _codacy_root()
+        issue = _codacy_issue("codacy-potential", 14)
+        client = _CodacyFake(
+            {
+                f"{root}/pull-requests/312": _codacy_pr(),
+                _codacy_issues_url(potential=False): {
+                    "analyzed": True,
+                    "data": [issue],
+                    "pagination": {"total": 1},
+                },
+                _codacy_issues_url(potential=True): {
+                    "analyzed": True,
+                    "data": [issue],
+                    "pagination": {"total": 1},
+                },
+            }
+        )
+        document = analyzer_codacy.read_pull_request(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("FULL_RUN", document["completeness"])
+        self.assertEqual("COMPLETE", document["coverage"]["status"])
+        self.assertEqual(1, document["coverage"]["count"])
+        self.assertEqual(1, len(document["findings"]))
+        self.assertTrue(document["findings"][0]["native"]["potential"])
+        self.assertEqual(
+            {"all": 1, "potential": 1},
+            document["native"]["issue_surface_totals"],
+        )
+
+    def test_codacy_conflicting_duplicate_identity_fails_closed(self) -> None:
+        root = _codacy_root()
+        client = _CodacyFake(
+            {
+                f"{root}/pull-requests/312": _codacy_pr(),
+                _codacy_issues_url(potential=False): {
+                    "analyzed": True,
+                    "data": [_codacy_issue("same-id", 14)],
+                    "pagination": {"total": 1},
+                },
+                _codacy_issues_url(potential=True): {
+                    "analyzed": True,
+                    "data": [_codacy_issue("same-id", 15)],
+                    "pagination": {"total": 1},
+                },
+            }
+        )
+        document = analyzer_codacy.read_pull_request(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("READBACK_UNAVAILABLE", document["completeness"])
+        self.assertEqual("ERROR", document["coverage"]["status"])
+        self.assertEqual("NORMALIZATION_ERROR", document["coverage"]["reason"])
+        self.assertEqual([], document["findings"])
+
     def test_codacy_single_page_without_pagination_is_complete(self) -> None:
         root = _codacy_root()
         client = _CodacyFake(
@@ -1165,7 +1351,7 @@ class CodacyAnalyzerReadbackTests(unittest.TestCase):
             )
 
     def test_token_shaped_values_do_not_enter_normalized_evidence(self) -> None:
-        secret = "super-secret-provider-token-value"
+        sentinel = "opaque-provider-fixture-value"
         document = analyzer_readback.build_readback(
             provider="synthetic",
             adapter="fixture/v1",
@@ -1185,7 +1371,7 @@ class CodacyAnalyzerReadbackTests(unittest.TestCase):
             findings=[],
             native={"auth": "environment-only"},
         )
-        self.assertNotIn(secret, analyzer_readback.canonical_json(document))
+        self.assertNotIn(sentinel, analyzer_readback.canonical_json(document))
         self.assertNotIn("DEEPSOURCE_API_TOKEN", json.dumps(document))
         self.assertNotIn("CODACY_API_TOKEN", json.dumps(document))
 
