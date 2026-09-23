@@ -1311,9 +1311,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
         self.assertEqual(2, raised.exception.code)
 
     def test_parent_wrapper_preserves_external_virtualenv_interpreter(self) -> None:
-        wrapper_text = (ROOT / "ci" / "prepare-candidate").read_text(
-            encoding="utf-8"
-        )
+        wrapper_text = (ROOT / "ci" / "prepare-candidate").read_text(encoding="utf-8")
 
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
