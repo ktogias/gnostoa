@@ -26,8 +26,16 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: main
+          ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Bind trusted main execution source
+        env:
+          EXECUTOR_REF: ${{ github.ref }}
+          EXECUTOR_SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          test "${EXECUTOR_REF}" = "refs/heads/main"
+          test "$(git rev-parse HEAD)" = "${EXECUTOR_SHA}"
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"

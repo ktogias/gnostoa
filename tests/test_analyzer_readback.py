@@ -529,6 +529,47 @@ class DeepSourceAnalyzerReadbackTests(unittest.TestCase):
             ["issue-1", "issue-2"], [x["id"] for x in document["findings"]]
         )
 
+    def test_full_run_deduplicates_overlapping_check_findings(self) -> None:
+        run_page = _run_page()
+        run_page["data"]["run"]["checks"]["totalCount"] = 2
+        second_check = {
+            "id": "check-python-secondary",
+            "status": "FAILURE",
+            "analyzer": {"shortcode": "python"},
+        }
+        run_page["data"]["run"]["checks"]["edges"].append({"node": second_check})
+        first_page = _check_page([_issue("issue-shared", 10)], total=1, cursor=None)
+        second_page = _check_page([_issue("issue-shared", 10)], total=1, cursor=None)
+        second_page["data"]["node"]["id"] = "check-python-secondary"
+        client = _DeepSourceFake(
+            {
+                ("run", None): run_page,
+                ("check-python", None): first_page,
+                ("check-python-secondary", None): second_page,
+            }
+        )
+        document = analyzer_deepsource.read_full_run(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            run_uid=RUN_UID,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("FULL_RUN", document["completeness"])
+        self.assertEqual("COMPLETE", document["coverage"]["status"])
+        self.assertEqual(1, document["coverage"]["count"])
+        self.assertNotIn("total", document["coverage"])
+        self.assertEqual(
+            ["issue-shared"], [item["id"] for item in document["findings"]]
+        )
+        self.assertEqual(2, document["native"]["raw_issue_count"])
+        self.assertEqual(2, document["native"]["provider_total"])
+        self.assertEqual(
+            ["check-python", "check-python-secondary"],
+            [item["reference"] for item in document["findings"][0]["provenance"]],
+        )
+
     def test_full_run_accepts_exhausted_relay_pages_without_total_count(self) -> None:
         run_page = _run_page()
         run_page["data"]["run"]["checks"]["totalCount"] = None

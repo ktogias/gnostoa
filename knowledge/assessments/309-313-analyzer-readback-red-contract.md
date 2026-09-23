@@ -55,7 +55,7 @@ behaviours:
 | R11 | Analyzer readback has no mutation route: no trigger, comment, dismissal, configuration or Git/provider write method is exposed. |
 | R12 | PR #312 dogfood can retain exact-head provider evidence or an explicit incomplete limitation without guessing from GitHub check counts. |
 | R13 | The runner rejects GitHub PR head movement across acquisition and stale DeepSource inline `commit_id` evidence. |
-| R14 | The manual workflow has read-only GitHub permissions, step-scoped analyzer secrets, no automatic PR trigger and uploads only a validated non-secret bundle. |
+| R14 | The manual workflow has read-only GitHub permissions, runs the credentialed step only for `refs/heads/main`, checks out exact `github.sha`, verifies `HEAD == github.sha` before injecting analyzer secrets, has no automatic PR trigger and uploads only a validated non-secret bundle. |
 | R15 | The common validator rejects contradictory completeness/coverage pairs such as `FULL_RUN` with `PARTIAL`, `AMBIGUOUS` without `INCOMPLETE`, or `AUTH_UNAVAILABLE` with `COMPLETE`. |
 
 ## Intended implementation shape
