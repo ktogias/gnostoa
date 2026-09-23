@@ -826,8 +826,11 @@ def _github_status_summary(
             or match.group("repo") != name
         ):
             continue
+        analyzer = match.group("analyzer")
+        if analyzer in analyzer_states:
+            continue
         run_ids.add(match.group("run"))
-        analyzer_states.setdefault(match.group("analyzer"), str(state))
+        analyzer_states[analyzer] = str(state)
     return run_ids, analyzer_states
 
 

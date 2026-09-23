@@ -1116,22 +1116,74 @@ class DeepSourceAnalyzerReadbackTests(unittest.TestCase):
         self.assertEqual("NORMALIZATION_ERROR", document["coverage"]["reason"])
         self.assertEqual(RUN_UID, document["analysis_id"])
 
-    def test_multiple_github_run_ids_are_ambiguous(self) -> None:
-        statuses = []
-        for run in (RUN_UID, "11111111-1111-1111-1111-111111111111"):
-            statuses.append(
-                {
-                    "context": "DeepSource: Python",
-                    "source_kind": "commit_status",
-                    "creator_login": "deepsource-io[bot]",
-                    "creator_type": "Bot",
-                    "state": "success",
-                    "target_url": (
-                        "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
-                        f"{run}/python/"
-                    ),
-                }
-            )
+    def test_newest_github_run_status_wins_for_same_analyzer(self) -> None:
+        older_run = "11111111-1111-1111-1111-111111111111"
+        statuses = [
+            {
+                "context": "DeepSource: Python",
+                "source_kind": "commit_status",
+                "creator_login": "deepsource-io[bot]",
+                "creator_type": "Bot",
+                "state": "success",
+                "target_url": (
+                    "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
+                    f"{RUN_UID}/python/"
+                ),
+            },
+            {
+                "context": "DeepSource: Python",
+                "source_kind": "commit_status",
+                "creator_login": "deepsource-io[bot]",
+                "creator_type": "Bot",
+                "state": "failure",
+                "target_url": (
+                    "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
+                    f"{older_run}/python/"
+                ),
+            },
+        ]
+        document = analyzer_deepsource.diff_local_from_github(
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            observed_head=HEAD,
+            statuses=statuses,
+            comments=[],
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("DIFF_LOCAL", document["completeness"])
+        self.assertEqual("COMPLETE", document["coverage"]["status"])
+        self.assertEqual(RUN_UID, document["analysis_id"])
+        self.assertEqual("SUCCESS", document["run_state"])
+
+    def test_multiple_latest_github_run_ids_across_analyzers_are_ambiguous(
+        self,
+    ) -> None:
+        other_run = "11111111-1111-1111-1111-111111111111"
+        statuses = [
+            {
+                "context": "DeepSource: Python",
+                "source_kind": "commit_status",
+                "creator_login": "deepsource-io[bot]",
+                "creator_type": "Bot",
+                "state": "success",
+                "target_url": (
+                    "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
+                    f"{RUN_UID}/python/"
+                ),
+            },
+            {
+                "context": "DeepSource: JavaScript",
+                "source_kind": "commit_status",
+                "creator_login": "deepsource-io[bot]",
+                "creator_type": "Bot",
+                "state": "success",
+                "target_url": (
+                    "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
+                    f"{other_run}/javascript/"
+                ),
+            },
+        ]
         document = analyzer_deepsource.diff_local_from_github(
             repository="ktogias/gnostoa",
             pull_number=312,
