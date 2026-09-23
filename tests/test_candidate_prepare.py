@@ -16,9 +16,8 @@ from tools import candidate_prepare
 
 ROOT = Path(__file__).resolve().parents[1]
 GIT: str = shutil.which("git") or ""
-SH: str = shutil.which("sh") or ""
-if not GIT or not SH:
-    raise RuntimeError("git and sh are required for candidate preparation tests")
+if not GIT:
+    raise RuntimeError("git is required for candidate preparation tests")
 
 _GIT_ENVIRONMENT_VARIABLES = (
     "GIT_DIR",
@@ -1365,58 +1364,58 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 "show",
                 f"{parent}:ci/prepare-candidate",
             )
-            bootstrap_tmp = root / "bootstrap-tmp"
-            bootstrap_tmp.mkdir()
-            environment = _test_env()
-            environment["PYTHONPATH"] = str(root)
-            environment["PATH"] = str(poison_bin) + os.pathsep + environment["PATH"]
-            environment["TMPDIR"] = str(bootstrap_tmp)
-            completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
-                [  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
-                    SH,
-                    "-s",
-                    "--",
-                    "verify",
-                    "--parent",
-                    parent,
-                    "--trusted-python",
-                    candidate_prepare.sys.executable,
-                ],
-                cwd=root,
-                env=environment,
-                input=trusted_wrapper,
-                check=False,
-                shell=False,
-                capture_output=True,
-                text=True,
-            )
-            self.assertEqual(0, completed.returncode, completed.stderr)
-            self.assertIn("trusted-parent verify", completed.stdout)
-            self.assertFalse(marker.exists())
-            self.assertEqual([], list(bootstrap_tmp.iterdir()))
+            with tempfile.TemporaryDirectory() as wrapper_directory:
+                parent_wrapper = Path(wrapper_directory) / "prepare-candidate"
+                parent_wrapper.write_text(trusted_wrapper, encoding="utf-8")
+                parent_wrapper.chmod(0o700)
+                bootstrap_tmp = root / "bootstrap-tmp"
+                bootstrap_tmp.mkdir()
+                environment = _test_env()
+                environment["PYTHONPATH"] = str(root)
+                environment["PATH"] = (
+                    str(poison_bin) + os.pathsep + environment["PATH"]
+                )
+                environment["TMPDIR"] = str(bootstrap_tmp)
+                completed = subprocess.run(  # nosec B603
+                    [
+                        str(parent_wrapper),
+                        "verify",
+                        "--parent",
+                        parent,
+                        "--trusted-python",
+                        candidate_prepare.sys.executable,
+                    ],
+                    cwd=root,
+                    env=environment,
+                    check=False,
+                    shell=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(0, completed.returncode, completed.stderr)
+                self.assertIn("trusted-parent verify", completed.stdout)
+                self.assertFalse(marker.exists())
+                self.assertEqual([], list(bootstrap_tmp.iterdir()))
 
-            rejected = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
-                [  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
-                    SH,
-                    "-s",
-                    "--",
-                    "verify",
-                    "--parent",
-                    parent,
-                    "--trusted-python",
-                    str(poison_bin / "python"),
-                ],
-                cwd=root,
-                env=environment,
-                input=trusted_wrapper,
-                check=False,
-                shell=False,
-                capture_output=True,
-                text=True,
-            )
-            self.assertEqual(2, rejected.returncode)
-            self.assertIn("outside the repository worktree", rejected.stderr)
-            self.assertFalse(marker.exists())
+                rejected = subprocess.run(  # nosec B603
+                    [
+                        str(parent_wrapper),
+                        "verify",
+                        "--parent",
+                        parent,
+                        "--trusted-python",
+                        str(poison_bin / "python"),
+                    ],
+                    cwd=root,
+                    env=environment,
+                    check=False,
+                    shell=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(2, rejected.returncode)
+                self.assertIn("outside the repository worktree", rejected.stderr)
+                self.assertFalse(marker.exists())
 
 
 if __name__ == "__main__":
