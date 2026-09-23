@@ -1297,7 +1297,8 @@ class CandidatePreparationContractTests(unittest.TestCase):
         wrapper_text = wrapper.read_text(encoding="utf-8")
         self.assertNotIn("python -m tools.candidate_prepare", wrapper_text)
         self.assertIn('show "${parent}:tools/candidate_prepare.py"', wrapper_text)
-        self.assertIn('exec "$python_executable" -I "$temporary"', wrapper_text)
+        self.assertIn('"$python_executable" -I "$temporary"', wrapper_text)
+        self.assertNotIn('exec "$python_executable"', wrapper_text)
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1346,9 +1347,12 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 "show",
                 f"{parent}:ci/prepare-candidate",
             )
+            bootstrap_tmp = root / "bootstrap-tmp"
+            bootstrap_tmp.mkdir()
             environment = _test_env()
             environment["PYTHONPATH"] = str(root)
             environment["PATH"] = str(poison_bin) + os.pathsep + environment["PATH"]
+            environment["TMPDIR"] = str(bootstrap_tmp)
             completed = subprocess.run(  # nosemgrep  # nosec B603
                 [
                     "sh",
@@ -1357,6 +1361,8 @@ class CandidatePreparationContractTests(unittest.TestCase):
                     "verify",
                     "--parent",
                     parent,
+                    "--trusted-python",
+                    candidate_prepare.sys.executable,
                 ],
                 cwd=root,
                 env=environment,
@@ -1368,6 +1374,30 @@ class CandidatePreparationContractTests(unittest.TestCase):
             )
             self.assertEqual(0, completed.returncode, completed.stderr)
             self.assertIn("trusted-parent verify", completed.stdout)
+            self.assertFalse(marker.exists())
+            self.assertEqual([], list(bootstrap_tmp.iterdir()))
+
+            rejected = subprocess.run(  # nosemgrep  # nosec B603
+                [
+                    "sh",
+                    "-s",
+                    "--",
+                    "verify",
+                    "--parent",
+                    parent,
+                    "--trusted-python",
+                    str(poison_bin / "python"),
+                ],
+                cwd=root,
+                env=environment,
+                input=trusted_wrapper,
+                check=False,
+                shell=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(2, rejected.returncode)
+            self.assertIn("outside the repository worktree", rejected.stderr)
             self.assertFalse(marker.exists())
 
 
