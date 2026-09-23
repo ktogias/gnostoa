@@ -46,6 +46,18 @@ jobs:
           test -s "${bundle}"
           test -s "${bundle}.sha256"
 
+      - name: Download exact locked Ruff wheel
+        shell: bash
+        env:
+          RUFF_SHA256: 4f11a8d11010301d0a398a2fdef67691feca7294da6aef55e2150e8fa2cd520b
+        run: |
+          set -eu
+          mkdir -p "${RUNNER_TEMP}/ruff-wheel"
+          python -m pip download --disable-pip-version-check --no-deps --only-binary=:all:             --dest "${RUNNER_TEMP}/ruff-wheel" ruff==0.16.0
+          wheel="$(find "${RUNNER_TEMP}/ruff-wheel" -maxdepth 1 -name 'ruff-0.16.0-*.whl' -print -quit)"
+          test -n "${wheel}"
+          test "$(sha256sum "${wheel}" | awk '{print $1}')" = "${RUFF_SHA256}"
+
       - name: Upload exact source bundle
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -53,5 +65,13 @@ jobs:
           path: |
             ${{ runner.temp }}/gnostoa-pr314-099163e35bf0e4934b3e2c0d33baf88ac3802cf8.bundle
             ${{ runner.temp }}/gnostoa-pr314-099163e35bf0e4934b3e2c0d33baf88ac3802cf8.bundle.sha256
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload exact locked Ruff wheel
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gnostoa-pr314-ruff-0.16.0
+          path: ${{ runner.temp }}/ruff-wheel/ruff-0.16.0-*.whl
           if-no-files-found: error
           retention-days: 1
