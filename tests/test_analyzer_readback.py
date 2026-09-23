@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import inspect
+import io
 import json
 import unittest
+import urllib.error
 import urllib.request
 from collections.abc import Mapping
 from typing import Any
@@ -1421,26 +1423,38 @@ class CodacyAnalyzerReadbackTests(unittest.TestCase):
 
     def test_token_shaped_values_do_not_enter_normalized_evidence(self) -> None:
         sentinel = "opaque-provider-fixture-value"
-        document = analyzer_readback.build_readback(
-            provider="synthetic",
-            adapter="fixture/v1",
+        client = analyzer_deepsource.DeepSourceGraphQLClient(sentinel)
+
+        class _HttpErrorOpener:
+            def open(self, *_args: object, **_kwargs: object) -> object:
+                raise urllib.error.HTTPError(
+                    "https://api.deepsource.com/graphql/",
+                    500,
+                    "provider failure",
+                    {},
+                    io.BytesIO(sentinel.encode("utf-8")),
+                )
+
+        client._opener = _HttpErrorOpener()  # type: ignore[assignment]
+        with self.assertRaises(analyzer_deepsource.ProviderReadFailure) as raised:
+            client.graphql(
+                analyzer_deepsource._RUN_QUERY,
+                {"runUid": RUN_UID, "cursor": None},
+            )
+        self.assertNotIn(sentinel, str(raised.exception))
+
+        document = analyzer_deepsource.read_full_run(
+            client,
             repository="example/project",
             pull_number=1,
             requested_head=HEAD,
-            observed_head=HEAD,
-            analysis_id="run",
-            scope="FULL",
-            completeness="FULL_RUN",
-            native_mode="FULL_RUN",
+            run_uid=RUN_UID,
             observed_at=OBSERVED,
-            run_state="SUCCESS",
-            coverage_record=analyzer_readback.coverage(
-                "COMPLETE", pages=1, count=0, total=0
-            ),
-            findings=[],
-            native={"auth": "environment-only"},
         )
-        self.assertNotIn(sentinel, analyzer_readback.canonical_json(document))
+        serialized = analyzer_readback.canonical_json(document)
+        self.assertEqual("READBACK_UNAVAILABLE", document["completeness"])
+        self.assertEqual("UNAVAILABLE", document["coverage"]["status"])
+        self.assertNotIn(sentinel, serialized)
         self.assertNotIn("DEEPSOURCE_API_TOKEN", json.dumps(document))
         self.assertNotIn("CODACY_API_TOKEN", json.dumps(document))
 
