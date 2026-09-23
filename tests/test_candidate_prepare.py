@@ -1310,8 +1310,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 encoding="utf-8",
             )
             (root / "tools" / "candidate_prepare.py").write_text(
-                "import sys\n"
-                "print('trusted-parent', sys.argv[1])\n",
+                "import sys\nprint('trusted-parent', sys.argv[1])\n",
                 encoding="utf-8",
             )
             self._git(root, "add", ".")
