@@ -869,7 +869,8 @@ def _diff_local_from_github(
         if marker is None:
             continue
         comment_head = comment.get("commit_id")
-        if comment_head != requested_head:
+        original_comment_head = comment.get("original_commit_id")
+        if comment_head != requested_head or original_comment_head != requested_head:
             continue
         finding: dict[str, Any] = {
             "id": marker.group("id"),

@@ -768,6 +768,7 @@ class DeepSourceAnalyzerReadbackTests(unittest.TestCase):
                 "path": "tools/example.py",
                 "line": 7,
                 "commit_id": HEAD,
+                "original_commit_id": HEAD,
                 "url": "https://github.com/ktogias/gnostoa/pull/312#discussion_r1",
                 "author_login": "deepsource-io[bot]",
                 "author_type": "Bot",
@@ -847,7 +848,48 @@ class DeepSourceAnalyzerReadbackTests(unittest.TestCase):
                 "path": "tools/old.py",
                 "line": 3,
                 "commit_id": OTHER_HEAD,
+                "original_commit_id": OTHER_HEAD,
                 "url": "https://github.com/ktogias/gnostoa/pull/312#discussion_stale",
+                "author_login": "deepsource-io[bot]",
+                "author_type": "Bot",
+            }
+        ]
+        document = analyzer_deepsource.diff_local_from_github(
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            observed_head=HEAD,
+            statuses=statuses,
+            comments=comments,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("COMPLETE", document["coverage"]["status"])
+        self.assertEqual([], document["findings"])
+
+    def test_github_native_projection_excludes_comment_retargeted_from_old_head(
+        self,
+    ) -> None:
+        statuses = [
+            {
+                "context": "DeepSource: Python",
+                "source_kind": "commit_status",
+                "creator_login": "deepsource-io[bot]",
+                "creator_type": "Bot",
+                "state": "success",
+                "target_url": (
+                    "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
+                    f"{RUN_UID}/python/"
+                ),
+            }
+        ]
+        comments = [
+            {
+                "body": "<!-- DeepSource: id=stale-retargeted -->\n<h3>Old issue</h3>",
+                "path": "tools/old.py",
+                "line": 3,
+                "commit_id": HEAD,
+                "original_commit_id": OTHER_HEAD,
+                "url": "https://github.com/ktogias/gnostoa/pull/312#discussion_retargeted",
                 "author_login": "deepsource-io[bot]",
                 "author_type": "Bot",
             }
@@ -917,6 +959,7 @@ class DeepSourceAnalyzerReadbackTests(unittest.TestCase):
                 "path": "tools/example.py",
                 "line": 7,
                 "commit_id": HEAD,
+                "original_commit_id": HEAD,
                 "url": "https://github.com/ktogias/gnostoa/pull/312#discussion_spoofed",
                 "author_login": "attacker",
                 "author_type": "User",
@@ -1379,6 +1422,42 @@ class CodacyAnalyzerReadbackTests(unittest.TestCase):
             requested_head=HEAD,
             observed_at=OBSERVED,
         )
+        self.assertEqual("PARTIAL", document["coverage"]["status"])
+        self.assertEqual("ANALYSIS_IN_PROGRESS", document["coverage"]["reason"])
+        self.assertEqual(1, document["coverage"]["count"])
+
+    def test_codacy_analysis_active_at_start_is_partial_even_if_it_finishes(
+        self,
+    ) -> None:
+        root = _codacy_root()
+        confirmed = _codacy_issues_url(potential=False)
+        potential = _codacy_issues_url(potential=True)
+        pr_url = f"{root}/pull-requests/312"
+        initial_pr = _codacy_pr()
+        initial_pr["isAnalysing"] = True
+        client = _CodacyFake(
+            {
+                pr_url: [initial_pr, _codacy_pr()],
+                confirmed: {
+                    "analyzed": True,
+                    "data": [_codacy_issue("codacy-1", 4)],
+                    "pagination": {"limit": 1000, "total": 1},
+                },
+                potential: {
+                    "analyzed": True,
+                    "data": [],
+                    "pagination": {"limit": 1000, "total": 0},
+                },
+            }
+        )
+        document = analyzer_codacy.read_pull_request(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("READBACK_UNAVAILABLE", document["completeness"])
         self.assertEqual("PARTIAL", document["coverage"]["status"])
         self.assertEqual("ANALYSIS_IN_PROGRESS", document["coverage"]["reason"])
         self.assertEqual(1, document["coverage"]["count"])

@@ -284,6 +284,7 @@ def _deepsource_comments(
                 "path": comment.get("path"),
                 "line": comment.get("line") or comment.get("original_line"),
                 "commit_id": comment.get("commit_id"),
+                "original_commit_id": comment.get("original_commit_id"),
                 "url": comment.get("html_url") or comment.get("url"),
                 "author_login": (
                     comment.get("user", {}).get("login")

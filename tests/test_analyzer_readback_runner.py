@@ -158,6 +158,25 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
         self.assertEqual(OTHER, bundle["observed_head"])
         self.assertEqual([], bundle["readbacks"])
 
+    def test_deepsource_comment_projection_retains_original_commit_identity(
+        self,
+    ) -> None:
+        projected = runner._deepsource_comments(
+            [
+                {
+                    "body": "finding",
+                    "path": "tools/example.py",
+                    "line": 7,
+                    "commit_id": HEAD,
+                    "original_commit_id": OTHER,
+                    "html_url": "https://github.com/ktogias/gnostoa/pull/312#discussion",
+                    "user": {"login": "deepsource-io[bot]", "type": "Bot"},
+                }
+            ]
+        )
+        self.assertEqual(HEAD, projected[0]["commit_id"])
+        self.assertEqual(OTHER, projected[0]["original_commit_id"])
+
     def test_check_run_can_supply_deepsource_run_association(self) -> None:
         urls = _github_urls()
         github = _GitHubFake(

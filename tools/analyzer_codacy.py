@@ -542,7 +542,7 @@ def _read_pull_request(
             ),
             findings=[],
         )
-    if final_analysing:
+    if _initial_analysing or final_analysing:
         retained = _merge_issue_findings(findings)
         return build_readback(
             provider="codacy",
