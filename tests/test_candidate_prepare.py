@@ -75,7 +75,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
     def _git(root: Path, *arguments: str) -> str:
         # Reuse the audited shell-free subprocess boundary from the implementation
         # so this fixture helper does not duplicate a tainted-command SAST sink.
-        completed = candidate_prepare._run(  # noqa: SLF001
+        completed = candidate_prepare._run(
             [GIT, *arguments],
             cwd=root,
             env=_test_env(),
@@ -1441,7 +1441,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
                 # repository wrapper whose bytes were matched to the exact parent
                 # above; argv is a fixed test shape, shell parsing is disabled, and
                 # hostile PATH/PYTHONPATH values are the subject under test.
-                completed = candidate_prepare._run(  # noqa: SLF001
+                completed = candidate_prepare._run(
                     [
                         str(parent_wrapper),
                         "verify",
@@ -1461,7 +1461,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
 
                 # Same audited boundary as the successful probe above; this
                 # invocation only substitutes the deliberately rejected interpreter.
-                rejected = candidate_prepare._run(  # noqa: SLF001
+                rejected = candidate_prepare._run(
                     [
                         str(parent_wrapper),
                         "verify",
