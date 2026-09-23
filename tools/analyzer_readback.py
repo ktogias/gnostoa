@@ -18,6 +18,8 @@ _READBACK_UNAVAILABLE_COVERAGE = frozenset(
 SCOPES = frozenset({"DIFF", "FULL"})
 MAX_FINDINGS = 10_000
 _SHA40 = re.compile(r"^[0-9a-f]{40}$")
+_OWNER_SEGMENT = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$")
+_REPOSITORY_SEGMENT = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 class AnalyzerReadbackError(ValueError):
@@ -55,11 +57,16 @@ def _sha(value: object, label: str) -> str:
     return text
 
 
-def _repository(value: object) -> str:
+def normalize_repository(value: object) -> str:
     text = _required_text(value, "repository")
     parts = text.split("/")
     if len(parts) != 2 or not all(parts):
         raise AnalyzerReadbackError("repository must use owner/name form")
+    owner, name = parts
+    if _OWNER_SEGMENT.fullmatch(owner) is None:
+        raise AnalyzerReadbackError("repository owner contains an unsafe path segment")
+    if name in {".", ".."} or _REPOSITORY_SEGMENT.fullmatch(name) is None:
+        raise AnalyzerReadbackError("repository name contains an unsafe path segment")
     return text
 
 
@@ -223,10 +230,16 @@ def build_readback(
     if scope not in SCOPES:
         raise AnalyzerReadbackError("readback scope is unsupported")
     normalized_findings = deduplicate_findings(findings)
+    retained_count = len(normalized_findings)
+    observed_count = _nonnegative_int(coverage_record.get("count"), "coverage count")
+    if observed_count < retained_count:
+        raise AnalyzerReadbackError(
+            "coverage count is smaller than retained finding population"
+        )
     normalized_coverage = coverage(
         _required_text(coverage_record.get("status"), "coverage status"),
         pages=_nonnegative_int(coverage_record.get("pages"), "coverage pages"),
-        count=_nonnegative_int(coverage_record.get("count"), "coverage count"),
+        count=retained_count,
         total=(
             None
             if coverage_record.get("total") is None
@@ -238,10 +251,6 @@ def build_readback(
             else _required_text(coverage_record.get("reason"), "coverage reason")
         ),
     )
-    if normalized_coverage["count"] != len(normalized_findings):
-        raise AnalyzerReadbackError(
-            "coverage count disagrees with retained finding population"
-        )
     normalized_completeness = _required_text(completeness, "completeness")
     if normalized_completeness not in COMPLETENESS_STATES:
         raise AnalyzerReadbackError("completeness state is unsupported")
@@ -272,7 +281,7 @@ def build_readback(
         "schema": SCHEMA,
         "provider": _required_text(provider, "provider"),
         "adapter": _required_text(adapter, "adapter"),
-        "repository": _repository(repository),
+        "repository": normalize_repository(repository),
         "pull_number": _positive_int(pull_number, "pull number"),
         "requested_head": requested,
         "scope": scope,

@@ -18,7 +18,8 @@ OBSERVED = "2026-09-23T14:00:00Z"
 RUN_UID = "0c29b163-9e8e-43be-bd8b-a93254aa2748"
 
 spec = importlib.util.spec_from_file_location("gnostoa_analyzer_runner", RUNNER_PATH)
-assert spec is not None and spec.loader is not None
+if spec is None or spec.loader is None:
+    raise RuntimeError("analyzer readback runner module is unavailable")
 runner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runner)
 
@@ -108,6 +109,31 @@ class _CodacyReader:
 
 
 class AnalyzerReadbackRunnerTests(unittest.TestCase):
+    def test_repository_segments_reject_path_and_query_injection(self) -> None:
+        class _NoNetwork:
+            def get(self, url: str) -> tuple[Any, Mapping[str, str]]:
+                raise AssertionError(f"network must not be reached: {url}")
+
+        for repository in (
+            "owner/..",
+            "owner/%2e%2e",
+            "owner/repo?per_page=1",
+            "owner/repo#fragment",
+        ):
+            with (
+                self.subTest(repository=repository),
+                self.assertRaisesRegex(runner.RunnerError, "repository"),
+            ):
+                runner.collect_bundle(
+                    _NoNetwork(),
+                    repository=repository,
+                    pull_number=312,
+                    requested_head=HEAD,
+                    deepsource=None,
+                    codacy=None,
+                    observed_at=OBSERVED,
+                )
+
     def test_head_movement_discards_provider_evidence(self) -> None:
         urls = _github_urls()
         github = _GitHubFake(

@@ -14,7 +14,13 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from tools import analyzer_codacy, analyzer_deepsource
-from tools.analyzer_readback import build_readback, canonical_json, coverage
+from tools.analyzer_readback import (
+    AnalyzerReadbackError,
+    build_readback,
+    canonical_json,
+    coverage,
+    normalize_repository,
+)
 
 BUNDLE_SCHEMA = "gnostoa-analyzer-readback-bundle/v1"
 _API_ROOT = "https://api.github.com"
@@ -129,9 +135,11 @@ def _exact_head(value: object, label: str) -> str:
 
 
 def _repository(value: str) -> tuple[str, str]:
-    parts = value.split("/")
-    if len(parts) != 2 or not all(parts):
-        raise RunnerError("repository must use owner/name form")
+    try:
+        normalized = normalize_repository(value)
+    except AnalyzerReadbackError as exc:
+        raise RunnerError("repository must use safe owner/name segments") from exc
+    parts = normalized.split("/")
     return parts[0], parts[1]
 
 

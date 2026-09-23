@@ -11,11 +11,17 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-from .analyzer_readback import build_readback, coverage
+from .analyzer_readback import (
+    AnalyzerReadbackError,
+    build_readback,
+    coverage,
+    deduplicate_findings,
+    normalize_repository,
+)
 
 _API_ROOT = "https://api.deepsource.com"
 _GRAPHQL_URL = f"{_API_ROOT}/graphql/"
-_TOKEN_ENV = "DEEPSOURCE_API_TOKEN"
+_TOKEN_ENV = "DEEPSOURCE_API_TOKEN"  # nosec B105 -- environment variable name, not a credential
 _TIMEOUT_SECONDS = 30
 _MAX_RESPONSE_BYTES = 4_194_304
 _MAX_PAGES = 100
@@ -373,7 +379,7 @@ def _issue_finding(
     return finding
 
 
-def read_full_run(
+def _read_full_run(
     client: GraphQLReader,
     *,
     repository: str,
@@ -382,6 +388,7 @@ def read_full_run(
     run_uid: str,
     observed_at: str | None = None,
 ) -> dict[str, Any]:
+    repository = normalize_repository(repository)
     observed = observed_at or _now()
     pages = 0
     checks: list[Mapping[str, Any]] = []
@@ -648,7 +655,10 @@ def read_full_run(
                     "ERROR", "DeepSource issue pagination is incomplete"
                 )
             if check_total_seen:
-                assert check_total is not None
+                if check_total is None:
+                    raise ProviderReadFailure(
+                        "ERROR", "DeepSource issue total invariant failed"
+                    )
                 provider_total += check_total
             else:
                 provider_total_known = False
@@ -721,7 +731,7 @@ def _trusted_github_comment(value: Mapping[str, Any]) -> bool:
     )
 
 
-def diff_local_from_github(
+def _diff_local_from_github(
     *,
     repository: str,
     pull_number: int,
@@ -731,6 +741,7 @@ def diff_local_from_github(
     comments: list[Mapping[str, Any]],
     observed_at: str,
 ) -> dict[str, Any]:
+    repository = normalize_repository(repository)
     owner, name = repository.split("/", 1)
     if observed_head != requested_head:
         return build_readback(
@@ -842,6 +853,7 @@ def diff_local_from_github(
             finding["category"] = category.group("value").upper()
         findings.append(finding)
     state_values = {value.lower() for value in analyzer_states.values()}
+    retained = deduplicate_findings(findings)
     if not state_values or not state_values <= {
         "success",
         "failure",
@@ -864,10 +876,10 @@ def diff_local_from_github(
             coverage_record=coverage(
                 "PARTIAL",
                 pages=1,
-                count=len(findings),
+                count=len(retained),
                 reason="ANALYZER_STATE_UNAVAILABLE",
             ),
-            findings=findings,
+            findings=retained,
             native={"analyzers": dict(sorted(analyzer_states.items()))},
         )
     if state_values & {"failure", "error"}:
@@ -890,8 +902,99 @@ def diff_local_from_github(
         observed_at=observed_at,
         run_state=run_state,
         coverage_record=coverage(
-            "COMPLETE", pages=1, count=len(findings), total=len(findings)
+            "COMPLETE", pages=1, count=len(retained), total=len(retained)
         ),
-        findings=findings,
+        findings=retained,
         native={"analyzers": dict(sorted(analyzer_states.items()))},
     )
+
+
+def read_full_run(
+    client: GraphQLReader,
+    *,
+    repository: str,
+    pull_number: int,
+    requested_head: str,
+    run_uid: str,
+    observed_at: str | None = None,
+) -> dict[str, Any]:
+    """Read one DeepSource run without letting normalization conflicts abort peers."""
+
+    try:
+        return _read_full_run(
+            client,
+            repository=repository,
+            pull_number=pull_number,
+            requested_head=requested_head,
+            run_uid=run_uid,
+            observed_at=observed_at,
+        )
+    except AnalyzerReadbackError:
+        observed = observed_at or _now()
+        return build_readback(
+            provider="deepsource",
+            adapter="deepsource-graphql/v1",
+            repository=repository,
+            pull_number=pull_number,
+            requested_head=requested_head,
+            observed_head=requested_head,
+            analysis_id=run_uid,
+            scope="FULL",
+            completeness="READBACK_UNAVAILABLE",
+            native_mode="FULL_RUN",
+            observed_at=observed,
+            run_state="UNKNOWN",
+            coverage_record=coverage(
+                "ERROR",
+                pages=0,
+                count=0,
+                reason="NORMALIZATION_ERROR",
+            ),
+            findings=[],
+        )
+
+
+def diff_local_from_github(
+    *,
+    repository: str,
+    pull_number: int,
+    requested_head: str,
+    observed_head: str,
+    statuses: list[Mapping[str, Any]],
+    comments: list[Mapping[str, Any]],
+    observed_at: str,
+) -> dict[str, Any]:
+    """Project GitHub DeepSource evidence without surfacing model conflicts."""
+
+    try:
+        return _diff_local_from_github(
+            repository=repository,
+            pull_number=pull_number,
+            requested_head=requested_head,
+            observed_head=observed_head,
+            statuses=statuses,
+            comments=comments,
+            observed_at=observed_at,
+        )
+    except AnalyzerReadbackError:
+        return build_readback(
+            provider="deepsource",
+            adapter="deepsource-github/v1",
+            repository=repository,
+            pull_number=pull_number,
+            requested_head=requested_head,
+            observed_head=requested_head,
+            analysis_id=None,
+            scope="DIFF",
+            completeness="READBACK_UNAVAILABLE",
+            native_mode="DIFF_LOCAL",
+            observed_at=observed_at,
+            run_state="UNKNOWN",
+            coverage_record=coverage(
+                "ERROR",
+                pages=0,
+                count=0,
+                reason="NORMALIZATION_ERROR",
+            ),
+            findings=[],
+        )
