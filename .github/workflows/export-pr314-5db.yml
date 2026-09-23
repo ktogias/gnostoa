@@ -1,0 +1,44 @@
+name: Export exact PR 314 head 5db
+
+on:
+  push:
+    branches:
+      - ops/pr314-source-5db
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 5dbfdede874359fd894156923448ded28e38846f
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Bind exact source identity
+        shell: bash
+        run: |
+          set -eu
+          test "$(git rev-parse HEAD)" = "5dbfdede874359fd894156923448ded28e38846f"
+          test "$(git rev-parse 'HEAD^{tree}')" = "d268272c4c43b7c167de0e5ea0373744f2478e72"
+          test -z "$(git status --porcelain)"
+      - name: Create verified Git bundle
+        shell: bash
+        run: |
+          set -eu
+          git branch --force gnostoa-export-source "5dbfdede874359fd894156923448ded28e38846f"
+          bundle="${RUNNER_TEMP}/gnostoa-pr314-5dbfdede874359fd894156923448ded28e38846f.bundle"
+          git bundle create "${bundle}" refs/heads/gnostoa-export-source
+          git bundle verify "${bundle}"
+          sha256sum "${bundle}" > "${bundle}.sha256"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gnostoa-pr314-source-5dbfdede874359fd894156923448ded28e38846f
+          path: |
+            ${{ runner.temp }}/gnostoa-pr314-5dbfdede874359fd894156923448ded28e38846f.bundle
+            ${{ runner.temp }}/gnostoa-pr314-5dbfdede874359fd894156923448ded28e38846f.bundle.sha256
+          if-no-files-found: error
+          retention-days: 1
