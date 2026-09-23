@@ -46,6 +46,40 @@ jobs:
           test -s "${bundle}"
           test -s "${bundle}.sha256"
 
+      - name: Set up trusted Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+
+      - name: Build portable locked Python 3.12 development environment
+        shell: bash
+        run: |
+          set -eu
+          destination="${RUNNER_TEMP}/python312-dev"
+          mkdir -p "${destination}"
+          cp -a "${pythonLocation}/." "${destination}/"
+          observed_prefix="$("${destination}/bin/python" -c 'import sys; print(sys.prefix)')"
+          test "${observed_prefix}" = "${destination}"
+          "${destination}/bin/python" -m pip install \
+            --disable-pip-version-check \
+            --only-binary=:all: \
+            --require-hashes \
+            -r requirements/development.lock
+          test "$("${destination}/bin/python" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')" = "3.12"
+          test "$("${destination}/bin/python" -m ruff --version)" = "ruff 0.16.0"
+          tar -C "${RUNNER_TEMP}" -czf "${RUNNER_TEMP}/gnostoa-python312-dev.tgz" python312-dev
+          sha256sum "${RUNNER_TEMP}/gnostoa-python312-dev.tgz" > "${RUNNER_TEMP}/gnostoa-python312-dev.tgz.sha256"
+
+      - name: Upload portable Python 3.12 development environment
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gnostoa-pr314-python312-dev
+          path: |
+            ${{ runner.temp }}/gnostoa-python312-dev.tgz
+            ${{ runner.temp }}/gnostoa-python312-dev.tgz.sha256
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Download exact locked Ruff wheel
         shell: bash
         env:
