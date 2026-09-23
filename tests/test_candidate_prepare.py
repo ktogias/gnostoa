@@ -73,7 +73,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
 
     @staticmethod
     def _git(root: Path, *arguments: str) -> str:
-        completed = subprocess.run(  # nosemgrep  # nosec B603
+        completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
             [GIT, *arguments],
             cwd=root,
             env=_test_env(),
@@ -1371,7 +1371,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
             environment["PATH"] = str(poison_bin) + os.pathsep + environment["PATH"]
             environment["TMPDIR"] = str(bootstrap_tmp)
             completed = subprocess.run(  # nosemgrep  # nosec B603
-                [
+                [  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
                     "sh",
                     "-s",
                     "--",
@@ -1394,8 +1394,8 @@ class CandidatePreparationContractTests(unittest.TestCase):
             self.assertFalse(marker.exists())
             self.assertEqual([], list(bootstrap_tmp.iterdir()))
 
-            rejected = subprocess.run(  # nosemgrep  # nosec B603
-                [
+            rejected = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                [  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
                     "sh",
                     "-s",
                     "--",
