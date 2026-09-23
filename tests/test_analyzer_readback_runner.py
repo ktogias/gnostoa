@@ -252,6 +252,36 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
         self.assertEqual(
             "UNAVAILABLE", readbacks["codacy-api-v3/v1"]["coverage"]["status"]
         )
+        self.assertNotIn("observed_head", readbacks["deepsource-graphql/v1"])
+        self.assertNotIn("observed_head", readbacks["codacy-api-v3/v1"])
+
+    def test_missing_deepsource_run_association_does_not_invent_observed_head(
+        self,
+    ) -> None:
+        urls = _github_urls()
+        github = _GitHubFake(
+            {
+                urls["pr"]: [_pr(), _pr()],
+                urls["statuses"]: [],
+                urls["checks"]: {"check_runs": []},
+                urls["comments"]: [],
+            }
+        )
+        bundle = runner.collect_bundle(
+            github,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            deepsource=_deepsource_fake(),
+            codacy=None,
+            observed_at=OBSERVED,
+        )
+        readbacks = {item["adapter"]: item for item in bundle["readbacks"]}
+        full = readbacks["deepsource-graphql/v1"]
+        self.assertEqual("AMBIGUOUS", full["completeness"])
+        self.assertEqual("INCOMPLETE", full["coverage"]["status"])
+        self.assertEqual("RUN_ASSOCIATION_AMBIGUOUS", full["coverage"]["reason"])
+        self.assertNotIn("observed_head", full)
 
     def test_secret_sentinel_is_rejected_before_output(self) -> None:
         with self.assertRaisesRegex(runner.RunnerError, "credential bytes"):

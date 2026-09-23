@@ -566,6 +566,41 @@ class DeepSourceAnalyzerReadbackTests(unittest.TestCase):
         self.assertEqual("ANALYZER_CHECK_NOT_COMPLETE", document["coverage"]["reason"])
         self.assertEqual([], document["findings"])
 
+    def test_full_run_malformed_check_subject_fails_closed(self) -> None:
+        run_page = _run_page()
+        del run_page["data"]["run"]["checks"]["edges"][0]["node"]["status"]
+        client = _DeepSourceFake({("run", None): run_page})
+        document = analyzer_deepsource.read_full_run(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            run_uid=RUN_UID,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("READBACK_UNAVAILABLE", document["completeness"])
+        self.assertEqual("ERROR", document["coverage"]["status"])
+        self.assertEqual("PROVIDER_ERROR", document["coverage"]["reason"])
+        self.assertNotIn("observed_head", document)
+        self.assertEqual([], document["findings"])
+
+    def test_full_run_malformed_provider_head_fallback_does_not_bind_head(
+        self,
+    ) -> None:
+        client = _DeepSourceFake({("run", None): _run_page(head="short")})
+        document = analyzer_deepsource.read_full_run(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            run_uid=RUN_UID,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("READBACK_UNAVAILABLE", document["completeness"])
+        self.assertEqual("ERROR", document["coverage"]["status"])
+        self.assertEqual("NORMALIZATION_ERROR", document["coverage"]["reason"])
+        self.assertNotIn("observed_head", document)
+
     def test_full_run_missing_run_is_ambiguous_not_unavailable(self) -> None:
         client = _DeepSourceFake({("run", None): {"data": {"run": None}}})
         document = analyzer_deepsource.read_full_run(
@@ -829,6 +864,23 @@ class DeepSourceAnalyzerReadbackTests(unittest.TestCase):
         self.assertEqual("COMPLETE", document["coverage"]["status"])
         self.assertEqual([], document["findings"])
 
+    def test_diff_local_malformed_observed_head_fallback_does_not_bind_head(
+        self,
+    ) -> None:
+        document = analyzer_deepsource.diff_local_from_github(
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            observed_head="short",
+            statuses=[],
+            comments=[],
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("READBACK_UNAVAILABLE", document["completeness"])
+        self.assertEqual("ERROR", document["coverage"]["status"])
+        self.assertEqual("NORMALIZATION_ERROR", document["coverage"]["reason"])
+        self.assertNotIn("observed_head", document)
+
     def test_multiple_github_run_ids_are_ambiguous(self) -> None:
         statuses = []
         for run in (RUN_UID, "11111111-1111-1111-1111-111111111111"):
@@ -1080,6 +1132,23 @@ class CodacyAnalyzerReadbackTests(unittest.TestCase):
         self.assertEqual("READBACK_UNAVAILABLE", document["completeness"])
         self.assertEqual("ERROR", document["coverage"]["status"])
         self.assertEqual("NORMALIZATION_ERROR", document["coverage"]["reason"])
+        self.assertNotIn("observed_head", document)
+        self.assertEqual([], document["findings"])
+
+    def test_codacy_malformed_provider_head_fallback_does_not_bind_head(self) -> None:
+        root = _codacy_root()
+        client = _CodacyFake({f"{root}/pull-requests/312": _codacy_pr(head="short")})
+        document = analyzer_codacy.read_pull_request(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("READBACK_UNAVAILABLE", document["completeness"])
+        self.assertEqual("ERROR", document["coverage"]["status"])
+        self.assertEqual("NORMALIZATION_ERROR", document["coverage"]["reason"])
+        self.assertNotIn("observed_head", document)
         self.assertEqual([], document["findings"])
 
     def test_codacy_single_page_without_pagination_is_complete(self) -> None:

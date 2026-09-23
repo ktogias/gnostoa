@@ -451,6 +451,9 @@ def _read_full_run(
                     "DeepSource check total availability changed during pagination",
                 )
             checks.extend(page_checks)
+            for check in page_checks:
+                _text(check.get("id"), "check.id")
+                _text(check.get("status"), "check.status")
             if not has_next:
                 break
         else:
@@ -937,7 +940,7 @@ def read_full_run(
             repository=repository,
             pull_number=pull_number,
             requested_head=requested_head,
-            observed_head=requested_head,
+            observed_head=None,
             analysis_id=run_uid,
             scope="FULL",
             completeness="READBACK_UNAVAILABLE",
@@ -983,7 +986,7 @@ def diff_local_from_github(
             repository=repository,
             pull_number=pull_number,
             requested_head=requested_head,
-            observed_head=requested_head,
+            observed_head=None,
             analysis_id=None,
             scope="DIFF",
             completeness="READBACK_UNAVAILABLE",

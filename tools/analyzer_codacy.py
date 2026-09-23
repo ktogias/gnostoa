@@ -622,7 +622,7 @@ def read_pull_request(
             repository=repository,
             pull_number=pull_number,
             requested_head=requested_head,
-            observed_head=requested_head,
+            observed_head=None,
             analysis_id=f"pr:{pull_number}",
             scope="DIFF",
             completeness="READBACK_UNAVAILABLE",
