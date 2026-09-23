@@ -79,10 +79,13 @@ non-hook authoring without importing a general orchestration subsystem.
    implementation. It is implementation-private and does not extend the public
    toolkit CLI. The authoritative invocation executes the wrapper bytes from the
    exact bound parent commit, not the editable candidate checkout. That trusted
-   wrapper scrubs caller Git routing/config overrides, locates the repository,
-   extracts `tools/candidate_prepare.py` from the same parent into a temporary
-   file, and executes it with `python -P`. Candidate changes to either authority
-   file therefore cannot execute before the parent authority rejects them.
+   wrapper first restricts executable lookup to trusted system locations, then
+   scrubs caller Git/Python routing/config overrides, disables Git replacement
+   objects, locates the repository, extracts `tools/candidate_prepare.py` from
+   the same parent into a temporary file, and executes it with isolated Python
+   (`-I`). Candidate `PYTHONPATH`, user-site modules, worktree executables and
+   changes to either authority file therefore cannot execute before the parent
+   authority rejects them.
    The change introducing this Decision is necessarily a bootstrap exception:
    its own pre-Decision parent does not contain this authority, so it cannot
    manufacture a trusted preparation receipt for itself. Activation begins for
