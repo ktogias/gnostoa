@@ -327,6 +327,8 @@ class AnalyzerReadbackRunnerTests(unittest.TestCase):
         self.assertNotIn("contents: write", workflow)
         self.assertNotIn("pull-requests: write", workflow)
         self.assertIn("timeout-minutes: 15", workflow)
+        self.assertIn("if: github.ref == 'refs/heads/main'", workflow)
+        self.assertIn("ref: main", workflow)
         self.assertIn("persist-credentials: false", workflow)
         self.assertIn(
             "DEEPSOURCE_API_TOKEN: ${{ secrets.DEEPSOURCE_API_TOKEN }}", workflow
