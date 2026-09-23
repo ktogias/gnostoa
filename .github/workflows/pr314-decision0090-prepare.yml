@@ -103,7 +103,7 @@ jobs:
           trusted_python="$(command -v python)"
           wrapper="${RUNNER_TEMP}/parent-prepare-candidate"
           sh "${wrapper}" verify             --parent "${PARENT_SHA}"             --tree "${prepared_tree}"             --receipt "${receipt}"             --receipt-sha256 "${receipt_sha}"             --trusted-python "${trusted_python}"             > "${RUNNER_TEMP}/pr314-receipt-verify.json"
-          git diff --binary "${PARENT_SHA}" "${prepared_tree}" > "${RUNNER_TEMP}/pr314-prepared.patch"
+          git diff --binary --full-index "${PARENT_SHA}" "${prepared_tree}" > "${RUNNER_TEMP}/pr314-prepared.patch"
           observed_prepared_diff_sha="$(sha256sum "${RUNNER_TEMP}/pr314-prepared.patch" | awk '{print $1}')"
           test "${observed_prepared_diff_sha}" = "${prepared_diff_sha}"
           {
