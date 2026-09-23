@@ -302,6 +302,7 @@ def _run_focused(
 
     assert process.stdout is not None
     assert process.stderr is not None
+    group_terminated = False
     selector = selectors.DefaultSelector()
     output = {"stdout": bytearray(), "stderr": bytearray()}
     timed_out = False
@@ -326,6 +327,7 @@ def _run_focused(
 
         if timed_out:
             _terminate_focused_process(process)
+            group_terminated = True
             raise PrepareError(
                 f"focused verification timed out after {timeout_seconds:g}s"
             )
@@ -333,6 +335,7 @@ def _run_focused(
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             _terminate_focused_process(process)
+            group_terminated = True
             raise PrepareError(
                 f"focused verification timed out after {timeout_seconds:g}s"
             )
@@ -340,6 +343,7 @@ def _run_focused(
             returncode = process.wait(timeout=remaining)
         except subprocess.TimeoutExpired as exc:
             _terminate_focused_process(process)
+            group_terminated = True
             raise PrepareError(
                 f"focused verification timed out after {timeout_seconds:g}s"
             ) from exc
@@ -347,6 +351,7 @@ def _run_focused(
         # A successful leader may leave descendants alive. End the complete
         # preparation-owned process group before mutation/style evidence is read.
         _terminate_focused_process(process)
+        group_terminated = True
         return _FocusedResult(
             returncode=returncode,
             stdout=bytes(output["stdout"]),
@@ -356,11 +361,12 @@ def _run_focused(
         # Exceptions while collecting output must not leak candidate processes.
         # Preserve an already-active primary exception if cleanup itself fails.
         active_exception = sys.exc_info()[0] is not None
-        try:
-            _terminate_focused_process(process)
-        except PrepareError:
-            if not active_exception:
-                raise
+        if not group_terminated:
+            try:
+                _terminate_focused_process(process)
+            except PrepareError:
+                if not active_exception:
+                    raise
         selector.close()
         process.stdout.close()
         process.stderr.close()
