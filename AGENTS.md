@@ -99,19 +99,64 @@ shown later in this file for preparation. A direct host invocation is a native
 fallback only when the container route is unavailable; record that reason.
 
 The preparation authority must come from the exact bound parent, never from the
-editable candidate checkout. Execute the parent wrapper bytes; that trusted
-wrapper restricts executable lookup to trusted system locations, scrubs inherited
-Git/Python routing, disables Git replacement objects, and runs the extracted
-parent `tools/candidate_prepare.py` with isolated Python (`-I`):
+editable candidate checkout. Retrieve the parent wrapper before executing it;
+the retrieval itself is part of the trust boundary, so it must use trusted
+system executable lookup, scrub caller Git routing/configuration, disable Git
+replacement objects, and check `git show` success instead of piping directly
+into a shell. Use this bootstrap at the start of each prepare/verify/release
+shell session:
 
 ```bash
 parent=<exact-40-character-parent-sha>
-git show "${parent}:ci/prepare-candidate" | \
-  sh -s -- prepare \
-    --parent "${parent}" \
-    --receipt <new-path-outside-the-worktree> \
-    --focused-profile fast
+if [ "${#parent}" -ne 40 ]; then
+  echo "ERROR: parent must be an exact 40-character commit SHA" >&2
+  exit 2
+fi
+case "${parent}" in
+  *[!0-9a-f]*)
+    echo "ERROR: parent must be an exact 40-character commit SHA" >&2
+    exit 2
+    ;;
+esac
+
+PATH=/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin
+export PATH
+git_executable="$(command -v git || true)"
+mktemp_executable="$(command -v mktemp || true)"
+if [ -z "${git_executable}" ] || [ -z "${mktemp_executable}" ]; then
+  echo "ERROR: trusted wrapper-retrieval executables are unavailable" >&2
+  exit 2
+fi
+
+parent_wrapper="$("${mktemp_executable}" /tmp/gnostoa-parent-wrapper.XXXXXX)"
+trap 'rm -f -- "$parent_wrapper"' EXIT HUP INT TERM
+if ! (
+  unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY
+  unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_INDEX_FILE GIT_CEILING_DIRECTORIES
+  unset GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_CONFIG GIT_CONFIG_PARAMETERS
+  unset GIT_EXTERNAL_DIFF GIT_TEMPLATE_DIR GIT_REPLACE_REF_BASE
+  export GIT_CONFIG_COUNT=0
+  export GIT_CONFIG_GLOBAL=/dev/null
+  export GIT_CONFIG_SYSTEM=/dev/null
+  export GIT_CONFIG_NOSYSTEM=1
+  export GIT_ATTR_NOSYSTEM=1
+  export GIT_NO_REPLACE_OBJECTS=1
+  "${git_executable}" -c core.hooksPath=/dev/null \
+    show "${parent}:ci/prepare-candidate"
+) > "${parent_wrapper}"; then
+  echo "ERROR: unable to retrieve exact-parent preparation wrapper" >&2
+  exit 2
+fi
+
+sh "${parent_wrapper}" prepare \
+  --parent "${parent}" \
+  --receipt <new-path-outside-the-worktree> \
+  --focused-profile fast
 ```
+
+The retrieved wrapper then restricts executable lookup again, scrubs inherited
+Git/Python routing, disables Git replacement objects, and runs the extracted
+parent `tools/candidate_prepare.py` with isolated Python (`-I`).
 
 If the bound parent does not contain this authority, no trusted preparation
 receipt can be issued through this route; authority evolution/bootstrap must be
@@ -176,28 +221,30 @@ prepared tree reachable until publication or explicit receipt expiry. The digest
 evidence, not producer authentication or bearer authority. To inspect/consume a
 receipt, supply the separately retained identity:
 
+After the trusted exact-parent wrapper retrieval above has populated
+`parent_wrapper` for this `parent`:
+
 ```bash
-parent=<exact-40-character-parent-sha>
-git show "${parent}:ci/prepare-candidate" | \
-  sh -s -- verify \
-    --parent "${parent}" \
-    --tree <exact-40-character-prepared-tree-sha> \
-    --receipt <path-outside-the-worktree> \
-    --receipt-sha256 <trusted-sha256-from-prepare>
+sh "${parent_wrapper}" verify \
+  --parent "${parent}" \
+  --tree <exact-40-character-prepared-tree-sha> \
+  --receipt <path-outside-the-worktree> \
+  --receipt-sha256 <trusted-sha256-from-prepare>
 ```
 
 A self-consistent receipt with a caller-chosen digest must never authorize a
 provider write. After publication or explicit receipt expiry, release the exact
 retained tree only through:
 
+After performing the same trusted exact-parent wrapper retrieval for this
+`parent`:
+
 ```bash
-parent=<exact-40-character-parent-sha>
-git show "${parent}:ci/prepare-candidate" | \
-  sh -s -- release \
-    --parent "${parent}" \
-    --tree <exact-40-character-prepared-tree-sha> \
-    --receipt <path-outside-the-worktree> \
-    --receipt-sha256 <trusted-sha256-from-prepare>
+sh "${parent_wrapper}" release \
+  --parent "${parent}" \
+  --tree <exact-40-character-prepared-tree-sha> \
+  --receipt <path-outside-the-worktree> \
+  --receipt-sha256 <trusted-sha256-from-prepare>
 ```
 
 This slice intentionally has no provider-write adapter; Git-data or API ref

@@ -114,7 +114,7 @@ if [ -n "$trusted_python" ]; then
   python_executable="$resolved_directory/${trusted_python##*/}"
 fi
 
-temporary="$("$mktemp_executable" "${TMPDIR:-/tmp}/gnostoa-candidate-prepare.XXXXXX.py")"
+temporary="$("$mktemp_executable" "${TMPDIR:-/tmp}/gnostoa-candidate-prepare.XXXXXX")"
 trap 'rm -f -- "$temporary"' EXIT HUP INT TERM
 
 if ! "$git_executable" -c core.hooksPath=/dev/null \

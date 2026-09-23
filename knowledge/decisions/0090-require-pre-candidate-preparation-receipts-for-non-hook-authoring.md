@@ -186,8 +186,15 @@ non-hook authoring without importing a general orchestration subsystem.
    workspace, reruns `./ci/style --check` against the exact normalized tree and
    executes `git diff --cached --check`.
 6. Run the exact-parent `ci/prepare-candidate` wrapper bytes from the
-   recommended Development Container by default (for example, `git show
-   "$parent:ci/prepare-candidate" | sh -s -- prepare ...`). The intended route is
+   recommended Development Container by default. Wrapper retrieval is itself a
+   trust-boundary operation: resolve Git/mktemp from the fixed trusted system
+   `PATH`, require an exact 40-character parent SHA, scrub inherited Git
+   repository routing and caller configuration, set `GIT_NO_REPLACE_OBJECTS=1`,
+   retrieve `$parent:ci/prepare-candidate` into a create-only temporary file,
+   check the `git show` exit status, and only then execute that file with
+   `sh ... prepare`. Do not pipe `git show` directly into `sh`, because
+   replacement refs apply before the wrapper can scrub Git state and a pipeline
+   can otherwise mask retrieval failure. The intended route is
    `.devcontainer/devcontainer.json`, whose
    writable workspace mount and `updateRemoteUserUID` setting support preparation
    writes without a `safe.directory` override. The read-only one-shot verification

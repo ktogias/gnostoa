@@ -1372,6 +1372,27 @@ class CandidatePreparationContractTests(unittest.TestCase):
             self.assertIn(f"executable={trusted_python}".encode(), completed.stdout)
             self.assertIn(b"in_venv=True", completed.stdout)
 
+    def test_documented_parent_wrapper_retrieval_is_hardened(self) -> None:
+        agents_text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        decision_text = (
+            ROOT
+            / "knowledge"
+            / "decisions"
+            / "0090-require-pre-candidate-preparation-receipts-for-non-hook-authoring.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn(
+            'git show "${parent}:ci/prepare-candidate" |',
+            agents_text,
+        )
+        self.assertNotIn(
+            '"$parent:ci/prepare-candidate" | sh -s -- prepare',
+            decision_text,
+        )
+        self.assertIn("GIT_NO_REPLACE_OBJECTS=1", agents_text)
+        self.assertIn("GIT_NO_REPLACE_OBJECTS=1", decision_text)
+        self.assertIn(') > "${parent_wrapper}"; then', agents_text)
+
     def test_parent_wrapper_executes_parent_preparation_authority(self) -> None:
         wrapper = ROOT / "ci" / "prepare-candidate"
         self.assertTrue(wrapper.is_file())
@@ -1379,6 +1400,8 @@ class CandidatePreparationContractTests(unittest.TestCase):
         self.assertNotIn("python -m tools.candidate_prepare", wrapper_text)
         self.assertIn('show "${parent}:tools/candidate_prepare.py"', wrapper_text)
         self.assertIn('"$python_executable" -I "$temporary"', wrapper_text)
+        self.assertIn("gnostoa-candidate-prepare.XXXXXX", wrapper_text)
+        self.assertNotIn("XXXXXX.py", wrapper_text)
         self.assertNotIn('exec "$python_executable"', wrapper_text)
 
         with tempfile.TemporaryDirectory() as directory:
