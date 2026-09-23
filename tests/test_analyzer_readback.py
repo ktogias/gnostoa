@@ -1,0 +1,1194 @@
+from __future__ import annotations
+
+import inspect
+import json
+import unittest
+import urllib.request
+from collections.abc import Mapping
+from typing import Any
+
+from tools import analyzer_codacy, analyzer_deepsource, analyzer_readback
+
+HEAD = "a" * 40
+OTHER_HEAD = "b" * 40
+RUN_UID = "0c29b163-9e8e-43be-bd8b-a93254aa2748"
+OBSERVED = "2026-09-23T13:30:00Z"
+
+
+class _DeepSourceFake:
+    def __init__(self, responses: dict[tuple[str, str | None], Any]) -> None:
+        self.responses = responses
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    def graphql(self, query: str, variables: Mapping[str, Any]) -> Mapping[str, Any]:
+        variables_dict = dict(variables)
+        self.calls.append((query, variables_dict))
+        if "AnalyzerRun" in query:
+            key = ("run", variables_dict.get("cursor"))
+        else:
+            key = (str(variables_dict.get("id")), variables_dict.get("cursor"))
+        value = self.responses[key]
+        if isinstance(value, BaseException):
+            raise value
+        return value
+
+
+class _CodacyFake:
+    def __init__(self, responses: dict[str, Any]) -> None:
+        self.responses = responses
+        self.calls: list[str] = []
+
+    def get(self, url: str) -> Mapping[str, Any]:
+        self.calls.append(url)
+        value = self.responses[url]
+        if isinstance(value, list):
+            if not value:
+                raise RuntimeError(f"no remaining fake responses for {url}")
+            value = value.pop(0)
+        if isinstance(value, BaseException):
+            raise value
+        return value
+
+
+def _run_page(
+    *,
+    head: str = HEAD,
+    cursor: str | None = None,
+    run_status: str = "FAILURE",
+    check_status: str = "FAILURE",
+) -> dict[str, Any]:
+    return {
+        "data": {
+            "run": {
+                "id": "run-node",
+                "runUid": RUN_UID,
+                "commitOid": head,
+                "baseOid": "c" * 40,
+                "status": run_status,
+                "repository": {
+                    "name": "gnostoa",
+                    "account": {"login": "ktogias", "vcsProvider": "GITHUB"},
+                },
+                "checks": {
+                    "totalCount": 1,
+                    "edges": [
+                        {
+                            "node": {
+                                "id": "check-python",
+                                "status": check_status,
+                                "analyzer": {"shortcode": "python"},
+                            }
+                        }
+                    ],
+                    "pageInfo": {
+                        "hasNextPage": cursor is not None,
+                        "endCursor": cursor,
+                    },
+                },
+            }
+        }
+    }
+
+
+def _issue(issue_id: str, line: int) -> dict[str, Any]:
+    return {
+        "id": issue_id,
+        "path": "tools/example.py",
+        "severity": "MAJOR",
+        "category": "TYPECHECK",
+        "title": f"Issue {issue_id}",
+        "explanation": "Details",
+        "isSuppressed": False,
+        "beginLine": line,
+        "beginColumn": 1,
+        "endLine": line,
+        "endColumn": 4,
+        "shortcode": "PY-TYPE",
+        "issue": {
+            "shortcode": "PY-TYPE",
+            "title": "Type issue",
+            "severity": "MAJOR",
+            "category": "TYPECHECK",
+        },
+    }
+
+
+def _check_page(
+    issues: list[dict[str, Any]],
+    *,
+    total: int,
+    cursor: str | None,
+    status: str = "FAILURE",
+) -> dict[str, Any]:
+    return {
+        "data": {
+            "node": {
+                "id": "check-python",
+                "status": status,
+                "analyzer": {"shortcode": "python"},
+                "issues": {
+                    "totalCount": total,
+                    "edges": [{"node": item} for item in issues],
+                    "pageInfo": {
+                        "hasNextPage": cursor is not None,
+                        "endCursor": cursor,
+                    },
+                },
+            }
+        }
+    }
+
+
+def _codacy_root() -> str:
+    return (
+        "https://app.codacy.com/api/v3/analysis/organizations/gh/ktogias/"
+        "repositories/gnostoa"
+    )
+
+
+def _codacy_issues_url(*, potential: bool, cursor: str | None = None) -> str:
+    query = f"status=new&onlyPotential={'true' if potential else 'false'}"
+    if cursor is not None:
+        query += f"&cursor={cursor}"
+    return f"{_codacy_root()}/pull-requests/312/issues?{query}"
+
+
+def _codacy_pr(head: str = HEAD) -> dict[str, Any]:
+    return {
+        "isUpToStandards": False,
+        "isAnalysing": False,
+        "pullRequest": {
+            "number": 312,
+            "repository": "gnostoa",
+            "headCommitSha": head,
+            "gitHref": "https://github.com/ktogias/gnostoa/pull/312",
+        },
+    }
+
+
+def _codacy_issue(issue_id: str, line: int) -> dict[str, Any]:
+    return {
+        "deltaType": "Added",
+        "commitIssue": {
+            "issueId": issue_id,
+            "resultDataId": line * 100,
+            "patternInfo": {
+                "id": "RUF001",
+                "category": "CodeStyle",
+                "level": "Warning",
+                "severityLevel": "High",
+                "title": "Formatting issue",
+            },
+            "filePath": "tools/example.py",
+            "lineNumber": line,
+            "message": f"Codacy {issue_id}",
+            "language": "Python",
+            "toolInfo": {"name": "Ruff", "uuid": "ruff-tool"},
+        },
+    }
+
+
+class AnalyzerReadbackModelTests(unittest.TestCase):
+    def test_requested_head_must_be_exact_sha(self) -> None:
+        with self.assertRaisesRegex(
+            analyzer_readback.AnalyzerReadbackError,
+            "requested head must be an exact 40-character SHA",
+        ):
+            analyzer_readback.build_readback(
+                provider="synthetic",
+                adapter="fixture/v1",
+                repository="example/project",
+                pull_number=1,
+                requested_head="abc",
+                observed_head=None,
+                analysis_id=None,
+                scope="FULL",
+                completeness="READBACK_UNAVAILABLE",
+                native_mode="FULL_RUN",
+                observed_at=OBSERVED,
+                run_state="UNKNOWN",
+                coverage_record=analyzer_readback.coverage(
+                    "UNAVAILABLE", pages=0, count=0, reason="FIXTURE"
+                ),
+                findings=[],
+            )
+
+    def test_complete_coverage_rejects_provider_total_disagreement(self) -> None:
+        with self.assertRaisesRegex(
+            analyzer_readback.AnalyzerReadbackError,
+            "coverage count disagrees with provider total",
+        ):
+            analyzer_readback.coverage("COMPLETE", pages=1, count=1, total=2)
+
+    def test_duplicate_provider_identity_collapses_and_retains_provenance(self) -> None:
+        common = {
+            "id": "provider-1",
+            "message": "same issue",
+            "path": "a.py",
+            "range": {"start_line": 1, "end_line": 1},
+        }
+        findings = analyzer_readback.deduplicate_findings(
+            [
+                {
+                    **common,
+                    "provenance": [
+                        {"surface": "github-inline", "reference": "comment:1"}
+                    ],
+                },
+                {
+                    **common,
+                    "provenance": [{"surface": "provider-api", "reference": "issue:1"}],
+                },
+            ]
+        )
+        self.assertEqual(1, len(findings))
+        self.assertEqual(
+            ["github-inline", "provider-api"],
+            [item["surface"] for item in findings[0]["provenance"]],
+        )
+
+    def test_synthetic_third_provider_uses_common_model_without_provider_branch(
+        self,
+    ) -> None:
+        document = analyzer_readback.build_readback(
+            provider="synthetic-analyzer",
+            adapter="fixture/v1",
+            repository="example/project",
+            pull_number=9,
+            requested_head=HEAD,
+            observed_head=HEAD,
+            analysis_id="run-9",
+            scope="FULL",
+            completeness="FULL_RUN",
+            native_mode="COMPLETE_SCAN",
+            observed_at=OBSERVED,
+            run_state="SUCCESS",
+            coverage_record=analyzer_readback.coverage(
+                "COMPLETE", pages=1, count=1, total=1
+            ),
+            findings=[{"id": "x", "message": "fixture"}],
+        )
+        self.assertEqual("synthetic-analyzer", document["provider"])
+        source = inspect.getsource(analyzer_readback)
+        self.assertNotIn('provider == "deepsource"', source)
+        self.assertNotIn('provider == "codacy"', source)
+
+    def test_full_run_completeness_requires_complete_coverage(self) -> None:
+        with self.assertRaisesRegex(
+            analyzer_readback.AnalyzerReadbackError,
+            "FULL_RUN requires COMPLETE coverage",
+        ):
+            analyzer_readback.build_readback(
+                provider="synthetic",
+                adapter="fixture/v1",
+                repository="example/project",
+                pull_number=1,
+                requested_head=HEAD,
+                observed_head=HEAD,
+                analysis_id="run",
+                scope="FULL",
+                completeness="FULL_RUN",
+                native_mode="COMPLETE_SCAN",
+                observed_at=OBSERVED,
+                run_state="SUCCESS",
+                coverage_record=analyzer_readback.coverage(
+                    "PARTIAL", pages=1, count=0, reason="TRUNCATED"
+                ),
+                findings=[],
+            )
+
+    def test_ambiguous_completeness_requires_incomplete_subject_coverage(self) -> None:
+        with self.assertRaisesRegex(
+            analyzer_readback.AnalyzerReadbackError,
+            "AMBIGUOUS requires INCOMPLETE coverage",
+        ):
+            analyzer_readback.build_readback(
+                provider="synthetic",
+                adapter="fixture/v1",
+                repository="example/project",
+                pull_number=1,
+                requested_head=HEAD,
+                observed_head=OTHER_HEAD,
+                analysis_id="run",
+                scope="FULL",
+                completeness="AMBIGUOUS",
+                native_mode="COMPLETE_SCAN",
+                observed_at=OBSERVED,
+                run_state="SUCCESS",
+                coverage_record=analyzer_readback.coverage(
+                    "ERROR", pages=1, count=0, reason="MISMATCH"
+                ),
+                findings=[],
+            )
+
+    def test_auth_unavailable_completeness_rejects_complete_coverage(self) -> None:
+        with self.assertRaisesRegex(
+            analyzer_readback.AnalyzerReadbackError,
+            "AUTH_UNAVAILABLE requires UNAVAILABLE coverage",
+        ):
+            analyzer_readback.build_readback(
+                provider="synthetic",
+                adapter="fixture/v1",
+                repository="example/project",
+                pull_number=1,
+                requested_head=HEAD,
+                observed_head=HEAD,
+                analysis_id="run",
+                scope="FULL",
+                completeness="AUTH_UNAVAILABLE",
+                native_mode="COMPLETE_SCAN",
+                observed_at=OBSERVED,
+                run_state="SUCCESS",
+                coverage_record=analyzer_readback.coverage(
+                    "COMPLETE", pages=1, count=0, total=0
+                ),
+                findings=[],
+            )
+
+
+class DeepSourceAnalyzerReadbackTests(unittest.TestCase):
+    def test_full_run_uses_exact_run_and_complete_issue_pagination(self) -> None:
+        client = _DeepSourceFake(
+            {
+                ("run", None): _run_page(),
+                ("check-python", None): _check_page(
+                    [_issue("issue-1", 10)], total=2, cursor="next"
+                ),
+                ("check-python", "next"): _check_page(
+                    [_issue("issue-2", 20)], total=2, cursor=None
+                ),
+            }
+        )
+        document = analyzer_deepsource.read_full_run(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            run_uid=RUN_UID,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("FULL", document["scope"])
+        self.assertEqual("FULL_RUN", document["completeness"])
+        self.assertEqual("FULL_RUN", document["native_mode"])
+        self.assertEqual("COMPLETE", document["coverage"]["status"])
+        self.assertEqual(2, document["coverage"]["count"])
+        self.assertEqual(2, document["coverage"]["total"])
+        self.assertEqual(3, document["coverage"]["pages"])
+        self.assertEqual(
+            ["issue-1", "issue-2"], [x["id"] for x in document["findings"]]
+        )
+
+    def test_full_run_accepts_exhausted_relay_pages_without_total_count(self) -> None:
+        run_page = _run_page()
+        run_page["data"]["run"]["checks"]["totalCount"] = None
+        issue_page = _check_page([_issue("issue-1", 10)], total=1, cursor=None)
+        issue_page["data"]["node"]["issues"]["totalCount"] = None
+        client = _DeepSourceFake(
+            {
+                ("run", None): run_page,
+                ("check-python", None): issue_page,
+            }
+        )
+        document = analyzer_deepsource.read_full_run(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            run_uid=RUN_UID,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("FULL_RUN", document["completeness"])
+        self.assertEqual("COMPLETE", document["coverage"]["status"])
+        self.assertEqual(1, document["coverage"]["count"])
+        self.assertNotIn("total", document["coverage"])
+        self.assertEqual(["issue-1"], [item["id"] for item in document["findings"]])
+
+    def test_full_run_pending_analysis_is_not_complete(self) -> None:
+        client = _DeepSourceFake(
+            {
+                ("run", None): _run_page(run_status="PENDING"),
+                ("check-python", None): _check_page([], total=0, cursor=None),
+            }
+        )
+        document = analyzer_deepsource.read_full_run(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            run_uid=RUN_UID,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("PARTIAL", document["coverage"]["status"])
+        self.assertEqual("ANALYSIS_RUN_NOT_COMPLETE", document["coverage"]["reason"])
+        self.assertEqual("PENDING", document["run_state"])
+        self.assertEqual([], document["findings"])
+
+    def test_full_run_ready_check_is_not_complete(self) -> None:
+        client = _DeepSourceFake(
+            {
+                ("run", None): _run_page(check_status="READY"),
+                ("check-python", None): _check_page(
+                    [], total=0, cursor=None, status="READY"
+                ),
+            }
+        )
+        document = analyzer_deepsource.read_full_run(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            run_uid=RUN_UID,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("PARTIAL", document["coverage"]["status"])
+        self.assertEqual("ANALYZER_CHECK_NOT_COMPLETE", document["coverage"]["reason"])
+        self.assertEqual([], document["findings"])
+
+    def test_full_run_missing_run_is_ambiguous_not_unavailable(self) -> None:
+        client = _DeepSourceFake({("run", None): {"data": {"run": None}}})
+        document = analyzer_deepsource.read_full_run(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            run_uid=RUN_UID,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("AMBIGUOUS", document["completeness"])
+        self.assertEqual("INCOMPLETE", document["coverage"]["status"])
+        self.assertEqual("RUN_ASSOCIATION_AMBIGUOUS", document["coverage"]["reason"])
+        self.assertNotIn("observed_head", document)
+        self.assertEqual([], document["findings"])
+
+    def test_full_run_rejects_stale_returned_commit(self) -> None:
+        client = _DeepSourceFake({("run", None): _run_page(head=OTHER_HEAD)})
+        document = analyzer_deepsource.read_full_run(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            run_uid=RUN_UID,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("AMBIGUOUS", document["completeness"])
+        self.assertEqual("AMBIGUOUS", document["completeness"])
+        self.assertEqual("INCOMPLETE", document["coverage"]["status"])
+        self.assertEqual("SUBJECT_MISMATCH", document["coverage"]["reason"])
+        self.assertEqual(OTHER_HEAD, document["observed_head"])
+        self.assertEqual([], document["findings"])
+
+    def test_second_issue_page_failure_is_not_promoted_to_full_complete(self) -> None:
+        client = _DeepSourceFake(
+            {
+                ("run", None): _run_page(),
+                ("check-python", None): _check_page(
+                    [_issue("issue-1", 10)], total=2, cursor="next"
+                ),
+                ("check-python", "next"): analyzer_deepsource.ProviderReadFailure(
+                    "UNAVAILABLE", "network unavailable"
+                ),
+            }
+        )
+        document = analyzer_deepsource.read_full_run(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            run_uid=RUN_UID,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("READBACK_UNAVAILABLE", document["completeness"])
+        self.assertEqual("UNAVAILABLE", document["coverage"]["status"])
+        self.assertEqual("READBACK_UNAVAILABLE", document["coverage"]["reason"])
+        self.assertEqual(1, document["coverage"]["count"])
+        self.assertEqual("FULL_RUN", document["native_mode"])
+
+    def test_github_native_projection_rejects_stale_status_subject(self) -> None:
+        document = analyzer_deepsource.diff_local_from_github(
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            observed_head=OTHER_HEAD,
+            statuses=[],
+            comments=[],
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("INCOMPLETE", document["coverage"]["status"])
+        self.assertEqual("SUBJECT_MISMATCH", document["coverage"]["reason"])
+        self.assertEqual(OTHER_HEAD, document["observed_head"])
+
+    def test_github_native_projection_remains_diff_local(self) -> None:
+        statuses = [
+            {
+                "context": "DeepSource: Python",
+                "source_kind": "commit_status",
+                "creator_login": "deepsource-io[bot]",
+                "creator_type": "Bot",
+                "state": "failure",
+                "target_url": (
+                    "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
+                    f"{RUN_UID}/python/"
+                ),
+            }
+        ]
+        comments = [
+            {
+                "body": (
+                    "<!-- DeepSource: id=Q2hlY2tJc3N1ZTp0ZXN0 -->\n"
+                    "<h3><picture></picture>Function is missing a return type annotation</h3>\n"
+                    "severity_major.svg category_typecheck.svg"
+                ),
+                "path": "tools/example.py",
+                "line": 7,
+                "commit_id": HEAD,
+                "url": "https://github.com/ktogias/gnostoa/pull/312#discussion_r1",
+                "author_login": "deepsource-io[bot]",
+                "author_type": "Bot",
+            }
+        ]
+        document = analyzer_deepsource.diff_local_from_github(
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            observed_head=HEAD,
+            statuses=statuses,
+            comments=comments,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("DIFF", document["scope"])
+        self.assertEqual("DIFF_LOCAL", document["completeness"])
+        self.assertEqual("DIFF_LOCAL", document["native_mode"])
+        self.assertEqual("COMPLETE", document["coverage"]["status"])
+        self.assertEqual(RUN_UID, document["analysis_id"])
+        self.assertEqual("TYPECHECK", document["findings"][0]["category"])
+        self.assertEqual("MAJOR", document["findings"][0]["severity"])
+
+    def test_github_native_projection_keeps_latest_status_per_analyzer(self) -> None:
+        statuses = [
+            {
+                "context": "DeepSource: Python",
+                "source_kind": "commit_status",
+                "creator_login": "deepsource-io[bot]",
+                "creator_type": "Bot",
+                "state": "success",
+                "target_url": (
+                    "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
+                    f"{RUN_UID}/python/"
+                ),
+            },
+            {
+                "context": "DeepSource: Python",
+                "source_kind": "commit_status",
+                "creator_login": "deepsource-io[bot]",
+                "creator_type": "Bot",
+                "state": "pending",
+                "target_url": (
+                    "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
+                    f"{RUN_UID}/python/"
+                ),
+            },
+        ]
+        document = analyzer_deepsource.diff_local_from_github(
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            observed_head=HEAD,
+            statuses=statuses,
+            comments=[],
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("SUCCESS", document["run_state"])
+        self.assertEqual({"python": "success"}, document["native"]["analyzers"])
+
+    def test_github_native_projection_excludes_stale_inline_comments(self) -> None:
+        statuses = [
+            {
+                "context": "DeepSource: Python",
+                "source_kind": "commit_status",
+                "creator_login": "deepsource-io[bot]",
+                "creator_type": "Bot",
+                "state": "success",
+                "target_url": (
+                    "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
+                    f"{RUN_UID}/python/"
+                ),
+            }
+        ]
+        comments = [
+            {
+                "body": "<!-- DeepSource: id=stale -->\n<h3>Stale issue</h3>",
+                "path": "tools/old.py",
+                "line": 3,
+                "commit_id": OTHER_HEAD,
+                "url": "https://github.com/ktogias/gnostoa/pull/312#discussion_stale",
+                "author_login": "deepsource-io[bot]",
+                "author_type": "Bot",
+            }
+        ]
+        document = analyzer_deepsource.diff_local_from_github(
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            observed_head=HEAD,
+            statuses=statuses,
+            comments=comments,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("COMPLETE", document["coverage"]["status"])
+        self.assertEqual([], document["findings"])
+
+    def test_github_native_projection_rejects_spoofed_run_status_producer(self) -> None:
+        statuses = [
+            {
+                "context": "DeepSource: Python",
+                "state": "success",
+                "target_url": (
+                    "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
+                    f"{RUN_UID}/python/"
+                ),
+                "source_kind": "commit_status",
+                "creator_login": "attacker",
+                "creator_type": "User",
+            }
+        ]
+        document = analyzer_deepsource.diff_local_from_github(
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            observed_head=HEAD,
+            statuses=statuses,
+            comments=[],
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("AMBIGUOUS", document["completeness"])
+        self.assertEqual("INCOMPLETE", document["coverage"]["status"])
+        self.assertEqual("RUN_ASSOCIATION_AMBIGUOUS", document["coverage"]["reason"])
+        self.assertNotIn("analysis_id", document)
+
+    def test_github_native_projection_rejects_spoofed_inline_comment_producer(
+        self,
+    ) -> None:
+        statuses = [
+            {
+                "context": "DeepSource: Python",
+                "state": "success",
+                "target_url": (
+                    "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
+                    f"{RUN_UID}/python/"
+                ),
+                "source_kind": "commit_status",
+                "creator_login": "deepsource-io[bot]",
+                "creator_type": "Bot",
+            }
+        ]
+        comments = [
+            {
+                "body": (
+                    "<!-- DeepSource: id=spoofed -->\n"
+                    "<h3><picture></picture>Forged DeepSource finding</h3>"
+                ),
+                "path": "tools/example.py",
+                "line": 7,
+                "commit_id": HEAD,
+                "url": "https://github.com/ktogias/gnostoa/pull/312#discussion_spoofed",
+                "author_login": "attacker",
+                "author_type": "User",
+            }
+        ]
+        document = analyzer_deepsource.diff_local_from_github(
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            observed_head=HEAD,
+            statuses=statuses,
+            comments=comments,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("COMPLETE", document["coverage"]["status"])
+        self.assertEqual([], document["findings"])
+
+    def test_multiple_github_run_ids_are_ambiguous(self) -> None:
+        statuses = []
+        for run in (RUN_UID, "11111111-1111-1111-1111-111111111111"):
+            statuses.append(
+                {
+                    "context": "DeepSource: Python",
+                    "source_kind": "commit_status",
+                    "creator_login": "deepsource-io[bot]",
+                    "creator_type": "Bot",
+                    "state": "success",
+                    "target_url": (
+                        "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
+                        f"{run}/python/"
+                    ),
+                }
+            )
+        document = analyzer_deepsource.diff_local_from_github(
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            observed_head=HEAD,
+            statuses=statuses,
+            comments=[],
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("AMBIGUOUS", document["completeness"])
+        self.assertEqual("INCOMPLETE", document["coverage"]["status"])
+        self.assertEqual("RUN_ASSOCIATION_AMBIGUOUS", document["coverage"]["reason"])
+
+    def test_unknown_github_analyzer_state_is_partial_not_success(self) -> None:
+        statuses = [
+            {
+                "context": "DeepSource: Python",
+                "source_kind": "commit_status",
+                "creator_login": "deepsource-io[bot]",
+                "creator_type": "Bot",
+                "state": "neutral",
+                "target_url": (
+                    "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
+                    f"{RUN_UID}/python/"
+                ),
+            }
+        ]
+        document = analyzer_deepsource.diff_local_from_github(
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            observed_head=HEAD,
+            statuses=statuses,
+            comments=[],
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("PARTIAL", document["coverage"]["status"])
+        self.assertEqual("ANALYZER_STATE_UNAVAILABLE", document["coverage"]["reason"])
+        self.assertEqual("UNKNOWN", document["run_state"])
+
+    def test_deepsource_api_url_rejects_non_default_and_malformed_ports(self) -> None:
+        for url in (
+            "https://api.deepsource.com:8443/graphql/",
+            "https://api.deepsource.com:not-a-port/graphql/",
+        ):
+            with self.subTest(url=url):
+                with self.assertRaises(analyzer_deepsource.ProviderReadFailure):
+                    analyzer_deepsource._validate_api_url(url)
+
+    def test_deepsource_redirect_reauthenticates_only_same_origin(self) -> None:
+        handler = analyzer_deepsource._DeepSourceRedirectHandler()
+        request = urllib.request.Request("https://api.deepsource.com/graphql/")
+        request.add_unredirected_header("Authorization", "Bearer secret-value")
+        redirected = handler.redirect_request(
+            request,
+            None,
+            302,
+            "Found",
+            {},
+            "https://api.deepsource.com/graphql/?page=2",
+        )
+        if redirected is None:
+            self.fail("same-origin redirect was unexpectedly refused")
+        self.assertEqual("Bearer secret-value", redirected.get_header("Authorization"))
+
+    def test_deepsource_redirect_cannot_leak_authorization_off_origin(self) -> None:
+        handler = analyzer_deepsource._DeepSourceRedirectHandler()
+        request = urllib.request.Request("https://api.deepsource.com/graphql/")
+        request.add_unredirected_header("Authorization", "Bearer secret-value")
+        with self.assertRaises(analyzer_deepsource.ProviderReadFailure):
+            handler.redirect_request(
+                request,
+                None,
+                302,
+                "Found",
+                {},
+                "https://example.invalid/steal",
+            )
+
+    def test_deepsource_missing_token_is_explicit_and_secret_never_serializes(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(
+            analyzer_deepsource.ProviderReadFailure,
+            "authentication unavailable",
+        ) as raised:
+            analyzer_deepsource.DeepSourceGraphQLClient("")
+        self.assertNotIn("token", str(raised.exception).lower())
+
+
+class CodacyAnalyzerReadbackTests(unittest.TestCase):
+    def test_codacy_exact_head_and_cursor_pagination_are_complete(self) -> None:
+        root = _codacy_root()
+        confirmed_first = _codacy_issues_url(potential=False)
+        confirmed_second = _codacy_issues_url(potential=False, cursor="next")
+        potential = _codacy_issues_url(potential=True)
+        client = _CodacyFake(
+            {
+                f"{root}/pull-requests/312": _codacy_pr(),
+                confirmed_first: {
+                    "analyzed": True,
+                    "data": [_codacy_issue("codacy-1", 4)],
+                    "pagination": {"cursor": "next", "limit": 1000, "total": 2},
+                },
+                confirmed_second: {
+                    "analyzed": True,
+                    "data": [_codacy_issue("codacy-2", 8)],
+                    "pagination": {"limit": 1000, "total": 2},
+                },
+                potential: {
+                    "analyzed": True,
+                    "data": [_codacy_issue("codacy-p1", 12)],
+                    "pagination": {"limit": 1000, "total": 1},
+                },
+            }
+        )
+        document = analyzer_codacy.read_pull_request(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("FULL_RUN", document["completeness"])
+        self.assertEqual("COMPLETE", document["coverage"]["status"])
+        self.assertEqual(3, document["coverage"]["count"])
+        self.assertEqual(5, document["coverage"]["pages"])
+        self.assertEqual(
+            ["codacy-1", "codacy-2", "codacy-p1"],
+            [x["id"] for x in document["findings"]],
+        )
+        self.assertIn(confirmed_first, client.calls)
+        self.assertIn(potential, client.calls)
+        potential_finding = next(
+            item for item in document["findings"] if item["id"] == "codacy-p1"
+        )
+        self.assertTrue(potential_finding["native"]["potential"])
+
+    def test_codacy_current_api_origin_and_native_issue_identities_are_retained(
+        self,
+    ) -> None:
+        root = _codacy_root()
+        self.assertTrue(root.startswith("https://app.codacy.com/api/v3/"))
+        client = _CodacyFake(
+            {
+                f"{root}/pull-requests/312": _codacy_pr(),
+                _codacy_issues_url(potential=False): {
+                    "analyzed": True,
+                    "data": [_codacy_issue("issue-uuid-1", 4)],
+                    "pagination": {"total": 1},
+                },
+                _codacy_issues_url(potential=True): {
+                    "analyzed": True,
+                    "data": [],
+                    "pagination": {"total": 0},
+                },
+            }
+        )
+        document = analyzer_codacy.read_pull_request(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual(len(client.calls), document["coverage"]["pages"])
+        finding = document["findings"][0]
+        self.assertEqual("issue-uuid-1", finding["id"])
+        self.assertEqual("issue-uuid-1", finding["native"]["issue_id"])
+        self.assertEqual(400, finding["native"]["result_data_id"])
+        self.assertEqual("Ruff", finding["native"]["tool_name"])
+        self.assertEqual("ruff-tool", finding["native"]["tool_uuid"])
+
+    def test_codacy_single_page_without_pagination_is_complete(self) -> None:
+        root = _codacy_root()
+        client = _CodacyFake(
+            {
+                f"{root}/pull-requests/312": _codacy_pr(),
+                _codacy_issues_url(potential=False): {
+                    "analyzed": True,
+                    "data": [],
+                },
+                _codacy_issues_url(potential=True): {
+                    "analyzed": True,
+                    "data": [],
+                },
+            }
+        )
+        document = analyzer_codacy.read_pull_request(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("FULL_RUN", document["completeness"])
+        self.assertEqual("COMPLETE", document["coverage"]["status"])
+        self.assertEqual(0, document["coverage"]["count"])
+
+    def test_codacy_cursor_exhaustion_can_establish_completeness_without_total(
+        self,
+    ) -> None:
+        root = _codacy_root()
+        client = _CodacyFake(
+            {
+                f"{root}/pull-requests/312": _codacy_pr(),
+                _codacy_issues_url(potential=False): {
+                    "analyzed": True,
+                    "data": [_codacy_issue("codacy-1", 4)],
+                    "pagination": {},
+                },
+                _codacy_issues_url(potential=True): {
+                    "analyzed": True,
+                    "data": [],
+                    "pagination": {},
+                },
+            }
+        )
+        document = analyzer_codacy.read_pull_request(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("COMPLETE", document["coverage"]["status"])
+        self.assertNotIn("total", document["coverage"])
+        self.assertEqual(["codacy-1"], [item["id"] for item in document["findings"]])
+
+    def test_codacy_head_change_during_readback_discards_unbound_findings(self) -> None:
+        root = _codacy_root()
+        confirmed = _codacy_issues_url(potential=False)
+        potential = _codacy_issues_url(potential=True)
+        pr_url = f"{root}/pull-requests/312"
+        client = _CodacyFake(
+            {
+                pr_url: [_codacy_pr(), _codacy_pr(OTHER_HEAD)],
+                confirmed: {
+                    "analyzed": True,
+                    "data": [_codacy_issue("codacy-1", 4)],
+                    "pagination": {"limit": 1000, "total": 1},
+                },
+                potential: {
+                    "analyzed": True,
+                    "data": [],
+                    "pagination": {"limit": 1000, "total": 0},
+                },
+            }
+        )
+        document = analyzer_codacy.read_pull_request(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("AMBIGUOUS", document["completeness"])
+        self.assertEqual("INCOMPLETE", document["coverage"]["status"])
+        self.assertEqual(
+            "SUBJECT_CHANGED_DURING_READBACK", document["coverage"]["reason"]
+        )
+        self.assertEqual(OTHER_HEAD, document["observed_head"])
+        self.assertEqual([], document["findings"])
+
+    def test_codacy_stale_pr_head_is_incomplete_without_guessing_findings(self) -> None:
+        root = _codacy_root()
+        client = _CodacyFake({f"{root}/pull-requests/312": _codacy_pr(OTHER_HEAD)})
+        document = analyzer_codacy.read_pull_request(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("AMBIGUOUS", document["completeness"])
+        self.assertEqual("INCOMPLETE", document["coverage"]["status"])
+        self.assertEqual("SUBJECT_MISMATCH", document["coverage"]["reason"])
+        self.assertEqual([], document["findings"])
+
+    def test_codacy_unanalyzed_latest_commit_is_partial_not_clean(self) -> None:
+        root = _codacy_root()
+        confirmed = _codacy_issues_url(potential=False)
+        client = _CodacyFake(
+            {
+                f"{root}/pull-requests/312": _codacy_pr(),
+                confirmed: {
+                    "analyzed": False,
+                    "data": [],
+                    "pagination": {"total": 0},
+                },
+            }
+        )
+        document = analyzer_codacy.read_pull_request(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("PARTIAL", document["coverage"]["status"])
+        self.assertEqual("LATEST_COMMIT_NOT_ANALYZED", document["coverage"]["reason"])
+
+    def test_codacy_analysis_starting_during_readback_is_partial(self) -> None:
+        root = _codacy_root()
+        confirmed = _codacy_issues_url(potential=False)
+        potential = _codacy_issues_url(potential=True)
+        pr_url = f"{root}/pull-requests/312"
+        final_pr = _codacy_pr()
+        final_pr["isAnalysing"] = True
+        client = _CodacyFake(
+            {
+                pr_url: [_codacy_pr(), final_pr],
+                confirmed: {
+                    "analyzed": True,
+                    "data": [_codacy_issue("codacy-1", 4)],
+                    "pagination": {"limit": 1000, "total": 1},
+                },
+                potential: {
+                    "analyzed": True,
+                    "data": [],
+                    "pagination": {"limit": 1000, "total": 0},
+                },
+            }
+        )
+        document = analyzer_codacy.read_pull_request(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("PARTIAL", document["coverage"]["status"])
+        self.assertEqual("ANALYSIS_IN_PROGRESS", document["coverage"]["reason"])
+        self.assertEqual(1, document["coverage"]["count"])
+
+    def test_codacy_total_mismatch_is_explicit_error(self) -> None:
+        root = _codacy_root()
+        confirmed = _codacy_issues_url(potential=False)
+        client = _CodacyFake(
+            {
+                f"{root}/pull-requests/312": _codacy_pr(),
+                confirmed: {
+                    "analyzed": True,
+                    "data": [_codacy_issue("codacy-1", 4)],
+                    "pagination": {"limit": 1000, "total": 2},
+                },
+            }
+        )
+        document = analyzer_codacy.read_pull_request(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("ERROR", document["coverage"]["status"])
+        self.assertEqual("COUNT_TOTAL_MISMATCH", document["coverage"]["reason"])
+        self.assertEqual(1, document["coverage"]["count"])
+
+    def test_codacy_api_url_rejects_non_default_and_malformed_ports(self) -> None:
+        for url in (
+            "https://api.codacy.com/api/v3/user",
+            "https://app.codacy.com:8443/api/v3/user",
+            "https://app.codacy.com:not-a-port/api/v3/user",
+        ):
+            with self.subTest(url=url):
+                with self.assertRaises(analyzer_codacy.ProviderReadFailure):
+                    analyzer_codacy._validate_api_url(url)
+
+    def test_codacy_redirect_reauthenticates_only_same_origin(self) -> None:
+        handler = analyzer_codacy._CodacyRedirectHandler()
+        request = urllib.request.Request("https://app.codacy.com/api/v3/user")
+        request.add_unredirected_header("api-token", "secret-value")
+        redirected = handler.redirect_request(
+            request,
+            None,
+            302,
+            "Found",
+            {},
+            "https://app.codacy.com/api/v3/user?cursor=next",
+        )
+        if redirected is None:
+            self.fail("same-origin redirect was unexpectedly refused")
+        self.assertEqual("secret-value", redirected.get_header("Api-token"))
+
+    def test_codacy_redirect_cannot_leak_token_off_origin(self) -> None:
+        handler = analyzer_codacy._CodacyRedirectHandler()
+        request = urllib.request.Request("https://app.codacy.com/api/v3/user")
+        request.add_unredirected_header("api-token", "secret-value")
+        with self.assertRaises(analyzer_codacy.ProviderReadFailure):
+            handler.redirect_request(
+                request,
+                None,
+                302,
+                "Found",
+                {},
+                "https://example.invalid/steal",
+            )
+
+    def test_codacy_missing_token_is_explicit_and_not_echoed(self) -> None:
+        with self.assertRaisesRegex(
+            analyzer_codacy.ProviderReadFailure,
+            "authentication unavailable",
+        ) as raised:
+            analyzer_codacy.CodacyRestClient("")
+        self.assertNotIn("api-token", str(raised.exception).lower())
+
+    def test_adapters_expose_no_provider_mutation_methods(self) -> None:
+        for cls in (
+            analyzer_codacy.CodacyRestClient,
+            analyzer_deepsource.DeepSourceGraphQLClient,
+        ):
+            public = {
+                name
+                for name, _ in inspect.getmembers(cls, inspect.isfunction)
+                if not name.startswith("_")
+            }
+            self.assertTrue(public <= {"get", "graphql", "from_environment"})
+            self.assertFalse(
+                public & {"post", "patch", "delete", "trigger", "ignore", "autofix"}
+            )
+
+    def test_live_deepsource_client_rejects_unadmitted_graphql_operation(self) -> None:
+        client = analyzer_deepsource.DeepSourceGraphQLClient("test-token")
+
+        class _FailOpener:
+            def open(self, *_args: object, **_kwargs: object) -> object:
+                raise AssertionError(
+                    "network must not be reached for an unadmitted query"
+                )
+
+        client._opener = _FailOpener()  # type: ignore[assignment]
+        with self.assertRaisesRegex(
+            analyzer_deepsource.ProviderReadFailure,
+            "unsupported GraphQL read operation",
+        ):
+            client.graphql(
+                'mutation Dangerous { dismissIssue(id: "1") { id } }',
+                {},
+            )
+
+    def test_token_shaped_values_do_not_enter_normalized_evidence(self) -> None:
+        secret = "super-secret-provider-token-value"
+        document = analyzer_readback.build_readback(
+            provider="synthetic",
+            adapter="fixture/v1",
+            repository="example/project",
+            pull_number=1,
+            requested_head=HEAD,
+            observed_head=HEAD,
+            analysis_id="run",
+            scope="FULL",
+            completeness="FULL_RUN",
+            native_mode="FULL_RUN",
+            observed_at=OBSERVED,
+            run_state="SUCCESS",
+            coverage_record=analyzer_readback.coverage(
+                "COMPLETE", pages=1, count=0, total=0
+            ),
+            findings=[],
+            native={"auth": "environment-only"},
+        )
+        self.assertNotIn(secret, analyzer_readback.canonical_json(document))
+        self.assertNotIn("DEEPSOURCE_API_TOKEN", json.dumps(document))
+        self.assertNotIn("CODACY_API_TOKEN", json.dumps(document))
+
+
+if __name__ == "__main__":
+    unittest.main()
