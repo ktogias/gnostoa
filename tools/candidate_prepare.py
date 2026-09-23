@@ -400,7 +400,11 @@ def _run(
     )
     if check and completed.returncode != 0:
         stderr = completed.stderr.decode("utf-8", errors="replace").strip()
-        detail = f": {stderr}" if stderr else ""
+        stdout = completed.stdout.decode("utf-8", errors="replace").strip()
+        diagnostics = "\n".join(value for value in (stderr, stdout) if value)
+        if len(diagnostics) > 4096:
+            diagnostics = diagnostics[-4096:]
+        detail = f": {diagnostics}" if diagnostics else ""
         raise PrepareError(f"command failed ({completed.returncode}){detail}")
     return completed
 
