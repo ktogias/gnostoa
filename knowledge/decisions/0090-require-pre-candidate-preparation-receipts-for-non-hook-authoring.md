@@ -192,9 +192,12 @@ non-hook authoring without importing a general orchestration subsystem.
    repository routing and caller configuration, set `GIT_NO_REPLACE_OBJECTS=1`,
    retrieve `$parent:ci/prepare-candidate` into a create-only temporary file,
    check the `git show` exit status, and only then execute that file with
-   `sh ... prepare`. Do not pipe `git show` directly into `sh`, because
-   replacement refs apply before the wrapper can scrub Git state and a pipeline
-   can otherwise mask retrieval failure. The intended route is
+   `sh ... prepare`. The documented helper performs this in a subshell and
+   keeps cleanup/signal traps local, so a failed retrieval or Ctrl-C cannot
+   terminate or reconfigure the caller's interactive shell. Do not pipe
+   `git show` directly into `sh`, because replacement refs apply before the
+   wrapper can scrub Git state and a pipeline can otherwise mask retrieval
+   failure. The intended route is
    `.devcontainer/devcontainer.json`, whose
    writable workspace mount and `updateRemoteUserUID` setting support preparation
    writes without a `safe.directory` override. The read-only one-shot verification
