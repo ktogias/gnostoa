@@ -16,8 +16,9 @@ from tools import candidate_prepare
 
 ROOT = Path(__file__).resolve().parents[1]
 GIT: str = shutil.which("git") or ""
-if not GIT:
-    raise RuntimeError("git is required for candidate preparation tests")
+SH: str = shutil.which("sh") or ""
+if not GIT or not SH:
+    raise RuntimeError("git and sh are required for candidate preparation tests")
 
 _GIT_ENVIRONMENT_VARIABLES = (
     "GIT_DIR",
@@ -1301,7 +1302,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
                     "--parent",
                     "0" * 40,
                     "--receipt",
-                    "/tmp/receipt.json",
+                    "receipt.json",
                     "--focused-profile",
                     "fast",
                     "--trusted-py",
@@ -1372,7 +1373,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
             environment["TMPDIR"] = str(bootstrap_tmp)
             completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
                 [  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
-                    "sh",
+                    SH,
                     "-s",
                     "--",
                     "verify",
@@ -1396,7 +1397,7 @@ class CandidatePreparationContractTests(unittest.TestCase):
 
             rejected = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
                 [  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
-                    "sh",
+                    SH,
                     "-s",
                     "--",
                     "verify",
