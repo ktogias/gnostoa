@@ -623,6 +623,25 @@ class CandidatePreparationContractTests(unittest.TestCase):
                     max_output_bytes=128,
                 )
 
+    def test_focused_timeout_kills_group_after_leader_exit(self) -> None:
+        class CompletedLeader:
+            pid = 424242
+
+            @staticmethod
+            def poll() -> int:
+                return 0
+
+            @staticmethod
+            def wait(timeout: float | None = None) -> int:
+                del timeout
+                return 0
+
+        with patch.object(candidate_prepare.os, "killpg") as killpg:
+            # skipcq: PYL-W0212 -- intentional white-box timeout cleanup regression
+            candidate_prepare._terminate_focused_process(CompletedLeader())  # type: ignore[arg-type]
+        killpg.assert_any_call(424242, candidate_prepare.signal.SIGTERM)
+        killpg.assert_any_call(424242, candidate_prepare.signal.SIGKILL)
+
     def test_prepare_does_not_admit_ignored_source_worktree_state(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
