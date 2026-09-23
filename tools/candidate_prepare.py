@@ -543,6 +543,7 @@ def _assert_source_index_hides_no_worktree_state(root: Path) -> None:
             "source index hides worktree state: " + ", ".join(sorted(hidden))
         )
 
+
 def _source_object_directory(root: Path) -> Path:
     common_text = _git_text(root, "rev-parse", "--git-common-dir")
     common = Path(common_text)
