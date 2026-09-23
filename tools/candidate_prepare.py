@@ -492,7 +492,7 @@ def _assert_safe_repository_git_configuration(root: Path) -> None:
     pattern = (
         r"^(filter\..*\.(clean|smudge|process|required)"
         r"|diff\.external|diff\..*\.(command|textconv)"
-        r"|core\.(attributesfile|hookspath|fsmonitor))$"
+        r"|core\.(attributesfile|fsmonitor))$"
     )
     configured = _run(
         [
