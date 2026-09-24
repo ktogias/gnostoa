@@ -652,6 +652,11 @@ alone.
 
 ## Supplied agent reviews
 
+For code-versus-security invocation routes, including the owner-selected Claude
+and Codex reviewers, use [Invoke external reviewers](invoke-external-reviewers.md).
+Read existing requests before triggering, preserve provider-specific command
+syntax, and distinguish acknowledgment, completed findings and human approval.
+
 When agent reviews are supplied for Gnostoa work, whether the owner forwards
 them or we commission them, record each reviewer before reporting the reviews
 as handled. Use the owning PR or Work Item review record and keep the existing
