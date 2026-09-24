@@ -289,6 +289,11 @@ def exercise(image: str, root: Path, private: Path, case: str, out: Path) -> dic
         if process is not None:
             try:
                 process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                # The bounded pipe may be full after capture stops. Reap the
+                # attachment client after independently removing the container.
+                process.kill()
+                process.wait(timeout=5)
             finally:
                 if process.poll() is None:
                     process.kill()
