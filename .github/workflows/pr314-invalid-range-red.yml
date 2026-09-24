@@ -1,0 +1,87 @@
+name: PR314 invalid range RED
+
+on:
+  push:
+    branches:
+      - transport/pr314-range-aaedae
+
+permissions:
+  contents: read
+
+jobs:
+  red:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact pre-change subject
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: aaedae65d27f96629533f25366b2f563d31ada75
+          persist-credentials: false
+      - name: Bind exact pre-change identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "aaedae65d27f96629533f25366b2f563d31ada75"
+          test "$(git rev-parse 'HEAD^{tree}')" = "361943f69b0e79f097ab7d576860381bcb471144"
+          test -z "$(git status --porcelain)"
+      - name: Set up Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Prove invalid range RED
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=. python - <<'PY'
+          from tests.test_analyzer_readback import (
+              HEAD,
+              OBSERVED,
+              RUN_UID,
+              _DeepSourceFake,
+              _check_page,
+              _issue,
+              _run_page,
+          )
+          from tools import analyzer_deepsource, analyzer_readback
+
+          issue = _issue("issue-invalid-range", 10)
+          issue["beginLine"] = 0
+          client = _DeepSourceFake(
+              {
+                  ("run", None): _run_page(
+                      run_status="SUCCESS", check_status="SUCCESS"
+                  ),
+                  ("check-python", None): _check_page(
+                      [issue], total=1, cursor=None, status="SUCCESS"
+                  ),
+              }
+          )
+
+          try:
+              document = analyzer_deepsource.read_full_run(
+                  client,
+                  repository="ktogias/gnostoa",
+                  pull_number=312,
+                  requested_head=HEAD,
+                  run_uid=RUN_UID,
+                  observed_at=OBSERVED,
+              )
+          except analyzer_readback.AnalyzerReadbackError as exc:
+              print(
+                  "EXPECTED_RED: malformed provider range escaped the adapter "
+                  f"and raised common-model error: {exc}"
+              )
+              raise SystemExit(0)
+
+          future = (
+              document["completeness"] == "READBACK_UNAVAILABLE"
+              and document["coverage"]["status"] == "ERROR"
+              and document["coverage"]["reason"] == "PROVIDER_ERROR"
+          )
+          if future:
+              raise SystemExit(
+                  "RED invalid: exact pre-change subject already normalizes malformed range"
+              )
+          raise AssertionError(document)
+          PY
