@@ -1,0 +1,77 @@
+name: Stage verified PR314 F1 F2 correction
+
+on:
+  push:
+    branches: [ops/pr314-f1f2-stage-cf7d]
+
+permissions:
+  contents: write
+  actions: read
+
+env:
+  TRUSTED_MAIN: 074bd0499395986021b4c320ee9d23ec67859186
+  PARENT: cf7d6f346890517d5f40dd2eee8cea6c1e8c7e7d
+  PREPARED_TREE: 99a2647d07be9fe4988f6ee38ef67f133b216b00
+  RECEIPT_SHA256: sha256:58262f0f566e5ed10c228279e409a0971f3ea3459190f955aa56fd43d47fb855
+  PATCH_SHA256: 6b27d5321481bc08bb8894c07c293eb774d95cb479a68c256a681251379beb03
+  TARGET_BRANCH: ops/pr314-f1f2-prepared-tree-cf7d
+
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 074bd0499395986021b4c320ee9d23ec67859186
+          fetch-depth: 0
+          persist-credentials: true
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          name: pr314-f1f2-prepared-cf7d
+          run-id: '35988275659'
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/prepared
+      - name: Verify trusted receipt and reconstruct exact tree in a separate index
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TRUSTED_MAIN"
+          test -z "$(git status --porcelain)"
+          test "$(git rev-parse "$PARENT^{tree}")" = 89e1dfd65b96209fc388ef869b7b27171463958a
+          git diff --exit-code "$TRUSTED_MAIN" "$PARENT" -- ci/prepare-candidate tools/candidate_prepare.py
+          patch="$RUNNER_TEMP/prepared/normalized.patch"
+          receipt="$RUNNER_TEMP/prepared/receipt.json"
+          echo "$PATCH_SHA256  $patch" | sha256sum -c -
+          ./ci/prepare-candidate verify --parent "$PARENT" --tree "$PREPARED_TREE" --receipt "$receipt" --receipt-sha256 "$RECEIPT_SHA256" --trusted-python "$(command -v python)"
+          export GIT_INDEX_FILE="$RUNNER_TEMP/prepared.index"
+          git read-tree "$PARENT"
+          git apply --cached --binary "$patch"
+          git diff --cached --check "$PARENT"
+          test "$(git write-tree)" = "$PREPARED_TREE"
+          cat > "$RUNNER_TEMP/expected-paths" <<'EOF'
+          ci/analyzer_readback.py
+          knowledge/decisions/0091-add-authenticated-provider-neutral-analyzer-readback.md
+          tests/test_analyzer_readback_runner.py
+          tools/analyzer_codacy.py
+          tools/analyzer_deepsource.py
+          EOF
+          git diff --cached --name-only "$PARENT" > "$RUNNER_TEMP/actual-paths"
+          diff -u "$RUNNER_TEMP/expected-paths" "$RUNNER_TEMP/actual-paths"
+          unset GIT_INDEX_FILE
+          test -z "$(git status --porcelain)"
+      - name: Guarded staging effect only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$TRUSTED_MAIN"
+          test "$(git ls-remote origin refs/heads/analyzer-readback-309-313 | cut -f1)" = "$PARENT"
+          test "$(git ls-remote origin "refs/heads/$TARGET_BRANCH" | cut -f1)" = "$PARENT"
+          commit="$(printf '%s\n' 'fix: keep malformed analyzer credentials out of diagnostics (#309 #313)' | git -c user.name='Gnostoa preparation' -c user.email='noreply@invalid' commit-tree "$PREPARED_TREE" -p "$PARENT")"
+          git -c core.hooksPath=/dev/null push --force-with-lease="refs/heads/$TARGET_BRANCH:$PARENT" origin "$commit:refs/heads/$TARGET_BRANCH"
+          test "$(git ls-remote origin "refs/heads/$TARGET_BRANCH" | cut -f1)" = "$commit"
+          printf 'STAGED_COMMIT=%s\nPREPARED_TREE=%s\nPRODUCTION_REF_UNCHANGED=%s\n' "$commit" "$PREPARED_TREE" "$PARENT" | tee "$RUNNER_TEMP/stage-result.txt"
+          cat "$RUNNER_TEMP/stage-result.txt" >> "$GITHUB_STEP_SUMMARY"
