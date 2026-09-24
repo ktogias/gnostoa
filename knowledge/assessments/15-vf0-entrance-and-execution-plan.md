@@ -291,3 +291,136 @@ authority evolution and the real integrated producer/consumer round trip remain
 separate subsequent obligations. All ten original gate-behavior rows still need
 executed support; E3 does not close VF0-03, VF0-04, VF0-08 or VF0-10. VF0 remains
 critical and inactive, with #318 still after its acceptance.
+
+## VF0-E4: live closed-record acquisition across two attempts
+
+The [pre-execution checkpoint](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5818227485)
+fixed the diagnostic protocol and negative-control categories before publication.
+The [executed reconciliation and record-edit checkpoint](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5818383699)
+precedes this assessment-only append. All earlier assessment bytes, including
+E3's rejected timestamp hypothesis and the original ten-row map, are preserved.
+This result advances experimental acquisition, not production VF0 enforcement.
+
+### Actual executions and bounded protocol
+
+[Producer run 36029088664](https://github.com/ktogias/gnostoa/actions/runs/36029088664)
+completed two actual attempts on source
+`ddd6a38b5bad2d6a5bd0794300684e8198889308`, path
+`.github/workflows/vf0-publisher-probe.yml`. Its `publisher` job had no candidate
+checkout, caller input or test execution. A separate transport-only job exported
+the exact starting PR source without executing repository code. The publisher
+created one fixed diagnostic observation and uploaded it with the already-used
+pinned upload-artifact action, without overwrite.
+
+After upload, a separate controller step emitted exactly one
+`VF0_PUBLISHER_V1 ` record. The bounded canonical ASCII JSON has a closed key
+set: schema, numeric repository/run/attempt, exact source commit, publisher role,
+artifact ID/name, archive SHA-256, observation SHA-256 and fixed diagnostic-input
+SHA-256. Numeric publisher-job identity is independently supplied by the
+provider's exact-attempt jobs endpoint and associated log endpoint; the role
+string inside the record is not that identity. The runner timestamp prefixes
+frame log lines only; no timestamp interval supplies attempt attribution.
+
+[Consumer run 36029757177](https://github.com/ktogias/gnostoa/actions/runs/36029757177)
+completed successfully on workflow source
+`335da3f966083ef6b637721ae6f12edf64a08366`, executing the exact helper at
+`50bd8ed60dfb83a6105adb67bd76c56d5c735d64`, path
+`.github/vf0-publisher-consumer.py`. It had only contents/Actions read permissions
+and used the job token, not an Environment/analyzer secret. Unlike E3, this
+consumer acquired and parsed actual raw provider logs itself: no manual
+transcription or mock network response supplied its positive observations.
+
+The live path reacquired the pinned producer workflow bytes and Git blob
+identity, current run, exact-attempt run/job metadata, raw publisher-job logs,
+artifact metadata and downloaded bytes. It required certificate/hostname-validated
+HTTPS and a bounded signed-download handoff without the API credential for both
+logs and archives. Full archive SHA-256 comparison preceded ZIP parsing. Only
+one bounded regular `observation.json` member was read, never extracted or
+executed. Run/job/artifact/log state was reacquired and reconciled after download.
+
+| Attempt | Provider publisher job | Artifact | Acquisition disposition |
+| --- | --- | --- | --- |
+| 1 | `107732969976` | `10820892833` | Historical diagnostic only; not current compliance |
+| 2 | `107733318066` | `10820783107` | Matching current diagnostic attempt |
+
+Both records matched their independently retrieved artifact metadata and bytes.
+The first attempt was not admitted as current evidence after the rerun. Supplying
+either actual record for the other attempt rejected with `RECORD_SUBJECT`.
+These are two matching diagnostic observations, not two production admissions.
+
+### Executed controls and retained identities
+
+The consumer executed **35 expected fixture/mutation rejections**: 33 bounded
+controls over the acquired data plus both actual cross-attempt substitutions.
+They cover missing/duplicate/conflicting/malformed/noncanonical records,
+duplicate keys, unknown key/schema, Boolean numeric identity, wrong
+repository/run/attempt/source/role/input/name/digest, changed or arbitrary source,
+oversized logs, stale/moved attempts, incomplete run/job coverage, failed
+publisher, mismatched/expired/changed artifact metadata, wrong observation digest
+and altered archive bytes. A failing ZIP-constructor sentinel confirmed the
+altered-byte rejection occurred before archive parsing.
+
+These are not 35 hostile-provider executions. Attempt movement and failed or
+unavailable state were represented by deterministic input mutations; no real
+concurrent rerun race, hostile TLS server, malicious OS, complete ZIP corpus or
+parser fuzz campaign was executed. An initially separate synthetic positive and
+33 controls passed locally before the helper was published. Those synthetic
+results are not counted again as additional live cases.
+
+Artifact **10821163285**, `vf0-e4-live-acquisition-36029757177`, expires
+**2026-10-01 16:47:16 UTC**. It retains the two raw logs, downloaded diagnostic
+archives, corresponding metadata, exact publisher/consumer source and result.
+Its nine members were inspected locally only after the complete archive digest
+matched independently retrieved provider metadata. The retained source bytes
+matched local preparation; raw-log/observation replay matched both observations
+and all 33 common controls. The result separately retains both cross-attempt
+rejections executed by the consumer.
+
+| Object | SHA-256 |
+| --- | --- |
+| E4 evidence archive | `c8c1960316e486faf62da75a586878d0a18ed5c6a56a2004f405a51b5a40eed8` |
+| Canonical `result.json`, including terminal LF | `e7a8707efa8be672454d392d6f995547eeeee7f716b2d5d7929a06948b9c16ee` |
+| Publisher workflow | `49bf2b3827303bc4f9fcea16935789147c446d2d359b2e5b65e0c609984df4fb` |
+| Consumer helper | `d7b7ef99c4f6904815943fd0293fcd150c931684baa162923e8f16d349375139` |
+| Attempt-1 diagnostic archive | `eced24251627032b6207c6fee259c51c2b9771d40f7de2c6e274a9eb6d8c6146` |
+| Attempt-2 diagnostic archive | `aafe31bd0f785c3a40d1a6ce08cfb521352bd91fc1cc3cc73837f9b996d22a48` |
+
+All three support files were removed by
+`9079575695e43fdbc86dd08737d4adf7f54719ed`, restoring the pre-helper tree
+`143375e2ca50f41cd4ca4104880a776b907cae5d`. History and artifacts remain retained;
+no helper entered this PR or main. Local retention does not extend provider
+availability or authenticate a later offline compliance claim.
+
+### What this does and does not establish
+
+The experiment supports a specific composite attempt-attribution route: exact
+provider job origin plus a closed, fixed-source publisher record, independently
+reconciled with artifact metadata and bytes. Neither a marker, raw log, source
+hash, artifact name nor payload assertion is sufficient alone. The parser is a
+diagnostic helper, not an API that can turn arbitrary caller bytes into an
+authenticated observation. The pinned support producer is still not integrated
+or admitted for production.
+
+In particular, the diagnostic publisher never ran hostile candidate/test code.
+Absence of that code is not proof of sandbox isolation, protected controller
+outputs or safe handling of a real evidence-only test delta. Separately
+authenticated human admission, effective class/mode policy, semantic non-vacuity,
+ordinary chronology and parent-production equality were not implemented or
+proved by this diagnostic input. No new signing service or dependency was added.
+The provider-neutral semantic relation and proposed Decision 0092 remain distinct
+from this GitHub-specific experiment.
+
+VF0-03 gains bounded executed support for actual closed-record acquisition;
+VF0-04 gains evidence for artifact/observation and attempt mismatch rejection.
+Neither row is complete. VF0-02/06/07 still require real isolated evidence-producer
+and authority tests; VF0-01 enforcement, VF0-08's integrated independent consumer
+and VF0-09 preparation parity remain open. No original row is waived or closed.
+
+The next bounded production-preparation work is to establish the externally
+admitted input contract and demonstrate isolation between evidence execution and
+controller/publisher authority, then establish focused failing conformance on the
+exact parent before implementing the reusable acquisition boundary and separately
+admitted D0090 authority evolution. The E4 helpers are reusable experimental
+reference material, not a second permanent pipeline. VF0 remains **critical and
+inactive**; the sequence remains **VF0 then #318**, with no merge authorization,
+Q0 activation or broader #15 completion supplied by this result.
