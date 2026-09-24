@@ -71,10 +71,10 @@ index 7d6df9de3ad5fe9ec72af12030c93862153b6d92..a824103d722650e02d65cb89a4224cf7
 +            # GitHub commit statuses are newest-first. Fence off the analyzer
 +            # before run-URL validation so an unusable newest status cannot
 +            # silently fall back to an older status for the same context.
-+            source_key = ("commit_status_context", context)
-+            if source_key in seen_sources:
++            commit_status_key = ("commit_status_context", context)
++            if commit_status_key in seen_sources:
 +                continue
-+            seen_sources.add(source_key)
++            seen_sources.add(commit_status_key)
          if not isinstance(target, str):
 +            if is_commit_status:
 +                analyzer_states.setdefault(
@@ -109,10 +109,10 @@ index 7d6df9de3ad5fe9ec72af12030c93862153b6d92..a824103d722650e02d65cb89a4224cf7
 +        # Check-run reads request GitHub's latest filter, but multiple distinct
 +        # latest runs still make exact association ambiguous.
 +        if not is_commit_status:
-+            source_key = (source_kind, analyzer, run_id)
-+            if source_key in seen_sources:
++            check_run_key = (source_kind, analyzer, run_id)
++            if check_run_key in seen_sources:
 +                continue
-+            seen_sources.add(source_key)
++            seen_sources.add(check_run_key)
          run_ids.add(run_id)
          analyzer_states.setdefault(analyzer, str(state))
      return run_ids, analyzer_states
