@@ -432,6 +432,23 @@ it into the future workflow. After integration, run the official trusted
 Environment-bound workflow from `main`; that post-integration smoke proves the
 combined Environment-policy, secret-injection, adapter and artifact path.
 
+If the token value has already been stored in the Environment and neither the
+owner nor another authorized secret manager retains it, GitHub cannot reveal it
+again. Do not treat Environment-secret metadata as functional-auth evidence.
+Rotate instead:
+
+1. create a fresh provider token;
+2. **before storing it**, run the bounded read-only exact-subject probe while the
+   value is still available in memory/interactive shell state;
+3. if the probe succeeds, write that exact value to the Environment secret;
+4. read back only the secret name/update metadata;
+5. unset/discard the local value;
+6. revoke the superseded provider token when its identity is known and doing so
+   cannot disrupt another consumer.
+
+This **verify-before-store** order prevents a write-only secret store from
+destroying the only opportunity for pre-merge functional validation.
+
 Never broaden an Environment from `main` to a helper/candidate branch merely to
 move this smoke earlier. The absence of a pre-merge trusted runner is a lifecycle
 fact, not a reason to weaken the secret boundary.
