@@ -1,0 +1,254 @@
+name: PR315 bounded documentation preparation
+
+on:
+  push:
+    branches: [agent-support/pr315-doc-reconciliation-20260924]
+    paths: [.github/workflows/pr315-doc-reconciliation.yml]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pr315-doc-reconciliation-20260924
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      payload: ${{ steps.export.outputs.payload }}
+      digest: ${{ steps.export.outputs.digest }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 240fc653c56108a030c4470a10ac7314ec040a4d
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Observe all six structural gaps before document edits
+        run: |
+          set -eu
+          python3 - <<'PYDOC'
+          import base64
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+
+          PARENT = "240fc653c56108a030c4470a10ac7314ec040a4d"
+          BASE_TREE = "9cd36a9af2109eddc201484617a119990e9b9f55"
+          RUNBOOK = "knowledge/runbooks/deliver-bounded-self-hosted-slice.md"
+          FAILURE = "knowledge/failure-modes/verification-first-chronology-bypass-during-recovery.md"
+
+          def git(*args):
+              return subprocess.check_output(["git", "-c", "core.hooksPath=/dev/null", *args], text=True).strip()
+
+          def require(condition, message):
+              if not condition:
+                  raise SystemExit(message)
+
+          require(git("rev-parse", "HEAD") == PARENT, "wrong preparation parent")
+          require(git("rev-parse", "HEAD^{tree}") == BASE_TREE, "wrong preparation tree")
+          require(not git("status", "--porcelain"), "dirty source")
+
+          edits = {
+              RUNBOOK: [
+                  (
+                      "- read the token without terminal echo (for example `read -rsp`);\n- pass it only in the provider's admitted authentication header;",
+                      "- read the token without terminal echo inside a disposable process (for\n  example in-process `getpass` or a child-shell `read -rsp`);\n- construct the provider's admitted authentication header in process, or deliver\n  it through protected stdin/a file descriptor (for example curl's `--header @-`);\n  never expand the credential into process arguments, including `curl -H` or\n  a command-line assignment passed to `env`;\n- disable shell tracing and HTTP verbose/debug output before accepting the\n  value, and avoid broad environment export or persistent header/config files;\n  stdin and descriptors reduce argv exposure, but do not protect against a\n  hostile same-user debugger or administrator: use a trusted local process\n  boundary;"
+                  ),
+                  (
+                      "- classify `401|403` as authentication failure, rate limiting separately, and\n  wrong/missing subject identity as a binding/readback failure;",
+                      "- classify rate limiting first using the provider's documented signals:\n  HTTP 429, or a throttled 403 identified by headers such as\n  `x-ratelimit-remaining: 0` / `retry-after` or a bounded rate-limit diagnostic;\n  do not rotate, delete or overwrite a credential because a probe was throttled;\n- after excluding rate limiting, distinguish 401 authentication rejection from\n  403 access/permission denial; a denied 403 does not alone prove that the\n  credential value is invalid. Stop verification-before-store on either denial\n  and retain wrong/missing subject identity as a separate binding/readback failure;"
+                  ),
+                  (
+                      "of v3 operations and must not be treated as equivalent. A `401|403` during the\nexact adapter-surface probe is an authentication failure even if another Codacy\nendpoint accepts that credential. Verify a new Codacy credential first against\nan account-authenticated v3 endpoint and then against the exact repository/PR\nanalysis endpoint before storing it.",
+                      "of v3 operations and must not be treated as equivalent. Apply the rate-limit\nclassification above before interpreting a denied adapter-surface probe. Once\nthrottling is excluded, a 401 authentication rejection or 403 access denial\nblocks verification-before-store even if another Codacy endpoint accepts that\ncredential; inspect token type and scope rather than assuming every denial\nrequires rotation. Verify a new Codacy credential first against an\naccount-authenticated v3 endpoint and then against the exact repository/PR\nanalysis endpoint before storing it."
+                  ),
+                  (
+                      "- if another execution already published the **same prepared tree**, adopt that\n  provider state and continue from the observed head;\n- if the bytes differ, re-bind/reconcile and prepare a successor from the new\n  exact parent rather than force-writing over it.",
+                      "- if another execution already published the **same prepared tree**, treat\n  adoption as read-only reconciliation of an existing effect, never as permission\n  to perform another write. Require attributable preparation provenance, verify\n  the retained receipt with its separately retained digest under its exact\n  parent-owned authority, and check that the published commit's **sole parent**\n  equals the receipt-bound parent and its tree equals the prepared tree;\n- compare the published commit's parent, not the published commit itself, with\n  the receipt-bound parent. Record the observed commit and obtain its own\n  exact-head CI/review evidence before continuing;\n- if the parent, provenance or tree does not match, do not adopt tree equality\n  alone as proof of prepared publication. Re-bind/reconcile the observed state\n  and prepare any successor from the new exact parent; never replay the old\n  receipt as authority for a new-parent write or force-write over another writer."
+                  ),
+                  (
+                      "A Decision 0090 receipt binds its prepared **tree** and parent. A later same-tree\nno-op child can preserve tree-level preparation evidence, but it does not make\nexact-head CI or external review results from an older commit apply to the new\ncommit automatically. Re-run/re-read the head-bound evidence.",
+                      "A Decision 0090 receipt binds its prepared **tree** and exact preparation\nparent. For an already-published direct child, verify the parent/tree/provenance\nconditions above. For a later same-tree descendant, retain older preparation\nevidence only as tree-level history, not as a receipt for the descendant's parent\nor authority for another write. Re-bind the observed subject and re-run/re-read\nits exact-head CI and review evidence; any successor publication requires\npreparation bound to its own exact current parent."
+                  )
+              ],
+              FAILURE: [
+                  (
+                      "| Impact | No merge or protected-main effect occurred. The intended defect was real and the final candidate behavior is supported, but the initial authoring chronology violated the Gnostoa-self verification-first specialization. |",
+                      "| Impact | At the time of this chronology incident, no merge or protected-main effect had occurred. The intended defect was real and the repaired candidate behavior was supported, but the initial authoring chronology violated the Gnostoa-self verification-first specialization. The later integration is a separate event, not retroactive chronology compliance. |"
+                  )
+              ]
+          }
+
+          originals = {name: Path(name).read_text(encoding="utf-8") for name in edits}
+          # Observe every unmet criterion against the exact original before writing any file.
+          for name, replacements in edits.items():
+              for index, (old, new) in enumerate(replacements, 1):
+                  require(originals[name].count(old) == 1, f"missing/ambiguous original: {name}#{index}")
+                  require(new not in originals[name], f"criterion already met: {name}#{index}")
+                  print(f"STRUCTURAL_UNMET_BEFORE_EDIT {name}#{index}")
+
+          for name, replacements in edits.items():
+              text = originals[name]
+              for old, new in replacements:
+                  text = text.replace(old, new, 1)
+              Path(name).write_text(text, encoding="utf-8")
+
+          for name, replacements in edits.items():
+              text = Path(name).read_text(encoding="utf-8")
+              for index, (old, new) in enumerate(replacements, 1):
+                  require(text.count(new) == 1 and old not in text, f"criterion failed: {name}#{index}")
+                  print(f"STRUCTURAL_SATISFIED_AFTER_EDIT {name}#{index}")
+          require(set(git("diff", "--name-only").splitlines()) == set(edits), "unexpected changed paths")
+          subprocess.run(["git", "diff", "--check"], check=True)
+          subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "add", "--", *sorted(edits)], check=True)
+          tree = git("write-tree")
+          files = []
+          for name in sorted(edits):
+              data = Path(name).read_bytes()
+              files.append({"path": name, "sha256": hashlib.sha256(data).hexdigest(), "content": base64.b64encode(data).decode("ascii")})
+          payload = json.dumps({"parent": PARENT, "base_tree": BASE_TREE, "tree": tree, "files": files}, sort_keys=True, separators=(",", ":"))
+          Path(os.environ["RUNNER_TEMP"], "pr315-prepared.json").write_text(payload, encoding="utf-8")
+          print("PREPARED_DOC_TREE=" + tree)
+          PYDOC
+      - name: Build repository-owned OCI runtime from prepared working tree
+        run: |
+          set -eu
+          ./ci/build-runtime --tag gnostoa:pr315-doc-prepared
+      - name: Verify policy in OCI runtime
+        run: |
+          set -eu
+          docker run --rm --entrypoint sh \
+            --mount type=bind,source="${GITHUB_WORKSPACE}",target=/workspace,readonly \
+            --workdir /workspace gnostoa:pr315-doc-prepared -ec './ci/verify policy'
+      - name: Verify fast in OCI runtime
+        run: |
+          set -eu
+          docker run --rm --entrypoint sh \
+            --mount type=bind,source="${GITHUB_WORKSPACE}",target=/workspace,readonly \
+            --workdir /workspace gnostoa:pr315-doc-prepared -ec './ci/verify fast'
+      - name: Reverify prepared bytes after tests and export bounded handoff
+        id: export
+        run: |
+          set -eu
+          python3 - <<'PYEXPORT'
+          import base64, hashlib, json, os, subprocess
+          from pathlib import Path
+          path = Path(os.environ["RUNNER_TEMP"], "pr315-prepared.json")
+          raw = path.read_bytes()
+          data = json.loads(raw)
+          subprocess.run(["git", "diff", "--quiet"], check=True)
+          tree = subprocess.check_output(["git", "write-tree"], text=True).strip()
+          if tree != data["tree"]:
+              raise SystemExit("post-verification candidate drift")
+          for item in data["files"]:
+              if hashlib.sha256(Path(item["path"]).read_bytes()).hexdigest() != item["sha256"]:
+                  raise SystemExit("post-verification document drift")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write("payload=" + base64.b64encode(raw).decode("ascii") + "\n")
+              output.write("digest=" + hashlib.sha256(raw).hexdigest() + "\n")
+          print("DOC_PREPARATION_VERIFIED " + tree)
+          PYEXPORT
+      - name: Retain exact non-secret preparation payload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr315-doc-preparation
+          path: ${{ runner.temp }}/pr315-prepared.json
+          retention-days: 7
+          if-no-files-found: error
+
+  retain-objects:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - name: Publish only checked documentation objects to a new support ref
+        env:
+          OBJECT_WRITE_TOKEN: ${{ github.token }}
+          PREPARED_PAYLOAD_B64: ${{ needs.prepare.outputs.payload }}
+          PREPARED_PAYLOAD_SHA256: ${{ needs.prepare.outputs.digest }}
+        run: |
+          set -eu
+          python3 - <<'PYPUBLISH'
+          import base64
+          import hashlib
+          import json
+          import os
+          import re
+          import urllib.error
+          import urllib.request
+
+          PARENT = "240fc653c56108a030c4470a10ac7314ec040a4d"
+          BASE_TREE = "9cd36a9af2109eddc201484617a119990e9b9f55"
+          RESULT_REF = "refs/heads/agent-support/pr315-prepared-20260924"
+          PATHS = {"knowledge/runbooks/deliver-bounded-self-hosted-slice.md", "knowledge/failure-modes/verification-first-chronology-bypass-during-recovery.md"}
+
+          def require(condition, message):
+              if not condition:
+                  raise SystemExit(message)
+
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  raise RuntimeError("redirect rejected")
+
+          opener = urllib.request.build_opener(NoRedirect())
+          token = os.environ["OBJECT_WRITE_TOKEN"]
+
+          def api(path, body=None):
+              require(path.startswith(("/git/", "/pulls/")), "disallowed API resource")
+              request = urllib.request.Request(
+                  "https://api.github.com/repos/ktogias/gnostoa" + path,
+                  data=None if body is None else json.dumps(body).encode("utf-8"),
+                  headers={"Authorization": "Bearer " + token, "Accept": "application/vnd.github+json", "Content-Type": "application/json", "X-GitHub-Api-Version": "2022-11-28"},
+                  method="GET" if body is None else "POST",
+              )
+              try:
+                  with opener.open(request, timeout=30) as response:
+                      data = response.read(2_000_001)
+                  require(len(data) <= 2_000_000, "API response too large")
+                  return json.loads(data)
+              except urllib.error.HTTPError as error:
+                  raise SystemExit("GitHub object API failed HTTP " + str(error.code)) from None
+
+          encoded = os.environ["PREPARED_PAYLOAD_B64"]
+          require(len(encoded) <= 250000, "prepared payload too large")
+          raw = base64.b64decode(encoded, validate=True)
+          require(hashlib.sha256(raw).hexdigest() == os.environ["PREPARED_PAYLOAD_SHA256"], "payload digest mismatch")
+          payload = json.loads(raw)
+          require(payload["parent"] == PARENT and payload["base_tree"] == BASE_TREE, "parent mismatch")
+          require(re.fullmatch(r"[0-9a-f]{40}", payload["tree"]) is not None, "invalid tree")
+          require(len(payload["files"]) == 2 and {item["path"] for item in payload["files"]} == PATHS, "unexpected file scope")
+          require(api("/git/commits/" + PARENT)["tree"]["sha"] == BASE_TREE, "source identity mismatch")
+          require(api("/pulls/315")["head"]["sha"] == PARENT, "CONCURRENT_WRITER: target moved")
+
+          entries = []
+          for item in payload["files"]:
+              contents = base64.b64decode(item["content"], validate=True)
+              require(0 < len(contents) < 100000, "invalid document size")
+              contents.decode("utf-8")
+              require(contents.endswith(b"\n") and b"\x00" not in contents, "invalid document bytes")
+              require(hashlib.sha256(contents).hexdigest() == item["sha256"], "document digest mismatch")
+              expected_blob = hashlib.sha1(b"blob " + str(len(contents)).encode("ascii") + b"\0" + contents).hexdigest()
+              blob = api("/git/blobs", {"content": item["content"], "encoding": "base64"})
+              require(blob["sha"] == expected_blob, "Git blob mismatch")
+              entries.append({"path": item["path"], "mode": "100644", "type": "blob", "sha": blob["sha"]})
+          tree = api("/git/trees", {"base_tree": BASE_TREE, "tree": entries})
+          require(tree["sha"] == payload["tree"], "prepared tree mismatch")
+          commit = api("/git/commits", {
+              "message": "docs: reconcile recovery review and post-314 chronology (#315)\n\nTwo documentation files only. Six pre-edit structural criteria observed unmet, then satisfied; policy and fast verified in the repository OCI runtime.\n\nPreparation run: " + os.environ["GITHUB_RUN_ID"] + "\nPrepared payload SHA-256: " + hashlib.sha256(raw).hexdigest() + "\nNo protected-main, analyzer, authority or policy mutation.",
+              "tree": tree["sha"], "parents": [PARENT],
+          })
+          require([p["sha"] for p in commit["parents"]] == [PARENT], "prepared commit parent mismatch")
+          require(api("/pulls/315")["head"]["sha"] == PARENT, "CONCURRENT_WRITER: target moved before result retention")
+          # Retention only: target PR ref is never changed by this write-capable job.
+          result = api("/git/refs", {"ref": RESULT_REF, "sha": commit["sha"]})
+          require(result["object"]["sha"] == commit["sha"], "result ref mismatch")
+          print(json.dumps({"prepared_commit": commit["sha"], "tree": tree["sha"], "parent": PARENT, "result_ref": RESULT_REF, "target_ref_unchanged": True}, sort_keys=True))
+          PYPUBLISH
