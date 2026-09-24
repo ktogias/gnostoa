@@ -1,0 +1,380 @@
+name: VF0 bounded acquisition experiment
+
+on:
+  push:
+    branches: [agent-support/vf0-acquisition-20260924]
+    paths: [.github/workflows/vf0-acquisition-probe.yml]
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+
+concurrency:
+  group: vf0-acquisition-20260924
+  cancel-in-progress: false
+
+jobs:
+  experiment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Reacquire pinned experimental evidence and exercise negative controls
+        env:
+          READ_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          mkdir -p "${RUNNER_TEMP}/vf0-acquisition"
+          cat > "${RUNNER_TEMP}/vf0-acquisition/probe.py" <<'PY'
+          """Disposable acquisition experiment: never issues a production VF0 receipt."""
+          import base64
+          import copy
+          import hashlib
+          import io
+          import json
+          import os
+          import re
+          import ssl
+          import stat
+          import sys
+          import time
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+          import zipfile
+          from datetime import datetime, timezone
+          from pathlib import Path, PurePosixPath
+          from unittest.mock import patch
+
+          REPO = 'ktogias/gnostoa'
+          REPO_ID = 1317045725
+          RUN = 36015395550
+          ARTIFACT = 10814840263
+          ATTEMPT = 1
+          SOURCE = '09957d875f7502b252fc047644c42b9c361d1550'
+          WORKFLOW = '.github/workflows/vf0-entrance.yml'
+          MAIN = '63fb3e7bf7a929c755250e6112f5a43a2b3db5c7'
+          HEAD = '5737c65ed138a0718f00d585c0b27b450dbea655'
+          NAME = 'vf0-exact-main-entrance-20260924'
+          API = 'https://api.github.com/repos/' + REPO
+          MAX_ARCHIVE = 12 * 1024 * 1024
+          MAX_EXPANDED = 16 * 1024 * 1024
+          MEMBERS = {
+              'evidence/prepare.stderr.txt', 'evidence/prepare.stdout.txt',
+              'evidence/existing-preparation-receipt.json', 'evidence/probe.py.txt',
+              'evidence/red-test.txt', 'evidence/reproducer.py', 'evidence/result.json',
+              'source/identity.json', 'source/main.bundle',
+          }
+          negatives = []
+          deadline = time.monotonic() + 240
+
+          class Rejected(Exception):
+              pass
+
+          def require(condition, code):
+              if not condition:
+                  raise Rejected(code)
+
+          def strict_object(pairs):
+              result = {}
+              for key, value in pairs:
+                  require(key not in result, 'DUPLICATE_JSON_KEY')
+                  result[key] = value
+              return result
+
+          def strict_json(raw):
+              def invalid_constant(value):
+                  raise Rejected('NONFINITE_JSON')
+              try:
+                  return json.loads(raw.decode('utf-8'), object_pairs_hook=strict_object,
+                                    parse_constant=invalid_constant)
+              except (ValueError, UnicodeError):
+                  raise Rejected('INVALID_JSON') from None
+
+          def https_url(url, asset=False):
+              try:
+                  parts = urllib.parse.urlsplit(url)
+                  valid = (parts.scheme == 'https' and parts.hostname and
+                           parts.port in (None, 443) and parts.username is None and
+                           parts.password is None and not parts.fragment and
+                           not any(ord(c) < 33 or ord(c) > 126 for c in url))
+              except ValueError:
+                  valid = False
+              require(valid, 'UNSAFE_HTTPS_URL')
+              if asset:
+                  require(parts.hostname.endswith(('.blob.core.windows.net',
+                                                    '.actions.githubusercontent.com')),
+                          'UNADMITTED_ASSET_HOST')
+              else:
+                  require(parts.netloc == 'api.github.com', 'WRONG_API_ORIGIN')
+              return url
+
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  return None
+
+          context = ssl.create_default_context()
+          require(context.check_hostname and context.verify_mode == ssl.CERT_REQUIRED,
+                  'TLS_VALIDATION_DISABLED')
+          opener = urllib.request.build_opener(
+              urllib.request.ProxyHandler({}), NoRedirect(),
+              urllib.request.HTTPSHandler(context=context))
+          credential = os.environ.pop('READ_TOKEN')
+          require(credential and all('!' <= c <= '~' for c in credential), 'INVALID_CREDENTIAL')
+
+          def request(url, *, asset=False):
+              headers = {'User-Agent': 'gnostoa-vf0-acquisition-experiment'}
+              if not asset:
+                  headers.update({'Authorization': 'Bearer ' + credential,
+                                  'Accept': 'application/vnd.github+json',
+                                  'X-GitHub-Api-Version': '2022-11-28'})
+              req = urllib.request.Request(https_url(url, asset), headers=headers, method='GET')
+              require(not asset or req.get_header('Authorization') is None,
+                      'ASSET_CREDENTIAL_LEAK')
+              return req
+
+          def bounded_body(response, limit):
+              result = bytearray()
+              while True:
+                  require(time.monotonic() < deadline, 'TOTAL_DEADLINE')
+                  block = response.read(min(65536, limit + 1 - len(result)))
+                  if not block:
+                      return bytes(result)
+                  result.extend(block)
+                  require(len(result) <= limit, 'BODY_LIMIT')
+
+          def get_json(path):
+              require(path.startswith('/'), 'INVALID_API_PATH')
+              try:
+                  with opener.open(request(API + path), timeout=30) as response:
+                      require(response.status == 200, 'METADATA_STATUS')
+                      return strict_json(bounded_body(response, 2 * 1024 * 1024))
+              except urllib.error.HTTPError as exc:
+                  raise Rejected('METADATA_HTTP_' + str(exc.code)) from None
+
+          def download():
+              try:
+                  response = opener.open(request(API + f'/actions/artifacts/{ARTIFACT}/zip'),
+                                         timeout=30)
+              except urllib.error.HTTPError as exc:
+                  require(exc.code == 302, 'DOWNLOAD_REDIRECT_STATUS')
+                  location = exc.headers.get('Location', '')
+                  exc.close()
+              else:
+                  response.close()
+                  raise Rejected('EXPECTED_SIGNED_DOWNLOAD_REDIRECT')
+              try:
+                  with opener.open(request(location, asset=True), timeout=30) as response:
+                      require(response.status == 200, 'ASSET_STATUS')
+                      return bounded_body(response, MAX_ARCHIVE)
+              except urllib.error.HTTPError as exc:
+                  raise Rejected('ASSET_HTTP_' + str(exc.code)) from None
+
+          def validate_run(run):
+              require(run.get('id') == RUN and run.get('workflow_id') == 366155334,
+                      'RUN_IDENTITY')
+              require(run.get('head_sha') == SOURCE and run.get('path') == WORKFLOW,
+                      'WORKFLOW_SOURCE')
+              require(run.get('head_branch') == 'agent-support/vf0-entrance-20260924' and
+                      run.get('event') == 'push', 'RUN_ROUTE')
+              require(run.get('repository', {}).get('id') == REPO_ID and
+                      run.get('head_repository', {}).get('id') == REPO_ID, 'RUN_REPOSITORY')
+              require(type(run.get('run_attempt')) is int and run['run_attempt'] == ATTEMPT,
+                      'RUN_ATTEMPT')
+              require(run.get('status') == 'completed' and run.get('conclusion') == 'success',
+                      'RUN_NOT_SUCCESSFUL')
+
+          def validate_artifact(item):
+              require(item.get('id') == ARTIFACT and item.get('name') == NAME, 'ARTIFACT_IDENTITY')
+              require(item.get('expired') is False, 'ARTIFACT_EXPIRED')
+              try:
+                  expiry = datetime.fromisoformat(item['expires_at'].replace('Z', '+00:00'))
+                  require(expiry.tzinfo is not None and expiry > datetime.now(timezone.utc),
+                          'ARTIFACT_EXPIRED')
+              except (KeyError, ValueError, TypeError):
+                  raise Rejected('ARTIFACT_EXPIRY_INVALID') from None
+              relation = item.get('workflow_run', {})
+              require(relation.get('id') == RUN and relation.get('repository_id') == REPO_ID and
+                      relation.get('head_repository_id') == REPO_ID and
+                      relation.get('head_sha') == SOURCE and
+                      relation.get('head_branch') == 'agent-support/vf0-entrance-20260924',
+                      'ARTIFACT_RUN_BINDING')
+              digest = item.get('digest')
+              require(isinstance(digest, str) and re.fullmatch(r'sha256:[0-9a-f]{64}', digest),
+                      'PROVIDER_DIGEST_MISSING_OR_INVALID')
+              require(type(item.get('size_in_bytes')) is int and
+                      0 < item['size_in_bytes'] <= MAX_ARCHIVE, 'ARTIFACT_SIZE')
+              return digest
+
+          def read_archive(raw, provider_digest):
+              require(isinstance(provider_digest, str) and
+                      re.fullmatch(r'sha256:[0-9a-f]{64}', provider_digest), 'DIGEST_INVALID')
+              require(0 < len(raw) <= MAX_ARCHIVE, 'ARCHIVE_SIZE')
+              require('sha256:' + hashlib.sha256(raw).hexdigest() == provider_digest,
+                      'ARCHIVE_DIGEST_MISMATCH')
+              # This boundary must precede even ZIP directory parsing.
+              try:
+                  with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+                      entries = archive.infolist()
+                      names = [entry.filename for entry in entries]
+                      require(len(names) == len(set(names)) and set(names) == MEMBERS,
+                              'ARCHIVE_MEMBERS')
+                      require(sum(entry.file_size for entry in entries) <= MAX_EXPANDED,
+                              'EXPANSION_LIMIT')
+                      for entry in entries:
+                          name = PurePosixPath(entry.filename)
+                          require(not name.is_absolute() and '..' not in name.parts and
+                                  '\\' not in entry.filename and not entry.is_dir() and
+                                  not stat.S_ISLNK(entry.external_attr >> 16) and
+                                  not (entry.flag_bits & 1) and entry.file_size <= MAX_EXPANDED,
+                                  'UNSAFE_ARCHIVE_MEMBER')
+                      item = archive.getinfo('evidence/result.json')
+                      require(item.file_size <= 32768, 'RESULT_SIZE')
+                      return strict_json(archive.read(item))
+              except (zipfile.BadZipFile, RuntimeError, OSError, NotImplementedError):
+                  raise Rejected('INVALID_ARCHIVE') from None
+
+          def expect_reject(name, action, expected):
+              try:
+                  action()
+              except Rejected as exc:
+                  require(str(exc) == expected, 'WRONG_NEGATIVE_REASON_' + name)
+                  negatives.append({'case': name, 'result': 'REJECT', 'reason': expected})
+              else:
+                  raise Rejected('FALSE_ACCEPT_' + name)
+
+          def changed(document, key, value):
+              result = copy.deepcopy(document)
+              result[key] = value
+              return result
+
+          def reject_production_subject(run):
+              # Experiment pins intentionally do not constitute a production trust root.
+              require(not run['head_branch'].startswith('agent-support/'),
+                      'SUPPORT_PRODUCER_NOT_ADMITTED')
+              raise Rejected('NO_INTEGRATED_VF0_PRODUCER_ADMITTED')
+
+          def main():
+              require(get_json('/git/ref/heads/main')['object']['sha'] == MAIN, 'MAIN_DRIFT')
+              require(get_json('/pulls/319')['head']['sha'] == HEAD, 'PR_DRIFT')
+              run = get_json(f'/actions/runs/{RUN}')
+              validate_run(run)
+              jobs = get_json(f'/actions/runs/{RUN}/attempts/{ATTEMPT}/jobs?per_page=100')
+              require(jobs.get('total_count') == 1 and len(jobs.get('jobs', [])) == 1,
+                      'JOB_POPULATION')
+              job = jobs['jobs'][0]
+              require(job['run_id'] == RUN and job['name'] == 'capture' and
+                      job['status'] == 'completed' and job['conclusion'] == 'success',
+                      'CAPTURE_JOB')
+              require(all(s['status'] == 'completed' and s['conclusion'] == 'success'
+                          for s in job['steps']), 'CAPTURE_STEPS')
+              source_hashes = {}
+              for path, expected in (
+                  (WORKFLOW, '7c6840e5e6d5e074418ac2e49c9d8c0a8837e43e'),
+                  ('.github/vf0-entrance-reproduce.py', '93a9c7420b0f4b92d57c4eda857b673f22e1182c'),
+              ):
+                  document = get_json('/contents/' + path + '?ref=' + SOURCE)
+                  require(document.get('path') == path and document.get('type') == 'file' and
+                          document.get('encoding') == 'base64' and document.get('sha') == expected,
+                          'SOURCE_METADATA')
+                  raw = base64.b64decode(''.join(document['content'].split()), validate=True)
+                  observed = hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest()
+                  require(observed == expected, 'SOURCE_BLOB_MISMATCH')
+                  source_hashes[path] = hashlib.sha256(raw).hexdigest()
+              metadata = get_json(f'/actions/artifacts/{ARTIFACT}')
+              digest = validate_artifact(metadata)
+              raw = download()
+              require(len(raw) == metadata['size_in_bytes'], 'DOWNLOAD_SIZE_MISMATCH')
+              observation = read_archive(raw, digest)
+              require(observation.get('schema') == 'gnostoa-vf0-entrance-observation/v1' and
+                      observation.get('parent') == MAIN and
+                      observation.get('parent_tree') == 'fa4cb2db0ea072897391efd77deda95ac7e1f9a4' and
+                      observation.get('execution') == 'RED' and observation.get('tests_run') == 1 and
+                      observation.get('failures') == 1 and observation.get('errors') == 0 and
+                      observation.get('skipped') == 0 and
+                      observation.get('parent_tracked_production_unchanged') is True,
+                      'ENTRANCE_OBSERVATION_BINDING')
+              # Actual source and archive acquisition succeeded; mutations below are local tests.
+              for key, value, reason in (
+                  ('id', RUN + 1, 'RUN_IDENTITY'), ('head_sha', '0' * 40, 'WORKFLOW_SOURCE'),
+                  ('path', '.github/workflows/other.yml', 'WORKFLOW_SOURCE'),
+                  ('run_attempt', 2, 'RUN_ATTEMPT'), ('repository', {'id': 1}, 'RUN_REPOSITORY'),
+                  ('conclusion', 'failure', 'RUN_NOT_SUCCESSFUL'),
+              ):
+                  expect_reject('run_' + key, lambda k=key, v=value: validate_run(changed(run, k, v)), reason)
+              for key, value, reason in (
+                  ('id', ARTIFACT + 1, 'ARTIFACT_IDENTITY'), ('expired', True, 'ARTIFACT_EXPIRED'),
+                  ('digest', None, 'PROVIDER_DIGEST_MISSING_OR_INVALID'),
+                  ('digest', 'sha256:not-a-digest', 'PROVIDER_DIGEST_MISSING_OR_INVALID'),
+                  ('workflow_run', {'id': RUN + 1}, 'ARTIFACT_RUN_BINDING'),
+              ):
+                  expect_reject('artifact_' + key + '_' + str(len(negatives)),
+                                lambda k=key, v=value: validate_artifact(changed(metadata, k, v)), reason)
+              with patch.object(zipfile, 'ZipFile', side_effect=AssertionError('ZIP_PARSE_BEFORE_DIGEST')):
+                  expect_reject('tampered_archive_before_zip_parser',
+                                lambda: read_archive(raw[:-1] + bytes([raw[-1] ^ 1]), digest),
+                                'ARCHIVE_DIGEST_MISMATCH')
+              for url in ('http://api.github.com/repos/x/y', 'https://api.github.com@evil.invalid/x',
+                          'https://api.github.com/x#fragment'):
+                  expect_reject('unsafe_url_' + str(len(negatives)), lambda u=url: https_url(u),
+                                'UNSAFE_HTTPS_URL')
+              expect_reject('wrong_api_origin', lambda: https_url('https://evil.invalid/x'),
+                            'WRONG_API_ORIGIN')
+              expect_reject('wrong_asset_host', lambda: https_url('https://evil.invalid/x', True),
+                            'UNADMITTED_ASSET_HOST')
+              require(request('https://fixture.blob.core.windows.net/a?sig=diagnostic', asset=True)
+                      .get_header('Authorization') is None, 'ASSET_CREDENTIAL_LEAK')
+              expect_reject('support_workflow_not_production', lambda: reject_production_subject(run),
+                            'SUPPORT_PRODUCER_NOT_ADMITTED')
+              claimed = changed(run, 'trusted', True)
+              expect_reject('self_asserted_trust_does_not_admit_support',
+                            lambda: reject_production_subject(claimed), 'SUPPORT_PRODUCER_NOT_ADMITTED')
+              expect_reject('duplicate_json_keys', lambda: strict_json(b'{"a":1,"a":2}'),
+                            'DUPLICATE_JSON_KEY')
+              validate_run(get_json(f'/actions/runs/{RUN}'))
+              after = get_json(f'/actions/artifacts/{ARTIFACT}')
+              require(validate_artifact(after) == digest and
+                      after['size_in_bytes'] == metadata['size_in_bytes'], 'ACQUISITION_DRIFT')
+              result = {
+                  'schema': 'gnostoa-vf0-acquisition-experiment/v1', 'status': 'PASS',
+                  'scope': 'EXPERIMENT_ONLY', 'production_producer_admitted': False,
+                  'vf0_gate_implemented': False, 'authenticated_api_reacquisition': True,
+                  'https_certificate_and_hostname_validation': True,
+                  'api_credential_on_asset_request': False, 'archive_parsed_only_after_digest': True,
+                  'archive_extracted_or_executed': False, 'run_id': RUN, 'run_attempt': ATTEMPT,
+                  'repository_id': REPO_ID, 'source_commit': SOURCE, 'source_sha256': source_hashes,
+                  'artifact_id': ARTIFACT, 'archive_sha256': digest, 'archive_bytes': len(raw),
+                  'observation_parent': observation['parent'],
+                  'negative_controls': negatives, 'negative_count': len(negatives),
+                  'limitations': ['Experiment pin is not production admission',
+                                  'No provider-neutral acquisition adapter or D0090 enforcement implemented',
+                                  'Mutation controls are local fixtures, not hostile-provider simulation',
+                                  'Run attempt must remain one; artifact API does not bind artifact to attempt directly',
+                                  'No proof of semantic test sufficiency or hostile OS/provider resistance'],
+              }
+              output = Path(__file__).with_name('result.json')
+              output.write_text(json.dumps(result, sort_keys=True, separators=(',', ':')) + '\n',
+                                encoding='utf-8')
+              print('VF0_ACQUISITION_EXPERIMENT_PASS negatives=' + str(len(negatives)))
+              print('RESULT_SHA256=' + hashlib.sha256(output.read_bytes()).hexdigest())
+
+          if __name__ == '__main__':
+              try:
+                  main()
+              except Rejected as exc:
+                  print('VF0_EXPERIMENT_REJECTED ' + str(exc))
+                  sys.exit(1)
+              except Exception as exc:
+                  # Never print signed URLs, credentials or potentially secret-bearing error text.
+                  print('VF0_EXPERIMENT_UNEXPECTED ' + type(exc).__name__)
+                  sys.exit(1)
+          PY
+          python3 "${RUNNER_TEMP}/vf0-acquisition/probe.py"
+      - name: Retain experiment source and bounded result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: vf0-acquisition-experiment-20260924
+          path: ${{ runner.temp }}/vf0-acquisition
+          retention-days: 7
+          if-no-files-found: error
