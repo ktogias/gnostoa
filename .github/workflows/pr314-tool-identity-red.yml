@@ -1,0 +1,86 @@
+name: PR314 normalized tool identity RED
+
+on:
+  push:
+    branches:
+      - transport/pr314-tool-identity-b817299
+
+permissions:
+  contents: read
+
+jobs:
+  red:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PARENT_SHA: b817299fb8b7f9bf47cd69c440a1ea675e5dfa12
+      PARENT_TREE: 9b3b76491c3a604a0d519dda97a68db3abcfed78
+    steps:
+      - name: Checkout exact pre-change subject
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ env.PARENT_SHA }}
+          persist-credentials: false
+      - name: Bind exact pre-change identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${PARENT_SHA}"
+          test "$(git rev-parse 'HEAD^{tree}')" = "${PARENT_TREE}"
+          test -z "$(git status --porcelain)"
+      - name: Prove normalized tool identity RED
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          PYTHONPATH=. python - <<'PY'
+          from tools import analyzer_readback
+
+          head = "a" * 40
+          document = analyzer_readback.build_readback(
+              provider="synthetic-analyzer",
+              adapter="fixture/v1",
+              repository="example/project",
+              pull_number=9,
+              requested_head=head,
+              observed_head=head,
+              analysis_id="run-9",
+              scope="FULL",
+              completeness="FULL_RUN",
+              native_mode="COMPLETE_SCAN",
+              observed_at="2026-09-24T06:00:00Z",
+              run_state="SUCCESS",
+              coverage_record=analyzer_readback.coverage(
+                  "COMPLETE", pages=1, count=1, total=1
+              ),
+              findings=[
+                  {
+                      "id": "finding-1",
+                      "message": "fixture",
+                      "tool": {"id": "fixture-tool", "name": "Fixture Tool"},
+                  }
+              ],
+          )
+          assert document["findings"][0]["tool"] == {
+              "id": "fixture-tool",
+              "name": "Fixture Tool",
+          }
+          PY
+          rc=$?
+          set -e
+          test "${rc}" -ne 0
+          echo "EXPECTED_RED: common model drops normalized analyzer/tool identity"
+      - name: Record Decision binding structural RED
+        shell: bash
+        run: |
+          set -euo pipefail
+          decision=knowledge/decisions/0091-add-authenticated-provider-neutral-analyzer-readback.md
+          if grep -Fq 'target: /decisions/0089-establish-q0-reviewer-qualification-semantics.md' "${decision}"; then
+            echo "RED invalid: Decision 0091 already binds Decision 0089" >&2
+            exit 1
+          fi
+          if grep -Fq 'target: /decisions/0067-evaluate-semantic-review-assurance-through-bound-evidence.md' "${decision}"; then
+            echo "RED invalid: Decision 0091 already binds Decision 0067" >&2
+            exit 1
+          fi
+          echo "EXPECTED_STRUCTURAL_RED: Decision 0091 lacks explicit 0089/0067 relationship"
