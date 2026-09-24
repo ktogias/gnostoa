@@ -13,7 +13,7 @@ jobs:
       - name: Acquire fixed experimental controller
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: ddd9a697b9c7249b8c472c872247c9d03c486fbb
+          ref: eb05bf43a9b8bdfc994287eeaf095597178e402f
           path: diagnostic
           fetch-depth: 0
           persist-credentials: false
@@ -22,10 +22,10 @@ jobs:
         run: |
           set -euo pipefail
           cd diagnostic
-          test "$(git rev-parse HEAD)" = ddd9a697b9c7249b8c472c872247c9d03c486fbb
+          test "$(git rev-parse HEAD)" = eb05bf43a9b8bdfc994287eeaf095597178e402f
           test "$(git rev-parse --is-shallow-repository)" = false
           test -z "$(git status --porcelain)"
-          echo '910c18b0861e54640fb1c95be16e5c8638346f169ad7b44bf2013d316438a474  .github/vf0-isolation-probe.py' | sha256sum --check
+          echo '72df2689f653eb4e0f195eec1e9402403ae468d4621df743818d7dd6e258114c  .github/vf0-isolation-probe.py' | sha256sum --check
           git cat-file -e 63fb3e7bf7a929c755250e6112f5a43a2b3db5c7^{commit}
           git update-ref refs/heads/vf0-e5-export 39f9932f729efbe58f28dd911b63be02f587fb7f
           git bundle create "$RUNNER_TEMP/vf0-e5-parent.bundle" refs/heads/vf0-e5-export
