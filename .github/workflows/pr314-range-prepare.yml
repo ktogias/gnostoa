@@ -1,0 +1,98 @@
+name: Prepare PR314 same-line range correction
+
+on:
+  push:
+    branches:
+      - ops/pr314-range-prepare-c1dd
+
+permissions:
+  contents: read
+
+env:
+  PARENT: c1dd251767ff47ccb4601adbb672a8d3dc57bb9f
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: c1dd251767ff47ccb4601adbb672a8d3dc57bb9f
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Reconstruct the bounded candidate from the exact parent
+        shell: bash
+        env:
+          PATCH_SHA256: f3c0e754e63373fcdaa9ed064aa3413c3b2dfeb25714ff00f60b56925e7e15da
+          GZIP_SHA256: ce1b11ee3b4157b1fa647c0f7b4d7a4417a9633e804db59dbd699ab6fe3e9359
+          PATCH_GZIP_BASE64: H4sIAAAAAAAC/61WW6/aOBB+51dY7AuIhOYCuaDtqquqj7srHfXtCEVOPAbvhuQ0dk4P7fa/d+wQLoEUDq2RkjAejz+Px58/Jjgntr0SitA3CqSS5pnQgubbL1AlFVCW0uy/6dOWpNc8BqJg8EKc0OXAs9gPgiAMQy8KKJ+lDqdRCIw5swjcmM/mznTqpMAyDnOfpvMUYgixg4Ve4PtBGkSRm/khZ9TziOs4wWw2sG37Os7BZDK5Aeu7d8R2Y88KyES/ZgFBCwNOkqxkNNsmQsoaRuaZCLYgUlUWyUUBCyIKNSb2H4SJTD0a+5/FdrkYEP3LciolGpo5H3ZT/lUyyD9qTKO6EErjmuq/76mE8WIwIdj07AYwx0SKYoV4/4VMSXw/QyWBJZJuINEYEGRebwo5kpBzg+XvEpE1cXT7LNSa6M4pooFKPVAhQT7ACl5GBy/dzrPTxf6hqkpc4xAKJkkKvKyAYMVIRSslh4do48W1yEVZbWguvkC7xA4W3b6em3QbCjZckKHcFmoNSmR2RYsVDK0e7w1ISbH/eAjJy4wqURa9o5qYiz4Mxscs22wCOrqe9QNXTNhtjk3MZk/ROb4WdO/p93h+u2D/dmoaDyY9ZfdUAZbMM8ikKIt97VGc9wlhCponJk/9xdfmWZK35PF01q9n+eum6SwbvtVZdNxd3a8I6r82qG9d2LefDXoB6V2r/UkUtwy4Y+3XVnoz8BuHLA+fSFr7skT+PpRoh7MOvCnrVBP0qPV82350ac6Eb44O1vt9pPcD4ns9+d1PgCck2Dr3Ucy5eXxuOrqCPnyqab5Pp9Xm7HE34VITEjkhpAo+1fhG8lljMpNNjbYUEnihmUrkmnYJiNx0+5F7br8BO5FKZZnLN30qqbdzJ5B810vnvjP3UfxEDObzNAgo49ybe5HvMx77DotCN5pOWRTxjGfAY8+JqU+570ZhOvPC2TyNIdI6yeEunXUEUjn+AnTbqd9CyKIqsiEzw6Xp7UWT2aPRM8xr1T5lqXdKRQCiKluT/7k5UoOqqMNbGeCASPCx40dS5mq5AjY4ZZty4tnTRcdyzyHhgazfBj4MKSYpSmQlxc9khSG/H70fDF01Ig1zXDLlYDaNhe95NWshlYbQ7Da+Hd8Qvv5F/NlotMrITfCSjhfbDY0HTXMg1aS9oosWhlYbWJlZVkhPIqHaHqIZVBgLkcHONaFHdhRqUXc8dF5Rpx6aAvXOtuR/TAT5dFdHo/GHOgAu0x3+PMXJPq41BpgRot/Bw3epiLfDAAA # pragma: allowlist secret -- public compressed candidate patch
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${PARENT}"
+          test "$(git rev-parse 'HEAD^{tree}')" = aab2ad9b3d6fbde8bc3661464574af9c692d5679
+          test -z "$(git status --porcelain)"
+          git show "${PARENT}:ci/prepare-candidate" > "${RUNNER_TEMP}/parent-prepare-candidate"
+          test -s "${RUNNER_TEMP}/parent-prepare-candidate"
+          printf '%s' "${PATCH_GZIP_BASE64}" | base64 --decode > "${RUNNER_TEMP}/candidate.patch.gz"
+          echo "${GZIP_SHA256}  ${RUNNER_TEMP}/candidate.patch.gz" | sha256sum -c -
+          gzip -dc "${RUNNER_TEMP}/candidate.patch.gz" > "${RUNNER_TEMP}/candidate.patch"
+          echo "${PATCH_SHA256}  ${RUNNER_TEMP}/candidate.patch" | sha256sum -c -
+          git apply --check "${RUNNER_TEMP}/candidate.patch"
+          git apply "${RUNNER_TEMP}/candidate.patch"
+          git diff --check
+          printf 'tests/test_analyzer_readback.py\ntools/analyzer_readback.py\n' > "${RUNNER_TEMP}/expected-paths"
+          git diff --name-only "${PARENT}" > "${RUNNER_TEMP}/actual-paths"
+          diff -u "${RUNNER_TEMP}/expected-paths" "${RUNNER_TEMP}/actual-paths"
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements/development.lock
+      - name: Install exact development tooling and run cheap checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --only-binary=:all: --require-hashes -r requirements/development.lock
+          python -m unittest tests.test_analyzer_readback tests.test_analyzer_readback_runner -v
+          python -m ruff format --check tools/analyzer_readback.py tests/test_analyzer_readback.py
+          python -m ruff check tools/analyzer_readback.py tests/test_analyzer_readback.py
+          python -m mypy --strict ci/analyzer_readback.py tools/analyzer_readback.py tools/analyzer_codacy.py tools/analyzer_deepsource.py
+      - name: Run exact-parent Decision 0090 preparation and verify receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          receipt="${RUNNER_TEMP}/receipt.json"
+          sh "${RUNNER_TEMP}/parent-prepare-candidate" prepare --parent "${PARENT}" --receipt "${receipt}" --focused-profile fast --trusted-python "$(command -v python)"
+          tree="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["prepared_tree"])' "${receipt}")"
+          receipt_sha="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["receipt_sha256"])' "${receipt}")"
+          sh "${RUNNER_TEMP}/parent-prepare-candidate" verify --parent "${PARENT}" --tree "${tree}" --receipt "${receipt}" --receipt-sha256 "${receipt_sha}" --trusted-python "$(command -v python)"
+          out="${RUNNER_TEMP}/prepared"
+          mkdir -p "${out}"
+          git diff --binary --full-index "${PARENT}" "${tree}" > "${out}/normalized.patch"
+          cp "${receipt}" "${out}/receipt.json"
+          retention_ref="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["retention_ref"])' "${receipt}")"
+          git bundle create "${out}/prepared.bundle" "${retention_ref}"
+          git bundle verify "${out}/prepared.bundle"
+          python - "${out}" <<'PY'
+          import hashlib, json, os, sys
+          from pathlib import Path
+          out = Path(sys.argv[1])
+          receipt = json.loads((out / 'receipt.json').read_text())
+          metadata = {
+              'parent': os.environ['PARENT'],
+              'prepared_tree': receipt['prepared_tree'],
+              'receipt_sha256': receipt['receipt_sha256'],
+              'normalized_patch_sha256': hashlib.sha256((out / 'normalized.patch').read_bytes()).hexdigest(),
+              'bundle_sha256': hashlib.sha256((out / 'prepared.bundle').read_bytes()).hexdigest(),
+              'red_run': 35980580401,
+          }
+          (out / 'metadata.json').write_text(json.dumps(metadata, sort_keys=True) + '\n')
+          print(json.dumps(metadata, indent=2, sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr314-range-prepared-c1dd
+          path: ${{ runner.temp }}/prepared
+          if-no-files-found: error
+          retention-days: 3
