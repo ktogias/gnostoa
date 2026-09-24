@@ -1,0 +1,122 @@
+name: PR314 pagination metadata RED
+
+on:
+  push:
+    branches:
+      - transport/pr314-final-hardening-aaedae
+
+permissions:
+  contents: read
+
+jobs:
+  red:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact pre-change subject
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: aaedae65d27f96629533f25366b2f563d31ada75
+          persist-credentials: false
+
+      - name: Bind exact pre-change identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "aaedae65d27f96629533f25366b2f563d31ada75"
+          test "$(git rev-parse 'HEAD^{tree}')" = "361943f69b0e79f097ab7d576860381bcb471144"
+          test -z "$(git status --porcelain)"
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+
+      - name: Prove pagination metadata RED
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=. python - <<'PY'
+          from collections.abc import Mapping
+          from typing import Any
+          from tools import analyzer_deepsource
+
+          head = "a" * 40
+          run_uid = "0c29b163-9e8e-43be-bd8b-a93254aa2748"
+
+          class Fake:
+              def __init__(self, *, analyzer: Any, status: str) -> None:
+                  self.analyzer = analyzer
+                  self.status = status
+
+              def graphql(self, query: str, variables: Mapping[str, Any]) -> Mapping[str, Any]:
+                  if "AnalyzerRun" in query:
+                      return {
+                          "data": {
+                              "run": {
+                                  "id": "run-node",
+                                  "runUid": run_uid,
+                                  "commitOid": head,
+                                  "baseOid": "c" * 40,
+                                  "status": "SUCCESS",
+                                  "repository": {
+                                      "name": "gnostoa",
+                                      "account": {
+                                          "login": "ktogias",
+                                          "vcsProvider": "GITHUB",
+                                      },
+                                  },
+                                  "checks": {
+                                      "totalCount": 1,
+                                      "edges": [{
+                                          "node": {
+                                              "id": "check-python",
+                                              "status": "SUCCESS",
+                                              "analyzer": {"shortcode": "python"},
+                                          }
+                                      }],
+                                      "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                  },
+                              }
+                          }
+                      }
+                  return {
+                      "data": {
+                          "node": {
+                              "id": "check-python",
+                              "status": self.status,
+                              "analyzer": self.analyzer,
+                              "issues": {
+                                  "totalCount": 0,
+                                  "edges": [],
+                                  "pageInfo": {"hasNextPage": False, "endCursor": None},
+                              },
+                          }
+                      }
+                  }
+
+          for label, fake in (
+              ("missing-analyzer", Fake(analyzer=None, status="SUCCESS")),
+              ("changed-status", Fake(analyzer={"shortcode": "python"}, status="PENDING")),
+          ):
+              document = analyzer_deepsource.read_full_run(
+                  fake,
+                  repository="ktogias/gnostoa",
+                  pull_number=314,
+                  requested_head=head,
+                  run_uid=run_uid,
+                  observed_at="2026-09-24T06:35:00Z",
+              )
+              future_ok = (
+                  document["completeness"] == "READBACK_UNAVAILABLE"
+                  and document["coverage"]["status"] == "ERROR"
+                  and document["coverage"]["reason"] == "PROVIDER_ERROR"
+              )
+              if future_ok:
+                  raise SystemExit(
+                      f"RED invalid for {label}: exact pre-change subject already fails closed"
+                  )
+              assert document["completeness"] == "FULL_RUN", (label, document)
+              assert document["coverage"]["status"] == "COMPLETE", (label, document)
+              print(f"EXPECTED_RED {label}: pagination metadata drift was promoted to FULL_RUN")
+          PY
