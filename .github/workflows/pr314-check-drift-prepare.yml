@@ -1,0 +1,247 @@
+name: PR314 DeepSource check-drift GREEN preparation
+
+on:
+  push:
+    branches:
+      - transport/pr314-check-drift-aaedae
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PARENT_SHA: aaedae65d27f96629533f25366b2f563d31ada75
+      PARENT_TREE: 361943f69b0e79f097ab7d576860381bcb471144
+    steps:
+      - name: Checkout immutable helper control
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.sha }}
+          path: control
+          persist-credentials: false
+
+      - name: Bind helper identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C "${GITHUB_WORKSPACE}/control" rev-parse HEAD)" = "${GITHUB_SHA}"
+
+      - name: Checkout exact parent
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ env.PARENT_SHA }}
+          fetch-depth: 0
+          path: source
+          persist-credentials: false
+
+      - name: Bind exact parent and shape candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}/source"
+          test "$(git rev-parse HEAD)" = "${PARENT_SHA}"
+          test "$(git rev-parse 'HEAD^{tree}')" = "${PARENT_TREE}"
+          test -z "$(git status --porcelain)"
+
+          python - <<'PY'
+          from pathlib import Path
+
+          source = Path("tools/analyzer_deepsource.py")
+          text = source.read_text(encoding="utf-8")
+
+          needle = '''    return run_uid, commit, state, f"{login}/{name}"
+
+
+          def _issue_finding(
+          '''
+          replacement = '''    return run_uid, commit, state, f"{login}/{name}"
+
+
+          def _check_subject(check: Mapping[str, Any]) -> tuple[str, str, str]:
+              analyzer = _mapping(check.get("analyzer"), "check.analyzer")
+              return (
+                  _text(check.get("id"), "check.id"),
+                  _text(check.get("status"), "check.status"),
+                  _text(analyzer.get("shortcode"), "analyzer.shortcode"),
+              )
+
+
+          def _issue_finding(
+          '''
+          if text.count(needle) != 1:
+              raise SystemExit("unexpected _issue_finding insertion context")
+          text = text.replace(needle, replacement, 1)
+
+          needle = '''            checks.extend(page_checks)
+                      for check in page_checks:
+                          _text(check.get("id"), "check.id")
+                          _text(check.get("status"), "check.status")
+                          analyzer = _mapping(check.get("analyzer"), "check.analyzer")
+                          _text(analyzer.get("shortcode"), "analyzer.shortcode")
+          '''
+          replacement = '''            checks.extend(page_checks)
+                      for check in page_checks:
+                          _check_subject(check)
+          '''
+          if text.count(needle) != 1:
+              raise SystemExit("unexpected run-check validation context")
+          text = text.replace(needle, replacement, 1)
+
+          needle = '''        for check in checks:
+                      check_id = _text(check.get("id"), "check.id")
+                      cursor: str | None = None
+          '''
+          replacement = '''        for check in checks:
+                      expected_check = _check_subject(check)
+                      check_id = expected_check[0]
+                      cursor: str | None = None
+          '''
+          if text.count(needle) != 1:
+              raise SystemExit("unexpected check pagination setup context")
+          text = text.replace(needle, replacement, 1)
+
+          needle = '''                node = _mapping(data.get("node"), "check node")
+                          if _text(node.get("id"), "check.id") != check_id:
+                              raise ProviderReadFailure(
+                                  "ERROR", "DeepSource check identity changed during pagination"
+                              )
+          '''
+          replacement = '''                node = _mapping(data.get("node"), "check node")
+                          if _check_subject(node) != expected_check:
+                              raise ProviderReadFailure(
+                                  "ERROR", "DeepSource check metadata changed during pagination"
+                              )
+          '''
+          if text.count(needle) != 1:
+              raise SystemExit("unexpected check pagination identity context")
+          source.write_text(text.replace(needle, replacement, 1), encoding="utf-8")
+
+          tests = Path("tests/test_analyzer_readback.py")
+          body = tests.read_text(encoding="utf-8")
+          anchor = '''    def test_github_native_projection_rejects_stale_status_subject(self) -> None:
+          '''
+          addition = '''    def test_full_run_rejects_check_metadata_drift_during_issue_pagination(
+                  self,
+              ) -> None:
+                  issue_page = _check_page(
+                      [_issue("issue-drift", 10)],
+                      total=1,
+                      cursor=None,
+                      status="SUCCESS",
+                  )
+                  issue_page["data"]["node"]["analyzer"] = {"shortcode": "javascript"}
+                  client = _DeepSourceFake(
+                      {
+                          ("run", None): _run_page(
+                              run_status="SUCCESS", check_status="SUCCESS"
+                          ),
+                          ("check-python", None): issue_page,
+                      }
+                  )
+
+                  document = analyzer_deepsource.read_full_run(
+                      client,
+                      repository="ktogias/gnostoa",
+                      pull_number=312,
+                      requested_head=HEAD,
+                      run_uid=RUN_UID,
+                      observed_at=OBSERVED,
+                  )
+
+                  self.assertEqual("READBACK_UNAVAILABLE", document["completeness"])
+                  self.assertEqual("ERROR", document["coverage"]["status"])
+                  self.assertEqual("PROVIDER_ERROR", document["coverage"]["reason"])
+                  self.assertEqual([], document["findings"])
+
+              def test_github_native_projection_rejects_stale_status_subject(self) -> None:
+          '''
+          if body.count(anchor) != 1:
+              raise SystemExit("unexpected regression insertion context")
+          tests.write_text(body.replace(anchor, addition, 1), encoding="utf-8")
+          PY
+
+          printf '%s\n'             tests/test_analyzer_readback.py             tools/analyzer_deepsource.py             > "${RUNNER_TEMP}/expected-paths"
+          git diff --name-only | LC_ALL=C sort > "${RUNNER_TEMP}/observed-paths"
+          LC_ALL=C sort -o "${RUNNER_TEMP}/expected-paths" "${RUNNER_TEMP}/expected-paths"
+          diff -u "${RUNNER_TEMP}/expected-paths" "${RUNNER_TEMP}/observed-paths"
+          git diff --check
+          git diff --binary --full-index > "${RUNNER_TEMP}/pr314-check-drift-input.patch"
+          sha256sum "${RUNNER_TEMP}/pr314-check-drift-input.patch" > "${RUNNER_TEMP}/pr314-check-drift-input.patch.sha256"
+
+      - name: Set up trusted Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: source/requirements/development.lock
+
+      - name: Install exact development dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install             --only-binary=:all:             --require-hashes             -r "${GITHUB_WORKSPACE}/source/requirements/development.lock"
+
+      - name: Prove strict mypy and behavioral GREEN
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}/source"
+          python -m mypy tools/analyzer_deepsource.py
+          PYTHONPATH=. python -m unittest             tests.test_analyzer_readback.DeepSourceAnalyzerReadbackTests.test_full_run_rejects_check_metadata_drift_during_issue_pagination
+          PYTHONPATH=. python -m unittest tests.test_analyzer_readback
+          python -m py_compile tools/analyzer_deepsource.py tests/test_analyzer_readback.py
+
+      - name: Execute exact-parent Decision 0090 preparation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}/source"
+          wrapper="${RUNNER_TEMP}/parent-prepare-candidate"
+          git show "${PARENT_SHA}:ci/prepare-candidate" > "${wrapper}"
+          sh "${wrapper}" prepare             --parent "${PARENT_SHA}"             --receipt "${RUNNER_TEMP}/pr314-check-drift-receipt.json"             --focused-profile fast             --trusted-python "$(command -v python)"             > "${RUNNER_TEMP}/pr314-check-drift-preparation-output.json"
+
+      - name: Verify receipt and materialize prepared tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}/source"
+          receipt="${RUNNER_TEMP}/pr314-check-drift-receipt.json"
+          prepared_tree="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["prepared_tree"])' "${receipt}")"
+          receipt_sha="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["receipt_sha256"])' "${receipt}")"
+          prepared_diff_sha="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["prepared_diff_sha256"])' "${receipt}")"
+          retention_ref="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["retention_ref"])' "${receipt}")"
+          wrapper="${RUNNER_TEMP}/parent-prepare-candidate"
+          sh "${wrapper}" verify             --parent "${PARENT_SHA}"             --tree "${prepared_tree}"             --receipt "${receipt}"             --receipt-sha256 "${receipt_sha}"             --trusted-python "$(command -v python)"             > "${RUNNER_TEMP}/pr314-check-drift-receipt-verify.json"
+          git diff --binary --full-index "${PARENT_SHA}" "${prepared_tree}" > "${RUNNER_TEMP}/pr314-check-drift-prepared.patch"
+          actual="sha256:$(sha256sum "${RUNNER_TEMP}/pr314-check-drift-prepared.patch" | awk '{print $1}')"
+          test "${actual}" = "${prepared_diff_sha}"
+          git bundle create "${RUNNER_TEMP}/pr314-check-drift-prepared.bundle" "${retention_ref}"
+          git bundle verify "${RUNNER_TEMP}/pr314-check-drift-prepared.bundle"
+          sha256sum "${RUNNER_TEMP}/pr314-check-drift-prepared.bundle" > "${RUNNER_TEMP}/pr314-check-drift-prepared.bundle.sha256"
+          {
+            printf 'parent_commit=%s\n' "${PARENT_SHA}"
+            printf 'parent_tree=%s\n' "${PARENT_TREE}"
+            printf 'prepared_tree=%s\n' "${prepared_tree}"
+            printf 'receipt_sha256=%s\n' "${receipt_sha}"
+            printf 'prepared_diff_sha256=%s\n' "${prepared_diff_sha}"
+          } > "${RUNNER_TEMP}/pr314-check-drift-preparation.identity"
+
+      - name: Upload bounded preparation evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr314-check-drift-decision0090-preparation
+          path: |
+            ${{ runner.temp }}/pr314-check-drift-input.patch
+            ${{ runner.temp }}/pr314-check-drift-input.patch.sha256
+            ${{ runner.temp }}/pr314-check-drift-receipt.json
+            ${{ runner.temp }}/pr314-check-drift-preparation-output.json
+            ${{ runner.temp }}/pr314-check-drift-receipt-verify.json
+            ${{ runner.temp }}/pr314-check-drift-prepared.patch
+            ${{ runner.temp }}/pr314-check-drift-prepared.bundle
+            ${{ runner.temp }}/pr314-check-drift-prepared.bundle.sha256
+            ${{ runner.temp }}/pr314-check-drift-preparation.identity
+          retention-days: 1
+          if-no-files-found: error
