@@ -1,0 +1,84 @@
+name: PR314 malformed analyzer RED
+
+on:
+  push:
+    branches:
+      - transport/pr314-malformed-analyzer-2ade51
+
+permissions:
+  contents: read
+
+jobs:
+  red:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact pre-change subject
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 2ade51b6ebccfde341aa153d7c1502a51bbfac96
+          persist-credentials: false
+      - name: Bind exact pre-change identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "2ade51b6ebccfde341aa153d7c1502a51bbfac96"
+          test "$(git rev-parse 'HEAD^{tree}')" = "832c7f719abd5596522a155aef98e0855bafdb1f"
+          test -z "$(git status --porcelain)"
+      - name: Set up Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Prove malformed analyzer RED
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=. python - <<'PY'
+          from tests.test_analyzer_readback import (
+              HEAD,
+              OBSERVED,
+              RUN_UID,
+              _DeepSourceFake,
+              _check_page,
+              _run_page,
+          )
+          from tools import analyzer_deepsource
+
+          run_page = _run_page(run_status="SUCCESS", check_status="SUCCESS")
+          check = run_page["data"]["run"]["checks"]["edges"][0]["node"]
+          check["analyzer"] = {}
+          client = _DeepSourceFake(
+              {
+                  ("run", None): run_page,
+                  ("check-python", None): _check_page(
+                      [], total=0, cursor=None, status="SUCCESS"
+                  ),
+              }
+          )
+          document = analyzer_deepsource.read_full_run(
+              client,
+              repository="ktogias/gnostoa",
+              pull_number=312,
+              requested_head=HEAD,
+              run_uid=RUN_UID,
+              observed_at=OBSERVED,
+          )
+
+          future = (
+              document["completeness"] == "READBACK_UNAVAILABLE"
+              and document["coverage"]["status"] == "ERROR"
+              and document["coverage"]["reason"] == "PROVIDER_ERROR"
+          )
+          if future:
+              raise SystemExit(
+                  "RED invalid: exact pre-change subject already rejects malformed analyzer"
+              )
+
+          assert document["completeness"] == "FULL_RUN", document
+          assert document["coverage"]["status"] == "COMPLETE", document
+          assert document["findings"] == [], document
+          print(
+              "EXPECTED_RED: malformed analyzer metadata with zero issues "
+              "was incorrectly accepted as FULL_RUN/COMPLETE"
+          )
+          PY
