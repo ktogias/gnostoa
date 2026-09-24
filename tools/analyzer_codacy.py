@@ -467,7 +467,12 @@ def _read_pull_request(
                 if next_cursor is None:
                     cursor = None
                     break
-                cursor = _text(next_cursor, "pagination.cursor")
+                next_cursor = _text(next_cursor, "pagination.cursor")
+                if next_cursor == cursor:
+                    raise ProviderReadFailure(
+                        "ERROR", "Codacy issue pagination did not advance"
+                    )
+                cursor = next_cursor
             else:
                 raise ProviderReadFailure(
                     "ERROR", "Codacy issue pagination exceeded bound"

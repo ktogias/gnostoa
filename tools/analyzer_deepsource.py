@@ -447,9 +447,14 @@ def _read_full_run(
                 raise ProviderReadFailure(
                     "ERROR", "DeepSource run changed during pagination"
                 )
+            previous_check_cursor = check_cursor
             page_checks, total, has_next, check_cursor = _page(
                 run.get("checks"), "run.checks"
             )
+            if has_next and check_cursor == previous_check_cursor:
+                raise ProviderReadFailure(
+                    "ERROR", "DeepSource check pagination did not advance"
+                )
             if total is not None:
                 if not checks_total_seen:
                     expected_checks_total = total
@@ -678,9 +683,14 @@ def _read_full_run(
                     raise ProviderReadFailure(
                         "ERROR", "DeepSource check metadata changed during pagination"
                     )
+                previous_cursor = cursor
                 issue_nodes, total, has_next, cursor = _page(
                     node.get("issues"), "check.issues"
                 )
+                if has_next and cursor == previous_cursor:
+                    raise ProviderReadFailure(
+                        "ERROR", "DeepSource issue pagination did not advance"
+                    )
                 if total is not None:
                     if not check_total_seen:
                         check_total = total

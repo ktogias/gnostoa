@@ -163,8 +163,8 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
                 redirected = handlers[0].redirect_request(
                     request, None, 302, "Found", {}, target
                 )
-                self.assertIsNotNone(redirected)
-                assert redirected is not None
+                if redirected is None:
+                    self.fail("same-origin redirect was refused")
                 self.assertEqual(target, redirected.full_url)
                 self.assertEqual(
                     "Bearer synthetic-transport-value",

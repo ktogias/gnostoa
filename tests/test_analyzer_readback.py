@@ -1579,6 +1579,64 @@ class DeepSourceAnalyzerReadbackTests(unittest.TestCase):
         self.assertNotIn("token", str(raised.exception).lower())
 
 
+class PaginationProgressTests(unittest.TestCase):
+    def test_deepsource_check_cursor_must_advance(self) -> None:
+        page = _run_page(cursor="same")
+        client = _DeepSourceFake({("run", None): page, ("run", "same"): page})
+        document = analyzer_deepsource.read_full_run(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            run_uid=RUN_UID,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("READBACK_UNAVAILABLE", document["completeness"])
+        self.assertEqual("ERROR", document["coverage"]["status"])
+        self.assertEqual(2, len(client.calls))
+
+    def test_deepsource_issue_cursor_must_advance(self) -> None:
+        page = _check_page([], total=0, cursor="same")
+        client = _DeepSourceFake(
+            {
+                ("run", None): _run_page(),
+                ("check-python", None): page,
+                ("check-python", "same"): page,
+            }
+        )
+        document = analyzer_deepsource.read_full_run(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            run_uid=RUN_UID,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("READBACK_UNAVAILABLE", document["completeness"])
+        self.assertEqual("ERROR", document["coverage"]["status"])
+        self.assertEqual(3, len(client.calls))
+
+    def test_codacy_issue_cursor_must_advance(self) -> None:
+        page = {"analyzed": True, "data": [], "pagination": {"cursor": "same"}}
+        client = _CodacyFake(
+            {
+                f"{_codacy_root()}/pull-requests/312": _codacy_pr(),
+                _codacy_issues_url(potential=False): page,
+                _codacy_issues_url(potential=False, cursor="same"): page,
+            }
+        )
+        document = analyzer_codacy.read_pull_request(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            observed_at=OBSERVED,
+        )
+        self.assertEqual("READBACK_UNAVAILABLE", document["completeness"])
+        self.assertEqual("ERROR", document["coverage"]["status"])
+        self.assertEqual(3, len(client.calls))
+
+
 class CodacyAnalyzerReadbackTests(unittest.TestCase):
     def test_codacy_exact_head_and_cursor_pagination_are_complete(self) -> None:
         root = _codacy_root()
