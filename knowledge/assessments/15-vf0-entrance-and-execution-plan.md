@@ -424,3 +424,126 @@ admitted D0090 authority evolution. The E4 helpers are reusable experimental
 reference material, not a second permanent pipeline. VF0 remains **critical and
 inactive**; the sequence remains **VF0 then #318**, with no merge authorization,
 Q0 activation or broader #15 completion supplied by this result.
+
+## VF0-E5: actual evidence/controller isolation and bounded cleanup
+
+The [pre-execution checkpoint](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5818685504)
+preceded the diagnostic controller and workflow. The
+[executed reconciliation and pre-edit checkpoint](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5819075808)
+precedes this assessment-only append. All 26,710 preceding assessment bytes,
+including the original behavior map and E3's rejected hypothesis, are preserved.
+E5 tests a fixed adversarial evidence program in actual containers; it does not
+implement human-admission acquisition or activate VF0.
+
+### Failed executions and repair chronology
+
+[Run 36033242673](https://github.com/ktogias/gnostoa/actions/runs/36033242673) and
+[run 36034256533](https://github.com/ktogias/gnostoa/actions/runs/36034256533)
+remain **FAILURE**. Both retained five completed-case captures and the overflow
+container configuration, but neither retained an overflow capture or final
+result. The provider logs reported `TimeoutExpired`, not a detailed traceback.
+
+The first [repair checkpoint](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5818858503)
+preceded a narrow attachment-wait fix. The exact published cleanup block was
+reproduced locally using a real finite full-pipe child: two tests, one assertion
+failure, zero errors, then two passing tests after repair. The second real run
+still failed, demonstrating that this local test did not cover the preceding
+container-removal step or full cleanup ordering.
+
+The next [repair checkpoint](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5818979327)
+recorded a fresh exact-finally-block RED: four tests, two assertion failures,
+zero errors. A real blocked pipe client and an instrumented removal boundary
+showed that removal preceded client closure, and removal failure skipped client
+cleanup. This was an ordering test, not simulated Docker assurance. The repair
+closes/reaps the attachment first, always attempts container removal afterwards,
+and verifies absence independently. All four local tests then passed; the actual
+OCI run below established the repaired full path. Output backpressure is the
+supported diagnosis, but the original timeout's exact call site was not logged.
+Neither earlier failure is retrospectively converted into success.
+
+### Actual successful subject and outcomes
+
+[Run 36035259818](https://github.com/ktogias/gnostoa/actions/runs/36035259818),
+job `107753623007`, succeeded on workflow source
+`578a8809681ac7e69b27c531973cfbaa6a591224`, executing controller
+`eb05bf43a9b8bdfc994287eeaf095597178e402f` at
+`.github/vf0-isolation-probe.py`. The development image was built from exact
+parent `63fb3e7bf7a929c755250e6112f5a43a2b3db5c7`, tree
+`fa4cb2db0ea072897391efd77deda95ac7e1f9a4`, and bound to local image identity
+`sha256:746284ee8836ccf6c1a18fcbc27ef03b59b741c8ea494a984fa81331b5539c62`.
+This is an executed image binding, not a reproducible-build claim.
+
+The controller materialized **613 exact regular parent files** plus only the
+fixed `tests/vf0_e5_probe.py`. Five preflight mutations rejected before container
+creation: changed production bytes, undeclared file, symlink evidence, wrong
+parent and wrong tree. Before initial publication, an arbitrary 4 MiB member
+limit was found to reject an existing 7,843,840-byte parent archive; materialization
+was corrected to exact Git-declared sizes within a 32 MiB aggregate bound.
+This setup correction did not alter the runtime or acceptance oracle.
+
+| Actual OCI case | Controller-observed outcome |
+| --- | --- |
+| Parent-function characterization | Exact workspace module imported; three fixed assertions; exit 0 |
+| Fixed adversarial isolation probe | Twelve fixed checks returned true; exit 0; parent and controller canary unchanged |
+| Fake publisher/workflow-command output | Captured as untrusted bytes only, not replayed to the workflow log |
+| Claimed RED with exit 17 | Exit 17 recorded; no RED or production receipt issued |
+| Timeout with spawned descendant | Five-second deadline; owned container removed and absence verified |
+| Unbounded stdout attempt | Output-limit termination; 65,536 bytes retained, at least 73,728 observed; container absence verified |
+
+All six cases recorded unchanged parent production/controller canary and verified
+container removal. The container had a read-only root and source mount, no
+network, no capabilities or privilege escalation, UID 10001, 256 MiB memory/swap,
+half a CPU, 32 PIDs and bounded temporary storage. No host Git metadata, Docker
+socket, credential environment or command-file/controller directory was mounted.
+The fixed probe attempted writes, UID escalation, symlink/proc-root access and
+network connection; its twelve returned booleans are not an authentication
+mechanism for arbitrary child assertions.
+
+The evidence bytes, five-second execution deadline, combined 65,536-byte capture
+ceiling, removal bound and OCI restrictions were unchanged across repairs.
+Container exit and termination are controller observations. This diagnostic
+never issues production receipts at all: preserving fake success text as data
+is not proof that an implemented production gate rejected a forged receipt.
+No resource-exhaustion stress corpus, hostile kernel/runtime/provider-admin test,
+complete sandbox certification or general test-oracle sufficiency is claimed.
+
+### Retention, cleanup and next obligation
+
+Successful artifact **10824390744**, `vf0-e5-isolation-36035259818`, expires
+**2026-10-01 17:35:29 UTC**. Its 24 bounded members retain exact controller/evidence
+source, image/runtime metadata, six container configurations/captures, parent
+manifest and result. The whole archive digest was compared with independently
+retrieved provider metadata before ZIP parsing. Local offline consistency replay
+checked all three historical archives, retained failures, source identities,
+limits, configurations and six outcomes; it did not execute artifact code,
+repeat Docker isolation or establish current provider availability.
+
+| Retained object | SHA-256 |
+| --- | --- |
+| First failed-run artifact 10823737447 | `2d1e4021b1f229f927d9ddf4ae263fc292e5aefec45938fdb269fe8fac1913fb` |
+| Second failed-run artifact 10823579024 | `e171d7299e334abb0c71721b28eeddebdd1f16e7850fa628ebc08095b319c760` |
+| Successful artifact 10824390744 | `4b8060da18a370350b077153c433e388c79b17d58a806d6b966ae4d28f0d163b` |
+| Successful canonical result, terminal LF included | `eacb41f24e49f675ec9160455e2075285d887883bd9d34a6cafee9c9389a9a70` |
+| Final diagnostic controller | `72df2689f653eb4e0f195eec1e9402403ae468d4621df743818d7dd6e258114c` |
+| Unchanged fixed evidence program | `79c9df97e7f075d2e1f579ae6635b707750c2f9c2c1b58ef655fecf7683f5418` |
+
+The failed artifacts expire respectively on 2026-10-01 at 17:18:33 and 17:27:16
+UTC. Cleanup `6e1fa70a1842695698202aa1d739e4bb1b7ac57e` removed both E5 support
+files and restored the pre-helper tree
+`9b4d7c223eb82a9739c12e5e5221c6207f1288bd`; history and artifacts remain retained.
+No helper entered this PR or main. Direct GitHub DNS and Docker were unavailable
+locally, so the actual OCI execution used this bounded provider recovery route;
+local source transport was independently digest-checked, bundle-verified and
+fscked. This conditional route is not the default when direct tooling is available.
+
+E5 gives partial experimental support to VF0-02/06/07/10 without closing any row.
+Its fixed allowlist and synthetic canary do not represent independently
+authenticated human admission. Next, establish that external admission/input
+contract and its failing conformance cases, then compose qualified evidence
+execution with reusable acquisition and separately admitted D0090 authority
+evolution. E4 and E5 remain separate experiments, not an integrated authenticated
+producer/consumer round trip. Do not rerun them merely to regenerate green
+results. VF0 remains **critical and inactive**, with missing-evidence enforcement,
+semantic non-vacuity, preparation parity and integrated-consumer obligations
+open. The sequence stays **VF0 then #318**; no merge, Ready transition, production
+trust or broader #15 completion is authorized by this record.
