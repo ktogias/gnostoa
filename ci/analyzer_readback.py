@@ -86,6 +86,8 @@ class GitHubReadClient:
     def __init__(self, token: str) -> None:
         if not token:
             raise RunnerError("GitHub read token is unavailable")
+        if any(not "!" <= char <= "~" for char in token):
+            raise RunnerError("GitHub read credential is malformed")
         self._token = token
         self._opener = urllib.request.build_opener(_GitHubRedirectHandler())
 
@@ -114,6 +116,9 @@ class GitHubReadClient:
             raise RunnerError(f"GitHub API HTTP {exc.code}") from exc
         except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
             raise RunnerError("GitHub API unavailable") from exc
+        except ValueError:
+            # HTTP header validation can include credential bytes in its error.
+            raise RunnerError("GitHub request failed validation") from None
         if len(raw) > _MAX_RESPONSE_BYTES:
             raise RunnerError("GitHub API response exceeds bounded size")
         try:

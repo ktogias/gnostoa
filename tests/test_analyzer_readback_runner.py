@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import contextlib
 import http.client
 import importlib.util
+import io
+import os
 import tempfile
+import traceback
 import unittest
+import urllib.request
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from tools.analyzer_readback import canonical_json
 
@@ -133,6 +139,308 @@ class _CodacyReader:
         if "onlyPotential=false" in url or "onlyPotential=true" in url:
             return {"analyzed": True, "data": [], "pagination": {}}
         raise AssertionError(f"unexpected Codacy URL: {url}")
+
+
+class AnalyzerTransportCredentialTests(unittest.TestCase):
+    def test_github_redirect_preserves_same_origin_credentials(self) -> None:
+        client = runner.GitHubReadClient("synthetic-transport-value")
+        handlers = [
+            handler
+            for handler in client._opener.handlers
+            if isinstance(handler, runner._GitHubRedirectHandler)
+        ]
+        self.assertEqual(1, len(handlers))
+        request = urllib.request.Request("https://api.github.com/start")
+        request.add_unredirected_header(
+            "Authorization", "Bearer synthetic-transport-value"
+        )
+        for target in (
+            "https://api.github.com/next",
+            "https://api.github.com:443/next",
+            "https://API.GITHUB.COM/next",
+        ):
+            with self.subTest(target=target):
+                redirected = handlers[0].redirect_request(
+                    request, None, 302, "Found", {}, target
+                )
+                self.assertIsNotNone(redirected)
+                assert redirected is not None
+                self.assertEqual(target, redirected.full_url)
+                self.assertEqual(
+                    "Bearer synthetic-transport-value",
+                    redirected.get_header("Authorization"),
+                )
+
+    def test_github_redirect_refuses_unsafe_origins(self) -> None:
+        handler = runner._GitHubRedirectHandler()
+        request = urllib.request.Request("https://api.github.com/start")
+        request.add_unredirected_header(
+            "Authorization", "Bearer synthetic-transport-value"
+        )
+        for target in (
+            "https://example.invalid/next",
+            "https://api.github.com.evil.example/next",
+            "https://api.github.com@evil.example/next",
+            "http://api.github.com/next",
+            "https://api.github.com:8443/next",
+            "https://api.github.com:not-a-port/next",
+            "https://api.github.com/next#fragment",
+            "https://u:p@api.github.com/next",
+        ):
+            with self.subTest(target=target), self.assertRaises(runner.RunnerError):
+                handler.redirect_request(request, None, 302, "Found", {}, target)
+
+    def test_malformed_credentials_do_not_echo_through_real_http_headers(self) -> None:
+        cases = (
+            (
+                runner.GitHubReadClient,
+                lambda c: c.get(
+                    "https://api.github.com/repos/ktogias/gnostoa/pulls/312"
+                ),
+                runner.RunnerError,
+            ),
+            (
+                runner.analyzer_deepsource.DeepSourceGraphQLClient,
+                lambda c: c.graphql(
+                    runner.analyzer_deepsource._RUN_QUERY,
+                    {"runUid": RUN_UID, "cursor": None},
+                ),
+                runner.analyzer_deepsource.ProviderReadFailure,
+            ),
+            (
+                runner.analyzer_codacy.CodacyRestClient,
+                lambda c: c.get(
+                    "https://app.codacy.com/api/v3/analysis/organizations/gh/ktogias/repositories/gnostoa/pull-requests/312"
+                ),
+                runner.analyzer_codacy.ProviderReadFailure,
+            ),
+        )
+        for factory, invoke, error_type in cases:
+            for suffix in ("\n", "\r"):
+                with self.subTest(client=factory.__name__, suffix=repr(suffix)):
+                    value = "synthetic-malformed-credential" + suffix
+                    with (
+                        patch.dict(os.environ, {}, clear=True),
+                        patch.object(
+                            http.client.HTTPSConnection,
+                            "connect",
+                            side_effect=AssertionError("network forbidden"),
+                        ) as connect,
+                    ):
+                        try:
+                            invoke(factory(value))
+                        except Exception as exc:
+                            rendered = "".join(traceback.format_exception(exc))
+                            self.assertNotIn("synthetic-malformed-credential", rendered)
+                            self.assertIsInstance(exc, error_type)
+                        else:
+                            self.fail("malformed credential was accepted")
+                        connect.assert_not_called()
+
+    def test_credential_validation_rejects_without_trimming_or_opener(self) -> None:
+        for factory, error_type in (
+            (runner.GitHubReadClient, runner.RunnerError),
+            (
+                runner.analyzer_deepsource.DeepSourceGraphQLClient,
+                runner.analyzer_deepsource.ProviderReadFailure,
+            ),
+            (
+                runner.analyzer_codacy.CodacyRestClient,
+                runner.analyzer_codacy.ProviderReadFailure,
+            ),
+        ):
+            for value in (
+                " x",
+                "x ",
+                "x\ty",
+                "x\x00y",
+                "x\x7fy",
+                "x\xffy",
+                "x\u2603y",
+                "x\ud800y",
+            ):
+                with self.subTest(client=factory.__name__, value=repr(value)):
+                    with patch("urllib.request.build_opener") as opener:
+                        with self.assertRaises(error_type) as caught:
+                            factory(value)
+                        self.assertNotIn(repr(value), str(caught.exception))
+                        opener.assert_not_called()
+            value = "aZ0._~+/=-!"
+            client = factory(value)
+            self.assertEqual(value, client._token)
+
+    def test_transport_value_errors_have_bounded_non_secret_diagnostics(self) -> None:
+        cases = (
+            (
+                runner.GitHubReadClient,
+                lambda c: c.get("https://api.github.com/start"),
+                runner.RunnerError,
+            ),
+            (
+                runner.analyzer_deepsource.DeepSourceGraphQLClient,
+                lambda c: c.graphql(
+                    runner.analyzer_deepsource._RUN_QUERY, {"runUid": RUN_UID}
+                ),
+                runner.analyzer_deepsource.ProviderReadFailure,
+            ),
+            (
+                runner.analyzer_codacy.CodacyRestClient,
+                lambda c: c.get("https://app.codacy.com/api/v3/start"),
+                runner.analyzer_codacy.ProviderReadFailure,
+            ),
+        )
+        for factory, invoke, error_type in cases:
+            with self.subTest(client=factory.__name__):
+                value = "synthetic-transport-credential"
+                client = factory(value)
+                with patch.object(
+                    client._opener, "open", side_effect=ValueError("header " + value)
+                ):
+                    try:
+                        invoke(client)
+                    except Exception as exc:
+                        self.assertNotIn(
+                            value, "".join(traceback.format_exception(exc))
+                        )
+                        self.assertIsInstance(exc, error_type)
+                    else:
+                        self.fail("transport failure was accepted")
+
+    def test_main_malformed_github_credentials_do_not_enter_stderr(self) -> None:
+        for name in ("GITHUB_TOKEN", "GH_TOKEN"):
+            for suffix in ("\n", "\r"):
+                with (
+                    self.subTest(name=name, suffix=repr(suffix)),
+                    tempfile.TemporaryDirectory() as directory,
+                ):
+                    output = Path(directory) / "readback.json"
+                    stderr, stdout = io.StringIO(), io.StringIO()
+                    with (
+                        patch.dict(
+                            os.environ,
+                            {name: "synthetic-main-credential" + suffix},
+                            clear=True,
+                        ),
+                        patch.object(
+                            http.client.HTTPSConnection,
+                            "connect",
+                            side_effect=AssertionError("network forbidden"),
+                        ) as connect,
+                        contextlib.redirect_stderr(stderr),
+                        contextlib.redirect_stdout(stdout),
+                    ):
+                        result = runner.main(
+                            [
+                                "--repository",
+                                "ktogias/gnostoa",
+                                "--pull-number",
+                                "312",
+                                "--head",
+                                HEAD,
+                                "--output",
+                                str(output),
+                            ]
+                        )
+                    self.assertEqual(2, result)
+                    self.assertFalse(output.exists())
+                    self.assertNotIn(
+                        "synthetic-main-credential",
+                        stderr.getvalue() + stdout.getvalue(),
+                    )
+                    self.assertTrue(stderr.getvalue().startswith("ERROR: "))
+                    connect.assert_not_called()
+
+    def test_malformed_optional_credential_keeps_valid_peer_readback(self) -> None:
+        for provider, token_name, peer_type, peer in (
+            (
+                "deepsource",
+                "DEEPSOURCE_API_TOKEN",
+                runner.analyzer_codacy.CodacyRestClient,
+                _CodacyReader(),
+            ),
+            (
+                "codacy",
+                "CODACY_API_TOKEN",
+                runner.analyzer_deepsource.DeepSourceGraphQLClient,
+                _deepsource_fake(),
+            ),
+        ):
+            with (
+                self.subTest(provider=provider),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                urls = _github_urls()
+                github = _GitHubFake(
+                    {
+                        urls["pr"]: [_pr(), _pr()],
+                        urls["statuses"]: [
+                            {
+                                "context": "DeepSource: Python",
+                                "state": "success",
+                                "target_url": "https://app.deepsource.com/gh/ktogias/gnostoa/run/"
+                                + RUN_UID
+                                + "/python/",
+                                "creator": {
+                                    "login": "deepsource-io[bot]",
+                                    "type": "Bot",
+                                },
+                            }
+                        ],
+                        urls["checks"]: {"check_runs": []},
+                        urls["comments"]: [],
+                    }
+                )
+                output = Path(directory) / "readback.json"
+                stderr, stdout = io.StringIO(), io.StringIO()
+                with (
+                    patch.dict(
+                        os.environ,
+                        {token_name: "synthetic-optional-credential\n"},
+                        clear=True,
+                    ),
+                    patch.object(
+                        runner.GitHubReadClient, "from_environment", return_value=github
+                    ),
+                    patch.object(peer_type, "from_environment", return_value=peer),
+                    patch.object(
+                        http.client.HTTPSConnection,
+                        "connect",
+                        side_effect=AssertionError("network forbidden"),
+                    ) as connect,
+                    contextlib.redirect_stderr(stderr),
+                    contextlib.redirect_stdout(stdout),
+                ):
+                    result = runner.main(
+                        [
+                            "--repository",
+                            "ktogias/gnostoa",
+                            "--pull-number",
+                            "312",
+                            "--head",
+                            HEAD,
+                            "--output",
+                            str(output),
+                        ]
+                    )
+                self.assertEqual(0, result)
+                serialized = output.read_text()
+                self.assertNotIn(
+                    "synthetic-optional-credential",
+                    serialized + stderr.getvalue() + stdout.getvalue(),
+                )
+                document = runner.json.loads(serialized)
+                self.assertEqual("BOUND", document["subject_binding"])
+                readbacks = {
+                    item["provider"]: item
+                    for item in document["readbacks"]
+                    if item["adapter"] != "deepsource-github/v1"
+                }
+                self.assertEqual(
+                    "AUTH_UNAVAILABLE", readbacks[provider]["completeness"]
+                )
+                other = "codacy" if provider == "deepsource" else "deepsource"
+                self.assertEqual("FULL_RUN", readbacks[other]["completeness"])
+                connect.assert_not_called()
 
 
 class AnalyzerReadbackRunnerTests(unittest.TestCase):

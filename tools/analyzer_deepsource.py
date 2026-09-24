@@ -177,6 +177,8 @@ class DeepSourceGraphQLClient:
     def __init__(self, token: str) -> None:
         if not token:
             raise ProviderReadFailure("AUTH", "DeepSource authentication unavailable")
+        if any(not "!" <= char <= "~" for char in token):
+            raise ProviderReadFailure("AUTH", "DeepSource credential is malformed")
         self._token = token
         self._opener = urllib.request.build_opener(_DeepSourceRedirectHandler())
 
@@ -226,6 +228,11 @@ class DeepSourceGraphQLClient:
             raise ProviderReadFailure(
                 "UNAVAILABLE", "DeepSource API unavailable"
             ) from exc
+        except ValueError:
+            # HTTP header validation can include credential bytes in its error.
+            raise ProviderReadFailure(
+                "ERROR", "DeepSource request failed validation"
+            ) from None
         if len(raw) > _MAX_RESPONSE_BYTES:
             raise ProviderReadFailure(
                 "ERROR", "DeepSource API response exceeds bounded size"

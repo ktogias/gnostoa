@@ -224,6 +224,18 @@ Adapters use fixed HTTPS origins and reject credential-bearing redirects outside
 the admitted provider origin. Authorization headers are attached only after URL
 validation. Error bodies are bounded and scrubbed before retention or display.
 
+Credentials must be non-empty visible ASCII without whitespace or control
+characters; reject malformed values before constructing the HTTP opener, without
+trimming or repairing them. Invalid optional analyzer credentials follow the
+existing `AUTH_UNAVAILABLE` path and do not discard valid peer readbacks. The
+three clients translate HTTP-layer `ValueError` into fixed, non-secret diagnostics
+with the original exception chain suppressed: header-validation errors may embed
+a printable representation of the credential. Artifact checks and CI log masking
+do not protect the native stderr path before serialization. Dedicated GitHub
+origin/redirect and malformed-credential exception/stderr regressions complement
+the existing provider-adapter tests; shared transport extraction remains outside
+this bounded correction.
+
 The first implementation uses the established token names for the provider
 accounts already selected by the owner, including `CODACY_API_TOKEN`; the
 DeepSource token variable is adapter-private and documented without persisting

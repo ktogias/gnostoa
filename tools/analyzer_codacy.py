@@ -87,6 +87,8 @@ class CodacyRestClient:
     def __init__(self, token: str) -> None:
         if not token:
             raise ProviderReadFailure("AUTH", "Codacy authentication unavailable")
+        if any(not "!" <= char <= "~" for char in token):
+            raise ProviderReadFailure("AUTH", "Codacy credential is malformed")
         self._token = token
         self._opener = urllib.request.build_opener(_CodacyRedirectHandler())
 
@@ -123,6 +125,11 @@ class CodacyRestClient:
             ) from exc
         except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
             raise ProviderReadFailure("UNAVAILABLE", "Codacy API unavailable") from exc
+        except ValueError:
+            # HTTP header validation can include credential bytes in its error.
+            raise ProviderReadFailure(
+                "ERROR", "Codacy request failed validation"
+            ) from None
         if len(raw) > _MAX_RESPONSE_BYTES:
             raise ProviderReadFailure(
                 "ERROR", "Codacy API response exceeds bounded size"
