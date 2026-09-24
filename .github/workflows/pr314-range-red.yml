@@ -1,0 +1,94 @@
+name: PR314 exact-head range RED and source export
+
+on:
+  push:
+    branches:
+      - ops/pr314-range-red-c1dd
+
+permissions:
+  contents: read
+
+jobs:
+  red-and-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: c1dd251767ff47ccb4601adbb672a8d3dc57bb9f
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Bind exact pre-change source
+        shell: bash
+        run: |
+          set -eu
+          test "$(git rev-parse HEAD)" = c1dd251767ff47ccb4601adbb672a8d3dc57bb9f
+          test "$(git rev-parse 'HEAD^{tree}')" = aab2ad9b3d6fbde8bc3661464574af9c692d5679
+          test -z "$(git status --porcelain)"
+      - name: Reproduce RED before any production edit
+        shell: bash
+        run: |
+          set -eu
+          python3 - <<'PY' 2>&1 | tee "${RUNNER_TEMP}/range-red.txt"
+          import unittest
+          from tools.analyzer_readback import AnalyzerReadbackError, normalize_finding
+
+          class RangeOrderRegression(unittest.TestCase):
+              def finding(self, location):
+                  return normalize_finding({"id": "synthetic-range", "message": "synthetic test", "range": location})
+
+              def test_reversed_same_line_columns_rejected(self):
+                  with self.assertRaisesRegex(AnalyzerReadbackError, "ends before it starts"):
+                      self.finding({"start_line": 12, "end_line": 12, "start_column": 9, "end_column": 3})
+
+              def test_ordered_same_line_columns_accepted(self):
+                  location = {"start_line": 12, "end_line": 12, "start_column": 3, "end_column": 9}
+                  self.assertEqual(location, self.finding(location)["range"])
+
+              def test_equal_columns_accepted(self):
+                  location = {"start_line": 12, "end_line": 12, "start_column": 3, "end_column": 3}
+                  self.assertEqual(location, self.finding(location)["range"])
+
+              def test_multiline_lower_end_column_accepted(self):
+                  location = {"start_line": 12, "end_line": 13, "start_column": 9, "end_column": 3}
+                  self.assertEqual(location, self.finding(location)["range"])
+
+              def test_partial_location_accepted(self):
+                  location = {"start_line": 12, "start_column": 9}
+                  self.assertEqual(location, self.finding(location)["range"])
+
+              def test_unspecified_lines_do_not_imply_same_line(self):
+                  location = {"start_column": 9, "end_column": 3}
+                  self.assertEqual(location, self.finding(location)["range"])
+
+              def test_reversed_lines_still_rejected(self):
+                  with self.assertRaisesRegex(AnalyzerReadbackError, "ends before it starts"):
+                      self.finding({"start_line": 13, "end_line": 12})
+
+          suite = unittest.defaultTestLoader.loadTestsFromTestCase(RangeOrderRegression)
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          if result.testsRun != 7 or result.errors or len(result.failures) != 1:
+              raise SystemExit("Unexpected RED population")
+          if not result.failures[0][0].id().endswith("test_reversed_same_line_columns_rejected"):
+              raise SystemExit("Unexpected failing case")
+          print("RED_REPRODUCED exact_head=c1dd251767ff47ccb4601adbb672a8d3dc57bb9f tests=7 expected_failures=1 production_edits=0")
+          PY
+          test -z "$(git status --porcelain)"
+      - name: Export unchanged exact Git source
+        shell: bash
+        run: |
+          set -eu
+          git branch gnostoa-export-c1dd c1dd251767ff47ccb4601adbb672a8d3dc57bb9f
+          bundle="${RUNNER_TEMP}/gnostoa-pr314-c1dd251767ff47ccb4601adbb672a8d3dc57bb9f.bundle"
+          git bundle create "${bundle}" refs/heads/gnostoa-export-c1dd
+          git bundle verify "${bundle}"
+          sha256sum "${bundle}" > "${bundle}.sha256"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr314-range-red-c1dd-source
+          path: |
+            ${{ runner.temp }}/range-red.txt
+            ${{ runner.temp }}/gnostoa-pr314-c1dd251767ff47ccb4601adbb672a8d3dc57bb9f.bundle
+            ${{ runner.temp }}/gnostoa-pr314-c1dd251767ff47ccb4601adbb672a8d3dc57bb9f.bundle.sha256
+          if-no-files-found: error
+          retention-days: 3
