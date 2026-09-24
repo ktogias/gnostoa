@@ -17,7 +17,11 @@ after PR #314 and the PR #315 recovery/RCA integration, #15 inserts one
 deterministic pre-implementation-evidence gate before the next critical
 outer-consumer/Q0 activation, PR #297 reconciliation or broader planner work.
 This is a late A1b safety closure reusing Decision 0090; it does not renumber or
-replace Ariadne v9. The same execution cursor also records
+replace Ariadne v9. Immediately after VF0, the first semantic implementation is
+[#318](https://github.com/ktogias/gnostoa/issues/318), which reuses Decision 0086's
+provider-neutral subject/adapter pattern to remove the remaining GitHub/source-host
+assumptions from the analyzer-readback core without merging analyzer evidence with
+reviewer/R2A authority. The same execution cursor also records
 [#317](https://github.com/ktogias/gnostoa/issues/317) as an optional,
 implementation-private execution-enablement side slice: after VF0, or at the
 first naturally occurring constrained environment, it may diagnose capabilities
