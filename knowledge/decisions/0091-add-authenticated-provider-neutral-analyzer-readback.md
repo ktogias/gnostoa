@@ -45,6 +45,10 @@ x-project-knowledge:
       target: /decisions/0062-require-proportionate-prior-art-and-reuse-review.md
     - kind: governed-by
       target: /decisions/0086-implement-useful-l1-as-protected-source-github-current-state-reconciler.md
+    - kind: references
+      target: /decisions/0067-evaluate-semantic-review-assurance-through-bound-evidence.md
+    - kind: references
+      target: /decisions/0089-establish-q0-reviewer-qualification-semantics.md
     - kind: governed-by
       target: /decisions/0090-require-pre-candidate-preparation-receipts-for-non-hook-authoring.md
 ---
@@ -74,6 +78,13 @@ Do not put analyzer HTTP/GraphQL calls in `tools/review_reconcile.py` or
 `tools/review_evaluate.py`. Do not add a provider SDK or the Codacy CLI as a
 runtime dependency in this first slice; bounded direct HTTPS clients are enough
 for the admitted read-only endpoints.
+
+"Provider-neutral" in this Decision refers to the **analyzer-provider boundary**:
+the normalized model and later consumers must not branch on DeepSource, Codacy or
+another analyzer provider. The first source-host transport remains a
+GitHub-specific adapter around a GitHub Pull Request. Generalizing repository
+identity and change-request transport beyond GitHub is not part of this bounded
+slice and must not be implied by the analyzer-provider abstraction claim.
 
 ## Decision
 
@@ -168,6 +179,8 @@ rejects contradictions between totals, retained findings and coverage claims.
 Normalize only fields needed for bounded disposition:
 
 - stable provider-native finding identity;
+- provider-scoped opaque analyzer/tool identity as `tool.id`, with optional
+  display `tool.name` when the provider supplies it;
 - severity/category when supplied;
 - rule/check identity and short message;
 - repository-relative location/range when supplied;
@@ -177,7 +190,24 @@ Normalize only fields needed for bounded disposition:
 
 Unknown provider fields are not promoted into generic semantics merely because a
 provider exposes them. Analyzer-specific metadata stays inside a bounded native
-provenance object.
+provenance object. `tool.id` is opaque and provider-scoped: the common model
+retains identity but does not infer equivalence, ordering, capability or semantic
+meaning from a shortcode, UUID or display name.
+
+Analyzer evidence and semantic-review authority remain disjoint. In particular:
+
+- analyzer provider identity or `tool.id` never becomes a reviewer/source
+  qualification identity;
+- analyzer-provider, analyzer or tool diversity never establishes an
+  `independence_domain_id`;
+- analyzer findings do not populate semantic-review observations or the protected
+  `qualification_snapshot`; and
+- analyzer availability or agreement cannot advance reviewer quorum, approval or
+  merge authority.
+
+Decision 0089 and the R2A contract in Decision 0067 continue to own reviewer
+qualification, independence and quorum. Any future bridge from analyzer evidence
+into semantic-review evidence requires separate admission and Decision coverage.
 
 ### 6. Authentication and secret hygiene are adapter-local
 

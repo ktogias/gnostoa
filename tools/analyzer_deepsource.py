@@ -338,6 +338,7 @@ def _issue_finding(
     check: Mapping[str, Any], issue: Mapping[str, Any]
 ) -> dict[str, Any]:
     analyzer = _mapping(check.get("analyzer"), "check.analyzer")
+    analyzer_id = _text(analyzer.get("shortcode"), "analyzer.shortcode")
     definition = issue.get("issue")
     definition_map = (
         _mapping(definition, "issue.definition") if definition is not None else {}
@@ -352,6 +353,7 @@ def _issue_finding(
     finding: dict[str, Any] = {
         "id": _text(issue.get("id"), "issue.id"),
         "message": _text(title, "issue.title"),
+        "tool": {"id": analyzer_id},
         "severity": _text(issue.get("severity"), "issue.severity"),
         "category": _text(issue.get("category"), "issue.category"),
         "path": _text(issue.get("path"), "issue.path"),
@@ -364,7 +366,7 @@ def _issue_finding(
             }
         ],
         "native": {
-            "analyzer": _text(analyzer.get("shortcode"), "analyzer.shortcode"),
+            "analyzer": analyzer_id,
             "check_status": _text(check.get("status"), "check.status"),
         },
     }

@@ -425,6 +425,66 @@ class AnalyzerReadbackModelTests(unittest.TestCase):
         self.assertNotIn('provider == "deepsource"', source)
         self.assertNotIn('provider == "codacy"', source)
 
+    def test_common_model_retains_provider_scoped_tool_identity(self) -> None:
+        document = analyzer_readback.build_readback(
+            provider="synthetic-analyzer",
+            adapter="fixture/v1",
+            repository="example/project",
+            pull_number=9,
+            requested_head=HEAD,
+            observed_head=HEAD,
+            analysis_id="run-9",
+            scope="FULL",
+            completeness="FULL_RUN",
+            native_mode="COMPLETE_SCAN",
+            observed_at=OBSERVED,
+            run_state="SUCCESS",
+            coverage_record=analyzer_readback.coverage(
+                "COMPLETE", pages=1, count=1, total=1
+            ),
+            findings=[
+                {
+                    "id": "finding-1",
+                    "message": "fixture",
+                    "tool": {"id": "fixture-tool", "name": "Fixture Tool"},
+                }
+            ],
+        )
+        self.assertEqual(
+            {"id": "fixture-tool", "name": "Fixture Tool"},
+            document["findings"][0]["tool"],
+        )
+
+    def test_common_model_rejects_unknown_tool_identity_fields(self) -> None:
+        with self.assertRaisesRegex(
+            analyzer_readback.AnalyzerReadbackError,
+            "finding tool identity has unknown fields",
+        ):
+            analyzer_readback.build_readback(
+                provider="synthetic-analyzer",
+                adapter="fixture/v1",
+                repository="example/project",
+                pull_number=9,
+                requested_head=HEAD,
+                observed_head=HEAD,
+                analysis_id="run-9",
+                scope="FULL",
+                completeness="FULL_RUN",
+                native_mode="COMPLETE_SCAN",
+                observed_at=OBSERVED,
+                run_state="SUCCESS",
+                coverage_record=analyzer_readback.coverage(
+                    "COMPLETE", pages=1, count=1, total=1
+                ),
+                findings=[
+                    {
+                        "id": "finding-1",
+                        "message": "fixture",
+                        "tool": {"id": "fixture-tool", "provider": "synthetic"},
+                    }
+                ],
+            )
+
     def test_full_run_completeness_requires_complete_coverage(self) -> None:
         with self.assertRaisesRegex(
             analyzer_readback.AnalyzerReadbackError,
@@ -552,6 +612,10 @@ class DeepSourceAnalyzerReadbackTests(unittest.TestCase):
         self.assertEqual(3, document["coverage"]["pages"])
         self.assertEqual(
             ["issue-1", "issue-2"], [x["id"] for x in document["findings"]]
+        )
+        self.assertEqual(
+            [{"id": "python"}, {"id": "python"}],
+            [x["tool"] for x in document["findings"]],
         )
 
     def test_full_run_deduplicates_overlapping_check_findings(self) -> None:
@@ -1557,6 +1621,10 @@ class CodacyAnalyzerReadbackTests(unittest.TestCase):
         self.assertEqual(400, finding["native"]["result_data_id"])
         self.assertEqual("Ruff", finding["native"]["tool_name"])
         self.assertEqual("ruff-tool", finding["native"]["tool_uuid"])
+        self.assertEqual(
+            {"id": "ruff-tool", "name": "Ruff"},
+            finding["tool"],
+        )
 
     def test_codacy_overlapping_potential_surface_collapses_by_native_id(self) -> None:
         root = _codacy_root()

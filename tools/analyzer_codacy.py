@@ -262,10 +262,24 @@ def _issue_finding(item: Mapping[str, Any]) -> dict[str, Any]:
         finding["range"] = {"start_line": line, "end_line": line}
     tool = commit_issue.get("toolInfo")
     if isinstance(tool, Mapping):
-        for source, target in (("name", "tool_name"), ("uuid", "tool_uuid")):
-            value = tool.get(source)
-            if isinstance(value, str) and value:
-                native[target] = value
+        tool_name = tool.get("name")
+        tool_uuid = tool.get("uuid")
+        if isinstance(tool_name, str) and tool_name:
+            native["tool_name"] = tool_name
+        if isinstance(tool_uuid, str) and tool_uuid:
+            native["tool_uuid"] = tool_uuid
+        tool_id = (
+            tool_uuid
+            if isinstance(tool_uuid, str) and tool_uuid
+            else tool_name
+            if isinstance(tool_name, str) and tool_name
+            else None
+        )
+        if tool_id is not None:
+            normalized_tool = {"id": tool_id}
+            if isinstance(tool_name, str) and tool_name:
+                normalized_tool["name"] = tool_name
+            finding["tool"] = normalized_tool
     return finding
 
 

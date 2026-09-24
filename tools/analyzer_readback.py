@@ -119,6 +119,22 @@ def _provenance(value: object) -> list[dict[str, str]]:
     return result
 
 
+def _tool_identity(value: object) -> dict[str, str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise AnalyzerReadbackError("finding tool identity must be an object")
+    allowed = {"id", "name"}
+    unknown = set(value) - allowed
+    if unknown:
+        raise AnalyzerReadbackError("finding tool identity has unknown fields")
+    result = {"id": _required_text(value.get("id"), "finding tool id")}
+    name = _optional_text(value.get("name"), "finding tool name")
+    if name is not None:
+        result["name"] = name
+    return result
+
+
 def normalize_finding(value: Mapping[str, Any]) -> dict[str, Any]:
     finding: dict[str, Any] = {
         "id": _required_text(value.get("id"), "finding id"),
@@ -128,6 +144,9 @@ def normalize_finding(value: Mapping[str, Any]) -> dict[str, Any]:
         normalized = _optional_text(value.get(key), f"finding {key}")
         if normalized is not None:
             finding[key] = normalized
+    tool = _tool_identity(value.get("tool"))
+    if tool is not None:
+        finding["tool"] = tool
     location = _range(value.get("range"))
     if location is not None:
         finding["range"] = location
