@@ -30,7 +30,9 @@ jobs:
           set -euo pipefail
           patch="${GITHUB_WORKSPACE}/control/recovery/pr314-unbound-status.patch"
           test -f "${patch}"
-          test "$(sha256sum "${patch}" | awk '{print $1}')" = "${INPUT_PATCH_SHA256}"
+          observed="$(sha256sum "${patch}" | awk '{print $1}')"
+          printf 'OBSERVED_PATCH_SHA256=%s\n' "${observed}"
+          test "${observed}" = "${INPUT_PATCH_SHA256}"
 
       - name: Checkout exact parent
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
