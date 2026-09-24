@@ -1,0 +1,62 @@
+name: Authenticated analyzer readback
+
+on:
+  workflow_dispatch:
+    inputs:
+      pull_number:
+        description: Pull Request number to read
+        required: true
+        type: number
+      head:
+        description: Exact 40-character Pull Request head SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: read
+  checks: read
+
+jobs:
+  readback:
+    if: github.ref == 'refs/heads/main'
+    environment: analyzer-readback
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Bind trusted main execution source
+        env:
+          EXECUTOR_REF: ${{ github.ref }}
+          EXECUTOR_SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          test "${EXECUTOR_REF}" = "refs/heads/main"
+          test "$(git rev-parse HEAD)" = "${EXECUTOR_SHA}"
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Read exact-head analyzer evidence
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DEEPSOURCE_API_TOKEN: ${{ secrets.DEEPSOURCE_API_TOKEN }}
+          CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
+          PULL_NUMBER: ${{ inputs.pull_number }}
+          REQUESTED_HEAD: ${{ inputs.head }}
+        run: |
+          set -eu
+          PYTHONPATH=. python ci/analyzer_readback.py \
+            --repository "${GITHUB_REPOSITORY}" \
+            --pull-number "${PULL_NUMBER}" \
+            --head "${REQUESTED_HEAD}" \
+            --output "${RUNNER_TEMP}/gnostoa-analyzer-readback.json"
+      - name: Upload non-secret analyzer readback
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: gnostoa-analyzer-readback-${{ inputs.pull_number }}-${{ inputs.head }}
+          path: ${{ runner.temp }}/gnostoa-analyzer-readback.json
+          if-no-files-found: error

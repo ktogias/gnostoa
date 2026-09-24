@@ -572,6 +572,22 @@ guardrails:
       - tests/test_review_reconcile_l1_render_compat.py
       - tests/test_review_reconcile_l1_full_review_followups.py
 
+  - id: authenticated-analyzer-readback
+    title: Authenticated analyzer readback is exact-subject, read-only, completeness-aware and secret-safe
+    applies_to: [kit]
+    enforcement: hybrid
+    owner: team:gnostoa-maintainers
+    guidance: knowledge/decisions/0091-add-authenticated-provider-neutral-analyzer-readback.md#decision
+    implementation:
+      - tools/analyzer_readback.py
+      - tools/analyzer_deepsource.py
+      - tools/analyzer_codacy.py
+      - ci/analyzer_readback.py
+      - .github/workflows/analyzer-readback.yml
+    tests:
+      - tests/test_analyzer_readback.py
+      - tests/test_analyzer_readback_runner.py
+
   - id: authoritative-centralized-ci
     title: Centralized CI authoritatively verifies the latest integration candidate
     applies_to: [kit, adopting-projects]
