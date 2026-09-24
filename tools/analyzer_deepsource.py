@@ -458,6 +458,8 @@ def _read_full_run(
             for check in page_checks:
                 _text(check.get("id"), "check.id")
                 _text(check.get("status"), "check.status")
+                analyzer = _mapping(check.get("analyzer"), "check.analyzer")
+                _text(analyzer.get("shortcode"), "analyzer.shortcode")
             if not has_next:
                 break
         else:
