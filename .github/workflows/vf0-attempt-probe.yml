@@ -1,0 +1,45 @@
+name: VF0 attempt attribution experiment
+on:
+  push:
+    branches:
+      - agent-support/vf0-attempt-20260924-1558
+    paths:
+      - .github/workflows/vf0-attempt-probe.yml
+permissions:
+  contents: read
+jobs:
+  capture:
+    name: VF0 diagnostic attempt ${{ github.run_attempt }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Create closed diagnostic observation
+        shell: bash
+        env:
+          OBS_REPOSITORY_ID: ${{ github.repository_id }}
+          OBS_RUN_ID: ${{ github.run_id }}
+          OBS_RUN_ATTEMPT: ${{ github.run_attempt }}
+          OBS_SOURCE: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          umask 077
+          [[ "$OBS_REPOSITORY_ID" =~ ^[0-9]+$ ]]
+          [[ "$OBS_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$OBS_RUN_ATTEMPT" =~ ^[0-9]+$ ]]
+          [[ "$OBS_SOURCE" =~ ^[0-9a-f]{40}$ ]]
+          mkdir -p "$RUNNER_TEMP/vf0-attempt"
+          printf '{"schema":"vf0-attempt-experiment/v1","repository_id":%s,"run_id":%s,"run_attempt":%s,"source_commit":"%s","production_producer_admitted":false}\n' \
+            "$OBS_REPOSITORY_ID" "$OBS_RUN_ID" "$OBS_RUN_ATTEMPT" "$OBS_SOURCE" \
+            > "$RUNNER_TEMP/vf0-attempt/observation.json"
+          sleep 3
+      - name: Retain exact attempt diagnostic
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: vf0-attempt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/vf0-attempt/observation.json
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: false
+      - name: Finish diagnostic window
+        shell: bash
+        run: sleep 3
