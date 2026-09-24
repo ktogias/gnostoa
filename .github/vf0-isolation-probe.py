@@ -222,8 +222,14 @@ def docker(*args: str, timeout: float = 30) -> bytes:
 
 def remove_owned(cid: str) -> None:
     need(re.fullmatch(r"[0-9a-f]{64}", cid) is not None, "CONTAINER_ID")
-    docker("rm", "--force", cid, timeout=15)
-    gone = command(["/usr/bin/docker", "container", "inspect", cid], timeout=15)
+    try:
+        docker("rm", "--force", cid, timeout=15)
+    except subprocess.TimeoutExpired:
+        raise Rejected("CONTAINER_REMOVAL_TIMEOUT") from None
+    try:
+        gone = command(["/usr/bin/docker", "container", "inspect", cid], timeout=15)
+    except subprocess.TimeoutExpired:
+        raise Rejected("CONTAINER_ABSENCE_CHECK_TIMEOUT") from None
     need(gone.returncode != 0 and b"no such" in gone.stderr.lower(), "CLEANUP_UNVERIFIED")
 
 
@@ -285,21 +291,22 @@ def exercise(image: str, root: Path, private: Path, case: str, out: Path) -> dic
             need(not state["Running"], "CONTAINER_STILL_RUNNING")
             exit_code = state["ExitCode"]
     finally:
-        remove_owned(cid)
-        if process is not None:
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                # The bounded pipe may be full after capture stops. Reap the
-                # attachment client after independently removing the container.
-                process.kill()
-                process.wait(timeout=5)
-            finally:
-                if process.poll() is None:
-                    process.kill()
+        # Close the attachment connection before removal so a bounded full pipe
+        # cannot keep the daemon's attached output blocked during cleanup.
+        try:
+            if process is not None:
+                try:
+                    if process.poll() is None:
+                        process.kill()
                     process.wait(timeout=5)
-                process.stdout.close()
-                process.stderr.close()
+                except subprocess.TimeoutExpired:
+                    raise Rejected("ATTACHMENT_REAP_TIMEOUT") from None
+                finally:
+                    process.stdout.close()
+                    process.stderr.close()
+        finally:
+            # Attachment failure must never bypass removal/absence verification.
+            remove_owned(cid)
     (out / (case + ".untrusted.stdout")).write_bytes(stdout)
     (out / (case + ".untrusted.stderr")).write_bytes(stderr)
     return {"case": case, "termination": termination, "container_exit_code": exit_code,
