@@ -379,6 +379,63 @@ uses an already prior-effective trusted runner. This rule is independent of
 whether the repository is private or whether the dispatching actor has write
 access.
 
+### Trusted Environment secret migration and functional verification
+
+When a new credentialed readback route uses a provider Environment as its
+non-bypassable secret-admission boundary, configure and verify that boundary
+before relying on the workflow:
+
+1. create the named Environment with custom deployment-branch policies;
+2. disable administrator bypass when the Decision requires a non-bypassable
+   branch restriction;
+3. admit only the protected/trusted execution branch (for Gnostoa-self
+   analyzer readback, exactly `main`);
+4. create the Environment-scoped secrets first;
+5. read back only secret **names/metadata** and the Environment policy; never
+   attempt to retrieve or retain secret values;
+6. only after the Environment copies are confirmed, delete broader
+   repository-level copies of the same secret names;
+7. read back repository secret names and prove those broader copies are absent.
+
+Do not reverse steps 4-6: deleting the only working credential copy before the
+Environment copy exists creates avoidable recovery pressure.
+
+If the credentialed workflow is new and does not yet exist on the trusted
+integrated branch, do not weaken the Environment policy temporarily just to test
+it from a candidate/helper ref. Functional credential verification has two safe
+routes:
+
+- use an already prior-effective trusted runner that references the Environment;
+  or
+- perform a direct **read-only maintainer-side provider probe** with the same
+  credential value, supplied interactively to the process and never written to
+  the repository, shell history, logs or retained evidence.
+
+For a direct probe:
+
+- read the token without terminal echo (for example `read -rsp`);
+- pass it only in the provider's admitted authentication header;
+- query an already-known repository/run/change-request subject through the same
+  API origin and read surface used by the adapter;
+- verify an exact non-secret subject identity in the response, not merely HTTP
+  connectivity;
+- classify `401|403` as authentication failure, rate limiting separately, and
+  wrong/missing subject identity as a binding/readback failure;
+- retain only a non-secret receipt: provider, endpoint class, subject identity,
+  HTTP/auth outcome, observation time and whether exact binding succeeded;
+- unset the credential and remove temporary response files immediately after the
+  probe.
+
+A direct probe proves that the token value is currently accepted for the
+intended read scope. It does **not** prove that the GitHub Environment will inject
+it into the future workflow. After integration, run the official trusted
+Environment-bound workflow from `main`; that post-integration smoke proves the
+combined Environment-policy, secret-injection, adapter and artifact path.
+
+Never broaden an Environment from `main` to a helper/candidate branch merely to
+move this smoke earlier. The absence of a pre-merge trusted runner is a lifecycle
+fact, not a reason to weaken the secret boundary.
+
 ### Atomic publication and concurrent-writer fencing
 
 Immediately before any branch/ref mutation, re-read the implementation branch
