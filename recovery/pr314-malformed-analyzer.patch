@@ -1,7 +1,7 @@
 diff --git a/tools/analyzer_deepsource.py b/tools/analyzer_deepsource.py
 --- a/tools/analyzer_deepsource.py
 +++ b/tools/analyzer_deepsource.py
-@@ -453,8 +453,10 @@
+@@ -453,7 +453,9 @@
              checks.extend(page_checks)
              for check in page_checks:
                  _text(check.get("id"), "check.id")
@@ -14,7 +14,7 @@ diff --git a/tools/analyzer_deepsource.py b/tools/analyzer_deepsource.py
 diff --git a/tests/test_analyzer_readback.py b/tests/test_analyzer_readback.py
 --- a/tests/test_analyzer_readback.py
 +++ b/tests/test_analyzer_readback.py
-@@ -810,6 +810,35 @@
+@@ -810,6 +810,36 @@
          self.assertEqual(1, document["coverage"]["count"])
          self.assertEqual("FULL_RUN", document["native_mode"])
  

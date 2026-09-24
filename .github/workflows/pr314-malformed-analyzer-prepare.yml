@@ -15,7 +15,7 @@ jobs:
     env:
       PARENT_SHA: 2ade51b6ebccfde341aa153d7c1502a51bbfac96
       PARENT_TREE: 832c7f719abd5596522a155aef98e0855bafdb1f
-      INPUT_PATCH_BLOB_SHA: d287f12b91ee949dcee14fc9d4bf02aca4226c95
+      INPUT_PATCH_BLOB_SHA: d7bf36a4927d4962f0ec0ba6fc531cc55d55f90b
     steps:
       - name: Checkout immutable helper control
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
