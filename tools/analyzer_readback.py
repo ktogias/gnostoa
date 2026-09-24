@@ -88,8 +88,12 @@ def _range(value: object) -> dict[str, int] | None:
         return None
     start_line = result.get("start_line")
     end_line = result.get("end_line")
-    if start_line is not None and end_line is not None and end_line < start_line:
-        raise AnalyzerReadbackError("finding range ends before it starts")
+    if start_line is not None and end_line is not None:
+        # Omitted columns cannot establish reversed same-line coordinates.
+        start = (start_line, result.get("start_column", 1))
+        end = (end_line, result.get("end_column", start[1]))
+        if end < start:
+            raise AnalyzerReadbackError("finding range ends before it starts")
     return result
 
 

@@ -192,6 +192,46 @@ def _codacy_issue(issue_id: str, line: int) -> dict[str, Any]:
 
 
 class AnalyzerReadbackModelTests(unittest.TestCase):
+    def test_finding_rejects_reversed_same_line_columns(self) -> None:
+        with self.assertRaisesRegex(
+            analyzer_readback.AnalyzerReadbackError, "ends before it starts"
+        ):
+            analyzer_readback.normalize_finding(
+                {
+                    "id": "synthetic-range",
+                    "message": "synthetic location",
+                    "range": {
+                        "start_line": 12,
+                        "end_line": 12,
+                        "start_column": 9,
+                        "end_column": 3,
+                    },
+                }
+            )
+
+    def test_finding_preserves_nonreversed_and_partial_ranges(self) -> None:
+        locations = [
+            {"start_line": 12, "end_line": 12, "start_column": 3, "end_column": 9},
+            {"start_line": 12, "end_line": 12, "start_column": 3, "end_column": 3},
+            {"start_line": 12, "end_line": 13, "start_column": 9, "end_column": 3},
+            {"start_line": 12, "end_line": 12, "start_column": 9},
+            {"start_line": 12, "end_line": 12, "end_column": 3},
+            {"start_line": 12, "end_line": 12},
+            {"start_line": 12, "start_column": 9, "end_column": 3},
+            {"end_line": 12, "start_column": 9, "end_column": 3},
+            {"start_column": 9, "end_column": 3},
+        ]
+        for location in locations:
+            with self.subTest(location=location):
+                finding = analyzer_readback.normalize_finding(
+                    {
+                        "id": "synthetic-range",
+                        "message": "synthetic location",
+                        "range": location,
+                    }
+                )
+                self.assertEqual(location, finding["range"])
+
     def test_requested_head_must_be_exact_sha(self) -> None:
         with self.assertRaisesRegex(
             analyzer_readback.AnalyzerReadbackError,
