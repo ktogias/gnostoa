@@ -1,4 +1,4 @@
-name: PR314 F1 F2 exact-parent RED
+name: Prepare PR314 F1 F2 correction
 
 on:
   push:
@@ -6,11 +6,15 @@ on:
 
 permissions:
   contents: read
+  actions: read
+
+env:
+  PARENT: cf7d6f346890517d5f40dd2eee8cea6c1e8c7e7d
 
 jobs:
-  red:
+  prepare:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
@@ -20,53 +24,81 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: '3.12'
-      - name: Apply only the digest-bound regression tests
-        shell: bash
-        env:
-          TEST_PATCH: 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 # pragma: allowlist secret -- public synthetic test patch
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = cf7d6f346890517d5f40dd2eee8cea6c1e8c7e7d
-          test "$(git rev-parse 'HEAD^{tree}')" = 89e1dfd65b96209fc388ef869b7b27171463958a
-          test -z "$(git status --porcelain)"
-          printf '%s' "$TEST_PATCH" | base64 -d > "$RUNNER_TEMP/tests.patch.gz"
-          echo "b472d2bf93e2f40000ff7440ce86896d8a48c6c90855bfd02836de0d20b36fc2  $RUNNER_TEMP/tests.patch.gz" | sha256sum -c -
-          gzip -dc "$RUNNER_TEMP/tests.patch.gz" > "$RUNNER_TEMP/tests.patch"
-          echo "70d98d4038cb23ad249cfc6ab514d587c3c2bbe54616c816680c073c3fb725d8  $RUNNER_TEMP/tests.patch" | sha256sum -c -
-          git apply "$RUNNER_TEMP/tests.patch"
-          test "$(git diff --name-only)" = tests/test_analyzer_readback_runner.py
-          python -m pip install --only-binary=:all: --require-hashes -r requirements/development.lock
-          python -m ruff check --fix tests/test_analyzer_readback_runner.py
-          python -m ruff format tests/test_analyzer_readback_runner.py
-      - name: Assert RED population before production edits
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/red"
-          python - <<'PY' 2>&1 | tee "$RUNNER_TEMP/red/red.txt"
-          import unittest
-          from tests.test_analyzer_readback_runner import AnalyzerTransportCredentialTests
-          suite = unittest.defaultTestLoader.loadTestsFromTestCase(AnalyzerTransportCredentialTests)
-          result = unittest.TextTestRunner(verbosity=2).run(suite)
-          expected = {
-              'test_malformed_credentials_do_not_echo_through_real_http_headers',
-              'test_credential_validation_rejects_without_trimming_or_opener',
-              'test_transport_value_errors_have_bounded_non_secret_diagnostics',
-              'test_main_malformed_github_credentials_do_not_enter_stderr',
-              'test_malformed_optional_credential_keeps_valid_peer_readback',
-          }
-          actual = {test.id().split('.')[-1].split(' ')[0] for test, _ in result.failures}
-          assert result.testsRun == 7 and not result.errors
-          assert len(result.failures) == 39 and actual == expected, actual
-          print('F1_CHARACTERIZATION_GREEN F2_RED_REPRODUCED tests=7 failing_subcases=39 production_edits=0')
-          PY
-          test "$(git diff --name-only)" = tests/test_analyzer_readback_runner.py
-          git diff --binary --full-index HEAD > "$RUNNER_TEMP/red/tests.patch"
-          cp tests/test_analyzer_readback_runner.py "$RUNNER_TEMP/red/test_analyzer_readback_runner.py"
-          sha256sum "$RUNNER_TEMP/red/tests.patch" "$RUNNER_TEMP/red/test_analyzer_readback_runner.py" | tee "$RUNNER_TEMP/red/digests.txt"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: pr314-f1f2-red-cf7d
+          run-id: '35987786075'
+          github-token: ${{ github.token }}
           path: ${{ runner.temp }}/red
+      - name: Bind exact source and retained tests
+        shell: bash
+        env:
+          FIX_PATCH: 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 # pragma: allowlist secret -- public candidate patch
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$PARENT"
+          test "$(git rev-parse 'HEAD^{tree}')" = 89e1dfd65b96209fc388ef869b7b27171463958a
+          test -z "$(git status --porcelain)"
+          echo "27112d224920c0576b39e5953adf0ce0c9ff9d7a7e4f60d255af280b84a3edc3  $RUNNER_TEMP/red/tests.patch" | sha256sum -c -
+          git apply "$RUNNER_TEMP/red/tests.patch"
+          printf '%s' "$FIX_PATCH" | base64 -d > "$RUNNER_TEMP/fix.patch.gz"
+          echo "e35233d3507664dd5953bce01618c64e6b424b362cfb1bc2673a30b6da7279c6  $RUNNER_TEMP/fix.patch.gz" | sha256sum -c -
+          gzip -dc "$RUNNER_TEMP/fix.patch.gz" > "$RUNNER_TEMP/fix.patch"
+          echo "c338e111aa715690366e33ba48d0d6c5833cd7ab747358d664e57aad9ab6eaa1  $RUNNER_TEMP/fix.patch" | sha256sum -c -
+          git apply --include=tests/test_analyzer_readback_runner.py "$RUNNER_TEMP/fix.patch"
+          python -m pip install --only-binary=:all: --require-hashes -r requirements/development.lock
+      - name: Replay final regressions RED on unchanged production
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git diff --name-only)" = tests/test_analyzer_readback_runner.py
+          python - <<'PY' 2>&1 | tee "$RUNNER_TEMP/final-red.txt"
+          import unittest
+          from tests.test_analyzer_readback_runner import AnalyzerTransportCredentialTests
+          result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(AnalyzerTransportCredentialTests))
+          assert result.testsRun == 7 and not result.errors and len(result.failures) == 39
+          print('FINAL_TESTS_RED tests=7 failing_subcases=39 production_edits=0')
+          PY
+      - name: Apply bounded repair and run focused GREEN
+        shell: bash
+        run: |
+          set -euo pipefail
+          git apply --exclude=tests/test_analyzer_readback_runner.py "$RUNNER_TEMP/fix.patch"
+          test "$(git diff --binary --full-index HEAD | sha256sum | cut -d' ' -f1)" = 6b27d5321481bc08bb8894c07c293eb774d95cb479a68c256a681251379beb03
+          git diff --check
+          python -m ruff format ci/analyzer_readback.py tools/analyzer_codacy.py tools/analyzer_deepsource.py tests/test_analyzer_readback_runner.py
+          python -m ruff check ci/analyzer_readback.py tools/analyzer_codacy.py tools/analyzer_deepsource.py tests/test_analyzer_readback_runner.py
+          python -m unittest tests.test_analyzer_readback tests.test_analyzer_readback_runner -v
+          python -m mypy --strict ci/analyzer_readback.py tools/analyzer_readback.py tools/analyzer_codacy.py tools/analyzer_deepsource.py
+      - name: Prepare through exact-parent wrapper
+        shell: bash
+        run: |
+          set -euo pipefail
+          env -i PATH=/usr/local/bin:/usr/bin:/bin GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_ATTR_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 /usr/bin/git -c core.hooksPath=/dev/null show "$PARENT:ci/prepare-candidate" > "$RUNNER_TEMP/parent-wrapper"
+          test -s "$RUNNER_TEMP/parent-wrapper"
+          out="$RUNNER_TEMP/prepared"
+          mkdir -p "$out"
+          sh "$RUNNER_TEMP/parent-wrapper" prepare --parent "$PARENT" --receipt "$out/receipt.json" --focused-profile fast --trusted-python "$(command -v python)"
+          tree="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["prepared_tree"])' "$out/receipt.json")"
+          digest="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["receipt_sha256"])' "$out/receipt.json")"
+          sh "$RUNNER_TEMP/parent-wrapper" verify --parent "$PARENT" --tree "$tree" --receipt "$out/receipt.json" --receipt-sha256 "$digest" --trusted-python "$(command -v python)"
+          git diff --binary --full-index "$PARENT" "$tree" > "$out/normalized.patch"
+          ref="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["retention_ref"])' "$out/receipt.json")"
+          git bundle create "$out/prepared.bundle" "$ref"
+          git bundle verify "$out/prepared.bundle"
+          cp "$RUNNER_TEMP/final-red.txt" "$out/final-red.txt"
+          python - "$out" <<'PY'
+          import hashlib,json,os,sys
+          from pathlib import Path
+          out=Path(sys.argv[1]); r=json.loads((out/'receipt.json').read_text())
+          expected=['ci/analyzer_readback.py','knowledge/decisions/0091-add-authenticated-provider-neutral-analyzer-readback.md','tests/test_analyzer_readback_runner.py','tools/analyzer_codacy.py','tools/analyzer_deepsource.py']
+          assert r['changed_paths']==expected
+          m={'parent':os.environ['PARENT'],'prepared_tree':r['prepared_tree'],'receipt_sha256':r['receipt_sha256'],'patch_sha256':hashlib.sha256((out/'normalized.patch').read_bytes()).hexdigest(),'bundle_sha256':hashlib.sha256((out/'prepared.bundle').read_bytes()).hexdigest()}
+          (out/'metadata.json').write_text(json.dumps(m,sort_keys=True)+'\n'); print(json.dumps(m,indent=2,sort_keys=True))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr314-f1f2-prepared-cf7d
+          path: ${{ runner.temp }}/prepared
           if-no-files-found: error
           retention-days: 3
