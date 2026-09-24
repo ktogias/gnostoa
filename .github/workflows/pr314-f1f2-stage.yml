@@ -1,4 +1,4 @@
-name: Stage verified PR314 test-only cleanup
+name: Stage verified PR314 pagination and test cleanup
 
 on:
   push:
@@ -11,10 +11,11 @@ permissions:
 env:
   TRUSTED_MAIN: 074bd0499395986021b4c320ee9d23ec67859186
   PARENT: 1442d11d4eb8c0785866f42922dd58f7e94d6f92
-  PREPARED_TREE: 8afcbabf60032bc1ea972ddeddadba75a1f01792
-  RECEIPT_SHA256: sha256:bdd38b41479defaffab6bfe66256b487773d0c91a2cc465a50c4716fe8e7ecc2
-  PATCH_SHA256: 1b0a3bed6b343f58d5241fed5a1c6e0b7afdc3fbe2a0ebb0d3e393ae68fe96ca
+  PREPARED_TREE: 48ce506d70cea2d5ed1c54d12bbcbe3ed70c24cb
+  RECEIPT_SHA256: sha256:f7fc54514cfd29b309d9627699a9791c82fe58f2812e1c9296486ae2d3fc4db8
+  PATCH_SHA256: 1f762b7d6a9742b8b5f50527a4c80f08091d3e7c25b491e7d6dbc3b028415fb0
   TARGET_BRANCH: ops/pr314-f1f2-prepared-tree-cf7d
+  EXPECTED_STAGING: cf3fba384083e6632bf2812570714ac4a5e6294e
 
 jobs:
   stage:
@@ -31,8 +32,8 @@ jobs:
           python-version: '3.12'
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
-          name: pr314-assert-cleanup-prepared-1442
-          run-id: '35989626593'
+          name: pr314-pagination-cleanup-prepared-1442
+          run-id: '35990600810'
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/prepared
       - name: Verify receipt and reconstruct tree without executing candidate
@@ -52,18 +53,25 @@ jobs:
           git apply --cached --binary "$patch"
           git diff --cached --check "$PARENT"
           test "$(git write-tree)" = "$PREPARED_TREE"
-          test "$(git diff --cached --name-only "$PARENT")" = tests/test_analyzer_readback_runner.py
+          cat > "$RUNNER_TEMP/expected-paths" <<'EOF'
+          tests/test_analyzer_readback.py
+          tests/test_analyzer_readback_runner.py
+          tools/analyzer_codacy.py
+          tools/analyzer_deepsource.py
+          EOF
+          git diff --cached --name-only "$PARENT" > "$RUNNER_TEMP/actual-paths"
+          diff -u "$RUNNER_TEMP/expected-paths" "$RUNNER_TEMP/actual-paths"
           unset GIT_INDEX_FILE
           test -z "$(git status --porcelain)"
-      - name: Guarded staging effect only
+      - name: Replace unused staging candidate with guarded combined candidate
         shell: bash
         run: |
           set -euo pipefail
           test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$TRUSTED_MAIN"
           test "$(git ls-remote origin refs/heads/analyzer-readback-309-313 | cut -f1)" = "$PARENT"
-          test "$(git ls-remote origin "refs/heads/$TARGET_BRANCH" | cut -f1)" = "$PARENT"
-          commit="$(printf '%s\n' 'test: keep redirect assertions active under optimization (#309 #313)' | git -c user.name='Gnostoa preparation' -c user.email='noreply@invalid' commit-tree "$PREPARED_TREE" -p "$PARENT")"
-          git -c core.hooksPath=/dev/null push --force-with-lease="refs/heads/$TARGET_BRANCH:$PARENT" origin "$commit:refs/heads/$TARGET_BRANCH"
+          test "$(git ls-remote origin "refs/heads/$TARGET_BRANCH" | cut -f1)" = "$EXPECTED_STAGING"
+          commit="$(printf '%s\n' 'fix: reject non-advancing analyzer pagination (#309 #313)' | git -c user.name='Gnostoa preparation' -c user.email='noreply@invalid' commit-tree "$PREPARED_TREE" -p "$PARENT")"
+          git -c core.hooksPath=/dev/null push --force-with-lease="refs/heads/$TARGET_BRANCH:$EXPECTED_STAGING" origin "$commit:refs/heads/$TARGET_BRANCH"
           test "$(git ls-remote origin "refs/heads/$TARGET_BRANCH" | cut -f1)" = "$commit"
-          printf 'STAGED_COMMIT=%s\nPREPARED_TREE=%s\nPRODUCTION_REF_UNCHANGED=%s\n' "$commit" "$PREPARED_TREE" "$PARENT" | tee "$RUNNER_TEMP/stage-result.txt"
+          printf 'STAGED_COMMIT=%s\nPREPARED_TREE=%s\nPRODUCTION_REF_UNCHANGED=%s\nSUPERSEDED_STAGING=%s\n' "$commit" "$PREPARED_TREE" "$PARENT" "$EXPECTED_STAGING" | tee "$RUNNER_TEMP/stage-result.txt"
           cat "$RUNNER_TEMP/stage-result.txt" >> "$GITHUB_STEP_SUMMARY"
