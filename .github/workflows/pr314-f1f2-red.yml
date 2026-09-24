@@ -1,121 +1,53 @@
-name: Prepare PR314 F1 F2 correction
+name: Read PR314 exact Codacy annotation
 
 on:
   push:
     branches: [ops/pr314-f1f2-evidence-cf7d]
 
 permissions:
-  contents: read
-  actions: read
-
-env:
-  PARENT: cf7d6f346890517d5f40dd2eee8cea6c1e8c7e7d
+  checks: read
 
 jobs:
-  prepare:
+  annotations:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          ref: cf7d6f346890517d5f40dd2eee8cea6c1e8c7e7d
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
-        with:
-          python-version: '3.12'
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
-        with:
-          name: pr314-f1f2-red-cf7d
-          run-id: '35987786075'
-          github-token: ${{ github.token }}
-          path: ${{ runner.temp }}/red
-      - name: Bind exact source and retained tests
+      - name: Read the fixed check and its annotation without candidate code
         shell: bash
+        env:
+          GH_READ_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$PARENT"
-          test "$(git rev-parse 'HEAD^{tree}')" = 89e1dfd65b96209fc388ef869b7b27171463958a
-          test -z "$(git status --porcelain)"
-          echo "27112d224920c0576b39e5953adf0ce0c9ff9d7a7e4f60d255af280b84a3edc3  $RUNNER_TEMP/red/tests.patch" | sha256sum -c -
-          git apply "$RUNNER_TEMP/red/tests.patch"
-          python - <<'PY'
+          python3 - <<'PY'
+          import json, os, urllib.request
           from pathlib import Path
-          p=Path('tests/test_analyzer_readback_runner.py'); s=p.read_text()
-          old='if item["scope"] == "FULL"'
-          assert s.count(old)==1
-          p.write_text(s.replace(old,'if item["adapter"] != "deepsource-github/v1"'))
-          PY
-          python -m pip install --only-binary=:all: --require-hashes -r requirements/development.lock
-      - name: Replay final regressions RED on unchanged production
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(git diff --name-only)" = tests/test_analyzer_readback_runner.py
-          python - <<'PY' 2>&1 | tee "$RUNNER_TEMP/final-red.txt"
-          import unittest
-          from tests.test_analyzer_readback_runner import AnalyzerTransportCredentialTests
-          result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(AnalyzerTransportCredentialTests))
-          assert result.testsRun == 7 and not result.errors and len(result.failures) == 39
-          print('FINAL_TESTS_RED tests=7 failing_subcases=39 production_edits=0')
-          PY
-      - name: Reconstruct the admitted repair and run focused GREEN
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          from pathlib import Path
-          for name, provider in [('ci/analyzer_readback.py','GitHub'),('tools/analyzer_deepsource.py','DeepSource'),('tools/analyzer_codacy.py','Codacy')]:
-              p=Path(name); s=p.read_text(); assert s.count('        self._token = token\n')==1
-              error='RunnerError("GitHub read credential is malformed")' if provider=='GitHub' else f'ProviderReadFailure("AUTH", "{provider} credential is malformed")'
-              s=s.replace('        self._token = token\n',f'        if any(not "!" <= char <= "~" for char in token):\n            raise {error}\n        self._token = token\n')
-              marker='        if len(raw) > _MAX_RESPONSE_BYTES:\n'
-              if provider=='GitHub':
-                  block='        except ValueError:\n            # HTTP header validation can include credential bytes in its error.\n            raise RunnerError("GitHub request failed validation") from None\n'
-              else:
-                  block=f'        except ValueError:\n            # HTTP header validation can include credential bytes in its error.\n            raise ProviderReadFailure(\n                "ERROR", "{provider} request failed validation"\n            ) from None\n'
-              assert s.count(marker)==1
-              p.write_text(s.replace(marker,block+marker,1))
-          p=Path('knowledge/decisions/0091-add-authenticated-provider-neutral-analyzer-readback.md'); s=p.read_text()
-          marker='The first implementation uses the established token names for the provider\n'
-          addition='Credentials must be non-empty visible ASCII without whitespace or control\ncharacters; reject malformed values before constructing the HTTP opener, without\ntrimming or repairing them. Invalid optional analyzer credentials follow the\nexisting `AUTH_UNAVAILABLE` path and do not discard valid peer readbacks. The\nthree clients translate HTTP-layer `ValueError` into fixed, non-secret diagnostics\nwith the original exception chain suppressed: header-validation errors may embed\na printable representation of the credential. Artifact checks and CI log masking\ndo not protect the native stderr path before serialization. Dedicated GitHub\norigin/redirect and malformed-credential exception/stderr regressions complement\nthe existing provider-adapter tests; shared transport extraction remains outside\nthis bounded correction.\n\n'
-          assert s.count(marker)==1; p.write_text(s.replace(marker,addition+marker,1))
-          PY
-          test "$(git diff --binary --full-index HEAD | sha256sum | cut -d' ' -f1)" = 6b27d5321481bc08bb8894c07c293eb774d95cb479a68c256a681251379beb03
-          git diff --check
-          python -m ruff format ci/analyzer_readback.py tools/analyzer_codacy.py tools/analyzer_deepsource.py tests/test_analyzer_readback_runner.py
-          python -m ruff check ci/analyzer_readback.py tools/analyzer_codacy.py tools/analyzer_deepsource.py tests/test_analyzer_readback_runner.py
-          python -m unittest tests.test_analyzer_readback tests.test_analyzer_readback_runner -v
-          python -m mypy --strict ci/analyzer_readback.py tools/analyzer_readback.py tools/analyzer_codacy.py tools/analyzer_deepsource.py
-      - name: Prepare through exact-parent wrapper
-        shell: bash
-        run: |
-          set -euo pipefail
-          env -i PATH=/usr/local/bin:/usr/bin:/bin GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_ATTR_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 /usr/bin/git -c core.hooksPath=/dev/null show "$PARENT:ci/prepare-candidate" > "$RUNNER_TEMP/parent-wrapper"
-          test -s "$RUNNER_TEMP/parent-wrapper"
-          out="$RUNNER_TEMP/prepared"
-          mkdir -p "$out"
-          sh "$RUNNER_TEMP/parent-wrapper" prepare --parent "$PARENT" --receipt "$out/receipt.json" --focused-profile fast --trusted-python "$(command -v python)"
-          tree="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["prepared_tree"])' "$out/receipt.json")"
-          digest="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["receipt_sha256"])' "$out/receipt.json")"
-          sh "$RUNNER_TEMP/parent-wrapper" verify --parent "$PARENT" --tree "$tree" --receipt "$out/receipt.json" --receipt-sha256 "$digest" --trusted-python "$(command -v python)"
-          git diff --binary --full-index "$PARENT" "$tree" > "$out/normalized.patch"
-          ref="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["retention_ref"])' "$out/receipt.json")"
-          git bundle create "$out/prepared.bundle" "$ref"
-          git bundle verify "$out/prepared.bundle"
-          cp "$RUNNER_TEMP/final-red.txt" "$out/final-red.txt"
-          python - "$out" <<'PY'
-          import hashlib,json,os,sys
-          from pathlib import Path
-          out=Path(sys.argv[1]); r=json.loads((out/'receipt.json').read_text())
-          expected=['ci/analyzer_readback.py','knowledge/decisions/0091-add-authenticated-provider-neutral-analyzer-readback.md','tests/test_analyzer_readback_runner.py','tools/analyzer_codacy.py','tools/analyzer_deepsource.py']
-          assert r['changed_paths']==expected
-          m={'parent':os.environ['PARENT'],'prepared_tree':r['prepared_tree'],'receipt_sha256':r['receipt_sha256'],'patch_sha256':hashlib.sha256((out/'normalized.patch').read_bytes()).hexdigest(),'bundle_sha256':hashlib.sha256((out/'prepared.bundle').read_bytes()).hexdigest()}
-          (out/'metadata.json').write_text(json.dumps(m,sort_keys=True)+'\n'); print(json.dumps(m,indent=2,sort_keys=True))
+          root='https://api.github.com/repos/ktogias/gnostoa/check-runs/107598722506'
+          token=os.environ['GH_READ_TOKEN']
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self,*args,**kwargs):
+                  raise RuntimeError('redirect refused')
+          opener=urllib.request.build_opener(NoRedirect())
+          def read(url):
+              req=urllib.request.Request(url,headers={'Authorization':'Bearer '+token,'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'})
+              with opener.open(req,timeout=30) as response:
+                  raw=response.read(2_000_001)
+              assert len(raw)<=2_000_000
+              return json.loads(raw)
+          check=read(root)
+          assert check['head_sha']=='1442d11d4eb8c0785866f42922dd58f7e94d6f92'
+          assert check['app']['slug']=='codacy-production'
+          assert check['output']['annotations_count']==1
+          annotations=read(root+'/annotations?per_page=100')
+          assert isinstance(annotations,list) and len(annotations)==1
+          result={'head':check['head_sha'],'check_id':check['id'],'app':check['app']['slug'],'conclusion':check['conclusion'],'annotations':annotations}
+          text=json.dumps(result,ensure_ascii=True,sort_keys=True,indent=2)
+          assert token not in text
+          Path(os.environ['RUNNER_TEMP'],'codacy-annotation.json').write_text(text+'\n')
+          print(text)
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: pr314-f1f2-prepared-cf7d
-          path: ${{ runner.temp }}/prepared
+          name: pr314-codacy-annotation-1442
+          path: ${{ runner.temp }}/codacy-annotation.json
           if-no-files-found: error
           retention-days: 3
