@@ -1,0 +1,197 @@
+name: PR315 CodeRabbit documentation preparation
+
+on:
+  push:
+    branches: [agent-support/pr315-cr-followup-20260924]
+    paths: [.github/workflows/pr315-cr-followup.yml]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pr315-cr-followup-20260924
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      payload: ${{ steps.export.outputs.payload }}
+      digest: ${{ steps.export.outputs.digest }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 130b9a523f59acc96bb4ef0e47eda83f2babb488
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Observe structural gaps before edits and prepare only two documents
+        run: |
+          set -eu
+          python3 - <<'PYDOC'
+          import base64, hashlib, json, os, subprocess
+          from pathlib import Path
+
+          parent = "130b9a523f59acc96bb4ef0e47eda83f2babb488"
+          base_tree = "584725e1e0ac399b0d75f41d735bccfc4ec71ef6"
+          def git(*args):
+              return subprocess.check_output(["git", "-c", "core.hooksPath=/dev/null", *args], text=True).strip()
+          def require(condition, message):
+              if not condition:
+                  raise SystemExit(message)
+          require(git("rev-parse", "HEAD") == parent, "wrong parent")
+          require(git("rev-parse", "HEAD^{tree}") == base_tree, "wrong source tree")
+          require(not git("status", "--porcelain"), "dirty source")
+          edits = {
+              "docs/roadmap.md": (
+                  "#10, #11 and #15 records; provider labels remain authoritative for the one\n",
+                  "issues #10, #11 and #15; provider labels remain authoritative for the one\n"
+              ),
+              "knowledge/runbooks/deliver-bounded-self-hosted-slice.md": (
+                  "- run candidate code only in a **read-only** preparation job with the exact\n  parent checkout and exact development dependencies;\n",
+                  "- run candidate code in a preparation job with read-only **provider\n  permissions**, the exact parent checkout and exact development dependencies;\n  supply no analyzer secrets or credentials that authorize remote writes;\n- interpret read-only as a remote provider/Git permission boundary, **not a\n  process sandbox**. Local preparation still creates disposable worktrees and\n  Git objects. Focused code runs as the invoking OS user and may affect other\n  resources accessible to that user. A sandbox claim additionally requires\n  verified process, filesystem and network isolation and credential exclusion;\n"
+              ),
+          }
+          originals = {path: Path(path).read_text(encoding="utf-8") for path in edits}
+          # Every source observation is completed before the first document write.
+          for path, (old, new) in edits.items():
+              require(originals[path].count(old) == 1, "missing/ambiguous prior text: " + path)
+              require(new not in originals[path], "criterion already met: " + path)
+              print("STRUCTURAL_UNMET_BEFORE_EDIT " + path)
+          for path, (old, new) in edits.items():
+              Path(path).write_text(originals[path].replace(old, new, 1), encoding="utf-8")
+          for path, (old, new) in edits.items():
+              text = Path(path).read_text(encoding="utf-8")
+              require(text.count(new) == 1 and old not in text, "structural repair failed: " + path)
+              print("STRUCTURAL_SATISFIED_AFTER_EDIT " + path)
+          require(set(git("diff", "--name-only").splitlines()) == set(edits), "unexpected changed paths")
+          subprocess.run(["git", "diff", "--check"], check=True)
+          subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "add", "--", *sorted(edits)], check=True)
+          files = []
+          for path in sorted(edits):
+              raw = Path(path).read_bytes()
+              files.append({"path": path, "sha256": hashlib.sha256(raw).hexdigest(), "content": base64.b64encode(raw).decode("ascii")})
+          payload = {"parent": parent, "base_tree": base_tree, "tree": git("write-tree"), "files": files}
+          raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+          Path(os.environ["RUNNER_TEMP"], "pr315-cr-prepared.json").write_bytes(raw)
+          print("PREPARED_DOC_TREE=" + payload["tree"])
+          PYDOC
+      - name: Build repository OCI runtime for prepared documents
+        run: ./ci/build-runtime --tag gnostoa:pr315-cr-prepared
+      - name: Verify policy and fast in OCI runtime
+        run: |
+          set -eu
+          for suite in policy fast; do
+            docker run --rm --entrypoint sh \
+              --mount type=bind,source="${GITHUB_WORKSPACE}",target=/workspace,readonly \
+              --workdir /workspace gnostoa:pr315-cr-prepared -ec "./ci/verify ${suite}"
+          done
+      - name: Reverify document bytes and export prepared handoff
+        id: export
+        run: |
+          set -eu
+          python3 - <<'PYEXPORT'
+          import base64, hashlib, json, os, subprocess
+          from pathlib import Path
+          raw = Path(os.environ["RUNNER_TEMP"], "pr315-cr-prepared.json").read_bytes()
+          data = json.loads(raw)
+          subprocess.run(["git", "diff", "--quiet"], check=True)
+          head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          tree = subprocess.check_output(["git", "write-tree"], text=True).strip()
+          if head != data["parent"] or tree != data["tree"]:
+              raise SystemExit("post-verification identity drift")
+          for item in data["files"]:
+              if hashlib.sha256(Path(item["path"]).read_bytes()).hexdigest() != item["sha256"]:
+                  raise SystemExit("post-verification document drift")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write("payload=" + base64.b64encode(raw).decode("ascii") + "\n")
+              out.write("digest=" + hashlib.sha256(raw).hexdigest() + "\n")
+          print("VERIFIED_DOC_TREE=" + tree)
+          print("PREPARED_PAYLOAD_SHA256=" + hashlib.sha256(raw).hexdigest())
+          PYEXPORT
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr315-cr-documentation-preparation
+          path: ${{ runner.temp }}/pr315-cr-prepared.json
+          retention-days: 7
+          if-no-files-found: error
+
+  retain-objects:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - name: Retain checked Git objects only; never update the target PR ref
+        env:
+          OBJECT_WRITE_TOKEN: ${{ github.token }}
+          PREPARED_B64: ${{ needs.prepare.outputs.payload }}
+          PREPARED_SHA256: ${{ needs.prepare.outputs.digest }}
+        run: |
+          set -eu
+          python3 - <<'PYRETAIN'
+          import base64, hashlib, json, os, re, urllib.error, urllib.request
+          parent = "130b9a523f59acc96bb4ef0e47eda83f2babb488"
+          base_tree = "584725e1e0ac399b0d75f41d735bccfc4ec71ef6"
+          result_ref = "refs/heads/agent-support/pr315-cr-prepared-20260924"
+          paths = {"docs/roadmap.md", "knowledge/runbooks/deliver-bounded-self-hosted-slice.md"}
+          def require(condition, message):
+              if not condition:
+                  raise SystemExit(message)
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  raise RuntimeError("redirect rejected")
+          opener = urllib.request.build_opener(NoRedirect())
+          token = os.environ["OBJECT_WRITE_TOKEN"]
+          def api(path, body=None):
+              allowed = {"/pulls/315", "/git/commits/" + parent, "/git/blobs", "/git/trees", "/git/commits", "/git/refs"}
+              require(path in allowed, "disallowed API resource")
+              request = urllib.request.Request(
+                  "https://api.github.com/repos/ktogias/gnostoa" + path,
+                  data=None if body is None else json.dumps(body).encode("utf-8"),
+                  headers={"Authorization": "Bearer " + token, "Accept": "application/vnd.github+json", "Content-Type": "application/json", "X-GitHub-Api-Version": "2022-11-28"},
+                  method="GET" if body is None else "POST",
+              )
+              try:
+                  with opener.open(request, timeout=30) as response:
+                      raw = response.read(2000001)
+                  require(len(raw) <= 2000000, "oversized API response")
+                  return json.loads(raw)
+              except urllib.error.HTTPError as error:
+                  raise SystemExit("GitHub object API HTTP " + str(error.code)) from None
+          encoded = os.environ["PREPARED_B64"]
+          require(len(encoded) < 500000, "oversized payload")
+          raw = base64.b64decode(encoded, validate=True)
+          require(hashlib.sha256(raw).hexdigest() == os.environ["PREPARED_SHA256"], "payload digest mismatch")
+          data = json.loads(raw)
+          require(data["parent"] == parent and data["base_tree"] == base_tree, "wrong preparation parent")
+          require(re.fullmatch(r"[0-9a-f]{40}", data["tree"]) is not None, "invalid tree")
+          require(len(data["files"]) == 2 and {f["path"] for f in data["files"]} == paths, "unexpected file scope")
+          require(api("/git/commits/" + parent)["tree"]["sha"] == base_tree, "source tree mismatch")
+          require(api("/pulls/315")["head"]["sha"] == parent, "CONCURRENT_WRITER: target moved")
+          entries = []
+          for item in data["files"]:
+              contents = base64.b64decode(item["content"], validate=True)
+              require(0 < len(contents) < 150000, "invalid document size")
+              contents.decode("utf-8")
+              require(contents.endswith(b"\n") and b"\x00" not in contents, "invalid document bytes")
+              require(hashlib.sha256(contents).hexdigest() == item["sha256"], "document digest mismatch")
+              expected = hashlib.sha1(b"blob " + str(len(contents)).encode("ascii") + b"\0" + contents).hexdigest()
+              blob = api("/git/blobs", {"content": item["content"], "encoding": "base64"})
+              require(blob["sha"] == expected, "blob identity mismatch")
+              entries.append({"path": item["path"], "mode": "100644", "type": "blob", "sha": blob["sha"]})
+          tree = api("/git/trees", {"base_tree": base_tree, "tree": entries})
+          require(tree["sha"] == data["tree"], "prepared tree mismatch")
+          commit = api("/git/commits", {
+              "message": "docs: clarify preparation isolation and roadmap prose (#315)\n\nTwo CodeRabbit findings; two documentation files only. Structural evidence recorded before edits; repository OCI policy and fast verification passed.\n\nPreparation run: " + os.environ["GITHUB_RUN_ID"] + "\nPrepared payload SHA-256: " + hashlib.sha256(raw).hexdigest() + "\nNo runtime, policy, Environment, secret, main or Q0 change.",
+              "tree": tree["sha"], "parents": [parent],
+          })
+          require([p["sha"] for p in commit["parents"]] == [parent], "wrong commit parent")
+          require(api("/pulls/315")["head"]["sha"] == parent, "CONCURRENT_WRITER before retention")
+          ref = api("/git/refs", {"ref": result_ref, "sha": commit["sha"]})
+          require(ref["object"]["sha"] == commit["sha"], "result ref mismatch")
+          print(json.dumps({"prepared_commit": commit["sha"], "tree": tree["sha"], "parent": parent, "result_ref": result_ref, "target_ref_unchanged": True}, sort_keys=True))
+          PYRETAIN
