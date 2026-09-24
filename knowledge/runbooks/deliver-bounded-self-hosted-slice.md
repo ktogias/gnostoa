@@ -413,14 +413,29 @@ routes:
 
 For a direct probe:
 
-- read the token without terminal echo (for example `read -rsp`);
-- pass it only in the provider's admitted authentication header;
+- read the token without terminal echo inside a disposable process (for
+  example in-process `getpass` or a child-shell `read -rsp`);
+- construct the provider's admitted authentication header in process, or deliver
+  it through protected stdin/a file descriptor (for example curl's `--header @-`);
+  never expand the credential into process arguments, including `curl -H` or
+  a command-line assignment passed to `env`;
+- disable shell tracing and HTTP verbose/debug output before accepting the
+  value, and avoid broad environment export or persistent header/config files;
+  stdin and descriptors reduce argv exposure, but do not protect against a
+  hostile same-user debugger or administrator: use a trusted local process
+  boundary;
 - query an already-known repository/run/change-request subject through the same
   API origin and read surface used by the adapter;
 - verify an exact non-secret subject identity in the response, not merely HTTP
   connectivity;
-- classify `401|403` as authentication failure, rate limiting separately, and
-  wrong/missing subject identity as a binding/readback failure;
+- classify rate limiting first using the provider's documented signals:
+  HTTP 429, or a throttled 403 identified by headers such as
+  `x-ratelimit-remaining: 0` / `retry-after` or a bounded rate-limit diagnostic;
+  do not rotate, delete or overwrite a credential because a probe was throttled;
+- after excluding rate limiting, distinguish 401 authentication rejection from
+  403 access/permission denial; a denied 403 does not alone prove that the
+  credential value is invalid. Stop verification-before-store on either denial
+  and retain wrong/missing subject identity as a separate binding/readback failure;
 - retain only a non-secret receipt: provider, endpoint class, subject identity,
   HTTP/auth outcome, observation time and whether exact binding succeeded;
 - unset the credential and remove temporary response files immediately after the
@@ -453,10 +468,13 @@ Provider token type is part of the verification subject, not interchangeable
 metadata. Probe the same API class the adapter will use. In particular, Codacy
 API v3 PR-analysis readback requires an **account API token** supplied through
 the `api-token` header; a repository token authorizes only a restricted subset
-of v3 operations and must not be treated as equivalent. A `401|403` during the
-exact adapter-surface probe is an authentication failure even if another Codacy
-endpoint accepts that credential. Verify a new Codacy credential first against
-an account-authenticated v3 endpoint and then against the exact repository/PR
+of v3 operations and must not be treated as equivalent. Apply the rate-limit
+classification above before interpreting a denied adapter-surface probe. Once
+throttling is excluded, a 401 authentication rejection or 403 access denial
+blocks verification-before-store even if another Codacy endpoint accepts that
+credential; inspect token type and scope rather than assuming every denial
+requires rotation. Verify a new Codacy credential first against an
+account-authenticated v3 endpoint and then against the exact repository/PR
 analysis endpoint before storing it.
 
 Never broaden an Environment from `main` to a helper/candidate branch merely to
@@ -487,10 +505,19 @@ prepared-tree identity.
 If the guarded effect fails because the branch moved, stop. Read the new head
 and compare it with the prepared result:
 
-- if another execution already published the **same prepared tree**, adopt that
-  provider state and continue from the observed head;
-- if the bytes differ, re-bind/reconcile and prepare a successor from the new
-  exact parent rather than force-writing over it.
+- if another execution already published the **same prepared tree**, treat
+  adoption as read-only reconciliation of an existing effect, never as permission
+  to perform another write. Require attributable preparation provenance, verify
+  the retained receipt with its separately retained digest under its exact
+  parent-owned authority, and check that the published commit's **sole parent**
+  equals the receipt-bound parent and its tree equals the prepared tree;
+- compare the published commit's parent, not the published commit itself, with
+  the receipt-bound parent. Record the observed commit and obtain its own
+  exact-head CI/review evidence before continuing;
+- if the parent, provenance or tree does not match, do not adopt tree equality
+  alone as proof of prepared publication. Re-bind/reconcile the observed state
+  and prepare any successor from the new exact parent; never replay the old
+  receipt as authority for a new-parent write or force-write over another writer.
 
 A same-tree no-op writer-epoch commit is an incident-recovery fence, not an
 ordinary publication technique. Use it only when the owner explicitly directs a
@@ -515,10 +542,13 @@ trigger comment; do not combine multiple trigger commands into one comment.
 Resolve findings against the exact reviewed head. Prefer one coherent prepared
 follow-up for related findings over a stream of single-finding micro-commits.
 
-A Decision 0090 receipt binds its prepared **tree** and parent. A later same-tree
-no-op child can preserve tree-level preparation evidence, but it does not make
-exact-head CI or external review results from an older commit apply to the new
-commit automatically. Re-run/re-read the head-bound evidence.
+A Decision 0090 receipt binds its prepared **tree** and exact preparation
+parent. For an already-published direct child, verify the parent/tree/provenance
+conditions above. For a later same-tree descendant, retain older preparation
+evidence only as tree-level history, not as a receipt for the descendant's parent
+or authority for another write. Re-bind the observed subject and re-run/re-read
+its exact-head CI and review evidence; any successor publication requires
+preparation bound to its own exact current parent.
 
 Inspect the authoritative CI jobs individually. `SKIPPED`, `CANCELED` and
 `SUCCESS` are distinct states. In particular, the repository's branch advisory

@@ -40,7 +40,7 @@ x-project-knowledge:
 | Field | Current state |
 |---|---|
 | Event | During recovery of PR #314 at exact head `09afa312a980cfa4334f9322be46d0ecec0349fa`, a new DeepSource status/check-run disagreement regression and its production fix were written and GREEN-verified before the agent had preserved executable RED evidence on the exact pre-change implementation. |
-| Impact | No merge or protected-main effect occurred. The intended defect was real and the final candidate behavior is supported, but the initial authoring chronology violated the Gnostoa-self verification-first specialization. |
+| Impact | At the time of this chronology incident, no merge or protected-main effect had occurred. The intended defect was real and the repaired candidate behavior was supported, but the initial authoring chronology violated the Gnostoa-self verification-first specialization. The later integration is a separate event, not retroactive chronology compliance. |
 | Detection | The owner explicitly asked whether RED→GREEN had actually been performed. The agent then audited the chronology instead of treating GREEN as sufficient. |
 | Immediate correction | Keep the new regression test, temporarily restore only the affected production implementation to the exact parent bytes, run the test to reproduce RED, restore the fix, and rerun GREEN. |
 | RED evidence | `PYTHONPATH=. python -m unittest tests.test_analyzer_readback.DeepSourceAnalyzerReadbackTests.test_commit_status_and_check_run_disagreement_is_ambiguous` returned exit 1 on the exact-parent implementation: expected `AMBIGUOUS`, observed `DIFF_LOCAL`. |
