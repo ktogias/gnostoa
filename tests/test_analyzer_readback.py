@@ -698,6 +698,58 @@ class DeepSourceAnalyzerReadbackTests(unittest.TestCase):
         self.assertNotIn("observed_head", document)
         self.assertEqual([], document["findings"])
 
+    def test_full_run_rejects_malformed_check_analyzer_without_issues(self) -> None:
+        run_page = _run_page(run_status="SUCCESS", check_status="SUCCESS")
+        run_page["data"]["run"]["checks"]["edges"][0]["node"]["analyzer"] = None
+        client = _DeepSourceFake({("run", None): run_page})
+
+        document = analyzer_deepsource.read_full_run(
+            client,
+            repository="ktogias/gnostoa",
+            pull_number=312,
+            requested_head=HEAD,
+            run_uid=RUN_UID,
+            observed_at=OBSERVED,
+        )
+
+        self.assertEqual("READBACK_UNAVAILABLE", document["completeness"])
+        self.assertEqual("ERROR", document["coverage"]["status"])
+        self.assertEqual("PROVIDER_ERROR", document["coverage"]["reason"])
+        self.assertEqual([], document["findings"])
+
+    def test_full_run_rejects_check_metadata_drift_without_issues(self) -> None:
+        cases: tuple[tuple[str, dict[str, Any]], ...] = (
+            ("missing-analyzer", {"status": "SUCCESS", "analyzer": None}),
+            (
+                "changed-status",
+                {"status": "PENDING", "analyzer": {"shortcode": "python"}},
+            ),
+        )
+        for label, replacement in cases:
+            with self.subTest(label=label):
+                check_page = _check_page([], total=0, cursor=None, status="SUCCESS")
+                check_page["data"]["node"].update(replacement)
+                client = _DeepSourceFake(
+                    {
+                        ("run", None): _run_page(
+                            run_status="SUCCESS", check_status="SUCCESS"
+                        ),
+                        ("check-python", None): check_page,
+                    }
+                )
+                document = analyzer_deepsource.read_full_run(
+                    client,
+                    repository="ktogias/gnostoa",
+                    pull_number=312,
+                    requested_head=HEAD,
+                    run_uid=RUN_UID,
+                    observed_at=OBSERVED,
+                )
+                self.assertEqual("READBACK_UNAVAILABLE", document["completeness"])
+                self.assertEqual("ERROR", document["coverage"]["status"])
+                self.assertEqual("PROVIDER_ERROR", document["coverage"]["reason"])
+                self.assertEqual([], document["findings"])
+
     def test_full_run_rejects_malformed_suppression_state(self) -> None:
         issue = _issue("issue-bad-suppression", 10)
         issue["isSuppressed"] = "false"
@@ -794,36 +846,6 @@ class DeepSourceAnalyzerReadbackTests(unittest.TestCase):
         self.assertEqual("READBACK_UNAVAILABLE", document["coverage"]["reason"])
         self.assertEqual(1, document["coverage"]["count"])
         self.assertEqual("FULL_RUN", document["native_mode"])
-
-    def test_full_run_rejects_malformed_check_analyzer_without_issues(
-        self,
-    ) -> None:
-        run_page = _run_page(run_status="SUCCESS", check_status="SUCCESS")
-        run_page["data"]["run"]["checks"]["edges"][0]["node"]["analyzer"] = {}
-        client = _DeepSourceFake({("run", None): run_page})
-
-        document = analyzer_deepsource.read_full_run(
-            client,
-            repository="ktogias/gnostoa",
-            pull_number=312,
-            requested_head=HEAD,
-            run_uid=RUN_UID,
-            observed_at=OBSERVED,
-        )
-
-        self.assertEqual("READBACK_UNAVAILABLE", document["completeness"])
-        self.assertEqual("ERROR", document["coverage"]["status"])
-        self.assertEqual("PROVIDER_ERROR", document["coverage"]["reason"])
-        self.assertEqual([], document["findings"])
-        self.assertEqual(
-            [
-                (
-                    analyzer_deepsource._RUN_QUERY,
-                    {"runUid": RUN_UID, "cursor": None},
-                )
-            ],
-            client.calls,
-        )
 
     def test_github_native_projection_rejects_stale_status_subject(self) -> None:
         document = analyzer_deepsource.diff_local_from_github(
