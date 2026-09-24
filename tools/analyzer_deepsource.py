@@ -641,6 +641,11 @@ def _read_full_run(
     try:
         for check in checks:
             check_id = _text(check.get("id"), "check.id")
+            expected_check_status = _text(check.get("status"), "check.status")
+            expected_analyzer = _text(
+                _mapping(check.get("analyzer"), "check.analyzer").get("shortcode"),
+                "analyzer.shortcode",
+            )
             cursor: str | None = None
             check_total: int | None = None
             check_total_seen = False
@@ -650,9 +655,19 @@ def _read_full_run(
                 pages += 1
                 data = _mapping(page.get("data"), "data")
                 node = _mapping(data.get("node"), "check node")
-                if _text(node.get("id"), "check.id") != check_id:
+                node_id = _text(node.get("id"), "check.id")
+                node_status = _text(node.get("status"), "check.status")
+                node_analyzer = _text(
+                    _mapping(node.get("analyzer"), "check.analyzer").get("shortcode"),
+                    "analyzer.shortcode",
+                )
+                if (
+                    node_id != check_id
+                    or node_status != expected_check_status
+                    or node_analyzer != expected_analyzer
+                ):
                     raise ProviderReadFailure(
-                        "ERROR", "DeepSource check identity changed during pagination"
+                        "ERROR", "DeepSource check metadata changed during pagination"
                     )
                 issue_nodes, total, has_next, cursor = _page(
                     node.get("issues"), "check.issues"
