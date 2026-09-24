@@ -1,53 +1,80 @@
-name: Read PR314 exact Codacy annotation
+name: Prepare PR314 test-only assert cleanup
 
 on:
   push:
     branches: [ops/pr314-f1f2-evidence-cf7d]
 
 permissions:
-  checks: read
+  contents: read
+
+env:
+  PARENT: 1442d11d4eb8c0785866f42922dd58f7e94d6f92
 
 jobs:
-  annotations:
+  prepare:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 25
     steps:
-      - name: Read the fixed check and its annotation without candidate code
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 1442d11d4eb8c0785866f42922dd58f7e94d6f92
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - name: Characterize parent and apply exact test-only cleanup
         shell: bash
-        env:
-          GH_READ_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import json, os, urllib.request
+          test "$(git rev-parse HEAD)" = "$PARENT"
+          test "$(git rev-parse 'HEAD^{tree}')" = 99a2647d07be9fe4988f6ee38ef67f133b216b00
+          test -z "$(git status --porcelain)"
+          python -m pip install --only-binary=:all: --require-hashes -r requirements/development.lock
+          python -m unittest tests.test_analyzer_readback tests.test_analyzer_readback_runner
+          python - <<'PY'
           from pathlib import Path
-          root='https://api.github.com/repos/ktogias/gnostoa/check-runs/107598722506'
-          token=os.environ['GH_READ_TOKEN']
-          class NoRedirect(urllib.request.HTTPRedirectHandler):
-              def redirect_request(self,*args,**kwargs):
-                  raise RuntimeError('redirect refused')
-          opener=urllib.request.build_opener(NoRedirect())
-          def read(url):
-              req=urllib.request.Request(url,headers={'Authorization':'Bearer '+token,'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'})
-              with opener.open(req,timeout=30) as response:
-                  raw=response.read(2_000_001)
-              assert len(raw)<=2_000_000
-              return json.loads(raw)
-          check=read(root)
-          assert check['head_sha']=='1442d11d4eb8c0785866f42922dd58f7e94d6f92'
-          assert check['app']['slug']=='codacy-production'
-          assert check['output']['annotations_count']==1
-          annotations=read(root+'/annotations?per_page=100')
-          assert isinstance(annotations,list) and len(annotations)==1
-          result={'head':check['head_sha'],'check_id':check['id'],'app':check['app']['slug'],'conclusion':check['conclusion'],'annotations':annotations}
-          text=json.dumps(result,ensure_ascii=True,sort_keys=True,indent=2)
-          assert token not in text
-          Path(os.environ['RUNNER_TEMP'],'codacy-annotation.json').write_text(text+'\n')
-          print(text)
+          p=Path('tests/test_analyzer_readback_runner.py');s=p.read_text()
+          old='                self.assertIsNotNone(redirected)\n                assert redirected is not None\n'
+          new='                if redirected is None:\n                    self.fail("same-origin redirect was refused")\n'
+          assert s.count(old)==1
+          p.write_text(s.replace(old,new))
+          PY
+          test "$(git diff --name-only)" = tests/test_analyzer_readback_runner.py
+          test "$(git diff --binary --full-index HEAD | sha256sum | cut -d' ' -f1)" = 1b0a3bed6b343f58d5241fed5a1c6e0b7afdc3fbe2a0ebb0d3e393ae68fe96ca
+          git diff --check
+          python -m ruff format --check tests/test_analyzer_readback_runner.py
+          python -m ruff check tests/test_analyzer_readback_runner.py
+          python -m unittest tests.test_analyzer_readback tests.test_analyzer_readback_runner
+          python -O -m unittest tests.test_analyzer_readback_runner.AnalyzerTransportCredentialTests
+          python -m mypy --strict ci/analyzer_readback.py tools/analyzer_readback.py tools/analyzer_codacy.py tools/analyzer_deepsource.py
+      - name: Exact-parent preparation and receipt verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          env -i PATH=/usr/local/bin:/usr/bin:/bin GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_ATTR_NOSYSTEM=1 GIT_NO_REPLACE_OBJECTS=1 /usr/bin/git -c core.hooksPath=/dev/null show "$PARENT:ci/prepare-candidate" > "$RUNNER_TEMP/parent-wrapper"
+          test -s "$RUNNER_TEMP/parent-wrapper"
+          out="$RUNNER_TEMP/prepared"
+          mkdir -p "$out"
+          sh "$RUNNER_TEMP/parent-wrapper" prepare --parent "$PARENT" --receipt "$out/receipt.json" --focused-profile fast --trusted-python "$(command -v python)"
+          tree="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["prepared_tree"])' "$out/receipt.json")"
+          digest="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["receipt_sha256"])' "$out/receipt.json")"
+          sh "$RUNNER_TEMP/parent-wrapper" verify --parent "$PARENT" --tree "$tree" --receipt "$out/receipt.json" --receipt-sha256 "$digest" --trusted-python "$(command -v python)"
+          git diff --binary --full-index "$PARENT" "$tree" > "$out/normalized.patch"
+          ref="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["retention_ref"])' "$out/receipt.json")"
+          git bundle create "$out/prepared.bundle" "$ref"
+          git bundle verify "$out/prepared.bundle"
+          python - "$out" <<'PY'
+          import hashlib,json,os,sys
+          from pathlib import Path
+          out=Path(sys.argv[1]);r=json.loads((out/'receipt.json').read_text())
+          assert r['changed_paths']==['tests/test_analyzer_readback_runner.py']
+          m={'parent':os.environ['PARENT'],'prepared_tree':r['prepared_tree'],'receipt_sha256':r['receipt_sha256'],'patch_sha256':hashlib.sha256((out/'normalized.patch').read_bytes()).hexdigest(),'bundle_sha256':hashlib.sha256((out/'prepared.bundle').read_bytes()).hexdigest()}
+          (out/'metadata.json').write_text(json.dumps(m,sort_keys=True)+'\n');print(json.dumps(m,indent=2,sort_keys=True))
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: pr314-codacy-annotation-1442
-          path: ${{ runner.temp }}/codacy-annotation.json
+          name: pr314-assert-cleanup-prepared-1442
+          path: ${{ runner.temp }}/prepared
           if-no-files-found: error
           retention-days: 3
