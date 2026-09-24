@@ -1,0 +1,109 @@
+name: VF0 exact-main entrance evidence
+
+on:
+  push:
+    branches: [agent-support/vf0-entrance-20260924]
+    paths: [.github/workflows/vf0-entrance.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vf0-entrance-20260924
+  cancel-in-progress: false
+
+env:
+  VF0_PARENT: 63fb3e7bf7a929c755250e6112f5a43a2b3db5c7
+  VF0_TREE: fa4cb2db0ea072897391efd77deda95ac7e1f9a4
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Acquire exact integrated source with complete ancestry
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 63fb3e7bf7a929c755250e6112f5a43a2b3db5c7
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Acquire immutable evidence-only harness
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: a7edb7bf3a44411b9a4097998a5b7224bcf08282
+          path: harness
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Export only declared-main history and verify disconnected restoration
+        working-directory: source
+        run: |
+          set -eu
+          test "$(git rev-parse HEAD)" = "$VF0_PARENT"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$VF0_TREE"
+          test "$(git rev-parse --is-shallow-repository)" = false
+          test -z "$(git status --porcelain)"
+          mkdir -p "$RUNNER_TEMP/vf0-artifact/source" "$RUNNER_TEMP/vf0-artifact/evidence"
+          git -c core.hooksPath=/dev/null update-ref refs/heads/vf0-export-parent "$VF0_PARENT"
+          git -c core.hooksPath=/dev/null bundle create "$RUNNER_TEMP/vf0-artifact/source/main.bundle" refs/heads/vf0-export-parent
+          empty=$(mktemp -d)
+          restored=$(mktemp -d)
+          trap 'rm -rf -- "$empty" "$restored"' EXIT
+          git -c core.hooksPath=/dev/null -C "$empty" init --quiet
+          git -C "$empty" bundle verify "$RUNNER_TEMP/vf0-artifact/source/main.bundle"
+          git -c core.hooksPath=/dev/null clone --quiet "$RUNNER_TEMP/vf0-artifact/source/main.bundle" "$restored/checkout"
+          git -C "$restored/checkout" fsck --full
+          git -C "$restored/checkout" cat-file -e "${VF0_PARENT}^{commit}"
+          git -C "$restored/checkout" checkout --quiet --detach "$VF0_PARENT"
+          test "$(git -C "$restored/checkout" rev-parse 'HEAD^{tree}')" = "$VF0_TREE"
+          test -z "$(git -C "$restored/checkout" status --porcelain)"
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          source = Path(os.environ['RUNNER_TEMP'], 'vf0-artifact', 'source')
+          data = {'parent': os.environ['VF0_PARENT'], 'tree': os.environ['VF0_TREE'],
+                  'bundle_sha256': hashlib.sha256((source / 'main.bundle').read_bytes()).hexdigest(),
+                  'non_shallow_source': True, 'empty_repository_bundle_verification': True,
+                  'restored_fsck_full': True, 'restored_parent_tree_clean': True}
+          (source / 'identity.json').write_text(json.dumps(data, sort_keys=True) + '\n', encoding='utf-8')
+          print(json.dumps(data, sort_keys=True))
+          PY
+      - name: Check the predeclared harness identity
+        run: |
+          set -eu
+          cp harness/.github/vf0-entrance-reproduce.py "$RUNNER_TEMP/vf0-artifact/evidence/reproducer.py"
+          printf '%s  %s\n' f6bdd6c74a5cb9e098197831d1fa8541ae6f82b258d6a6b096b0da594d935337 "$RUNNER_TEMP/vf0-artifact/evidence/reproducer.py" | sha256sum -c -
+      - name: Build exact-main repository development image
+        working-directory: source
+        run: |
+          docker build --target development --build-arg VCS_REF="$VF0_PARENT" --tag gnostoa:vf0-entrance .
+      - name: Capture expected RED with actual parent-owned preparation
+        run: |
+          set -eu
+          docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
+            --user "$(id -u):$(id -g)" --entrypoint python \
+            --mount type=bind,source="$GITHUB_WORKSPACE/source",target=/workspace,readonly \
+            --mount type=bind,source="$RUNNER_TEMP/vf0-artifact/evidence",target=/evidence \
+            --workdir /workspace --env VF0_PARENT --env VF0_TREE \
+            gnostoa:vf0-entrance /evidence/reproducer.py
+          test "$(git -C source rev-parse HEAD)" = "$VF0_PARENT"
+          test "$(git -C source rev-parse 'HEAD^{tree}')" = "$VF0_TREE"
+          test -z "$(git -C source status --porcelain)"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          doc = json.loads(Path(os.environ['RUNNER_TEMP'], 'vf0-artifact', 'evidence', 'result.json').read_text())
+          assert doc['execution'] == 'RED' and doc['tests_run'] == 1 and doc['failures'] == 1
+          assert doc['errors'] == 0 and doc['skipped'] == 0
+          assert doc['parent'] == os.environ['VF0_PARENT']
+          assert doc['parent_tree'] == os.environ['VF0_TREE']
+          print('VF0 entrance evidence captured; the desired gate is NOT implemented or passing.')
+          PY
+      - name: Retain bounded source and evidence, including diagnostics on unexpected failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: vf0-exact-main-entrance-20260924
+          path: ${{ runner.temp }}/vf0-artifact/
+          retention-days: 7
+          if-no-files-found: error
