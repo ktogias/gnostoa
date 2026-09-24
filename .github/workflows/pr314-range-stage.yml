@@ -1,0 +1,72 @@
+name: Stage verified PR314 range candidate
+
+on:
+  push:
+    branches:
+      - ops/pr314-range-stage-control-c1dd
+
+permissions:
+  contents: write
+  actions: read
+
+env:
+  TRUSTED_MAIN: 074bd0499395986021b4c320ee9d23ec67859186
+  PARENT: c1dd251767ff47ccb4601adbb672a8d3dc57bb9f
+  PREPARED_TREE: 89e1dfd65b96209fc388ef869b7b27171463958a
+  RECEIPT_SHA256: sha256:ee539930dbb050cf49d2659517d76c0d30945485b01982b65c40d0716b526bfd
+  PATCH_SHA256: f3c0e754e63373fcdaa9ed064aa3413c3b2dfeb25714ff00f60b56925e7e15da
+  TARGET_BRANCH: ops/pr314-range-prepared-tree-c1dd
+
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 074bd0499395986021b4c320ee9d23ec67859186
+          fetch-depth: 0
+          persist-credentials: true
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          name: pr314-range-prepared-c1dd
+          run-id: '35981492091'
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/prepared
+      - name: Verify receipt and reconstruct tree without executing candidate code
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${TRUSTED_MAIN}"
+          test -z "$(git status --porcelain)"
+          test "$(git rev-parse "${PARENT}^{tree}")" = aab2ad9b3d6fbde8bc3661464574af9c692d5679
+          git diff --exit-code "${TRUSTED_MAIN}" "${PARENT}" -- ci/prepare-candidate tools/candidate_prepare.py
+          patch="${RUNNER_TEMP}/prepared/normalized.patch"
+          receipt="${RUNNER_TEMP}/prepared/receipt.json"
+          echo "${PATCH_SHA256}  ${patch}" | sha256sum -c -
+          ./ci/prepare-candidate verify --parent "${PARENT}" --tree "${PREPARED_TREE}" --receipt "${receipt}" --receipt-sha256 "${RECEIPT_SHA256}" --trusted-python "$(command -v python)"
+          export GIT_INDEX_FILE="${RUNNER_TEMP}/prepared.index"
+          git read-tree "${PARENT}"
+          git apply --cached --binary "${patch}"
+          git diff --cached --check "${PARENT}"
+          test "$(git write-tree)" = "${PREPARED_TREE}"
+          printf 'tests/test_analyzer_readback.py\ntools/analyzer_readback.py\n' > "${RUNNER_TEMP}/expected-paths"
+          git diff --cached --name-only "${PARENT}" > "${RUNNER_TEMP}/actual-paths"
+          diff -u "${RUNNER_TEMP}/expected-paths" "${RUNNER_TEMP}/actual-paths"
+          unset GIT_INDEX_FILE
+          test -z "$(git status --porcelain)"
+      - name: Guarded staging-ref effect only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "${TRUSTED_MAIN}"
+          test "$(git ls-remote origin refs/heads/analyzer-readback-309-313 | cut -f1)" = "${PARENT}"
+          test "$(git ls-remote origin "refs/heads/${TARGET_BRANCH}" | cut -f1)" = "${PARENT}"
+          commit="$(printf '%s\n' 'fix: reject reversed same-line finding ranges (#309 #313)' | git -c user.name='Gnostoa preparation' -c user.email='noreply@invalid' commit-tree "${PREPARED_TREE}" -p "${PARENT}")"
+          git -c core.hooksPath=/dev/null push --force-with-lease="refs/heads/${TARGET_BRANCH}:${PARENT}" origin "${commit}:refs/heads/${TARGET_BRANCH}"
+          test "$(git ls-remote origin "refs/heads/${TARGET_BRANCH}" | cut -f1)" = "${commit}"
+          printf 'STAGED_COMMIT=%s\nPREPARED_TREE=%s\nPRODUCTION_REF_UNCHANGED=%s\n' "${commit}" "${PREPARED_TREE}" "${PARENT}" | tee "${RUNNER_TEMP}/stage-result.txt"
+          cat "${RUNNER_TEMP}/stage-result.txt" >> "${GITHUB_STEP_SUMMARY}"
