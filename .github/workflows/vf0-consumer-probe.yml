@@ -1,0 +1,35 @@
+name: VF0 live closed-record acquisition experiment
+on:
+  push:
+    branches: [agent-support/vf0-publisher-20260924-1644]
+    paths: [.github/workflows/vf0-consumer-probe.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  acquire:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 50bd8ed60dfb83a6105adb67bd76c56d5c735d64
+          persist-credentials: false
+      - name: Verify fixed diagnostic bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 50bd8ed60dfb83a6105adb67bd76c56d5c735d64
+          echo 'd7b7ef99c4f6904815943fd0293fcd150c931684baa162923e8f16d349375139  .github/vf0-publisher-consumer.py' | sha256sum --check
+      - name: Acquire provider evidence and execute mutation controls
+        env:
+          READ_TOKEN: ${{ github.token }}
+        shell: bash
+        run: /usr/bin/python3 -I .github/vf0-publisher-consumer.py "$RUNNER_TEMP/vf0-e4-result"
+      - name: Retain diagnostic evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: vf0-e4-live-acquisition-${{ github.run_id }}
+          path: ${{ runner.temp }}/vf0-e4-result/
+          if-no-files-found: error
+          retention-days: 7
