@@ -15,7 +15,7 @@ jobs:
     env:
       PARENT_SHA: 2ade51b6ebccfde341aa153d7c1502a51bbfac96
       PARENT_TREE: 832c7f719abd5596522a155aef98e0855bafdb1f
-      INPUT_PATCH_SHA256: 36c24a7337cb6c35ce18427c73d9e0b770bc231aaa109ca354b3faf841e6d4da
+      INPUT_PATCH_BLOB_SHA: d287f12b91ee949dcee14fc9d4bf02aca4226c95
     steps:
       - name: Checkout immutable helper control
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -30,7 +30,11 @@ jobs:
           set -euo pipefail
           patch="${GITHUB_WORKSPACE}/control/recovery/pr314-malformed-analyzer.patch"
           test -f "${patch}"
-          test "$(sha256sum "${patch}" | awk '{print $1}')" = "${INPUT_PATCH_SHA256}"
+          observed_blob="$(git -C "${GITHUB_WORKSPACE}/control" hash-object recovery/pr314-malformed-analyzer.patch)"
+          test "${observed_blob}" = "${INPUT_PATCH_BLOB_SHA}"
+          input_patch_sha256="$(sha256sum "${patch}" | awk '{print $1}')"
+          printf 'INPUT_PATCH_SHA256=%s\n' "${input_patch_sha256}" >> "${GITHUB_ENV}"
+          printf '%s\n' "${input_patch_sha256}" > "${RUNNER_TEMP}/pr314-malformed-analyzer-input-patch.sha256"
 
       - name: Checkout exact parent
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -121,6 +125,7 @@ jobs:
         with:
           name: pr314-malformed-analyzer-decision0090-preparation
           path: |
+            ${{ runner.temp }}/pr314-malformed-analyzer-input-patch.sha256
             ${{ runner.temp }}/pr314-malformed-analyzer-receipt.json
             ${{ runner.temp }}/pr314-malformed-analyzer-preparation-output.json
             ${{ runner.temp }}/pr314-malformed-analyzer-receipt-verify.json
