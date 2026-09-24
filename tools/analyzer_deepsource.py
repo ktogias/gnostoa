@@ -813,12 +813,26 @@ def _github_status_summary(
         context = status.get("context")
         target = status.get("target_url")
         state = status.get("state")
-        if (
-            not isinstance(context, str)
-            or _DEEPSOURCE_STATUS.fullmatch(context) is None
-        ):
+        if not isinstance(context, str):
             continue
+        context_match = _DEEPSOURCE_STATUS.fullmatch(context)
+        if context_match is None:
+            continue
+        source_kind = str(status.get("source_kind"))
+        is_commit_status = source_kind == "commit_status"
+        if is_commit_status:
+            # GitHub commit statuses are newest-first. Fence off the analyzer
+            # before run-URL validation so an unusable newest status cannot
+            # silently fall back to an older status for the same context.
+            commit_status_key = ("commit_status_context", context)
+            if commit_status_key in seen_sources:
+                continue
+            seen_sources.add(commit_status_key)
         if not isinstance(target, str):
+            if is_commit_status:
+                analyzer_states.setdefault(
+                    context_match.group("analyzer").lower(), "unbound"
+                )
             continue
         match = _RUN_URL.fullmatch(target)
         if (
@@ -826,21 +840,20 @@ def _github_status_summary(
             or match.group("owner") != owner
             or match.group("repo") != name
         ):
+            if is_commit_status:
+                analyzer_states.setdefault(
+                    context_match.group("analyzer").lower(), "unbound"
+                )
             continue
         analyzer = match.group("analyzer")
-        source_kind = str(status.get("source_kind"))
         run_id = match.group("run")
-        # GitHub commit statuses are newest-first, so select the first status
-        # per analyzer. Check-run reads already request GitHub's latest filter,
-        # but multiple distinct latest runs still make exact association ambiguous.
-        source_key: tuple[str, ...] = (
-            (source_kind, analyzer)
-            if source_kind == "commit_status"
-            else (source_kind, analyzer, run_id)
-        )
-        if source_key in seen_sources:
-            continue
-        seen_sources.add(source_key)
+        # Check-run reads request GitHub's latest filter, but multiple distinct
+        # latest runs still make exact association ambiguous.
+        if not is_commit_status:
+            check_run_key = (source_kind, analyzer, run_id)
+            if check_run_key in seen_sources:
+                continue
+            seen_sources.add(check_run_key)
         run_ids.add(run_id)
         analyzer_states.setdefault(analyzer, str(state))
     return run_ids, analyzer_states
