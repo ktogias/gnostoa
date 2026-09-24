@@ -136,6 +136,67 @@ or a prior green status. It grants neither human admission nor merge authority.
 Provider evidence retention/availability becomes an explicit operational cost;
 no offline or expired-artifact acceptance is implied by this proposal.
 
+#### Parent-owned trust and admission inputs
+
+The proposed trust configuration is a closed, versioned part of the immutable
+parent-owned authority, loaded before candidate execution. It binds the admitted
+API origin and numeric repository identity; prior-integrated producer revision,
+workflow path and relevant source/dependency closure; permitted event and caller
+identities; publisher job role and publication-record protocol; runtime pins;
+and bounded acquisition, member and retention requirements. An exact source pin
+must be accompanied by its admitted integration identity. Neither a branch name
+nor successful execution proves that integration or admission. Changing these
+inputs is authority evolution, not an ordinary candidate-supplied configuration.
+
+Work Item, Decision, class, scope and evidence-mode admission come from the
+applicable authority contract through separately authenticated, exact records.
+Bind their raw identities and effective policy revision, admitted evidence-only
+paths, oracle/non-vacuity obligations and chronology disposition. A producer
+checks this admission; it cannot create it or choose a weaker class or mode.
+An authenticated comment author is not automatically an independently dispositive
+human event: the applicable contract must identify the actor, record, revision
+and effect. Missing, changed, ambiguous or ineffective required admission denies
+compliance. This proposal does not implement that event-acquisition contract or
+attribute human approval to the executor's diagnostic records.
+
+#### Attempt identity remains a separate proof obligation
+
+The [VF0-E3 result](../assessments/15-vf0-entrance-and-execution-plan.md#vf0-e3-attempt-attribution-and-a-rejected-timestamp-hypothesis)
+rejects the proposed strict upload-step timestamp relation for both genuine
+attempts. Artifact metadata associates a run, not an attempt. A filename,
+payload attempt, timestamp window or matching caller digest cannot close that
+gap. Do not widen an interval after observing this failure or replace provenance
+with timestamp coincidence.
+
+The next proposed experiment uses a closed publication record from a pinned,
+admitted publisher-only execution context. It must bind repository, run,
+attempt and publisher job identity to the artifact ID and complete archive
+digest, as well as the admitted input and observation identities. Resolve the
+publisher job through the exact-attempt provider endpoint and pinned source;
+reacquire its bounded publication record independently of the artifact payload,
+then compare it with provider artifact metadata and the downloaded bytes.
+The artifact name may be runtime-derived as an additional consistency check,
+never as the trust root.
+
+Candidate/test execution must not write, interleave with or spoof that publisher
+channel. Arbitrary test logs and uploader-looking text are inadmissible; the E3
+manual transcription is diagnostic only. The exact closed protocol, trusted
+emission and parser boundaries, source closure and adversarial conformance remain
+to be established before this route can produce an authenticated observation.
+No production log parser is selected merely because the fixed diagnostic logs
+contained matching values.
+
+The first proposed production route accepts only the explicitly requested,
+current latest run attempt, after its required jobs completed successfully with
+complete coverage. An in-progress newer attempt does not permit reuse of an
+older completed one. Re-read the run,
+attempt, publisher and artifact identities after acquisition. Any newer attempt,
+changed identity, missing/duplicate/conflicting publication record, incomplete
+coverage or unavailable/expired material denies the current acquisition; never
+fall back silently to an older artifact. Historical replay remains separate from
+current compliance. The independent CI consumer must enforce the same identity
+and admission relation, not trust the preparer's snapshot.
+
 ### 4. Keep bootstrap and activation explicit
 
 Current Decision 0090 deliberately rejects changes to its own authority. VF0's
@@ -174,6 +235,13 @@ These are reference-only uses: no third-party code/schema is copied and no new
 package, key service or policy engine is acquired. External metadata capability
 is not proof that the proposed Gnostoa acquisition route already works.
 
+The attempt-binding follow-up also inspected the
+[pinned uploader's declared outputs](https://github.com/actions/upload-artifact/blob/ea165f8d65b6e75b540449e92b4886f43607fa02/action.yml)
+and actual exact-job provider logs. This is reference/service reuse, with no
+third-party implementation or schema copied. Human-oriented log wording has a
+maintenance and spoofing cost; the diagnostic consistency result does not admit
+an arbitrary-log parser or remove the closed-publisher proof obligation.
+
 ## Consequences
 
 Acceptance requires every row of the
@@ -182,6 +250,13 @@ to have aligned executed support, an actual authenticated producer/consumer roun
 trip, rejection of self-consistent but untrusted receipts, ordinary parent-bound
 preparation parity,
 critical-scope semantic review and exact integrated-subject reconciliation.
+
+All ten initial rows describe executable gate behavior, including the handling
+of a `STRUCTURAL`-mode receipt; none is exempt from executed support. A
+non-executable source criterion carried by that mode is a different object: it
+requires the mode table's accountable review, not a ceremonial executable test.
+That review does not count as executed gate evidence or replace the mode-policy
+and preparation-parity tests in VF0-05 and VF0-09.
 
 Semantic adequacy of a test/oracle and legitimacy of human admission are not
 proved by cryptographic hashes or a process exit code. Preserve accountable human

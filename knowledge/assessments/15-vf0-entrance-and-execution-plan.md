@@ -163,7 +163,7 @@ The 20 negative controls are deterministic local mutations of acquired data or
 request inputs, not 20 hostile-provider executions. They rejected wrong run ID,
 source commit, workflow path, attempt, repository and conclusion; wrong artifact
 ID, expired flag, missing/malformed digest and wrong run association; altered
-archive bytes; three unsafe HTTPS URLs, wrong API origin and asset host; support
+archive bytes; three unsafe URL forms, wrong API origin and asset host; support
 producer non-admission with and without a self-asserted trust flag; and duplicate
 JSON keys. The altered-byte test replaced the ZIP constructor with a failure
 sentinel: digest rejection happened without calling that constructor.
@@ -201,7 +201,7 @@ handle stale/replaced evidence and bind the same identity in the independent
 consumer. Likewise, fixed pins in a diagnostic script are not a substitute for
 an admitted integrated producer and parent-owned trust configuration.
 
-### Current behavior-map delta
+### Post-E2 behavior-map delta
 
 Preserve the initial map above as the pre-production checkpoint. VF0-03 now has
 **partial experimental support** for acquisition, digest rejection and rejecting
@@ -213,3 +213,81 @@ open. The next bounded step is to reconcile the admitted producer/attempt and
 trust-configuration contract, then establish focused conformance evidence for
 its reusable acquisition adapter before changing D0090 authority. The sequence
 VF0 then #318 and aggregate critical classification are unchanged.
+
+## VF0-E3: attempt attribution and a rejected timestamp hypothesis
+
+The [original checkpoint](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5817575821)
+preceded the temporary producer. [Run 36024200145](https://github.com/ktogias/gnostoa/actions/runs/36024200145)
+completed two actual attempts on the same source
+`75c55209f452fe57a1ed8cd0e79d9561642a1793`. Its only diagnostic job had no checkout,
+caller inputs or candidate execution. Workflow `.github/workflows/vf0-attempt-probe.yml`
+has provider blob `b418910265fdf30170fd1515518d41a25e8ae83f`; it remains an
+experimental, non-admitted producer. No new live run was needed on resume.
+
+All following times are UTC on 2026-09-24. Exact-attempt job metadata and
+run-associated artifact metadata were acquired separately.
+
+| Attempt / job | Upload-step start / end | Artifact / creation |
+| --- | --- | --- |
+| 1 / 107716443309 | 15:59:49 / 15:59:49 | 10819500924 / 15:59:49 |
+| 2 / 107716928097 | 16:00:58 / 16:00:59 | 10819271025 / 16:00:59 |
+
+**Negative result:** the predeclared strict upload-step-window relation rejected
+both genuine cases because artifact creation equalled an interval boundary.
+The interval was not widened after observation, and a job-window check was not
+substituted as a successful production attribution rule. This falsifies that
+bounded positive oracle, not all possible attempt-binding mechanisms.
+
+### Separate diagnostic consistency observation
+
+The [diagnostic-extension checkpoint](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5817792898)
+preceded its local evaluator. Authenticated retrieval of each exact job's full
+log exposed the pinned uploader's artifact ID and ZIP digest. These matched
+independently retrieved artifact metadata and the downloaded archive bytes.
+Only the bounded single `observation.json` member was read after digest
+comparison; neither archive content nor observation code was extracted/executed.
+
+The [retained reconciliation](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5817950344)
+records **two matching diagnostic cases and 21 expected local-control
+rejections**, separately from the two preserved timestamp-oracle rejections.
+Inputs were reduced, manually transcribed fields from connector metadata/log
+reads, not an implemented live adapter or raw-log parser. The controls covered
+crossed attempts in both directions; missing/conflicting or mismatched publisher
+identity; wrong source/repository/run/job/name; Boolean attempt; failed job;
+incomplete coverage; missing/malformed digest; expired flag/elapsed expiry;
+altered bytes before a sentinel ZIP constructor; caller-reasserted old evidence;
+and attempted production use. They are not malicious-provider executions or a
+complete parser/security corpus.
+
+| Retained object | SHA-256 |
+| --- | --- |
+| Attempt 1 archive | `a0987a133c76b45a781e2a860a21eb25ac093f27d47ad012eacbed570dcf2b92` |
+| Attempt 2 archive | `5f205e7bd7e156cbc010b68a721dbce758b96301e01829b0366a603344fa2249` |
+| Attempt 1 observation | `c6ed71976ff3f2f24c17c29cc73f3a4ff7d1903776aed6dc5dcc75d0814fdf06` |
+| Attempt 2 observation | `ad33c7fc73e873f944127435fe4845c6db03cda5ed5dfa9e1cb1a5e70711c988` |
+| Local replay source | `5fe5afc5232d306ce82ee2c5a248d182c18e9a61dc5588972a3edc8036c25251` |
+| Local result including terminal LF | `e97753ced9fa94da1d3826a17696e8527e408a929f6c5e7c8bd99f74d1a583d8` |
+
+Artifacts expire respectively on **2026-10-01 15:59:49 UTC** and
+**2026-10-01 16:00:58 UTC**. The replay source/result are retained in the local
+handoff, not claimed as provider-produced test artifacts. Its fixed historical
+comparison cut, `2026-09-24T16:15:00Z`, does not assert continuing availability.
+The immutable workflow source survives helper cleanup and artifact expiry;
+reproducing a later live run produces new identities, not the historical result.
+
+### Disposition and next proof obligation
+
+Keep the timestamp hypothesis rejected and the log consistency observation
+strictly diagnostic. Candidate-controlled logs can forge uploader-looking text;
+this experiment's closed support job does not admit arbitrary job logs or itself
+as a production trust root. The proposed parent-owned trust and external-admission
+inputs are now explicit in Decision 0092, but their production acquisition and
+consumer contracts remain unimplemented.
+
+Next, freeze a closed publisher-record protocol and its isolated emission,
+external-admission inputs and bounded acquisition contract; establish focused
+failing conformance evidence before implementing the reusable adapter. D0090
+authority evolution and the real integrated producer/consumer round trip remain
+separate subsequent obligations. All ten original gate-behavior rows still need
+executed support; E3 does not close VF0-03, VF0-04, VF0-08 or VF0-10. VF0 remains
+critical and inactive, with #318 still after its acceptance.
