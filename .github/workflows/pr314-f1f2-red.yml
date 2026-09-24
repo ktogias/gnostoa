@@ -1,4 +1,4 @@
-name: Prepare PR314 test-only assert cleanup
+name: Prepare PR314 pagination and test cleanup
 
 on:
   push:
@@ -23,7 +23,7 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: '3.12'
-      - name: Characterize parent and apply exact test-only cleanup
+      - name: Bind exact parent and candidate patch
         shell: bash
         run: |
           set -euo pipefail
@@ -31,22 +31,169 @@ jobs:
           test "$(git rev-parse 'HEAD^{tree}')" = 99a2647d07be9fe4988f6ee38ef67f133b216b00
           test -z "$(git status --porcelain)"
           python -m pip install --only-binary=:all: --require-hashes -r requirements/development.lock
-          python -m unittest tests.test_analyzer_readback tests.test_analyzer_readback_runner
-          python - <<'PY'
-          from pathlib import Path
-          p=Path('tests/test_analyzer_readback_runner.py');s=p.read_text()
-          old='                self.assertIsNotNone(redirected)\n                assert redirected is not None\n'
-          new='                if redirected is None:\n                    self.fail("same-origin redirect was refused")\n'
-          assert s.count(old)==1
-          p.write_text(s.replace(old,new))
+          cat > "$RUNNER_TEMP/candidate.patch" <<'PATCH'
+          diff --git a/tests/test_analyzer_readback.py b/tests/test_analyzer_readback.py
+          index 0bedcfe53ab5be9e719fd726336b6881c37fda22..0c3d952aec67bed1cfb75eb16a2082007e2f1af8 100644
+          --- a/tests/test_analyzer_readback.py
+          +++ b/tests/test_analyzer_readback.py
+          @@ -1579,6 +1579,64 @@ class DeepSourceAnalyzerReadbackTests(unittest.TestCase):
+                   self.assertNotIn("token", str(raised.exception).lower())
+           
+           
+          +class PaginationProgressTests(unittest.TestCase):
+          +    def test_deepsource_check_cursor_must_advance(self) -> None:
+          +        page = _run_page(cursor="same")
+          +        client = _DeepSourceFake({("run", None): page, ("run", "same"): page})
+          +        document = analyzer_deepsource.read_full_run(
+          +            client,
+          +            repository="ktogias/gnostoa",
+          +            pull_number=312,
+          +            requested_head=HEAD,
+          +            run_uid=RUN_UID,
+          +            observed_at=OBSERVED,
+          +        )
+          +        self.assertEqual("READBACK_UNAVAILABLE", document["completeness"])
+          +        self.assertEqual("ERROR", document["coverage"]["status"])
+          +        self.assertEqual(2, len(client.calls))
+          +
+          +    def test_deepsource_issue_cursor_must_advance(self) -> None:
+          +        page = _check_page([], total=0, cursor="same")
+          +        client = _DeepSourceFake(
+          +            {
+          +                ("run", None): _run_page(),
+          +                ("check-python", None): page,
+          +                ("check-python", "same"): page,
+          +            }
+          +        )
+          +        document = analyzer_deepsource.read_full_run(
+          +            client,
+          +            repository="ktogias/gnostoa",
+          +            pull_number=312,
+          +            requested_head=HEAD,
+          +            run_uid=RUN_UID,
+          +            observed_at=OBSERVED,
+          +        )
+          +        self.assertEqual("READBACK_UNAVAILABLE", document["completeness"])
+          +        self.assertEqual("ERROR", document["coverage"]["status"])
+          +        self.assertEqual(3, len(client.calls))
+          +
+          +    def test_codacy_issue_cursor_must_advance(self) -> None:
+          +        page = {"analyzed": True, "data": [], "pagination": {"cursor": "same"}}
+          +        client = _CodacyFake(
+          +            {
+          +                f"{_codacy_root()}/pull-requests/312": _codacy_pr(),
+          +                _codacy_issues_url(potential=False): page,
+          +                _codacy_issues_url(potential=False, cursor="same"): page,
+          +            }
+          +        )
+          +        document = analyzer_codacy.read_pull_request(
+          +            client,
+          +            repository="ktogias/gnostoa",
+          +            pull_number=312,
+          +            requested_head=HEAD,
+          +            observed_at=OBSERVED,
+          +        )
+          +        self.assertEqual("READBACK_UNAVAILABLE", document["completeness"])
+          +        self.assertEqual("ERROR", document["coverage"]["status"])
+          +        self.assertEqual(3, len(client.calls))
+          +
+          +
+           class CodacyAnalyzerReadbackTests(unittest.TestCase):
+               def test_codacy_exact_head_and_cursor_pagination_are_complete(self) -> None:
+                   root = _codacy_root()
+          diff --git a/tests/test_analyzer_readback_runner.py b/tests/test_analyzer_readback_runner.py
+          index 09893423946aae975217f2bdda9f60502da713df..995c1acc246e35d6081a55f8be48e922c16fc0da 100644
+          --- a/tests/test_analyzer_readback_runner.py
+          +++ b/tests/test_analyzer_readback_runner.py
+          @@ -163,8 +163,8 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
+                           redirected = handlers[0].redirect_request(
+                               request, None, 302, "Found", {}, target
+                           )
+          -                self.assertIsNotNone(redirected)
+          -                assert redirected is not None
+          +                if redirected is None:
+          +                    self.fail("same-origin redirect was refused")
+                           self.assertEqual(target, redirected.full_url)
+                           self.assertEqual(
+                               "Bearer synthetic-transport-value",
+          diff --git a/tools/analyzer_codacy.py b/tools/analyzer_codacy.py
+          index ecf6bf8975cbb8b81fa4d9cc2f4aa5acf53fdafa..518852e7edbfaaff8d36332761db671cfb2d788f 100644
+          --- a/tools/analyzer_codacy.py
+          +++ b/tools/analyzer_codacy.py
+          @@ -467,7 +467,12 @@ def _read_pull_request(
+                           if next_cursor is None:
+                               cursor = None
+                               break
+          -                cursor = _text(next_cursor, "pagination.cursor")
+          +                next_cursor = _text(next_cursor, "pagination.cursor")
+          +                if next_cursor == cursor:
+          +                    raise ProviderReadFailure(
+          +                        "ERROR", "Codacy issue pagination did not advance"
+          +                    )
+          +                cursor = next_cursor
+                       else:
+                           raise ProviderReadFailure(
+                               "ERROR", "Codacy issue pagination exceeded bound"
+          diff --git a/tools/analyzer_deepsource.py b/tools/analyzer_deepsource.py
+          index 596edab66dd93b6d7db36c6ee149c73879e1fadc..77250faefd4a92352c3f8894310d91ccf3ede52c 100644
+          --- a/tools/analyzer_deepsource.py
+          +++ b/tools/analyzer_deepsource.py
+          @@ -447,9 +447,14 @@ def _read_full_run(
+                           raise ProviderReadFailure(
+                               "ERROR", "DeepSource run changed during pagination"
+                           )
+          +            previous_check_cursor = check_cursor
+                       page_checks, total, has_next, check_cursor = _page(
+                           run.get("checks"), "run.checks"
+                       )
+          +            if has_next and check_cursor == previous_check_cursor:
+          +                raise ProviderReadFailure(
+          +                    "ERROR", "DeepSource check pagination did not advance"
+          +                )
+                       if total is not None:
+                           if not checks_total_seen:
+                               expected_checks_total = total
+          @@ -678,9 +683,14 @@ def _read_full_run(
+                               raise ProviderReadFailure(
+                                   "ERROR", "DeepSource check metadata changed during pagination"
+                               )
+          +                previous_cursor = cursor
+                           issue_nodes, total, has_next, cursor = _page(
+                               node.get("issues"), "check.issues"
+                           )
+          +                if has_next and cursor == previous_cursor:
+          +                    raise ProviderReadFailure(
+          +                        "ERROR", "DeepSource issue pagination did not advance"
+          +                    )
+                           if total is not None:
+                               if not check_total_seen:
+                                   check_total = total
+          PATCH
+          echo "1f762b7d6a9742b8b5f50527a4c80f08091d3e7c25b491e7d6dbc3b028415fb0  $RUNNER_TEMP/candidate.patch" | sha256sum -c -
+          git apply --include='tests/*' "$RUNNER_TEMP/candidate.patch"
+      - name: Observe pagination RED before adapter edits
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code -- tools ci knowledge
+          python - <<'PY' 2>&1 | tee "$RUNNER_TEMP/pagination-red.txt"
+          import unittest
+          from tests.test_analyzer_readback import PaginationProgressTests
+          result=unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(PaginationProgressTests))
+          assert result.testsRun==3 and len(result.failures)==3 and not result.errors
+          print('PAGINATION_RED_REPRODUCED tests=3 failures=3 production_edits=0')
           PY
-          test "$(git diff --name-only)" = tests/test_analyzer_readback_runner.py
-          test "$(git diff --binary --full-index HEAD | sha256sum | cut -d' ' -f1)" = 1b0a3bed6b343f58d5241fed5a1c6e0b7afdc3fbe2a0ebb0d3e393ae68fe96ca
+      - name: Apply progression guards and verify GREEN
+        shell: bash
+        run: |
+          set -euo pipefail
+          git apply --include='tools/*' "$RUNNER_TEMP/candidate.patch"
+          test "$(git diff --binary --full-index HEAD | sha256sum | cut -d' ' -f1)" = 1f762b7d6a9742b8b5f50527a4c80f08091d3e7c25b491e7d6dbc3b028415fb0
           git diff --check
-          python -m ruff format --check tests/test_analyzer_readback_runner.py
-          python -m ruff check tests/test_analyzer_readback_runner.py
+          python -m ruff format --check tests/test_analyzer_readback.py tests/test_analyzer_readback_runner.py tools/analyzer_codacy.py tools/analyzer_deepsource.py
+          python -m ruff check tests/test_analyzer_readback.py tests/test_analyzer_readback_runner.py tools/analyzer_codacy.py tools/analyzer_deepsource.py
           python -m unittest tests.test_analyzer_readback tests.test_analyzer_readback_runner
-          python -O -m unittest tests.test_analyzer_readback_runner.AnalyzerTransportCredentialTests
+          python -O -m unittest tests.test_analyzer_readback.PaginationProgressTests tests.test_analyzer_readback_runner.AnalyzerTransportCredentialTests
           python -m mypy --strict ci/analyzer_readback.py tools/analyzer_readback.py tools/analyzer_codacy.py tools/analyzer_deepsource.py
       - name: Exact-parent preparation and receipt verification
         shell: bash
@@ -64,17 +211,18 @@ jobs:
           ref="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["retention_ref"])' "$out/receipt.json")"
           git bundle create "$out/prepared.bundle" "$ref"
           git bundle verify "$out/prepared.bundle"
+          cp "$RUNNER_TEMP/pagination-red.txt" "$out/pagination-red.txt"
           python - "$out" <<'PY'
           import hashlib,json,os,sys
           from pathlib import Path
           out=Path(sys.argv[1]);r=json.loads((out/'receipt.json').read_text())
-          assert r['changed_paths']==['tests/test_analyzer_readback_runner.py']
+          assert r['changed_paths']==['tests/test_analyzer_readback.py','tests/test_analyzer_readback_runner.py','tools/analyzer_codacy.py','tools/analyzer_deepsource.py']
           m={'parent':os.environ['PARENT'],'prepared_tree':r['prepared_tree'],'receipt_sha256':r['receipt_sha256'],'patch_sha256':hashlib.sha256((out/'normalized.patch').read_bytes()).hexdigest(),'bundle_sha256':hashlib.sha256((out/'prepared.bundle').read_bytes()).hexdigest()}
           (out/'metadata.json').write_text(json.dumps(m,sort_keys=True)+'\n');print(json.dumps(m,indent=2,sort_keys=True))
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: pr314-assert-cleanup-prepared-1442
+          name: pr314-pagination-cleanup-prepared-1442
           path: ${{ runner.temp }}/prepared
           if-no-files-found: error
           retention-days: 3
