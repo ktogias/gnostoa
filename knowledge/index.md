@@ -186,6 +186,7 @@ inherited, copied or loaded by adopting projects.
 - [Container-first verification routing bypass](failure-modes/container-first-verification-routing-bypass.md)
 - [Reverse-centaur review overload](failure-modes/reverse-centaur-review-overload.md)
 - [Post-effect current-state drift](failure-modes/post-effect-current-state-drift.md)
+- [Verification-first chronology bypass during recovery](failure-modes/verification-first-chronology-bypass-during-recovery.md)
 - [Maintain the toolkit](runbooks/maintain-the-kit.md)
 - [Prepare an experiment capsule](runbooks/prepare-an-experiment-capsule.md)
 - [Deliver a bounded self-hosted slice](runbooks/deliver-bounded-self-hosted-slice.md)
