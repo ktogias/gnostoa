@@ -15,8 +15,8 @@ jobs:
     env:
       PARENT_SHA: 2ade51b6ebccfde341aa153d7c1502a51bbfac96
       PARENT_TREE: 832c7f719abd5596522a155aef98e0855bafdb1f
-      CODE_BLOB: 02dd4977173c3e9ebc936958e73655cddb284b3f
-      TEST_BLOB: 71ade4234394aec91faa993888273f3dd541f40f
+      CODE_BLOB: 55aa14f3ac25ab22540882b9366ab69ae2bf7b56
+      TEST_BLOB: 800f3b11504ec4b859056a095a666bd32885a27c
     steps:
       - name: Checkout immutable helper control
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -81,6 +81,7 @@ jobs:
           python -m mypy tools/analyzer_deepsource.py
           PYTHONPATH=. python -m unittest \
             tests.test_analyzer_readback.DeepSourceAnalyzerReadbackTests.test_full_run_rejects_malformed_check_analyzer_without_issues \
+            tests.test_analyzer_readback.DeepSourceAnalyzerReadbackTests.test_full_run_rejects_check_metadata_drift_without_issues \
             tests.test_analyzer_readback.DeepSourceAnalyzerReadbackTests.test_full_run_rejects_malformed_suppression_state
           PYTHONPATH=. python -m unittest tests.test_analyzer_readback
           python -m py_compile tools/analyzer_deepsource.py tests/test_analyzer_readback.py
