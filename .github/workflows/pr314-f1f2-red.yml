@@ -32,8 +32,6 @@ jobs:
           path: ${{ runner.temp }}/red
       - name: Bind exact source and retained tests
         shell: bash
-        env:
-          FIX_PATCH: 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 # pragma: allowlist secret -- public candidate patch
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$PARENT"
@@ -41,11 +39,13 @@ jobs:
           test -z "$(git status --porcelain)"
           echo "27112d224920c0576b39e5953adf0ce0c9ff9d7a7e4f60d255af280b84a3edc3  $RUNNER_TEMP/red/tests.patch" | sha256sum -c -
           git apply "$RUNNER_TEMP/red/tests.patch"
-          printf '%s' "$FIX_PATCH" | base64 -d > "$RUNNER_TEMP/fix.patch.gz"
-          echo "e35233d3507664dd5953bce01618c64e6b424b362cfb1bc2673a30b6da7279c6  $RUNNER_TEMP/fix.patch.gz" | sha256sum -c -
-          gzip -dc "$RUNNER_TEMP/fix.patch.gz" > "$RUNNER_TEMP/fix.patch"
-          echo "c338e111aa715690366e33ba48d0d6c5833cd7ab747358d664e57aad9ab6eaa1  $RUNNER_TEMP/fix.patch" | sha256sum -c -
-          git apply --include=tests/test_analyzer_readback_runner.py "$RUNNER_TEMP/fix.patch"
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('tests/test_analyzer_readback_runner.py'); s=p.read_text()
+          old='if item["scope"] == "FULL"'
+          assert s.count(old)==1
+          p.write_text(s.replace(old,'if item["adapter"] != "deepsource-github/v1"'))
+          PY
           python -m pip install --only-binary=:all: --require-hashes -r requirements/development.lock
       - name: Replay final regressions RED on unchanged production
         shell: bash
@@ -59,11 +59,28 @@ jobs:
           assert result.testsRun == 7 and not result.errors and len(result.failures) == 39
           print('FINAL_TESTS_RED tests=7 failing_subcases=39 production_edits=0')
           PY
-      - name: Apply bounded repair and run focused GREEN
+      - name: Reconstruct the admitted repair and run focused GREEN
         shell: bash
         run: |
           set -euo pipefail
-          git apply --exclude=tests/test_analyzer_readback_runner.py "$RUNNER_TEMP/fix.patch"
+          python - <<'PY'
+          from pathlib import Path
+          for name, provider in [('ci/analyzer_readback.py','GitHub'),('tools/analyzer_deepsource.py','DeepSource'),('tools/analyzer_codacy.py','Codacy')]:
+              p=Path(name); s=p.read_text(); assert s.count('        self._token = token\n')==1
+              error='RunnerError("GitHub read credential is malformed")' if provider=='GitHub' else f'ProviderReadFailure("AUTH", "{provider} credential is malformed")'
+              s=s.replace('        self._token = token\n',f'        if any(not "!" <= char <= "~" for char in token):\n            raise {error}\n        self._token = token\n')
+              marker='        if len(raw) > _MAX_RESPONSE_BYTES:\n'
+              if provider=='GitHub':
+                  block='        except ValueError:\n            # HTTP header validation can include credential bytes in its error.\n            raise RunnerError("GitHub request failed validation") from None\n'
+              else:
+                  block=f'        except ValueError:\n            # HTTP header validation can include credential bytes in its error.\n            raise ProviderReadFailure(\n                "ERROR", "{provider} request failed validation"\n            ) from None\n'
+              assert s.count(marker)==1
+              p.write_text(s.replace(marker,block+marker,1))
+          p=Path('knowledge/decisions/0091-add-authenticated-provider-neutral-analyzer-readback.md'); s=p.read_text()
+          marker='The first implementation uses the established token names for the provider\n'
+          addition='Credentials must be non-empty visible ASCII without whitespace or control\ncharacters; reject malformed values before constructing the HTTP opener, without\ntrimming or repairing them. Invalid optional analyzer credentials follow the\nexisting `AUTH_UNAVAILABLE` path and do not discard valid peer readbacks. The\nthree clients translate HTTP-layer `ValueError` into fixed, non-secret diagnostics\nwith the original exception chain suppressed: header-validation errors may embed\na printable representation of the credential. Artifact checks and CI log masking\ndo not protect the native stderr path before serialization. Dedicated GitHub\norigin/redirect and malformed-credential exception/stderr regressions complement\nthe existing provider-adapter tests; shared transport extraction remains outside\nthis bounded correction.\n\n'
+          assert s.count(marker)==1; p.write_text(s.replace(marker,addition+marker,1))
+          PY
           test "$(git diff --binary --full-index HEAD | sha256sum | cut -d' ' -f1)" = 6b27d5321481bc08bb8894c07c293eb774d95cb479a68c256a681251379beb03
           git diff --check
           python -m ruff format ci/analyzer_readback.py tools/analyzer_codacy.py tools/analyzer_deepsource.py tests/test_analyzer_readback_runner.py
