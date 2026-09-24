@@ -547,3 +547,55 @@ results. VF0 remains **critical and inactive**, with missing-evidence enforcemen
 semantic non-vacuity, preparation parity and integrated-consumer obligations
 open. The sequence stays **VF0 then #318**; no merge, Ready transition, production
 trust or broader #15 completion is authorized by this record.
+
+
+## VF0-A7: normalized relation core
+
+The [owner-approved bootstrap method and additional connections](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5823426881)
+allow bounded continuation, not merge, producer trust or activation. The
+[pre-edit C1-C7 checkpoint](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5823516283)
+bound the exact parent `4ef62a31424bf9d58e49bb4e591f1a827a89a506` before creating
+`tools/vf0_contract.py`. The entry-point conformance test failed with one explicit
+assertion before that module existed. This is **interface conformance RED**, not
+a behavioral producer RED receipt or a replacement for the actual E1 gap.
+
+The private relation module implements closed, bounded normalization and relation
+checks without filesystem, network or process operations. Its result is always
+`authentication=NOT_ESTABLISHED`, `compliance=false`, `vf0_active=false`, including
+when the asserted relation matches. Supplied policy, classification, principal,
+record hashes, guarantees and observation times remain untrusted data. The
+admission time is when the observer acquired the disposition, **not an invented
+native approval timestamp**. No object deserializer, self-consistent payload or
+`VERIFIED` string authenticates its own provenance. A future protected composition
+must independently acquire the effective policy, admission, source, exact attempt,
+archive bytes, actual outcomes and guarantees before relying on a matching
+relation. The module neither reads effective policy nor issues a D0090 receipt.
+
+| Obligation | Implemented, locally executed support | Remaining limitation |
+| --- | --- | --- |
+| C1 closed bounded inputs | Duplicate/unknown/missing fields, non-finite values, excessive bytes/depth/nodes, cycles and strict integer negatives | No unbounded fuzz or resource-exhaustion certification |
+| C2 exact relation | Request/policy/admission/material hashes, parent/tree, allowed changed paths and retained test bytes | Actual source/path classification and byte acquisition belong to protected composition |
+| C3 modes and time | RED/characterization/structural/emergency controls, forbidden mode, late reconstruction, zero cases/skips/unrelated failures and freshness boundaries | Fixture policy and asserted observations are not effective policy or executed producer evidence |
+| C4 provider isolation | Two different native fixture layouts normalize to matching outcomes; opaque attempt and namespace collision negatives | No live second-provider support |
+| C5 capability evidence | Every required guarantee rejects missing/unknown/unsupported/contradictory state or absent retained identity | Record hashes and state labels do not authenticate guarantees |
+| C6 navigation separation | Wrong-subject/unsafe link mappings reject independently; missing links leave the relation unchanged | URL filtering is not origin ownership, renderer escaping or provider authentication |
+| C7 no self-authentication | Fully matching forged input still has no authentication, compliance, preparation or write authority | Parent-owned acquisition and preparer integration are not implemented by this module |
+
+The focused suite contains **32 tests** with additional negative subcases. Local
+Ruff 0.16.0 formatting/lint and strict mypy 2.3.0 cover both new files. The tools
+were recovered from the unchanged parent development lock through
+[read-only transport run36070735299](https://github.com/ktogias/gnostoa/actions/runs/36070735299),
+then installed offline with hash enforcement in an external virtualenv. Archive
+10838570896 SHA-256 `44e29ed4785aa1178a0af95c34372b632700adab28a7baa449f2e6f3c9e92625`
+was verified before ZIP parsing; all 67 wheels match the parent lock. This does
+not add a dependency. Cleanup `623ba257ad0bcc9819dee4aa41b72938fb78ac55` removes
+the temporary transport workflow. No new source export was necessary.
+
+This helper-only candidate must still cross ordinary exact-parent D0090
+preparation before publication; it does not consume the one-time authority-change
+exception. Exact receipt, final CI and individual reviewer dispositions are
+retained in the PR candidate seal, not predicted here. The original ten VF0 gate
+rows and E1-E5 observations above remain unchanged. A7 is not the integrated
+producer/consumer, does not make supplied records authoritative and cannot close
+VF0-01/03/07/08/09/10. Protected composition and the single introducing authority
+transition remain subsequent work under the already approved method.

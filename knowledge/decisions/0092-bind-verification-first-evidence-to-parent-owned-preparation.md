@@ -154,9 +154,11 @@ capabilities; and unchanged authority under link changes. Reject an action-link
 mapping bound to the wrong subject without changing an otherwise valid approval's
 disposition. A missing UI link alone must not turn an otherwise valid approval
 into an authorization denial. Synthetic mappings demonstrate
-contract isolation, not live support for a second provider. These tests are
-**NOT RUN** in this records-only clarification and do not replace any original
-VF0 behavior-map obligation. Human handoffs follow the delivery runbook's
+contract isolation, not live support for a second provider. These tests were
+**NOT RUN** at the records-only clarification checkpoint. The later
+[A7 relation-core implementation](../assessments/15-vf0-entrance-and-execution-plan.md#vf0-a7-normalized-relation-core)
+records its separate synthetic conformance evidence; it does not replace any
+original VF0 behavior-map obligation. Human handoffs follow the delivery runbook's
 [direct-action-link convention](../runbooks/deliver-bounded-self-hosted-slice.md#human-action-handoff).
 
 ### 3. Prove a bounded provider-backed acquisition route first
@@ -264,6 +266,20 @@ current compliance. The independent CI consumer must enforce the same identity
 and admission relation, not trust the preparer's snapshot.
 
 ### 4. Keep bootstrap and activation explicit
+
+The owner has now [approved the bounded bootstrap-preparation method](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5823426881)
+proposed in [5822958067](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5822958067).
+This permits implementation, bounded validation and publication on the existing
+PR, not merge, producer-trust admission or activation. The introducing transition
+must freeze its exact parent, file set, patch and tool/runtime identities before
+execution. Validate it externally with the unmodified parent's tools; never have
+the modified preparer certify itself, invent a v1 receipt, disable an existing
+rejection test or install a permanent override. Ordinary helper-only candidates
+continue through normal D0090 preparation. Material authority/policy/parent drift
+or wider scope requires reconciliation rather than reuse of this exception.
+The exception ends with its one explicitly identified introducing transition.
+The linked comment is an agent-authored record of the owner's chat decision,
+not a native provider approval event or cryptographic human-presence proof.
 
 Current Decision 0090 deliberately rejects changes to its own authority. VF0's
 introducing candidate must therefore use a separately declared authority-evolution

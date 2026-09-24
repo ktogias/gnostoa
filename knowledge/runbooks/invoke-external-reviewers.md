@@ -173,6 +173,19 @@ Where no dedicated security command was verified, keep that limitation explicit.
 | Gitar | Use its existing review or [documented natural-language interaction][gitar] for a read-only review request; explicitly exclude code changes. No exact standalone review command was verified in that command table. | Security-focused analysis is not a verified dedicated security command. `unblock`, auto-apply and auto-merge controls alter state; do not use them as review triggers. |
 | TuringMind | Retain the [registry's route and credit observations][registry]; revalidate the installation's actual supported invocation. No new command is inferred. | Dedicated security syntax remains unverified. Credit exhaustion is unavailable evidence, not a clean security result. |
 | DeepSource | Separate analyzer lane. [AI review may run on `@deepsourcebot` mentions][deepsource] under the configured mentions-only policy. | Static/security analysis and AI review have different activation and results. Do not substitute Autofix or formatter commits for review; no analyzer result grants reviewer qualification. |
+| Greptile | [Developer Essentials][greptile] documents `@greptileai`; for Draft PRs, `@greptileai review this draft`. Check repository enablement, indexing and filters first. | [Security-focused review][greptile-security-focus] can be requested with `@greptileai check this PR for security vulnerabilities`. This wording alone does not prove the separate [Security Check][greptile-security-check] ran; record its own native result and coverage when present. No dedicated Security Check activation command was verified in this research cut. |
+| ItoQA | The provider's [GitHub App listing][itoqa] describes automatic PR-triggered behavioral QA, with generated tests and PR results. Treat it as an execution/QA lane, not automatically a semantic code-review vote. | No manual mention command, dedicated security trigger, Draft behavior or Gnostoa Python/CLI applicability was verified. Do not invent a trigger or treat UI-focused QA as VF0 oracle/provenance evidence. Check the actual run, source, test scope and retained artifacts before using a result. |
+
+## Owner-reported additional connections
+
+The [owner's continuation record][additional-connections] reports **ItoQA and
+Greptile connected to ktogias/gnostoa**. Record the installation state as
+`OWNER_REPORTED_CONNECTED`; it does not establish exact permissions, available
+quota, completed execution, security coverage, reviewer independence or quorum.
+They join future review/QA planning without becoming mandatory on every commit.
+Reconcile both entries in the existing #297 registry work; do not create another
+registry or alter its paused branch. Provider names, native triggers and QA versus
+review modes remain route data, not branches in the common VF0 evaluator.
 
 ## Historical #319 observations and authority boundary
 
@@ -249,3 +262,8 @@ qualification, change permissions or mark the review complete to continue.
 [deepsource]: https://docs.deepsource.com/docs/platform/dashboard/repository/settings
 [codex-result]: https://github.com/ktogias/gnostoa/pull/319#issuecomment-5821943083
 [claude-request]: https://github.com/ktogias/gnostoa/pull/319#issuecomment-5821757574
+[additional-connections]: https://github.com/ktogias/gnostoa/pull/319#issuecomment-5823426881
+[greptile]: https://www.greptile.com/docs/code-review/developer-essentials
+[greptile-security-focus]: https://www.greptile.com/docs/code-review/tips-recipes#security-focused-reviews
+[greptile-security-check]: https://www.greptile.com/security-check
+[itoqa]: https://github.com/apps/itoqa
