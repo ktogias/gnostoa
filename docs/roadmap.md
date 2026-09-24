@@ -30,7 +30,7 @@ canonical workflow or authority surface. A fully capable direct environment
 continues without waiting for #317. [#316](https://github.com/ktogias/gnostoa/issues/316)
 remains an independent branch-role/CI-applicability optimization, while #308
 retains writer-fencing ownership. That checkpoint and its addenda link the owning
-#10, #11 and #15 records; provider labels remain authoritative for the one
+issues #10, #11 and #15; provider labels remain authoritative for the one
 currently selected Work Item.
 
 The categories are priorities, not acceptance or effectiveness states. Open

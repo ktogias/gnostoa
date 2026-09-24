@@ -349,8 +349,14 @@ a provider-side preparation fallback may be used with the same trust boundary:
 
 - reconstruct one immutable candidate patch against the exact parent and bind
   its SHA-256 and exact changed-path set;
-- run candidate code only in a **read-only** preparation job with the exact
-  parent checkout and exact development dependencies;
+- run candidate code in a preparation job with read-only **provider
+  permissions**, the exact parent checkout and exact development dependencies;
+  supply no analyzer secrets or credentials that authorize remote writes;
+- interpret read-only as a remote provider/Git permission boundary, **not a
+  process sandbox**. Local preparation still creates disposable worktrees and
+  Git objects. Focused code runs as the invoking OS user and may affect other
+  resources accessible to that user. A sandbox claim additionally requires
+  verified process, filesystem and network isolation and credential exclusion;
 - execute the parent-owned `ci/prepare-candidate`, retain the external receipt,
   receipt digest, prepared tree, normalized patch digest and changed paths;
 - upload only the non-secret preparation evidence/artifact needed by the
