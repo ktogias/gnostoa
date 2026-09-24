@@ -150,9 +150,10 @@ Do not promote its GitHub-shaped diagnostic manifest into the common contract.
 Acceptance requires conformance evidence for a network-free
 core; two distinct synthetic provider mappings producing equivalent common
 outcomes; opaque/colliding native identities; missing/ambiguous coverage or
-capabilities; and unchanged authority under link changes. The same URL with a
-wrong subject must reject; a missing UI link alone must not turn an otherwise
-valid approval into an authorization denial. Synthetic mappings demonstrate
+capabilities; and unchanged authority under link changes. Reject an action-link
+mapping bound to the wrong subject without changing an otherwise valid approval's
+disposition. A missing UI link alone must not turn an otherwise valid approval
+into an authorization denial. Synthetic mappings demonstrate
 contract isolation, not live support for a second provider. These tests are
 **NOT RUN** in this records-only clarification and do not replace any original
 VF0 behavior-map obligation. Human handoffs follow the delivery runbook's
