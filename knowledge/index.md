@@ -192,6 +192,7 @@ inherited, copied or loaded by adopting projects.
 - [Maintain the toolkit](runbooks/maintain-the-kit.md)
 - [Prepare an experiment capsule](runbooks/prepare-an-experiment-capsule.md)
 - [Deliver a bounded self-hosted slice](runbooks/deliver-bounded-self-hosted-slice.md)
+- [Invoke external code and security reviewers](runbooks/invoke-external-reviewers.md)
 - [Run a bounded owner-led experiment](runbooks/run-owner-led-experiment.md)
 - [Recover a retained experiment workspace](runbooks/recover-a-retained-experiment-workspace.md)
 - [Prepare the first public repository publication](runbooks/prepare-first-publication.md)

@@ -146,8 +146,8 @@ settings, security review may already run alongside code review. Check the
 associated task before duplicating activation. Manual reviews normally publish
 Medium-or-higher findings; automatic reviews normally publish High/Critical,
 but settings can change these thresholds. The full **Security Report** stays in
-the associated Codex task. No PR findings alone cannot establish completion or
-absence of vulnerabilities. A generic `@codex review` with security-focused prose
+the associated Codex task. The absence of PR findings cannot establish review
+completion or absence of vulnerabilities. A generic `@codex review` with security-focused prose
 is not this dedicated mode.
 
 `@codex` requests to fix or address feedback can create commits. They are not
@@ -163,7 +163,7 @@ Where no dedicated security command was verified, keep that limitation explicit.
 
 | Provider | Code-review route | Security route and limits |
 | --- | --- | --- |
-| CodeRabbit | [`@coderabbitai review`][coderabbit-commands] is incremental; `@coderabbitai full review` requests a full pass. | PR review can raise security findings. The separate [Security Agent][coderabbit-security] runs from Security → Scan repositories → Code findings, with its own entitlement/credit check; it is not the PR command or automatically the PR head. No new scan subscription is selected here. |
+| CodeRabbit | [`@coderabbitai review`][coderabbit-commands] is incremental; `@coderabbitai full review` requests a full pass. | PR review can raise security findings. The separate [Security Agent][coderabbit-security] has settings under Security → Repositories (AI Deep Scan) and results under Security → Agent Findings. The referenced launch guide also lists Scan repositories → Code findings; verify the installed UI labels. Keep its entitlement/credit check: this is not the PR command or automatically the PR head. No new scan subscription is selected here. |
 | Sourcery | Exact standalone `@sourcery-ai review`, as retained in the [registry observation][registry]. | [Security scanning][sourcery] is distinct from PR review. No dedicated security comment verified in this research cut; do not append a guessed suffix to the exact-only command. |
 | Qodo | Current v2 configuration uses [`/agentic_review`][qodo]; older PR-Agent uses `/review`. Verify installed generation/channel first. | Security scope/configuration is not a verified dedicated command here. Bare slash routes remain manually gated by repository-specific collision checks. |
 | CodeAnt | [`@codeant-ai: review`][codeant] in its own comment; Gnostoa has observed additional bounded instructions. | Ordinary review includes security. Separate [Scan Center security analysis][codeant-security] is not an invented PR-comment command. |
