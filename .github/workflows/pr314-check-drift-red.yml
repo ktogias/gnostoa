@@ -1,0 +1,93 @@
+name: PR314 DeepSource check-drift RED
+
+on:
+  push:
+    branches:
+      - transport/pr314-check-drift-aaedae
+
+permissions:
+  contents: read
+
+jobs:
+  red:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact pre-change subject
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: aaedae65d27f96629533f25366b2f563d31ada75
+          persist-credentials: false
+
+      - name: Bind exact pre-change identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "aaedae65d27f96629533f25366b2f563d31ada75"
+          test "$(git rev-parse 'HEAD^{tree}')" = "361943f69b0e79f097ab7d576860381bcb471144"
+          test -z "$(git status --porcelain)"
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+
+      - name: Prove check-metadata drift RED
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=. python - <<'PY'
+          from tests.test_analyzer_readback import (
+              HEAD,
+              OBSERVED,
+              RUN_UID,
+              _DeepSourceFake,
+              _check_page,
+              _issue,
+              _run_page,
+          )
+          from tools import analyzer_deepsource
+
+          issue_page = _check_page(
+              [_issue("issue-drift", 10)],
+              total=1,
+              cursor=None,
+              status="SUCCESS",
+          )
+          issue_page["data"]["node"]["analyzer"] = {"shortcode": "javascript"}
+          client = _DeepSourceFake(
+              {
+                  ("run", None): _run_page(
+                      run_status="SUCCESS", check_status="SUCCESS"
+                  ),
+                  ("check-python", None): issue_page,
+              }
+          )
+
+          document = analyzer_deepsource.read_full_run(
+              client,
+              repository="ktogias/gnostoa",
+              pull_number=312,
+              requested_head=HEAD,
+              run_uid=RUN_UID,
+              observed_at=OBSERVED,
+          )
+
+          future = (
+              document["completeness"] == "READBACK_UNAVAILABLE"
+              and document["coverage"]["status"] == "ERROR"
+              and document["coverage"]["reason"] == "PROVIDER_ERROR"
+          )
+          if future:
+              raise SystemExit(
+                  "RED invalid: exact pre-change subject already rejects check metadata drift"
+              )
+
+          assert document["completeness"] == "FULL_RUN", document
+          assert document["coverage"]["status"] == "COMPLETE", document
+          assert document["findings"][0]["native"]["analyzer"] == "javascript", document
+          print(
+              "EXPECTED_RED: issue pagination changed analyzer metadata for the same "
+              "check id and was incorrectly accepted as FULL_RUN/COMPLETE"
+          )
+          PY
