@@ -387,14 +387,16 @@ def _candidate(value: Any, request: dict[str, Any]) -> dict[str, Any]:
         )
     _text(candidate["tree"])
     _time(candidate["observed_at"])
+    changed = _paths(candidate["changed_paths"])
+    _need(changed <= set(request["candidate_paths"]), "CANDIDATE_PATH_SCOPE")
+    evidence_files = _files(candidate["evidence_files"])
     _need(
-        _paths(candidate["changed_paths"]) <= set(request["candidate_paths"]),
-        "CANDIDATE_PATH_SCOPE",
-    )
-    _need(
-        _files(candidate["evidence_files"]) == request["material"]["evidence_files"],
+        evidence_files == request["material"]["evidence_files"],
         "CANDIDATE_EVIDENCE_BINDING",
     )
+    # These files describe the admitted evidence delta, not every test already
+    # present in the parent. The final diff must carry that same retained delta.
+    _need(set(evidence_files) <= changed, "CANDIDATE_EVIDENCE_DELTA_MISSING")
     return candidate
 
 

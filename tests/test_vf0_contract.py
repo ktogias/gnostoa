@@ -250,21 +250,27 @@ class VF0RelationTests(unittest.TestCase):
                 doc["candidate"][field] = value
                 self.assertRejected(doc)
 
+    def test_candidate_diff_must_carry_each_admitted_evidence_delta_file(self) -> None:
+        self.document["candidate"]["changed_paths"] = ["tools/target.py"]
+        self.assertRejected(self.document)
+
     def test_candidate_paths_do_not_escape_the_request(self) -> None:
-        for paths in [
-            [],
-            ["tools/foreign.py"],
-            ["../outside.py"],
-            ["/tmp/outside"],
-            ["tools/../target.py"],
-            ["tools//target.py"],
-            ["tools\\target.py"],
-            ["tools/target.py", "tools/target.py"],
+        for paths, reason in [
+            ([], "PATH_SET"),
+            (["tools/foreign.py"], "CANDIDATE_PATH_SCOPE"),
+            (["../outside.py"], "PATH_FORMAT"),
+            (["/tmp/outside"], "PATH_FORMAT"),
+            (["tools/../target.py"], "PATH_FORMAT"),
+            (["tools//target.py"], "PATH_FORMAT"),
+            (["tools\\target.py"], "PATH_FORMAT"),
+            (["tools/target.py", "tools/target.py"], "DUPLICATE_PATH"),
         ]:
             with self.subTest(paths=paths):
                 doc = copy.deepcopy(self.document)
+                # Keep the valid request unchanged so candidate validation is
+                # exercised; a generic scope refusal cannot hide a format bug.
                 doc["candidate"]["changed_paths"] = paths
-                self.assertRejected(doc)
+                self.assertEqual([reason], self.assertRejected(doc)["reasons"])
 
     def test_requested_paths_and_evidence_members_are_canonical(self) -> None:
         for path in [
