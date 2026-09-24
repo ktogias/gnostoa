@@ -1,0 +1,69 @@
+name: VF0 exact-parent development wheel transport
+on:
+  push:
+    branches: [agent-support/vf0-devtools-20260924]
+    paths: [.github/workflows/vf0-devtools.yml]
+permissions:
+  contents: read
+jobs:
+  transport:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 4ef62a31424bf9d58e49bb4e591f1a827a89a506
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.13'
+      - name: Download only existing hash-admitted wheels
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          test "$(git rev-parse HEAD)" = 4ef62a31424bf9d58e49bb4e591f1a827a89a506
+          test "$(git rev-parse 'HEAD^{tree}')" = c1b367a8c0215c1867f25233c8972c5595aa7cda
+          test -z "$(git status --porcelain)"
+          mkdir -m 700 "$RUNNER_TEMP/vf0-devtools"
+          cp requirements/development.lock "$RUNNER_TEMP/vf0-devtools/development.lock"
+          python -I -m pip download --disable-pip-version-check \
+            --require-hashes --only-binary=:all: \
+            --platform manylinux_2_28_x86_64 --platform manylinux2014_x86_64 \
+            --platform manylinux_2_17_x86_64 --implementation cp \
+            --python-version 3.13 --abi cp313 --abi abi3 --abi none \
+            --dest "$RUNNER_TEMP/vf0-devtools/wheels" \
+            -r requirements/development.lock
+          python -I - <<'PY'
+          import hashlib
+          import json
+          import os
+          import platform
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP']) / 'vf0-devtools'
+          files = sorted((root / 'wheels').iterdir())
+          assert 1 <= len(files) <= 100
+          assert all(p.is_file() and not p.is_symlink() and p.suffix == '.whl' for p in files)
+          assert sum(p.stat().st_size for p in files) <= 200_000_000
+          result = {
+              'schema': 'vf0-development-wheel-transport/v1',
+              'source': '4ef62a31424bf9d58e49bb4e591f1a827a89a506',
+              'lock_sha256': hashlib.sha256((root / 'development.lock').read_bytes()).hexdigest(),
+              'producer_python': platform.python_version(),
+              'target': 'CPython3.13-linux-x86_64-manylinux2.28/2.17',
+              'run_id': os.environ['GITHUB_RUN_ID'],
+              'attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+              'wheels': {p.name: {'bytes': p.stat().st_size, 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()} for p in files},
+          }
+          (root / 'manifest.json').write_text(json.dumps(result, sort_keys=True, indent=2) + '\n')
+          print('VF0_DEVTOOLS_TRANSPORT', json.dumps(result, sort_keys=True))
+          PY
+          test -z "$(git status --porcelain)"
+      - name: Retain admitted development tools
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: vf0-devtools-${{ github.run_id }}
+          path: ${{ runner.temp }}/vf0-devtools/
+          if-no-files-found: error
+          retention-days: 7
