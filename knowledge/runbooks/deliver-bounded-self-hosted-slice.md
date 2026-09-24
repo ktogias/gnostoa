@@ -13,6 +13,9 @@ sources:
   - id: agent-execution-recovery-work-item
     resource: https://github.com/ktogias/gnostoa/issues/308
     title: Enforce a single active implementation identity per Work Item across sessions
+  - id: owner-action-links
+    resource: https://github.com/ktogias/gnostoa/pull/319#issuecomment-5821298046
+    title: Owner direction for direct action links and provider-neutral boundaries
 x-project-knowledge:
   id: kit.runbook.deliver-bounded-self-hosted-slice
   owners:
@@ -212,6 +215,40 @@ The existing emergency route retains its declared timing and follow-up.
     subject re-binding, reconciliation and the micro-retrospective succeed; then
     record the next owner decision without starting it automatically.
 
+
+## Human action handoff
+
+When asking the owner to act in a provider UI, include a **direct clickable link**
+to the exact run, job, approval request or other action target in that same
+message. A bare identifier, workflow name or menu path is not a substitute for
+an available direct link. Status updates about that action also retain its link.
+Read the target from provider metadata through the admitted adapter and reconcile
+its repository, exact source and execution/attempt identity before presenting it.
+
+Put the requested action, bounded effect and strongest remaining uncertainty
+beside the link. When approval binds an exact request, include the manifest
+identity and exact comment where required, the request expiry with timezone,
+and the distinction between request validity and artifact retention. Identify
+what is **not** authorized, such as production deployment, merge or activation.
+Do not make the owner rediscover these details in a provider dashboard.
+
+When there is no direct approval deep link, supply the exact containing run/job
+URL and the minimal steps to reach the control. If no target URL is available,
+state that limitation and give the known exact subject and shortest navigation
+path; never invent a link or imply that it was verified. Do not expose API
+credentials, signed asset URLs or other bearer links as owner action targets.
+
+A link is a navigation aid, not an object identity, capability or approval.
+Resolve native routes inside the provider adapter; keep navigation separate from
+admission/evidence evaluation. A changed or missing UI link does not create,
+revoke or authenticate authority. After the owner reports completion, reacquire
+the actual provider event and reconcile its subject and effect; the chat report,
+green status or an empty waiting queue is not a substitute for that event.
+
+Mark agent-authored handoffs and explanatory provider records as agent-authored;
+declared labels do not authenticate human approval. Preserve exact-only trigger
+commands and exact-candidate seal syntax through their existing routes. This
+handoff convention adds neither an approval gate nor provider-write permission.
 
 ## Conditional agent execution recovery playbook
 

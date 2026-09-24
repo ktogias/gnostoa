@@ -16,6 +16,9 @@ sources:
   - id: records-checkpoint
     resource: https://github.com/ktogias/gnostoa/issues/15#issuecomment-5816546629
     title: Decision and plan pre-edit structural checkpoint
+  - id: owner-provider-neutral-direction
+    resource: https://github.com/ktogias/gnostoa/pull/319#issuecomment-5821298046
+    title: Native A6 approval read-back and owner-selected abstraction requirements
 x-project-knowledge:
   id: kit.decision.0092.bind-verification-first-evidence-to-parent-owned-preparation
   owners:
@@ -94,6 +97,67 @@ supplied hash, `trusted` boolean, issuer label nor timestamp is a trust root.
 The semantic verifier consumes an observation obtained by the trusted acquisition
 boundary; arbitrary JSON deserialization must not produce such an observation.
 
+### Provider-neutral implementation boundary
+
+VF0 follows the existing [Decision 0016](0016-evolve-human-agent-workflow-through-bounded-self-hosted-slices.md)
+portable-state/effect separation and [Decision 0086](0086-implement-useful-l1-as-protected-source-github-current-state-reconciler.md)
+common-reducer/adapter pattern. GitHub is the first concrete acquisition adapter,
+not the domain model. These are requirements for the eventual implementation,
+not a new public schema, an implemented API or a production-admission claim.
+
+Keep a deterministic, network-free semantic core over provider-neutral concepts:
+
+| Concept | Common responsibility |
+| --- | --- |
+| Admission request | Exact subject/parent, Work Item/Decision/policy revisions, classified scope/mode, evidence plan, requested effect, identity and expiry |
+| Admission observation | Observed disposition and principal, exact approved request, raw record/revision references, provenance, coverage and freshness; not inferred human presence |
+| Execution/evidence reference | Provider and instance namespace, opaque repository/run/attempt/artifact identities, exact source/material digests and observed execution result |
+| Human action link | Display label, relation and safe UI URL bound to the referenced subject; navigation only, never approval authority |
+
+Separate read-only admission acquisition, evidence acquisition and action-link
+resolution behind narrow interfaces. The composition boundary selects an
+explicitly admitted adapter; the core must not inspect native URL paths, parse
+GitHub approval comments, assume integer IDs, import provider SDKs or branch on
+GitHub/GitLab workflow fields. Preserve opaque IDs with provider-instance and
+repository scope; their magnitude or lexical order is not chronology. A missing
+attempt identity must not be fabricated as attempt 1.
+
+The adapter owns authenticated transport, native APIs and pagination, source
+and protection metadata, native-event parsing, artifact retrieval and UI routes.
+GitHub Environments, required-reviewer settings, numeric IDs, workflow YAML,
+permission names and the A6 comment format stay in its specialization. Raw
+provider records remain retrievable evidence; normalization must not discard
+unavailable fields, ambiguous identity, provenance limitations or weaker
+protection. A caller-created observation or `trusted` flag cannot satisfy the
+admitted acquisition boundary merely because it has the common shape.
+
+Declare the adapter's supported guarantees and their observed evidence: exact
+request binding, record coverage, attempt identity/currentness, source and
+protection revalidation, retention and approval/execution credential separation.
+The common policy decides which guarantees are required. Unsupported, unknown
+or contradictory required guarantees deny compliance rather than selecting a
+weaker common denominator. Report human authorship, native publisher identity
+and authority independently. An API `approved` state is not by itself evidence
+of a non-delegated human credential.
+
+The [A6 read-back](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5821298046)
+observed a real request-bound native approval and successful diagnostic job.
+It does not establish full credential separation or independently revalidated
+post-approval protections. Its single-attempt pilot and no-production scope
+remain adapter-specific experimental constraints, not universal workflow rules.
+Do not promote its GitHub-shaped diagnostic manifest into the common contract.
+
+Acceptance requires conformance evidence for a network-free
+core; two distinct synthetic provider mappings producing equivalent common
+outcomes; opaque/colliding native identities; missing/ambiguous coverage or
+capabilities; and unchanged authority under link changes. The same URL with a
+wrong subject must reject; a missing UI link alone must not turn an otherwise
+valid approval into an authorization denial. Synthetic mappings demonstrate
+contract isolation, not live support for a second provider. These tests are
+**NOT RUN** in this records-only clarification and do not replace any original
+VF0 behavior-map obligation. Human handoffs follow the delivery runbook's
+[direct-action-link convention](../runbooks/deliver-bounded-self-hosted-slice.md#human-action-handoff).
+
 ### 3. Prove a bounded provider-backed acquisition route first
 
 The proposed first production acquisition route is a prior-integrated,
@@ -140,8 +204,9 @@ no offline or expired-artifact acceptance is implied by this proposal.
 
 The proposed trust configuration is a closed, versioned part of the immutable
 parent-owned authority, loaded before candidate execution. It binds the admitted
-API origin and numeric repository identity; prior-integrated producer revision,
-workflow path and relevant source/dependency closure; permitted event and caller
+API origin, adapter/provider-instance identity and opaque repository identity
+(numeric in the GitHub adapter); prior-integrated producer revision, workflow
+path and relevant source/dependency closure; permitted event and caller
 identities; publisher job role and publication-record protocol; runtime pins;
 and bounded acquisition, member and retention requirements. An exact source pin
 must be accompanied by its admitted integration identity. Neither a branch name
