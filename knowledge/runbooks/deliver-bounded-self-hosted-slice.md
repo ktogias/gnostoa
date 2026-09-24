@@ -449,6 +449,16 @@ Rotate instead:
 This **verify-before-store** order prevents a write-only secret store from
 destroying the only opportunity for pre-merge functional validation.
 
+Provider token type is part of the verification subject, not interchangeable
+metadata. Probe the same API class the adapter will use. In particular, Codacy
+API v3 PR-analysis readback requires an **account API token** supplied through
+the `api-token` header; a repository token authorizes only a restricted subset
+of v3 operations and must not be treated as equivalent. A `401|403` during the
+exact adapter-surface probe is an authentication failure even if another Codacy
+endpoint accepts that credential. Verify a new Codacy credential first against
+an account-authenticated v3 endpoint and then against the exact repository/PR
+analysis endpoint before storing it.
+
 Never broaden an Environment from `main` to a helper/candidate branch merely to
 move this smoke earlier. The absence of a pre-merge trusted runner is a lifecycle
 fact, not a reason to weaken the secret boundary.
