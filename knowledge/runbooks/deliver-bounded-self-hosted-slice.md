@@ -283,12 +283,24 @@ surface:
 1. Start it at the exact required commit. Do not create a second implementation
    PR or treat the helper branch as implementation authority.
 2. Use a pinned `actions/checkout`, `contents: read`,
-   `persist-credentials: false`, and an explicit exact SHA.
-3. Assert exact `HEAD`, exact `HEAD^{tree}` and a clean checkout before export.
-4. Create a `git bundle`, run `git bundle verify`, retain its SHA-256 and upload
-   it as a short-lived artifact.
-5. After download, verify the artifact digest and bundle again, clone from it,
-   check out the exact commit and repeat the head/tree/clean assertions.
+   `persist-credentials: false`, `fetch-depth: 0`, and an explicit exact SHA.
+3. Require `git rev-parse --is-shallow-repository` to return `false`; assert
+   exact `HEAD`, exact `HEAD^{tree}` and a clean checkout. Verify the declared
+   preparation-parent object with `git cat-file -e <preparation-parent>^{commit}`.
+4. Create a self-contained `git bundle` from named refs for the declared source
+   and any distinct preparation parent, without excluding prerequisite history
+   or exporting unrelated refs. Run `git bundle verify`, retain its SHA-256 and
+   upload it as a short-lived artifact.
+5. After download, verify the artifact digest and verify the bundle in a
+   disposable empty Git repository. Clone into a fresh repository and require
+   `git fsck --full` to succeed. Verify the declared
+   preparation-parent object again, check out the exact source commit and repeat
+   the head/tree/clean assertions.
+
+The preparation parent is the explicitly bound commit and may equal exported
+`HEAD`; do not substitute `HEAD^`. Bundle verification and exact HEAD/tree
+checks alone do not establish connected history or availability of every
+required object. The non-shallow export and post-clone checks are both required.
 
 Use this route because the direct transport is unavailable, not because bundles
 are intrinsically preferable to `git clone` or an existing exact checkout.
@@ -396,15 +408,28 @@ before relying on the workflow:
    branch restriction;
 3. admit only the protected/trusted execution branch (for Gnostoa-self
    analyzer readback, exactly `main`);
-4. create the Environment-scoped secrets first;
+4. follow verify-before-store below: probe the intended value and write that
+   same verified value to the Environment-scoped secret;
 5. read back only secret **names/metadata** and the Environment policy; never
-   attempt to retrieve or retain secret values;
-6. only after the Environment copies are confirmed, delete broader
-   repository-level copies of the same secret names;
-7. read back repository secret names and prove those broader copies are absent.
+   retrieve values from GitHub or put them in retained evidence;
+6. satisfy the functional/recovery gate below before deleting broader copies;
+7. delete the authorized repository-level copies, then read back secret names
+   and prove those broader copies are absent.
 
-Do not reverse steps 4-6: deleting the only working credential copy before the
-Environment copy exists creates avoidable recovery pressure.
+Metadata proves existence, not stored-value correctness or secret injection.
+When an admitted pre-cleanup probe is available, require a successful trusted,
+main-only Environment-bound readback of the intended provider subject before
+cleanup. Otherwise, cleanup requires all of: the same-value
+verify-before-store evidence, an independently recoverable verified value held
+by the maintainer under existing authorized secret-management policy, and
+explicit maintainer authorization for deferred injection verification. Keep that
+recovery value available until the trusted Environment-bound smoke succeeds;
+Gnostoa retains only the non-secret receipt and the unresolved smoke requirement.
+Without these conditions, stop for owner disposition rather than deleting the
+last recovery path. Check affected consumers before deleting any shared copy.
+This does not authorize a new secret store, weaker Environment restrictions or
+broader repository/organization copies for live execution. The live route remains
+disabled until its Environment-only credential boundary is satisfied.
 
 If the credentialed workflow is new and does not yet exist on the trusted
 integrated branch, do not weaken the Environment policy temporarily just to test
@@ -466,6 +491,11 @@ Rotate instead:
 5. unset/discard the local value;
 6. revoke the superseded provider token when its identity is known and doing so
    cannot disrupt another consumer.
+
+Apply the same functional/recovery gate before discarding the last recoverable
+value or revoking the last working credential. Local probe copies are still
+unset promptly; any authorized recovery value stays in the maintainer's existing
+secret-management path, never in Gnostoa evidence or broader Actions secrets.
 
 This **verify-before-store** order prevents a write-only secret store from
 destroying the only opportunity for pre-merge functional validation.
