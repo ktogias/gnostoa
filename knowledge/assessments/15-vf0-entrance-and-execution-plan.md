@@ -121,7 +121,8 @@ independent proof of test semantic sufficiency.
 2. **Decision/proof preparation:** reconcile the proposed acquisition boundary,
    trust configuration, admission inputs and version transition. Build a focused
    positive/negative provenance experiment before treating an acquired observation
-   as trusted. This records-only candidate does not implement that experiment.
+   as trusted. The initial records-only candidate did not implement that
+   experiment; the VF0-E2 result below records its subsequent bounded prototype.
 3. **Evidence producer and verifier:** specify closed bounded inputs, preserve
    production equality and declared oracle identities, execute in demonstrated
    isolation, then retain observations outside candidate control. Keep the provider
@@ -137,3 +138,78 @@ independent proof of test semantic sufficiency.
 No independent stage may claim the overall gate is active. Artifact availability,
 test/oracle adequacy, actual admission and isolation are material proof obligations,
 not satisfied by a document, function name, receipt schema or green unit test.
+
+## VF0-E2: bounded acquisition experiment
+
+The [continuation checkpoint](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5817094277)
+bound this experiment and the three review repairs before record edits. Its
+[read-only run 36020858876](https://github.com/ktogias/gnostoa/actions/runs/36020858876)
+completed successfully using the one-shot workflow at
+`9095c79d7f7fb1735fe6b3b148ac5908affb5a7b`, path
+`.github/workflows/vf0-acquisition-probe.yml`. No candidate checkout or supplied
+artifact code was executed, no Environment/analyzer secret was used, and the
+job had only repository content, Actions and pull-request read permissions.
+
+The live positive case reacquired the existing entrance run, its first-attempt
+capture job and step outcomes, both pinned producer source files, artifact
+metadata and download from GitHub. It validated TLS certificates/hostnames,
+followed the bounded signed-asset handoff without forwarding the API credential,
+compared the downloaded archive with the provider-reported SHA-256 before even
+opening ZIP metadata, and read only the declared bounded observation member.
+Run/attempt and artifact metadata were reread after acquisition. This was actual
+provider access, not a mock network response or acceptance of an offline digest.
+
+The 20 negative controls are deterministic local mutations of acquired data or
+request inputs, not 20 hostile-provider executions. They rejected wrong run ID,
+source commit, workflow path, attempt, repository and conclusion; wrong artifact
+ID, expired flag, missing/malformed digest and wrong run association; altered
+archive bytes; three unsafe HTTPS URLs, wrong API origin and asset host; support
+producer non-admission with and without a self-asserted trust flag; and duplicate
+JSON keys. The altered-byte test replaced the ZIP constructor with a failure
+sentinel: digest rejection happened without calling that constructor.
+
+The positive result recognizes the historical helper **only under this
+experiment's fixed pins**. Both production-admission controls rejected it;
+`production_producer_admitted` and `vf0_gate_implemented` remain false. The
+branch-prefix rejection is an experiment safeguard, not a sufficient production
+trust policy. No trusted observation type, reusable provider adapter, production
+producer, D0090 receipt extension or independent CI consumer was installed.
+
+### Retained evidence and limits
+
+Artifact **10816258803**, `vf0-acquisition-experiment-20260924`, expires
+**2026-10-01 15:31:55 UTC**. Downloaded bytes were checked locally against the
+provider digest before reading its exact two members, `probe.py` and `result.json`.
+
+| Object | SHA-256 |
+| --- | --- |
+| Experiment artifact archive | `f91cbb2b8a4c52ba92335301d84ba5fe34d1e39675152d925b83769b6390df9a` |
+| Experimental probe | `8fe21fe8aa6328b67ebc97874d1fea9a8f1a793b3a0670578f10cd97ed04389e` |
+| Canonical result including terminal LF | `64c9ae7735ab7a7c4cb1b2425b6428082c806c8df7bf5d49e751f74ee3d9285d` |
+
+The earlier entrance artifact identity, content and RED disposition are unchanged.
+This second experiment demonstrates bounded acquisition feasibility, not the
+semantic sufficiency or chronology of that original test and not VF0 activation.
+Only the reported cases executed: no malicious TLS server, ZIP-bomb corpus,
+complete archive-parser fuzzing or hostile OS/provider experiment is claimed.
+
+One material provider limit remains: artifact metadata binds a workflow run but
+has no direct run-attempt field. The prototype admits only the known first
+attempt and rereads it; it does not claim a general solution for rerun attribution.
+The production design must authenticate attempt-specific observation identity,
+handle stale/replaced evidence and bind the same identity in the independent
+consumer. Likewise, fixed pins in a diagnostic script are not a substitute for
+an admitted integrated producer and parent-owned trust configuration.
+
+### Current behavior-map delta
+
+Preserve the initial map above as the pre-production checkpoint. VF0-03 now has
+**partial experimental support** for acquisition, digest rejection and rejecting
+self-asserted support trust; production authentication remains **NOT RUN**.
+VF0-04 and VF0-10 have partial experimental support for identity and availability
+rejections only. All remaining production proof obligations, including VF0-08's
+integrated producer/consumer round trip and VF0-01's actual enforcement, remain
+open. The next bounded step is to reconcile the admitted producer/attempt and
+trust-configuration contract, then establish focused conformance evidence for
+its reusable acquisition adapter before changing D0090 authority. The sequence
+VF0 then #318 and aggregate critical classification are unchanged.

@@ -101,7 +101,11 @@ explicitly pinned evidence runner and independent provider read-back. The
 provider adapter must reacquire repository, workflow source/revision, run/attempt,
 job outcomes, artifact identity and archive digest from the authenticated provider
 origin. It must check them against parent-owned trust configuration, not values
-asserted inside the artifact. A successful unrelated or support-branch workflow
+asserted inside the artifact. Hash the complete downloaded archive and compare
+its SHA-256 with the independently reacquired provider digest before opening or
+parsing the archive, extracting members or executing any supplied content. A
+missing, malformed or mismatched digest rejects the archive; successful download
+alone is insufficient. A successful unrelated or support-branch workflow
 is not an admitted producer. The entrance helper is experimental evidence only.
 
 The runner evaluates an exact parent plus an admitted evidence-only delta. It
@@ -113,10 +117,15 @@ against the declared threat model; read-only remote permissions alone are not
 an OS sandbox. Interpreter/runtime identities and relevant execution limits
 belong to the bound execution, not to an unverified caller declaration.
 
-For the first GitHub adapter, validate exact workflow source and repository/run
-relationships, pin the admitted integrated producer revision, reject arbitrary
-URLs/redirected credentials, and treat missing, ambiguous or expired artifacts
-as unavailable evidence. Use provider identity as the acquisition mechanism;
+For the first GitHub adapter, require HTTPS with certificate and hostname
+validation for every metadata and artifact request, including signed downloads
+that carry no API credential. Authenticate credential-bearing requests only to
+the admitted API origin. A signed asset URL may be followed only through the
+bounded provider-authorized handoff; do not forward the API credential to its
+asset host or relax TLS validation. Validate exact workflow source and
+repository/run relationships, pin the admitted integrated producer revision,
+reject arbitrary URLs/redirected credentials, and treat missing, ambiguous or
+expired artifacts as unavailable evidence. Use provider identity as the acquisition mechanism;
 do not introduce a signing service or a caller-owned signing key merely to make
 an envelope look authenticated. Offline downloaded files alone remain diagnostic.
 The core receipt/policy/candidate relation remains provider-neutral.
@@ -167,9 +176,11 @@ is not proof that the proposed Gnostoa acquisition route already works.
 
 ## Consequences
 
-Acceptance requires the entire behavior map below to have aligned executed
-support, an actual authenticated producer/consumer round trip, rejection of
-self-consistent but untrusted receipts, ordinary parent-bound preparation parity,
+Acceptance requires every row of the
+[initial behavior map](../assessments/15-vf0-entrance-and-execution-plan.md#initial-behavior-map-before-production-mutation)
+to have aligned executed support, an actual authenticated producer/consumer round
+trip, rejection of self-consistent but untrusted receipts, ordinary parent-bound
+preparation parity,
 critical-scope semantic review and exact integrated-subject reconciliation.
 
 Semantic adequacy of a test/oracle and legitimacy of human admission are not
