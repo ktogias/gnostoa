@@ -463,6 +463,15 @@ Never broaden an Environment from `main` to a helper/candidate branch merely to
 move this smoke earlier. The absence of a pre-merge trusted runner is a lifecycle
 fact, not a reason to weaken the secret boundary.
 
+When giving a maintainer an interactive verification command, do **not** place
+`exit`, `exec`, or persistent `set -e/-u/-o pipefail` state directly in the
+parent interactive shell. A final `exit "$rc"` closes the maintainer's terminal,
+and `set -e` can terminate the shell on an expected verification failure before
+the result can be read. Put the verification in a disposable script or explicit
+subshell instead; let only that child process exit, print the result, and keep the
+parent terminal alive. Prefer a final interactive pause when the maintainer is
+copying output manually.
+
 ### Atomic publication and concurrent-writer fencing
 
 Immediately before any branch/ref mutation, re-read the implementation branch
