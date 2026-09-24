@@ -36,11 +36,17 @@ jobs:
           test "$(gh api "repos/$repo/git/commits/$main" --jq .tree.sha)" = "$tree"
           count="$(gh api --method GET "repos/$repo/actions/workflows/analyzer-readback.yml/runs" -f head_sha="$main" -f event=workflow_dispatch --jq .total_count)"
           case "$count" in ''|*[!0-9]*) echo 'INVALID_RUN_COUNT'; exit 1;; esac
-          if test "$count" -gt 0; then
+          if test "$count" -gt 1; then
             echo 'EXISTING_OFFICIAL_READBACK_FOUND; no duplicate dispatch'
             exit 0
           fi
+          test "$count" = '1'
+          gh api "repos/$repo/actions/runs/35996303251" > "$RUNNER_TEMP/pr314-first-run.json"
+          jq -e --arg main "$main" '.conclusion == "success" and .head_sha == $main and .head_branch == "main" and .path == ".github/workflows/analyzer-readback.yml"' "$RUNNER_TEMP/pr314-first-run.json" > /dev/null
+          probe_head='81e955b1962eaa8a415fae3dad00568b12c3349e'
+          gh api "repos/$repo/pulls/305" > "$RUNNER_TEMP/pr305-readback-subject.json"
+          jq -e --arg head "$probe_head" '.merged == true and .head.sha == $head' "$RUNNER_TEMP/pr305-readback-subject.json" > /dev/null
           test "$(gh api "repos/$repo/git/ref/heads/main" --jq .object.sha)" = "$main"
-          jq -n --arg head "$head" '{ref:"main",inputs:{pull_number:"314",head:$head}}' > "$RUNNER_TEMP/pr314-dispatch-request.json"
+          jq -n --arg head "$probe_head" '{ref:"main",inputs:{pull_number:"305",head:$head}}' > "$RUNNER_TEMP/pr314-dispatch-request.json"
           gh api --method POST "repos/$repo/actions/workflows/analyzer-readback.yml/dispatches" -H 'X-GitHub-Api-Version: 2026-03-10' --input "$RUNNER_TEMP/pr314-dispatch-request.json"
-          echo 'OFFICIAL_MAIN_READBACK_DISPATCH_ACCEPTED'
+          echo 'OFFICIAL_EXISTING_ANALYSIS_READBACK_DISPATCH_ACCEPTED'
