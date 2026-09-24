@@ -1,0 +1,70 @@
+name: VF0 evidence controller isolation experiment
+on:
+  push:
+    branches: [agent-support/vf0-isolation-20260924-1715]
+    paths: [.github/workflows/vf0-isolation-probe.yml]
+permissions:
+  contents: read
+jobs:
+  isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Acquire fixed experimental controller
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 0510231079043cd54d6b0c2cb3e90a4b49bab181
+          path: diagnostic
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify controller and export exact PR source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd diagnostic
+          test "$(git rev-parse HEAD)" = 0510231079043cd54d6b0c2cb3e90a4b49bab181
+          test "$(git rev-parse --is-shallow-repository)" = false
+          test -z "$(git status --porcelain)"
+          echo 'b58e9bbee29625659af5e3e722cbe626fcf43bea1029bc0f58b00878880dd79d  .github/vf0-isolation-probe.py' | sha256sum --check
+          git cat-file -e 63fb3e7bf7a929c755250e6112f5a43a2b3db5c7^{commit}
+          git update-ref refs/heads/vf0-e5-export 39f9932f729efbe58f28dd911b63be02f587fb7f
+          git bundle create "$RUNNER_TEMP/vf0-e5-parent.bundle" refs/heads/vf0-e5-export
+          git bundle verify "$RUNNER_TEMP/vf0-e5-parent.bundle"
+          sha256sum "$RUNNER_TEMP/vf0-e5-parent.bundle"
+      - name: Retain exact source transport
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: vf0-e5-source-${{ github.run_id }}
+          path: ${{ runner.temp }}/vf0-e5-parent.bundle
+          if-no-files-found: error
+          retention-days: 7
+      - name: Acquire exact protected parent
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 63fb3e7bf7a929c755250e6112f5a43a2b3db5c7
+          path: parent
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Build and bind protected-parent development image
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd parent
+          test "$(git rev-parse HEAD)" = 63fb3e7bf7a929c755250e6112f5a43a2b3db5c7
+          test "$(git rev-parse HEAD^{tree})" = fa4cb2db0ea072897391efd77deda95ac7e1f9a4
+          test -z "$(git status --porcelain)"
+          docker build --target development --build-arg VCS_REF=63fb3e7bf7a929c755250e6112f5a43a2b3db5c7 --tag gnostoa:vf0-e5-parent .
+          docker image inspect --format '{{.Id}}' gnostoa:vf0-e5-parent > "$RUNNER_TEMP/vf0-e5-image.txt"
+      - name: Execute bounded isolation and input controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -I diagnostic/.github/vf0-isolation-probe.py "$GITHUB_WORKSPACE/parent" "$(cat "$RUNNER_TEMP/vf0-e5-image.txt")" "$RUNNER_TEMP/vf0-e5-result"
+      - name: Retain observations without replaying child stdout
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: vf0-e5-isolation-${{ github.run_id }}
+          path: ${{ runner.temp }}/vf0-e5-result/
+          if-no-files-found: warn
+          retention-days: 7
