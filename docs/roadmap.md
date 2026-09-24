@@ -17,9 +17,17 @@ after PR #314 and the PR #315 recovery/RCA integration, #15 inserts one
 deterministic pre-implementation-evidence gate before the next critical
 outer-consumer/Q0 activation, PR #297 reconciliation or broader planner work.
 This is a late A1b safety closure reusing Decision 0090; it does not renumber or
-replace Ariadne v9. That checkpoint and its addenda link the owning #10, #11 and
-#15 records; provider labels remain authoritative for the one currently selected
-Work Item.
+replace Ariadne v9. The same execution cursor also records
+[#317](https://github.com/ktogias/gnostoa/issues/317) as an optional,
+implementation-private execution-enablement side slice: after VF0, or at the
+first naturally occurring constrained environment, it may diagnose capabilities
+and automate safe local recovery setup without becoming a mandatory rung,
+canonical workflow or authority surface. A fully capable direct environment
+continues without waiting for #317. [#316](https://github.com/ktogias/gnostoa/issues/316)
+remains an independent branch-role/CI-applicability optimization, while #308
+retains writer-fencing ownership. That checkpoint and its addenda link the owning
+#10, #11 and #15 records; provider labels remain authoritative for the one
+currently selected Work Item.
 
 The categories are priorities, not acceptance or effectiveness states. Open
 Work Items remain open until their own lifecycle completes. Closed historical
