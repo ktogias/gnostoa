@@ -574,7 +574,7 @@ relation. The module neither reads effective policy nor issues a D0090 receipt.
 | Obligation | Implemented, locally executed support | Remaining limitation |
 | --- | --- | --- |
 | C1 closed bounded inputs | Duplicate/unknown/missing fields, non-finite values, excessive bytes/depth/nodes, cycles and strict integer negatives | No unbounded fuzz or resource-exhaustion certification |
-| C2 exact relation | Request/policy/admission/material hashes, parent/tree, allowed changed paths and retained test bytes | Actual source/path classification and byte acquisition belong to protected composition |
+| C2 exact relation | Request/policy/admission/material hashes, parent/tree, allowed changed paths and retained test bytes; a candidate declaring changes cannot retain the parent tree | Actual source/path classification and byte acquisition belong to protected composition |
 | C3 modes and time | RED/characterization/structural/emergency controls, forbidden mode, late reconstruction, zero cases/skips/unrelated failures and freshness boundaries | Fixture policy and asserted observations are not effective policy or executed producer evidence |
 | C4 provider isolation | Two different native fixture layouts normalize to matching outcomes; opaque attempt and namespace collision negatives | No live second-provider support |
 | C5 capability evidence | Every required guarantee rejects missing/unknown/unsupported/contradictory state or absent retained identity | Record hashes and state labels do not authenticate guarantees |
@@ -599,3 +599,54 @@ rows and E1-E5 observations above remain unchanged. A7 is not the integrated
 producer/consumer, does not make supplied records authoritative and cannot close
 VF0-01/03/07/08/09/10. Protected composition and the single introducing authority
 transition remain subsequent work under the already approved method.
+
+## VF0-A7 chronology, A8 and bounded execution candidate
+
+The **32-test** count above is intentionally preserved as the original A7
+checkpoint. A later retained-evidence-delta regression increased the published
+relation suite to **33 tests** before exact head
+`d217453ece7694eeaed0f9acb2d17bd5903e70e0`. Do not rewrite the earlier number
+as though those tests had already existed. The subsequent C2 review reproduced
+a contradictory MATCH when `changed_paths` was non-empty but the candidate tree
+was reset to the parent tree. On unchanged `d217`, the external pre-edit suite
+therefore observed four C2 assertion failures across the allowed synthetic modes,
+one missing-execution-entry assertion failure, one passing prior-fix control and
+zero errors/skips.
+
+[A8 run 36099667712](https://github.com/ktogias/gnostoa/actions/runs/36099667712)
+completed its three bounded jobs successfully, including the actual
+characterization and independent read-back of its native approval/result. That
+retained experiment remains bound to its historical subject; it is **not** a
+D0090 receipt for a later candidate and does not establish producer admission,
+credential separation, compliance or VF0 activation. No A8 rerun is required
+merely because the execution component changes.
+
+The current grouped R1-R5 candidate adds one C2 relation regression, bringing the
+relation suite to **34 tests**, and introduces a private bounded execution
+component plus fixed live-OCI smoke. Its local conformance suite contains **39
+execution/fixture tests**. Together, **73 focused tests** pass normally and with
+Python optimization as a non-root user; scoped Ruff 0.16.0 formatting/lint and
+strict mypy 2.3.0 also pass. The execution tests use real temporary Git subjects
+and finite local processes while Docker-specific paths use explicit doubles. They
+cover immutable per-call subjects, tests-only evidence bounds, complete byte/mode
+comparison before and after execution, environment scrubbing, bounded separate
+stdout/stderr, nonzero/timeout/overflow observations, descendant termination,
+read-only OCI contract inspection and attachment-before-container cleanup.
+
+This evidence still does **not** claim a live run of the new Docker specialization.
+`tests/vf0_execution_oci_smoke.py` is intentionally outside unittest discovery and
+must be executed after exact ordinary D0090 preparation/publication of this
+component. Its successive-subject success check requires `completed`, exit code
+`0` **and** exact expected stdout; matching bytes from a nonzero or timed-out run
+do not count. The smoke also exercises forged authority-looking output without
+replaying it as a workflow command or treating it as authority.
+
+The grouped scope is limited to `tools/vf0_execution.py`,
+`tests/test_vf0_execution.py`, `tests/vf0_execution_oci_smoke.py`, the C2 repair
+in `tools/vf0_contract.py`/`tests/test_vf0_contract.py`, this assessment, Decision
+0092 and the corresponding guardrail record. It changes no D0090 authority file,
+effective policy threshold, public CLI/schema, dependency, credential, permanent
+workflow or provider-specific common-core contract. Ordinary unchanged-parent
+D0090 preparation remains mandatory before publication; the previously approved
+bootstrap exception is unused. VF0 remains **critical and inactive** and still
+precedes #318.

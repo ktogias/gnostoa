@@ -254,6 +254,13 @@ class VF0RelationTests(unittest.TestCase):
         self.document["candidate"]["changed_paths"] = ["tools/target.py"]
         self.assertRejected(self.document)
 
+    def test_changed_candidate_cannot_retain_the_parent_tree(self) -> None:
+        self.document["candidate"]["tree"] = self.document["request"]["material"][
+            "parent_tree"
+        ]
+        result = self.assertRejected(self.document)
+        self.assertEqual(["CANDIDATE_TREE_UNCHANGED"], result["reasons"])
+
     def test_candidate_paths_do_not_escape_the_request(self) -> None:
         for paths, reason in [
             ([], "PATH_SET"),

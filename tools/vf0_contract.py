@@ -385,9 +385,11 @@ def _candidate(value: Any, request: dict[str, Any]) -> dict[str, Any]:
             _text(candidate[key]) == request["material"][key],
             "CANDIDATE_PARENT_BINDING",
         )
-    _text(candidate["tree"])
+    tree = _text(candidate["tree"])
     _time(candidate["observed_at"])
     changed = _paths(candidate["changed_paths"])
+    if changed:
+        _need(tree != request["material"]["parent_tree"], "CANDIDATE_TREE_UNCHANGED")
     _need(changed <= set(request["candidate_paths"]), "CANDIDATE_PATH_SCOPE")
     evidence_files = _files(candidate["evidence_files"])
     _need(

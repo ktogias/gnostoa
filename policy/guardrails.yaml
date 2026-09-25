@@ -766,3 +766,15 @@ guardrails:
       - tools/vf0_contract.py
     tests:
       - tests/test_vf0_contract.py
+
+  - id: vf0-bounded-execution-is-observation-only
+    title: VF0 bounded execution observes immutable evidence subjects without conferring authority
+    applies_to: [kit]
+    enforcement: hybrid
+    owner: team:gnostoa-maintainers
+    guidance: knowledge/decisions/0092-bind-verification-first-evidence-to-parent-owned-preparation.md#provider-neutral-bounded-execution-component
+    implementation:
+      - tools/vf0_execution.py
+    tests:
+      - tests/test_vf0_execution.py
+      - tests/vf0_execution_oci_smoke.py

@@ -197,6 +197,32 @@ do not introduce a signing service or a caller-owned signing key merely to make
 an envelope look authenticated. Offline downloaded files alone remain diagnostic.
 The core receipt/policy/candidate relation remains provider-neutral.
 
+#### Provider-neutral bounded execution component
+
+The private `tools/vf0_execution.py` component implements only the execution
+observation boundary above. Each call receives an explicit immutable Git commit
+and tree plus a bounded tests-only evidence delta; no process-global subject or
+provider identity is accepted. The controller reconstructs regular-file bytes and
+modes from Git objects into an ephemeral gitless materialization, verifies the
+complete material before execution and again afterwards, and rejects symlinks,
+special files, path escape, undeclared mutation and subject/tree mismatch.
+
+Runtime mechanics remain behind a backend interface. The local subprocess backend
+is conformance support, **not** an isolation claim. The Docker specialization
+requires a digest-pinned image, read-only root and subject mount, no network or
+IPC sharing, dropped capabilities, no-new-privileges, a fixed non-root UID, bounded
+memory/CPU/PIDs/tmpfs and a clean child environment. The controller owns bounded
+stdout/stderr capture and records actual completion, timeout or overflow; child
+text never becomes RED certification, approval, compliance or a preparation
+receipt. The attachment process is closed/reaped before owned-container removal,
+and container absence is independently verified even after client failure.
+
+Unit doubles establish command/cleanup contracts only. Live OCI support requires
+the fixed `tests/vf0_execution_oci_smoke.py` against the **exact published and
+prepared component**, including isolation, forged-output, nonzero, descendant
+timeout, overflow, successive immutable-subject and wrong-tree controls. That
+smoke is component conformance evidence, not producer admission or VF0 activation.
+
 The independent check-only CI consumer must repeat the admitted acquisition and
 candidate/evidence binding. It does not trust an agent's retained local digest
 or a prior green status. It grants neither human admission nor merge authority.
