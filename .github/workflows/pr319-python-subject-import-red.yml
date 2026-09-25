@@ -1,0 +1,43 @@
+name: PR319 pre-edit Python subject-import RED
+on:
+  push:
+    branches: [agent-support/pr319-oci-smoke-d2b1a1e6-20260925]
+permissions:
+  contents: read
+jobs:
+  red:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: d2b1a1e6c1e6a7d6cda479dd7fc1a8752c653793
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Reproduce isolated-Python subject routing gap
+        run: |
+          set -euo pipefail
+          cd candidate
+          test "$(git rev-parse HEAD)" = "d2b1a1e6c1e6a7d6cda479dd7fc1a8752c653793"
+          IMAGE='ghcr.io/ktogias/gnostoa@sha256:f89bf32c0c4b86bac71fa008579b2385e6ae39bf4822f685479c4f2cc22bfca4'
+          docker pull "$IMAGE" >/dev/null
+          observed="$(
+            docker run --rm --pull=never               --read-only --network none --ipc none --cap-drop ALL               --security-opt no-new-privileges --user 10001:10001               --mount "type=bind,source=$PWD,target=/workspace,readonly"               --workdir /workspace               --env PYTHONPATH=/workspace               --entrypoint /usr/local/bin/python3               "$IMAGE" -I -c 'import tools.vf0_execution as m; print(m.__file__)'
+          )"
+          printf 'observed=%s\nexpected_prefix=/workspace/\n' "$observed" | tee "$RUNNER_TEMP/pre-edit-red.txt"
+          case "$observed" in
+            /workspace/*)
+              echo "PRE_EDIT_UNEXPECTED_GREEN" >&2
+              exit 1
+              ;;
+            *)
+              echo "PRE_EDIT_RED_OBSERVED"
+              ;;
+          esac
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr319-python-subject-import-red-d2b1
+          path: ${{ runner.temp }}/pre-edit-red.txt
+          if-no-files-found: error
+          retention-days: 2
