@@ -27,7 +27,8 @@ def _steps(workflow: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _single_job(workflow: dict[str, Any]) -> dict[str, Any]:
     jobs = list(workflow["jobs"].values())
-    assert len(jobs) == 1
+    if len(jobs) != 1:
+        raise AssertionError(f"expected exactly one job, found {len(jobs)}")
     return jobs[0]
 
 
