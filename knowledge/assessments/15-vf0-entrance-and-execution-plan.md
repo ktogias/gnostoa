@@ -633,6 +633,13 @@ comparison before and after execution, environment scrubbing, bounded separate
 stdout/stderr, nonzero/timeout/overflow observations, descendant termination,
 read-only OCI contract inspection and attachment-before-container cleanup.
 
+Successor chronology after the subsequent execution hardening and restrictive-umask
+regression: the relation suite remains **34 tests** and the execution/fixture suite
+is now **45 tests**, so the exact focused invocation executes **79 tests**. All 79
+pass normally and under Python optimization. The preceding **39 / 73** account is
+retained as the earlier grouped-candidate checkpoint; it is not the current-head
+focused-test total.
+
 This evidence still does **not** claim a live run of the new Docker specialization.
 `tests/vf0_execution_oci_smoke.py` is intentionally outside unittest discovery and
 must be executed after exact ordinary D0090 preparation/publication of this
