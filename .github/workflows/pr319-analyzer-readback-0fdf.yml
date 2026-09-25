@@ -1,0 +1,48 @@
+name: PR319 analyzer readback 0fdf
+
+on:
+  push:
+    branches:
+      - agent-support/pr319-analyzer-readback-0fdf-20260925
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: read
+  checks: read
+
+jobs:
+  readback:
+    environment: analyzer-readback
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout trusted main
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 63fb3e7bf7a929c755250e6112f5a43a2b3db5c7
+          path: trusted
+          persist-credentials: false
+      - name: Bind trusted analyzer source
+        run: |
+          set -eu
+          test "$(git -C trusted rev-parse HEAD)" = 63fb3e7bf7a929c755250e6112f5a43a2b3db5c7
+          test -z "$(git -C trusted status --porcelain)"
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Read exact PR head analyzers
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DEEPSOURCE_API_TOKEN: ${{ secrets.DEEPSOURCE_API_TOKEN }}
+          CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
+        run: |
+          set -eu
+          cd trusted
+          PYTHONPATH=. python ci/analyzer_readback.py             --repository "${GITHUB_REPOSITORY}"             --pull-number 319             --head 0fdfefe80407555b3e8f950677752826e7dfcea9             --output "${RUNNER_TEMP}/gnostoa-analyzer-readback.json"
+      - name: Upload bounded readback
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr319-analyzer-readback-0fdf
+          path: ${{ runner.temp }}/gnostoa-analyzer-readback.json
+          if-no-files-found: error
