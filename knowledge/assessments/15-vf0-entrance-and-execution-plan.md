@@ -665,6 +665,13 @@ tests**, so the focused corpus is **89 tests**. All 89 pass normally and under
 Python optimization; the full non-root `fast` profile also passes before ordinary
 D0090 preparation.
 
+Subsequent containment and evidence-identity hardening adds three more
+execution/fixture regressions. At exact head
+`d2b1a1e6c1e6a7d6cda479dd7fc1a8752c653793`, direct source count is **34
+relation tests + 58 execution/fixture tests = 92 focused tests**. The preceding
+**55 / 89** account is retained as its historical checkpoint; **92** is the
+current focused-test total before the isolated-subject import-routing repair.
+
 This evidence still does **not** claim a live run of the new Docker specialization.
 `tests/vf0_execution_oci_smoke.py` is intentionally outside unittest discovery and
 must be executed after exact ordinary D0090 preparation/publication of this

@@ -84,6 +84,9 @@ elif case == "overflow":
         os.write(1, b"x" * 4096)
 elif case == "subject":
     print(pathlib.Path("/workspace/subject.txt").read_text(), end="")
+elif case == "subject_import":
+    from tools import vf0_execution
+    print(vf0_execution.SUBJECT_MARKER)
 else:
     raise AssertionError("UNKNOWN_CASE")
 """
@@ -177,7 +180,11 @@ assert all(checks.values()), "READONLY_PROBE_FAILED"
 
 def _commit(repo: Path, value: str) -> GitSubject:
     (repo / "subject.txt").write_text(value + "\n")
-    _git(repo, "add", "subject.txt")
+    tools = repo / "tools"
+    tools.mkdir(exist_ok=True)
+    (tools / "__init__.py").write_text("")
+    (tools / "vf0_execution.py").write_text(f"SUBJECT_MARKER = {value!r}\n")
+    _git(repo, "add", "subject.txt", "tools/__init__.py", "tools/vf0_execution.py")
     _git(
         repo,
         "-c",
@@ -223,12 +230,29 @@ def _summary(observation: ExecutionObservation) -> dict[str, Any]:
     }
 
 
+_ISOLATED_SUBJECT_BOOTSTRAP = (
+    "import runpy,site,sys;"
+    "script=sys.argv[1];"
+    "sys.argv=sys.argv[1:];"
+    "sys.path.insert(0,'/workspace');"
+    "sys.path.extend(site.getsitepackages());"
+    "runpy.run_path(script,run_name='__main__')"
+)
+
+
 def run_smoke(image: str) -> dict[str, Any]:
     backend = DockerBackend(image)
     read_only_behavior = _probe_read_only_behavior(image)
     limits = ExecutionLimits(timeout_seconds=5.0, output_bytes=65_536)
     evidence = EvidenceFile(EVIDENCE_PATH, EVIDENCE)
-    command = ("/usr/local/bin/python3", "-I", "/workspace/" + EVIDENCE_PATH)
+    command = (
+        "/usr/local/bin/python3",
+        "-I",
+        "-S",
+        "-c",
+        _ISOLATED_SUBJECT_BOOTSTRAP,
+        "/workspace/" + EVIDENCE_PATH,
+    )
 
     with tempfile.TemporaryDirectory(prefix="vf0-execution-live-") as td:
         repo = Path(td) / "fixture"
@@ -276,8 +300,18 @@ def run_smoke(image: str) -> dict[str, Any]:
             repo, second, [evidence], [*command, "subject"], backend, limits
         )
         _expect_completed_success(second_observation, b"two\n")
+        first_import = execute(
+            repo, first, [evidence], [*command, "subject_import"], backend, limits
+        )
+        _expect_completed_success(first_import, b"one\n")
+        second_import = execute(
+            repo, second, [evidence], [*command, "subject_import"], backend, limits
+        )
+        _expect_completed_success(second_import, b"two\n")
         cases["subject_one"] = _summary(first_observation)
         cases["subject_two"] = _summary(second_observation)
+        cases["subject_import_one"] = _summary(first_import)
+        cases["subject_import_two"] = _summary(second_import)
 
         wrong = GitSubject(commit=second.commit, tree=first.tree)
         wrong_tree: dict[str, object] | None = None
