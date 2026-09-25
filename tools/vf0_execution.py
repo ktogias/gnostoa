@@ -239,10 +239,10 @@ def _trusted_git_tree_entries(repo: Path, commit: str) -> list[bytes]:
                 while selector.get_map():
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
-                        raise subprocess.TimeoutExpired(process.args, 30)
+                        raise subprocess.TimeoutExpired("/usr/bin/git ls-tree", 30)
                     events = selector.select(remaining)
                     if not events:
-                        raise subprocess.TimeoutExpired(process.args, 30)
+                        raise subprocess.TimeoutExpired("/usr/bin/git ls-tree", 30)
                     for key, _ in events:
                         chunk = os.read(key.fd, 65_536)
                         if not chunk:
