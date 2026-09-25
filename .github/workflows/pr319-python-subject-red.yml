@@ -1,0 +1,69 @@
+name: PR319 isolated-python subject routing RED
+
+on:
+  push:
+    branches:
+      - agent-support/pr319-python-subject-red-d2b1-20260925
+
+permissions:
+  contents: read
+
+jobs:
+  red:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: d2b1a1e6c1e6a7d6cda479dd7fc1a8752c653793
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Bind exact current head
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "d2b1a1e6c1e6a7d6cda479dd7fc1a8752c653793"
+          test "$(git rev-parse HEAD^{tree})" = "8ff237528f3dc6b7aa6d2600666ce545acd29bf9"
+          test -z "$(git status --porcelain)"
+      - name: Reproduce isolated-python fallback
+        env:
+          IMAGE: ghcr.io/ktogias/gnostoa@sha256:f89bf32c0c4b86bac71fa008579b2385e6ae39bf4822f685479c4f2cc22bfca4
+        run: |
+          set -euo pipefail
+          docker pull "$IMAGE" >/dev/null
+          out="$RUNNER_TEMP/import-path.txt"
+          set +e
+          docker run --rm --pull=never             --read-only             --network none             --ipc none             --cap-drop ALL             --security-opt no-new-privileges             --user 10001:10001             --env PYTHONPATH=/workspace             --mount "type=bind,source=$GITHUB_WORKSPACE/candidate,target=/workspace,readonly"             --workdir /workspace             --entrypoint /usr/local/bin/python3             "$IMAGE"             -I -c 'from pathlib import Path; import sys, tools.vf0_execution as m; p=str(Path(m.__file__).resolve()); print(p); raise SystemExit(0 if p.startswith("/workspace/") else 42)'             >"$out" 2>"$RUNNER_TEMP/stderr.txt"
+          rc=$?
+          set -e
+          path="$(head -n1 "$out")"
+          test "$rc" -eq 42
+          case "$path" in
+            /opt/gnostoa/*) ;;
+            *) echo "unexpected import path: $path" >&2; exit 3 ;;
+          esac
+          python3 - "$path" "d2b1a1e6c1e6a7d6cda479dd7fc1a8752c653793" "8ff237528f3dc6b7aa6d2600666ce545acd29bf9" >"$RUNNER_TEMP/result.json" <<'PY'
+          import json, sys
+          path, head, tree = sys.argv[1:]
+          print(json.dumps({
+            "schema":"pr319-isolated-python-subject-red/v1",
+            "subject_head":head,
+            "subject_tree":tree,
+            "py_isolated":True,
+            "declared_pythonpath":"/workspace",
+            "observed_module_path":path,
+            "workspace_subject_loaded":path.startswith("/workspace/"),
+            "red_confirmed":not path.startswith("/workspace/"),
+          }, sort_keys=True))
+          PY
+          sha256sum "$RUNNER_TEMP/result.json" > "$RUNNER_TEMP/result.sha256"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr319-isolated-python-subject-red-d2b1
+          path: |
+            ${{ runner.temp }}/result.json
+            ${{ runner.temp }}/result.sha256
+            ${{ runner.temp }}/import-path.txt
+          if-no-files-found: error
+          retention-days: 7
