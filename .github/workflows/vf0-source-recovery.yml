@@ -1,0 +1,46 @@
+name: VF0 exact-source recovery transport
+on:
+  push:
+    branches: [agent-support/vf0-source-recovery-20260925]
+    paths: [.github/workflows/vf0-source-recovery.yml]
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: d217453ece7694eeaed0f9acb2d17bd5903e70e0
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify and export exact source without execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
+          export GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_COUNT=0 GIT_NO_REPLACE_OBJECTS=1
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          test "$(git rev-parse HEAD)" = d217453ece7694eeaed0f9acb2d17bd5903e70e0
+          test "$(git rev-parse 'HEAD^{tree}')" = 47ad47143c8d6493c4a7cd8f0e32442efb3b9d3e
+          test "$(git rev-parse --is-shallow-repository)" = false
+          test -z "$(git status --porcelain)"
+          git cat-file -e d217453ece7694eeaed0f9acb2d17bd5903e70e0^{commit}
+          git fsck --full --no-reflogs
+          mkdir -m 700 "$RUNNER_TEMP/vf0-source"
+          git -c core.hooksPath=/dev/null update-ref refs/gnostoa/transport-source d217453ece7694eeaed0f9acb2d17bd5903e70e0
+          git bundle create "$RUNNER_TEMP/vf0-source/source.bundle" refs/gnostoa/transport-source
+          git bundle verify "$RUNNER_TEMP/vf0-source/source.bundle"
+          test "$(stat -c %s "$RUNNER_TEMP/vf0-source/source.bundle")" -le 200000000
+          printf '%s\n' 'head=d217453ece7694eeaed0f9acb2d17bd5903e70e0' 'tree=47ad47143c8d6493c4a7cd8f0e32442efb3b9d3e' 'history=non-shallow-self-contained' > "$RUNNER_TEMP/vf0-source/identity.txt"
+          (cd "$RUNNER_TEMP/vf0-source" && sha256sum source.bundle identity.txt > SHA256SUMS)
+          cat "$RUNNER_TEMP/vf0-source/SHA256SUMS"
+          test -z "$(git status --porcelain)"
+      - name: Retain exact source transport
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: vf0-source-d217-${{ github.run_id }}
+          path: ${{ runner.temp }}/vf0-source/
+          if-no-files-found: error
+          retention-days: 7
