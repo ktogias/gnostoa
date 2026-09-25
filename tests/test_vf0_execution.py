@@ -1160,6 +1160,42 @@ class VF0DockerBackendTests(unittest.TestCase):
                     backend.calls.count(("inspect", backend.container_name)), 2
                 )
 
+    def test_uncertain_create_retries_transient_inspect_failure(self) -> None:
+        class TransientInspect(FakeDockerBackend):
+            def __init__(self, image: str, root: Path) -> None:
+                super().__init__(image, root, create_mode="exception")
+                self.name_inspects = 0
+
+            def _command(
+                self, *args: str, timeout: float = 30
+            ) -> subprocess.CompletedProcess[bytes]:
+                if self.container_name is not None and args == (
+                    "inspect",
+                    self.container_name,
+                ):
+                    self.name_inspects += 1
+                    if self.name_inspects == 1:
+                        self.calls.append(tuple(args))
+                        raise ExecutionRejected("DOCKER_COMMAND_FAILED")
+                return super()._command(*args, timeout=timeout)
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td).resolve()
+            backend = TransientInspect(self.image, root)
+            with (
+                mock.patch(
+                    "tools.vf0_execution.time.monotonic",
+                    side_effect=[0.0, 0.0, 0.1, 0.1, 0.2],
+                ),
+                mock.patch("tools.vf0_execution.time.sleep"),
+            ):
+                with self.assertRaisesRegex(ExecutionRejected, "DOCKER_COMMAND_FAILED"):
+                    backend.run(
+                        root, ["/bin/true"], ExecutionLimits(), subject=self.subject
+                    )
+            self.assertGreaterEqual(backend.name_inspects, 2)
+            self.assertTrue(backend.removed)
+
     def test_uncertain_create_waits_for_delayed_owned_container(self) -> None:
         class DelayedAppearance(FakeDockerBackend):
             def __init__(self, image: str, root: Path) -> None:

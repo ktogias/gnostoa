@@ -672,6 +672,14 @@ relation tests + 58 execution/fixture tests = 92 focused tests**. The preceding
 **55 / 89** account is retained as its historical checkpoint; **92** is the
 current focused-test total before the isolated-subject import-routing repair.
 
+The later isolated-subject import-routing repair changes the live smoke but does
+not change unittest discovery, so exact head
+`95422b09becd8ee9edea25c14d5a24f8b564d41c` still has **34 + 58 = 92 focused
+tests**. The subsequent uncertain-create cleanup retry regression adds one
+execution/fixture test, bringing the bounded successor to **34 relation + 59
+execution/fixture = 93 focused tests**. All **93** pass normally and under
+`python -O` before ordinary exact-parent D0090 preparation.
+
 This evidence still does **not** claim a live run of the new Docker specialization.
 `tests/vf0_execution_oci_smoke.py` is intentionally outside unittest discovery and
 must be executed after exact ordinary D0090 preparation/publication of this

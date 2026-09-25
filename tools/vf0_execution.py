@@ -847,7 +847,16 @@ class DockerBackend:
     ) -> None:
         deadline = time.monotonic() + _UNCERTAIN_CREATE_SETTLE_SECONDS
         while True:
-            inspected = self._command("inspect", container_name, timeout=15)
+            try:
+                inspected = self._command("inspect", container_name, timeout=15)
+            except ExecutionRejected:
+                inspected = None
+            if inspected is None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise ExecutionRejected("OCI_CLEANUP_UNVERIFIED")
+                time.sleep(min(_UNCERTAIN_CREATE_POLL_SECONDS, remaining))
+                continue
             message = (inspected.stderr + b"\n" + inspected.stdout).lower()
             if inspected.returncode == 0:
                 try:
