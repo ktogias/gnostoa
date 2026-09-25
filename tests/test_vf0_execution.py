@@ -184,6 +184,47 @@ class VF0SubjectTests(unittest.TestCase):
                 result.evidence_sha256,
             )
 
+    def test_restrictive_umask_normalizes_materialization_directory_modes(self) -> None:
+        class ModeBackend:
+            modes: dict[str, int]
+
+            def run(
+                self, root: Path, command: Sequence[str], limits: ExecutionLimits
+            ) -> UntrustedCapture:
+                del command, limits
+                self.modes = {
+                    "root": root.stat().st_mode & 0o777,
+                    "tests": (root / "tests").stat().st_mode & 0o777,
+                    "bin": (root / "bin").stat().st_mode & 0o777,
+                    "nested": (root / "tests" / "nested").stat().st_mode & 0o777,
+                    "deep": (root / "tests" / "nested" / "deep").stat().st_mode & 0o777,
+                }
+                return UntrustedCapture("completed", 0, b"", b"", 0)
+
+        with tempfile.TemporaryDirectory() as td:
+            repo, subject = _repo(Path(td))
+            evidence = EvidenceFile(
+                path="tests/nested/deep/e.py",
+                content=b"print('mode-ok')\n",
+            )
+            backend = ModeBackend()
+            previous_umask = os.umask(0o077)
+            try:
+                execute(repo, subject, [evidence], ["/bin/true"], backend)
+            finally:
+                os.umask(previous_umask)
+
+            self.assertEqual(
+                {
+                    "root": 0o755,
+                    "tests": 0o755,
+                    "bin": 0o755,
+                    "nested": 0o755,
+                    "deep": 0o755,
+                },
+                backend.modes,
+            )
+
     def test_admitted_evidence_can_replace_existing_test_byte_for_this_execution_only(
         self,
     ) -> None:

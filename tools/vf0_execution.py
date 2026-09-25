@@ -245,6 +245,32 @@ def _write_git_blob(
         raise
 
 
+def _normalize_subject_directory(path: Path, *, exist_ok: bool) -> None:
+    """Create/normalize one controller-owned subject directory as traversable."""
+
+    try:
+        path.mkdir(mode=0o755, parents=False, exist_ok=exist_ok)
+        mode = path.lstat().st_mode
+        if not stat.S_ISDIR(mode):
+            raise ExecutionRejected("SUBJECT_DIRECTORY")
+        path.chmod(0o755)
+    except OSError as exc:
+        raise ExecutionRejected("SUBJECT_DIRECTORY") from exc
+
+
+def _normalize_subject_parents(root: Path, destination: Path) -> None:
+    """Normalize every controller-created parent below the materialization root."""
+
+    try:
+        relative = destination.relative_to(root)
+    except ValueError as exc:
+        raise ExecutionRejected("SUBJECT_PATH") from exc
+    current = root
+    for part in relative.parts[:-1]:
+        current /= part
+        _normalize_subject_directory(current, exist_ok=True)
+
+
 def _repo_root(repo: Path) -> Path:
     resolved = repo.resolve(strict=True)
     top = Path(
@@ -276,7 +302,7 @@ def _materialize_subject(
     ).split(b"\0")
     expected: dict[str, _MaterialFile] = {}
     total = 0
-    target.mkdir(mode=0o755, parents=False, exist_ok=False)
+    _normalize_subject_directory(target, exist_ok=False)
     for entry in filter(None, entries):
         try:
             meta, raw_name = entry.split(b"\t", 1)
@@ -293,7 +319,7 @@ def _materialize_subject(
         total += size
         _need(total <= _MAX_SUBJECT_BYTES, "SUBJECT_TOTAL_BOUND")
         destination = target / name
-        destination.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+        _normalize_subject_parents(target, destination)
         payload = _write_git_blob(root, oid, destination, size)
         destination.chmod(0o755 if mode == "100755" else 0o644)
         expected[name] = _MaterialFile(mode=mode, sha256=_sha256(payload), size=size)
@@ -345,7 +371,7 @@ def _overlay_evidence(
         total += len(item.content)
         _need(total <= _MAX_EVIDENCE_BYTES, "EVIDENCE_TOTAL_BOUND")
         destination = root.joinpath(*PurePosixPath(item.path).parts)
-        destination.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+        _normalize_subject_parents(root, destination)
         destination.write_bytes(item.content)
         destination.chmod(0o755 if item.mode == "100755" else 0o644)
         expected[item.path] = _MaterialFile(
