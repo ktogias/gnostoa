@@ -16,7 +16,7 @@ import re
 import selectors
 import signal
 import stat
-import subprocess
+import subprocess  # nosec B404 -- intentional bounded list-argv execution boundary
 import tempfile
 import time
 from collections.abc import Sequence
@@ -31,6 +31,7 @@ _MAX_SUBJECT_BYTES = 64 * 1024 * 1024
 _MAX_FILE_BYTES = 32 * 1024 * 1024
 _MAX_EVIDENCE_FILES = 32
 _MAX_EVIDENCE_BYTES = 2 * 1024 * 1024
+_CONTAINER_TMP = "/tmp"  # nosec B108 -- isolated container tmpfs, never a host temp path
 _CLEAN_ENV = {
     "PATH": "/usr/local/bin:/usr/bin:/bin",
     "HOME": "/nonexistent",
@@ -189,7 +190,8 @@ def _trusted_git_argv(repo: Path, *args: str) -> list[str]:
 
 def _trusted_git(repo: Path, *args: str) -> bytes:
     try:
-        result = subprocess.run(
+        # Fixed /usr/bin/git, list argv, scrubbed env, no shell: intentional audit boundary.
+        result = subprocess.run(  # nosec B603  # nosemgrep
             _trusted_git_argv(repo, *args),
             check=False,
             stdin=subprocess.DEVNULL,
@@ -363,17 +365,30 @@ def _kill_process_group(process: subprocess.Popen[bytes]) -> None:
             process.kill()
 
 
+def _validate_command(argv: Sequence[str]) -> None:
+    _need(
+        bool(argv)
+        and all(isinstance(part, str) and part and "\0" not in part for part in argv),
+        "COMMAND",
+    )
+    executable = argv[0]
+    path = PurePosixPath(executable)
+    _need(
+        path.is_absolute() or (executable.startswith("./") and ".." not in path.parts),
+        "COMMAND_EXECUTABLE",
+    )
+
+
 def _capture_process(
     argv: Sequence[str],
     *,
     cwd: Path | None,
     limits: ExecutionLimits,
 ) -> UntrustedCapture:
-    _need(
-        bool(argv) and all(isinstance(part, str) and part for part in argv), "COMMAND"
-    )
+    _validate_command(argv)
     try:
-        process = subprocess.Popen(
+        # Intentional private execution primitive: validated list argv, no shell, scrubbed env.
+        process = subprocess.Popen(  # nosec B603  # nosemgrep
             list(argv),
             cwd=str(cwd) if cwd is not None else None,
             env=_CLEAN_ENV,
@@ -464,7 +479,7 @@ class DockerBackend:
 
     def __init__(self, image: str, docker_executable: str = "/usr/bin/docker") -> None:
         _need(_IMAGE_RE.fullmatch(image) is not None, "OCI_IMAGE_PIN")
-        _need(Path(docker_executable).is_absolute(), "DOCKER_EXECUTABLE")
+        _need(docker_executable == "/usr/bin/docker", "DOCKER_EXECUTABLE")
         self.image = image
         self.docker_executable = docker_executable
 
@@ -472,7 +487,8 @@ class DockerBackend:
         self, *args: str, timeout: float = 30
     ) -> subprocess.CompletedProcess[bytes]:
         try:
-            return subprocess.run(
+            # Fixed /usr/bin/docker, list argv, scrubbed env, no shell: intentional audit boundary.
+            return subprocess.run(  # nosec B603  # nosemgrep
                 [self.docker_executable, *args],
                 check=False,
                 stdin=subprocess.DEVNULL,
@@ -564,10 +580,7 @@ class DockerBackend:
         command: Sequence[str],
         limits: ExecutionLimits,
     ) -> UntrustedCapture:
-        _need(
-            bool(command) and all(isinstance(part, str) and part for part in command),
-            "COMMAND",
-        )
+        _validate_command(command)
         self._inspect_image()
         create = [
             "create",
@@ -593,9 +606,9 @@ class DockerBackend:
             "--log-driver",
             "none",
             "--tmpfs",
-            f"/tmp:rw,nosuid,nodev,noexec,mode=1777,size={limits.tmpfs_bytes}",
+            f"{_CONTAINER_TMP}:rw,nosuid,nodev,noexec,mode=1777,size={limits.tmpfs_bytes}",
             "--env",
-            "HOME=/tmp",
+            f"HOME={_CONTAINER_TMP}",
             "--env",
             "PYTHONDONTWRITEBYTECODE=1",
             "--mount",

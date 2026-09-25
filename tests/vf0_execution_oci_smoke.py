@@ -11,7 +11,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import subprocess
+import subprocess  # nosec B404 -- fixed live-smoke Git helper and fixture payload
 import sys
 import tempfile
 from pathlib import Path
@@ -90,7 +90,7 @@ else:
 
 
 def _git(repo: Path, *args: str) -> str:
-    result = subprocess.run(
+    result = subprocess.run(  # nosec B603 -- fixed /usr/bin/git smoke helper, no shell
         ["/usr/bin/git", "-c", "core.hooksPath=/dev/null", "-C", str(repo), *args],
         check=True,
         capture_output=True,

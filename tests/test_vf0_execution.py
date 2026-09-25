@@ -6,7 +6,7 @@ import hashlib
 import importlib
 import importlib.util
 import os
-import subprocess
+import subprocess  # nosec B404 -- test-only fixed list-argv Git/process fixtures
 import sys
 import tempfile
 import textwrap
@@ -31,7 +31,7 @@ from tools.vf0_execution import (
 
 
 def _git(repo: Path, *args: str) -> str:
-    result = subprocess.run(
+    result = subprocess.run(  # nosec B603 -- fixed /usr/bin/git test helper, no shell
         ["/usr/bin/git", "-c", "core.hooksPath=/dev/null", "-C", str(repo), *args],
         check=True,
         capture_output=True,
@@ -285,6 +285,30 @@ class VF0SubjectTests(unittest.TestCase):
             repo, subject = _repo(Path(td))
             with self.assertRaisesRegex(ExecutionRejected, "COMMAND"):
                 execute(repo, subject, [_evidence("pass")], [], SubprocessBackend())
+
+    def test_path_lookup_command_rejects(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo, subject = _repo(Path(td))
+            with self.assertRaisesRegex(ExecutionRejected, "COMMAND_EXECUTABLE"):
+                execute(
+                    repo,
+                    subject,
+                    [_evidence("pass")],
+                    ["python3", "-c", "pass"],
+                    SubprocessBackend(),
+                )
+
+    def test_relative_command_escape_rejects(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo, subject = _repo(Path(td))
+            with self.assertRaisesRegex(ExecutionRejected, "COMMAND_EXECUTABLE"):
+                execute(
+                    repo,
+                    subject,
+                    [_evidence("pass")],
+                    ["./../bin/tool"],
+                    SubprocessBackend(),
+                )
 
     def test_evidence_file_size_is_bounded(self) -> None:
         with self.assertRaisesRegex(ExecutionRejected, "EVIDENCE_FILE_BOUND"):
@@ -599,7 +623,10 @@ class FakeDockerBackend(DockerBackend):
             )
         if args[:2] == ("container", "inspect"):
             return subprocess.CompletedProcess(
-                [], 1, stdout=b"", stderr=b"Error: No such container"
+                ["/usr/bin/docker"],
+                1,
+                stdout=b"",
+                stderr=b"Error: No such container",
             )
         raise AssertionError(args)
 
@@ -612,6 +639,10 @@ class VF0DockerBackendTests(unittest.TestCase):
             with self.subTest(image=image):
                 with self.assertRaisesRegex(ExecutionRejected, "OCI_IMAGE_PIN"):
                     DockerBackend(image)
+
+    def test_docker_executable_is_fixed(self) -> None:
+        with self.assertRaisesRegex(ExecutionRejected, "DOCKER_EXECUTABLE"):
+            DockerBackend(self.image, docker_executable="/usr/local/bin/docker")
 
     def test_create_contract_is_read_only_network_free_nonroot_and_bounded(
         self,
