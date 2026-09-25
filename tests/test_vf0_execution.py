@@ -133,6 +133,8 @@ class VF0SubjectTests(unittest.TestCase):
             "tests/../evidence.py",
             "tests",
             "tests/./evidence.py",
+            "tests/.git/config",
+            "tests/.GIT/config",
         ):
             with self.subTest(path=path):
                 with self.assertRaises(ExecutionRejected):
@@ -259,14 +261,30 @@ class VF0SubjectTests(unittest.TestCase):
                 with self.assertRaisesRegex(ExecutionRejected, "SUBJECT_FILE_BOUND"):
                     module._snapshot(root)
 
+    def test_snapshot_bounds_entry_count_before_manifest_growth(self) -> None:
+        import tools.vf0_execution as module
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            for name in ("a", "b", "c"):
+                (root / name).write_text(name)
+            with mock.patch.object(module, "_MAX_SNAPSHOT_ENTRIES", 2):
+                with self.assertRaisesRegex(ExecutionRejected, "SUBJECT_ENTRY_BOUND"):
+                    module._snapshot(root)
+
     def test_restrictive_umask_normalizes_materialization_directory_modes(self) -> None:
         class ModeBackend:
             modes: dict[str, int]
 
             def run(
-                self, root: Path, command: Sequence[str], limits: ExecutionLimits
+                self,
+                root: Path,
+                command: Sequence[str],
+                limits: ExecutionLimits,
+                *,
+                subject: GitSubject,
             ) -> UntrustedCapture:
-                del command, limits
+                del command, limits, subject
                 self.modes = {
                     "root": root.stat().st_mode & 0o777,
                     "tests": (root / "tests").stat().st_mode & 0o777,
@@ -325,8 +343,14 @@ class VF0SubjectTests(unittest.TestCase):
             called = False
 
             def run(
-                self, root: Path, command: Sequence[str], limits: ExecutionLimits
+                self,
+                root: Path,
+                command: Sequence[str],
+                limits: ExecutionLimits,
+                *,
+                subject: GitSubject,
             ) -> UntrustedCapture:
+                del root, command, limits, subject
                 self.called = True
                 raise AssertionError("backend must not run")
 
@@ -368,6 +392,38 @@ class VF0SubjectTests(unittest.TestCase):
                     subject,
                     [_evidence("print('x')")],
                     [sys.executable, "-c", "pass"],
+                    SubprocessBackend(),
+                )
+
+    def test_subject_git_metadata_path_rejects_before_materialization(self) -> None:
+        import tools.vf0_execution as module
+
+        with tempfile.TemporaryDirectory() as td:
+            repo, subject = _repo(Path(td))
+            fake_entry = b"100644 blob " + (b"a" * 40) + b" 1\t.git/config"
+            with mock.patch(
+                "tools.vf0_execution._trusted_git_tree_entries",
+                return_value=[fake_entry],
+            ):
+                with self.assertRaisesRegex(ExecutionRejected, "SUBJECT_PATH"):
+                    module._materialize_subject(
+                        repo, subject, Path(td) / "materialized"
+                    )
+
+    def test_evidence_cannot_replace_an_existing_subject_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo, _ = _repo(Path(td))
+            directory = repo / "tests" / "nested"
+            directory.mkdir()
+            (directory / "keep.py").write_text("VALUE = 1\n")
+            subject = _commit(repo, "nested-directory")
+            evidence = EvidenceFile(path="tests/nested", content=b"not-a-directory\n")
+            with self.assertRaisesRegex(ExecutionRejected, "EVIDENCE_DESTINATION"):
+                execute(
+                    repo,
+                    subject,
+                    [evidence],
+                    ["/bin/true"],
                     SubprocessBackend(),
                 )
 
@@ -494,8 +550,10 @@ class VF0SubjectTests(unittest.TestCase):
                 root: Path,
                 command: Sequence[str],
                 limits: ExecutionLimits,
+                *,
+                subject: GitSubject,
             ) -> UntrustedCapture:
-                del command, limits
+                del command, limits, subject
                 self.seen = True
                 if root.resolve() == self.repository or (root / ".git").exists():
                     raise AssertionError("backend received repository metadata")
@@ -647,6 +705,33 @@ class VF0CaptureTests(unittest.TestCase):
             time.sleep(0.5)
             self.assertFalse(marker.exists(), "descendant survived normal leader exit")
 
+    def test_detached_session_descendant_cannot_outlive_local_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            marker = Path(td) / "detached-survived.txt"
+            child = (
+                "import pathlib,time; "
+                "time.sleep(0.25); "
+                f"pathlib.Path({str(marker)!r}).write_text('survived')"
+            )
+            capture = self._run(
+                f"""
+                import subprocess, sys
+                subprocess.Popen(
+                    [sys.executable, '-I', '-c', {child!r}],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+                print('LEADER_DONE', flush=True)
+                """,
+                ExecutionLimits(timeout_seconds=1.0),
+            )
+            self.assertEqual(("completed", 0), (capture.termination, capture.exit_code))
+            self.assertIn(b"LEADER_DONE", capture.stdout)
+            time.sleep(0.5)
+            self.assertFalse(marker.exists(), "detached descendant escaped containment")
+
     def test_caller_marker_environment_is_not_inherited(self) -> None:
         marker = "VF0_CALLER_MARKER"
         previous = os.environ.get(marker)
@@ -679,6 +764,7 @@ class FakeDockerBackend(DockerBackend):
         invalid_contract: bool = False,
         nano_cpus: int = 500_000_000,
         create_mode: str = "success",
+        extra_mount: bool = False,
     ) -> None:
         super().__init__(image=image, docker_executable="/usr/bin/docker")
         self.calls: list[tuple[str, ...]] = []
@@ -686,6 +772,7 @@ class FakeDockerBackend(DockerBackend):
         self.invalid_contract = invalid_contract
         self.nano_cpus = nano_cpus
         self.create_mode = create_mode
+        self.extra_mount = extra_mount
         self.container_id = "a" * 64
         self.container_name: str | None = None
         self.cleanup_nonce: str | None = None
@@ -755,6 +842,13 @@ class FakeDockerBackend(DockerBackend):
                 stderr=b"",
             )
         if args == ("inspect", self.container_id):
+            if self.removed:
+                return subprocess.CompletedProcess(
+                    ["/usr/bin/docker"],
+                    1,
+                    stdout=b"",
+                    stderr=b"Error: No such container",
+                )
             contract = {
                 "HostConfig": {
                     "ReadonlyRootfs": not self.invalid_contract,
@@ -771,6 +865,11 @@ class FakeDockerBackend(DockerBackend):
                 "Config": {
                     "User": "10001:10001",
                     "Labels": {"gnostoa.vf0.cleanup-token": self.cleanup_nonce},
+                    "Env": [
+                        "KNOWLEDGE_KIT_ROOT=/workspace",
+                        "KNOWLEDGE_KIT_REVISION=" + ("d" * 40),
+                        "PYTHONPATH=/workspace",
+                    ],
                 },
                 "Mounts": [
                     {
@@ -779,7 +878,19 @@ class FakeDockerBackend(DockerBackend):
                         "Destination": "/workspace",
                         "RW": False,
                     }
-                ],
+                ]
+                + (
+                    [
+                        {
+                            "Type": "volume",
+                            "Source": "anonymous",
+                            "Destination": "/workspace/shadow",
+                            "RW": True,
+                        }
+                    ]
+                    if self.extra_mount
+                    else []
+                ),
             }
             import json
 
@@ -816,6 +927,7 @@ class FakeDockerBackend(DockerBackend):
 
 class VF0DockerBackendTests(unittest.TestCase):
     image = "ghcr.io/ktogias/gnostoa@sha256:" + "c" * 64
+    subject = GitSubject(commit="d" * 40, tree="e" * 40)
 
     def test_image_must_be_digest_pinned(self) -> None:
         for image in ("ghcr.io/ktogias/gnostoa:latest", "sha256:short", "http://bad"):
@@ -841,6 +953,7 @@ class VF0DockerBackendTests(unittest.TestCase):
                     root,
                     ["/usr/local/bin/python3", "-I", "/workspace/tests/e.py"],
                     ExecutionLimits(),
+                    subject=self.subject,
                 )
             self.assertEqual(17, result.exit_code)
             create = next(
@@ -864,8 +977,22 @@ class VF0DockerBackendTests(unittest.TestCase):
                 "--pids-limit 32",
                 "--log-driver none",
                 "target=/workspace,readonly",
+                "KNOWLEDGE_KIT_ROOT=/workspace",
+                "KNOWLEDGE_KIT_REVISION=" + self.subject.commit,
+                "PYTHONPATH=/workspace",
             ):
                 self.assertIn(fragment, rendered)
+
+    def test_extra_image_declared_mount_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td).resolve()
+            backend = FakeDockerBackend(self.image, root, extra_mount=True)
+            with mock.patch("tools.vf0_execution._capture_process") as attached:
+                with self.assertRaisesRegex(ExecutionRejected, "OCI_MOUNT_CONTRACT"):
+                    backend.run(
+                        root, ["/bin/true"], ExecutionLimits(), subject=self.subject
+                    )
+            attached.assert_not_called()
 
     def test_fractional_cpu_contract_uses_docker_nano_cpu_rounding(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -879,6 +1006,7 @@ class VF0DockerBackendTests(unittest.TestCase):
                     root,
                     ["/usr/local/bin/python3", "-I", "/workspace/tests/e.py"],
                     ExecutionLimits(cpus=2.01),
+                    subject=self.subject,
                 )
             self.assertEqual(17, result.exit_code)
 
@@ -888,10 +1016,12 @@ class VF0DockerBackendTests(unittest.TestCase):
             backend = FakeDockerBackend(self.image, root, invalid_contract=True)
             with mock.patch("tools.vf0_execution._capture_process") as attached:
                 with self.assertRaisesRegex(ExecutionRejected, "OCI_CONTRACT"):
-                    backend.run(root, ["/bin/true"], ExecutionLimits())
+                    backend.run(
+                        root, ["/bin/true"], ExecutionLimits(), subject=self.subject
+                    )
             attached.assert_not_called()
             self.assertIn(("rm", "--force", backend.container_id), backend.calls)
-            self.assertIn(("container", "inspect", backend.container_id), backend.calls)
+            self.assertIn(("inspect", backend.container_id), backend.calls)
 
     def test_attachment_failure_still_removes_and_verifies_absence(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -902,10 +1032,12 @@ class VF0DockerBackendTests(unittest.TestCase):
                 side_effect=ExecutionRejected("BACKEND_START_FAILED"),
             ):
                 with self.assertRaisesRegex(ExecutionRejected, "BACKEND_START_FAILED"):
-                    backend.run(root, ["/bin/true"], ExecutionLimits())
+                    backend.run(
+                        root, ["/bin/true"], ExecutionLimits(), subject=self.subject
+                    )
             rm_index = backend.calls.index(("rm", "--force", backend.container_id))
             absent_index = backend.calls.index(
-                ("container", "inspect", backend.container_id)
+                ("inspect", backend.container_id), rm_index + 1
             )
             self.assertLess(rm_index, absent_index)
 
@@ -920,15 +1052,17 @@ class VF0DockerBackendTests(unittest.TestCase):
                 root = Path(td).resolve()
                 backend = FakeDockerBackend(self.image, root, create_mode=create_mode)
                 with self.assertRaisesRegex(ExecutionRejected, reason):
-                    backend.run(root, ["/bin/true"], ExecutionLimits())
+                    backend.run(
+                        root, ["/bin/true"], ExecutionLimits(), subject=self.subject
+                    )
                 self.assertTrue(backend.created)
                 self.assertTrue(backend.removed)
                 if backend.container_name is None:
                     self.fail("cleanup identity was not established before create")
                 self.assertIn(("inspect", backend.container_name), backend.calls)
                 self.assertIn(("rm", "--force", backend.container_name), backend.calls)
-                self.assertIn(
-                    ("container", "inspect", backend.container_name), backend.calls
+                self.assertGreaterEqual(
+                    backend.calls.count(("inspect", backend.container_name)), 2
                 )
 
     def test_uncertain_create_waits_for_delayed_owned_container(self) -> None:
@@ -961,12 +1095,14 @@ class VF0DockerBackendTests(unittest.TestCase):
             with (
                 mock.patch(
                     "tools.vf0_execution.time.monotonic",
-                    side_effect=[0.0, 0.0, 0.1],
+                    side_effect=[0.0, 0.0, 0.1, 0.1],
                 ),
                 mock.patch("tools.vf0_execution.time.sleep"),
             ):
                 with self.assertRaisesRegex(ExecutionRejected, "DOCKER_COMMAND_FAILED"):
-                    backend.run(root, ["/bin/true"], ExecutionLimits())
+                    backend.run(
+                        root, ["/bin/true"], ExecutionLimits(), subject=self.subject
+                    )
             self.assertGreaterEqual(backend.name_inspects, 3)
             self.assertTrue(backend.removed)
 
@@ -978,14 +1114,19 @@ class VF0DockerBackendTests(unittest.TestCase):
             with mock.patch(
                 "tools.vf0_execution._capture_process", return_value=capture
             ):
-                result = backend.run(root, ["/bin/sleep", "60"], ExecutionLimits())
+                result = backend.run(
+                    root,
+                    ["/bin/sleep", "60"],
+                    ExecutionLimits(),
+                    subject=self.subject,
+                )
             self.assertEqual("timeout", result.termination)
             self.assertIsNone(result.exit_code)
             self.assertNotIn(
                 ("inspect", "--format", "{{json .State}}", backend.container_id),
                 backend.calls,
             )
-            self.assertIn(("container", "inspect", backend.container_id), backend.calls)
+            self.assertIn(("inspect", backend.container_id), backend.calls)
 
     def test_output_limit_has_no_container_exit_claim_and_cleanup_still_occurs(
         self,
@@ -997,10 +1138,45 @@ class VF0DockerBackendTests(unittest.TestCase):
             with mock.patch(
                 "tools.vf0_execution._capture_process", return_value=capture
             ):
-                result = backend.run(root, ["/bin/cat"], ExecutionLimits())
+                result = backend.run(
+                    root, ["/bin/cat"], ExecutionLimits(), subject=self.subject
+                )
             self.assertTrue(result.truncated)
             self.assertIsNone(result.exit_code)
             self.assertIn(("rm", "--force", backend.container_id), backend.calls)
+
+    def test_uncertain_remove_retries_and_verifies_absence(self) -> None:
+        class UncertainRemove(FakeDockerBackend):
+            def __init__(self, image: str, root: Path) -> None:
+                super().__init__(image, root)
+                self.remove_attempts = 0
+
+            def _command(
+                self, *args: str, timeout: float = 30
+            ) -> subprocess.CompletedProcess[bytes]:
+                if args[:2] == ("rm", "--force"):
+                    self.calls.append(tuple(args))
+                    self.remove_attempts += 1
+                    if self.remove_attempts == 1:
+                        raise ExecutionRejected("DOCKER_COMMAND_FAILED")
+                return super()._command(*args, timeout=timeout)
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td).resolve()
+            backend = UncertainRemove(self.image, root)
+            capture = UntrustedCapture("completed", 0, b"", b"", 0)
+            with (
+                mock.patch(
+                    "tools.vf0_execution._capture_process", return_value=capture
+                ),
+                mock.patch("tools.vf0_execution.time.sleep"),
+            ):
+                result = backend.run(
+                    root, ["/bin/true"], ExecutionLimits(), subject=self.subject
+                )
+            self.assertEqual(17, result.exit_code)
+            self.assertGreaterEqual(backend.remove_attempts, 2)
+            self.assertTrue(backend.removed)
 
     def test_cleanup_failure_is_fail_closed(self) -> None:
         class BrokenCleanup(FakeDockerBackend):
@@ -1022,7 +1198,9 @@ class VF0DockerBackendTests(unittest.TestCase):
                 "tools.vf0_execution._capture_process", return_value=capture
             ):
                 with self.assertRaisesRegex(ExecutionRejected, "OCI_CLEANUP_REMOVE"):
-                    backend.run(root, ["/bin/true"], ExecutionLimits())
+                    backend.run(
+                        root, ["/bin/true"], ExecutionLimits(), subject=self.subject
+                    )
 
     def test_wrong_repo_digest_rejects_before_create(self) -> None:
         class WrongImage(FakeDockerBackend):
@@ -1043,7 +1221,9 @@ class VF0DockerBackendTests(unittest.TestCase):
             root = Path(td).resolve()
             backend = WrongImage(self.image, root)
             with self.assertRaisesRegex(ExecutionRejected, "OCI_IMAGE_IDENTITY"):
-                backend.run(root, ["/bin/true"], ExecutionLimits())
+                backend.run(
+                    root, ["/bin/true"], ExecutionLimits(), subject=self.subject
+                )
             self.assertFalse(
                 any(call and call[0] == "create" for call in backend.calls)
             )

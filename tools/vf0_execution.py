@@ -34,10 +34,14 @@ _MAX_SUBJECT_FILES = 4096
 _MAX_SUBJECT_TREE_LISTING_BYTES = 32 * 1024 * 1024
 _MAX_EVIDENCE_FILES = 32
 _MAX_EVIDENCE_BYTES = 2 * 1024 * 1024
+_MAX_SNAPSHOT_ENTRIES = 65_536
+_LOCAL_CONTAINMENT_EXECUTABLE = "/usr/bin/unshare"
 _CONTAINER_TMP = "/tmp"  # nosec B108 -- isolated container tmpfs, never a host temp path
 _CONTAINER_CLEANUP_LABEL = "gnostoa.vf0.cleanup-token"
 _UNCERTAIN_CREATE_SETTLE_SECONDS = 2.0
 _UNCERTAIN_CREATE_POLL_SECONDS = 0.1
+_UNCERTAIN_REMOVE_SETTLE_SECONDS = 2.0
+_UNCERTAIN_REMOVE_POLL_SECONDS = 0.1
 _CLEAN_ENV = {
     "PATH": "/usr/local/bin:/usr/bin:/bin",
     "HOME": "/nonexistent",
@@ -75,6 +79,7 @@ def _evidence_path(value: str) -> str:
     _need(bool(value) and "\\" not in value, "EVIDENCE_PATH")
     raw_parts = value.split("/")
     _need(all(part not in {"", ".", ".."} for part in raw_parts), "EVIDENCE_PATH")
+    _need(all(part.casefold() != ".git" for part in raw_parts), "EVIDENCE_PATH")
     path = PurePosixPath(value)
     _need(not path.is_absolute(), "EVIDENCE_PATH")
     _need(
@@ -180,6 +185,8 @@ class ExecutionBackend(Protocol):
         root: Path,
         command: Sequence[str],
         limits: ExecutionLimits,
+        *,
+        subject: GitSubject,
     ) -> UntrustedCapture: ...
 
 
@@ -393,6 +400,7 @@ def _materialize_subject(
         _need(mode in {"100644", "100755"} and kind == "blob", "SUBJECT_FILE_TYPE")
         path = PurePosixPath(name)
         _need(not path.is_absolute() and ".." not in path.parts, "SUBJECT_PATH")
+        _need(all(part.casefold() != ".git" for part in path.parts), "SUBJECT_PATH")
         _need(name not in expected, "SUBJECT_PATH_DUPLICATE")
         _need(0 <= size <= _MAX_FILE_BYTES, "SUBJECT_FILE_BOUND")
         total += size
@@ -408,24 +416,44 @@ def _materialize_subject(
 def _snapshot(root: Path) -> dict[str, _MaterialFile]:
     files: dict[str, _MaterialFile] = {}
     total = 0
-    for item in sorted(root.rglob("*")):
-        mode = item.lstat().st_mode
-        _need(not stat.S_ISLNK(mode), "SUBJECT_SYMLINK")
-        if stat.S_ISDIR(mode):
-            continue
-        _need(stat.S_ISREG(mode), "SUBJECT_SPECIAL_FILE")
-        _need(item.lstat().st_size <= _MAX_FILE_BYTES, "SUBJECT_FILE_BOUND")
-        with item.open("rb") as stream:
-            raw = stream.read(_MAX_FILE_BYTES + 1)
-        _need(len(raw) <= _MAX_FILE_BYTES, "SUBJECT_FILE_BOUND")
-        total += len(raw)
-        _need(total <= _MAX_SUBJECT_BYTES + _MAX_EVIDENCE_BYTES, "SUBJECT_TOTAL_BOUND")
-        name = item.relative_to(root).as_posix()
-        files[name] = _MaterialFile(
-            mode="100755" if mode & 0o111 else "100644",
-            sha256=_sha256(raw),
-            size=len(raw),
-        )
+    observed_entries = 0
+    pending = [root]
+    try:
+        while pending:
+            directory = pending.pop()
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    observed_entries += 1
+                    _need(
+                        observed_entries <= _MAX_SNAPSHOT_ENTRIES, "SUBJECT_ENTRY_BOUND"
+                    )
+                    mode = entry.stat(follow_symlinks=False).st_mode
+                    _need(not stat.S_ISLNK(mode), "SUBJECT_SYMLINK")
+                    item = Path(entry.path)
+                    if stat.S_ISDIR(mode):
+                        pending.append(item)
+                        continue
+                    _need(stat.S_ISREG(mode), "SUBJECT_SPECIAL_FILE")
+                    _need(
+                        entry.stat(follow_symlinks=False).st_size <= _MAX_FILE_BYTES,
+                        "SUBJECT_FILE_BOUND",
+                    )
+                    with item.open("rb") as stream:
+                        raw = stream.read(_MAX_FILE_BYTES + 1)
+                    _need(len(raw) <= _MAX_FILE_BYTES, "SUBJECT_FILE_BOUND")
+                    total += len(raw)
+                    _need(
+                        total <= _MAX_SUBJECT_BYTES + _MAX_EVIDENCE_BYTES,
+                        "SUBJECT_TOTAL_BOUND",
+                    )
+                    name = item.relative_to(root).as_posix()
+                    files[name] = _MaterialFile(
+                        mode="100755" if mode & 0o111 else "100644",
+                        sha256=_sha256(raw),
+                        size=len(raw),
+                    )
+    except OSError as exc:
+        raise ExecutionRejected("SUBJECT_SNAPSHOT") from exc
     return files
 
 
@@ -453,8 +481,19 @@ def _overlay_evidence(
         _need(total <= _MAX_EVIDENCE_BYTES, "EVIDENCE_TOTAL_BOUND")
         destination = root.joinpath(*PurePosixPath(item.path).parts)
         _normalize_subject_parents(root, destination)
-        destination.write_bytes(item.content)
-        destination.chmod(0o755 if item.mode == "100755" else 0o644)
+        try:
+            existing_mode = destination.lstat().st_mode
+        except FileNotFoundError:
+            existing_mode = None
+        except OSError as exc:
+            raise ExecutionRejected("EVIDENCE_DESTINATION") from exc
+        if existing_mode is not None:
+            _need(stat.S_ISREG(existing_mode), "EVIDENCE_DESTINATION")
+        try:
+            destination.write_bytes(item.content)
+            destination.chmod(0o755 if item.mode == "100755" else 0o644)
+        except OSError as exc:
+            raise ExecutionRejected("EVIDENCE_DESTINATION") from exc
         expected[item.path] = _MaterialFile(
             mode=item.mode,
             sha256=_sha256(item.content),
@@ -573,15 +612,34 @@ def _capture_process(
 
 
 class SubprocessBackend:
-    """Finite local backend used for conformance tests; it is not an OS sandbox."""
+    """Finite local backend with PID-namespace descendant containment."""
 
     def run(
         self,
         root: Path,
         command: Sequence[str],
         limits: ExecutionLimits,
+        *,
+        subject: GitSubject,
     ) -> UntrustedCapture:
-        return _capture_process(command, cwd=root, limits=limits)
+        del subject
+        _validate_command(command)
+        _need(
+            Path(_LOCAL_CONTAINMENT_EXECUTABLE).is_file()
+            and os.access(_LOCAL_CONTAINMENT_EXECUTABLE, os.X_OK),
+            "LOCAL_CONTAINMENT_UNAVAILABLE",
+        )
+        contained = [
+            _LOCAL_CONTAINMENT_EXECUTABLE,
+            "--user",
+            "--map-current-user",
+            "--pid",
+            "--fork",
+            "--kill-child",
+            "--",
+            *command,
+        ]
+        return _capture_process(contained, cwd=root, limits=limits)
 
 
 class DockerBackend:
@@ -638,6 +696,7 @@ class DockerBackend:
         root: Path,
         limits: ExecutionLimits,
         cleanup_nonce: str,
+        subject: GitSubject,
     ) -> None:
         try:
             raw = json.loads(self._checked("inspect", container_id))
@@ -657,17 +716,35 @@ class DockerBackend:
             and isinstance(mounts, list),
             "OCI_INSPECT",
         )
-        binds = [m for m in mounts if isinstance(m, dict) and m.get("Type") == "bind"]
         _need(
-            len(binds) == 1
-            and binds[0].get("Source") == str(root)
-            and binds[0].get("Destination") == "/workspace"
-            and binds[0].get("RW") is False,
+            len(mounts) == 1
+            and isinstance(mounts[0], dict)
+            and mounts[0].get("Type") == "bind"
+            and mounts[0].get("Source") == str(root)
+            and mounts[0].get("Destination") == "/workspace"
+            and mounts[0].get("RW") is False,
             "OCI_MOUNT_CONTRACT",
         )
         security = host.get("SecurityOpt") or []
         labels = config.get("Labels") or {}
-        _need(isinstance(labels, dict), "OCI_INSPECT")
+        environment = config.get("Env") or []
+        _need(isinstance(labels, dict) and isinstance(environment, list), "OCI_INSPECT")
+        protected_environment: dict[str, str] = {}
+        for item in environment:
+            _need(isinstance(item, str) and "=" in item, "OCI_INSPECT")
+            key, value = item.split("=", 1)
+            if key in {"KNOWLEDGE_KIT_ROOT", "KNOWLEDGE_KIT_REVISION", "PYTHONPATH"}:
+                _need(key not in protected_environment, "OCI_ENV_CONTRACT")
+                protected_environment[key] = value
+        _need(
+            protected_environment
+            == {
+                "KNOWLEDGE_KIT_ROOT": "/workspace",
+                "KNOWLEDGE_KIT_REVISION": subject.commit,
+                "PYTHONPATH": "/workspace",
+            },
+            "OCI_ENV_CONTRACT",
+        )
         _need(
             host.get("ReadonlyRootfs") is True
             and host.get("NetworkMode") == "none"
@@ -684,12 +761,65 @@ class DockerBackend:
             "OCI_CONTRACT",
         )
 
-    def _remove_and_verify(self, container_id: str) -> None:
-        result = self._command("rm", "--force", container_id, timeout=15)
-        _need(result.returncode == 0, "OCI_CLEANUP_REMOVE")
-        gone = self._command("container", "inspect", container_id, timeout=15)
-        message = (gone.stderr + b"\n" + gone.stdout).lower()
-        _need(gone.returncode != 0 and b"no such" in message, "OCI_CLEANUP_UNVERIFIED")
+    def _cleanup_presence(self, container_id: str, cleanup_nonce: str) -> bool | None:
+        try:
+            inspected = self._command("inspect", container_id, timeout=15)
+        except ExecutionRejected:
+            return None
+        message = (inspected.stderr + b"\n" + inspected.stdout).lower()
+        if inspected.returncode != 0:
+            _need(b"no such" in message, "OCI_CLEANUP_UNVERIFIED")
+            return False
+        try:
+            raw = json.loads(inspected.stdout)
+        except (json.JSONDecodeError, TypeError) as exc:
+            raise ExecutionRejected("OCI_CLEANUP_UNVERIFIED") from exc
+        _need(
+            isinstance(raw, list) and len(raw) == 1 and isinstance(raw[0], dict),
+            "OCI_CLEANUP_UNVERIFIED",
+        )
+        config = raw[0].get("Config", {})
+        labels = config.get("Labels") if isinstance(config, dict) else None
+        _need(
+            isinstance(labels, dict)
+            and labels.get(_CONTAINER_CLEANUP_LABEL) == cleanup_nonce,
+            "OCI_CLEANUP_OWNERSHIP",
+        )
+        return True
+
+    def _reconcile_uncertain_remove(
+        self, container_id: str, cleanup_nonce: str
+    ) -> None:
+        deadline = time.monotonic() + _UNCERTAIN_REMOVE_SETTLE_SECONDS
+        while True:
+            presence = self._cleanup_presence(container_id, cleanup_nonce)
+            if presence is False:
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ExecutionRejected("OCI_CLEANUP_UNVERIFIED")
+            try:
+                retry = self._command("rm", "--force", container_id, timeout=15)
+            except ExecutionRejected:
+                retry = None
+            if retry is not None and retry.returncode != 0:
+                message = (retry.stderr + b"\n" + retry.stdout).lower()
+                if b"no such" in message:
+                    return
+                raise ExecutionRejected("OCI_CLEANUP_REMOVE")
+            time.sleep(min(_UNCERTAIN_REMOVE_POLL_SECONDS, remaining))
+
+    def _remove_and_verify(self, container_id: str, cleanup_nonce: str) -> None:
+        try:
+            result = self._command("rm", "--force", container_id, timeout=15)
+        except ExecutionRejected:
+            self._reconcile_uncertain_remove(container_id, cleanup_nonce)
+            return
+        if result.returncode != 0:
+            message = (result.stderr + b"\n" + result.stdout).lower()
+            if b"no such" not in message:
+                raise ExecutionRejected("OCI_CLEANUP_REMOVE")
+        self._reconcile_uncertain_remove(container_id, cleanup_nonce)
 
     def _cleanup_uncertain_create(
         self, container_name: str, cleanup_nonce: str
@@ -716,7 +846,7 @@ class DockerBackend:
                     and labels.get(_CONTAINER_CLEANUP_LABEL) == cleanup_nonce,
                     "OCI_CLEANUP_OWNERSHIP",
                 )
-                self._remove_and_verify(container_name)
+                self._remove_and_verify(container_name, cleanup_nonce)
                 return
             _need(b"no such" in message, "OCI_CLEANUP_UNVERIFIED")
             remaining = deadline - time.monotonic()
@@ -729,6 +859,8 @@ class DockerBackend:
         root: Path,
         command: Sequence[str],
         limits: ExecutionLimits,
+        *,
+        subject: GitSubject,
     ) -> UntrustedCapture:
         _validate_command(command)
         self._inspect_image()
@@ -767,6 +899,12 @@ class DockerBackend:
             f"HOME={_CONTAINER_TMP}",
             "--env",
             "PYTHONDONTWRITEBYTECODE=1",
+            "--env",
+            "KNOWLEDGE_KIT_ROOT=/workspace",
+            "--env",
+            f"KNOWLEDGE_KIT_REVISION={subject.commit}",
+            "--env",
+            "PYTHONPATH=/workspace",
             "--mount",
             f"type=bind,source={root},target=/workspace,readonly",
             "--workdir",
@@ -782,7 +920,7 @@ class DockerBackend:
             observed_id = self._checked(*create).decode().strip().lower()
             _need(_DOCKER_ID_RE.fullmatch(observed_id) is not None, "OCI_CONTAINER_ID")
             container_id = observed_id
-            self._validate_container(container_id, root, limits, cleanup_nonce)
+            self._validate_container(container_id, root, limits, cleanup_nonce, subject)
             capture = _capture_process(
                 [self.docker_executable, "start", "--attach", container_id],
                 cwd=None,
@@ -817,7 +955,7 @@ class DockerBackend:
                 if container_id is None:
                     self._cleanup_uncertain_create(container_name, cleanup_nonce)
                 else:
-                    self._remove_and_verify(container_id)
+                    self._remove_and_verify(container_id, cleanup_nonce)
             except ExecutionRejected:
                 if attachment_finished:
                     raise
@@ -847,7 +985,7 @@ def execute(
         before = _snapshot(root)
         _need(before == expected, "SUBJECT_BEFORE_EXECUTION")
         before_digest = _manifest_digest(before)
-        capture = backend.run(root, tuple(command), chosen_limits)
+        capture = backend.run(root, tuple(command), chosen_limits, subject=subject)
         after = _snapshot(root)
         _need(after == expected, "SUBJECT_MUTATED")
         after_digest = _manifest_digest(after)

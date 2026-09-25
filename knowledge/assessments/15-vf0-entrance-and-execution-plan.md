@@ -653,6 +653,18 @@ pre-read rejection of oversized post-execution files. The relation suite remains
 successor executes **83 focused tests**. All 83 pass normally and under Python
 optimization before ordinary D0090 preparation.
 
+The next in-scope execution-hardening candidate adds six execution/fixture test
+methods for bounded post-execution entry traversal, subject Git-metadata path
+rejection, evidence-directory destination refusal, detached-session descendant
+containment, complete OCI mount validation, and uncertain Docker-remove
+reconciliation. Existing evidence-path and OCI create-contract tests are also
+strengthened to reject `.git` components and require exact mounted-subject
+routing (`KNOWLEDGE_KIT_ROOT`, `KNOWLEDGE_KIT_REVISION`, and `PYTHONPATH`). The
+relation suite remains **34 tests** and the execution/fixture suite becomes **55
+tests**, so the focused corpus is **89 tests**. All 89 pass normally and under
+Python optimization; the full non-root `fast` profile also passes before ordinary
+D0090 preparation.
+
 This evidence still does **not** claim a live run of the new Docker specialization.
 `tests/vf0_execution_oci_smoke.py` is intentionally outside unittest discovery and
 must be executed after exact ordinary D0090 preparation/publication of this
