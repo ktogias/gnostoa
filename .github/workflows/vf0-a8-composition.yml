@@ -1,0 +1,125 @@
+name: VF0 A8 approved composition diagnostic
+on:
+  push:
+    branches: [agent-support/vf0-admission-a6-20260924]
+    paths: [.github/workflows/vf0-a8-composition.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  freeze:
+    name: Freeze exact A8 request
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout fixed coordinator
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.sha }}
+          path: coordinator
+          persist-credentials: false
+      - name: Checkout exact diagnostic subject
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: d695af8bbf67828cd87868ccf972ecd5c37e6405
+          path: subject
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout pinned existing E5 controller
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: eb05bf43a9b8bdfc994287eeaf095597178e402f
+          path: e5
+          persist-credentials: false
+      - name: Freeze and publish request without test execution
+        id: request
+        env:
+          A8_READ_TOKEN: ${{ github.token }}
+        run: /usr/bin/python3 -I -B coordinator/.github/vf0-a8-composition.py freeze
+      - name: Retain exact owner request
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: vf0-a8-request-${{ github.run_id }}-1
+          path: ${{ runner.temp }}/vf0-a8-freeze/
+          if-no-files-found: error
+          retention-days: 7
+  capture:
+    name: Run approved isolated characterization
+    needs: freeze
+    environment: vf0-admission
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout fixed coordinator
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.sha }}
+          path: coordinator
+          persist-credentials: false
+      - name: Checkout exact diagnostic subject
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: d695af8bbf67828cd87868ccf972ecd5c37e6405
+          path: subject
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout pinned existing E5 controller
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: eb05bf43a9b8bdfc994287eeaf095597178e402f
+          path: e5
+          persist-credentials: false
+      - name: Verify native approval then execute bounded characterization
+        env:
+          A8_READ_TOKEN: ${{ github.token }}
+        run: /usr/bin/python3 -I -B coordinator/.github/vf0-a8-composition.py capture
+      - name: Retain actual capture
+        id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: vf0-a8-capture-${{ github.run_id }}-1
+          path: ${{ runner.temp }}/vf0-a8-capture/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Emit closed publisher record
+        env:
+          A8_READ_TOKEN: ${{ github.token }}
+          A8_ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          A8_ARTIFACT_SHA256: ${{ steps.upload.outputs.artifact-digest }}
+        run: /usr/bin/python3 -I -B coordinator/.github/vf0-a8-composition.py publish
+  consume:
+    name: Reacquire and reconcile A8
+    needs: capture
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout fixed coordinator
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.sha }}
+          path: coordinator
+          persist-credentials: false
+      - name: Checkout exact diagnostic subject
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: d695af8bbf67828cd87868ccf972ecd5c37e6405
+          path: subject
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout pinned existing E5 controller
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: eb05bf43a9b8bdfc994287eeaf095597178e402f
+          path: e5
+          persist-credentials: false
+      - name: Independently reacquire publisher artifact and evaluate common relation
+        env:
+          A8_READ_TOKEN: ${{ github.token }}
+        run: /usr/bin/python3 -I -B coordinator/.github/vf0-a8-composition.py consume
+      - name: Retain composed diagnostic result
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: vf0-a8-result-${{ github.run_id }}-1
+          path: ${{ runner.temp }}/vf0-a8-consume/
+          if-no-files-found: error
+          retention-days: 7
