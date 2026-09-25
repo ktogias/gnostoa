@@ -701,7 +701,26 @@ caller-owned mutable bytes-like input is copied to immutable `bytes` when the
 `EvidenceFile` is constructed, so later caller/backend mutation cannot change the
 materialized bytes or the retained evidence digest. The relation suite remains **34
 tests** and the execution/fixture suite becomes **65 tests**, so the focused corpus
-is **99 tests**. All **99** pass normally and under `python -O` before ordinary
+is **99 tests**. All **99** pass normally and under `python -O` on the candidate
+bytes later D0090-prepared as tree
+`a5afe5d1c88040cf3ade5f0519bfcacaa2849b20` and published byte-identically as
+commit `4cf86acb854d48f458cee8173ee49e12a1aafe7d`.
+
+The later fixed-fixture OCI smoke [run 36193427786](https://github.com/ktogias/gnostoa/actions/runs/36193427786)
+uses temporary support-workflow head
+`dd48ff067d269412ee4fec23e4147de8c756c886`, but job `108263677959` explicitly
+checks out commit `4cf86acb854d48f458cee8173ee49e12a1aafe7d`, verifies tree
+`a5afe5d1c88040cf3ade5f0519bfcacaa2849b20`, and the retained result is bound to
+that exact subject. The run concluded successfully; the support-branch head is
+transport/workflow identity, not the subject under test.
+
+The following bounded-input/process-ownership successor batches two exact-head
+review repairs: oversized or lazy evidence input is capped at the declared limit
+plus one and rejected before subject materialization, and normal leader exit is
+observed without reaping so the owned process group is cleared before the leader
+PID can be reused. The relation suite remains **34 tests** and the
+execution/fixture suite becomes **67 tests**, so the focused corpus is **101
+tests**. All **101** pass normally and under `python -O` before ordinary
 exact-parent D0090 preparation.
 
 This evidence still does **not** claim a live run of the new Docker specialization.

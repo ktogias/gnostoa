@@ -403,6 +403,39 @@ class VF0SubjectTests(unittest.TestCase):
                 backend.modes,
             )
 
+    def test_oversized_evidence_is_bounded_before_materialization(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+
+        class OversizedEvidence(Sequence[EvidenceFile]):
+            def __init__(self) -> None:
+                self.pulled = 0
+
+            def __len__(self) -> int:
+                return 10_000_000
+
+            def __getitem__(self, index: int) -> EvidenceFile:
+                if index >= 100:
+                    raise IndexError
+                self.pulled += 1
+                return EvidenceFile(
+                    path=f"tests/oversized-{index}.py", content=b"pass\n"
+                )
+
+        evidence = OversizedEvidence()
+        subject = GitSubject(commit="a" * 40, tree="b" * 40)
+        with mock.patch.object(
+            module, "_materialize_subject", side_effect=AssertionError("materialized")
+        ):
+            with self.assertRaisesRegex(ExecutionRejected, "EVIDENCE_COUNT"):
+                execute(
+                    Path("/tmp/not-used"),
+                    subject,
+                    evidence,
+                    ["/bin/true"],
+                    SubprocessBackend(),
+                )
+        self.assertEqual(module._MAX_EVIDENCE_FILES + 1, evidence.pulled)
+
     def test_evidence_sequence_is_snapshotted_before_backend_execution(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             repo, subject = _repo(Path(td))
@@ -775,6 +808,48 @@ class VF0SubjectTests(unittest.TestCase):
                     ["/bin/true"],
                     DirectoryModeBackend(),
                 )
+
+    def test_process_group_is_cleared_before_leader_reap(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        events: list[str] = []
+        process = mock.Mock()
+        process.pid = 12345
+        process.stdout = mock.Mock()
+        process.stderr = mock.Mock()
+        process.returncode = 0
+        process.wait.side_effect = lambda *args, **kwargs: events.append("wait") or 0
+
+        class EmptySelector:
+            def register(self, *args: object, **kwargs: object) -> None:
+                pass
+
+            def get_map(self) -> dict[object, object]:
+                return {}
+
+            def close(self) -> None:
+                pass
+
+        def observe_without_reap(
+            _process: subprocess.Popen[bytes], _deadline: float
+        ) -> bool:
+            events.append("observe")
+            return True
+
+        def record_kill(_process: subprocess.Popen[bytes]) -> None:
+            events.append("kill")
+
+        with (
+            mock.patch.object(module.subprocess, "Popen", return_value=process),
+            mock.patch.object(
+                module.selectors, "DefaultSelector", return_value=EmptySelector()
+            ),
+            mock.patch.object(
+                module, "_wait_for_exit_without_reap", side_effect=observe_without_reap
+            ),
+            mock.patch.object(module, "_kill_process_group", side_effect=record_kill),
+        ):
+            module._capture_process(["/bin/true"], cwd=None, limits=ExecutionLimits())
+        self.assertEqual(["observe", "kill", "wait"], events)
 
     def test_runtime_file_mode_change_is_rejected_after_observation(self) -> None:
         class FileModeBackend:

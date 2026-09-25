@@ -52,9 +52,14 @@ x-project-knowledge:
 ## Executive conclusion
 
 PR #319 exposed a **process interpretation failure**, not a newly introduced
-repository rule. During an already admitted #15 / D0092 implementation slice,
-the executor began treating each new analyzer or reviewer finding as a new scope
-that required another owner admission before repair. That interrupted the
+repository rule. The repository record did not contain a blanket #15 / D0092
+implementation admission: the one-time D0090 bootstrap-preparation approval was
+bound to its frozen parent, file set, patch, tools and runtime, and later findings
+remained subject to their effective bounded authority. In the active task the
+owner also explicitly directed autonomous continuation through review convergence
+within the currently authorized scope. The executor nevertheless began treating
+each new analyzer or reviewer finding as necessarily outside whatever effective
+admission or continuation authority covered the candidate. That interrupted the
 previous autonomous review-convergence loop and repeatedly returned ordinary
 in-scope remediation to the owner.
 
@@ -69,8 +74,8 @@ September 24 or 25:
   safeguards, not a new per-finding approval rule.
 
 The proximate cause was therefore **interpretation drift**: admission was keyed
-to the novelty of an observation instead of to expansion of the already admitted
-outcome, scope, authority or effect boundary.
+to the novelty of an observation instead of to whether the proposed repair
+expanded the current effective outcome, scope, authority or effect boundary.
 
 The incident failed safe with respect to authority: no unauthorized merge,
 activation, producer admission, policy weakening or source mutation occurred at
@@ -94,7 +99,7 @@ protected transition.
 
 During PR #319 the executor instead requested new admissions for:
 
-1. analyzer findings on the already admitted VF0 implementation;
+1. analyzer findings on the VF0 candidate while the task carried bounded review-convergence authority;
 2. Codex finding `4105633211`, a restrictive-`umask` edge case in that same
    implementation;
 3. Codex finding `4105815623`, a documentation-only correction to current
@@ -122,16 +127,18 @@ engine is selected here.
 
 A finding is an observation/evidence unit. Admission authorizes a bounded desired
 outcome and effect envelope. Multiple findings can be consumed while converging
-one admitted slice. Treating each finding as a new admission unit converts normal
-iterative review into a sequence of owner approvals.
+one effective admission envelope when that envelope actually covers their repairs.
+Treating each finding as a new admission unit regardless of that boundary converts
+normal iterative review into a sequence of owner approvals.
 
 ### Contributing cause 1: asymmetric wording
 
 The Requirement correctly says that an **unadmitted finding** must not silently
 become implementation authority, but it does not explicitly state the converse:
-a finding discovered during an already admitted implementation/review slice does
-not require a new admission when its repair is necessary to satisfy the existing
-acceptance criteria and does not broaden scope, authority or effects.
+a finding discovered during implementation/review does not require a new admission
+when the current effective admission or explicit task authority already covers that
+exact repair, it is necessary to satisfy the existing acceptance criteria, and it
+does not broaden scope, authority or effects.
 
 ### Contributing cause 2: no retained active admission/effect envelope
 
@@ -178,7 +185,7 @@ Instead, “this is a new finding” became the effective escalation test.
 1. **Why were repeated owner approvals requested?** Each new finding was treated
    as fresh implementation admission.
 2. **Why?** “Unadmitted finding” was interpreted per finding instead of relative
-   to the active admitted slice.
+   to the active effective admission envelope.
 3. **Why was that not rejected?** The Requirement exposes a strong STOP rule but
    no equally visible CONTINUE predicate for in-scope convergence.
 4. **Why did it appear now?** Recovery/session complexity increased conservative
@@ -229,11 +236,12 @@ that the workflow behaved correctly.
 ## Immediate operating mitigation
 
 Until durable wording is separately selected and admitted, use this task-local
-triage inside an already admitted slice:
+triage only after fresh read-back establishes the effective admission or explicit
+task authority covering both the current candidate and the proposed repair:
 
 | Classification | Meaning | Action |
 | --- | --- | --- |
-| `IN_SCOPE_REMEDIATION` | Required to meet existing acceptance criteria; no outcome/effect expansion | Repair autonomously, re-prepare, rerun checks/reviews and continue convergence |
+| `IN_SCOPE_REMEDIATION` | Required to meet existing acceptance criteria within the effective admission/task authority exact scope; no outcome/effect expansion | Repair autonomously inside that scope, re-prepare, rerun checks/reviews and continue convergence |
 | `SCOPE_EXPANSION` | New capability/outcome/Work Item/Decision or materially broader semantics | Stop and request admission |
 | `AUTHORITY_OR_EFFECT_CHANGE` | Policy/threshold/provider effect/activation/Ready/merge or other protected transition | Stop at the applicable human gate |
 | `UNCERTAIN_BOUNDARY` | Evidence is insufficient to classify after fresh provider/source read-back | Stop with the specific uncertainty, not a generic per-finding approval request |
@@ -251,7 +259,8 @@ re-read fresh reviewers/analyzers, and repeat until convergence.
 ### F1 — A finding is not the unit of implementation admission
 
 Admission should bind the selected outcome, scope and effect envelope. Multiple
-review/analyzer findings may be consumed inside one admitted slice.
+review/analyzer findings may be consumed inside one effective envelope only while
+that envelope or explicit task authority covers each proposed repair.
 
 ### F2 — Review convergence is part of implementation
 
@@ -295,7 +304,8 @@ Do not add tooling merely because this single incident occurred.
 A fresh agent should be able to:
 
 - autonomously repair multiple independent reviewer findings that remain inside
-  one admitted slice and reach review convergence without owner round trips; and
+  one effective bounded admission/task-authority envelope and reach review
+  convergence without owner round trips; and
 - stop reliably when a finding would expand scope, change authority/effects or
   cross a protected transition.
 

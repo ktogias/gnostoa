@@ -280,20 +280,20 @@ class VF0RelationTests(unittest.TestCase):
                 self.assertEqual([reason], self.assertRejected(doc)["reasons"])
 
     def test_requested_paths_and_evidence_members_are_canonical(self) -> None:
-        for path in [
-            "../outside",
-            "/absolute",
-            "a//b",
-            "a/./b",
-            "a\\b",
-            ".git/config",
-            "x/\x00",
+        for path, reason in [
+            ("../outside", "PATH_FORMAT"),
+            ("/absolute", "PATH_FORMAT"),
+            ("a//b", "PATH_FORMAT"),
+            ("a/./b", "PATH_FORMAT"),
+            ("a\\b", "PATH_FORMAT"),
+            (".git/config", "PATH_FORMAT"),
+            ("x/\x00", "TEXT_IDENTITY"),
         ]:
             with self.subTest(path=path):
                 doc = copy.deepcopy(self.document)
-                doc["request"]["candidate_paths"] = [path]
+                doc["request"]["candidate_paths"].append(path)
                 _rebind(doc)
-                self.assertRejected(doc)
+                self.assertEqual([reason], self.assertRejected(doc)["reasons"])
 
     def test_guarantee_missing_unknown_unsupported_or_contradicted_rejects(
         self,

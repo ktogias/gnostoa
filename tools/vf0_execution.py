@@ -551,6 +551,29 @@ def _validate_command(argv: Sequence[str]) -> None:
     )
 
 
+def _wait_for_exit_without_reap(
+    process: subprocess.Popen[bytes], deadline: float
+) -> bool:
+    """Observe leader exit while retaining its PID until group cleanup."""
+
+    _need(
+        hasattr(os, "waitid") and hasattr(os, "WNOWAIT"),
+        "BACKEND_REAP_UNAVAILABLE",
+    )
+    options = os.WEXITED | os.WNOHANG | os.WNOWAIT
+    while True:
+        try:
+            result = os.waitid(os.P_PID, process.pid, options)
+        except (ChildProcessError, OSError) as exc:
+            raise ExecutionRejected("BACKEND_REAP_FAILED") from exc
+        if result is not None:
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(0.01, remaining))
+
+
 def _capture_process(
     argv: Sequence[str],
     *,
@@ -607,16 +630,13 @@ def _capture_process(
                     break
             if termination != "completed":
                 break
-        if termination == "completed":
-            remaining = max(0.0, deadline - time.monotonic())
-            try:
-                process.wait(timeout=remaining)
-            except subprocess.TimeoutExpired:
-                termination = "timeout"
-                _kill_process_group(process)
-        # The leader may have exited cleanly after spawning descendants that
-        # closed or redirected their stdio. Always clear the owned session before
-        # returning so those descendants cannot outlive this bounded execution.
+        if termination == "completed" and not _wait_for_exit_without_reap(
+            process, deadline
+        ):
+            termination = "timeout"
+        # Observe normal leader exit without reaping it, then clear the owned
+        # session while that PID is still reserved. This prevents PID reuse from
+        # redirecting a later killpg to unrelated same-user work.
         _kill_process_group(process)
         try:
             process.wait(timeout=5)
@@ -1017,6 +1037,20 @@ class DockerBackend:
                 raise
 
 
+def _snapshot_evidence(
+    evidence: Sequence[EvidenceFile],
+) -> tuple[EvidenceFile, ...]:
+    snapshot: list[EvidenceFile] = []
+    iterator = iter(evidence)
+    for _ in range(_MAX_EVIDENCE_FILES + 1):
+        try:
+            snapshot.append(next(iterator))
+        except StopIteration:
+            break
+    _need(1 <= len(snapshot) <= _MAX_EVIDENCE_FILES, "EVIDENCE_COUNT")
+    return tuple(snapshot)
+
+
 def execute(
     repository: Path,
     subject: GitSubject,
@@ -1034,7 +1068,7 @@ def execute(
         and all(isinstance(part, str) and part for part in command_snapshot),
         "COMMAND",
     )
-    evidence_snapshot = tuple(evidence)
+    evidence_snapshot = _snapshot_evidence(evidence)
     with tempfile.TemporaryDirectory(prefix="gnostoa-vf0-execution-") as temporary:
         temp = Path(temporary)
         root = temp / "subject"

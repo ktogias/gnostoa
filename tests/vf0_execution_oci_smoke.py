@@ -29,7 +29,7 @@ from tools.vf0_execution import (
 
 FIXED_IMAGE = "ghcr.io/ktogias/gnostoa@sha256:f89bf32c0c4b86bac71fa008579b2385e6ae39bf4822f685479c4f2cc22bfca4"  # pragma: allowlist secret -- public registry identity
 EVIDENCE_PATH = "tests/vf0_execution_live_evidence.py"
-EVIDENCE = rb"""import json, os, pathlib, socket, subprocess, sys, time
+EVIDENCE = rb"""import errno, json, os, pathlib, socket, subprocess, sys, time
 case = sys.argv[1]
 if case == "isolation":
     checks = {}
@@ -40,8 +40,8 @@ if case == "isolation":
             os.write(fd, b"ISOLATION_FAILURE\n")
             os.close(fd)
             checks[name] = False
-        except OSError:
-            checks[name] = True
+        except OSError as exc:
+            checks[name] = exc.errno == errno.EROFS
     checks["no_git_metadata"] = not pathlib.Path("/workspace/.git").exists()
     checks["no_docker_socket"] = not pathlib.Path("/var/run/docker.sock").exists()
     checks["clean_environment"] = all(name not in os.environ for name in
@@ -112,7 +112,7 @@ def _git(repo: Path, *args: str) -> str:
 def _probe_read_only_behavior(image: str) -> dict[str, bool]:
     """Behaviorally prove read-only rootfs and bind mount with writable targets."""
 
-    payload = r"""import json, os
+    payload = r"""import errno, json, os
 checks = {}
 for name, path in (("workspace_bind_read_only", "/probe/writable.txt"),
                    ("rootfs_read_only", "/home/kit/vf0-rootfs-probe")):
@@ -121,8 +121,8 @@ for name, path in (("workspace_bind_read_only", "/probe/writable.txt"),
         os.write(fd, b"READONLY_FAILURE\n")
         os.close(fd)
         checks[name] = False
-    except OSError:
-        checks[name] = True
+    except OSError as exc:
+        checks[name] = exc.errno == errno.EROFS
 print(json.dumps(checks, sort_keys=True))
 assert all(checks.values()), "READONLY_PROBE_FAILED"
 """
