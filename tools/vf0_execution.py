@@ -558,7 +558,7 @@ class DockerBackend:
         container_id: str,
         root: Path,
         limits: ExecutionLimits,
-        cleanup_token: str,
+        cleanup_nonce: str,
     ) -> None:
         try:
             raw = json.loads(self._checked("inspect", container_id))
@@ -597,7 +597,7 @@ class DockerBackend:
             and host.get("CapDrop") == ["ALL"]
             and "no-new-privileges" in security
             and config.get("User") == "10001:10001"
-            and labels.get(_CONTAINER_CLEANUP_LABEL) == cleanup_token
+            and labels.get(_CONTAINER_CLEANUP_LABEL) == cleanup_nonce
             and host.get("PidsLimit") == limits.pids
             and host.get("Memory") == limits.memory_bytes
             and host.get("MemorySwap") == limits.memory_bytes
@@ -613,7 +613,7 @@ class DockerBackend:
         _need(gone.returncode != 0 and b"no such" in message, "OCI_CLEANUP_UNVERIFIED")
 
     def _cleanup_uncertain_create(
-        self, container_name: str, cleanup_token: str
+        self, container_name: str, cleanup_nonce: str
     ) -> None:
         inspected = self._command("inspect", container_name, timeout=15)
         message = (inspected.stderr + b"\n" + inspected.stdout).lower()
@@ -632,7 +632,7 @@ class DockerBackend:
         labels = config.get("Labels") if isinstance(config, dict) else None
         _need(
             isinstance(labels, dict)
-            and labels.get(_CONTAINER_CLEANUP_LABEL) == cleanup_token,
+            and labels.get(_CONTAINER_CLEANUP_LABEL) == cleanup_nonce,
             "OCI_CLEANUP_OWNERSHIP",
         )
         self._remove_and_verify(container_name)
@@ -645,14 +645,14 @@ class DockerBackend:
     ) -> UntrustedCapture:
         _validate_command(command)
         self._inspect_image()
-        cleanup_token = uuid.uuid4().hex
-        container_name = f"gnostoa-vf0-{cleanup_token}"
+        cleanup_nonce = uuid.uuid4().hex
+        container_name = f"gnostoa-vf0-{cleanup_nonce}"
         create = [
             "create",
             "--name",
             container_name,
             "--label",
-            f"{_CONTAINER_CLEANUP_LABEL}={cleanup_token}",
+            f"{_CONTAINER_CLEANUP_LABEL}={cleanup_nonce}",
             "--read-only",
             "--network",
             "none",
@@ -695,7 +695,7 @@ class DockerBackend:
             observed_id = self._checked(*create).decode().strip().lower()
             _need(_DOCKER_ID_RE.fullmatch(observed_id) is not None, "OCI_CONTAINER_ID")
             container_id = observed_id
-            self._validate_container(container_id, root, limits, cleanup_token)
+            self._validate_container(container_id, root, limits, cleanup_nonce)
             capture = _capture_process(
                 [self.docker_executable, "start", "--attach", container_id],
                 cwd=None,
@@ -728,7 +728,7 @@ class DockerBackend:
             # absence of the owned container.
             try:
                 if container_id is None:
-                    self._cleanup_uncertain_create(container_name, cleanup_token)
+                    self._cleanup_uncertain_create(container_name, cleanup_nonce)
                 else:
                     self._remove_and_verify(container_id)
             except ExecutionRejected:

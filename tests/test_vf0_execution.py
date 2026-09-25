@@ -614,7 +614,7 @@ class FakeDockerBackend(DockerBackend):
         self.create_mode = create_mode
         self.container_id = "a" * 64
         self.container_name: str | None = None
-        self.cleanup_token: str | None = None
+        self.cleanup_nonce: str | None = None
         self.created = False
         self.removed = False
 
@@ -640,7 +640,7 @@ class FakeDockerBackend(DockerBackend):
             key, token = label.split("=", 1)
             if key != "gnostoa.vf0.cleanup-token":
                 raise AssertionError(label)
-            self.cleanup_token = token
+            self.cleanup_nonce = token
             self.created = True
             if self.create_mode == "exception":
                 raise ExecutionRejected("DOCKER_COMMAND_FAILED")
@@ -672,7 +672,7 @@ class FakeDockerBackend(DockerBackend):
                         {
                             "Config": {
                                 "Labels": {
-                                    "gnostoa.vf0.cleanup-token": self.cleanup_token
+                                    "gnostoa.vf0.cleanup-token": self.cleanup_nonce
                                 }
                             }
                         }
@@ -696,7 +696,7 @@ class FakeDockerBackend(DockerBackend):
                 },
                 "Config": {
                     "User": "10001:10001",
-                    "Labels": {"gnostoa.vf0.cleanup-token": self.cleanup_token},
+                    "Labels": {"gnostoa.vf0.cleanup-token": self.cleanup_nonce},
                 },
                 "Mounts": [
                     {
