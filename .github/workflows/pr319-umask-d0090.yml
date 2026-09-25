@@ -126,6 +126,7 @@ jobs:
           sha256sum "$RUNNER_TEMP/prepared.patch" > "$RUNNER_TEMP/prepared.patch.sha256"
 
       - name: Upload non-secret preparation evidence
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: pr319-umask-d0090
@@ -136,6 +137,8 @@ jobs:
             ${{ runner.temp }}/prepared.patch.sha256
             ${{ runner.temp }}/metadata.json
             ${{ runner.temp }}/prepare.stdout
+            ${{ runner.temp }}/prepare.stderr
+            ${{ runner.temp }}/prepare.rc
             ${{ runner.temp }}/verify.stdout
           if-no-files-found: error
           retention-days: 7
