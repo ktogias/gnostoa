@@ -1,0 +1,117 @@
+diff --git a/tests/test_vf0_execution.py b/tests/test_vf0_execution.py
+index f844f7f..67d8a7d 100644
+--- a/tests/test_vf0_execution.py
++++ b/tests/test_vf0_execution.py
+@@ -367,6 +367,44 @@ class VF0SubjectTests(unittest.TestCase):
+             self.assertEqual(one.evidence_sha256, two.evidence_sha256)
+             self.assertEqual(one.before_manifest_sha256, two.before_manifest_sha256)
+ 
++    def test_materialization_directories_ignore_restrictive_caller_umask(self) -> None:
++        class InspectingBackend:
++            modes: dict[str, int] | None = None
++
++            def run(
++                self,
++                root: Path,
++                command: Sequence[str],
++                limits: ExecutionLimits,
++            ) -> UntrustedCapture:
++                del command, limits
++                self.modes = {
++                    "root": root.stat().st_mode & 0o777,
++                    "tests": (root / "tests").stat().st_mode & 0o777,
++                    "bin": (root / "bin").stat().st_mode & 0o777,
++                    "deep": (root / "tests" / "deep").stat().st_mode & 0o777,
++                }
++                return UntrustedCapture("completed", 0, b"", b"", 0)
++
++        with tempfile.TemporaryDirectory() as td:
++            repo, subject = _repo(Path(td))
++            backend = InspectingBackend()
++            previous = os.umask(0o077)
++            try:
++                execute(
++                    repo,
++                    subject,
++                    [_evidence("pass", path="tests/deep/e.py")],
++                    [sys.executable, "-c", "pass"],
++                    backend,
++                )
++            finally:
++                os.umask(previous)
++            self.assertEqual(
++                {"root": 0o755, "tests": 0o755, "bin": 0o755, "deep": 0o755},
++                backend.modes,
++            )
++
+     def test_backend_receives_ephemeral_gitless_materialization(self) -> None:
+         class InspectingBackend:
+             def __init__(self, repository: Path) -> None:
+diff --git a/tools/vf0_execution.py b/tools/vf0_execution.py
+index 36ad5e9..3adc612 100644
+--- a/tools/vf0_execution.py
++++ b/tools/vf0_execution.py
+@@ -31,6 +31,7 @@ _MAX_SUBJECT_BYTES = 64 * 1024 * 1024
+ _MAX_FILE_BYTES = 32 * 1024 * 1024
+ _MAX_EVIDENCE_FILES = 32
+ _MAX_EVIDENCE_BYTES = 2 * 1024 * 1024
++_SUBJECT_DIRECTORY_MODE = 0o755
+ _CONTAINER_TMP = "/tmp"  # nosec B108 -- isolated container tmpfs, never a host temp path
+ _CLEAN_ENV = {
+     "PATH": "/usr/local/bin:/usr/bin:/bin",
+@@ -184,6 +185,25 @@ class _MaterialFile:
+     size: int
+ 
+ 
++def _ensure_subject_directory(path: Path, *, exist_ok: bool) -> None:
++    """Create or normalize one controller-owned materialization directory."""
++
++    try:
++        path.mkdir(mode=_SUBJECT_DIRECTORY_MODE, parents=False, exist_ok=exist_ok)
++        mode = path.lstat().st_mode
++        _need(stat.S_ISDIR(mode) and not stat.S_ISLNK(mode), "SUBJECT_DIRECTORY")
++        path.chmod(_SUBJECT_DIRECTORY_MODE)
++    except OSError as exc:
++        raise ExecutionRejected("SUBJECT_DIRECTORY") from exc
++
++
++def _ensure_subject_parent_chain(root: Path, relative: PurePosixPath) -> None:
++    current = root
++    for part in relative.parts:
++        current = current / part
++        _ensure_subject_directory(current, exist_ok=True)
++
++
+ def _trusted_git_argv(repo: Path, *args: str) -> list[str]:
+     return ["/usr/bin/git", "-c", "core.hooksPath=/dev/null", "-C", str(repo), *args]
+ 
+@@ -276,7 +296,7 @@ def _materialize_subject(
+     ).split(b"\0")
+     expected: dict[str, _MaterialFile] = {}
+     total = 0
+-    target.mkdir(mode=0o755, parents=False, exist_ok=False)
++    _ensure_subject_directory(target, exist_ok=False)
+     for entry in filter(None, entries):
+         try:
+             meta, raw_name = entry.split(b"\t", 1)
+@@ -293,7 +313,7 @@ def _materialize_subject(
+         total += size
+         _need(total <= _MAX_SUBJECT_BYTES, "SUBJECT_TOTAL_BOUND")
+         destination = target / name
+-        destination.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
++        _ensure_subject_parent_chain(target, path.parent)
+         payload = _write_git_blob(root, oid, destination, size)
+         destination.chmod(0o755 if mode == "100755" else 0o644)
+         expected[name] = _MaterialFile(mode=mode, sha256=_sha256(payload), size=size)
+@@ -344,8 +364,9 @@ def _overlay_evidence(
+         observed_paths.add(item.path)
+         total += len(item.content)
+         _need(total <= _MAX_EVIDENCE_BYTES, "EVIDENCE_TOTAL_BOUND")
+-        destination = root.joinpath(*PurePosixPath(item.path).parts)
+-        destination.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
++        evidence_path = PurePosixPath(item.path)
++        destination = root.joinpath(*evidence_path.parts)
++        _ensure_subject_parent_chain(root, evidence_path.parent)
+         destination.write_bytes(item.content)
+         destination.chmod(0o755 if item.mode == "100755" else 0o644)
+         expected[item.path] = _MaterialFile(
