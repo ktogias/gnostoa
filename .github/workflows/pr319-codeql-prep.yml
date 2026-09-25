@@ -1,0 +1,122 @@
+name: PR319 D0090 CodeQL hardening prepare
+
+on:
+  push:
+    branches:
+      - agent-support/pr319-codeql-prep-20260925
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout support control
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          path: support
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout exact parent
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: b7b008b52fcfb053dc8b6c25893c4dcaf475dc28
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: candidate/requirements/development.lock
+
+      - name: Install exact development dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --only-binary=:all: --require-hashes -r candidate/requirements/development.lock
+
+      - name: Apply exact candidate patch
+        run: |
+          set -euo pipefail
+          echo 'bb2c2020e5d0e19caf58077732ca1e07fc77ec61e4ac3037eb5478dd20d9b743  support/.github/pr319-codeqlfix.patch' | sha256sum --check
+          cd candidate
+          test "$(git rev-parse HEAD)" = b7b008b52fcfb053dc8b6c25893c4dcaf475dc28
+          test "$(git rev-parse HEAD^{tree})" = e436776d3a772544bf01cc718e5e4edc20194619
+          test -z "$(git status --porcelain)"
+          git apply --binary ../support/.github/pr319-codeqlfix.patch
+          test "$(git rev-parse HEAD)" = b7b008b52fcfb053dc8b6c25893c4dcaf475dc28
+          git diff --name-only | sort > "$RUNNER_TEMP/changed-paths.txt"
+          printf '%s\n'             knowledge/assessments/15-vf0-entrance-and-execution-plan.md             tests/test_vf0_execution.py             tools/vf0_execution.py | sort > "$RUNNER_TEMP/expected-paths.txt"
+          diff -u "$RUNNER_TEMP/expected-paths.txt" "$RUNNER_TEMP/changed-paths.txt"
+          git diff --check
+
+      - name: Prepare and independently verify exact candidate
+        run: |
+          set -euo pipefail
+          cd candidate
+          parent=b7b008b52fcfb053dc8b6c25893c4dcaf475dc28
+          wrapper="$RUNNER_TEMP/prepare-candidate"
+          git show "$parent:ci/prepare-candidate" > "$wrapper"
+          chmod 700 "$wrapper"
+          receipt="$RUNNER_TEMP/receipt.json"
+          "$wrapper" prepare             --parent "$parent"             --receipt "$receipt"             --focused-profile fast             --trusted-python "$(command -v python)" | tee "$RUNNER_TEMP/prepare.stdout"
+          python - "$receipt" "$RUNNER_TEMP/metadata.txt" <<'PY'
+import json
+import pathlib
+import sys
+receipt = pathlib.Path(sys.argv[1])
+metadata = pathlib.Path(sys.argv[2])
+doc = json.loads(receipt.read_text(encoding="utf-8"))
+required = {
+    "schema",
+    "parent_commit",
+    "parent_tree",
+    "prepared_tree",
+    "retention_ref",
+    "prepared_diff_sha256",
+    "receipt_sha256",
+    "verify_sha256",
+}
+missing = sorted(required - doc.keys())
+if missing:
+    raise SystemExit(f"missing receipt fields: {missing}")
+if doc["parent_commit"] != "b7b008b52fcfb053dc8b6c25893c4dcaf475dc28":
+    raise SystemExit("wrong receipt parent")
+if doc["focused_profile"] != "fast":
+    raise SystemExit("wrong focused profile")
+metadata.write_text(
+    "\n".join(f"{key}={doc[key]}" for key in sorted(required)) + "\n",
+    encoding="utf-8",
+)
+print(doc["prepared_tree"])
+print(doc["receipt_sha256"])
+PY
+          tree="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["prepared_tree"])' "$receipt")"
+          receipt_sha="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["receipt_sha256"])' "$receipt")"
+          "$wrapper" verify             --parent "$parent"             --tree "$tree"             --receipt "$receipt"             --receipt-sha256 "$receipt_sha"             --trusted-python "$(command -v python)" | tee "$RUNNER_TEMP/verify.stdout"
+          git diff --binary "$parent^{tree}" "$tree" > "$RUNNER_TEMP/prepared.patch"
+          git archive --format=tar "$tree" | gzip -n > "$RUNNER_TEMP/prepared-tree.tar.gz"
+          sha256sum "$receipt" "$RUNNER_TEMP/prepared.patch" "$RUNNER_TEMP/prepared-tree.tar.gz" > "$RUNNER_TEMP/artifact-sha256.txt"
+          git diff --name-only "$parent^{tree}" "$tree" | sort > "$RUNNER_TEMP/prepared-paths.txt"
+          diff -u "$RUNNER_TEMP/expected-paths.txt" "$RUNNER_TEMP/prepared-paths.txt"
+
+      - name: Upload preparation evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr319-codeql-prepared-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/receipt.json
+            ${{ runner.temp }}/prepare.stdout
+            ${{ runner.temp }}/verify.stdout
+            ${{ runner.temp }}/metadata.txt
+            ${{ runner.temp }}/prepared.patch
+            ${{ runner.temp }}/prepared-tree.tar.gz
+            ${{ runner.temp }}/artifact-sha256.txt
+            ${{ runner.temp }}/prepared-paths.txt
+          retention-days: 7
+          if-no-files-found: error

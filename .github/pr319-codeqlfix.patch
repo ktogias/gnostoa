@@ -1,0 +1,238 @@
+diff --git a/knowledge/assessments/15-vf0-entrance-and-execution-plan.md b/knowledge/assessments/15-vf0-entrance-and-execution-plan.md
+index a18f12df9d90749c4d144a00d0c6150257d37149..186e18800a506a4644a96bbf4015f3eb9a5b0996 100644
+--- a/knowledge/assessments/15-vf0-entrance-and-execution-plan.md
++++ b/knowledge/assessments/15-vf0-entrance-and-execution-plan.md
+@@ -650,3 +650,44 @@ workflow or provider-specific common-core contract. Ordinary unchanged-parent
+ D0090 preparation remains mandatory before publication; the previously approved
+ bootstrap exception is unused. VF0 remains **critical and inactive** and still
+ precedes #318.
++
++### Post-publication OCI conformance and materialization hardening
++
++The preceding pre-smoke statement is retained as chronology. The declared live
++OCI component smoke subsequently ran against exact published head
++`b7b008b52fcfb053dc8b6c25893c4dcaf475dc28`, tree
++`e436776d3a772544bf01cc718e5e4edc20194619`, in GitHub Actions run
++[36132076440](https://github.com/ktogias/gnostoa/actions/runs/36132076440), job
++`108061408916`. The one-shot workflow used `contents: read`, no Environment,
++secret or external input, and the already pinned image
++`ghcr.io/ktogias/gnostoa@sha256:f89bf32c0c4b86bac71fa008579b2385e6ae39bf4822f685479c4f2cc22bfca4`.
++Retained artifact `10862250915` matched provider archive SHA-256
++`87d908f59bbe446bfa22be22457142e80aecc45fed4c64d5ecec8036dc3feee4`
++before ZIP parsing; bounded `result.json` SHA-256 is
++`9dd838d5801fb67b20fe8e50df3656b31c0e85fc09d69acb96b1c9eb7b8594ca`.
++
++The fixed cases observed isolation and spoof cases completing with exit 0,
++nonzero exit 17, descendant timeout, bounded output overflow at 65,536 retained
++bytes, two successful successive immutable subjects with distinct commit/tree
++identities, and wrong-tree refusal before container start. Every executed case
++reported the subject unchanged and no authority effect. The retained result
++keeps `production_receipt_issued=false`, `producer_admitted=false`,
++`compliance_established=false` and `vf0_active=false`. This is actual Docker
++component conformance, not RED certification, producer admission, D0090
++activation or merge authority. Support-workflow cleanup commit
++`eace1d2c93235f02b4c4287a0c2e5265a6f10d40` restored its source tree; retained
++evidence expires 2026-10-02T11:56:11Z.
++
++Current-head CodeQL then supplied two pre-edit security findings on the Git
++materialization implementation: Python recomputed the Git SHA-1 blob object ID
++from blob bytes, and those same bytes were written from a Python value into the
++private materialization. The integrity requirement remains valid, but neither
++operation needs Python to hold repository blob content. The successor therefore
++streams `git cat-file blob` directly into an exclusively created destination,
++checks exact size/type, asks trusted Git to recompute the raw blob identity with
++`git hash-object --no-filters`, and retains only a SHA-256 file manifest in
++Python. A corruption regression replaces a loose object behind its expected
++object name and requires `SUBJECT_BLOB_MISMATCH` before backend execution. This
++hardening removes the weak-hash and clear-text-storage scanner patterns without
++weakening exact Git-object verification or changing the provider-neutral
++execution contract.
+diff --git a/tests/test_vf0_execution.py b/tests/test_vf0_execution.py
+index 000d4b2e2a07202b2b4401e9b6ad518d56cf3ed4..d5d919c131f7992ba7a8e9b0af5175cfd8118c9c 100644
+--- a/tests/test_vf0_execution.py
++++ b/tests/test_vf0_execution.py
+@@ -10,6 +10,7 @@ import subprocess
+ import sys
+ import tempfile
+ import textwrap
++import time
+ import unittest
+ from collections.abc import Callable, Sequence
+ from dataclasses import fields
+@@ -253,6 +254,60 @@ class VF0SubjectTests(unittest.TestCase):
+                     SubprocessBackend(),
+                 )
+ 
++    def test_corrupt_git_blob_is_rejected_by_object_identity(self) -> None:
++        class NeverBackend:
++            called = False
++
++            def run(
++                self, root: Path, command: Sequence[str], limits: ExecutionLimits
++            ) -> UntrustedCapture:
++                self.called = True
++                raise AssertionError("backend must not run")
++
++        with tempfile.TemporaryDirectory() as td:
++            repo, subject = _repo(Path(td))
++            oid = _git(repo, "rev-parse", f"{subject.commit}:subject.txt")
++            other = (
++                subprocess.run(
++                    [
++                        "/usr/bin/git",
++                        "-c",
++                        "core.hooksPath=/dev/null",
++                        "-C",
++                        str(repo),
++                        "hash-object",
++                        "-w",
++                        "--stdin",
++                    ],
++                    check=True,
++                    input=b"different\n",
++                    stdout=subprocess.PIPE,
++                    env={
++                        "PATH": "/usr/local/bin:/usr/bin/bin",
++                        "HOME": str(repo.parent),
++                        "GIT_CONFIG_NOSYSTEM": "1",
++                        "GIT_CONFIG_GLOBAL": "/dev/null",
++                        "GIT_NO_REPLACE_OBJECTS": "1",
++                    },
++                 )
++                .stdout.decode("ascii")
++                .strip()
++            )
++            objects = repo / ".git" / "objects"
++            target_object = objects / oid[:2] / oid[2:]
++            other_object = objects / other[:2] / other[2:]
++            target_object.write_bytes(other_object.read_bytes())
++            backend = NeverBackend()
++            with self.assertRaisesRegex(ExecutionRejected, "SUBJECT_BLOB_MISMATCH"):
++                execute(
++                    repo,
++                    subject,
++                    [_evidence("print('x')")],
++                    [sys.executable, "-c", "pass"],
++                    backend,
++                )
++            self.assertFalse(backend.called)
++
+     def test_duplicate_evidence_path_rejects(self) -> None:
+         with tempfile.TemporaryDirectory() as td:
+             repo, subject = _repo(Path(td))
+@@ -489,6 +544,31 @@ class VF0CaptureTests(unittest.TestCase):
+             _kill_process_group(process)
+         kill_group.assert_called_once_with(12345, 9)
+ 
++    def test_timeout_kills_descendant_even_after_leader_exits(self) -> None:
++        from tools.vf0_execution import _capture_process
++
++        with tempfile.TemporaryDirectory() as td:
++            marker = Path(td) / "descendant-survived"
++            child = (
++                "import pathlib,time; "
++                "time.sleep(0.4); "
++                f"pathlib.Path({str(marker)!r}).write_text('alive')"
++            )
++            leader = (
++                "import subprocess,sys; "
++                f"subprocess.Popen([sys.executable, '-I', '-c', {child!r}]); "
++                "print('LEADER_EXITED', flush=True)"
++            )
++            capture = _capture_process(
++                [sys.executable, "-I", "-c", leader],
++                cwd=Path(td),
++                limits=ExecutionLimits(timeout_seconds=0.1),
++            )
++            self.assertEqual("timeout", capture.termination)
++            self.assertIn(b"LEADER_EXITED", capture.stdout)
++            time.sleep(0.5)
++            self.assertFalse(marker.exists())
++
+     def test_caller_marker_environment_is_not_inherited(self) -> None:
+         marker = "VF0_CALLER_MARKER"
+         previous = os.environ.get(marker)
+diff --git a/tools/vf0_execution.py b/tools/vf0_execution.py
+index 4faaf6e29b200d75a86e210b84ab78f69d6d8ec2..4bc8d757890bebd4e55142094f09e68e47005031 100644
+--- a/tools/vf0_execution.py
++++ b/tols/vf0_execution.py
+@@ -55,9 +55,12 @@ def _sha256(raw: bytes) -> str:
+     return hashlib.sha256(raw).hexdigest()
+ 
+ 
+-def _git_blob_sha1(raw: bytes) -> str:
+-    framed = b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw
+-    return hashlib.sha1(framed).hexdigest()
++def _sha256_file(path: Path) -> str:
++    try:
++        with path.open("rb") as stream:
++            return hashlib.file_digest(stream, "sha256").hexdigest()
++    except OSError as exc:
++        raise ExecutionRejected("SUBJECT_FILE_READ") from exc
+ 
+ 
+ def _canonical(value: object) -> bytes:
+@@ -205,6 +208,23 @@ def _trusted_git(repo: Path, *args: str) -> bytes:
+     return result.stdout
+ 
++def _trusted_git_to_descriptor(repo: Path, descriptor: int, *args: str) -> None:
++    argv = ["/usr/bin/git", "-c", "core.hooksPath=/dev/null", "-C", str(repo), *args]
++    try:
++        result = subprocess.run(
++            argv,
++            check=False,
++            stdin=subprocess.DEVNULL,
++            stdout=descriptor,
++            stderr=subprocess.PIPE,
++            env=_CLEAN_ENV,
++            timeout=30,
++        )
++    except (OSError, subprocess.TimeoutExpired) as exc:
++        raise ExecutionRejected("GIT_COMMAND_FAILED") from exc
++    _need(result.returncode == 0, "GIT_COMMAND_FAILED")
++
++
+ def _repo_root(repo: Path) -> Path:
+     resolved = repo.resolve(strict=True)
+     top = Path(
+@@ -252,16 +272,34 @@ def _materialize_subject(
+         _need(0 <= size <= _MAX_FILE_BYTES, "SUBJECT_FILE_BOUND")
+         total += size
+         _need(total <= _MAX_SUBJECT_BYTES, "SUBJECT_TOTAL_BOUND")
+-        payload = _trusted_git(root, "cat-file", "blob", oid)
++        destination = target / name
++        destination.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
++        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
++        if hasattr(os, "O_NOFOLLOW"):
++            flags |= os.O_NOFOLLOW
++        try:
++            descriptor = os.open(destination, flags, 0o600)
++        except OSError as exc:
++            raise ExecutionRejected("SUBJECT_FILE_CREATE") from exc
++        try:
++            _trusted_git_to_descriptor(root, descriptor, "cat-file", "blob", oid)
++            observed = os.fstat(descriptor)
++        finally:
++            os.close(descriptor)
+         _need(
+-            len(payload) == size and _git_blob_sha1(payload) == oid,
++            stat.S_ISREG(observed.st_mode) and observed.st_size == size,
+             "SUBJECT_BLOB_MISMATCH",
+         )
+-        destination = target / name
+-        destination.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+-        destination.write_bytes(payload)
++        actual_oid = (
++            _trusted_git(root, "hash-object", "--no-filters", "--", str(destination))
++            .decode("ascii")
++            .strip()
++        )
++        _need(actual_oid == oid, "SUBJECT_BLOB_MISMATCH")
+         destination.chmod(0o755 if mode == "100755" else 0o644)
+-        expected[name] = _MaterialFile(mode=mode, sha256=_sha256(payload), size=size)
++        expected[name] = _MaterialFile(
++            mode=mode, sha256=_sha256_file(destination), size=size
++        )
+     return expected
+ 
+ 
