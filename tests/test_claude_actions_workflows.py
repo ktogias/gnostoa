@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
@@ -21,8 +22,21 @@ _ASSOCIATION_FIELDS = (
 )
 
 
+def _workflow_paths(directory: Path) -> list[Path]:
+    # GitHub Actions loads both extensions from .github/workflows.
+    return sorted(
+        path for pattern in ("*.yml", "*.yaml") for path in directory.glob(pattern)
+    )
+
+
 def _steps(workflow: dict[str, Any]) -> list[dict[str, Any]]:
-    return [step for job in workflow["jobs"].values() for step in job["steps"]]
+    return [step for job in workflow["jobs"].values() for step in job.get("steps", [])]
+
+
+def _action_references(workflow: dict[str, Any]) -> list[str]:
+    references = [job["uses"] for job in workflow["jobs"].values() if "uses" in job]
+    references.extend(step["uses"] for step in _steps(workflow) if "uses" in step)
+    return references
 
 
 def _single_job(workflow: dict[str, Any]) -> dict[str, Any]:
@@ -32,12 +46,35 @@ def _single_job(workflow: dict[str, Any]) -> dict[str, Any]:
     return jobs[0]
 
 
+class WorkflowEnumerationTests(unittest.TestCase):
+    def test_workflow_paths_cover_both_github_extensions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ("a.yml", "b.yaml", "c.json"):
+                (root / name).write_text("", encoding="utf-8")
+            self.assertEqual(
+                ["a.yml", "b.yaml"],
+                [path.name for path in _workflow_paths(root)],
+            )
+
+    def test_action_references_include_reusable_workflow_jobs(self) -> None:
+        workflow = {
+            "jobs": {
+                "call": {"uses": "owner/repo/.github/workflows/x.yml@main"},
+                "run": {"steps": [{"uses": "owner/action@v1"}, {"run": "true"}]},
+            }
+        }
+        self.assertEqual(
+            ["owner/repo/.github/workflows/x.yml@main", "owner/action@v1"],
+            _action_references(workflow),
+        )
+
+
 class ClaudeActionsWorkflowTests(unittest.TestCase):
     def test_every_workflow_action_is_pinned_to_a_full_commit_sha(self) -> None:
-        for path in sorted(WORKFLOWS.glob("*.yml")):
-            for step in _steps(load_yaml(path)):
-                uses = step.get("uses")
-                if uses is None or uses.startswith("./"):
+        for path in _workflow_paths(WORKFLOWS):
+            for uses in _action_references(load_yaml(path)):
+                if uses.startswith("./"):
                     continue
                 with self.subTest(workflow=path.name, uses=uses):
                     self.assertRegex(uses, _PINNED_USES)
