@@ -1,0 +1,64 @@
+name: PR319 exact-head VF0 OCI smoke
+
+on:
+  push:
+    branches:
+      - agent-support/pr319-umask-oci-smoke-20260925
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 02cc6ea4795f516dfaaab4440a30cfa299286ca8
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Bind exact published subject
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "02cc6ea4795f516dfaaab4440a30cfa299286ca8"
+          test "$(git rev-parse HEAD^{tree})" = "9630b78eaa9c69637fffef4e300490a88e488da4"
+          test -z "$(git status --porcelain)"
+          git fsck --full
+      - name: Run fixed VF0 OCI component smoke
+        env:
+          IMAGE: ghcr.io/ktogias/gnostoa@sha256:f89bf32c0c4b86bac71fa008579b2385e6ae39bf4822f685479c4f2cc22bfca4
+        run: |
+          set -euo pipefail
+          docker pull "$IMAGE"
+          python3 tests/vf0_execution_oci_smoke.py \
+            --image "$IMAGE" \
+            --output /tmp/result.json
+          python3 - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          names = [
+              "tools/vf0_execution.py",
+              "tests/test_vf0_execution.py",
+              "tests/vf0_execution_oci_smoke.py",
+          ]
+          result = Path("/tmp/result.json")
+          meta = {
+              "schema":"pr319-vf0-execution-smoke-wrapper/v1",
+              "head":"02cc6ea4795f516dfaaab4440a30cfa299286ca8",
+              "tree":"9630b78eaa9c69637fffef4e300490a88e488da4",
+              "image":"ghcr.io/ktogias/gnostoa@sha256:f89bf32c0c4b86bac71fa008579b2385e6ae39bf4822f685479c4f2cc22bfca4",
+              "sources":{n:hashlib.sha256(Path(n).read_bytes()).hexdigest() for n in names},
+              "result_sha256":hashlib.sha256(result.read_bytes()).hexdigest(),
+          }
+          Path("/tmp/metadata.json").write_text(json.dumps(meta,sort_keys=True,indent=2)+"\n")
+          PY
+      - name: Upload bounded smoke evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr319-vf0-execution-smoke-02cc6ea4
+          path: |
+            /tmp/result.json
+            /tmp/metadata.json
+          if-no-files-found: error
+          retention-days: 7
