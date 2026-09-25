@@ -30,6 +30,8 @@ _DOCKER_ID_RE = re.compile(r"[0-9a-f]{64}")
 _IMAGE_RE = re.compile(r"(?:[a-z0-9][a-z0-9._/-]*@)?sha256:[0-9a-f]{64}")
 _MAX_SUBJECT_BYTES = 64 * 1024 * 1024
 _MAX_FILE_BYTES = 32 * 1024 * 1024
+_MAX_SUBJECT_FILES = 4096
+_MAX_SUBJECT_TREE_LISTING_BYTES = 32 * 1024 * 1024
 _MAX_EVIDENCE_FILES = 32
 _MAX_EVIDENCE_BYTES = 2 * 1024 * 1024
 _CONTAINER_TMP = "/tmp"  # nosec B108 -- isolated container tmpfs, never a host temp path
@@ -209,6 +211,81 @@ def _trusted_git(repo: Path, *args: str) -> bytes:
     return result.stdout
 
 
+def _trusted_git_tree_entries(repo: Path, commit: str) -> list[bytes]:
+    """Read a bounded Git tree listing without buffering unbounded provider output."""
+
+    try:
+        with tempfile.TemporaryFile() as stderr:
+            # Fixed /usr/bin/git, list argv, scrubbed env, no shell: intentional audit boundary.
+            process = subprocess.Popen(  # nosec B603  # nosemgrep
+                _trusted_git_argv(repo, "ls-tree", "-rzl", "--full-tree", commit),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=stderr,
+                env=_CLEAN_ENV,
+            )
+            if process.stdout is None:
+                process.kill()
+                process.wait()
+                raise ExecutionRejected("GIT_COMMAND_FAILED")
+
+            selector = selectors.DefaultSelector()
+            selector.register(process.stdout, selectors.EVENT_READ)
+            deadline = time.monotonic() + 30.0
+            pending = bytearray()
+            entries: list[bytes] = []
+            observed_bytes = 0
+            try:
+                while selector.get_map():
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise subprocess.TimeoutExpired(process.args, 30)
+                    events = selector.select(remaining)
+                    if not events:
+                        raise subprocess.TimeoutExpired(process.args, 30)
+                    for key, _ in events:
+                        chunk = os.read(key.fd, 65_536)
+                        if not chunk:
+                            selector.unregister(key.fileobj)
+                            continue
+                        observed_bytes += len(chunk)
+                        _need(
+                            observed_bytes <= _MAX_SUBJECT_TREE_LISTING_BYTES,
+                            "SUBJECT_TREE_BOUND",
+                        )
+                        pending.extend(chunk)
+                        while True:
+                            end = pending.find(0)
+                            if end < 0:
+                                break
+                            entry = bytes(pending[:end])
+                            del pending[: end + 1]
+                            if not entry:
+                                continue
+                            _need(
+                                len(entries) < _MAX_SUBJECT_FILES,
+                                "SUBJECT_FILE_COUNT",
+                            )
+                            entries.append(entry)
+
+                remaining = max(0.0, deadline - time.monotonic())
+                process.wait(timeout=remaining)
+            except Exception:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait()
+                raise
+            finally:
+                selector.close()
+                process.stdout.close()
+
+            _need(process.returncode == 0, "GIT_COMMAND_FAILED")
+            _need(not pending, "SUBJECT_TREE_ENTRY")
+            return entries
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ExecutionRejected("GIT_COMMAND_FAILED") from exc
+
+
 def _write_git_blob(
     repo: Path, oid: str, destination: Path, expected_size: int
 ) -> bytes:
@@ -301,13 +378,11 @@ def _materialize_subject(
     _need(commit == subject.commit, "SUBJECT_COMMIT")
     _need(tree == subject.tree, "SUBJECT_TREE")
 
-    entries = _trusted_git(
-        root, "ls-tree", "-rzl", "--full-tree", subject.commit
-    ).split(b"\0")
+    entries = _trusted_git_tree_entries(root, subject.commit)
     expected: dict[str, _MaterialFile] = {}
     total = 0
     _normalize_subject_directory(target, exist_ok=False)
-    for entry in filter(None, entries):
+    for entry in entries:
         try:
             meta, raw_name = entry.split(b"\t", 1)
             mode, kind, oid, raw_size = meta.decode("ascii").split()
@@ -339,7 +414,9 @@ def _snapshot(root: Path) -> dict[str, _MaterialFile]:
         if stat.S_ISDIR(mode):
             continue
         _need(stat.S_ISREG(mode), "SUBJECT_SPECIAL_FILE")
-        raw = item.read_bytes()
+        _need(item.lstat().st_size <= _MAX_FILE_BYTES, "SUBJECT_FILE_BOUND")
+        with item.open("rb") as stream:
+            raw = stream.read(_MAX_FILE_BYTES + 1)
         _need(len(raw) <= _MAX_FILE_BYTES, "SUBJECT_FILE_BOUND")
         total += len(raw)
         _need(total <= _MAX_SUBJECT_BYTES + _MAX_EVIDENCE_BYTES, "SUBJECT_TOTAL_BOUND")

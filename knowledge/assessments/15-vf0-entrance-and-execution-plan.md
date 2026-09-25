@@ -646,6 +646,13 @@ relation suite remains **34 tests** and the execution/fixture suite becomes **46
 tests**, so this candidate executes **80 focused tests**. All 80 pass normally and
 under Python optimization before ordinary D0090 preparation.
 
+The subsequent subject/snapshot boundedness repair adds three execution/fixture
+regressions: finite Git subject entry count, finite Git tree-listing bytes, and
+pre-read rejection of oversized post-execution files. The relation suite remains
+**34 tests** and the execution/fixture suite becomes **49 tests**, so this
+successor executes **83 focused tests**. All 83 pass normally and under Python
+optimization before ordinary D0090 preparation.
+
 This evidence still does **not** claim a live run of the new Docker specialization.
 `tests/vf0_execution_oci_smoke.py` is intentionally outside unittest discovery and
 must be executed after exact ordinary D0090 preparation/publication of this

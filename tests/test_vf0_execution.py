@@ -185,6 +185,80 @@ class VF0SubjectTests(unittest.TestCase):
                 result.evidence_sha256,
             )
 
+    def test_subject_file_count_is_bounded_before_materialization(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            repo.mkdir()
+            _git(repo, "init", "--quiet")
+            empty = repo / "empty"
+            empty.write_bytes(b"")
+            oid = _git(repo, "hash-object", "-w", "empty")
+            tree_input = "".join(
+                f"100644 blob {oid}\tfile-{index:04d}\n"
+                for index in range(module._MAX_SUBJECT_FILES + 1)
+            ).encode()
+            result = subprocess.run(  # nosec B603 -- fixed Git plumbing fixture, no shell
+                [
+                    "/usr/bin/git",
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                    "-C",
+                    str(repo),
+                    "mktree",
+                ],
+                check=True,
+                input=tree_input,
+                capture_output=True,
+                env={
+                    "PATH": "/usr/local/bin:/usr/bin:/bin",
+                    "HOME": str(repo.parent),
+                    "GIT_CONFIG_NOSYSTEM": "1",
+                    "GIT_CONFIG_GLOBAL": "/dev/null",
+                    "GIT_NO_REPLACE_OBJECTS": "1",
+                },
+            )
+            tree = result.stdout.decode().strip()
+            commit = _git(
+                repo,
+                "-c",
+                "user.name=VF0 Test",
+                "-c",
+                "user.email=vf0@example.invalid",
+                "commit-tree",
+                tree,
+                "-m",
+                "many-files",
+            )
+            with self.assertRaisesRegex(ExecutionRejected, "SUBJECT_FILE_COUNT"):
+                module._trusted_git_tree_entries(repo, commit)
+
+    def test_subject_tree_listing_bytes_are_bounded(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        with tempfile.TemporaryDirectory() as td:
+            repo, subject = _repo(Path(td))
+            with mock.patch.object(module, "_MAX_SUBJECT_TREE_LISTING_BYTES", 1):
+                with self.assertRaisesRegex(ExecutionRejected, "SUBJECT_TREE_BOUND"):
+                    module._trusted_git_tree_entries(repo, subject.commit)
+
+    def test_snapshot_rejects_oversized_file_before_read_bytes(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            oversized = root / "oversized.bin"
+            with oversized.open("wb") as handle:
+                handle.truncate(module._MAX_FILE_BYTES + 1)
+            original_read_bytes = Path.read_bytes
+
+            def guarded_read_bytes(path: Path) -> bytes:
+                if path == oversized:
+                    raise AssertionError("oversized file read before size bound")
+                return original_read_bytes(path)
+
+            with mock.patch.object(Path, "read_bytes", guarded_read_bytes):
+                with self.assertRaisesRegex(ExecutionRejected, "SUBJECT_FILE_BOUND"):
+                    module._snapshot(root)
+
     def test_restrictive_umask_normalizes_materialization_directory_modes(self) -> None:
         class ModeBackend:
             modes: dict[str, int]
