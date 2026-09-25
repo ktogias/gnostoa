@@ -1,0 +1,80 @@
+name: PR319 snapshot integrity RED 518e4e8d
+on:
+  push:
+    branches: [agent-support/pr319-red-snapshot-518e4e8d-20260925]
+permissions:
+  contents: read
+jobs:
+  red:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 518e4e8ddaa731eb9635715033d34282e47e5542
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Bind exact head and run pre-edit REDs
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "518e4e8ddaa731eb9635715033d34282e47e5542"
+          python - <<'PY'
+          import tempfile
+          import unittest
+          from pathlib import Path
+          from collections.abc import Iterator
+          from typing import Sequence
+
+          from tests.test_vf0_execution import _evidence, _repo
+          from tools.vf0_execution import (
+              ExecutionLimits,
+              ExecutionRejected,
+              GitSubject,
+              UntrustedCapture,
+              execute,
+          )
+
+          class DirectoryMutatingBackend:
+              def run(self, root: Path, command: Sequence[str], limits: ExecutionLimits, *, subject: GitSubject) -> UntrustedCapture:
+                  del command, limits, subject
+                  (root / "runtime-empty").mkdir()
+                  return UntrustedCapture("completed", 0, b"", b"", 0)
+
+          class RecordingBackend:
+              def __init__(self):
+                  self.command = None
+              def run(self, root: Path, command: Sequence[str], limits: ExecutionLimits, *, subject: GitSubject) -> UntrustedCapture:
+                  del root, limits, subject
+                  self.command = tuple(command)
+                  return UntrustedCapture("completed", 0, b"", b"", 0)
+
+          class FlippingCommand:
+              def __init__(self):
+                  self.iterations = 0
+              def __len__(self):
+                  return 1
+              def __iter__(self) -> Iterator[str]:
+                  self.iterations += 1
+                  yield "/bin/true" if self.iterations == 1 else "/bin/false"
+
+          class RedTests(unittest.TestCase):
+              def test_empty_directory_mutation_is_rejected(self):
+                  with tempfile.TemporaryDirectory() as td:
+                      repo, subject = _repo(Path(td))
+                      with self.assertRaisesRegex(ExecutionRejected, "SUBJECT_MUTATED"):
+                          execute(repo, subject, [_evidence("pass")], ["/bin/true"], DirectoryMutatingBackend())
+
+              def test_command_is_snapshotted_before_validation(self):
+                  with tempfile.TemporaryDirectory() as td:
+                      repo, subject = _repo(Path(td))
+                      command = FlippingCommand()
+                      backend = RecordingBackend()
+                      execute(repo, subject, [_evidence("pass")], command, backend)
+                      self.assertEqual(("/bin/true",), backend.command)
+                      self.assertEqual(1, command.iterations)
+
+          unittest.main(verbosity=2)
+          PY
