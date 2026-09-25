@@ -1,0 +1,134 @@
+name: PR319 D0090 mutable evidence preparation
+
+on:
+  push:
+    branches:
+      - agent-support/pr319-d0090-mutable-evidence-20260925
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: da05e97699a475f0bb8b7c649f77083ace1c45d3
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/development.lock
+      - name: Install exact development dependencies
+        run: |
+          python -m pip install             --only-binary=:all:             --require-hashes             -r requirements/development.lock
+      - name: Bind parent and apply immutable candidate patch
+        env:
+          EXPECTED_PARENT: da05e97699a475f0bb8b7c649f77083ace1c45d3
+          EXPECTED_TREE: 938b14b9eff5ddcebd1200d4695897062e32cc87
+          EXPECTED_PATCH_SHA256: 1344db8d118b97fe120cb5612cac0126c79a00daa67a400fc28672a9cc53860d
+          PATCH_B64: ZGlmZiAtLWdpdCBhL2tub3dsZWRnZS9hc3Nlc3NtZW50cy8xNS12ZjAtZW50cmFuY2UtYW5kLWV4ZWN1dGlvbi1wbGFuLm1kIGIva25vd2xlZGdlL2Fzc2Vzc21lbnRzLzE1LXZmMC1lbnRyYW5jZS1hbmQtZXhlY3V0aW9uLXBsYW4ubWQKaW5kZXggOTdhMTliMC4uYTlmYjY1MiAxMDA2NDQKLS0tIGEva25vd2xlZGdlL2Fzc2Vzc21lbnRzLzE1LXZmMC1lbnRyYW5jZS1hbmQtZXhlY3V0aW9uLXBsYW4ubWQKKysrIGIva25vd2xlZGdlL2Fzc2Vzc21lbnRzLzE1LXZmMC1lbnRyYW5jZS1hbmQtZXhlY3V0aW9uLXBsYW4ubWQKQEAgLTY5Niw2ICs2OTYsMTMgQEAgdGhlIGV4ZWN1dGlvbi9maXh0dXJlIHN1aXRlIGJlY29tZXMgKio2NCB0ZXN0cyoqLCBzbyB0aGUgZm9jdXNlZCBjb3JwdXMgaXMgKio5OAogdGVzdHMqKi4gQWxsICoqOTgqKiBwYXNzIG5vcm1hbGx5IGFuZCB1bmRlciBgcHl0aG9uIC1PYCBiZWZvcmUgb3JkaW5hcnkKIGV4YWN0LXBhcmVudCBEMDA5MCBwcmVwYXJhdGlvbi4KIAorVGhlIG5leHQgaW1tdXRhYmxlLWV2aWRlbmNlIHN1Y2Nlc3NvciBhZGRzIG9uZSBleGVjdXRpb24vZml4dHVyZSByZWdyZXNzaW9uIHRoYXQKK3NuYXBzaG90cyBzdXBwb3J0ZWQgYnl0ZXMtbGlrZSBldmlkZW5jZSBjb250ZW50IHRvIGltbXV0YWJsZSBgYnl0ZXNgIGF0Citjb25zdHJ1Y3Rpb24sIHNvIGxhdGVyIGNhbGxlci9iYWNrZW5kIG11dGF0aW9uIGNhbm5vdCBhbHRlciB0aGUgcmV0YWluZWQgZGlnZXN0LgorVGhlIHJlbGF0aW9uIHN1aXRlIHJlbWFpbnMgKiozNCB0ZXN0cyoqIGFuZCB0aGUgZXhlY3V0aW9uL2ZpeHR1cmUgc3VpdGUgYmVjb21lcworKio2NSB0ZXN0cyoqLCBmb3IgKio5OSBmb2N1c2VkIHRlc3RzKiogdG90YWwuIEFsbCAqKjk5KiogcGFzcyBub3JtYWxseSBhbmQgdW5kZXIKK2BweXRob24gLU9gIGJlZm9yZSBvcmRpbmFyeSBleGFjdC1wYXJlbnQgRDAwOTAgcHJlcGFyYXRpb24uCisKIFRoaXMgZXZpZGVuY2Ugc3RpbGwgZG9lcyAqKm5vdCoqIGNsYWltIGEgbGl2ZSBydW4gb2YgdGhlIG5ldyBEb2NrZXIgc3BlY2lhbGl6YXRpb24uCiBgdGVzdHMvdmYwX2V4ZWN1dGlvbl9vY2lfc21va2UucHlgIGlzIGludGVudGlvbmFsbHkgb3V0c2lkZSB1bml0dGVzdCBkaXNjb3ZlcnkgYW5kCiBtdXN0IGJlIGV4ZWN1dGVkIGFmdGVyIGV4YWN0IG9yZGluYXJ5IEQwMDkwIHByZXBhcmF0aW9uL3B1YmxpY2F0aW9uIG9mIHRoaXMKZGlmZiAtLWdpdCBhL3Rlc3RzL3Rlc3RfdmYwX2V4ZWN1dGlvbi5weSBiL3Rlc3RzL3Rlc3RfdmYwX2V4ZWN1dGlvbi5weQppbmRleCBlMzZjN2Q5Li41OWFkN2YzIDEwMDY0NAotLS0gYS90ZXN0cy90ZXN0X3ZmMF9leGVjdXRpb24ucHkKKysrIGIvdGVzdHMvdGVzdF92ZjBfZXhlY3V0aW9uLnB5CkBAIC0zNjUsNiArMzY1LDQzIEBAIGNsYXNzIFZGMFN1YmplY3RUZXN0cyh1bml0dGVzdC5UZXN0Q2FzZSk6CiAgICAgICAgICAgICAgICAgYmFja2VuZC5tb2RlcywKICAgICAgICAgICAgICkKIAorICAgIGRlZiB0ZXN0X2V2aWRlbmNlX2NvbnRlbnRfaXNfc25hcHNob3R0ZWRfdG9faW1tdXRhYmxlX2J5dGVzKHNlbGYpIC0+IE5vbmU6CisgICAgICAgIHBheWxvYWQgPSBieXRlYXJyYXkoYiJwcmludCgnb3JpZ2luYWwnKVxuIikKKyAgICAgICAgb3JpZ2luYWwgPSBieXRlcyhwYXlsb2FkKQorICAgICAgICBldmlkZW5jZSA9IEV2aWRlbmNlRmlsZSgKKyAgICAgICAgICAgIHBhdGg9InRlc3RzL211dGFibGUucHkiLAorICAgICAgICAgICAgY29udGVudD1jYXN0KGJ5dGVzLCBwYXlsb2FkKSwKKyAgICAgICAgKQorCisgICAgICAgIGNsYXNzIE11dGF0aW5nQmFja2VuZDoKKyAgICAgICAgICAgIGRlZiBydW4oCisgICAgICAgICAgICAgICAgc2VsZiwKKyAgICAgICAgICAgICAgICByb290OiBQYXRoLAorICAgICAgICAgICAgICAgIGNvbW1hbmQ6IFNlcXVlbmNlW3N0cl0sCisgICAgICAgICAgICAgICAgbGltaXRzOiBFeGVjdXRpb25MaW1pdHMsCisgICAgICAgICAgICAgICAgKiwKKyAgICAgICAgICAgICAgICBzdWJqZWN0OiBHaXRTdWJqZWN0LAorICAgICAgICAgICAgKSAtPiBVbnRydXN0ZWRDYXB0dXJlOgorICAgICAgICAgICAgICAgIGRlbCByb290LCBjb21tYW5kLCBsaW1pdHMsIHN1YmplY3QKKyAgICAgICAgICAgICAgICBwYXlsb2FkWzpdID0gYiJwcmludCgnbXV0YXRlZCEnKVxuIgorICAgICAgICAgICAgICAgIHJldHVybiBVbnRydXN0ZWRDYXB0dXJlKCJjb21wbGV0ZWQiLCAwLCBiIiIsIGIiIiwgMCkKKworICAgICAgICB3aXRoIHRlbXBmaWxlLlRlbXBvcmFyeURpcmVjdG9yeSgpIGFzIHRkOgorICAgICAgICAgICAgcmVwbywgc3ViamVjdCA9IF9yZXBvKFBhdGodGQpKQorICAgICAgICAgICAgcmVzdWx0ID0gZXhlY3V0ZSgKKyAgICAgICAgICAgICAgICByZXBvLAorICAgICAgICAgICAgICAgIHN1YmplY3QsCisgICAgICAgICAgICAgICAgW2V2aWRlbmNlXSwKKyAgICAgICAgICAgICAgICBbIi9iaW4vdHJ1ZSJdLAorICAgICAgICAgICAgICAgIE11dGF0aW5nQmFja2VuZCgpLAorICAgICAgICAgICAgKQorICAgICAgICBzZWxmLmFzc2VydElzSW5zdGFuY2UoZXZpZGVuY2UuY29udGVudCwgYnl0ZXMpCisgICAgICAgIHNlbGYuYXNzZXJ0RXF1YWwob3JpZ2luYWwsIGV2aWRlbmNlLmNvbnRlbnQpCisgICAgICAgIHNlbGYuYXNzZXJ0RXF1YWwoCisgICAgICAgICAgICBoYXNobGliLnNoYTI1NihvcmlnaW5hbCkuaGV4ZGlnZXN0KCksCisgICAgICAgICAgICBkaWN0KHJlc3VsdC5ldmlkZW5jZV9zaGEyNTYpW2V2aWRlbmNlLnBhdGhdLAorICAgICAgICApCisKICAgICBkZWYgdGVzdF9ldmlkZW5jZV9zZXF1ZW5jZV9pc19zbmFwc2hvdHRlZF9iZWZvcmVfYmFja2VuZF9leGVjdXRpb24oc2VsZikgLT4gTm9uZToKICAgICAgICAgd2l0aCB0ZW1wZmlsZS5UZW1wb3JhcnlEaXJlY3RvcnkoKSBhcyB0ZDoKICAgICAgICAgICAgIHJlcG8sIHN1YmplY3QgPSBfcmVwbyhQYXRoKHRkKSkKZGlmZiAtLWdpdCBhL3Rvb2xzL3ZmMF9leGVjdXRpb24ucHkgYi90b29scy92ZjBfZXhlY3V0aW9uLnB5CmluZGV4IGQzNjlmNTQuLjJkMDUzMjEgMTAwNjQ0Ci0tLSBhL3Rvb2xzL3ZmMF9leGVjdXRpb24ucHkKKysrIGIvdG9vbHMvdmYwX2V4ZWN1dGlvbi5weQpAQCAtMTEyLDYgKzExMiwxMSBAQCBjbGFzcyBFdmlkZW5jZUZpbGU6CiAgICAgZGVmIF9fcG9zdF9pbml0X18oc2VsZikgLT4gTm9uZToKICAgICAgICAgb2JqZWN0Ll9fc2V0YXR0cl9fKHNlbGYsICJwYXRoIiwgX2V2aWRlbmNlX3BhdGgoc2VsZi5wYXRoKSkKICAgICAgICAgX25lZWQoc2VsZi5tb2RlIGluIHsiMTAwNjQ0IiwgIjEwMDc1NSJ9LCAiRVZJREVOQ0VfTU9ERSIpCisgICAgICAgIF9uZWVkKAorICAgICAgICAgICAgaXNpbnN0YW5jZShzZWxmLmNvbnRlbnQsIChieXRlcywgYnl0ZWFycmF5LCBtZW1vcnl2aWV3KSksCisgICAgICAgICAgICAiRVZJREVOQ0VfQ09OVEVOVCIsCisgICAgICAgICkKKyAgICAgICAgb2JqZWN0Ll9fc2V0YXR0cl9fKHNlbGYsICJjb250ZW50IiwgYnl0ZXMoc2VsZi5jb250ZW50KSkKICAgICAgICAgX25lZWQobGVuKHNlbGYuY29udGVudCkgPD0gX01BWF9FVklERU5DRV9CWVRFUywgIkVWSURFTkNFX0ZJTEVfQk9VTkQiKQogCiAK
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_PARENT"
+          test "$(git rev-parse HEAD^{tree})" = "$EXPECTED_TREE"
+          test "$(git rev-parse --is-shallow-repository)" = "false"
+          test -z "$(git status --porcelain)"
+          printf '%s' "$PATCH_B64" | base64 --decode > "$RUNNER_TEMP/candidate.patch"
+          test "$(sha256sum "$RUNNER_TEMP/candidate.patch" | awk '{print $1}')" = "$EXPECTED_PATCH_SHA256"
+          git apply --check "$RUNNER_TEMP/candidate.patch"
+          git apply "$RUNNER_TEMP/candidate.patch"
+          actual_paths="$(git diff --name-only | LC_ALL=C sort)"
+          expected_paths="$(printf '%s\n'             knowledge/assessments/15-vf0-entrance-and-execution-plan.md             tests/test_vf0_execution.py             tools/vf0_execution.py | LC_ALL=C sort)"
+          test "$actual_paths" = "$expected_paths"
+          git diff --check
+          git diff --binary > "$RUNNER_TEMP/applied.patch"
+          test "$(sha256sum "$RUNNER_TEMP/applied.patch" | awk '{print $1}')" = "$EXPECTED_PATCH_SHA256"
+      - name: Run exact-parent ordinary D0090 prepare and verify
+        env:
+          EXPECTED_PARENT: da05e97699a475f0bb8b7c649f77083ace1c45d3
+        run: |
+          set -euo pipefail
+          trusted_python="$(command -v python)"
+          test -n "$trusted_python"
+          case "$trusted_python" in "$GITHUB_WORKSPACE"/*) exit 2;; esac
+
+          run_parent_prepare_candidate() (
+            parent=$1
+            action=$2
+            shift 2
+            test "${#parent}" -eq 40
+            case "${parent}" in *[!0-9a-f]*) exit 2;; esac
+            PATH=/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin
+            export PATH
+            git_executable="$(command -v git)"
+            mktemp_executable="$(command -v mktemp)"
+            parent_wrapper="$("${mktemp_executable}" /tmp/gnostoa-parent-wrapper.XXXXXX)"
+            trap 'rm -f -- "$parent_wrapper"' EXIT
+            if ! (
+              unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY
+              unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_INDEX_FILE GIT_CEILING_DIRECTORIES
+              unset GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_CONFIG GIT_CONFIG_PARAMETERS
+              unset GIT_EXTERNAL_DIFF GIT_TEMPLATE_DIR GIT_REPLACE_REF_BASE
+              export GIT_CONFIG_COUNT=0
+              export GIT_CONFIG_GLOBAL=/dev/null
+              export GIT_CONFIG_SYSTEM=/dev/null
+              export GIT_CONFIG_NOSYSTEM=1
+              export GIT_ATTR_NOSYSTEM=1
+              export GIT_NO_REPLACE_OBJECTS=1
+              "${git_executable}" -c core.hooksPath=/dev/null show "${parent}:ci/prepare-candidate"
+            ) > "${parent_wrapper}"; then
+              exit 2
+            fi
+            sh "${parent_wrapper}" "${action}" --parent "${parent}" "$@"
+          )
+
+          receipt="$RUNNER_TEMP/receipt.json"
+          run_parent_prepare_candidate "$EXPECTED_PARENT" prepare             --trusted-python "$trusted_python"             --receipt "$receipt"             --focused-profile fast             > "$RUNNER_TEMP/prepare.json"
+
+          python - "$receipt" "$RUNNER_TEMP/identity.env" <<'PY'
+          import hashlib, json, pathlib, sys
+          receipt = pathlib.Path(sys.argv[1])
+          doc = json.loads(receipt.read_text())
+          raw = receipt.read_bytes()
+          vals = {
+              "PREPARED_TREE": doc["prepared_tree"],
+              "RECEIPT_SHA256": doc["receipt_sha256"],
+              "RAW_RECEIPT_SHA256": hashlib.sha256(raw).hexdigest(),
+              "PREPARED_DIFF_SHA256": doc["prepared_diff_sha256"],
+              "RETENTION_REF": doc["retention_ref"],
+          }
+          pathlib.Path(sys.argv[2]).write_text("\n".join(f"{k}={v}" for k,v in vals.items())+"\n")
+          PY
+          . "$RUNNER_TEMP/identity.env"
+
+          run_parent_prepare_candidate "$EXPECTED_PARENT" verify             --trusted-python "$trusted_python"             --tree "$PREPARED_TREE"             --receipt "$receipt"             --receipt-sha256 "$RECEIPT_SHA256"             > "$RUNNER_TEMP/verify.json"
+
+          git diff --binary > "$RUNNER_TEMP/prepared.patch"
+          sha256sum "$RUNNER_TEMP/prepared.patch" > "$RUNNER_TEMP/prepared.patch.sha256"
+          printf '%s\n' "$EXPECTED_PARENT" > "$RUNNER_TEMP/parent.txt"
+          printf '%s\n' "$PREPARED_TREE" > "$RUNNER_TEMP/prepared-tree.txt"
+          cat "$RUNNER_TEMP/identity.env"
+          cat "$RUNNER_TEMP/prepare.json"
+          cat "$RUNNER_TEMP/verify.json"
+      - name: Upload bounded preparation evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr319-d0090-mutable-evidence
+          path: |
+            ${{ runner.temp }}/candidate.patch
+            ${{ runner.temp }}/applied.patch
+            ${{ runner.temp }}/receipt.json
+            ${{ runner.temp }}/prepare.json
+            ${{ runner.temp }}/verify.json
+            ${{ runner.temp }}/identity.env
+            ${{ runner.temp }}/prepared.patch
+            ${{ runner.temp }}/prepared.patch.sha256
+            ${{ runner.temp }}/parent.txt
+            ${{ runner.temp }}/prepared-tree.txt
+          if-no-files-found: error
+          retention-days: 1
