@@ -210,6 +210,7 @@ def run_smoke(image: str) -> dict[str, Any]:
         cases["subject_two"] = _summary(second_observation)
 
         wrong = GitSubject(commit=second.commit, tree=first.tree)
+        wrong_tree: dict[str, object] | None = None
         try:
             execute(repo, wrong, [evidence], [*command, "subject"], backend, limits)
         except ExecutionRejected as exc:
@@ -222,6 +223,8 @@ def run_smoke(image: str) -> dict[str, Any]:
             }
         else:
             raise AssertionError("WRONG_TREE_ACCEPTED")
+        if wrong_tree is None:
+            raise AssertionError("WRONG_TREE_RESULT_MISSING")
 
     return {
         "schema": "gnostoa-vf0-execution-oci-smoke/v1",

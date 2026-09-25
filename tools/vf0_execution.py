@@ -33,7 +33,7 @@ _MAX_EVIDENCE_FILES = 32
 _MAX_EVIDENCE_BYTES = 2 * 1024 * 1024
 _CLEAN_ENV = {
     "PATH": "/usr/local/bin:/usr/bin:/bin",
-    "HOME": "/tmp",
+    "HOME": "/nonexistent",
     "GIT_CONFIG_NOSYSTEM": "1",
     "GIT_CONFIG_GLOBAL": "/dev/null",
     "GIT_NO_REPLACE_OBJECTS": "1",
@@ -53,11 +53,6 @@ def _need(condition: bool, reason: str) -> None:
 
 def _sha256(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
-
-
-def _git_blob_sha1(raw: bytes) -> str:
-    framed = b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw
-    return hashlib.sha1(framed).hexdigest()
 
 
 def _canonical(value: object) -> bytes:
@@ -188,11 +183,14 @@ class _MaterialFile:
     size: int
 
 
+def _trusted_git_argv(repo: Path, *args: str) -> list[str]:
+    return ["/usr/bin/git", "-c", "core.hooksPath=/dev/null", "-C", str(repo), *args]
+
+
 def _trusted_git(repo: Path, *args: str) -> bytes:
-    argv = ["/usr/bin/git", "-c", "core.hooksPath=/dev/null", "-C", str(repo), *args]
     try:
         result = subprocess.run(
-            argv,
+            _trusted_git_argv(repo, *args),
             check=False,
             stdin=subprocess.DEVNULL,
             capture_output=True,
@@ -203,6 +201,45 @@ def _trusted_git(repo: Path, *args: str) -> bytes:
         raise ExecutionRejected("GIT_COMMAND_FAILED") from exc
     _need(result.returncode == 0, "GIT_COMMAND_FAILED")
     return result.stdout
+
+
+def _write_git_blob(
+    repo: Path, oid: str, destination: Path, expected_size: int
+) -> bytes:
+    """Materialize one Git blob directly, then independently verify its object id."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(destination, flags, 0o600)
+    except OSError as exc:
+        raise ExecutionRejected("SUBJECT_DESTINATION") from exc
+    try:
+        with os.fdopen(descriptor, "wb") as output:
+            try:
+                result = subprocess.run(
+                    _trusted_git_argv(repo, "cat-file", "blob", oid),
+                    check=False,
+                    stdin=subprocess.DEVNULL,
+                    stdout=output,
+                    stderr=subprocess.PIPE,
+                    env=_CLEAN_ENV,
+                    timeout=30,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise ExecutionRejected("GIT_COMMAND_FAILED") from exc
+        _need(result.returncode == 0, "GIT_COMMAND_FAILED")
+        _need(destination.stat().st_size == expected_size, "SUBJECT_BLOB_MISMATCH")
+        observed_oid = (
+            _trusted_git(repo, "hash-object", "--no-filters", "--", str(destination))
+            .decode("ascii")
+            .strip()
+        )
+        _need(observed_oid == oid, "SUBJECT_BLOB_MISMATCH")
+        return destination.read_bytes()
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
 
 
 def _repo_root(repo: Path) -> Path:
@@ -252,14 +289,9 @@ def _materialize_subject(
         _need(0 <= size <= _MAX_FILE_BYTES, "SUBJECT_FILE_BOUND")
         total += size
         _need(total <= _MAX_SUBJECT_BYTES, "SUBJECT_TOTAL_BOUND")
-        payload = _trusted_git(root, "cat-file", "blob", oid)
-        _need(
-            len(payload) == size and _git_blob_sha1(payload) == oid,
-            "SUBJECT_BLOB_MISMATCH",
-        )
         destination = target / name
         destination.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
-        destination.write_bytes(payload)
+        payload = _write_git_blob(root, oid, destination, size)
         destination.chmod(0o755 if mode == "100755" else 0o644)
         expected[name] = _MaterialFile(mode=mode, sha256=_sha256(payload), size=size)
     return expected

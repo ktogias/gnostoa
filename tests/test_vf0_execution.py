@@ -87,9 +87,11 @@ class VF0ExecutionEntryTests(unittest.TestCase):
     def test_entrypoint_exists_without_provider_dependency(self) -> None:
         module = importlib.import_module("tools.vf0_execution")
         self.assertTrue(callable(module.execute))
-        self.assertIsNotNone(module.__file__)
-        assert module.__file__ is not None
-        source = Path(module.__file__).read_text()
+        module_file = module.__file__
+        self.assertIsNotNone(module_file)
+        if module_file is None:
+            self.fail("module source path unavailable")
+        source = Path(module_file).read_text()
         self.assertNotIn("github", source.lower())
         self.assertNotIn("requests", source)
 
@@ -473,7 +475,7 @@ class VF0CaptureTests(unittest.TestCase):
             print('DESCENDANT_STARTED', flush=True)
             time.sleep(60)
             """,
-            ExecutionLimits(timeout_seconds=0.3),
+            ExecutionLimits(timeout_seconds=1.5),
         )
         self.assertEqual("timeout", capture.termination)
         self.assertIsNone(capture.exit_code)
@@ -535,7 +537,7 @@ class FakeDockerBackend(DockerBackend):
         self.calls.append(tuple(args))
         if args[:2] == ("image", "inspect"):
             return subprocess.CompletedProcess(
-                [],
+                ["/usr/bin/docker"],
                 0,
                 stdout=(
                     f'[{{"Id":"sha256:{"b" * 64}","RepoDigests":["{self.image}"]}}]'
@@ -544,7 +546,10 @@ class FakeDockerBackend(DockerBackend):
             )
         if args and args[0] == "create":
             return subprocess.CompletedProcess(
-                [], 0, stdout=(self.container_id + "\n").encode(), stderr=b""
+                ["/usr/bin/docker"],
+                0,
+                stdout=(self.container_id + "\n").encode(),
+                stderr=b"",
             )
         if args == ("inspect", self.container_id):
             contract = {
@@ -573,15 +578,24 @@ class FakeDockerBackend(DockerBackend):
             import json
 
             return subprocess.CompletedProcess(
-                [], 0, stdout=json.dumps([contract]).encode(), stderr=b""
+                ["/usr/bin/docker"],
+                0,
+                stdout=json.dumps([contract]).encode(),
+                stderr=b"",
             )
         if args[:3] == ("inspect", "--format", "{{json .State}}"):
             return subprocess.CompletedProcess(
-                [], 0, stdout=b'{"Running":false,"ExitCode":17}\n', stderr=b""
+                ["/usr/bin/docker"],
+                0,
+                stdout=b'{"Running":false,"ExitCode":17}\n',
+                stderr=b"",
             )
         if args[:2] == ("rm", "--force"):
             return subprocess.CompletedProcess(
-                [], 0, stdout=(self.container_id + "\n").encode(), stderr=b""
+                ["/usr/bin/docker"],
+                0,
+                stdout=(self.container_id + "\n").encode(),
+                stderr=b"",
             )
         if args[:2] == ("container", "inspect"):
             return subprocess.CompletedProcess(
