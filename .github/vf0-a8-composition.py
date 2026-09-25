@@ -326,6 +326,31 @@ def capture(root, out, manifest, before, reader):
     approved(before['approvals'], manifest, int(time.time()))
     admitted_at = int(time.time())
     e5 = load_source(root/'e5/.github/vf0-isolation-probe.py', E5_SHA, 'a8_pinned_e5')
+    try:
+        _capture_with_e5(root, out, manifest, before, reader, e5, admitted_at)
+    except e5.Rejected as exc:
+        # The separately loaded pinned dependency has its own rejection class.
+        # Only static known codes cross the log boundary; never copy raw output.
+        known = {
+            'SUBJECT_BINDING', 'SUBJECT_BYTES_OR_MODE', 'SYMLINK_REJECTED',
+            'SPECIAL_FILE_REJECTED', 'UNDECLARED_PATH', 'TRUSTED_COMMAND_FAILED',
+            'PARENT_HEAD', 'PARENT_TREE', 'PARENT_DIRTY', 'PARENT_FILE_TYPE',
+            'PARENT_ARCHIVE_BOUND', 'ARCHIVE_PATH', 'ARCHIVE_MEMBER',
+            'PARENT_MEMBER_BOUND', 'PARENT_MEMBER_UNAVAILABLE', 'PARENT_BLOB_MISMATCH',
+            'PARENT_PATH_SET', 'CONTAINER_ID', 'MOUNT_CONTRACT', 'OCI_CONTRACT',
+            'CONTAINER_STILL_RUNNING', 'ATTACHMENT_REAP_TIMEOUT',
+            'CONTAINER_REMOVAL_TIMEOUT', 'CONTAINER_ABSENCE_CHECK_TIMEOUT',
+            'CLEANUP_UNVERIFIED',
+        }
+        code = str(exc) if str(exc) in known else 'REJECTED'
+        reason = 'E5_' + code
+        write_json(out/'failure.json', {'schema': 'vf0-a8-capture-failure/v1',
+            'reason': reason, 'manifest_sha256': sha(canonical(manifest)),
+            'production_producer_admitted': False, 'vf0_active': False})
+        raise Rejected(reason) from None
+
+
+def _capture_with_e5(root, out, manifest, before, reader, e5, admitted_at):
     e5.PARENT, e5.TREE, e5.EVIDENCE_PATH, e5.EVIDENCE = SUBJECT, TREE, PROBE_PATH, PROBE
     e5.docker('pull', IMAGE, timeout=120)
     image = strict(e5.docker('image', 'inspect', IMAGE))[0]
@@ -340,19 +365,19 @@ def capture(root, out, manifest, before, reader):
         snapshot = work/'evidence-subject'
         baseline = e5.snapshot(root/'subject', snapshot)
         (snapshot/PROBE_PATH).write_bytes(PROBE)
-        e5.validate_snapshot(snapshot, baseline)
+        e5.validate_snapshot(snapshot, baseline, parent=SUBJECT, tree=TREE)
         started = int(time.time())
         outcome = e5.exercise(image['Id'], snapshot, private, 'characterize', out)
         completed = int(time.time())
         need(outcome['termination'] == 'completed' and outcome['container_exit_code'] == 0, 'CHARACTERIZATION_OUTCOME')
         need((out/'characterize.untrusted.stdout').read_bytes() == b'VF0_A8_CHARACTERIZATION_OK\n'
              and (out/'characterize.untrusted.stderr').read_bytes() == b'', 'FIXED_ORACLE')
-        e5.validate_snapshot(snapshot, baseline)
+        e5.validate_snapshot(snapshot, baseline, parent=SUBJECT, tree=TREE)
         need((private/'canary').read_bytes() == canary, 'CANARY_CHANGED')
         # This actual candidate materialization occurs only after observation.
         candidate = work/'synthetic-candidate'
         shutil.copytree(snapshot, candidate)
-        e5.validate_snapshot(candidate, baseline)
+        e5.validate_snapshot(candidate, baseline, parent=SUBJECT, tree=TREE)
         candidate_at = int(time.time())
         tree, patch, production = evidence_tree(root/'subject')
         need(tree == manifest['request']['material']['evidence_tree'] and

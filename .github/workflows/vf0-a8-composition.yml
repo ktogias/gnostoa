@@ -87,6 +87,14 @@ jobs:
           A8_ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
           A8_ARTIFACT_SHA256: ${{ steps.upload.outputs.artifact-digest }}
         run: /usr/bin/python3 -I -B coordinator/.github/vf0-a8-composition.py publish
+      - name: Retain bounded partial capture on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: vf0-a8-failed-capture-${{ github.run_id }}-1
+          path: ${{ runner.temp }}/vf0-a8-capture/
+          if-no-files-found: ignore
+          retention-days: 7
   consume:
     name: Reacquire and reconcile A8
     needs: capture
