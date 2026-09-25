@@ -1,0 +1,80 @@
+name: PR319 uncertain-create inspect RED
+
+on:
+  push:
+    branches:
+      - agent-support/pr319-red-uncertain-inspect-95422b09-20260925
+
+permissions:
+  contents: read
+
+jobs:
+  red:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 95422b09becd8ee9edea25c14d5a24f8b564d41c
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Bind exact head and reproduce transient inspect cleanup gap
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "95422b09becd8ee9edea25c14d5a24f8b564d41c"
+          python - <<'PY'
+          import json
+          from unittest import mock
+          import subprocess
+          from tools.vf0_execution import DockerBackend, ExecutionRejected
+
+          class Probe(DockerBackend):
+              def __init__(self):
+                  super().__init__("sha256:" + "c" * 64)
+                  self.calls = []
+                  self.inspect_attempts = 0
+                  self.removed = False
+
+              def _command(self, *args: str, timeout: float = 30):
+                  del timeout
+                  self.calls.append(tuple(args))
+                  if args == ("inspect", "owned-name"):
+                      self.inspect_attempts += 1
+                      if self.inspect_attempts == 1:
+                          raise ExecutionRejected("DOCKER_COMMAND_FAILED")
+                      if self.removed:
+                          return subprocess.CompletedProcess(
+                              ["/usr/bin/docker"], 1, stdout=b"",
+                              stderr=b"Error: No such container"
+                          )
+                      return subprocess.CompletedProcess(
+                          ["/usr/bin/docker"], 0,
+                          stdout=json.dumps([{
+                              "Config":{"Labels":{
+                                  "gnostoa.vf0.cleanup-token":"nonce"
+                              }}
+                          }]).encode(),
+                          stderr=b"",
+                      )
+                  if args == ("rm", "--force", "owned-name"):
+                      self.removed = True
+                      return subprocess.CompletedProcess(
+                          ["/usr/bin/docker"], 0, stdout=b"owned-name\n", stderr=b""
+                      )
+                  raise AssertionError(args)
+
+          probe = Probe()
+          with (
+              mock.patch("tools.vf0_execution.time.monotonic",
+                         side_effect=[0.0, 0.0, 0.1, 0.1, 0.2]),
+              mock.patch("tools.vf0_execution.time.sleep"),
+          ):
+              probe._cleanup_uncertain_create("owned-name", "nonce")
+
+          assert probe.inspect_attempts >= 2, probe.inspect_attempts
+          assert probe.removed is True
+          print("UNCERTAIN_CREATE_TRANSIENT_INSPECT_RETRY_OK")
+          PY
