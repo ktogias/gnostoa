@@ -116,6 +116,7 @@ inherited, copied or loaded by adopting projects.
 - [WI-DET-01 L0-lite observed workflow baseline](assessments/15-l0-lite-observed-workflow-baseline.md)
 - [Issue 15 useful L1 current-state reconciliation execution plan](assessments/15-useful-l1-current-state-reconciliation-execution-plan.md)
 - [Issue 15 provider-abstraction retrospective and root-cause analysis](assessments/15-provider-abstraction-retrospective.md)
+- [PR 319 review-convergence admission interpretation-drift incident RCA](assessments/319-review-convergence-admission-interpretation-drift-rca.md)
 - [Issues 309/313 analyzer-readback RED-first execution contract](assessments/309-313-analyzer-readback-red-contract.md)
 - [B2/P1 streamlined self-hosting measurements](assessments/b2-p1-streamlined-self-hosting-measurements.md)
 - [B2/P2 fresh-session resume and effect-authority findings](assessments/b2-p2-fresh-session-and-effect-authority-findings.md)
