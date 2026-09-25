@@ -1,0 +1,84 @@
+name: PR319 stage D0090-prepared fa2 successor
+
+on:
+  push:
+    branches:
+      - agent-support/pr319-fa2-final-stage-20260925
+
+permissions:
+  contents: write
+
+jobs:
+  stage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Reconstruct exact prepared tree without executing candidate
+        env:
+          PARENT: fa2cf1cdc5028e4bf8c442dcc2530ef8496aa96f
+          PARENT_TREE: 77a6f71eb86faf0b02b19b4d59ef5ca99a1d3cf6
+          PREPARED_TREE: ac27d9e45c58c9941f4dc320716ec4df95ae575e
+          PATCH_SHA256: f98864654a9e1519fc93b13569d5bc781ca5c8c9862c8d5181ac6444be8b16c1
+          PR_BRANCH: vf0-verification-first-15
+          STAGING_BRANCH: agent-support/pr319-fa2-prepared-candidate-20260925
+        run: |
+          set -euo pipefail
+          base64 -d candidate.patch.gz.b64 > "$RUNNER_TEMP/candidate.patch.gz"
+          gzip -dc "$RUNNER_TEMP/candidate.patch.gz" > "$RUNNER_TEMP/candidate.patch"
+          test "$(sha256sum "$RUNNER_TEMP/candidate.patch" | awk '{print $1}')" = "$PATCH_SHA256"
+
+          git checkout --detach "$PARENT"
+          test "$(git rev-parse HEAD)" = "$PARENT"
+          test "$(git rev-parse HEAD^{tree})" = "$PARENT_TREE"
+          test -z "$(git status --porcelain)"
+          git fsck --full
+
+          git apply --index "$RUNNER_TEMP/candidate.patch"
+          git diff --cached --check
+          mapfile -t changed < <(git diff --cached --name-only | LC_ALL=C sort)
+          expected=(
+            knowledge/assessments/15-vf0-entrance-and-execution-plan.md
+            tests/test_vf0_execution.py
+            tools/vf0_execution.py
+          )
+          test "${#changed[@]}" -eq "${#expected[@]}"
+          for i in "${!expected[@]}"; do
+            test "${changed[$i]}" = "${expected[$i]}"
+          done
+
+          observed_tree="$(git write-tree)"
+          test "$observed_tree" = "$PREPARED_TREE"
+
+          remote_head="$(git ls-remote origin "refs/heads/$PR_BRANCH" | awk '{print $1}')"
+          test "$remote_head" = "$PARENT"
+
+          export GIT_AUTHOR_NAME='ChatGPT'
+          export GIT_AUTHOR_EMAIL='chatgpt@users.noreply.github.com'
+          export GIT_COMMITTER_NAME='ChatGPT'
+          export GIT_COMMITTER_EMAIL='chatgpt@users.noreply.github.com'
+          commit="$(printf '%s\n' 'Harden VF0 cleanup and subject isolation (#15)' | git commit-tree "$PREPARED_TREE" -p "$PARENT")"
+
+          test "$(git show -s --format=%P "$commit")" = "$PARENT"
+          test "$(git rev-parse "$commit^{tree}")" = "$PREPARED_TREE"
+
+          git push origin "$commit:refs/heads/$STAGING_BRANCH"
+
+          {
+            printf 'parent=%s\n' "$PARENT"
+            printf 'tree=%s\n' "$PREPARED_TREE"
+            printf 'commit=%s\n' "$commit"
+            printf 'patch_sha256=%s\n' "$PATCH_SHA256"
+          } > "$RUNNER_TEMP/staged.txt"
+
+      - name: Upload bounded staging metadata
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr319-fa2-prepared-stage
+          path: ${{ runner.temp }}/staged.txt
+          if-no-files-found: error
+          retention-days: 1
