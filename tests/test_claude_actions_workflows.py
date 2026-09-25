@@ -132,6 +132,18 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertNotIn("concurrency", workflow)
         self.assertNotIn("concurrency", job)
 
+    def test_mention_workflow_has_no_unconfigured_assignment_trigger(self) -> None:
+        # Without an assignee_trigger input the action never runs Claude for
+        # `issues: assigned`; the trigger would only start an idle job.
+        workflow = load_yaml(MENTION_WORKFLOW)
+        claude = next(
+            step
+            for step in _steps(workflow)
+            if step.get("uses", "").startswith("anthropics/claude-code-action@")
+        )
+        self.assertNotIn("assignee_trigger", claude["with"])
+        self.assertEqual({"types": ["opened"]}, workflow[True]["issues"])
+
     def test_guardrail_owns_claude_workflows_and_their_test(self) -> None:
         guardrails = load_yaml(ROOT / "policy" / "guardrails.yaml")
         entry = next(

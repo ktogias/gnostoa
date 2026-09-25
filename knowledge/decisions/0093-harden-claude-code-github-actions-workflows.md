@@ -83,8 +83,12 @@ Terms. It is only executed in CI and is neither copied nor redistributed.
    associations, as defence in depth before the action's own check, and give it
    a timeout. Do not add a concurrency group: GitHub keeps one pending run per
    group, so an unrelated comment could silently replace a pending request.
-7. Leave `allowed_bots`, `allowed_non_write_users` and extra mention-job tools
-   unset.
+7. Trigger the mention job on `issues: opened` only. Without an
+   `assignee_trigger` input, the action never runs Claude for
+   `issues: assigned`, so that trigger would only start idle jobs whenever a
+   `@claude`-mentioning issue is reassigned.
+8. Leave `allowed_bots`, `allowed_non_write_users`, `assignee_trigger` and extra
+   mention-job tools unset.
 
 `tests/test_claude_actions_workflows.py` enforces the full-SHA rule for every
 workflow and the Claude-specific invariants above. The
