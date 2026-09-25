@@ -1,0 +1,141 @@
+name: PR319 restrictive-umask D0090 preparation
+
+on:
+  push:
+    branches:
+      - agent-support/pr319-umask-d0090-20260925
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout immutable support inputs
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.sha }}
+          path: support
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout exact preparation parent
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 1b07b02b4e866ce5b24bea8a74b766b368552078
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Bind parent and immutable patch
+        env:
+          PARENT: 1b07b02b4e866ce5b24bea8a74b766b368552078
+          PATCH_SHA256: 4d9b5f7e338c15ec0e9fb5ea8c20a19c1a246060b554ef3ee1cec351e847b625
+        run: |
+          set -euo pipefail
+          test "$(git -C candidate rev-parse HEAD)" = "$PARENT"
+          test "$(git -C candidate rev-parse --is-shallow-repository)" = "false"
+          test -z "$(git -C candidate status --porcelain)"
+          echo "$PATCH_SHA256  support/support/pr319-umask.patch" | sha256sum --check
+          git -C candidate apply --check ../support/support/pr319-umask.patch
+          git -C candidate apply ../support/support/pr319-umask.patch
+          test "$(git -C candidate diff --name-only)" = "$(printf '%s\n' tests/test_vf0_execution.py tools/vf0_execution.py)"
+          test -z "$(git -C candidate diff --check)"
+
+      - name: Set up exact Python lane
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: candidate/requirements/development.lock
+
+      - name: Install exact development dependencies
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          python -m pip install             --only-binary=:all:             --require-hashes             -r requirements/development.lock
+
+      - name: Run parent-owned D0090 preparation and fresh verify
+        env:
+          PARENT: 1b07b02b4e866ce5b24bea8a74b766b368552078
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          RECEIPT="$RUNNER_TEMP/receipt.json"
+          PREP_OUT="$RUNNER_TEMP/prepare.stdout"
+          VERIFY_OUT="$RUNNER_TEMP/verify.stdout"
+          PYTHON="$(command -v python)"
+
+          ./ci/prepare-candidate prepare             --parent "$PARENT"             --receipt "$RECEIPT"             --focused-profile fast             --trusted-python "$PYTHON"             > "$PREP_OUT"
+
+          TREE="$(python - "$RECEIPT" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              print(json.load(handle)["prepared_tree"])
+          PY
+          )"
+          RECEIPT_SHA="$(python - "$RECEIPT" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              print(json.load(handle)["receipt_sha256"])
+          PY
+          )"
+          DIFF_SHA="$(python - "$RECEIPT" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              print(json.load(handle)["prepared_diff_sha256"])
+          PY
+          )"
+
+          ./ci/prepare-candidate verify             --parent "$PARENT"             --tree "$TREE"             --receipt "$RECEIPT"             --receipt-sha256 "$RECEIPT_SHA"             --trusted-python "$PYTHON"             > "$VERIFY_OUT"
+
+          git diff --binary --full-index "$PARENT" "$TREE" > "$RUNNER_TEMP/prepared.patch"
+          test "$(sha256sum "$RUNNER_TEMP/prepared.patch" | awk '{print $1}')" = "$DIFF_SHA"
+          test "$(git diff --name-only "$PARENT" "$TREE")" = "$(printf '%s\n' tests/test_vf0_execution.py tools/vf0_execution.py)"
+
+          python - "$RECEIPT" "$RUNNER_TEMP/metadata.json" <<'PY'
+          import json, sys
+          receipt_path, output_path = sys.argv[1:]
+          with open(receipt_path, encoding="utf-8") as handle:
+              receipt=json.load(handle)
+          assert receipt["parent_commit"] == "1b07b02b4e866ce5b24bea8a74b766b368552078"
+          assert receipt["focused_profile"] == "fast"
+          assert receipt["changed_paths"] == ["tests/test_vf0_execution.py", "tools/vf0_execution.py"]
+          assert all(value == 0 for value in receipt["checks"].values())
+          selected = {
+              "parent_commit": receipt["parent_commit"],
+              "parent_tree": receipt["parent_tree"],
+              "prepared_tree": receipt["prepared_tree"],
+              "receipt_sha256": receipt["receipt_sha256"],
+              "prepared_diff_sha256": receipt["prepared_diff_sha256"],
+              "retention_ref": receipt["retention_ref"],
+              "checks": receipt["checks"],
+              "focused_profile": receipt["focused_profile"],
+              "changed_paths": receipt["changed_paths"],
+              "style_sha256": receipt["style_sha256"],
+              "verify_sha256": receipt["verify_sha256"],
+              "ruff_version": receipt["ruff_version"],
+          }
+          with open(output_path, "w", encoding="utf-8") as handle:
+              json.dump(selected, handle, sort_keys=True, indent=2)
+              handle.write("\n")
+          PY
+          sha256sum "$RECEIPT" > "$RUNNER_TEMP/receipt.file.sha256"
+          sha256sum "$RUNNER_TEMP/prepared.patch" > "$RUNNER_TEMP/prepared.patch.sha256"
+
+      - name: Upload non-secret preparation evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr319-umask-d0090
+          path: |
+            ${{ runner.temp }}/receipt.json
+            ${{ runner.temp }}/receipt.file.sha256
+            ${{ runner.temp }}/prepared.patch
+            ${{ runner.temp }}/prepared.patch.sha256
+            ${{ runner.temp }}/metadata.json
+            ${{ runner.temp }}/prepare.stdout
+            ${{ runner.temp }}/verify.stdout
+          if-no-files-found: error
+          retention-days: 7
