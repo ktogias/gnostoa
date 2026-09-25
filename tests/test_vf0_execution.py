@@ -759,7 +759,7 @@ class VF0DockerBackendTests(unittest.TestCase):
                 if args[:2] == ("rm", "--force"):
                     self.calls.append(tuple(args))
                     return subprocess.CompletedProcess(
-                        [], 1, stdout=b"", stderr=b"denied"
+                        ["/usr/bin/docker"], 1, stdout=b"", stderr=b"denied"
                     )
                 return super()._command(*args, timeout=timeout)
 

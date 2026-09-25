@@ -219,7 +219,8 @@ def _write_git_blob(
     try:
         with os.fdopen(descriptor, "wb") as output:
             try:
-                result = subprocess.run(
+                # Fixed /usr/bin/git object read, list argv, scrubbed env, no shell.
+                result = subprocess.run(  # nosec B603  # nosemgrep
                     _trusted_git_argv(repo, "cat-file", "blob", oid),
                     check=False,
                     stdin=subprocess.DEVNULL,
