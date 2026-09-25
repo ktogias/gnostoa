@@ -857,6 +857,45 @@ class VF0DockerBackendTests(unittest.TestCase):
                     ("container", "inspect", backend.container_name), backend.calls
                 )
 
+    def test_uncertain_create_waits_for_delayed_owned_container(self) -> None:
+        class DelayedAppearance(FakeDockerBackend):
+            def __init__(self, image: str, root: Path) -> None:
+                super().__init__(image, root, create_mode="exception")
+                self.name_inspects = 0
+
+            def _command(
+                self, *args: str, timeout: float = 30
+            ) -> subprocess.CompletedProcess[bytes]:
+                if self.container_name is not None and args == (
+                    "inspect",
+                    self.container_name,
+                ):
+                    self.name_inspects += 1
+                    if self.name_inspects < 3:
+                        self.calls.append(tuple(args))
+                        return subprocess.CompletedProcess(
+                            ["/usr/bin/docker"],
+                            1,
+                            stdout=b"",
+                            stderr=b"Error: No such container",
+                        )
+                return super()._command(*args, timeout=timeout)
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td).resolve()
+            backend = DelayedAppearance(self.image, root)
+            with (
+                mock.patch(
+                    "tools.vf0_execution.time.monotonic",
+                    side_effect=[0.0, 0.0, 0.1],
+                ),
+                mock.patch("tools.vf0_execution.time.sleep"),
+            ):
+                with self.assertRaisesRegex(ExecutionRejected, "DOCKER_COMMAND_FAILED"):
+                    backend.run(root, ["/bin/true"], ExecutionLimits())
+            self.assertGreaterEqual(backend.name_inspects, 3)
+            self.assertTrue(backend.removed)
+
     def test_timeout_has_no_container_exit_claim_and_cleanup_still_occurs(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td).resolve()

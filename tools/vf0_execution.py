@@ -34,6 +34,8 @@ _MAX_EVIDENCE_FILES = 32
 _MAX_EVIDENCE_BYTES = 2 * 1024 * 1024
 _CONTAINER_TMP = "/tmp"  # nosec B108 -- isolated container tmpfs, never a host temp path
 _CONTAINER_CLEANUP_LABEL = "gnostoa.vf0.cleanup-token"
+_UNCERTAIN_CREATE_SETTLE_SECONDS = 2.0
+_UNCERTAIN_CREATE_POLL_SECONDS = 0.1
 _CLEAN_ENV = {
     "PATH": "/usr/local/bin:/usr/bin:/bin",
     "HOME": "/nonexistent",
@@ -615,27 +617,35 @@ class DockerBackend:
     def _cleanup_uncertain_create(
         self, container_name: str, cleanup_nonce: str
     ) -> None:
-        inspected = self._command("inspect", container_name, timeout=15)
-        message = (inspected.stderr + b"\n" + inspected.stdout).lower()
-        if inspected.returncode != 0:
+        deadline = time.monotonic() + _UNCERTAIN_CREATE_SETTLE_SECONDS
+        while True:
+            inspected = self._command("inspect", container_name, timeout=15)
+            message = (inspected.stderr + b"\n" + inspected.stdout).lower()
+            if inspected.returncode == 0:
+                try:
+                    raw = json.loads(inspected.stdout)
+                except (json.JSONDecodeError, TypeError) as exc:
+                    raise ExecutionRejected("OCI_CLEANUP_UNVERIFIED") from exc
+                _need(
+                    isinstance(raw, list)
+                    and len(raw) == 1
+                    and isinstance(raw[0], dict),
+                    "OCI_CLEANUP_UNVERIFIED",
+                )
+                config = raw[0].get("Config", {})
+                labels = config.get("Labels") if isinstance(config, dict) else None
+                _need(
+                    isinstance(labels, dict)
+                    and labels.get(_CONTAINER_CLEANUP_LABEL) == cleanup_nonce,
+                    "OCI_CLEANUP_OWNERSHIP",
+                )
+                self._remove_and_verify(container_name)
+                return
             _need(b"no such" in message, "OCI_CLEANUP_UNVERIFIED")
-            return
-        try:
-            raw = json.loads(inspected.stdout)
-        except (json.JSONDecodeError, TypeError) as exc:
-            raise ExecutionRejected("OCI_CLEANUP_UNVERIFIED") from exc
-        _need(
-            isinstance(raw, list) and len(raw) == 1 and isinstance(raw[0], dict),
-            "OCI_CLEANUP_UNVERIFIED",
-        )
-        config = raw[0].get("Config", {})
-        labels = config.get("Labels") if isinstance(config, dict) else None
-        _need(
-            isinstance(labels, dict)
-            and labels.get(_CONTAINER_CLEANUP_LABEL) == cleanup_nonce,
-            "OCI_CLEANUP_OWNERSHIP",
-        )
-        self._remove_and_verify(container_name)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            time.sleep(min(_UNCERTAIN_CREATE_POLL_SECONDS, remaining))
 
     def run(
         self,

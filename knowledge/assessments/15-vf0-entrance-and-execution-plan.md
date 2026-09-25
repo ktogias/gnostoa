@@ -634,11 +634,17 @@ stdout/stderr, nonzero/timeout/overflow observations, descendant termination,
 read-only OCI contract inspection and attachment-before-container cleanup.
 
 Successor chronology after the subsequent execution hardening and restrictive-umask
-regression: the relation suite remains **34 tests** and the execution/fixture suite
-is now **45 tests**, so the exact focused invocation executes **79 tests**. All 79
-pass normally and under Python optimization. The preceding **39 / 73** account is
-retained as the earlier grouped-candidate checkpoint; it is not the current-head
-focused-test total.
+regression, through exact head `f54cf89a0387856d441be3bfaa5a20783f03af36`:
+the relation suite remains **34 tests** and the execution/fixture suite is **45
+tests**, so the exact focused invocation executes **79 tests**. All 79 pass normally
+and under Python optimization. The preceding **39 / 73** account is retained as
+the earlier grouped-candidate checkpoint rather than rewritten.
+
+The bounded uncertain-create settling repair adds one execution/fixture regression
+for delayed Docker resource appearance after an initially negative inspect. The
+relation suite remains **34 tests** and the execution/fixture suite becomes **46
+tests**, so this candidate executes **80 focused tests**. All 80 pass normally and
+under Python optimization before ordinary D0090 preparation.
 
 This evidence still does **not** claim a live run of the new Docker specialization.
 `tests/vf0_execution_oci_smoke.py` is intentionally outside unittest discovery and
