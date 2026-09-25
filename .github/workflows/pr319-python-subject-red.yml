@@ -34,7 +34,7 @@ jobs:
           docker pull "$IMAGE" >/dev/null
           out="$RUNNER_TEMP/import-path.txt"
           set +e
-          docker run --rm --pull=never             --read-only             --network none             --ipc none             --cap-drop ALL             --security-opt no-new-privileges             --user 10001:10001             --env PYTHONPATH=/workspace             --mount "type=bind,source=$GITHUB_WORKSPACE/candidate,target=/workspace,readonly"             --workdir /workspace             --entrypoint /usr/local/bin/python3             "$IMAGE"             -I -c 'from pathlib import Path; import sys, tools.vf0_execution as m; p=str(Path(m.__file__).resolve()); print(p); raise SystemExit(0 if p.startswith("/workspace/") else 42)'             >"$out" 2>"$RUNNER_TEMP/stderr.txt"
+          docker run --rm --pull=never             --read-only             --network none             --ipc none             --cap-drop ALL             --security-opt no-new-privileges             --user 10001:10001             --env PYTHONPATH=/workspace             --mount "type=bind,source=$GITHUB_WORKSPACE/candidate,target=/workspace,readonly"             --workdir /workspace             --entrypoint /usr/local/bin/python3             "$IMAGE"             -I -c 'from pathlib import Path; import tools; p=str(Path(tools.__file__).resolve()); print(p); raise SystemExit(0 if p.startswith("/workspace/") else 42)'             >"$out" 2>"$RUNNER_TEMP/stderr.txt"
           rc=$?
           set -e
           path="$(head -n1 "$out")"
