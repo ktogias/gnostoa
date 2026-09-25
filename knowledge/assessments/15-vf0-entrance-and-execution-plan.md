@@ -688,6 +688,14 @@ execution/fixture suite becomes **62 tests**, so the exact focused corpus is **9
 tests**. All **96** pass normally and under `python -O` before ordinary
 exact-parent D0090 preparation.
 
+The following exact-mode and Git-listing cleanup successor adds two more
+execution/fixture regressions: regular-file permission changes are retained at
+full mode precision, and selector-setup failure after `git ls-tree` spawn always
+terminates and reaps the owned child. The relation suite remains **34 tests** and
+the execution/fixture suite becomes **64 tests**, so the focused corpus is **98
+tests**. All **98** pass normally and under `python -O` before ordinary
+exact-parent D0090 preparation.
+
 This evidence still does **not** claim a live run of the new Docker specialization.
 `tests/vf0_execution_oci_smoke.py` is intentionally outside unittest discovery and
 must be executed after exact ordinary D0090 preparation/publication of this

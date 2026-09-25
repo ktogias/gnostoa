@@ -236,13 +236,14 @@ def _trusted_git_tree_entries(repo: Path, commit: str) -> list[bytes]:
                 process.wait()
                 raise ExecutionRejected("GIT_COMMAND_FAILED")
 
-            selector = selectors.DefaultSelector()
-            selector.register(process.stdout, selectors.EVENT_READ)
+            selector: selectors.BaseSelector | None = None
             deadline = time.monotonic() + 30.0
             pending = bytearray()
             entries: list[bytes] = []
             observed_bytes = 0
             try:
+                selector = selectors.DefaultSelector()
+                selector.register(process.stdout, selectors.EVENT_READ)
                 while selector.get_map():
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
@@ -279,11 +280,15 @@ def _trusted_git_tree_entries(repo: Path, commit: str) -> list[bytes]:
                 process.wait(timeout=remaining)
             except Exception:
                 if process.poll() is None:
-                    process.kill()
-                    process.wait()
+                    try:
+                        process.kill()
+                    except ProcessLookupError:
+                        pass
+                process.wait()
                 raise
             finally:
-                selector.close()
+                if selector is not None:
+                    selector.close()
                 process.stdout.close()
 
             _need(process.returncode == 0, "GIT_COMMAND_FAILED")
@@ -417,6 +422,10 @@ def _directory_mode(mode: int) -> str:
     return f"{stat.S_IMODE(mode):04o}"
 
 
+def _file_mode(mode: int) -> str:
+    return f"{stat.S_IFREG | stat.S_IMODE(mode):06o}"
+
+
 def _snapshot(root: Path) -> tuple[dict[str, _MaterialFile], dict[str, str]]:
     files: dict[str, _MaterialFile] = {}
     root_mode = root.lstat().st_mode
@@ -454,7 +463,7 @@ def _snapshot(root: Path) -> tuple[dict[str, _MaterialFile], dict[str, str]]:
                         "SUBJECT_TOTAL_BOUND",
                     )
                     files[name] = _MaterialFile(
-                        mode="100755" if mode & 0o111 else "100644",
+                        mode=_file_mode(mode),
                         sha256=_sha256(raw),
                         size=len(raw),
                     )

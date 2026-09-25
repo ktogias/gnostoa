@@ -261,6 +261,35 @@ class VF0SubjectTests(unittest.TestCase):
                 with self.assertRaisesRegex(ExecutionRejected, "SUBJECT_TREE_BOUND"):
                     module._trusted_git_tree_entries(repo, subject.commit)
 
+    def test_subject_tree_listing_selector_setup_failure_reaps_child(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+
+        class ExplodingSelector:
+            def register(self, fileobj: object, events: int) -> None:
+                del fileobj, events
+                raise OSError("selector setup failed")
+
+            def close(self) -> None:
+                pass
+
+        with tempfile.TemporaryDirectory() as td:
+            repo, subject = _repo(Path(td))
+            process = mock.Mock()
+            process.stdout = mock.Mock()
+            process.poll.return_value = None
+            with (
+                mock.patch.object(module.subprocess, "Popen", return_value=process),
+                mock.patch.object(
+                    module.selectors,
+                    "DefaultSelector",
+                    return_value=ExplodingSelector(),
+                ),
+            ):
+                with self.assertRaisesRegex(ExecutionRejected, "GIT_COMMAND_FAILED"):
+                    module._trusted_git_tree_entries(repo, subject.commit)
+            process.kill.assert_called_once_with()
+            process.wait.assert_called_once_with()
+
     def test_snapshot_rejects_oversized_file_before_read_bytes(self) -> None:
         module = importlib.import_module("tools.vf0_execution")
         with tempfile.TemporaryDirectory() as td:
@@ -707,6 +736,31 @@ class VF0SubjectTests(unittest.TestCase):
                     [_evidence("pass")],
                     ["/bin/true"],
                     DirectoryModeBackend(),
+                )
+
+    def test_runtime_file_mode_change_is_rejected_after_observation(self) -> None:
+        class FileModeBackend:
+            def run(
+                self,
+                root: Path,
+                command: Sequence[str],
+                limits: ExecutionLimits,
+                *,
+                subject: GitSubject,
+            ) -> UntrustedCapture:
+                del command, limits, subject
+                (root / "subject.txt").chmod(0o600)
+                return UntrustedCapture("completed", 0, b"", b"", 0)
+
+        with tempfile.TemporaryDirectory() as td:
+            repo, subject = _repo(Path(td))
+            with self.assertRaisesRegex(ExecutionRejected, "SUBJECT_MUTATED"):
+                execute(
+                    repo,
+                    subject,
+                    [_evidence("pass")],
+                    ["/bin/true"],
+                    FileModeBackend(),
                 )
 
     def test_runtime_file_mutation_is_rejected_after_observation(self) -> None:
