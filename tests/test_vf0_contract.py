@@ -259,7 +259,7 @@ class VF0RelationTests(unittest.TestCase):
             ([], "PATH_SET"),
             (["tools/foreign.py"], "CANDIDATE_PATH_SCOPE"),
             (["../outside.py"], "PATH_FORMAT"),
-            (["/tmp/outside"], "PATH_FORMAT"),
+            (["/outside"], "PATH_FORMAT"),
             (["tools/../target.py"], "PATH_FORMAT"),
             (["tools//target.py"], "PATH_FORMAT"),
             (["tools\\target.py"], "PATH_FORMAT"),
@@ -603,7 +603,8 @@ class VF0RelationTests(unittest.TestCase):
 
     def test_common_core_has_no_effectful_or_provider_specific_imports(self) -> None:
         filename = self.core.__file__
-        assert filename is not None
+        if filename is None:
+            self.fail("The relation module must have a source file.")
         tree = ast.parse(Path(filename).read_text())
         imported: set[str] = set()
         for node in ast.walk(tree):
