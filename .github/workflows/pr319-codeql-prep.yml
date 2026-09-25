@@ -51,7 +51,7 @@ jobs:
           git apply --binary ../support/.github/pr319-codeqlfix.patch
           test "$(git rev-parse HEAD)" = b7b008b52fcfb053dc8b6c25893c4dcaf475dc28
           git diff --name-only | sort > "$RUNNER_TEMP/changed-paths.txt"
-          printf '%s\n'             knowledge/assessments/15-vf0-entrance-and-execution-plan.md             tests/test_vf0_execution.py             tools/vf0_execution.py | sort > "$RUNNER_TEMP/expected-paths.txt"
+          printf '%s\n' knowledge/assessments/15-vf0-entrance-and-execution-plan.md tests/test_vf0_execution.py tools/vf0_execution.py | sort > "$RUNNER_TEMP/expected-paths.txt"
           diff -u "$RUNNER_TEMP/expected-paths.txt" "$RUNNER_TEMP/changed-paths.txt"
           git diff --check
 
@@ -64,41 +64,12 @@ jobs:
           git show "$parent:ci/prepare-candidate" > "$wrapper"
           chmod 700 "$wrapper"
           receipt="$RUNNER_TEMP/receipt.json"
-          "$wrapper" prepare             --parent "$parent"             --receipt "$receipt"             --focused-profile fast             --trusted-python "$(command -v python)" | tee "$RUNNER_TEMP/prepare.stdout"
-          python - "$receipt" "$RUNNER_TEMP/metadata.txt" <<'PY'
-import json
-import pathlib
-import sys
-receipt = pathlib.Path(sys.argv[1])
-metadata = pathlib.Path(sys.argv[2])
-doc = json.loads(receipt.read_text(encoding="utf-8"))
-required = {
-    "schema",
-    "parent_commit",
-    "parent_tree",
-    "prepared_tree",
-    "retention_ref",
-    "prepared_diff_sha256",
-    "receipt_sha256",
-    "verify_sha256",
-}
-missing = sorted(required - doc.keys())
-if missing:
-    raise SystemExit(f"missing receipt fields: {missing}")
-if doc["parent_commit"] != "b7b008b52fcfb053dc8b6c25893c4dcaf475dc28":
-    raise SystemExit("wrong receipt parent")
-if doc["focused_profile"] != "fast":
-    raise SystemExit("wrong focused profile")
-metadata.write_text(
-    "\n".join(f"{key}={doc[key]}" for key in sorted(required)) + "\n",
-    encoding="utf-8",
-)
-print(doc["prepared_tree"])
-print(doc["receipt_sha256"])
-PY
-          tree="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["prepared_tree"])' "$receipt")"
-          receipt_sha="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["receipt_sha256"])' "$receipt")"
-          "$wrapper" verify             --parent "$parent"             --tree "$tree"             --receipt "$receipt"             --receipt-sha256 "$receipt_sha"             --trusted-python "$(command -v python)" | tee "$RUNNER_TEMP/verify.stdout"
+          "$wrapper" prepare --parent "$parent" --receipt "$receipt" --focused-profile fast --trusted-python "$(command -v python)" | tee "$RUNNER_TEMP/prepare.stdout"
+          python -c 'import json,sys; d=json.load(open(sys.argv[1], encoding="utf-8")); assert d["parent_commit"]=="b7b008b52fcfb053dc8b6c25893c4dcaf475dc28"; assert d["focused_profile"]=="fast"; print(d["prepared_tree"]); print(d["receipt_sha256"])' "$receipt"
+          tree="$(python -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["prepared_tree"])' "$receipt")"
+          receipt_sha="$(python -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["receipt_sha256"])' "$receipt")"
+          "$wrapper" verify --parent "$parent" --tree "$tree" --receipt "$receipt" --receipt-sha256 "$receipt_sha" --trusted-python "$(command -v python)" | tee "$RUNNER_TEMP/verify.stdout"
+          python -c 'import json,pathlib,sys; d=json.load(open(sys.argv[1], encoding="utf-8")); keys=["schema","parent_commit","parent_tree","prepared_tree","retention_ref","prepared_diff_sha256","receipt_sha256","verify_sha256"]; pathlib.Path(sys.argv[2]).write_text("\n".join(f"{k}={d[k]}" for k in keys)+"\n", encoding="utf-8")' "$receipt" "$RUNNER_TEMP/metadata.txt"
           git diff --binary "$parent^{tree}" "$tree" > "$RUNNER_TEMP/prepared.patch"
           git archive --format=tar "$tree" | gzip -n > "$RUNNER_TEMP/prepared-tree.tar.gz"
           sha256sum "$receipt" "$RUNNER_TEMP/prepared.patch" "$RUNNER_TEMP/prepared-tree.tar.gz" > "$RUNNER_TEMP/artifact-sha256.txt"
