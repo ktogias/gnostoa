@@ -781,7 +781,7 @@ class VF0DockerBackendTests(unittest.TestCase):
                 if args[:2] == ("image", "inspect"):
                     self.calls.append(tuple(args))
                     return subprocess.CompletedProcess(
-                        [],
+                        ["/usr/bin/docker"],
                         0,
                         stdout=b'[{"Id":"sha256:00","RepoDigests":[]}]',
                         stderr=b"",
