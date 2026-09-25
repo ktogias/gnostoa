@@ -84,6 +84,23 @@ def _evidence(source: str, path: str = "tests/vf0_evidence.py") -> EvidenceFile:
     return EvidenceFile(path=path, content=textwrap.dedent(source).encode())
 
 
+class _DirectTestBackend:
+    """Test-only direct capture; production containment is tested separately."""
+
+    def run(
+        self,
+        root: Path,
+        command: Sequence[str],
+        limits: ExecutionLimits,
+        *,
+        subject: GitSubject,
+    ) -> UntrustedCapture:
+        del subject
+        from tools.vf0_execution import _capture_process
+
+        return _capture_process(command, cwd=root, limits=limits)
+
+
 class VF0ExecutionEntryTests(unittest.TestCase):
     def test_entrypoint_exists_without_provider_dependency(self) -> None:
         module = importlib.import_module("tools.vf0_execution")
@@ -135,6 +152,7 @@ class VF0SubjectTests(unittest.TestCase):
             "tests/./evidence.py",
             "tests/.git/config",
             "tests/.GIT/config",
+            "tests/a\0b.py",
         ):
             with self.subTest(path=path):
                 with self.assertRaises(ExecutionRejected):
@@ -173,7 +191,7 @@ class VF0SubjectTests(unittest.TestCase):
                 subject,
                 [evidence],
                 [sys.executable, "-I", evidence.path],
-                SubprocessBackend(),
+                _DirectTestBackend(),
             )
             self.assertEqual("completed", result.capture.termination)
             self.assertEqual(0, result.capture.exit_code)
@@ -318,6 +336,33 @@ class VF0SubjectTests(unittest.TestCase):
                 backend.modes,
             )
 
+    def test_evidence_sequence_is_snapshotted_before_backend_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo, subject = _repo(Path(td))
+            original = _evidence("print('original')")
+            evidence = [original]
+
+            class MutatingBackend:
+                def run(
+                    self,
+                    root: Path,
+                    command: Sequence[str],
+                    limits: ExecutionLimits,
+                    *,
+                    subject: GitSubject,
+                ) -> UntrustedCapture:
+                    del root, command, limits, subject
+                    evidence[0] = EvidenceFile(
+                        path="tests/replaced.py", content=b"print('replacement')\n"
+                    )
+                    return UntrustedCapture("completed", 0, b"", b"", 0)
+
+            result = execute(repo, subject, evidence, ["/bin/true"], MutatingBackend())
+            self.assertEqual(
+                ((original.path, hashlib.sha256(original.content).hexdigest()),),
+                result.evidence_sha256,
+            )
+
     def test_admitted_evidence_can_replace_existing_test_byte_for_this_execution_only(
         self,
     ) -> None:
@@ -333,7 +378,7 @@ class VF0SubjectTests(unittest.TestCase):
                 subject,
                 [evidence],
                 [sys.executable, "-I", evidence.path],
-                SubprocessBackend(),
+                _DirectTestBackend(),
             )
             self.assertEqual(b"evidence\n", result.capture.stdout)
             self.assertEqual(original, (repo / "tests" / "existing.py").read_bytes())
@@ -377,7 +422,7 @@ class VF0SubjectTests(unittest.TestCase):
                     subject,
                     [_evidence("print('x')")],
                     [sys.executable, "-c", "pass"],
-                    SubprocessBackend(),
+                    _DirectTestBackend(),
                 )
 
     def test_git_symlink_subject_is_rejected_before_execution(self) -> None:
@@ -392,7 +437,7 @@ class VF0SubjectTests(unittest.TestCase):
                     subject,
                     [_evidence("print('x')")],
                     [sys.executable, "-c", "pass"],
-                    SubprocessBackend(),
+                    _DirectTestBackend(),
                 )
 
     def test_subject_git_metadata_path_rejects_before_materialization(self) -> None:
@@ -424,7 +469,7 @@ class VF0SubjectTests(unittest.TestCase):
                     subject,
                     [evidence],
                     ["/bin/true"],
-                    SubprocessBackend(),
+                    _DirectTestBackend(),
                 )
 
     def test_duplicate_evidence_path_rejects(self) -> None:
@@ -437,7 +482,7 @@ class VF0SubjectTests(unittest.TestCase):
                     subject,
                     [item, item],
                     [sys.executable, "-c", "pass"],
-                    SubprocessBackend(),
+                    _DirectTestBackend(),
                 )
 
     def test_empty_evidence_set_rejects(self) -> None:
@@ -449,14 +494,14 @@ class VF0SubjectTests(unittest.TestCase):
                     subject,
                     [],
                     [sys.executable, "-c", "pass"],
-                    SubprocessBackend(),
+                    _DirectTestBackend(),
                 )
 
     def test_empty_command_rejects(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             repo, subject = _repo(Path(td))
             with self.assertRaisesRegex(ExecutionRejected, "COMMAND"):
-                execute(repo, subject, [_evidence("pass")], [], SubprocessBackend())
+                execute(repo, subject, [_evidence("pass")], [], _DirectTestBackend())
 
     def test_path_lookup_command_rejects(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -467,7 +512,7 @@ class VF0SubjectTests(unittest.TestCase):
                     subject,
                     [_evidence("pass")],
                     ["python3", "-c", "pass"],
-                    SubprocessBackend(),
+                    _DirectTestBackend(),
                 )
 
     def test_relative_command_escape_rejects(self) -> None:
@@ -479,7 +524,7 @@ class VF0SubjectTests(unittest.TestCase):
                     subject,
                     [_evidence("pass")],
                     ["./../bin/tool"],
-                    SubprocessBackend(),
+                    _DirectTestBackend(),
                 )
 
     def test_evidence_file_size_is_bounded(self) -> None:
@@ -497,7 +542,7 @@ class VF0SubjectTests(unittest.TestCase):
                     subject,
                     [first, second],
                     [sys.executable, "-c", "pass"],
-                    SubprocessBackend(),
+                    _DirectTestBackend(),
                 )
 
     def test_executable_mode_is_preserved_for_admitted_evidence(self) -> None:
@@ -509,7 +554,7 @@ class VF0SubjectTests(unittest.TestCase):
                 mode="100755",
             )
             result = execute(
-                repo, subject, [evidence], ["./tests/evidence.sh"], SubprocessBackend()
+                repo, subject, [evidence], ["./tests/evidence.sh"], _DirectTestBackend()
             )
             self.assertEqual(
                 ("completed", 0),
@@ -527,14 +572,14 @@ class VF0SubjectTests(unittest.TestCase):
                 subject,
                 [first, second],
                 [sys.executable, "-c", "pass"],
-                SubprocessBackend(),
+                _DirectTestBackend(),
             )
             two = execute(
                 repo,
                 subject,
                 [second, first],
                 [sys.executable, "-c", "pass"],
-                SubprocessBackend(),
+                _DirectTestBackend(),
             )
             self.assertEqual(one.evidence_sha256, two.evidence_sha256)
             self.assertEqual(one.before_manifest_sha256, two.before_manifest_sha256)
@@ -582,7 +627,7 @@ class VF0SubjectTests(unittest.TestCase):
             ]
             with self.assertRaisesRegex(ExecutionRejected, "SUBJECT_MUTATED"):
                 execute(
-                    repo, subject, [_evidence("pass")], command, SubprocessBackend()
+                    repo, subject, [_evidence("pass")], command, _DirectTestBackend()
                 )
 
     def test_runtime_symlink_creation_is_rejected_after_observation(self) -> None:
@@ -596,7 +641,7 @@ class VF0SubjectTests(unittest.TestCase):
             ]
             with self.assertRaisesRegex(ExecutionRejected, "SUBJECT_SYMLINK"):
                 execute(
-                    repo, subject, [_evidence("pass")], command, SubprocessBackend()
+                    repo, subject, [_evidence("pass")], command, _DirectTestBackend()
                 )
 
     def test_successive_calls_bind_distinct_subjects_without_global_state(self) -> None:
@@ -612,14 +657,14 @@ class VF0SubjectTests(unittest.TestCase):
                 first,
                 [evidence],
                 [sys.executable, "-I", evidence.path],
-                SubprocessBackend(),
+                _DirectTestBackend(),
             )
             two = execute(
                 repo,
                 second,
                 [evidence],
                 [sys.executable, "-I", evidence.path],
-                SubprocessBackend(),
+                _DirectTestBackend(),
             )
             self.assertEqual(b"one\n", one.capture.stdout)
             self.assertEqual(b"two\n", two.capture.stdout)
@@ -640,7 +685,7 @@ class VF0CaptureTests(unittest.TestCase):
                 subject,
                 [evidence],
                 [sys.executable, "-I", evidence.path],
-                SubprocessBackend(),
+                _DirectTestBackend(),
                 limits,
             ).capture
 
@@ -706,14 +751,23 @@ class VF0CaptureTests(unittest.TestCase):
             self.assertFalse(marker.exists(), "descendant survived normal leader exit")
 
     def test_detached_session_descendant_cannot_outlive_local_execution(self) -> None:
+        import tools.vf0_execution as module
+
         with tempfile.TemporaryDirectory() as td:
+            repo, subject = _repo(Path(td))
+            try:
+                module._probe_local_containment(repo)
+            except ExecutionRejected as exc:
+                if str(exc) != "LOCAL_CONTAINMENT_UNAVAILABLE":
+                    raise
+                self.skipTest("local PID/user namespace containment unavailable")
             marker = Path(td) / "detached-survived.txt"
             child = (
                 "import pathlib,time; "
                 "time.sleep(0.25); "
                 f"pathlib.Path({str(marker)!r}).write_text('survived')"
             )
-            capture = self._run(
+            evidence = _evidence(
                 f"""
                 import subprocess, sys
                 subprocess.Popen(
@@ -724,13 +778,54 @@ class VF0CaptureTests(unittest.TestCase):
                     start_new_session=True,
                 )
                 print('LEADER_DONE', flush=True)
-                """,
-                ExecutionLimits(timeout_seconds=1.0),
+                """
             )
+            capture = execute(
+                repo,
+                subject,
+                [evidence],
+                [sys.executable, "-I", evidence.path],
+                SubprocessBackend(),
+                ExecutionLimits(timeout_seconds=1.0),
+            ).capture
             self.assertEqual(("completed", 0), (capture.termination, capture.exit_code))
             self.assertIn(b"LEADER_DONE", capture.stdout)
             time.sleep(0.5)
             self.assertFalse(marker.exists(), "detached descendant escaped containment")
+
+    def test_subprocess_backend_rejects_failed_containment_probe(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            subject = GitSubject(commit="a" * 40, tree="b" * 40)
+            failed = UntrustedCapture("completed", 1, b"", b"unshare failed", 14)
+            with mock.patch(
+                "tools.vf0_execution._capture_process", return_value=failed
+            ) as capture:
+                with self.assertRaisesRegex(
+                    ExecutionRejected, "LOCAL_CONTAINMENT_UNAVAILABLE"
+                ):
+                    SubprocessBackend().run(
+                        root, ["/bin/true"], ExecutionLimits(), subject=subject
+                    )
+            self.assertEqual(1, capture.call_count)
+            self.assertEqual("/bin/true", capture.call_args.args[0][-1])
+
+    def test_subprocess_backend_preserves_command_nonzero_after_probe(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            subject = GitSubject(commit="a" * 40, tree="b" * 40)
+            probe = UntrustedCapture("completed", 0, b"", b"", 0)
+            command = UntrustedCapture("completed", 17, b"claimed-red\n", b"", 12)
+            with mock.patch(
+                "tools.vf0_execution._capture_process", side_effect=[probe, command]
+            ) as capture:
+                result = SubprocessBackend().run(
+                    root, ["/bin/false"], ExecutionLimits(), subject=subject
+                )
+            self.assertEqual(("completed", 17), (result.termination, result.exit_code))
+            self.assertEqual(2, capture.call_count)
+            self.assertEqual("/bin/true", capture.call_args_list[0].args[0][-1])
+            self.assertEqual("/bin/false", capture.call_args_list[1].args[0][-1])
 
     def test_caller_marker_environment_is_not_inherited(self) -> None:
         marker = "VF0_CALLER_MARKER"

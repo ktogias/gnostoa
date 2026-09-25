@@ -76,7 +76,7 @@ def _git_sha1(value: str, reason: str) -> str:
 
 
 def _evidence_path(value: str) -> str:
-    _need(bool(value) and "\\" not in value, "EVIDENCE_PATH")
+    _need(bool(value) and "\\" not in value and "\0" not in value, "EVIDENCE_PATH")
     raw_parts = value.split("/")
     _need(all(part not in {"", ".", ".."} for part in raw_parts), "EVIDENCE_PATH")
     _need(all(part.casefold() != ".git" for part in raw_parts), "EVIDENCE_PATH")
@@ -611,6 +611,39 @@ def _capture_process(
     )
 
 
+def _local_containment_argv(command: Sequence[str]) -> list[str]:
+    return [
+        _LOCAL_CONTAINMENT_EXECUTABLE,
+        "--user",
+        "--map-current-user",
+        "--pid",
+        "--fork",
+        "--kill-child",
+        "--",
+        *command,
+    ]
+
+
+def _probe_local_containment(root: Path) -> None:
+    _need(
+        Path(_LOCAL_CONTAINMENT_EXECUTABLE).is_file()
+        and os.access(_LOCAL_CONTAINMENT_EXECUTABLE, os.X_OK),
+        "LOCAL_CONTAINMENT_UNAVAILABLE",
+    )
+    try:
+        probe = _capture_process(
+            _local_containment_argv(("/bin/true",)),
+            cwd=root,
+            limits=ExecutionLimits(timeout_seconds=5.0, output_bytes=8192),
+        )
+    except ExecutionRejected as exc:
+        raise ExecutionRejected("LOCAL_CONTAINMENT_UNAVAILABLE") from exc
+    _need(
+        probe.termination == "completed" and probe.exit_code == 0,
+        "LOCAL_CONTAINMENT_UNAVAILABLE",
+    )
+
+
 class SubprocessBackend:
     """Finite local backend with PID-namespace descendant containment."""
 
@@ -624,22 +657,10 @@ class SubprocessBackend:
     ) -> UntrustedCapture:
         del subject
         _validate_command(command)
-        _need(
-            Path(_LOCAL_CONTAINMENT_EXECUTABLE).is_file()
-            and os.access(_LOCAL_CONTAINMENT_EXECUTABLE, os.X_OK),
-            "LOCAL_CONTAINMENT_UNAVAILABLE",
+        _probe_local_containment(root)
+        return _capture_process(
+            _local_containment_argv(command), cwd=root, limits=limits
         )
-        contained = [
-            _LOCAL_CONTAINMENT_EXECUTABLE,
-            "--user",
-            "--map-current-user",
-            "--pid",
-            "--fork",
-            "--kill-child",
-            "--",
-            *command,
-        ]
-        return _capture_process(contained, cwd=root, limits=limits)
 
 
 class DockerBackend:
@@ -977,11 +998,12 @@ def execute(
         bool(command) and all(isinstance(part, str) and part for part in command),
         "COMMAND",
     )
+    evidence_snapshot = tuple(evidence)
     with tempfile.TemporaryDirectory(prefix="gnostoa-vf0-execution-") as temporary:
         temp = Path(temporary)
         root = temp / "subject"
         baseline = _materialize_subject(repository, subject, root)
-        expected = _overlay_evidence(root, baseline, evidence)
+        expected = _overlay_evidence(root, baseline, evidence_snapshot)
         before = _snapshot(root)
         _need(before == expected, "SUBJECT_BEFORE_EXECUTION")
         before_digest = _manifest_digest(before)
@@ -991,7 +1013,7 @@ def execute(
         after_digest = _manifest_digest(after)
         _need(before_digest == after_digest, "SUBJECT_MUTATED")
         evidence_digests = tuple(
-            sorted((item.path, _sha256(item.content)) for item in evidence)
+            sorted((item.path, _sha256(item.content)) for item in evidence_snapshot)
         )
         return ExecutionObservation(
             subject=subject,

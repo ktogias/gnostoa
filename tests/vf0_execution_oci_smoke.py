@@ -34,7 +34,7 @@ case = sys.argv[1]
 if case == "isolation":
     checks = {}
     for name, path in (("subject_read_only", "/workspace/subject.txt"),
-                       ("rootfs_read_only", "/etc/vf0-write-probe")):
+                       ("rootfs_read_only", "/home/kit/vf0-write-probe")):
         try:
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
             os.write(fd, b"ISOLATION_FAILURE\n")
@@ -106,6 +106,75 @@ def _git(repo: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
+def _probe_read_only_behavior(image: str) -> dict[str, bool]:
+    """Behaviorally prove read-only rootfs and bind mount with writable targets."""
+
+    payload = r"""import json, os
+checks = {}
+for name, path in (("workspace_bind_read_only", "/probe/writable.txt"),
+                   ("rootfs_read_only", "/home/kit/vf0-rootfs-probe")):
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        os.write(fd, b"READONLY_FAILURE\n")
+        os.close(fd)
+        checks[name] = False
+    except OSError:
+        checks[name] = True
+print(json.dumps(checks, sort_keys=True))
+assert all(checks.values()), "READONLY_PROBE_FAILED"
+"""
+    with tempfile.TemporaryDirectory(prefix="vf0-readonly-probe-") as td:
+        root = Path(td)
+        root.chmod(0o777)
+        probe = root / "writable.txt"
+        probe.write_bytes(b"original\n")
+        probe.chmod(0o666)
+        result = subprocess.run(  # nosec B603 -- fixed /usr/bin/docker smoke probe, no shell
+            [
+                "/usr/bin/docker",
+                "run",
+                "--rm",
+                "--pull=never",
+                "--read-only",
+                "--network",
+                "none",
+                "--ipc",
+                "none",
+                "--cap-drop",
+                "ALL",
+                "--security-opt",
+                "no-new-privileges",
+                "--user",
+                "10001:10001",
+                "--mount",
+                f"type=bind,source={root},target=/probe,readonly",
+                "--entrypoint",
+                "/usr/local/bin/python3",
+                image,
+                "-I",
+                "-c",
+                payload,
+            ],
+            check=False,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            env={"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/nonexistent"},
+            timeout=30,
+        )
+        if result.returncode != 0:
+            raise AssertionError("READONLY_BEHAVIOR_PROBE_FAILED")
+        try:
+            observed = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            raise AssertionError("READONLY_BEHAVIOR_PROBE_OUTPUT") from exc
+        expected = {"rootfs_read_only": True, "workspace_bind_read_only": True}
+        if observed != expected:
+            raise AssertionError("READONLY_BEHAVIOR_PROBE_RESULT")
+        if probe.read_bytes() != b"original\n":
+            raise AssertionError("READONLY_BIND_MUTATED")
+        return expected
+
+
 def _commit(repo: Path, value: str) -> GitSubject:
     (repo / "subject.txt").write_text(value + "\n")
     _git(repo, "add", "subject.txt")
@@ -156,6 +225,7 @@ def _summary(observation: ExecutionObservation) -> dict[str, Any]:
 
 def run_smoke(image: str) -> dict[str, Any]:
     backend = DockerBackend(image)
+    read_only_behavior = _probe_read_only_behavior(image)
     limits = ExecutionLimits(timeout_seconds=5.0, output_bytes=65_536)
     evidence = EvidenceFile(EVIDENCE_PATH, EVIDENCE)
     command = ("/usr/local/bin/python3", "-I", "/workspace/" + EVIDENCE_PATH)
@@ -232,6 +302,7 @@ def run_smoke(image: str) -> dict[str, Any]:
         "scope": "COMPONENT_CONFORMANCE_ONLY",
         "image": image,
         "cases": cases,
+        "read_only_behavior": read_only_behavior,
         "wrong_tree": wrong_tree,
         "production_receipt_issued": False,
         "producer_admitted": False,
