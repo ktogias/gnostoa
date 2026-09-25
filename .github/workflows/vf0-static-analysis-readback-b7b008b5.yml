@@ -1,0 +1,105 @@
+name: VF0 static-analysis readback b7b008b5
+
+on:
+  push:
+    branches:
+      - agent-support/vf0-execution-smoke-b7b008b5
+
+permissions:
+  contents: read
+  checks: read
+  security-events: read
+
+jobs:
+  readback:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Read exact PR-head analysis annotations
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/vf0-static-readback"
+          python3 - "$RUNNER_TEMP/vf0-static-readback/result.json" <<'PY'
+          import json, os, sys, urllib.error, urllib.parse, urllib.request
+
+          repo = "ktogias/gnostoa"
+          token = os.environ["GH_TOKEN"]
+          out = {"schema":"vf0-static-analysis-readback/v1","subject":"b7b008b52fcfb053dc8b6c25893c4dcaf475dc28","checks":{}}
+
+          def get_json(url):
+              req = urllib.request.Request(
+                  url,
+                  headers={
+                      "Accept":"application/vnd.github+json",
+                      "Authorization":"Bearer " + token,
+                      "X-GitHub-Api-Version":"2022-11-28",
+                      "User-Agent":"gnostoa-vf0-readback",
+                  },
+              )
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  return json.load(response)
+
+          for name, check_id in {
+              "codeql":108060962674,
+              "sonar":108060903877,
+              "codacy":108061106787,
+          }.items():
+              try:
+                  rows = get_json(f"https://api.github.com/repos/{repo}/check-runs/{check_id}/annotations?per_page=100")
+                  out["checks"][name] = [
+                      {
+                          "path": row.get("path"),
+                          "start_line": row.get("start_line"),
+                          "end_line": row.get("end_line"),
+                          "annotation_level": row.get("annotation_level"),
+                          "title": row.get("title"),
+                          "message": row.get("message"),
+                          "raw_details": row.get("raw_details"),
+                      }
+                      for row in rows
+                  ]
+              except Exception as exc:
+                  out["checks"][name] = {"error": type(exc).__name__}
+
+          try:
+              alerts = get_json(
+                  f"https://api.github.com/repos/{repo}/code-scanning/alerts?state=open&pr=319&per_page=100"
+              )
+              selected = []
+              for alert in alerts:
+                  tool = alert.get("tool") or {}
+                  if tool.get("name") != "CodeQL":
+                      continue
+                  inst = alert.get("most_recent_instance") or {}
+                  loc = inst.get("location") or {}
+                  selected.append({
+                      "number":alert.get("number"),
+                      "html_url":alert.get("html_url"),
+                      "rule_id":(alert.get("rule") or {}).get("id"),
+                      "rule_name":(alert.get("rule") or {}).get("name"),
+                      "security_severity_level":(alert.get("rule") or {}).get("security_severity_level"),
+                      "message":(inst.get("message") or {}).get("text"),
+                      "path":loc.get("path"),
+                      "start_line":loc.get("start_line"),
+                      "end_line":loc.get("end_line"),
+                      "commit_sha":inst.get("commit_sha"),
+                  })
+              out["codeql_alerts"] = selected
+          except Exception as exc:
+              out["codeql_alerts"] = {"error":type(exc).__name__}
+
+          with open(sys.argv[1],"w",encoding="utf-8") as fh:
+              json.dump(out,fh,sort_keys=True,separators=(",",":"))
+              fh.write("\n")
+          PY
+          sha256sum "$RUNNER_TEMP/vf0-static-readback/result.json" > "$RUNNER_TEMP/vf0-static-readback/result.sha256"
+
+      - name: Retain bounded readback
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: vf0-static-analysis-readback-b7b008b5
+          path: ${{ runner.temp }}/vf0-static-readback
+          retention-days: 7
