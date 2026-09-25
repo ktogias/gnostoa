@@ -1,0 +1,77 @@
+name: PR319 exact OCI smoke 9df1bd05
+
+on:
+  push:
+    branches:
+      - agent-support/pr319-oci-smoke-9df1bd05-20260925
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact published candidate
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 9df1bd05b3fc2d4d8ce6aa2066c18a90281f95fc
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Bind exact source
+        env:
+          EXPECTED_HEAD: 9df1bd05b3fc2d4d8ce6aa2066c18a90281f95fc
+          EXPECTED_TREE: e6389215ba6298d20e88915b1f05b9b1ac3fde9b
+        run: |
+          set -eu
+          cd candidate
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD^{tree})" = "$EXPECTED_TREE"
+          test "$(git rev-parse --is-shallow-repository)" = false
+          test -z "$(git status --porcelain)"
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Pull pinned OCI image
+        env:
+          IMAGE: ghcr.io/ktogias/gnostoa@sha256:f89bf32c0c4b86bac71fa008579b2385e6ae39bf4822f685479c4f2cc22bfca4
+        run: |
+          set -eu
+          docker pull "$IMAGE"
+          docker image inspect "$IMAGE" >/dev/null
+      - name: Execute fixed repository-owned smoke
+        env:
+          IMAGE: ghcr.io/ktogias/gnostoa@sha256:f89bf32c0c4b86bac71fa008579b2385e6ae39bf4822f685479c4f2cc22bfca4
+          RESULT: ${{ runner.temp }}/result.json
+          META: ${{ runner.temp }}/metadata.json
+        run: |
+          set -eu
+          cd candidate
+          PYTHONPATH=. python tests/vf0_execution_oci_smoke.py --image "$IMAGE" --output "$RESULT" >/dev/null
+          python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          result = Path(os.environ["RESULT"])
+          if not result.is_file() or result.stat().st_size > 262144:
+              raise SystemExit("RESULT_BOUND")
+          meta = {
+              "schema":"pr319-vf0-oci-smoke-retention/v1",
+              "subject":"9df1bd05b3fc2d4d8ce6aa2066c18a90281f95fc",
+              "tree":"e6389215ba6298d20e88915b1f05b9b1ac3fde9b",
+              "image":"ghcr.io/ktogias/gnostoa@sha256:f89bf32c0c4b86bac71fa008579b2385e6ae39bf4822f685479c4f2cc22bfca4",
+              "result_sha256":hashlib.sha256(result.read_bytes()).hexdigest(),
+          }
+          Path(os.environ["META"]).write_text(json.dumps(meta,sort_keys=True,separators=(",",":"))+"\n")
+          print("OCI_SMOKE_OK " + meta["result_sha256"])
+          PY
+      - name: Upload bounded result
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr319-vf0-oci-smoke-9df1bd05
+          path: |
+            ${{ runner.temp }}/result.json
+            ${{ runner.temp }}/metadata.json
+          if-no-files-found: error
+          retention-days: 7
