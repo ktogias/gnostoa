@@ -23,7 +23,7 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
-from typing import Protocol
+from typing import Protocol, cast
 
 _GIT_SHA1_RE = re.compile(r"[0-9a-f]{40}")
 _DOCKER_ID_RE = re.compile(r"[0-9a-f]{64}")
@@ -112,7 +112,12 @@ class EvidenceFile:
     def __post_init__(self) -> None:
         object.__setattr__(self, "path", _evidence_path(self.path))
         _need(self.mode in {"100644", "100755"}, "EVIDENCE_MODE")
-        _need(len(self.content) <= _MAX_EVIDENCE_BYTES, "EVIDENCE_FILE_BOUND")
+        raw_content = cast(object, self.content)
+        if not isinstance(raw_content, (bytes, bytearray, memoryview)):
+            raise ExecutionRejected("EVIDENCE_CONTENT")
+        content = bytes(raw_content)
+        _need(len(content) <= _MAX_EVIDENCE_BYTES, "EVIDENCE_FILE_BOUND")
+        object.__setattr__(self, "content", content)
 
 
 @dataclass(frozen=True)

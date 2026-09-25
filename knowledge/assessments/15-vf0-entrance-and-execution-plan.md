@@ -696,6 +696,14 @@ the execution/fixture suite becomes **64 tests**, so the focused corpus is **98
 tests**. All **98** pass normally and under `python -O` before ordinary
 exact-parent D0090 preparation.
 
+The next evidence-payload snapshot successor adds one execution/fixture regression:
+caller-owned mutable bytes-like input is copied to immutable `bytes` when the
+`EvidenceFile` is constructed, so later caller/backend mutation cannot change the
+materialized bytes or the retained evidence digest. The relation suite remains **34
+tests** and the execution/fixture suite becomes **65 tests**, so the focused corpus
+is **99 tests**. All **99** pass normally and under `python -O` before ordinary
+exact-parent D0090 preparation.
+
 This evidence still does **not** claim a live run of the new Docker specialization.
 `tests/vf0_execution_oci_smoke.py` is intentionally outside unittest discovery and
 must be executed after exact ordinary D0090 preparation/publication of this

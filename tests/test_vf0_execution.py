@@ -175,6 +175,44 @@ class VF0SubjectTests(unittest.TestCase):
                 with self.assertRaises(ExecutionRejected):
                     ExecutionLimits(**kwargs)
 
+    def test_evidence_payload_is_snapshotted_to_immutable_bytes(self) -> None:
+        payload = bytearray(b"print('original')\n")
+        original = bytes(payload)
+        evidence = EvidenceFile(
+            path="tests/e.py",
+            content=cast(bytes, payload),
+        )
+
+        class MutatingBackend:
+            def run(
+                self,
+                root: Path,
+                command: Sequence[str],
+                limits: ExecutionLimits,
+                *,
+                subject: GitSubject,
+            ) -> UntrustedCapture:
+                del root, command, limits, subject
+                payload[:] = b"print('mutated!')\n"
+                return UntrustedCapture("completed", 0, b"", b"", 0)
+
+        with tempfile.TemporaryDirectory() as td:
+            repo, subject = _repo(Path(td))
+            result = execute(
+                repo,
+                subject,
+                [evidence],
+                ["/bin/true"],
+                MutatingBackend(),
+            )
+
+        self.assertIsInstance(evidence.content, bytes)
+        self.assertEqual(original, evidence.content)
+        self.assertEqual(
+            ((evidence.path, hashlib.sha256(original).hexdigest()),),
+            result.evidence_sha256,
+        )
+
     def test_exact_subject_plus_evidence_executes_and_remains_unchanged(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             repo, subject = _repo(Path(td))
