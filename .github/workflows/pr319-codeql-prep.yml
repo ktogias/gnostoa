@@ -28,6 +28,27 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Reconstruct and apply exact candidate
+        run: |
+          set -euo pipefail
+          cat             support/.github/pr319-codeql-chunks/00             support/.github/pr319-codeql-chunks/01-00             support/.github/pr319-codeql-chunks/01-01             support/.github/pr319-codeql-chunks/01-02             support/.github/pr319-codeql-chunks/01-03-00             support/.github/pr319-codeql-chunks/01-03-01-00             support/.github/pr319-codeql-chunks/01-03-01-01             support/.github/pr319-codeql-chunks/01-03-01-02             support/.github/pr319-codeql-chunks/01-03-02             support/.github/pr319-codeql-chunks/01-03-03             support/.github/pr319-codeql-chunks/02             support/.github/pr319-codeql-chunks/03             support/.github/pr319-codeql-chunks/04             > "$RUNNER_TEMP/candidate.patch.b64"
+          echo '363bab0311e759ecbb9d579a30186ba51ec8ada760ae480c069c043c8f5e2a0e  '"$RUNNER_TEMP"'/candidate.patch.b64' | sha256sum --check
+          base64 -d "$RUNNER_TEMP/candidate.patch.b64" > "$RUNNER_TEMP/candidate.patch"
+          echo 'bb2c2020e5d0e19caf58077732ca1e07fc77ec61e4ac3037eb5478dd20d9b743  '"$RUNNER_TEMP"'/candidate.patch' | sha256sum --check
+          test "$(git hash-object "$RUNNER_TEMP/candidate.patch")" = 96430eb931d294320db2ce3a2d852ee6c5086ae9
+          cd candidate
+          test "$(git rev-parse HEAD)" = b7b008b52fcfb053dc8b6c25893c4dcaf475dc28
+          test "$(git rev-parse HEAD^{tree})" = e436776d3a772544bf01cc718e5e4edc20194619
+          test -z "$(git status --porcelain)"
+          git apply --binary "$RUNNER_TEMP/candidate.patch"
+          git diff --name-only | sort > "$RUNNER_TEMP/changed-paths.txt"
+          printf '%s\n' knowledge/assessments/15-vf0-entrance-and-execution-plan.md tests/test_vf0_execution.py tools/vf0_execution.py | sort > "$RUNNER_TEMP/expected-paths.txt"
+          diff -u "$RUNNER_TEMP/expected-paths.txt" "$RUNNER_TEMP/changed-paths.txt"
+          test "$(git hash-object knowledge/assessments/15-vf0-entrance-and-execution-plan.md)" = 186e18800a506a4644a96bbf4015f3eb9a5b0996
+          test "$(git hash-object tests/test_vf0_execution.py)" = d5d919c131f7992ba7a8e9b0af5175cfd8118c9c
+          test "$(git hash-object tools/vf0_execution.py)" = 4bc8d757890bebd4e55142094f09e68e47005031
+          git diff --check
+
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
@@ -39,21 +60,6 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --disable-pip-version-check --only-binary=:all: --require-hashes -r candidate/requirements/development.lock
-
-      - name: Apply exact candidate patch
-        run: |
-          set -euo pipefail
-          echo 'bb2c2020e5d0e19caf58077732ca1e07fc77ec61e4ac3037eb5478dd20d9b743  support/.github/pr319-codeqlfix.patch' | sha256sum --check
-          cd candidate
-          test "$(git rev-parse HEAD)" = b7b008b52fcfb053dc8b6c25893c4dcaf475dc28
-          test "$(git rev-parse HEAD^{tree})" = e436776d3a772544bf01cc718e5e4edc20194619
-          test -z "$(git status --porcelain)"
-          git apply --binary ../support/.github/pr319-codeqlfix.patch
-          test "$(git rev-parse HEAD)" = b7b008b52fcfb053dc8b6c25893c4dcaf475dc28
-          git diff --name-only | sort > "$RUNNER_TEMP/changed-paths.txt"
-          printf '%s\n' knowledge/assessments/15-vf0-entrance-and-execution-plan.md tests/test_vf0_execution.py tools/vf0_execution.py | sort > "$RUNNER_TEMP/expected-paths.txt"
-          diff -u "$RUNNER_TEMP/expected-paths.txt" "$RUNNER_TEMP/changed-paths.txt"
-          git diff --check
 
       - name: Prepare and independently verify exact candidate
         run: |
