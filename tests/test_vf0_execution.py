@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import importlib.util
 import os
 import subprocess
 import sys
 import tempfile
 import textwrap
 import unittest
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import fields
 from pathlib import Path
+from typing import cast
 from unittest import mock
 
 from tools.vf0_execution import (
@@ -477,18 +479,29 @@ class VF0CaptureTests(unittest.TestCase):
         self.assertIsNone(capture.exit_code)
         self.assertIn(b"DESCENDANT_STARTED", capture.stdout)
 
-    def test_caller_secret_environment_is_not_inherited(self) -> None:
-        previous = os.environ.get("VF0_CALLER_SECRET")
-        os.environ["VF0_CALLER_SECRET"] = "must-not-leak"
+    def test_group_kill_is_attempted_even_after_leader_exit(self) -> None:
+        process = mock.Mock()
+        process.pid = 12345
+        process.poll.return_value = 0
+        with mock.patch("tools.vf0_execution.os.killpg") as kill_group:
+            from tools.vf0_execution import _kill_process_group
+
+            _kill_process_group(process)
+        kill_group.assert_called_once_with(12345, 9)
+
+    def test_caller_marker_environment_is_not_inherited(self) -> None:
+        marker = "VF0_CALLER_MARKER"
+        previous = os.environ.get(marker)
+        os.environ[marker] = "must-not-leak"
         try:
             capture = self._run(
-                "import os; print('present' if 'VF0_CALLER_SECRET' in os.environ else 'absent')"
+                f"import os; print('present' if {marker!r} in os.environ else 'absent')"
             )
         finally:
             if previous is None:
-                os.environ.pop("VF0_CALLER_SECRET", None)
+                os.environ.pop(marker, None)
             else:
-                os.environ["VF0_CALLER_SECRET"] = previous
+                os.environ[marker] = previous
         self.assertEqual(b"absent\n", capture.stdout)
 
     def test_spoofed_approval_text_remains_only_untrusted_bytes(self) -> None:
@@ -501,12 +514,18 @@ class VF0CaptureTests(unittest.TestCase):
 
 class FakeDockerBackend(DockerBackend):
     def __init__(
-        self, image: str, root: Path, *, invalid_contract: bool = False
+        self,
+        image: str,
+        root: Path,
+        *,
+        invalid_contract: bool = False,
+        nano_cpus: int = 500_000_000,
     ) -> None:
         super().__init__(image=image, docker_executable="/usr/bin/docker")
         self.calls: list[tuple[str, ...]] = []
         self.root = root
         self.invalid_contract = invalid_contract
+        self.nano_cpus = nano_cpus
         self.container_id = "a" * 64
 
     def _command(
@@ -539,7 +558,7 @@ class FakeDockerBackend(DockerBackend):
                     "PidsLimit": 32,
                     "Memory": 256 * 1024 * 1024,
                     "MemorySwap": 256 * 1024 * 1024,
-                    "NanoCpus": 500_000_000,
+                    "NanoCpus": self.nano_cpus,
                 },
                 "Config": {"User": "10001:10001"},
                 "Mounts": [
@@ -612,6 +631,21 @@ class VF0DockerBackendTests(unittest.TestCase):
                 "target=/workspace,readonly",
             ):
                 self.assertIn(fragment, rendered)
+
+    def test_fractional_cpu_contract_uses_docker_nano_cpu_rounding(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td).resolve()
+            backend = FakeDockerBackend(self.image, root, nano_cpus=2_010_000_000)
+            capture = UntrustedCapture("completed", 0, b"ok\n", b"", 3)
+            with mock.patch(
+                "tools.vf0_execution._capture_process", return_value=capture
+            ):
+                result = backend.run(
+                    root,
+                    ["/usr/local/bin/python3", "-I", "/workspace/tests/e.py"],
+                    ExecutionLimits(cpus=2.01),
+                )
+            self.assertEqual(17, result.exit_code)
 
     def test_container_inspect_contract_is_verified_before_attachment(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -719,6 +753,19 @@ class VF0DockerBackendTests(unittest.TestCase):
             )
 
 
+def _load_smoke_success_checker() -> Callable[[ExecutionObservation, bytes], None]:
+    path = Path(__file__).with_name("vf0_execution_oci_smoke.py")
+    spec = importlib.util.spec_from_file_location("_vf0_execution_oci_smoke", path)
+    if spec is None or spec.loader is None:
+        raise AssertionError("SMOKE_HELPER_LOAD")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return cast(
+        Callable[[ExecutionObservation, bytes], None],
+        module._expect_completed_success,
+    )
+
+
 class VF0SmokeContractTests(unittest.TestCase):
     def _observation(
         self, termination: str, exit_code: int | None, stdout: bytes
@@ -739,25 +786,25 @@ class VF0SmokeContractTests(unittest.TestCase):
         )
 
     def test_smoke_success_requires_zero_exit_not_only_expected_output(self) -> None:
-        from tests.vf0_execution_oci_smoke import _expect_completed_success
+        expect_completed_success = _load_smoke_success_checker()
 
         with self.assertRaisesRegex(AssertionError, "SMOKE_SUCCESS_CONTRACT"):
-            _expect_completed_success(
+            expect_completed_success(
                 self._observation("completed", 17, b"two\n"), b"two\n"
             )
 
     def test_smoke_success_rejects_timeout_even_with_expected_output(self) -> None:
-        from tests.vf0_execution_oci_smoke import _expect_completed_success
+        expect_completed_success = _load_smoke_success_checker()
 
         with self.assertRaisesRegex(AssertionError, "SMOKE_SUCCESS_CONTRACT"):
-            _expect_completed_success(
+            expect_completed_success(
                 self._observation("timeout", None, b"two\n"), b"two\n"
             )
 
     def test_smoke_success_accepts_completed_zero_exact_output(self) -> None:
-        from tests.vf0_execution_oci_smoke import _expect_completed_success
+        expect_completed_success = _load_smoke_success_checker()
 
-        _expect_completed_success(self._observation("completed", 0, b"two\n"), b"two\n")
+        expect_completed_success(self._observation("completed", 0, b"two\n"), b"two\n")
 
 
 if __name__ == "__main__":

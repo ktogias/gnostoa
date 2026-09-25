@@ -45,7 +45,7 @@ if case == "isolation":
     checks["no_git_metadata"] = not pathlib.Path("/workspace/.git").exists()
     checks["no_docker_socket"] = not pathlib.Path("/var/run/docker.sock").exists()
     checks["clean_environment"] = all(name not in os.environ for name in
-        ("GITHUB_TOKEN", "ACTIONS_RUNTIME_TOKEN", "GITHUB_OUTPUT", "GITHUB_ENV", "VF0_CALLER_SECRET"))
+        ("GITHUB_TOKEN", "ACTIONS_RUNTIME_TOKEN", "GITHUB_OUTPUT", "GITHUB_ENV", "VF0_CALLER_MARKER"))
     checks["nonroot"] = os.getuid() == 10001
     try:
         os.setuid(0)

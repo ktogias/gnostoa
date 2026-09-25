@@ -322,14 +322,13 @@ def _overlay_evidence(
 
 
 def _kill_process_group(process: subprocess.Popen[bytes]) -> None:
-    if process.poll() is not None:
-        return
     try:
         os.killpg(process.pid, signal.SIGKILL)
     except ProcessLookupError:
         return
     except OSError:
-        process.kill()
+        if process.poll() is None:
+            process.kill()
 
 
 def _capture_process(
@@ -516,7 +515,7 @@ class DockerBackend:
             and host.get("PidsLimit") == limits.pids
             and host.get("Memory") == limits.memory_bytes
             and host.get("MemorySwap") == limits.memory_bytes
-            and host.get("NanoCpus") == int(limits.cpus * 1_000_000_000),
+            and host.get("NanoCpus") == round(limits.cpus * 1_000_000_000),
             "OCI_CONTRACT",
         )
 
