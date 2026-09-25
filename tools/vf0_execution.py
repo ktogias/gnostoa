@@ -19,6 +19,7 @@ import stat
 import subprocess  # nosec B404 -- intentional bounded list-argv execution boundary
 import tempfile
 import time
+import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
@@ -32,6 +33,7 @@ _MAX_FILE_BYTES = 32 * 1024 * 1024
 _MAX_EVIDENCE_FILES = 32
 _MAX_EVIDENCE_BYTES = 2 * 1024 * 1024
 _CONTAINER_TMP = "/tmp"  # nosec B108 -- isolated container tmpfs, never a host temp path
+_CONTAINER_CLEANUP_LABEL = "gnostoa.vf0.cleanup-token"
 _CLEAN_ENV = {
     "PATH": "/usr/local/bin:/usr/bin:/bin",
     "HOME": "/nonexistent",
@@ -469,8 +471,10 @@ def _capture_process(
             except subprocess.TimeoutExpired:
                 termination = "timeout"
                 _kill_process_group(process)
-        if process.poll() is None:
-            _kill_process_group(process)
+        # The leader may have exited cleanly after spawning descendants that
+        # closed or redirected their stdio. Always clear the owned session before
+        # returning so those descendants cannot outlive this bounded execution.
+        _kill_process_group(process)
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired as exc:
@@ -550,7 +554,11 @@ class DockerBackend:
             _need(spec[0].get("Id") == self.image, "OCI_IMAGE_IDENTITY")
 
     def _validate_container(
-        self, container_id: str, root: Path, limits: ExecutionLimits
+        self,
+        container_id: str,
+        root: Path,
+        limits: ExecutionLimits,
+        cleanup_token: str,
     ) -> None:
         try:
             raw = json.loads(self._checked("inspect", container_id))
@@ -579,6 +587,8 @@ class DockerBackend:
             "OCI_MOUNT_CONTRACT",
         )
         security = host.get("SecurityOpt") or []
+        labels = config.get("Labels") or {}
+        _need(isinstance(labels, dict), "OCI_INSPECT")
         _need(
             host.get("ReadonlyRootfs") is True
             and host.get("NetworkMode") == "none"
@@ -587,6 +597,7 @@ class DockerBackend:
             and host.get("CapDrop") == ["ALL"]
             and "no-new-privileges" in security
             and config.get("User") == "10001:10001"
+            and labels.get(_CONTAINER_CLEANUP_LABEL) == cleanup_token
             and host.get("PidsLimit") == limits.pids
             and host.get("Memory") == limits.memory_bytes
             and host.get("MemorySwap") == limits.memory_bytes
@@ -601,6 +612,31 @@ class DockerBackend:
         message = (gone.stderr + b"\n" + gone.stdout).lower()
         _need(gone.returncode != 0 and b"no such" in message, "OCI_CLEANUP_UNVERIFIED")
 
+    def _cleanup_uncertain_create(
+        self, container_name: str, cleanup_token: str
+    ) -> None:
+        inspected = self._command("inspect", container_name, timeout=15)
+        message = (inspected.stderr + b"\n" + inspected.stdout).lower()
+        if inspected.returncode != 0:
+            _need(b"no such" in message, "OCI_CLEANUP_UNVERIFIED")
+            return
+        try:
+            raw = json.loads(inspected.stdout)
+        except (json.JSONDecodeError, TypeError) as exc:
+            raise ExecutionRejected("OCI_CLEANUP_UNVERIFIED") from exc
+        _need(
+            isinstance(raw, list) and len(raw) == 1 and isinstance(raw[0], dict),
+            "OCI_CLEANUP_UNVERIFIED",
+        )
+        config = raw[0].get("Config", {})
+        labels = config.get("Labels") if isinstance(config, dict) else None
+        _need(
+            isinstance(labels, dict)
+            and labels.get(_CONTAINER_CLEANUP_LABEL) == cleanup_token,
+            "OCI_CLEANUP_OWNERSHIP",
+        )
+        self._remove_and_verify(container_name)
+
     def run(
         self,
         root: Path,
@@ -609,8 +645,14 @@ class DockerBackend:
     ) -> UntrustedCapture:
         _validate_command(command)
         self._inspect_image()
+        cleanup_token = uuid.uuid4().hex
+        container_name = f"gnostoa-vf0-{cleanup_token}"
         create = [
             "create",
+            "--name",
+            container_name,
+            "--label",
+            f"{_CONTAINER_CLEANUP_LABEL}={cleanup_token}",
             "--read-only",
             "--network",
             "none",
@@ -647,11 +689,13 @@ class DockerBackend:
             self.image,
             *command[1:],
         ]
-        container_id = self._checked(*create).decode().strip().lower()
-        _need(_DOCKER_ID_RE.fullmatch(container_id) is not None, "OCI_CONTAINER_ID")
+        container_id: str | None = None
         attachment_finished = False
         try:
-            self._validate_container(container_id, root, limits)
+            observed_id = self._checked(*create).decode().strip().lower()
+            _need(_DOCKER_ID_RE.fullmatch(observed_id) is not None, "OCI_CONTAINER_ID")
+            container_id = observed_id
+            self._validate_container(container_id, root, limits, cleanup_token)
             capture = _capture_process(
                 [self.docker_executable, "start", "--attach", container_id],
                 cwd=None,
@@ -683,7 +727,10 @@ class DockerBackend:
             # Even preflight/client failures still remove and independently verify
             # absence of the owned container.
             try:
-                self._remove_and_verify(container_id)
+                if container_id is None:
+                    self._cleanup_uncertain_create(container_name, cleanup_token)
+                else:
+                    self._remove_and_verify(container_id)
             except ExecutionRejected:
                 if attachment_finished:
                     raise

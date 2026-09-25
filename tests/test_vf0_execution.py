@@ -10,6 +10,7 @@ import subprocess  # nosec B404 -- test-only fixed list-argv Git/process fixture
 import sys
 import tempfile
 import textwrap
+import time
 import unittest
 from collections.abc import Callable, Sequence
 from dataclasses import fields
@@ -547,14 +548,30 @@ class VF0CaptureTests(unittest.TestCase):
         self.assertIn(b"DESCENDANT_STARTED", capture.stdout)
 
     def test_group_kill_is_attempted_even_after_leader_exit(self) -> None:
-        process = mock.Mock()
-        process.pid = 12345
-        process.poll.return_value = 0
-        with mock.patch("tools.vf0_execution.os.killpg") as kill_group:
-            from tools.vf0_execution import _kill_process_group
-
-            _kill_process_group(process)
-        kill_group.assert_called_once_with(12345, 9)
+        with tempfile.TemporaryDirectory() as td:
+            marker = Path(td) / "descendant-survived.txt"
+            child = (
+                "import pathlib,time; "
+                "time.sleep(0.25); "
+                f"pathlib.Path({str(marker)!r}).write_text('survived')"
+            )
+            capture = self._run(
+                f"""
+                import subprocess, sys
+                subprocess.Popen(
+                    [sys.executable, '-I', '-c', {child!r}],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                print('LEADER_DONE', flush=True)
+                """,
+                ExecutionLimits(timeout_seconds=1.0),
+            )
+            self.assertEqual(("completed", 0), (capture.termination, capture.exit_code))
+            self.assertIn(b"LEADER_DONE", capture.stdout)
+            time.sleep(0.5)
+            self.assertFalse(marker.exists(), "descendant survived normal leader exit")
 
     def test_caller_marker_environment_is_not_inherited(self) -> None:
         marker = "VF0_CALLER_MARKER"
@@ -587,13 +604,19 @@ class FakeDockerBackend(DockerBackend):
         *,
         invalid_contract: bool = False,
         nano_cpus: int = 500_000_000,
+        create_mode: str = "success",
     ) -> None:
         super().__init__(image=image, docker_executable="/usr/bin/docker")
         self.calls: list[tuple[str, ...]] = []
         self.root = root
         self.invalid_contract = invalid_contract
         self.nano_cpus = nano_cpus
+        self.create_mode = create_mode
         self.container_id = "a" * 64
+        self.container_name: str | None = None
+        self.cleanup_token: str | None = None
+        self.created = False
+        self.removed = False
 
     def _command(
         self, *args: str, timeout: float = 30
@@ -610,10 +633,51 @@ class FakeDockerBackend(DockerBackend):
                 stderr=b"",
             )
         if args and args[0] == "create":
+            name_index = args.index("--name") + 1
+            label_index = args.index("--label") + 1
+            self.container_name = args[name_index]
+            label = args[label_index]
+            key, token = label.split("=", 1)
+            if key != "gnostoa.vf0.cleanup-token":
+                raise AssertionError(label)
+            self.cleanup_token = token
+            self.created = True
+            if self.create_mode == "exception":
+                raise ExecutionRejected("DOCKER_COMMAND_FAILED")
+            if self.create_mode == "malformed":
+                return subprocess.CompletedProcess(
+                    ["/usr/bin/docker"], 0, stdout=b"not-a-container-id\n", stderr=b""
+                )
             return subprocess.CompletedProcess(
                 ["/usr/bin/docker"],
                 0,
                 stdout=(self.container_id + "\n").encode(),
+                stderr=b"",
+            )
+        if self.container_name is not None and args == ("inspect", self.container_name):
+            if self.removed:
+                return subprocess.CompletedProcess(
+                    ["/usr/bin/docker"],
+                    1,
+                    stdout=b"",
+                    stderr=b"Error: No such container",
+                )
+            import json
+
+            return subprocess.CompletedProcess(
+                ["/usr/bin/docker"],
+                0,
+                stdout=json.dumps(
+                    [
+                        {
+                            "Config": {
+                                "Labels": {
+                                    "gnostoa.vf0.cleanup-token": self.cleanup_token
+                                }
+                            }
+                        }
+                    ]
+                ).encode(),
                 stderr=b"",
             )
         if args == ("inspect", self.container_id):
@@ -630,7 +694,10 @@ class FakeDockerBackend(DockerBackend):
                     "MemorySwap": 256 * 1024 * 1024,
                     "NanoCpus": self.nano_cpus,
                 },
-                "Config": {"User": "10001:10001"},
+                "Config": {
+                    "User": "10001:10001",
+                    "Labels": {"gnostoa.vf0.cleanup-token": self.cleanup_token},
+                },
                 "Mounts": [
                     {
                         "Type": "bind",
@@ -656,10 +723,11 @@ class FakeDockerBackend(DockerBackend):
                 stderr=b"",
             )
         if args[:2] == ("rm", "--force"):
+            self.removed = True
             return subprocess.CompletedProcess(
                 ["/usr/bin/docker"],
                 0,
-                stdout=(self.container_id + "\n").encode(),
+                stdout=(str(args[2]) + "\n").encode(),
                 stderr=b"",
             )
         if args[:2] == ("container", "inspect"):
@@ -705,6 +773,13 @@ class VF0DockerBackendTests(unittest.TestCase):
                 call for call in backend.calls if call and call[0] == "create"
             )
             rendered = " ".join(create)
+            name = create[create.index("--name") + 1]
+            label = create[create.index("--label") + 1]
+            self.assertRegex(name, r"^gnostoa-vf0-[0-9a-f]{32}$")
+            self.assertEqual(
+                "gnostoa.vf0.cleanup-token=" + name.removeprefix("gnostoa-vf0-"),
+                label,
+            )
             for fragment in (
                 "--read-only",
                 "--network none",
@@ -759,6 +834,28 @@ class VF0DockerBackendTests(unittest.TestCase):
                 ("container", "inspect", backend.container_id)
             )
             self.assertLess(rm_index, absent_index)
+
+        for create_mode, reason in (
+            ("exception", "DOCKER_COMMAND_FAILED"),
+            ("malformed", "OCI_CONTAINER_ID"),
+        ):
+            with (
+                self.subTest(create_mode=create_mode),
+                tempfile.TemporaryDirectory() as td,
+            ):
+                root = Path(td).resolve()
+                backend = FakeDockerBackend(self.image, root, create_mode=create_mode)
+                with self.assertRaisesRegex(ExecutionRejected, reason):
+                    backend.run(root, ["/bin/true"], ExecutionLimits())
+                self.assertTrue(backend.created)
+                self.assertTrue(backend.removed)
+                if backend.container_name is None:
+                    self.fail("cleanup identity was not established before create")
+                self.assertIn(("inspect", backend.container_name), backend.calls)
+                self.assertIn(("rm", "--force", backend.container_name), backend.calls)
+                self.assertIn(
+                    ("container", "inspect", backend.container_name), backend.calls
+                )
 
     def test_timeout_has_no_container_exit_claim_and_cleanup_still_occurs(self) -> None:
         with tempfile.TemporaryDirectory() as td:
