@@ -1,0 +1,141 @@
+name: PR319 guarded Codacy annotation publication
+
+on:
+  push:
+    branches:
+      - agent-support/pr319-source-0fdf-20260925
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: vf0-verification-first-15
+          fetch-depth: 0
+          persist-credentials: true
+          path: target
+      - name: Publish exact prepared tree
+        working-directory: target
+        env:
+          EXPECTED_PARENT: 0fdfefe80407555b3e8f950677752826e7dfcea9
+          EXPECTED_PARENT_TREE: 532a230115ace25ec9da9133225c5e1f1f5f7d89
+          EXPECTED_TREE: e6389215ba6298d20e88915b1f05b9b1ac3fde9b
+          TARGET_BRANCH: vf0-verification-first-15
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_PARENT"
+          test "$(git rev-parse HEAD^{tree})" = "$EXPECTED_PARENT_TREE"
+          remote_head="$(git ls-remote --heads origin "refs/heads/$TARGET_BRANCH" | awk '{print $1}')"
+          test "$remote_head" = "$EXPECTED_PARENT"
+          python3 - <<'PY'
+          from pathlib import Path
+
+          repo = Path(".")
+          p = repo / "tools/vf0_execution.py"
+          s = p.read_text()
+          s = s.replace(
+              "import subprocess\n",
+              "import subprocess  # nosec B404 -- intentional bounded argv-only execution boundary\n",
+              1,
+          )
+          s = s.replace(
+              """        result = subprocess.run(
+              _trusted_git_argv(repo, *args),""",
+              """        # Fixed /usr/bin/git, list argv, scrubbed env, no shell.
+          result = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+              _trusted_git_argv(repo, *args),""",
+              1,
+          )
+          s = s.replace(
+              """        process = subprocess.Popen(
+              list(argv),""",
+              """        # Explicit argv list, scrubbed env, no shell; this is the bounded execution primitive.
+          process = subprocess.Popen(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+              list(argv),""",
+              1,
+          )
+          s = s.replace(
+              """            return subprocess.run(
+                  [self.docker_executable, *args],""",
+              """            # Absolute Docker executable plus argv list; shell parsing is never enabled.
+              return subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                  [self.docker_executable, *args],""",
+              1,
+          )
+          s = s.replace(
+              '            f"/tmp:rw,nosuid,nodev,noexec,mode=1777,size={limits.tmpfs_bytes}",',
+              '            f"/tmp:rw,nosuid,nodev,noexec,mode=1777,size={limits.tmpfs_bytes}",  # nosec B108 -- container-private tmpfs, never a host temp path',
+              1,
+          )
+          p.write_text(s)
+
+          p = repo / "tests/test_vf0_execution.py"
+          s = p.read_text()
+          s = s.replace(
+              "import subprocess\n",
+              "import subprocess  # nosec B404 -- test harness intentionally exercises subprocess boundaries\n",
+              1,
+          )
+          s = s.replace(
+              """    result = subprocess.run(
+              ["/usr/bin/git",""",
+              """    result = subprocess.run(  # nosec B603 -- fixed /usr/bin/git test helper, no shell
+              ["/usr/bin/git",""",
+              1,
+          )
+          s = s.replace(
+              """        if args[:2] == ("container", "inspect"):
+              return subprocess.CompletedProcess(
+                  [], 1, stdout=b"", stderr=b"Error: No such container"
+              )""",
+              """        if args[:2] == ("container", "inspect"):
+              return subprocess.CompletedProcess(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+                  [], 1, stdout=b"", stderr=b"Error: No such container"
+              )""",
+              1,
+          )
+          p.write_text(s)
+
+          p = repo / "tests/vf0_execution_oci_smoke.py"
+          s = p.read_text()
+          s = s.replace(
+              "import subprocess\n",
+              "import subprocess  # nosec B404 -- fixed live-smoke harness intentionally exercises subprocesses\n",
+              1,
+          )
+          s = s.replace(
+              """    result = subprocess.run(
+              ["/usr/bin/git",""",
+              """    result = subprocess.run(  # nosec B603 -- fixed /usr/bin/git smoke helper, no shell
+              ["/usr/bin/git",""",
+              1,
+          )
+          p.write_text(s)
+          PY
+          git diff --check
+          git add tools/vf0_execution.py tests/test_vf0_execution.py tests/vf0_execution_oci_smoke.py
+          actual_paths="$(git diff --cached --name-only | sort)"
+          expected_paths="$(printf '%s\n' tests/test_vf0_execution.py tests/vf0_execution_oci_smoke.py tools/vf0_execution.py | sort)"
+          test "$actual_paths" = "$expected_paths"
+          tree="$(git write-tree)"
+          test "$tree" = "$EXPECTED_TREE"
+          commit="$(printf '%s\n' 'Document intentional VF0 analyzer boundaries (#15)' | git -c user.name='Konstantinos Togias' -c user.email='info@ktogias.gr' commit-tree "$tree" -p "$EXPECTED_PARENT")"
+          remote_head="$(git ls-remote --heads origin "refs/heads/$TARGET_BRANCH" | awk '{print $1}')"
+          test "$remote_head" = "$EXPECTED_PARENT"
+          git push origin "$commit:refs/heads/$TARGET_BRANCH"
+          printf '%s\n' "$commit" > "$RUNNER_TEMP/published-commit.txt"
+          printf '%s\n' "$tree" > "$RUNNER_TEMP/published-tree.txt"
+      - name: Retain publication identity
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr319-codacy-publication
+          path: |
+            ${{ runner.temp }}/published-commit.txt
+            ${{ runner.temp }}/published-tree.txt
+          if-no-files-found: error
+          retention-days: 1
