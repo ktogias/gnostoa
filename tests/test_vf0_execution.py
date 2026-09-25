@@ -12,7 +12,7 @@ import tempfile
 import textwrap
 import time
 import unittest
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import fields
 from pathlib import Path
 from typing import cast
@@ -615,6 +615,99 @@ class VF0SubjectTests(unittest.TestCase):
                 backend,
             )
             self.assertTrue(backend.seen)
+
+    def test_command_sequence_is_snapshotted_before_validation(self) -> None:
+        class FlippingCommand:
+            def __init__(self) -> None:
+                self.iterations = 0
+
+            def __len__(self) -> int:
+                return 1
+
+            def __iter__(self) -> Iterator[str]:
+                self.iterations += 1
+                yield "/bin/true" if self.iterations == 1 else "/bin/false"
+
+        class RecordingBackend:
+            command: tuple[str, ...] | None = None
+
+            def run(
+                self,
+                root: Path,
+                command: Sequence[str],
+                limits: ExecutionLimits,
+                *,
+                subject: GitSubject,
+            ) -> UntrustedCapture:
+                del root, limits, subject
+                self.command = tuple(command)
+                return UntrustedCapture("completed", 0, b"", b"", 0)
+
+        with tempfile.TemporaryDirectory() as td:
+            repo, subject = _repo(Path(td))
+            command = FlippingCommand()
+            backend = RecordingBackend()
+            execute(
+                repo,
+                subject,
+                [_evidence("pass")],
+                cast(Sequence[str], command),
+                backend,
+            )
+            self.assertEqual(("/bin/true",), backend.command)
+            self.assertEqual(1, command.iterations)
+
+    def test_runtime_empty_directory_creation_is_rejected_after_observation(
+        self,
+    ) -> None:
+        class DirectoryMutatingBackend:
+            def run(
+                self,
+                root: Path,
+                command: Sequence[str],
+                limits: ExecutionLimits,
+                *,
+                subject: GitSubject,
+            ) -> UntrustedCapture:
+                del command, limits, subject
+                (root / "runtime-empty").mkdir()
+                return UntrustedCapture("completed", 0, b"", b"", 0)
+
+        with tempfile.TemporaryDirectory() as td:
+            repo, subject = _repo(Path(td))
+            with self.assertRaisesRegex(ExecutionRejected, "SUBJECT_MUTATED"):
+                execute(
+                    repo,
+                    subject,
+                    [_evidence("pass")],
+                    ["/bin/true"],
+                    DirectoryMutatingBackend(),
+                )
+
+    def test_runtime_directory_mode_change_is_rejected_after_observation(self) -> None:
+        class DirectoryModeBackend:
+            def run(
+                self,
+                root: Path,
+                command: Sequence[str],
+                limits: ExecutionLimits,
+                *,
+                subject: GitSubject,
+            ) -> UntrustedCapture:
+                del command, limits, subject
+                (root / "tests").chmod(0o700)
+                return UntrustedCapture("completed", 0, b"", b"", 0)
+
+        with tempfile.TemporaryDirectory() as td:
+            repo, subject = _repo(Path(td))
+            with self.assertRaisesRegex(ExecutionRejected, "SUBJECT_MUTATED"):
+                execute(
+                    repo,
+                    subject,
+                    [_evidence("pass")],
+                    ["/bin/true"],
+                    DirectoryModeBackend(),
+                )
 
     def test_runtime_file_mutation_is_rejected_after_observation(self) -> None:
         with tempfile.TemporaryDirectory() as td:

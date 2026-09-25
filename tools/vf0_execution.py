@@ -413,8 +413,15 @@ def _materialize_subject(
     return expected
 
 
-def _snapshot(root: Path) -> dict[str, _MaterialFile]:
+def _directory_mode(mode: int) -> str:
+    return f"{stat.S_IMODE(mode):04o}"
+
+
+def _snapshot(root: Path) -> tuple[dict[str, _MaterialFile], dict[str, str]]:
     files: dict[str, _MaterialFile] = {}
+    root_mode = root.lstat().st_mode
+    _need(stat.S_ISDIR(root_mode), "SUBJECT_SNAPSHOT")
+    directories = {".": _directory_mode(root_mode)}
     total = 0
     observed_entries = 0
     pending = [root]
@@ -427,17 +434,17 @@ def _snapshot(root: Path) -> dict[str, _MaterialFile]:
                     _need(
                         observed_entries <= _MAX_SNAPSHOT_ENTRIES, "SUBJECT_ENTRY_BOUND"
                     )
-                    mode = entry.stat(follow_symlinks=False).st_mode
+                    metadata = entry.stat(follow_symlinks=False)
+                    mode = metadata.st_mode
                     _need(not stat.S_ISLNK(mode), "SUBJECT_SYMLINK")
                     item = Path(entry.path)
+                    name = item.relative_to(root).as_posix()
                     if stat.S_ISDIR(mode):
+                        directories[name] = _directory_mode(mode)
                         pending.append(item)
                         continue
                     _need(stat.S_ISREG(mode), "SUBJECT_SPECIAL_FILE")
-                    _need(
-                        entry.stat(follow_symlinks=False).st_size <= _MAX_FILE_BYTES,
-                        "SUBJECT_FILE_BOUND",
-                    )
+                    _need(metadata.st_size <= _MAX_FILE_BYTES, "SUBJECT_FILE_BOUND")
                     with item.open("rb") as stream:
                         raw = stream.read(_MAX_FILE_BYTES + 1)
                     _need(len(raw) <= _MAX_FILE_BYTES, "SUBJECT_FILE_BOUND")
@@ -446,7 +453,6 @@ def _snapshot(root: Path) -> dict[str, _MaterialFile]:
                         total <= _MAX_SUBJECT_BYTES + _MAX_EVIDENCE_BYTES,
                         "SUBJECT_TOTAL_BOUND",
                     )
-                    name = item.relative_to(root).as_posix()
                     files[name] = _MaterialFile(
                         mode="100755" if mode & 0o111 else "100644",
                         sha256=_sha256(raw),
@@ -454,13 +460,18 @@ def _snapshot(root: Path) -> dict[str, _MaterialFile]:
                     )
     except OSError as exc:
         raise ExecutionRejected("SUBJECT_SNAPSHOT") from exc
-    return files
+    return files, directories
 
 
-def _manifest_digest(manifest: dict[str, _MaterialFile]) -> str:
+def _manifest_digest(
+    files: dict[str, _MaterialFile], directories: dict[str, str]
+) -> str:
     serial = {
-        path: {"mode": item.mode, "sha256": item.sha256, "size": item.size}
-        for path, item in sorted(manifest.items())
+        "directories": dict(sorted(directories.items())),
+        "files": {
+            path: {"mode": item.mode, "sha256": item.sha256, "size": item.size}
+            for path, item in sorted(files.items())
+        },
     }
     return _sha256(_canonical(serial))
 
@@ -1003,8 +1014,10 @@ def execute(
     """Execute one explicit subject and return only bounded untrusted observations."""
 
     chosen_limits = limits or ExecutionLimits()
+    command_snapshot = tuple(command)
     _need(
-        bool(command) and all(isinstance(part, str) and part for part in command),
+        bool(command_snapshot)
+        and all(isinstance(part, str) and part for part in command_snapshot),
         "COMMAND",
     )
     evidence_snapshot = tuple(evidence)
@@ -1013,13 +1026,14 @@ def execute(
         root = temp / "subject"
         baseline = _materialize_subject(repository, subject, root)
         expected = _overlay_evidence(root, baseline, evidence_snapshot)
-        before = _snapshot(root)
-        _need(before == expected, "SUBJECT_BEFORE_EXECUTION")
-        before_digest = _manifest_digest(before)
-        capture = backend.run(root, tuple(command), chosen_limits, subject=subject)
-        after = _snapshot(root)
-        _need(after == expected, "SUBJECT_MUTATED")
-        after_digest = _manifest_digest(after)
+        before_files, before_directories = _snapshot(root)
+        _need(before_files == expected, "SUBJECT_BEFORE_EXECUTION")
+        before_digest = _manifest_digest(before_files, before_directories)
+        capture = backend.run(root, command_snapshot, chosen_limits, subject=subject)
+        after_files, after_directories = _snapshot(root)
+        _need(after_files == expected, "SUBJECT_MUTATED")
+        _need(after_directories == before_directories, "SUBJECT_MUTATED")
+        after_digest = _manifest_digest(after_files, after_directories)
         _need(before_digest == after_digest, "SUBJECT_MUTATED")
         evidence_digests = tuple(
             sorted((item.path, _sha256(item.content)) for item in evidence_snapshot)

@@ -680,6 +680,14 @@ execution/fixture test, bringing the bounded successor to **34 relation + 59
 execution/fixture = 93 focused tests**. All **93** pass normally and under
 `python -O` before ordinary exact-parent D0090 preparation.
 
+The next snapshot-integrity successor adds three execution/fixture regressions:
+command sequences are snapshotted once before validation/materialization, empty
+directory creation is detected as subject mutation, and directory-mode changes
+are detected as subject mutation. The relation suite remains **34 tests** and the
+execution/fixture suite becomes **62 tests**, so the exact focused corpus is **96
+tests**. All **96** pass normally and under `python -O` before ordinary
+exact-parent D0090 preparation.
+
 This evidence still does **not** claim a live run of the new Docker specialization.
 `tests/vf0_execution_oci_smoke.py` is intentionally outside unittest discovery and
 must be executed after exact ordinary D0090 preparation/publication of this
