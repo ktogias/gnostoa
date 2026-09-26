@@ -1003,6 +1003,67 @@ class VF0SubjectTests(unittest.TestCase):
             module._capture_process(["/bin/true"], cwd=None, limits=ExecutionLimits())
         self.assertEqual(["observe", "kill", "wait"], events)
 
+    def test_selector_construction_failure_cleans_and_reaps_owned_process(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        events: list[str] = []
+        process = mock.Mock()
+        process.pid = 12345
+        process.stdout = mock.Mock()
+        process.stderr = mock.Mock()
+        process.returncode = 0
+        process.wait.side_effect = lambda *args, **kwargs: events.append("wait") or 0
+
+        with (
+            mock.patch.object(module.subprocess, "Popen", return_value=process),
+            mock.patch.object(
+                module.selectors, "DefaultSelector", side_effect=OSError("selector")
+            ),
+            mock.patch.object(
+                module,
+                "_kill_process_group",
+                side_effect=lambda _process: events.append("kill"),
+            ),
+        ):
+            with self.assertRaisesRegex(OSError, "selector"):
+                module._capture_process(
+                    ["/bin/true"], cwd=None, limits=ExecutionLimits()
+                )
+        self.assertEqual(["kill", "wait"], events)
+        process.stdout.close.assert_called_once_with()
+        process.stderr.close.assert_called_once_with()
+
+    def test_selector_registration_failure_cleans_and_reaps_owned_process(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        events: list[str] = []
+        process = mock.Mock()
+        process.pid = 12345
+        process.stdout = mock.Mock()
+        process.stderr = mock.Mock()
+        process.returncode = 0
+        process.wait.side_effect = lambda *args, **kwargs: events.append("wait") or 0
+        selector = mock.Mock()
+        selector.register.side_effect = OSError("register")
+
+        with (
+            mock.patch.object(module.subprocess, "Popen", return_value=process),
+            mock.patch.object(
+                module.selectors, "DefaultSelector", return_value=selector
+            ),
+            mock.patch.object(
+                module,
+                "_kill_process_group",
+                side_effect=lambda _process: events.append("kill"),
+            ),
+        ):
+            with self.assertRaisesRegex(OSError, "register"):
+                module._capture_process(
+                    ["/bin/true"], cwd=None, limits=ExecutionLimits()
+                )
+        self.assertEqual(["kill", "wait"], events)
+        selector.close.assert_called_once_with()
+        process.stdout.close.assert_called_once_with()
+        process.stderr.close.assert_called_once_with()
+
     def test_runtime_file_mode_change_is_rejected_after_observation(self) -> None:
         class FileModeBackend:
             def run(
@@ -1475,6 +1536,19 @@ class VF0DockerBackendTests(unittest.TestCase):
     image = "ghcr.io/ktogias/gnostoa@sha256:" + "c" * 64
     subject = GitSubject(commit="d" * 40, tree="e" * 40)
 
+    @staticmethod
+    def _completed_capture(
+        exit_code: int = 17, stdout: bytes = b"ok\n", stderr: bytes = b""
+    ) -> UntrustedCapture:
+        marker = b"\x1eGNOSTOA_VF0_EXIT_V1:" + str(exit_code).encode() + b"\x1f"
+        return UntrustedCapture(
+            "completed",
+            exit_code,
+            stdout,
+            stderr + marker,
+            len(stdout) + len(stderr) + len(marker),
+        )
+
     def test_image_must_be_digest_pinned(self) -> None:
         for image in ("ghcr.io/ktogias/gnostoa:latest", "sha256:short", "http://bad"):
             with self.subTest(image=image):
@@ -1491,7 +1565,7 @@ class VF0DockerBackendTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td).resolve()
             backend = FakeDockerBackend(self.image, root)
-            capture = UntrustedCapture("completed", 0, b"ok\n", b"", 3)
+            capture = self._completed_capture()
             with mock.patch(
                 "tools.vf0_execution._capture_process", return_value=capture
             ):
@@ -1512,6 +1586,11 @@ class VF0DockerBackendTests(unittest.TestCase):
             self.assertEqual(
                 "gnostoa.vf0.cleanup-token=" + name.removeprefix("gnostoa-vf0-"),
                 label,
+            )
+            entrypoint_index = create.index("--entrypoint") + 1
+            self.assertEqual("/usr/local/bin/python3", create[entrypoint_index])
+            self.assertEqual(
+                ("-I", "-c"), create[entrypoint_index + 2 : entrypoint_index + 4]
             )
             for fragment in (
                 "--read-only",
@@ -1547,7 +1626,7 @@ class VF0DockerBackendTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td).resolve()
             backend = FakeDockerBackend(self.image, root, nano_cpus=2_010_000_000)
-            capture = UntrustedCapture("completed", 0, b"ok\n", b"", 3)
+            capture = self._completed_capture()
             with mock.patch(
                 "tools.vf0_execution._capture_process", return_value=capture
             ):
@@ -1592,8 +1671,8 @@ class VF0DockerBackendTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td).resolve()
             backend = CreatedState(self.image, root)
-            capture = UntrustedCapture(
-                "completed", 125, b"", b"daemon unavailable\n", 19
+            capture = self._completed_capture(
+                125, stdout=b"", stderr=b"daemon unavailable\n"
             )
             with mock.patch(
                 "tools.vf0_execution._capture_process", return_value=capture
@@ -1608,15 +1687,76 @@ class VF0DockerBackendTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td).resolve()
             backend = FakeDockerBackend(self.image, root)
+            stderr = b"daemon unavailable\n"
+            capture = UntrustedCapture("completed", 125, b"", stderr, len(stderr))
+            with mock.patch(
+                "tools.vf0_execution._capture_process", return_value=capture
+            ):
+                with self.assertRaisesRegex(ExecutionRejected, "OCI_ATTACH_STATE"):
+                    backend.run(
+                        root, ["/bin/true"], ExecutionLimits(), subject=self.subject
+                    )
+            self.assertTrue(backend.removed)
+
+    def test_colliding_attachment_failure_status_is_rejected_without_trailer(
+        self,
+    ) -> None:
+        class ExitOne(FakeDockerBackend):
+            def _command(
+                self, *args: str, timeout: float = 30
+            ) -> subprocess.CompletedProcess[bytes]:
+                if args[:3] == ("inspect", "--format", "{{json .State}}"):
+                    self.calls.append(tuple(args))
+                    return subprocess.CompletedProcess(
+                        ["/usr/bin/docker"],
+                        0,
+                        stdout=b'{"Status":"exited","Running":false,"ExitCode":1}\n',
+                        stderr=b"",
+                    )
+                return super()._command(*args, timeout=timeout)
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td).resolve()
+            backend = ExitOne(self.image, root)
+            stderr = b"daemon connection lost\n"
+            capture = UntrustedCapture("completed", 1, b"", stderr, len(stderr))
+            with mock.patch(
+                "tools.vf0_execution._capture_process", return_value=capture
+            ):
+                with self.assertRaisesRegex(ExecutionRejected, "OCI_ATTACH_STATE"):
+                    backend.run(
+                        root, ["/bin/true"], ExecutionLimits(), subject=self.subject
+                    )
+            self.assertTrue(backend.removed)
+
+    def test_unique_final_wrapper_trailer_allows_nonzero_container_exit(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td).resolve()
+            backend = FakeDockerBackend(self.image, root)
+            capture = self._completed_capture(17, stderr=b"child stderr\n")
+            with mock.patch(
+                "tools.vf0_execution._capture_process", return_value=capture
+            ):
+                result = backend.run(
+                    root, ["/bin/false"], ExecutionLimits(), subject=self.subject
+                )
+            self.assertEqual(("completed", 17), (result.termination, result.exit_code))
+            self.assertEqual(b"child stderr\n", result.stderr)
+
+    def test_spoofed_wrapper_trailer_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td).resolve()
+            backend = FakeDockerBackend(self.image, root)
+            marker = b"\x1eGNOSTOA_VF0_EXIT_V1:17\x1f"
             capture = UntrustedCapture(
-                "completed", 125, b"", b"daemon unavailable\n", 19
+                "completed", 17, b"", marker + marker, len(marker) * 2
             )
             with mock.patch(
                 "tools.vf0_execution._capture_process", return_value=capture
             ):
-                with self.assertRaisesRegex(ExecutionRejected, "OCI_EXIT_STATE"):
+                with self.assertRaisesRegex(ExecutionRejected, "OCI_ATTACH_STATE"):
                     backend.run(
-                        root, ["/bin/true"], ExecutionLimits(), subject=self.subject
+                        root, ["/bin/false"], ExecutionLimits(), subject=self.subject
                     )
             self.assertTrue(backend.removed)
 
@@ -1804,7 +1944,7 @@ class VF0DockerBackendTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td).resolve()
             backend = UncertainRemove(self.image, root)
-            capture = UntrustedCapture("completed", 0, b"", b"", 0)
+            capture = self._completed_capture(stdout=b"")
             with (
                 mock.patch(
                     "tools.vf0_execution._capture_process", return_value=capture
@@ -1833,7 +1973,7 @@ class VF0DockerBackendTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td).resolve()
             backend = BrokenCleanup(self.image, root)
-            capture = UntrustedCapture("completed", 0, b"", b"", 0)
+            capture = self._completed_capture(stdout=b"")
             with mock.patch(
                 "tools.vf0_execution._capture_process", return_value=capture
             ):

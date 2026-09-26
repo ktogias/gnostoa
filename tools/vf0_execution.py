@@ -44,6 +44,22 @@ _MAX_SNAPSHOT_ENTRIES = 65_536
 _LOCAL_CONTAINMENT_EXECUTABLE = "/usr/bin/unshare"
 _CONTAINER_TMP = "/tmp"  # nosec B108 -- isolated container tmpfs, never a host temp path
 _CONTAINER_CLEANUP_LABEL = "gnostoa.vf0.cleanup-token"
+_OCI_WRAPPER_EXECUTABLE = "/usr/local/bin/python3"
+_OCI_EXIT_SENTINEL_PREFIX = b"\x1eGNOSTOA_VF0_EXIT_V1:"
+_OCI_EXIT_SENTINEL_SUFFIX = b"\x1f"
+_OCI_WRAPPER_SOURCE = (
+    "import os,subprocess,sys\n"
+    "try:\n"
+    "    process=subprocess.Popen(sys.argv[1:])\n"
+    "    code=process.wait()\n"
+    "except FileNotFoundError:\n"
+    "    code=127\n"
+    "except PermissionError:\n"
+    "    code=126\n"
+    "code=128-code if code < 0 else code\n"
+    "os.write(2,b'\x1eGNOSTOA_VF0_EXIT_V1:'+str(code).encode('ascii')+b'\x1f')\n"
+    "raise SystemExit(code)\n"
+)
 _UNCERTAIN_CREATE_SETTLE_SECONDS = 2.0
 _UNCERTAIN_CREATE_POLL_SECONDS = 0.1
 _UNCERTAIN_REMOVE_SETTLE_SECONDS = 2.0
@@ -636,24 +652,22 @@ def _capture_process(
         raise ExecutionRejected("BACKEND_START_FAILED") from exc
     process_stdout = process.stdout
     process_stderr = process.stderr
-    if process_stdout is None or process_stderr is None:
-        _kill_process_group(process)
-        raise ExecutionRejected("BACKEND_PIPES")
-
+    selector: selectors.BaseSelector | None = None
     stdout = bytearray()
     stderr = bytearray()
     observed = 0
     termination = "completed"
     deadline = time.monotonic() + limits.timeout_seconds
-    selector = selectors.DefaultSelector()
-    selector.register(process_stdout, selectors.EVENT_READ, stdout)
-    selector.register(process_stderr, selectors.EVENT_READ, stderr)
     try:
+        if process_stdout is None or process_stderr is None:
+            raise ExecutionRejected("BACKEND_PIPES")
+        selector = selectors.DefaultSelector()
+        selector.register(process_stdout, selectors.EVENT_READ, stdout)
+        selector.register(process_stderr, selectors.EVENT_READ, stderr)
         while selector.get_map():
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 termination = "timeout"
-                _kill_process_group(process)
                 break
             for key, _ in selector.select(timeout=min(0.05, remaining)):
                 chunk = os.read(key.fd, 8192)
@@ -666,7 +680,6 @@ def _capture_process(
                     key.data.extend(chunk[:room])
                 if len(chunk) > room:
                     termination = "output_limit"
-                    _kill_process_group(process)
                     break
             if termination != "completed":
                 break
@@ -674,18 +687,22 @@ def _capture_process(
             process, deadline
         ):
             termination = "timeout"
-        # Observe normal leader exit without reaping it, then clear the owned
-        # session while that PID is still reserved. This prevents PID reuse from
-        # redirecting a later killpg to unrelated same-user work.
+    finally:
+        # Everything after successful Popen is inside one owned-process cleanup
+        # boundary. Selector construction/registration and stream processing may
+        # fail, but no such failure may leave the session running or unreaped.
         _kill_process_group(process)
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired as exc:
             raise ExecutionRejected("BACKEND_REAP_FAILED") from exc
-    finally:
-        selector.close()
-        process_stdout.close()
-        process_stderr.close()
+        finally:
+            if selector is not None:
+                selector.close()
+            if process_stdout is not None:
+                process_stdout.close()
+            if process_stderr is not None:
+                process_stderr.close()
     exit_code = process.returncode if termination == "completed" else None
     return UntrustedCapture(
         termination=termination,
@@ -1033,9 +1050,12 @@ class DockerBackend:
             "--workdir",
             "/workspace",
             "--entrypoint",
-            command[0],
+            _OCI_WRAPPER_EXECUTABLE,
             self.image,
-            *command[1:],
+            "-I",
+            "-c",
+            _OCI_WRAPPER_SOURCE,
+            *command,
         ]
         container_id: str | None = None
         attachment_finished = False
@@ -1051,6 +1071,7 @@ class DockerBackend:
             )
             attachment_finished = True
             if capture.termination == "completed":
+                capture = _unwrap_oci_completion(capture)
                 try:
                     state = json.loads(
                         self._checked(
@@ -1070,8 +1091,7 @@ class DockerBackend:
                     isinstance(exit_code, int) and not isinstance(exit_code, bool),
                     "OCI_EXIT_STATE",
                 )
-                _need(capture.exit_code in {0, exit_code}, "OCI_EXIT_STATE")
-                capture = replace(capture, exit_code=exit_code)
+                _need(capture.exit_code == exit_code, "OCI_EXIT_STATE")
             return capture
         finally:
             # _capture_process closes/reaps the attachment group before this point.
@@ -1086,6 +1106,28 @@ class DockerBackend:
                 if attachment_finished:
                     raise
                 raise
+
+
+def _unwrap_oci_completion(capture: UntrustedCapture) -> UntrustedCapture:
+    """Require and strip the trusted wrapper's unique final completion trailer."""
+
+    if capture.termination != "completed":
+        return capture
+    stderr = capture.stderr
+    _need(stderr.count(_OCI_EXIT_SENTINEL_PREFIX) == 1, "OCI_ATTACH_STATE")
+    marker_start = stderr.find(_OCI_EXIT_SENTINEL_PREFIX)
+    _need(
+        marker_start >= 0 and stderr.endswith(_OCI_EXIT_SENTINEL_SUFFIX),
+        "OCI_ATTACH_STATE",
+    )
+    raw_code = stderr[
+        marker_start + len(_OCI_EXIT_SENTINEL_PREFIX) : -len(_OCI_EXIT_SENTINEL_SUFFIX)
+    ]
+    _need(1 <= len(raw_code) <= 3 and raw_code.isdigit(), "OCI_ATTACH_STATE")
+    exit_code = int(raw_code)
+    _need(0 <= exit_code <= 255, "OCI_ATTACH_STATE")
+    _need(capture.exit_code in {0, exit_code}, "OCI_ATTACH_STATE")
+    return replace(capture, exit_code=exit_code, stderr=stderr[:marker_start])
 
 
 def _snapshot_evidence(
