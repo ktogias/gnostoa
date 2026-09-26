@@ -2029,6 +2029,88 @@ class VF0DockerBackendTests(unittest.TestCase):
             self.assertGreaterEqual(backend.remove_attempts, 2)
             self.assertTrue(backend.removed)
 
+    def test_nonzero_remove_client_result_reconciles_before_failing(self) -> None:
+        class NonzeroThenRemoved(FakeDockerBackend):
+            def __init__(self, image: str, root: Path) -> None:
+                super().__init__(image, root)
+                self.remove_attempts = 0
+
+            def _command(
+                self, *args: str, timeout: float = 30
+            ) -> subprocess.CompletedProcess[bytes]:
+                if args[:2] == ("rm", "--force"):
+                    self.calls.append(tuple(args))
+                    self.remove_attempts += 1
+                    if self.remove_attempts == 1:
+                        return subprocess.CompletedProcess(
+                            ["/usr/bin/docker"],
+                            1,
+                            stdout=b"",
+                            stderr=b"connection reset by peer",
+                        )
+                return super()._command(*args, timeout=timeout)
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td).resolve()
+            backend = NonzeroThenRemoved(self.image, root)
+            capture = self._completed_capture(stdout=b"")
+            with (
+                mock.patch(
+                    "tools.vf0_execution._capture_process", return_value=capture
+                ),
+                mock.patch("tools.vf0_execution.time.sleep"),
+            ):
+                result = backend.run(
+                    root, ["/bin/true"], ExecutionLimits(), subject=self.subject
+                )
+            self.assertEqual(17, result.exit_code)
+            self.assertGreaterEqual(backend.remove_attempts, 2)
+            self.assertTrue(backend.removed)
+
+    def test_nonzero_cleanup_inspect_reconciles_before_failing(self) -> None:
+        class NonzeroInspectThenRemoved(FakeDockerBackend):
+            def __init__(self, image: str, root: Path) -> None:
+                super().__init__(image, root)
+                self.remove_attempts = 0
+                self.inspect_attempts = 0
+
+            def _command(
+                self, *args: str, timeout: float = 30
+            ) -> subprocess.CompletedProcess[bytes]:
+                if args[:2] == ("rm", "--force"):
+                    self.calls.append(tuple(args))
+                    self.remove_attempts += 1
+                    if self.remove_attempts == 1:
+                        raise ExecutionRejected("DOCKER_COMMAND_FAILED")
+                if args == ("inspect", self.container_id) and self.remove_attempts > 0:
+                    self.inspect_attempts += 1
+                    if self.inspect_attempts == 1:
+                        self.calls.append(tuple(args))
+                        return subprocess.CompletedProcess(
+                            ["/usr/bin/docker"],
+                            1,
+                            stdout=b"",
+                            stderr=b"temporary daemon disconnect",
+                        )
+                return super()._command(*args, timeout=timeout)
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td).resolve()
+            backend = NonzeroInspectThenRemoved(self.image, root)
+            capture = self._completed_capture(stdout=b"")
+            with (
+                mock.patch(
+                    "tools.vf0_execution._capture_process", return_value=capture
+                ),
+                mock.patch("tools.vf0_execution.time.sleep"),
+            ):
+                result = backend.run(
+                    root, ["/bin/true"], ExecutionLimits(), subject=self.subject
+                )
+            self.assertEqual(17, result.exit_code)
+            self.assertGreaterEqual(backend.inspect_attempts, 2)
+            self.assertTrue(backend.removed)
+
     def test_cleanup_failure_is_fail_closed(self) -> None:
         class BrokenCleanup(FakeDockerBackend):
             def _command(
@@ -2048,7 +2130,9 @@ class VF0DockerBackendTests(unittest.TestCase):
             with mock.patch(
                 "tools.vf0_execution._capture_process", return_value=capture
             ):
-                with self.assertRaisesRegex(ExecutionRejected, "OCI_CLEANUP_REMOVE"):
+                with self.assertRaisesRegex(
+                    ExecutionRejected, "OCI_CLEANUP_UNVERIFIED"
+                ):
                     backend.run(
                         root, ["/bin/true"], ExecutionLimits(), subject=self.subject
                     )

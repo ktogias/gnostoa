@@ -907,8 +907,9 @@ class DockerBackend:
             return None
         message = (inspected.stderr + b"\n" + inspected.stdout).lower()
         if inspected.returncode != 0:
-            _need(b"no such" in message, "OCI_CLEANUP_UNVERIFIED")
-            return False
+            if b"no such" in message:
+                return False
+            return None
         try:
             raw = json.loads(inspected.stdout)
         except (json.JSONDecodeError, TypeError) as exc:
@@ -947,7 +948,6 @@ class DockerBackend:
                 message = (retry.stderr + b"\n" + retry.stdout).lower()
                 if b"no such" in message:
                     return
-                raise ExecutionRejected("OCI_CLEANUP_REMOVE")
             time.sleep(min(_UNCERTAIN_REMOVE_POLL_SECONDS, remaining))
 
     def _remove_and_verify(self, container_id: str, cleanup_nonce: str) -> None:
@@ -960,8 +960,8 @@ class DockerBackend:
             return
         if result.returncode != 0:
             message = (result.stderr + b"\n" + result.stdout).lower()
-            if b"no such" not in message:
-                raise ExecutionRejected("OCI_CLEANUP_REMOVE")
+            if b"no such" in message:
+                return
         self._reconcile_uncertain_remove(container_id, cleanup_nonce)
 
     def _cleanup_uncertain_create(

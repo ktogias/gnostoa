@@ -786,6 +786,17 @@ completed/unwrapped captures. The focused corpus is therefore **35 relation + 86
 execution = 121 tests**, and the full non-root `fast` suite executes **1,421 tests**
 with the same two declared skips before ordinary exact-parent D0090 preparation.
 
+The subsequent final-candidate/cleanup convergence successor separates the RED
+`evidence_tree` from a production-containing final candidate by binding the latter
+to the admitted `production_sha256`, while evidence-only candidates retain the
+exact evidence tree. It also treats ambiguous nonzero Docker cleanup client
+results as unknown state and reconciles removal/absence through the existing
+bounded deadline instead of aborting immediately. Three relation regressions and
+two execution regressions raise the focused corpus to **38 relation + 88 execution
+= 126 tests**. All **126** pass normally and under `python -O`; the full non-root
+`ci/verify fast` suite passes with **1,426 tests** and two declared skips before
+ordinary exact-parent D0090 preparation.
+
 This evidence still does **not** claim a live run of the new Docker specialization.
 `tests/vf0_execution_oci_smoke.py` is intentionally outside unittest discovery and
 must be executed after exact ordinary D0090 preparation/publication of this

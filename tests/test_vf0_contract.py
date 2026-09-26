@@ -126,10 +126,11 @@ def _fixture() -> dict[str, Any]:
         "candidate": {
             "parent_commit": "git-sha1:parent",
             "parent_tree": "git-sha1:parent-tree",
-            "tree": "git-sha1:evidence-tree",
+            "tree": "git-sha1:final-candidate-tree",
             "observed_at": 500,
             "changed_paths": ["tests/test_target.py", "tools/target.py"],
             "evidence_files": {"tests/test_target.py": sha},
+            "production_sha256": sha,
         },
     }
 
@@ -261,10 +262,34 @@ class VF0RelationTests(unittest.TestCase):
         result = self.assertRejected(self.document)
         self.assertEqual(["CANDIDATE_TREE_UNCHANGED"], result["reasons"])
 
-    def test_candidate_tree_is_bound_to_the_admitted_evidence_tree(self) -> None:
-        self.document["candidate"]["tree"] = "completely-unrelated-tree"
+    def test_production_candidate_cannot_retain_the_evidence_tree(self) -> None:
+        self.document["candidate"]["tree"] = self.document["request"]["material"][
+            "evidence_tree"
+        ]
         result = self.assertRejected(self.document)
-        self.assertEqual(["CANDIDATE_TREE_BINDING"], result["reasons"])
+        self.assertEqual(["CANDIDATE_PRODUCTION_TREE_UNCHANGED"], result["reasons"])
+
+    def test_final_candidate_binds_declared_production_delta(self) -> None:
+        doc = copy.deepcopy(self.document)
+        doc["candidate"]["tree"] = "git-sha1:final-candidate-tree"
+        doc["candidate"]["production_sha256"] = doc["request"]["material"][
+            "production_sha256"
+        ]
+        self.assertEqual("MATCH", self.core.evaluate(doc)["status"])
+
+    def test_final_candidate_rejects_mismatched_production_delta(self) -> None:
+        doc = copy.deepcopy(self.document)
+        doc["candidate"]["tree"] = "git-sha1:final-candidate-tree"
+        doc["candidate"]["production_sha256"] = "sha256:" + "b" * 64
+        result = self.assertRejected(doc)
+        self.assertEqual(["CANDIDATE_PRODUCTION_BINDING"], result["reasons"])
+
+    def test_evidence_only_candidate_retains_the_admitted_evidence_tree(self) -> None:
+        doc = copy.deepcopy(self.document)
+        doc["candidate"]["changed_paths"] = ["tests/test_target.py"]
+        doc["candidate"]["tree"] = doc["request"]["material"]["evidence_tree"]
+        doc["candidate"]["production_sha256"] = None
+        self.assertEqual("MATCH", self.core.evaluate(doc)["status"])
 
     def test_candidate_paths_do_not_escape_the_request(self) -> None:
         for paths, reason in [

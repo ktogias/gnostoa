@@ -378,6 +378,7 @@ def _candidate(value: Any, request: dict[str, Any]) -> dict[str, Any]:
             "observed_at",
             "changed_paths",
             "evidence_files",
+            "production_sha256",
         },
     )
     for key in ("parent_commit", "parent_tree"):
@@ -390,16 +391,33 @@ def _candidate(value: Any, request: dict[str, Any]) -> dict[str, Any]:
     changed = _paths(candidate["changed_paths"])
     if changed:
         _need(tree != request["material"]["parent_tree"], "CANDIDATE_TREE_UNCHANGED")
-    _need(tree == request["material"]["evidence_tree"], "CANDIDATE_TREE_BINDING")
     _need(changed <= set(request["candidate_paths"]), "CANDIDATE_PATH_SCOPE")
     evidence_files = _files(candidate["evidence_files"])
     _need(
         evidence_files == request["material"]["evidence_files"],
         "CANDIDATE_EVIDENCE_BINDING",
     )
+    evidence_paths = set(evidence_files)
     # These files describe the admitted evidence delta, not every test already
     # present in the parent. The final diff must carry that same retained delta.
-    _need(set(evidence_files) <= changed, "CANDIDATE_EVIDENCE_DELTA_MISSING")
+    _need(evidence_paths <= changed, "CANDIDATE_EVIDENCE_DELTA_MISSING")
+    production_paths = changed - evidence_paths
+    if production_paths:
+        _need(
+            tree != request["material"]["evidence_tree"],
+            "CANDIDATE_PRODUCTION_TREE_UNCHANGED",
+        )
+        _need(
+            _sha(candidate["production_sha256"])
+            == request["material"]["production_sha256"],
+            "CANDIDATE_PRODUCTION_BINDING",
+        )
+    else:
+        _need(candidate["production_sha256"] is None, "CANDIDATE_PRODUCTION_UNEXPECTED")
+        _need(
+            tree == request["material"]["evidence_tree"],
+            "CANDIDATE_EVIDENCE_TREE_BINDING",
+        )
     return candidate
 
 
