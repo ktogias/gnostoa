@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import importlib.util
+import json
 import os
 import shutil
 import subprocess  # nosec B404 -- test-only fixed list-argv Git/process fixtures
@@ -543,6 +544,48 @@ class VF0SubjectTests(unittest.TestCase):
         with self.assertRaisesRegex(ExecutionRejected, "EVIDENCE_PATH_COMPONENT_BOUND"):
             EvidenceFile(path=path, content=b"pass\n")
 
+    def test_evidence_snapshot_rejects_duck_typed_item_before_materialization(
+        self,
+    ) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+
+        class DuckEvidence:
+            path = "tests/duck.py"
+            content = b"pass\n"
+            mode = "100644"
+
+        subject = GitSubject(commit="a" * 40, tree="b" * 40)
+        with mock.patch.object(
+            module, "_materialize_subject", side_effect=AssertionError("materialized")
+        ):
+            with self.assertRaisesRegex(ExecutionRejected, "EVIDENCE_CONTENT"):
+                execute(
+                    Path.cwd() / "unused-repository",
+                    subject,
+                    cast(Sequence[EvidenceFile], [DuckEvidence()]),
+                    ["/bin/true"],
+                    _DirectTestBackend(),
+                )
+
+    def test_evidence_snapshot_revalidates_post_construction_path_mutation(
+        self,
+    ) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        item = _evidence("pass")
+        object.__setattr__(item, "path", "../../outside")
+        subject = GitSubject(commit="a" * 40, tree="b" * 40)
+        with mock.patch.object(
+            module, "_materialize_subject", side_effect=AssertionError("materialized")
+        ):
+            with self.assertRaisesRegex(ExecutionRejected, "EVIDENCE_PATH"):
+                execute(
+                    Path.cwd() / "unused-repository",
+                    subject,
+                    [item],
+                    ["/bin/true"],
+                    _DirectTestBackend(),
+                )
+
     def test_evidence_sequence_is_snapshotted_before_backend_execution(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             repo, subject = _repo(Path(td))
@@ -863,6 +906,76 @@ class VF0SubjectTests(unittest.TestCase):
             )
             self.assertEqual(("/bin/true",), backend.command)
             self.assertEqual(1, command.iterations)
+
+    def test_observation_binds_command_and_effective_limits(self) -> None:
+        class StaticBackend:
+            def run(
+                self,
+                root: Path,
+                command: Sequence[str],
+                limits: ExecutionLimits,
+                *,
+                subject: GitSubject,
+            ) -> UntrustedCapture:
+                del root, command, limits, subject
+                return UntrustedCapture("completed", 0, b"same", b"", 4)
+
+        def digest(value: object) -> str:
+            raw = json.dumps(
+                value,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            ).encode("ascii")
+            return "sha256:" + hashlib.sha256(raw).hexdigest()
+
+        limits = ExecutionLimits(
+            timeout_seconds=7.5,
+            output_bytes=4096,
+            memory_bytes=128 * 1024 * 1024,
+            cpus=1.25,
+            pids=64,
+            tmpfs_bytes=8 * 1024 * 1024,
+        )
+        command = ["/bin/true", "--fixture"]
+        with tempfile.TemporaryDirectory() as td:
+            repo, subject = _repo(Path(td))
+            result = execute(
+                repo, subject, [_evidence("pass")], command, StaticBackend(), limits
+            )
+        self.assertEqual(digest(command), result.command_sha256)
+        self.assertEqual(
+            digest(
+                {
+                    "timeout_seconds": limits.timeout_seconds,
+                    "output_bytes": limits.output_bytes,
+                    "memory_bytes": limits.memory_bytes,
+                    "cpus": limits.cpus,
+                    "pids": limits.pids,
+                    "tmpfs_bytes": limits.tmpfs_bytes,
+                }
+            ),
+            result.limits_sha256,
+        )
+        self.assertEqual("gnostoa-python-backend-v1", result.backend_identity)
+        self.assertTrue(result.runtime_identity.startswith("sha256:"))
+
+    def test_runtime_identity_distinguishes_pinned_oci_images(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        first = "sha256:" + "1" * 64
+        second = "sha256:" + "2" * 64
+        first_backend, first_runtime = module._backend_runtime_identities(
+            DockerBackend(first)
+        )
+        second_backend, second_runtime = module._backend_runtime_identities(
+            DockerBackend(second)
+        )
+        self.assertEqual("gnostoa-docker-oci-v1", first_backend)
+        self.assertEqual(first_backend, second_backend)
+        self.assertEqual(first, first_runtime)
+        self.assertEqual(second, second_runtime)
+        self.assertNotEqual(first_runtime, second_runtime)
 
     def test_command_count_is_bounded_while_snapshotting(self) -> None:
         module = importlib.import_module("tools.vf0_execution")
@@ -2237,6 +2350,10 @@ class VF0SmokeContractTests(unittest.TestCase):
         return ExecutionObservation(
             subject=GitSubject(commit="a" * 40, tree="b" * 40),
             evidence_sha256=(("tests/e.py", "c" * 64),),
+            command_sha256="sha256:" + "e" * 64,
+            limits_sha256="sha256:" + "f" * 64,
+            backend_identity="gnostoa-docker-oci-v1",
+            runtime_identity="sha256:" + "1" * 64,
             before_manifest_sha256="d" * 64,
             after_manifest_sha256="d" * 64,
             capture=UntrustedCapture(

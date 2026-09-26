@@ -809,6 +809,18 @@ tests**, for **128 focused tests** total. All **128** pass normally and under
 `python -O`; the full non-root `ci/verify fast` suite passes with **1,428 tests**
 and two declared skips before ordinary exact-parent D0090 preparation.
 
+The next review-convergence successor binds the execution inputs that produced each
+controller-created observation and revalidates evidence objects at the execution
+boundary. The observation now carries canonical command and effective-limit
+digests plus controller-derived backend/runtime identities; the Docker runtime
+identity is the digest-pinned image selected by the backend. Exact `EvidenceFile`
+items are reconstructed before materialization so post-construction field mutation
+or duck typing cannot bypass path, mode or content validation. Four execution
+regressions raise the execution/fixture suite to **94 tests** while the relation
+suite remains **38 tests**, for **132 focused tests** total. All **132** pass
+normally and under `python -O`; ordinary exact-parent D0090 `fast` preparation is
+required before publication.
+
 This evidence still does **not** claim a live run of the new Docker specialization.
 `tests/vf0_execution_oci_smoke.py` is intentionally outside unittest discovery and
 must be executed after exact ordinary D0090 preparation/publication of this

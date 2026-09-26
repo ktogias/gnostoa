@@ -101,6 +101,17 @@ def _canonical(value: object) -> bytes:
     return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
 
 
+def _identity_digest(value: object) -> str:
+    raw = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("ascii")
+    return "sha256:" + hashlib.sha256(raw).hexdigest()
+
+
 def _git_sha1(value: str, reason: str) -> str:
     _need(_GIT_SHA1_RE.fullmatch(value) is not None, reason)
     return value
@@ -225,6 +236,10 @@ class ExecutionObservation:
 
     subject: GitSubject
     evidence_sha256: tuple[tuple[str, str], ...]
+    command_sha256: str
+    limits_sha256: str
+    backend_identity: str
+    runtime_identity: str
     before_manifest_sha256: str
     after_manifest_sha256: str
     capture: UntrustedCapture
@@ -1230,6 +1245,42 @@ def _enforce_output_limit(
     )
 
 
+def _limits_identity(limits: ExecutionLimits) -> str:
+    return _identity_digest(
+        {
+            "timeout_seconds": limits.timeout_seconds,
+            "output_bytes": limits.output_bytes,
+            "memory_bytes": limits.memory_bytes,
+            "cpus": limits.cpus,
+            "pids": limits.pids,
+            "tmpfs_bytes": limits.tmpfs_bytes,
+        }
+    )
+
+
+def _backend_runtime_identities(backend: ExecutionBackend) -> tuple[str, str]:
+    backend_type = type(backend)
+    if backend_type is SubprocessBackend:
+        return (
+            "gnostoa-local-subprocess-v1",
+            _identity_digest(
+                {
+                    "containment_executable": _LOCAL_CONTAINMENT_EXECUTABLE,
+                    "wrapper_executable": _LOCAL_CONTAINMENT_WRAPPER_EXECUTABLE,
+                    "wrapper_source": _LOCAL_CONTAINMENT_WRAPPER_SOURCE,
+                }
+            ),
+        )
+    if backend_type is DockerBackend:
+        docker_backend = cast(DockerBackend, backend)
+        return "gnostoa-docker-oci-v1", docker_backend.image
+    class_identity = f"{backend_type.__module__}.{backend_type.__qualname__}"
+    return (
+        "gnostoa-python-backend-v1",
+        _identity_digest({"python_class": class_identity}),
+    )
+
+
 def _snapshot_evidence(
     evidence: Sequence[EvidenceFile],
 ) -> tuple[EvidenceFile, ...]:
@@ -1237,9 +1288,13 @@ def _snapshot_evidence(
     iterator = iter(evidence)
     for _ in range(_MAX_EVIDENCE_FILES + 1):
         try:
-            snapshot.append(next(iterator))
+            item = next(iterator)
         except StopIteration:
             break
+        _need(type(item) is EvidenceFile, "EVIDENCE_CONTENT")
+        snapshot.append(
+            EvidenceFile(path=item.path, content=item.content, mode=item.mode)
+        )
     _need(1 <= len(snapshot) <= _MAX_EVIDENCE_FILES, "EVIDENCE_COUNT")
     return tuple(snapshot)
 
@@ -1283,6 +1338,9 @@ def execute(
     chosen_limits = limits or ExecutionLimits()
     command_snapshot = _snapshot_command(command)
     evidence_snapshot = _snapshot_evidence(evidence)
+    command_sha256 = _identity_digest(list(command_snapshot))
+    limits_sha256 = _limits_identity(chosen_limits)
+    backend_identity, runtime_identity = _backend_runtime_identities(backend)
     with tempfile.TemporaryDirectory(prefix="gnostoa-vf0-execution-") as temporary:
         temp = Path(temporary)
         root = temp / "subject"
@@ -1303,6 +1361,10 @@ def execute(
         return ExecutionObservation(
             subject=subject,
             evidence_sha256=evidence_digests,
+            command_sha256=command_sha256,
+            limits_sha256=limits_sha256,
+            backend_identity=backend_identity,
+            runtime_identity=runtime_identity,
             before_manifest_sha256=before_digest,
             after_manifest_sha256=after_digest,
             capture=capture,

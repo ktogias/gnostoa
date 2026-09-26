@@ -225,6 +225,10 @@ def _summary(observation: ExecutionObservation) -> dict[str, Any]:
     return {
         "subject_commit": observation.subject.commit,
         "subject_tree": observation.subject.tree,
+        "command_sha256": observation.command_sha256,
+        "limits_sha256": observation.limits_sha256,
+        "backend_identity": observation.backend_identity,
+        "runtime_identity": observation.runtime_identity,
         "termination": observation.capture.termination,
         "exit_code": observation.capture.exit_code,
         "stdout_sha256": hashlib.sha256(observation.capture.stdout).hexdigest(),
