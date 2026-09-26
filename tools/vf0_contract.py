@@ -40,6 +40,7 @@ _MATERIAL_FIELDS = {
     "command_sha256",
     "oracle_sha256",
     "evidence_files",
+    "evidence_modes",
 }
 
 
@@ -163,6 +164,14 @@ def _files(value: Any) -> dict[str, str]:
     return cast(dict[str, str], value)
 
 
+def _file_modes(value: Any) -> dict[str, str]:
+    _need(type(value) is dict and len(value) <= 256, "FILE_MODE_MANIFEST")
+    for path, mode in value.items():
+        _path(path)
+        _need(mode in {"100644", "100755"}, "FILE_MODE")
+    return cast(dict[str, str], value)
+
+
 def _material(value: Any) -> dict[str, Any]:
     material = _mapping(value, _MATERIAL_FIELDS)
     for key in ("parent_commit", "parent_tree", "evidence_tree"):
@@ -174,7 +183,9 @@ def _material(value: Any) -> dict[str, Any]:
         "oracle_sha256",
     ):
         _sha(material[key])
-    _files(material["evidence_files"])
+    evidence_files = _files(material["evidence_files"])
+    evidence_modes = _file_modes(material["evidence_modes"])
+    _need(set(evidence_modes) == set(evidence_files), "EVIDENCE_MODE_MANIFEST")
     return material
 
 
@@ -378,6 +389,7 @@ def _candidate(value: Any, request: dict[str, Any]) -> dict[str, Any]:
             "observed_at",
             "changed_paths",
             "evidence_files",
+            "evidence_modes",
             "production_sha256",
         },
     )
@@ -397,6 +409,12 @@ def _candidate(value: Any, request: dict[str, Any]) -> dict[str, Any]:
         evidence_files == request["material"]["evidence_files"],
         "CANDIDATE_EVIDENCE_BINDING",
     )
+    evidence_modes = _file_modes(candidate["evidence_modes"])
+    _need(
+        evidence_modes == request["material"]["evidence_modes"],
+        "CANDIDATE_EVIDENCE_MODE_BINDING",
+    )
+    _need(set(evidence_modes) == set(evidence_files), "EVIDENCE_MODE_MANIFEST")
     evidence_paths = set(evidence_files)
     # These files describe the admitted evidence delta, not every test already
     # present in the parent. The final diff must carry that same retained delta.
