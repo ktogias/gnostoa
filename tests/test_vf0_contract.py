@@ -556,8 +556,10 @@ class VF0RelationTests(unittest.TestCase):
         )
         doc["evidence"]["mode"] = "STRUCTURAL"
         doc["request"]["material"]["evidence_files"] = {}
+        doc["request"]["material"]["evidence_modes"] = {}
         doc["evidence"]["material"] = copy.deepcopy(doc["request"]["material"])
         doc["candidate"]["evidence_files"] = {}
+        doc["candidate"]["evidence_modes"] = {}
         doc["request"]["outcome"] = {"exit_code": 0, "cases": []}
         doc["evidence"]["outcome"] = {"exit_code": 0, "cases": []}
         doc["evidence"]["accountable_review"] = _ref("accountable-review")
