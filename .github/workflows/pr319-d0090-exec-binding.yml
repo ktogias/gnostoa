@@ -105,7 +105,7 @@ jobs:
           prepared=pathlib.Path(__import__("os").environ["RUNNER_TEMP"])/"prepared.patch"
           summary={
               "schema":"pr319-d0090-exec-binding/v1",
-              "parent":receipt["parent"],
+              "parent":receipt["parent_commit"],
               "parent_tree":receipt["parent_tree"],
               "prepared_tree":receipt["prepared_tree"],
               "receipt_sha256":receipt["receipt_sha256"],
