@@ -735,6 +735,15 @@ tests**, so the focused corpus is **102 tests**. The same successor removes the
 Codacy B108 scanner bait from the oversized-evidence test without changing its
 behavior.
 
+The next bounded review-convergence successor covers a deleted materialization
+root as a stable `SUBJECT_SNAPSHOT` rejection instead of leaking raw
+`FileNotFoundError`, and refines the live OCI isolation assertion so the actual
+subject file is required to be write-blocked at the fixed non-root identity
+(`EROFS` or `EACCES`) while independent writable probes continue to require
+strict `EROFS` for the read-only bind and root filesystem. The relation suite
+remains **34 tests** and the execution/fixture suite becomes **69 tests**, so the
+focused corpus is **103 tests**.
+
 This evidence still does **not** claim a live run of the new Docker specialization.
 `tests/vf0_execution_oci_smoke.py` is intentionally outside unittest discovery and
 must be executed after exact ordinary D0090 preparation/publication of this

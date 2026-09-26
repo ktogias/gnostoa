@@ -438,13 +438,13 @@ def _file_mode(mode: int) -> str:
 
 def _snapshot(root: Path) -> tuple[dict[str, _MaterialFile], dict[str, str]]:
     files: dict[str, _MaterialFile] = {}
-    root_mode = root.lstat().st_mode
-    _need(stat.S_ISDIR(root_mode), "SUBJECT_SNAPSHOT")
-    directories = {".": _directory_mode(root_mode)}
-    total = 0
-    observed_entries = 0
-    pending = [root]
     try:
+        root_mode = root.lstat().st_mode
+        _need(stat.S_ISDIR(root_mode), "SUBJECT_SNAPSHOT")
+        directories = {".": _directory_mode(root_mode)}
+        total = 0
+        observed_entries = 0
+        pending = [root]
         while pending:
             directory = pending.pop()
             with os.scandir(directory) as entries:

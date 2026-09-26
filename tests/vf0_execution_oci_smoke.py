@@ -33,15 +33,22 @@ EVIDENCE = rb"""import errno, json, os, pathlib, socket, subprocess, sys, time
 case = sys.argv[1]
 if case == "isolation":
     checks = {}
-    for name, path in (("subject_read_only", "/workspace/subject.txt"),
-                       ("rootfs_read_only", "/home/kit/vf0-write-probe")):
-        try:
-            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-            os.write(fd, b"ISOLATION_FAILURE\n")
-            os.close(fd)
-            checks[name] = False
-        except OSError as exc:
-            checks[name] = exc.errno == errno.EROFS
+    subject = pathlib.Path("/workspace/subject.txt")
+    checks["subject_exists"] = subject.is_file()
+    try:
+        fd = os.open(subject, os.O_WRONLY | os.O_APPEND)
+        os.write(fd, b"ISOLATION_FAILURE\n")
+        os.close(fd)
+        checks["subject_write_blocked"] = False
+    except OSError as exc:
+        checks["subject_write_blocked"] = exc.errno in {errno.EROFS, errno.EACCES}
+    try:
+        fd = os.open("/home/kit/vf0-write-probe", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        os.write(fd, b"ISOLATION_FAILURE\n")
+        os.close(fd)
+        checks["rootfs_read_only"] = False
+    except OSError as exc:
+        checks["rootfs_read_only"] = exc.errno == errno.EROFS
     checks["no_git_metadata"] = not pathlib.Path("/workspace/.git").exists()
     checks["no_docker_socket"] = not pathlib.Path("/var/run/docker.sock").exists()
     checks["clean_environment"] = all(name not in os.environ for name in

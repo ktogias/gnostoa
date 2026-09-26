@@ -6,6 +6,7 @@ import hashlib
 import importlib
 import importlib.util
 import os
+import shutil
 import subprocess  # nosec B404 -- test-only fixed list-argv Git/process fixtures
 import sys
 import tempfile
@@ -212,6 +213,33 @@ class VF0SubjectTests(unittest.TestCase):
             ((evidence.path, hashlib.sha256(original).hexdigest()),),
             result.evidence_sha256,
         )
+
+    def test_deleted_materialization_root_is_bounded_snapshot_rejection(self) -> None:
+        class DeleteRootBackend:
+            subject_immutable_during_execution = False
+
+            def run(
+                self,
+                root: Path,
+                command: Sequence[str],
+                limits: ExecutionLimits,
+                *,
+                subject: GitSubject,
+            ) -> UntrustedCapture:
+                del command, limits, subject
+                shutil.rmtree(root)
+                return UntrustedCapture("completed", 0, b"", b"", 0)
+
+        with tempfile.TemporaryDirectory() as td:
+            repo, subject = _repo(Path(td))
+            with self.assertRaisesRegex(ExecutionRejected, "SUBJECT_SNAPSHOT"):
+                execute(
+                    repo,
+                    subject,
+                    [_evidence("pass")],
+                    ["/bin/true"],
+                    DeleteRootBackend(),
+                )
 
     def test_direct_backend_snapshot_equality_is_not_runtime_immutability(self) -> None:
         with tempfile.TemporaryDirectory() as td:
