@@ -1,0 +1,145 @@
+name: PR319 D0090 mode-runtime preparation
+
+on:
+  push:
+    branches:
+      - agent-support/pr319-d0090-mode-runtime-8413198f-20260926
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout support candidate
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          path: support
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout exact parent
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 8413198f86a8576fea1a2047b2e59c5ea3ce2d84
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up trusted Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+
+      - name: Install exact development dependencies
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check -r requirements/development.lock
+
+      - name: Bind exact parent and candidate patch
+        env:
+          PARENT: 8413198f86a8576fea1a2047b2e59c5ea3ce2d84
+          PARENT_TREE: e98b82c07bdba99a2d3168fed8180ee2e8c765d1
+          PATCH_SHA256: 7f3ab8e4cf8799e311967f7275017de29a2ccab50630045712decab032b57955
+        run: |
+          set -euo pipefail
+          cd candidate
+          test "$(git rev-parse HEAD)" = "$PARENT"
+          test "$(git rev-parse HEAD^{tree})" = "$PARENT_TREE"
+          test "$(git rev-parse --is-shallow-repository)" = "false"
+          test -z "$(git status --porcelain)"
+          git fsck --full
+          cd ../support
+          git diff --binary --full-index "$PARENT" HEAD --             knowledge/assessments/15-vf0-entrance-and-execution-plan.md             tests/test_vf0_contract.py             tests/test_vf0_execution.py             tools/vf0_contract.py             tools/vf0_execution.py > "$RUNNER_TEMP/input.patch"
+          test "$(sha256sum "$RUNNER_TEMP/input.patch" | awk '{print $1}')" = "$PATCH_SHA256"
+          git diff --name-only "$PARENT" HEAD --             knowledge/assessments/15-vf0-entrance-and-execution-plan.md             tests/test_vf0_contract.py             tests/test_vf0_execution.py             tools/vf0_contract.py             tools/vf0_execution.py | sort > "$RUNNER_TEMP/actual-paths.txt"
+          cat > "$RUNNER_TEMP/expected-paths.txt" <<'EOF'
+          knowledge/assessments/15-vf0-entrance-and-execution-plan.md
+          tests/test_vf0_contract.py
+          tests/test_vf0_execution.py
+          tools/vf0_contract.py
+          tools/vf0_execution.py
+          EOF
+          sort -o "$RUNNER_TEMP/expected-paths.txt" "$RUNNER_TEMP/expected-paths.txt"
+          cmp "$RUNNER_TEMP/expected-paths.txt" "$RUNNER_TEMP/actual-paths.txt"
+          cd ../candidate
+          git apply --check "$RUNNER_TEMP/input.patch"
+          git apply "$RUNNER_TEMP/input.patch"
+          git diff --check "$PARENT"
+
+      - name: Run parent-owned ordinary D0090 prepare and verify
+        env:
+          PARENT: 8413198f86a8576fea1a2047b2e59c5ea3ce2d84
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          git show "$PARENT:ci/prepare-candidate" > "$RUNNER_TEMP/prepare-candidate"
+          chmod 500 "$RUNNER_TEMP/prepare-candidate"
+          TRUSTED_PYTHON="$(python -c 'import sys; print(sys.executable)')"
+          sh "$RUNNER_TEMP/prepare-candidate" prepare             --parent "$PARENT"             --receipt "$RUNNER_TEMP/receipt.json"             --focused-profile fast             --trusted-python "$TRUSTED_PYTHON"             | tee "$RUNNER_TEMP/prepare.stdout"
+          python - "$RUNNER_TEMP/receipt.json" "$RUNNER_TEMP/receipt-env" <<'PY'
+          import json, pathlib, sys
+          doc=json.loads(pathlib.Path(sys.argv[1]).read_text())
+          pathlib.Path(sys.argv[2]).write_text(
+              "RECEIPT_SHA=" + doc["receipt_sha256"] + "\n"
+              + "PREPARED_TREE=" + doc["prepared_tree"] + "\n"
+              + "PREPARED_DIFF_SHA=" + doc["prepared_diff_sha256"] + "\n"
+          )
+          expected=[
+              "knowledge/assessments/15-vf0-entrance-and-execution-plan.md",
+              "tests/test_vf0_contract.py",
+              "tests/test_vf0_execution.py",
+              "tools/vf0_contract.py",
+              "tools/vf0_execution.py",
+          ]
+          if sorted(doc["changed_paths"]) != expected:
+              raise SystemExit("RECEIPT_PATH_SET_MISMATCH")
+          if doc.get("focused_profile") != "fast":
+              raise SystemExit("RECEIPT_PROFILE_MISMATCH")
+          PY
+          . "$RUNNER_TEMP/receipt-env"
+          sh "$RUNNER_TEMP/prepare-candidate" verify             --parent "$PARENT"             --tree "$PREPARED_TREE"             --receipt "$RUNNER_TEMP/receipt.json"             --receipt-sha256 "$RECEIPT_SHA"             | tee "$RUNNER_TEMP/verify.stdout"
+          git diff --binary --full-index "$PARENT" "$PREPARED_TREE" > "$RUNNER_TEMP/prepared.patch"
+          ACTUAL_DIFF_SHA="sha256:$(sha256sum "$RUNNER_TEMP/prepared.patch" | awk '{print $1}')"
+          test "$ACTUAL_DIFF_SHA" = "$PREPARED_DIFF_SHA"
+          sha256sum "$RUNNER_TEMP/receipt.json" > "$RUNNER_TEMP/receipt-file.sha256"
+          sha256sum "$RUNNER_TEMP/prepared.patch" > "$RUNNER_TEMP/prepared-patch.sha256"
+          python - "$RUNNER_TEMP/receipt.json" "$RUNNER_TEMP/summary.json" <<'PY'
+          import hashlib, json, os, pathlib, sys
+          receipt_path=pathlib.Path(sys.argv[1])
+          receipt=json.loads(receipt_path.read_text())
+          prepared=pathlib.Path(os.environ["RUNNER_TEMP"])/"prepared.patch"
+          summary={
+              "schema":"pr319-d0090-mode-runtime/v1",
+              "parent":receipt["parent_commit"],
+              "parent_tree":receipt["parent_tree"],
+              "prepared_tree":receipt["prepared_tree"],
+              "receipt_sha256":receipt["receipt_sha256"],
+              "receipt_file_sha256":hashlib.sha256(receipt_path.read_bytes()).hexdigest(),
+              "prepared_diff_sha256":receipt["prepared_diff_sha256"],
+              "prepared_patch_file_sha256":hashlib.sha256(prepared.read_bytes()).hexdigest(),
+              "focused_profile":receipt["focused_profile"],
+              "changed_paths":receipt["changed_paths"],
+              "input_patch_sha256":"7f3ab8e4cf8799e311967f7275017de29a2ccab50630045712decab032b57955",
+          }
+          pathlib.Path(sys.argv[2]).write_text(json.dumps(summary,sort_keys=True,indent=2)+"\n")
+          PY
+
+      - name: Upload bounded preparation evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr319-d0090-mode-runtime
+          path: |
+            ${{ runner.temp }}/receipt.json
+            ${{ runner.temp }}/prepare.stdout
+            ${{ runner.temp }}/verify.stdout
+            ${{ runner.temp }}/input.patch
+            ${{ runner.temp }}/prepared.patch
+            ${{ runner.temp }}/receipt-file.sha256
+            ${{ runner.temp }}/prepared-patch.sha256
+            ${{ runner.temp }}/summary.json
+          if-no-files-found: error
+          retention-days: 7
