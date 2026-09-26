@@ -126,7 +126,7 @@ def _fixture() -> dict[str, Any]:
         "candidate": {
             "parent_commit": "git-sha1:parent",
             "parent_tree": "git-sha1:parent-tree",
-            "tree": "git-sha1:candidate-tree",
+            "tree": "git-sha1:evidence-tree",
             "observed_at": 500,
             "changed_paths": ["tests/test_target.py", "tools/target.py"],
             "evidence_files": {"tests/test_target.py": sha},
@@ -260,6 +260,11 @@ class VF0RelationTests(unittest.TestCase):
         ]
         result = self.assertRejected(self.document)
         self.assertEqual(["CANDIDATE_TREE_UNCHANGED"], result["reasons"])
+
+    def test_candidate_tree_is_bound_to_the_admitted_evidence_tree(self) -> None:
+        self.document["candidate"]["tree"] = "completely-unrelated-tree"
+        result = self.assertRejected(self.document)
+        self.assertEqual(["CANDIDATE_TREE_BINDING"], result["reasons"])
 
     def test_candidate_paths_do_not_escape_the_request(self) -> None:
         for paths, reason in [
