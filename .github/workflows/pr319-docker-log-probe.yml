@@ -1,0 +1,61 @@
+name: PR319 Docker log transport probe
+
+on:
+  push:
+    branches:
+      - agent-support/pr319-docker-log-probe-b2d4-20260926
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Probe detached start plus logs-follow semantics
+        env:
+          IMAGE: ghcr.io/ktogias/gnostoa@sha256:f89bf32c0c4b86bac71fa008579b2385e6ae39bf4822f685479c4f2cc22bfca4
+        run: |
+          set -euo pipefail
+          docker pull "$IMAGE" >/dev/null
+          name="gnostoa-log-probe-$RANDOM-$RANDOM"
+          cleanup() { docker rm -f "$name" >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          docker create --name "$name" --log-driver local --log-opt max-size=128k --log-opt max-file=1 \
+            --entrypoint /usr/local/bin/python3 "$IMAGE" -I -c \
+            'import sys; print("probe-out"); print("probe-err", file=sys.stderr); raise SystemExit(17)' >/dev/null
+          docker start "$name" >/dev/null
+          set +e
+          docker logs --follow "$name" >"$RUNNER_TEMP/stdout.bin" 2>"$RUNNER_TEMP/stderr.bin"
+          logs_rc=$?
+          set -e
+          state="$(docker inspect --format '{{json .State}}' "$name")"
+          python3 - "$logs_rc" "$state" "$RUNNER_TEMP/stdout.bin" "$RUNNER_TEMP/stderr.bin" <<'PY'
+          import hashlib, json, pathlib, sys
+          logs_rc=int(sys.argv[1]); state=json.loads(sys.argv[2])
+          out=pathlib.Path(sys.argv[3]).read_bytes()
+          err=pathlib.Path(sys.argv[4]).read_bytes()
+          result={
+            "logs_rc":logs_rc,
+            "state_status":state.get("Status"),
+            "state_running":state.get("Running"),
+            "state_exit_code":state.get("ExitCode"),
+            "stdout":out.decode("utf-8","replace"),
+            "stderr":err.decode("utf-8","replace"),
+            "stdout_sha256":hashlib.sha256(out).hexdigest(),
+            "stderr_sha256":hashlib.sha256(err).hexdigest(),
+          }
+          pathlib.Path("/tmp/result.json").write_text(json.dumps(result,sort_keys=True,indent=2)+"\n")
+          print(json.dumps(result,sort_keys=True))
+          assert state.get("Status")=="exited" and state.get("Running") is False
+          assert state.get("ExitCode")==17
+          assert out==b"probe-out\n"
+          assert err==b"probe-err\n"
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr319-docker-log-transport-probe
+          path: /tmp/result.json
+          if-no-files-found: error
+          retention-days: 1
