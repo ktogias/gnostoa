@@ -464,6 +464,15 @@ class VF0SubjectTests(unittest.TestCase):
                 )
         self.assertEqual(module._MAX_EVIDENCE_FILES + 1, evidence.pulled)
 
+    def test_evidence_path_bytes_are_bounded_before_split(self) -> None:
+        with self.assertRaisesRegex(ExecutionRejected, "EVIDENCE_PATH_BOUND"):
+            EvidenceFile(path="tests/" + "x" * 4096, content=b"pass\n")
+
+    def test_evidence_path_components_are_bounded_before_split(self) -> None:
+        path = "tests/" + "/".join("x" for _ in range(256))
+        with self.assertRaisesRegex(ExecutionRejected, "EVIDENCE_PATH_COMPONENT_BOUND"):
+            EvidenceFile(path=path, content=b"pass\n")
+
     def test_evidence_sequence_is_snapshotted_before_backend_execution(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             repo, subject = _repo(Path(td))
@@ -784,6 +793,51 @@ class VF0SubjectTests(unittest.TestCase):
             )
             self.assertEqual(("/bin/true",), backend.command)
             self.assertEqual(1, command.iterations)
+
+    def test_command_count_is_bounded_while_snapshotting(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+
+        class LargeCommand(Sequence[str]):
+            def __init__(self) -> None:
+                self.pulled = 0
+
+            def __len__(self) -> int:
+                return 10_000_000
+
+            def __getitem__(self, index: int) -> str:
+                self.pulled += 1
+                return "/bin/true"
+
+        command = LargeCommand()
+        subject = GitSubject(commit="a" * 40, tree="b" * 40)
+        with mock.patch.object(
+            module, "_materialize_subject", side_effect=AssertionError("materialized")
+        ):
+            with self.assertRaisesRegex(ExecutionRejected, "COMMAND_COUNT_BOUND"):
+                execute(
+                    Path.cwd() / "unused-repository",
+                    subject,
+                    [_evidence("pass")],
+                    command,
+                    SubprocessBackend(),
+                )
+        self.assertEqual(module._MAX_COMMAND_ARGS + 1, command.pulled)
+
+    def test_command_total_utf8_bytes_are_bounded_before_materialization(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        subject = GitSubject(commit="a" * 40, tree="b" * 40)
+        command = ["/bin/true", "x" * module._MAX_COMMAND_BYTES]
+        with mock.patch.object(
+            module, "_materialize_subject", side_effect=AssertionError("materialized")
+        ):
+            with self.assertRaisesRegex(ExecutionRejected, "COMMAND_BYTES_BOUND"):
+                execute(
+                    Path.cwd() / "unused-repository",
+                    subject,
+                    [_evidence("pass")],
+                    command,
+                    SubprocessBackend(),
+                )
 
     def test_runtime_empty_directory_creation_is_rejected_after_observation(
         self,
@@ -1334,7 +1388,7 @@ class FakeDockerBackend(DockerBackend):
             return subprocess.CompletedProcess(
                 ["/usr/bin/docker"],
                 0,
-                stdout=(str(args[2]) + "\n").encode(),
+                stdout=(str(args[-1]) + "\n").encode(),
                 stderr=b"",
             )
         if args[:2] == ("container", "inspect"):
@@ -1415,6 +1469,9 @@ class VF0DockerBackendTests(unittest.TestCase):
                         root, ["/bin/true"], ExecutionLimits(), subject=self.subject
                     )
             attached.assert_not_called()
+            self.assertIn(
+                ("rm", "--force", "--volumes", backend.container_id), backend.calls
+            )
 
     def test_fractional_cpu_contract_uses_docker_nano_cpu_rounding(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -1442,7 +1499,9 @@ class VF0DockerBackendTests(unittest.TestCase):
                         root, ["/bin/true"], ExecutionLimits(), subject=self.subject
                     )
             attached.assert_not_called()
-            self.assertIn(("rm", "--force", backend.container_id), backend.calls)
+            self.assertIn(
+                ("rm", "--force", "--volumes", backend.container_id), backend.calls
+            )
             self.assertIn(("inspect", backend.container_id), backend.calls)
 
     def test_attachment_failure_still_removes_and_verifies_absence(self) -> None:
@@ -1457,7 +1516,9 @@ class VF0DockerBackendTests(unittest.TestCase):
                     backend.run(
                         root, ["/bin/true"], ExecutionLimits(), subject=self.subject
                     )
-            rm_index = backend.calls.index(("rm", "--force", backend.container_id))
+            rm_index = backend.calls.index(
+                ("rm", "--force", "--volumes", backend.container_id)
+            )
             absent_index = backend.calls.index(
                 ("inspect", backend.container_id), rm_index + 1
             )
@@ -1482,7 +1543,10 @@ class VF0DockerBackendTests(unittest.TestCase):
                 if backend.container_name is None:
                     self.fail("cleanup identity was not established before create")
                 self.assertIn(("inspect", backend.container_name), backend.calls)
-                self.assertIn(("rm", "--force", backend.container_name), backend.calls)
+                self.assertIn(
+                    ("rm", "--force", "--volumes", backend.container_name),
+                    backend.calls,
+                )
                 self.assertGreaterEqual(
                     backend.calls.count(("inspect", backend.container_name)), 2
                 )
@@ -1601,7 +1665,9 @@ class VF0DockerBackendTests(unittest.TestCase):
                 )
             self.assertTrue(result.truncated)
             self.assertIsNone(result.exit_code)
-            self.assertIn(("rm", "--force", backend.container_id), backend.calls)
+            self.assertIn(
+                ("rm", "--force", "--volumes", backend.container_id), backend.calls
+            )
 
     def test_uncertain_remove_retries_and_verifies_absence(self) -> None:
         class UncertainRemove(FakeDockerBackend):

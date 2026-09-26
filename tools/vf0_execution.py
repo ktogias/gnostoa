@@ -34,6 +34,10 @@ _MAX_SUBJECT_FILES = 4096
 _MAX_SUBJECT_TREE_LISTING_BYTES = 32 * 1024 * 1024
 _MAX_EVIDENCE_FILES = 32
 _MAX_EVIDENCE_BYTES = 2 * 1024 * 1024
+_MAX_EVIDENCE_PATH_BYTES = 4 * 1024
+_MAX_EVIDENCE_PATH_COMPONENTS = 256
+_MAX_COMMAND_ARGS = 256
+_MAX_COMMAND_BYTES = 64 * 1024
 _MAX_SNAPSHOT_ENTRIES = 65_536
 _LOCAL_CONTAINMENT_EXECUTABLE = "/usr/bin/unshare"
 _CONTAINER_TMP = "/tmp"  # nosec B108 -- isolated container tmpfs, never a host temp path
@@ -76,7 +80,18 @@ def _git_sha1(value: str, reason: str) -> str:
 
 
 def _evidence_path(value: str) -> str:
-    _need(bool(value) and "\\" not in value and "\0" not in value, "EVIDENCE_PATH")
+    _need(isinstance(value, str) and bool(value), "EVIDENCE_PATH")
+    _need(len(value) <= _MAX_EVIDENCE_PATH_BYTES, "EVIDENCE_PATH_BOUND")
+    try:
+        encoded = value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ExecutionRejected("EVIDENCE_PATH") from exc
+    _need(len(encoded) <= _MAX_EVIDENCE_PATH_BYTES, "EVIDENCE_PATH_BOUND")
+    _need(
+        value.count("/") + 1 <= _MAX_EVIDENCE_PATH_COMPONENTS,
+        "EVIDENCE_PATH_COMPONENT_BOUND",
+    )
+    _need("\\" not in value and "\0" not in value, "EVIDENCE_PATH")
     raw_parts = value.split("/")
     _need(all(part not in {"", ".", ".."} for part in raw_parts), "EVIDENCE_PATH")
     _need(all(part.casefold() != ".git" for part in raw_parts), "EVIDENCE_PATH")
@@ -874,7 +889,9 @@ class DockerBackend:
             if remaining <= 0:
                 raise ExecutionRejected("OCI_CLEANUP_UNVERIFIED")
             try:
-                retry = self._command("rm", "--force", container_id, timeout=15)
+                retry = self._command(
+                    "rm", "--force", "--volumes", container_id, timeout=15
+                )
             except ExecutionRejected:
                 retry = None
             if retry is not None and retry.returncode != 0:
@@ -886,7 +903,9 @@ class DockerBackend:
 
     def _remove_and_verify(self, container_id: str, cleanup_nonce: str) -> None:
         try:
-            result = self._command("rm", "--force", container_id, timeout=15)
+            result = self._command(
+                "rm", "--force", "--volumes", container_id, timeout=15
+            )
         except ExecutionRejected:
             self._reconcile_uncertain_remove(container_id, cleanup_nonce)
             return
@@ -1060,6 +1079,32 @@ def _snapshot_evidence(
     return tuple(snapshot)
 
 
+def _snapshot_command(command: Sequence[str]) -> tuple[str, ...]:
+    snapshot: list[str] = []
+    total_bytes = 0
+    try:
+        iterator = iter(command)
+    except TypeError as exc:
+        raise ExecutionRejected("COMMAND") from exc
+    for index in range(_MAX_COMMAND_ARGS + 1):
+        try:
+            part = next(iterator)
+        except StopIteration:
+            break
+        if index >= _MAX_COMMAND_ARGS:
+            raise ExecutionRejected("COMMAND_COUNT_BOUND")
+        _need(isinstance(part, str) and bool(part), "COMMAND")
+        try:
+            encoded = part.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise ExecutionRejected("COMMAND") from exc
+        total_bytes += len(encoded)
+        _need(total_bytes <= _MAX_COMMAND_BYTES, "COMMAND_BYTES_BOUND")
+        snapshot.append(part)
+    _need(bool(snapshot), "COMMAND")
+    return tuple(snapshot)
+
+
 def execute(
     repository: Path,
     subject: GitSubject,
@@ -1071,12 +1116,7 @@ def execute(
     """Execute one explicit subject and return only bounded untrusted observations."""
 
     chosen_limits = limits or ExecutionLimits()
-    command_snapshot = tuple(command)
-    _need(
-        bool(command_snapshot)
-        and all(isinstance(part, str) and part for part in command_snapshot),
-        "COMMAND",
-    )
+    command_snapshot = _snapshot_command(command)
     evidence_snapshot = _snapshot_evidence(evidence)
     with tempfile.TemporaryDirectory(prefix="gnostoa-vf0-execution-") as temporary:
         temp = Path(temporary)

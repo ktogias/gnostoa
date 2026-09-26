@@ -744,6 +744,13 @@ strict `EROFS` for the read-only bind and root filesystem. The relation suite
 remains **34 tests** and the execution/fixture suite becomes **69 tests**, so the
 focused corpus is **103 tests**.
 
+The next bounded-input/cleanup successor caps command snapshotting at **256
+arguments** and **64 KiB UTF-8**, caps admitted evidence paths at **4 KiB UTF-8**
+and **256 components** before splitting, and removes anonymous Docker volumes on
+both initial and retry cleanup. Four new boundary regressions raise the
+execution/fixture suite to **73 tests**, for **107 focused tests** total; the
+existing rejected-extra-mount test also verifies `docker rm --force --volumes`.
+
 This evidence still does **not** claim a live run of the new Docker specialization.
 `tests/vf0_execution_oci_smoke.py` is intentionally outside unittest discovery and
 must be executed after exact ordinary D0090 preparation/publication of this
