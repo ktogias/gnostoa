@@ -958,8 +958,24 @@ class VF0SubjectTests(unittest.TestCase):
             ),
             result.limits_sha256,
         )
-        self.assertEqual("gnostoa-python-backend-v1", result.backend_identity)
-        self.assertTrue(result.runtime_identity.startswith("sha256:"))
+        self.assertIsNone(result.backend_identity)
+        self.assertIsNone(result.runtime_identity)
+
+    def test_custom_backend_runtime_configuration_is_explicitly_unbound(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+
+        class ConfiguredBackend:
+            def __init__(self, runtime: str) -> None:
+                self.runtime = runtime
+
+        self.assertEqual(
+            (None, None),
+            module._backend_runtime_identities(ConfiguredBackend("/runtime/a")),
+        )
+        self.assertEqual(
+            (None, None),
+            module._backend_runtime_identities(ConfiguredBackend("/runtime/b")),
+        )
 
     def test_runtime_identity_distinguishes_pinned_oci_images(self) -> None:
         module = importlib.import_module("tools.vf0_execution")
