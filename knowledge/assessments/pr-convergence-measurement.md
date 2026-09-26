@@ -28,6 +28,9 @@ sources:
   - id: per-finding-audit
     resource: https://github.com/ktogias/gnostoa/pull/319#issuecomment-5839243810
     title: Per-finding audit correcting the open-thread characterisation
+  - id: substantive-remeasurement
+    resource: https://github.com/ktogias/gnostoa/pull/319#issuecomment-5844578031
+    title: Re-measurement on substantive closure, which inverted the verdict
   - id: littles-law
     resource: https://web.eng.ucsd.edu/~massimo/ECE158A/Handouts_files/Little.pdf
     title: Little J.D.C. and Graves S.C., Little's Law
@@ -78,10 +81,14 @@ threads, reviewer recommendations, R2A advisory outcome. None of them answers
 wrong way at once.
 
 At the measured head #319 had complete green CI, an implementation measuring
-1.6 findings per KLOC, and every individual finding repaired within 20–30
-minutes — while work-in-progress climbed monotonically from 0 to 25. The
-open-thread count, the only number that did move, overstated live defects by
-roughly a factor of four.
+1.6 findings per KLOC, and a median finding-to-fix latency of 23 minutes — while
+the open-thread count climbed monotonically toward 36. Re-measured on fixes rather
+than resolve clicks, live defects were **3**. The tracker overstated them roughly
+twelvefold, and four successive analyses of this candidate reported the tracker's
+divergence as the work's.
+
+That error is the reason this assessment exists. The measures below are not
+difficult; choosing the wrong departure series makes all of them wrong at once.
 
 This assessment records what published practice already offers for that
 question, what it says about #319, and what it cannot say.
@@ -138,6 +145,13 @@ best-in-class above 95%. Taken alone it is a lagging summary. Its value here is
 in a *pair*: DRE computed from the tracker versus DRE computed from the code.
 The gap between them measures tracker drift, which no single-number DRE exposes.
 
+The PR 319 measurement promoted this from a supporting measure to **the primary
+one**. Every other measure in this set is computed from an arrival and a departure
+series; if departures are read from the tracker, every one of them is wrong by the
+size of the gap. On PR 319 that was 54 points, and it inverted the verdict. The
+paired form is therefore not an extra check — it is the precondition for trusting
+any of the rest.
+
 ### 4. Reliability growth — and its precondition
 
 Goel-Okumoto and the Rayleigh family model cumulative defects as
@@ -160,28 +174,46 @@ reflect reviewer saturation rather than code quality.
 
 ## Worked case — PR 319
 
-33 commits over 30.3 hours, 43 review threads. Measured from the GitHub API.
+54 review threads over 41 hours, 38 commits. Measured from the GitHub API.
 
-| Measure | Value | Reading |
+The candidate was first measured on **tracker** state — a thread counts as closed when
+it is resolved. It was then re-measured on **substantive** state: for each finding a
+code detector was built for the mechanism the finding asked for, and the commit history
+bisected for the first commit after the finding was raised in which that mechanism is
+present. Departure is that commit, not a resolve click.
+
+The two bases disagree on the verdict:
+
+| Measure | Tracker basis | Substantive basis |
 |---|---|---|
-| ρ = λ/μ | 1.42 / 0.59 = **2.39** | unstable; WIP unbounded |
-| Cumulative arrival curvature | 0.77 → 3.22 findings/h, **convex** | no SRGM fits; remaining count not estimable |
-| Implementation density | **1.6 / KLOC** | the original code was clean |
-| Remediation density | **15.3 / KLOC** | repairs are 9.6× denser than what they repair |
-| Tracked DRE | 18/43 = **42%** | |
-| Substantive DRE | 35/43 = **81%** | 39-point gap = tracker drift, not backlog |
-| Review size per pass | ~1048 LOC | 2.6× the effective band |
+| Departures of 54 arrivals | 18 | **47** |
+| Live items | 36 | **7** |
+| ρ = λ/μ overall | 3.00 | **1.15** |
+| ρ trailing 12 h | ∞ | **1.33** |
+| DRE | 33% | **87%** |
+| WIP shape | 0 → 36, monotonic | 0 for 22 h, then flat at **5–7** for 14 h |
 
-Two mechanisms, both in the flow rather than the work:
+On the tracker basis the candidate looks unstable. On the substantive basis it is a
+bounded queue slightly above equilibrium, with **median fix latency of 23 minutes**
+(p90 83 min). Of the 7 live items, 3 were code defects raised six minutes before
+measurement and 4 were documentation.
 
-1. **Departures stopped.** The last owner-directed closure was at t+21.1 h;
-   every open thread was raised afterwards. Closure was demonstrably possible —
-   five findings from the same reviewer had already been closed.
-2. **Repairs reseed.** At 9.6× the density of the implementation, each
-   remediation round supplies the next round's findings, which is why the
-   cumulative curve turned convex instead of saturating.
+**This is the finding that matters most in this research.** Every alarming figure in
+the first measurement — ρ = 3.00, ρ = ∞, WIP climbing without bound — was the tracker
+diverging from the work. A 54-point gap between substantive and tracked DRE produced
+all of them.
 
-Neither is repaired by working faster. #319 was already working very fast.
+### What the substantive measurement still shows as wrong
+
+Two things survive the correction, and neither is the queue:
+
+1. **Arrival is genuinely accelerating** — 0.83 → 1.81 findings/h across the halves,
+   so the cumulative curve is convex. Departures keep pace, so this is not instability,
+   but it does mean no reliability-growth model can estimate what remains.
+2. **Remediation is 10.9× denser in findings than the implementation it repairs** —
+   17.5/KLOC across 23 remediation commits against 1.6/KLOC for the original
+   implementation. This is the arrival driver, and it is why the curve is convex
+   rather than saturating.
 
 ## Proposed instrument set
 
@@ -189,11 +221,11 @@ Computable from the GitHub API with no new runtime dependency.
 
 | # | Measure | Source literature | Healthy |
 |---|---|---|---|
-| 1 | ρ = λ/μ over a trailing window | flow / Little's Law | < 1 |
+| 1 | ρ = λ/μ over a trailing window, **computed on substantive departures** | flow / Little's Law | < 1 |
 | 2 | Cumulative arrival vs departure series | CFD practice | parallel |
 | 3 | Findings per KLOC added, per commit | relative churn | declining |
 | 4 | Curvature of cumulative arrivals | SRGM precondition | concave |
-| 5 | Tracked DRE − substantive DRE | DRE, paired | ≈ 0 |
+| 5 | **Tracked DRE − substantive DRE** — the primary measure | DRE, paired | ≈ 0 |
 | 6 | Remediation : implementation density ratio | relative churn | → 1 |
 | 7 | Review size per pass | review-size study | 200–400 LOC |
 | 8 | Yield decay across passes on a **frozen** head | SRGM, properly conditioned | → 0 |
@@ -217,10 +249,17 @@ precondition. It does not emit a number.
 - A flat arrival curve over eleven heads is evidence, not proof, of an
   unbounded finding supply. Measure 8 on a frozen head is the experiment that
   would distinguish the two, and it has not been run.
-- Substantive DRE required reading the code to decide whether each open finding
-  was in fact repaired. That step is currently manual and may not be
-  mechanisable; if it is not, measure 5 stays a review aid rather than an
-  instrument.
+- Substantive DRE required reading the code to decide whether each finding was in
+  fact repaired. On PR 319 this was done by writing a per-finding code detector and
+  bisecting the commit history, which is reproducible and was accurate enough to
+  invert the verdict — but the detectors were written by hand from each finding's
+  text. Whether that authoring step can be mechanised is **the central open question
+  of this research**, because measure 5 is the precondition for every other measure
+  and it is the only one that currently needs human judgment.
+- Two of the detectors were initially mis-escaped and wrongly reported their finding
+  as unfixed. Detector authorship is therefore itself a failure surface, and any
+  instrument built on this method needs a positive control — a finding known to be
+  unfixed — to catch a detector that never matches.
 
 ## Admission boundary
 
