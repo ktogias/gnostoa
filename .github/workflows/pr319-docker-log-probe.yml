@@ -22,7 +22,7 @@ jobs:
           name="gnostoa-log-probe-$RANDOM-$RANDOM"
           cleanup() { docker rm -f "$name" >/dev/null 2>&1 || true; }
           trap cleanup EXIT
-          docker create --name "$name" --log-driver local --log-opt max-size=128k --log-opt max-file=1 \
+          docker create --name "$name" --log-driver json-file --log-opt max-size=128k --log-opt max-file=1 \
             --entrypoint /usr/local/bin/python3 "$IMAGE" -I -c \
             'import sys; print("probe-out"); print("probe-err", file=sys.stderr); raise SystemExit(17)' >/dev/null
           docker start "$name" >/dev/null
