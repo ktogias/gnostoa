@@ -1,0 +1,82 @@
+name: PR319 exact-head VF0 execution smoke 8413198f
+
+on:
+  push:
+    branches:
+      - agent-support/pr319-oci-smoke-8413198f-20260926
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 8413198f86a8576fea1a2047b2e59c5ea3ce2d84
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Bind exact source
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "8413198f86a8576fea1a2047b2e59c5ea3ce2d84"
+          test "$(git rev-parse HEAD^{tree})" = "e98b82c07bdba99a2d3168fed8180ee2e8c765d1"
+          test "$(git rev-parse --is-shallow-repository)" = "false"
+          test -z "$(git status --porcelain)"
+          git fsck --full
+          sha256sum tools/vf0_execution.py tests/test_vf0_execution.py tests/vf0_execution_oci_smoke.py > "$RUNNER_TEMP/source.sha256"
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Run focused exact-head corpus normally and optimized
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          PYTHONPATH=. python -m unittest tests.test_vf0_contract tests.test_vf0_execution -v
+          PYTHONPATH=. python -O -m unittest tests.test_vf0_contract tests.test_vf0_execution -v
+      - name: Pull fixed image and run live component smoke
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          IMAGE='ghcr.io/ktogias/gnostoa@sha256:f89bf32c0c4b86bac71fa008579b2385e6ae39bf4822f685479c4f2cc22bfca4'
+          docker pull "$IMAGE"
+          PYTHONPATH=. python tests/vf0_execution_oci_smoke.py --image "$IMAGE" --output "$RUNNER_TEMP/result.json"
+          test -s "$RUNNER_TEMP/result.json"
+          python - "$RUNNER_TEMP/result.json" "8413198f86a8576fea1a2047b2e59c5ea3ce2d84" "e98b82c07bdba99a2d3168fed8180ee2e8c765d1" "$IMAGE" <<'PY'
+          import json, pathlib, sys
+          path, head, tree, image = sys.argv[1:]
+          doc=json.loads(pathlib.Path(path).read_text())
+          assert doc["status"]=="PASS"
+          assert doc["scope"]=="COMPONENT_CONFORMANCE_ONLY"
+          assert doc["production_receipt_issued"] is False
+          assert doc["producer_admitted"] is False
+          assert doc["compliance_established"] is False
+          assert doc["vf0_active"] is False
+          cases=doc["cases"]
+          for case in cases.values():
+              assert case["backend_identity"]=="gnostoa-docker-oci-v1"
+              assert case["runtime_identity"]==image
+              for key in ("command_sha256","limits_sha256"):
+                  value=case[key]
+                  assert value.startswith("sha256:") and len(value)==71
+          assert len({case["limits_sha256"] for case in cases.values()}) == 1
+          assert cases["subject_one"]["command_sha256"] == cases["subject_two"]["command_sha256"]
+          assert cases["subject_import_one"]["command_sha256"] == cases["subject_import_two"]["command_sha256"]
+          meta={"subject_head":head,"subject_tree":tree,"result":doc}
+          pathlib.Path(path).write_text(json.dumps(meta,sort_keys=True,separators=(",",":"))+"\n")
+          PY
+          sha256sum "$RUNNER_TEMP/result.json" > "$RUNNER_TEMP/result.sha256"
+      - name: Upload bounded result
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr319-vf0-execution-smoke-8413198f
+          path: |
+            ${{ runner.temp }}/result.json
+            ${{ runner.temp }}/result.sha256
+            ${{ runner.temp }}/source.sha256
+          if-no-files-found: error
+          retention-days: 7
