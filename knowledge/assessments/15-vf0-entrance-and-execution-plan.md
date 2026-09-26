@@ -723,6 +723,18 @@ execution/fixture suite becomes **67 tests**, so the focused corpus is **101
 tests**. All **101** pass normally and under `python -O` before ordinary
 exact-parent D0090 preparation.
 
+The following local-immutability review successor makes the local backend's
+claim boundary explicit: PID/user-namespace containment without a read-only
+subject mount may produce bounded local capture and equal pre/post snapshots,
+but it cannot assert that the subject stayed immutable throughout execution. A
+regression transiently forges and restores a production file and requires
+`subject_unchanged=false`; the read-only OCI backend remains capable of the true
+claim because its inspected bind mount and root filesystem are read-only. The
+relation suite remains **34 tests** and the execution/fixture suite becomes **68
+tests**, so the focused corpus is **102 tests**. The same successor removes the
+Codacy B108 scanner bait from the oversized-evidence test without changing its
+behavior.
+
 This evidence still does **not** claim a live run of the new Docker specialization.
 `tests/vf0_execution_oci_smoke.py` is intentionally outside unittest discovery and
 must be executed after exact ordinary D0090 preparation/publication of this

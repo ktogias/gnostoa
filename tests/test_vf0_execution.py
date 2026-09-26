@@ -213,7 +213,7 @@ class VF0SubjectTests(unittest.TestCase):
             result.evidence_sha256,
         )
 
-    def test_exact_subject_plus_evidence_executes_and_remains_unchanged(self) -> None:
+    def test_direct_backend_snapshot_equality_is_not_runtime_immutability(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             repo, subject = _repo(Path(td))
             evidence = _evidence(
@@ -234,7 +234,7 @@ class VF0SubjectTests(unittest.TestCase):
             self.assertEqual("completed", result.capture.termination)
             self.assertEqual(0, result.capture.exit_code)
             self.assertEqual(b"OBSERVED\n", result.capture.stdout)
-            self.assertTrue(result.subject_unchanged)
+            self.assertFalse(result.subject_unchanged)
             self.assertEqual(
                 result.before_manifest_sha256, result.after_manifest_sha256
             )
@@ -428,7 +428,7 @@ class VF0SubjectTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(ExecutionRejected, "EVIDENCE_COUNT"):
                 execute(
-                    Path("/tmp/not-used"),
+                    Path.cwd() / "unused-repository",
                     subject,
                     evidence,
                     ["/bin/true"],
@@ -1052,6 +1052,45 @@ class VF0CaptureTests(unittest.TestCase):
             self.assertIn(b"LEADER_DONE", capture.stdout)
             time.sleep(0.5)
             self.assertFalse(marker.exists(), "detached descendant escaped containment")
+
+    def test_subprocess_backend_does_not_claim_transiently_restored_subject_immutable(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo, subject = _repo(Path(td))
+            evidence = _evidence(
+                """
+                from pathlib import Path
+                subject = Path('subject.txt')
+                original = subject.read_bytes()
+                subject.write_bytes(b'forged\\n')
+                assert subject.read_bytes() == b'forged\\n'
+                subject.write_bytes(original)
+                print('TRANSIENT_FORGE_OBSERVED')
+                """
+            )
+            try:
+                result = execute(
+                    repo,
+                    subject,
+                    [evidence],
+                    [sys.executable, "-I", evidence.path],
+                    SubprocessBackend(),
+                    ExecutionLimits(timeout_seconds=2.0),
+                )
+            except ExecutionRejected as exc:
+                if str(exc) != "LOCAL_CONTAINMENT_UNAVAILABLE":
+                    raise
+                self.skipTest("local PID/user namespace containment unavailable")
+            self.assertEqual(
+                ("completed", 0),
+                (result.capture.termination, result.capture.exit_code),
+            )
+            self.assertEqual(b"TRANSIENT_FORGE_OBSERVED\n", result.capture.stdout)
+            self.assertEqual(
+                result.before_manifest_sha256, result.after_manifest_sha256
+            )
+            self.assertFalse(result.subject_unchanged)
 
     def test_subprocess_backend_rejects_failed_containment_probe(self) -> None:
         with tempfile.TemporaryDirectory() as td:

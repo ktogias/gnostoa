@@ -174,7 +174,12 @@ class UntrustedCapture:
 
 @dataclass(frozen=True)
 class ExecutionObservation:
-    """Provider-neutral observation; deliberately contains no approval/compliance fields."""
+    """Provider-neutral observation with conservative runtime-immutability signaling.
+
+    ``subject_unchanged`` is true only when the selected controller backend
+    declares that it enforces subject immutability throughout execution and the
+    before/after manifests also match. Snapshot equality alone is insufficient.
+    """
 
     subject: GitSubject
     evidence_sha256: tuple[tuple[str, str], ...]
@@ -690,7 +695,9 @@ def _probe_local_containment(root: Path) -> None:
 
 
 class SubprocessBackend:
-    """Finite local backend with PID-namespace descendant containment."""
+    """Finite local backend with PID containment but no immutable subject mount."""
+
+    subject_immutable_during_execution = False
 
     def run(
         self,
@@ -710,6 +717,8 @@ class SubprocessBackend:
 
 class DockerBackend:
     """Linux/amd64 OCI specialization with a read-only, network-free subject."""
+
+    subject_immutable_during_execution = True
 
     def __init__(self, image: str, docker_executable: str = "/usr/bin/docker") -> None:
         _need(_IMAGE_RE.fullmatch(image) is not None, "OCI_IMAGE_PIN")
@@ -1092,5 +1101,7 @@ def execute(
             before_manifest_sha256=before_digest,
             after_manifest_sha256=after_digest,
             capture=capture,
-            subject_unchanged=True,
+            subject_unchanged=(
+                getattr(backend, "subject_immutable_during_execution", False) is True
+            ),
         )
