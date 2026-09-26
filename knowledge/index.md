@@ -100,6 +100,7 @@ inherited, copied or loaded by adopting projects.
 - [Establish Q0 reviewer qualification semantics and stage protected activation behind a prior-integrated runtime](decisions/0089-establish-q0-reviewer-qualification-semantics.md)
 - [Require pre-candidate preparation receipts for non-hook authoring](decisions/0090-require-pre-candidate-preparation-receipts-for-non-hook-authoring.md)
 - [Add authenticated provider-neutral analyzer readback before critical Q0 activation](decisions/0091-add-authenticated-provider-neutral-analyzer-readback.md)
+- [Harden the Claude Code GitHub Actions workflows before integration](decisions/0093-harden-claude-code-github-actions-workflows.md)
 - [Prevent policy drift](requirements/prevent-policy-drift.md)
 - [Traceable change control](requirements/reviewed-change-control.md)
 - [Require explicit admission for retrospective findings](requirements/retrospective-findings-require-explicit-admission.md)

@@ -670,6 +670,8 @@ guardrails:
       - .github/workflows/publish-r2a-p2b-oci.yml
       - .github/workflows/verify-r2a-current-advisory-restoration-runtime.yml
       - .github/workflows/publish-current-advisory-restoration-runtime.yml
+      - .github/workflows/claude-code-review.yml
+      - .github/workflows/claude.yml
       - ci/github-actions.yml
       - ci/gitlab-ci.yml
       - ci/security_scan.py
@@ -678,6 +680,7 @@ guardrails:
       - guidance/reference/continuous-integration-contract.md
       - knowledge/assessments/0082-secret-scan-triage-evidence.json
       - knowledge/decisions/0082-eliminate-host-persistence-for-protected-review-payloads-and-route-security-gates.md
+      - knowledge/decisions/0093-harden-claude-code-github-actions-workflows.md
       - tools/extended_route.py
       - tools/security_scan.py
     tests:
@@ -696,6 +699,7 @@ guardrails:
       - tests/test_r2a_p2b_integrated_materialization.py::R2AP2bIntegratedMaterializationTests.test_materialization_is_governed_and_routed
       - tests/test_current_advisory_restoration_runtime.py
       - tests/test_current_advisory_restoration_publication.py
+      - tests/test_claude_actions_workflows.py
 
   - id: conditional-artifact-promotion
     title: Delivery activates for deployable artifacts and promotes the verified artifact
