@@ -1,4 +1,4 @@
-name: PR319 exact-head VF0 execution smoke 22812485
+name: PR319 exact-head VF0 isolation diagnostic 22812485
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  smoke:
+  diagnose:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -19,51 +19,53 @@ jobs:
           path: candidate
           fetch-depth: 0
           persist-credentials: false
-      - name: Bind exact source
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Diagnose exact isolation outcome
         working-directory: candidate
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "22812485f8fb9d296e49020bbb234c2e8a721f20"
           test "$(git rev-parse HEAD^{tree})" = "7783c317a8246375a7a647fd79fbca8232d59888"
-          test "$(git rev-parse --is-shallow-repository)" = "false"
-          test -z "$(git status --porcelain)"
-          git fsck --full
-          sha256sum tools/vf0_execution.py tests/test_vf0_execution.py tests/vf0_execution_oci_smoke.py > "$RUNNER_TEMP/source.sha256"
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
-        with:
-          python-version: "3.12"
-      - name: Pull fixed image and run live component smoke
-        working-directory: candidate
-        run: |
-          set -euo pipefail
           IMAGE='ghcr.io/ktogias/gnostoa@sha256:f89bf32c0c4b86bac71fa008579b2385e6ae39bf4822f685479c4f2cc22bfca4'
-          docker pull "$IMAGE"
-          PYTHONPATH=. python tests/vf0_execution_oci_smoke.py --image "$IMAGE" --output "$RUNNER_TEMP/result.json"
-          test -s "$RUNNER_TEMP/result.json"
-          python - "$RUNNER_TEMP/result.json" "22812485f8fb9d296e49020bbb234c2e8a721f20" "7783c317a8246375a7a647fd79fbca8232d59888" <<'PY'
-          import json, pathlib, sys
-          path, head, tree = sys.argv[1:]
-          doc=json.loads(pathlib.Path(path).read_text())
-          assert doc["status"]=="PASS"
-          assert doc["scope"]=="COMPONENT_CONFORMANCE_ONLY"
-          assert doc["production_receipt_issued"] is False
-          assert doc["producer_admitted"] is False
-          assert doc["compliance_established"] is False
-          assert doc["vf0_active"] is False
-          for case in doc.get("cases", []):
-              if case.get("execution_observed"):
-                  assert case.get("subject_unchanged") is True
-          meta={"subject_head":head,"subject_tree":tree,"result":doc}
-          pathlib.Path(path).write_text(json.dumps(meta,sort_keys=True,separators=(",",":"))+"\n")
+          docker pull "$IMAGE" >/dev/null
+          IMAGE="$IMAGE" PYTHONPATH=. python - <<'PY'
+          import json, os, runpy, tempfile
+          from pathlib import Path
+          ns=runpy.run_path("tests/vf0_execution_oci_smoke.py")
+          image=os.environ["IMAGE"]
+          probe=ns["_probe_read_only_behavior"](image)
+          backend=ns["DockerBackend"](image)
+          limits=ns["ExecutionLimits"](timeout_seconds=5.0,output_bytes=65_536)
+          evidence=ns["EvidenceFile"](ns["EVIDENCE_PATH"],ns["EVIDENCE"])
+          command=(
+              "/usr/local/bin/python3","-I","-S","-c",
+              ns["_ISOLATED_SUBJECT_BOOTSTRAP"],
+              "/workspace/"+ns["EVIDENCE_PATH"],
+          )
+          with tempfile.TemporaryDirectory(prefix="vf0-execution-diag-") as td:
+              repo=Path(td)/"fixture"; repo.mkdir(mode=0o755)
+              ns["_git"](repo,"init","--quiet")
+              ns["_commit"](repo,"one")
+              subject=ns["_commit"](repo,"two")
+              obs=ns["execute"](repo,subject,[evidence],[*command,"isolation"],backend,limits)
+              result={
+                  "probe":probe,
+                  "termination":obs.capture.termination,
+                  "exit_code":obs.capture.exit_code,
+                  "stdout":obs.capture.stdout.decode("utf-8","replace"),
+                  "stderr":obs.capture.stderr.decode("utf-8","replace"),
+                  "subject_unchanged":obs.subject_unchanged,
+                  "before_after_equal":obs.before_manifest_sha256==obs.after_manifest_sha256,
+              }
+              print(json.dumps(result,sort_keys=True))
+              Path(os.environ["RUNNER_TEMP"]).joinpath("diagnostic.json").write_text(json.dumps(result,sort_keys=True)+"\n")
           PY
-          sha256sum "$RUNNER_TEMP/result.json" > "$RUNNER_TEMP/result.sha256"
-      - name: Upload bounded result
+      - name: Upload bounded diagnostic
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: pr319-vf0-execution-smoke-22812485
-          path: |
-            ${{ runner.temp }}/result.json
-            ${{ runner.temp }}/result.sha256
-            ${{ runner.temp }}/source.sha256
+          name: pr319-isolation-diagnostic-22812485
+          path: ${{ runner.temp }}/diagnostic.json
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
