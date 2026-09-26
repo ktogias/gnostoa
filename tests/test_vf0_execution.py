@@ -177,6 +177,21 @@ class VF0SubjectTests(unittest.TestCase):
                 with self.assertRaises(ExecutionRejected):
                     ExecutionLimits(**kwargs)
 
+    def test_execution_limit_types_fail_through_stable_rejection(self) -> None:
+        for kwargs, reason in (
+            ({"timeout_seconds": "5"}, "TIMEOUT_BOUND"),
+            ({"timeout_seconds": True}, "TIMEOUT_BOUND"),
+            ({"output_bytes": 1.5}, "OUTPUT_BOUND"),
+            ({"memory_bytes": True}, "MEMORY_BOUND"),
+            ({"cpus": "0.5"}, "CPU_BOUND"),
+            ({"cpus": False}, "CPU_BOUND"),
+            ({"pids": 32.0}, "PIDS_BOUND"),
+            ({"tmpfs_bytes": False}, "TMPFS_BOUND"),
+        ):
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaisesRegex(ExecutionRejected, reason):
+                    ExecutionLimits(**kwargs)
+
     def test_evidence_payload_is_snapshotted_to_immutable_bytes(self) -> None:
         payload = bytearray(b"print('original')\n")
         original = bytes(payload)
@@ -674,6 +689,30 @@ class VF0SubjectTests(unittest.TestCase):
                     [sys.executable, "-c", "pass"],
                     _DirectTestBackend(),
                 )
+
+    def test_missing_repository_root_is_a_bounded_rejection(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo, subject = _repo(Path(td))
+            missing = repo.parent / "missing-repository"
+            with self.assertRaisesRegex(ExecutionRejected, "REPOSITORY_ROOT"):
+                execute(
+                    missing,
+                    subject,
+                    [_evidence("print('x')")],
+                    [sys.executable, "-c", "pass"],
+                    _DirectTestBackend(),
+                )
+
+    def test_reported_repository_root_resolution_is_a_bounded_rejection(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        with tempfile.TemporaryDirectory() as td:
+            repo, _ = _repo(Path(td))
+            missing = repo.parent / "reported-missing-root"
+            with mock.patch.object(
+                module, "_trusted_git", return_value=str(missing).encode()
+            ):
+                with self.assertRaisesRegex(ExecutionRejected, "REPOSITORY_ROOT"):
+                    module._repo_root(repo)
 
     def test_git_symlink_subject_is_rejected_before_execution(self) -> None:
         with tempfile.TemporaryDirectory() as td:
