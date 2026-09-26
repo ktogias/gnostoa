@@ -833,6 +833,17 @@ Two relation regressions and one execution regression raise the focused corpus t
 `python -O`; ordinary exact-parent D0090 `fast` preparation remains required
 before publication.
 
+The next review-convergence successor keeps the execution boundary fail-closed for
+malformed runtime limits and unavailable repository roots. Limit scalar types are
+validated before range comparisons, so nonnumeric values, booleans and wrong numeric
+categories reject through the existing bounded reason codes instead of raising raw
+Python exceptions. Repository-root discovery now translates filesystem resolution
+failures for both the supplied path and Git-reported top-level path into the stable
+`REPOSITORY_ROOT` refusal. Three execution regressions raise the focused corpus to
+**40 relation + 98 execution = 138 tests**. All **138** pass normally and under
+`python -O`; ordinary exact-parent D0090 `fast` preparation remains required before
+publication.
+
 This evidence still does **not** claim a live run of the new Docker specialization.
 `tests/vf0_execution_oci_smoke.py` is intentionally outside unittest discovery and
 must be executed after exact ordinary D0090 preparation/publication of this

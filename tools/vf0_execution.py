@@ -185,14 +185,20 @@ class ExecutionLimits:
     tmpfs_bytes: int = 64 * 1024 * 1024
 
     def __post_init__(self) -> None:
+        _need(type(self.timeout_seconds) in {int, float}, "TIMEOUT_BOUND")
         _need(0.05 <= self.timeout_seconds <= 300.0, "TIMEOUT_BOUND")
+        _need(type(self.output_bytes) is int, "OUTPUT_BOUND")
         _need(1 <= self.output_bytes <= 4 * 1024 * 1024, "OUTPUT_BOUND")
+        _need(type(self.memory_bytes) is int, "MEMORY_BOUND")
         _need(
             32 * 1024 * 1024 <= self.memory_bytes <= 4 * 1024 * 1024 * 1024,
             "MEMORY_BOUND",
         )
+        _need(type(self.cpus) in {int, float}, "CPU_BOUND")
         _need(0.1 <= self.cpus <= 8.0, "CPU_BOUND")
+        _need(type(self.pids) is int, "PIDS_BOUND")
         _need(8 <= self.pids <= 4096, "PIDS_BOUND")
+        _need(type(self.tmpfs_bytes) is int, "TMPFS_BOUND")
         _need(1 * 1024 * 1024 <= self.tmpfs_bytes <= 1024 * 1024 * 1024, "TMPFS_BOUND")
 
 
@@ -436,10 +442,15 @@ def _normalize_subject_parents(root: Path, destination: Path) -> None:
 
 
 def _repo_root(repo: Path) -> Path:
-    resolved = repo.resolve(strict=True)
-    top = Path(
-        _trusted_git(resolved, "rev-parse", "--show-toplevel").decode().strip()
-    ).resolve(strict=True)
+    try:
+        resolved = repo.resolve(strict=True)
+    except OSError as exc:
+        raise ExecutionRejected("REPOSITORY_ROOT") from exc
+    top_value = _trusted_git(resolved, "rev-parse", "--show-toplevel").decode().strip()
+    try:
+        top = Path(top_value).resolve(strict=True)
+    except OSError as exc:
+        raise ExecutionRejected("REPOSITORY_ROOT") from exc
     _need(top == resolved, "REPOSITORY_ROOT")
     return resolved
 
