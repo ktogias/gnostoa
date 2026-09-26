@@ -390,6 +390,7 @@ def _candidate(value: Any, request: dict[str, Any]) -> dict[str, Any]:
     changed = _paths(candidate["changed_paths"])
     if changed:
         _need(tree != request["material"]["parent_tree"], "CANDIDATE_TREE_UNCHANGED")
+    _need(tree == request["material"]["evidence_tree"], "CANDIDATE_TREE_BINDING")
     _need(changed <= set(request["candidate_paths"]), "CANDIDATE_PATH_SCOPE")
     evidence_files = _files(candidate["evidence_files"])
     _need(

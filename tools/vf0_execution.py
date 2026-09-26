@@ -32,6 +32,8 @@ _MAX_SUBJECT_BYTES = 64 * 1024 * 1024
 _MAX_FILE_BYTES = 32 * 1024 * 1024
 _MAX_SUBJECT_FILES = 4096
 _MAX_SUBJECT_TREE_LISTING_BYTES = 32 * 1024 * 1024
+_MAX_SUBJECT_PATH_BYTES = 4 * 1024
+_MAX_SUBJECT_PATH_COMPONENTS = 256
 _MAX_EVIDENCE_FILES = 32
 _MAX_EVIDENCE_BYTES = 2 * 1024 * 1024
 _MAX_EVIDENCE_PATH_BYTES = 4 * 1024
@@ -416,13 +418,19 @@ def _materialize_subject(
     _need(tree == subject.tree, "SUBJECT_TREE")
 
     entries = _trusted_git_tree_entries(root, subject.commit)
-    expected: dict[str, _MaterialFile] = {}
+    planned: list[tuple[str, str, str, int]] = []
+    planned_names: set[str] = set()
+    planned_directories: set[tuple[str, ...]] = set()
     total = 0
-    _normalize_subject_directory(target, exist_ok=False)
     for entry in entries:
         try:
             meta, raw_name = entry.split(b"\t", 1)
             mode, kind, oid, raw_size = meta.decode("ascii").split()
+            _need(len(raw_name) <= _MAX_SUBJECT_PATH_BYTES, "SUBJECT_PATH_BOUND")
+            _need(
+                raw_name.count(b"/") + 1 <= _MAX_SUBJECT_PATH_COMPONENTS,
+                "SUBJECT_PATH_COMPONENT_BOUND",
+            )
             name = raw_name.decode("utf-8")
             size = int(raw_size)
         except (ValueError, UnicodeDecodeError) as exc:
@@ -431,10 +439,22 @@ def _materialize_subject(
         path = PurePosixPath(name)
         _need(not path.is_absolute() and ".." not in path.parts, "SUBJECT_PATH")
         _need(all(part.casefold() != ".git" for part in path.parts), "SUBJECT_PATH")
-        _need(name not in expected, "SUBJECT_PATH_DUPLICATE")
+        _need(name not in planned_names, "SUBJECT_PATH_DUPLICATE")
         _need(0 <= size <= _MAX_FILE_BYTES, "SUBJECT_FILE_BOUND")
         total += size
         _need(total <= _MAX_SUBJECT_BYTES, "SUBJECT_TOTAL_BOUND")
+        for depth in range(1, len(path.parts)):
+            planned_directories.add(tuple(path.parts[:depth]))
+        planned.append((name, mode, oid, size))
+        planned_names.add(name)
+        _need(
+            len(planned_directories) + len(planned) <= _MAX_SNAPSHOT_ENTRIES,
+            "SUBJECT_ENTRY_BOUND",
+        )
+
+    expected: dict[str, _MaterialFile] = {}
+    _normalize_subject_directory(target, exist_ok=False)
+    for name, mode, oid, size in planned:
         destination = target / name
         _normalize_subject_parents(target, destination)
         payload = _write_git_blob(root, oid, destination, size)

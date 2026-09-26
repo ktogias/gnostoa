@@ -327,6 +327,76 @@ class VF0SubjectTests(unittest.TestCase):
                 with self.assertRaisesRegex(ExecutionRejected, "SUBJECT_TREE_BOUND"):
                     module._trusted_git_tree_entries(repo, subject.commit)
 
+    def test_subject_path_bytes_are_bounded_before_materialization(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        with tempfile.TemporaryDirectory() as td:
+            repo, subject = _repo(Path(td))
+            raw_name = b"x" * (module._MAX_SUBJECT_PATH_BYTES + 1)
+            entry = b"100644 blob " + b"0" * 40 + b" 1\t" + raw_name
+            target = Path(td) / "materialized"
+            with (
+                mock.patch.object(
+                    module, "_trusted_git_tree_entries", return_value=[entry]
+                ),
+                mock.patch.object(
+                    module,
+                    "_write_git_blob",
+                    side_effect=AssertionError("blob written before path bound"),
+                ),
+            ):
+                with self.assertRaisesRegex(ExecutionRejected, "SUBJECT_PATH_BOUND"):
+                    module._materialize_subject(repo, subject, target)
+            self.assertFalse(target.exists())
+
+    def test_subject_path_components_are_bounded_before_materialization(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        with tempfile.TemporaryDirectory() as td:
+            repo, subject = _repo(Path(td))
+            raw_name = b"/".join(
+                b"x" for _ in range(module._MAX_SUBJECT_PATH_COMPONENTS + 1)
+            )
+            entry = b"100644 blob " + b"0" * 40 + b" 1\t" + raw_name
+            target = Path(td) / "materialized"
+            with (
+                mock.patch.object(
+                    module, "_trusted_git_tree_entries", return_value=[entry]
+                ),
+                mock.patch.object(
+                    module,
+                    "_write_git_blob",
+                    side_effect=AssertionError("blob written before component bound"),
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    ExecutionRejected, "SUBJECT_PATH_COMPONENT_BOUND"
+                ):
+                    module._materialize_subject(repo, subject, target)
+            self.assertFalse(target.exists())
+
+    def test_subject_directory_entries_are_bounded_before_materialization(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        with tempfile.TemporaryDirectory() as td:
+            repo, subject = _repo(Path(td))
+            entries = [
+                b"100644 blob " + b"0" * 40 + b" 1\ta/b/one.txt",
+                b"100644 blob " + b"1" * 40 + b" 1\tc/d/two.txt",
+            ]
+            target = Path(td) / "materialized"
+            with (
+                mock.patch.object(
+                    module, "_trusted_git_tree_entries", return_value=entries
+                ),
+                mock.patch.object(module, "_MAX_SNAPSHOT_ENTRIES", 5),
+                mock.patch.object(
+                    module,
+                    "_write_git_blob",
+                    side_effect=AssertionError("blob written before aggregate bound"),
+                ),
+            ):
+                with self.assertRaisesRegex(ExecutionRejected, "SUBJECT_ENTRY_BOUND"):
+                    module._materialize_subject(repo, subject, target)
+            self.assertFalse(target.exists())
+
     def test_subject_tree_listing_selector_setup_failure_reaps_child(self) -> None:
         module = importlib.import_module("tools.vf0_execution")
 
