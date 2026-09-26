@@ -80,6 +80,7 @@ def _fixture() -> dict[str, Any]:
             "command_sha256": sha,
             "oracle_sha256": sha,
             "evidence_files": {"tests/test_target.py": sha},
+            "evidence_modes": {"tests/test_target.py": "100644"},
         },
         "outcome": outcome,
         "valid_from": 100,
@@ -130,6 +131,7 @@ def _fixture() -> dict[str, Any]:
             "observed_at": 500,
             "changed_paths": ["tests/test_target.py", "tools/target.py"],
             "evidence_files": {"tests/test_target.py": sha},
+            "evidence_modes": {"tests/test_target.py": "100644"},
             "production_sha256": sha,
         },
     }
@@ -250,6 +252,11 @@ class VF0RelationTests(unittest.TestCase):
                 doc = copy.deepcopy(self.document)
                 doc["candidate"][field] = value
                 self.assertRejected(doc)
+
+    def test_final_candidate_rejects_changed_retained_evidence_mode(self) -> None:
+        self.document["candidate"]["evidence_modes"]["tests/test_target.py"] = "100755"
+        result = self.assertRejected(self.document)
+        self.assertEqual(["CANDIDATE_EVIDENCE_MODE_BINDING"], result["reasons"])
 
     def test_candidate_diff_must_carry_each_admitted_evidence_delta_file(self) -> None:
         self.document["candidate"]["changed_paths"] = ["tools/target.py"]

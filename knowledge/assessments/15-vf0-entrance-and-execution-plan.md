@@ -821,6 +821,20 @@ suite remains **38 tests**, for **132 focused tests** total. All **132** pass
 normally and under `python -O`; ordinary exact-parent D0090 `fast` preparation is
 required before publication.
 
+A subsequent review-convergence successor closes two additional exact-subject
+binding gaps. The normalized relation material now carries an exact retained
+evidence path-to-Git-mode manifest, so a final candidate cannot silently change an
+admitted executable evidence file between `100755` and `100644`. The execution
+observation emits concrete backend/runtime identities only for the exact
+controller-owned subprocess and Docker backends; arbitrary custom backends and
+subclasses remain usable as unit doubles but expose those identities as unbound
+rather than inventing class-only provenance. Exact-parent pre-edit RED is retained
+at [run 36250510461](https://github.com/ktogias/gnostoa/actions/runs/36250510461).
+One relation regression raises that suite to **39 tests** while the
+execution/fixture suite remains **94 tests**, for **133 focused tests** total.
+Normal, optimized and ordinary exact-parent D0090 `fast` verification are
+required before publication.
+
 This evidence still does **not** claim a live run of the new Docker specialization.
 `tests/vf0_execution_oci_smoke.py` is intentionally outside unittest discovery and
 must be executed after exact ordinary D0090 preparation/publication of this

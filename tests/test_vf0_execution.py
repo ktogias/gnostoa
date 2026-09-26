@@ -909,6 +909,9 @@ class VF0SubjectTests(unittest.TestCase):
 
     def test_observation_binds_command_and_effective_limits(self) -> None:
         class StaticBackend:
+            def __init__(self, runtime: str) -> None:
+                self.runtime = runtime
+
             def run(
                 self,
                 root: Path,
@@ -942,7 +945,12 @@ class VF0SubjectTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             repo, subject = _repo(Path(td))
             result = execute(
-                repo, subject, [_evidence("pass")], command, StaticBackend(), limits
+                repo,
+                subject,
+                [_evidence("pass")],
+                command,
+                StaticBackend("/runtime/a"),
+                limits,
             )
         self.assertEqual(digest(command), result.command_sha256)
         self.assertEqual(
@@ -958,8 +966,13 @@ class VF0SubjectTests(unittest.TestCase):
             ),
             result.limits_sha256,
         )
-        self.assertEqual("gnostoa-python-backend-v1", result.backend_identity)
-        self.assertTrue(result.runtime_identity.startswith("sha256:"))
+        self.assertIsNone(result.backend_identity)
+        self.assertIsNone(result.runtime_identity)
+        module = importlib.import_module("tools.vf0_execution")
+        self.assertEqual(
+            (None, None),
+            module._backend_runtime_identities(StaticBackend("/runtime/b")),
+        )
 
     def test_runtime_identity_distinguishes_pinned_oci_images(self) -> None:
         module = importlib.import_module("tools.vf0_execution")

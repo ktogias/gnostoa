@@ -238,8 +238,8 @@ class ExecutionObservation:
     evidence_sha256: tuple[tuple[str, str], ...]
     command_sha256: str
     limits_sha256: str
-    backend_identity: str
-    runtime_identity: str
+    backend_identity: str | None
+    runtime_identity: str | None
     before_manifest_sha256: str
     after_manifest_sha256: str
     capture: UntrustedCapture
@@ -1258,7 +1258,16 @@ def _limits_identity(limits: ExecutionLimits) -> str:
     )
 
 
-def _backend_runtime_identities(backend: ExecutionBackend) -> tuple[str, str]:
+def _backend_runtime_identities(
+    backend: ExecutionBackend,
+) -> tuple[str | None, str | None]:
+    """Return concrete identities only for exact controller-owned backends.
+
+    Custom backends and subclasses remain useful as unit doubles, but they do not
+    receive a caller-controlled or class-only runtime identity that could be
+    mistaken for bound execution provenance.
+    """
+
     backend_type = type(backend)
     if backend_type is SubprocessBackend:
         return (
@@ -1274,11 +1283,7 @@ def _backend_runtime_identities(backend: ExecutionBackend) -> tuple[str, str]:
     if backend_type is DockerBackend:
         docker_backend = cast(DockerBackend, backend)
         return "gnostoa-docker-oci-v1", docker_backend.image
-    class_identity = f"{backend_type.__module__}.{backend_type.__qualname__}"
-    return (
-        "gnostoa-python-backend-v1",
-        _identity_digest({"python_class": class_identity}),
-    )
+    return None, None
 
 
 def _snapshot_evidence(

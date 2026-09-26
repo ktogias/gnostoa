@@ -20,6 +20,7 @@ SCHEMA = "gnostoa-vf0-relation-input/v1"
 RESULT_SCHEMA = "gnostoa-vf0-relation-result/v1"
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _MODES = {"RED", "CHARACTERIZATION", "STRUCTURAL", "EMERGENCY_POST_EVENT"}
+_GIT_FILE_MODES = {"100644", "100755"}
 _CLASSES = {"mechanical", "normal", "normative", "critical", "emergency"}
 _GUARANTEES = {
     "request_binding",
@@ -40,6 +41,7 @@ _MATERIAL_FIELDS = {
     "command_sha256",
     "oracle_sha256",
     "evidence_files",
+    "evidence_modes",
 }
 
 
@@ -163,6 +165,23 @@ def _files(value: Any) -> dict[str, str]:
     return cast(dict[str, str], value)
 
 
+def _file_modes(value: Any) -> dict[str, str]:
+    _need(type(value) is dict and len(value) <= 256, "FILE_MODE_MANIFEST")
+    for path, mode in value.items():
+        _path(path)
+        _need(type(mode) is str and mode in _GIT_FILE_MODES, "FILE_MODE_FORMAT")
+    return cast(dict[str, str], value)
+
+
+def _evidence_manifest(
+    files_value: Any, modes_value: Any
+) -> tuple[dict[str, str], dict[str, str]]:
+    files = _files(files_value)
+    modes = _file_modes(modes_value)
+    _need(set(files) == set(modes), "FILE_MANIFEST_PATHS")
+    return files, modes
+
+
 def _material(value: Any) -> dict[str, Any]:
     material = _mapping(value, _MATERIAL_FIELDS)
     for key in ("parent_commit", "parent_tree", "evidence_tree"):
@@ -174,7 +193,7 @@ def _material(value: Any) -> dict[str, Any]:
         "oracle_sha256",
     ):
         _sha(material[key])
-    _files(material["evidence_files"])
+    _evidence_manifest(material["evidence_files"], material["evidence_modes"])
     return material
 
 
@@ -378,6 +397,7 @@ def _candidate(value: Any, request: dict[str, Any]) -> dict[str, Any]:
             "observed_at",
             "changed_paths",
             "evidence_files",
+            "evidence_modes",
             "production_sha256",
         },
     )
@@ -392,10 +412,16 @@ def _candidate(value: Any, request: dict[str, Any]) -> dict[str, Any]:
     if changed:
         _need(tree != request["material"]["parent_tree"], "CANDIDATE_TREE_UNCHANGED")
     _need(changed <= set(request["candidate_paths"]), "CANDIDATE_PATH_SCOPE")
-    evidence_files = _files(candidate["evidence_files"])
+    evidence_files, evidence_modes = _evidence_manifest(
+        candidate["evidence_files"], candidate["evidence_modes"]
+    )
     _need(
         evidence_files == request["material"]["evidence_files"],
         "CANDIDATE_EVIDENCE_BINDING",
+    )
+    _need(
+        evidence_modes == request["material"]["evidence_modes"],
+        "CANDIDATE_EVIDENCE_MODE_BINDING",
     )
     evidence_paths = set(evidence_files)
     # These files describe the admitted evidence delta, not every test already
