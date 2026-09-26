@@ -1,0 +1,45 @@
+name: PR319 exact source export 477f9ba6
+
+on:
+  push:
+    branches:
+      - agent-support/pr319-source-477f9ba6-20260926
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 477f9ba6930cce09048ca227cba9d0b4be450dfb
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Bind exact source and create bundle
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "477f9ba6930cce09048ca227cba9d0b4be450dfb"
+          test "$(git rev-parse HEAD^{tree})" = "30d8b3c033903d0cecc104df58baad121387989f"
+          test "$(git rev-parse --is-shallow-repository)" = "false"
+          test -z "$(git status --porcelain)"
+          git fsck --full
+          git update-ref refs/heads/pr319-source-export 477f9ba6930cce09048ca227cba9d0b4be450dfb
+          git bundle create "$RUNNER_TEMP/source.bundle" refs/heads/pr319-source-export
+          git bundle verify "$RUNNER_TEMP/source.bundle"
+          sha256sum "$RUNNER_TEMP/source.bundle" > "$RUNNER_TEMP/source.bundle.sha256"
+          printf '%s\n' '477f9ba6930cce09048ca227cba9d0b4be450dfb' > "$RUNNER_TEMP/head.txt"
+          printf '%s\n' '30d8b3c033903d0cecc104df58baad121387989f' > "$RUNNER_TEMP/tree.txt"
+      - name: Upload exact source bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr319-source-477f9ba6
+          path: |
+            ${{ runner.temp }}/source.bundle
+            ${{ runner.temp }}/source.bundle.sha256
+            ${{ runner.temp }}/head.txt
+            ${{ runner.temp }}/tree.txt
+          if-no-files-found: error
+          retention-days: 1
