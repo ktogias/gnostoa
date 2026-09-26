@@ -80,6 +80,7 @@ def _fixture() -> dict[str, Any]:
             "command_sha256": sha,
             "oracle_sha256": sha,
             "evidence_files": {"tests/test_target.py": sha},
+            "evidence_modes": {"tests/test_target.py": "100755"},
         },
         "outcome": outcome,
         "valid_from": 100,
@@ -130,6 +131,7 @@ def _fixture() -> dict[str, Any]:
             "observed_at": 500,
             "changed_paths": ["tests/test_target.py", "tools/target.py"],
             "evidence_files": {"tests/test_target.py": sha},
+            "evidence_modes": {"tests/test_target.py": "100755"},
             "production_sha256": sha,
         },
     }
@@ -254,6 +256,20 @@ class VF0RelationTests(unittest.TestCase):
     def test_candidate_diff_must_carry_each_admitted_evidence_delta_file(self) -> None:
         self.document["candidate"]["changed_paths"] = ["tools/target.py"]
         self.assertRejected(self.document)
+
+    def test_final_candidate_binds_retained_evidence_modes(self) -> None:
+        doc = copy.deepcopy(self.document)
+        doc["candidate"]["evidence_modes"]["tests/test_target.py"] = "100644"
+        result = self.assertRejected(doc)
+        self.assertEqual(["CANDIDATE_EVIDENCE_MODE_BINDING"], result["reasons"])
+
+    def test_evidence_mode_manifest_covers_exact_evidence_paths(self) -> None:
+        doc = copy.deepcopy(self.document)
+        doc["request"]["material"]["evidence_modes"] = {}
+        doc["evidence"]["material"]["evidence_modes"] = {}
+        _rebind(doc)
+        result = self.assertRejected(doc)
+        self.assertEqual(["EVIDENCE_MODE_MANIFEST"], result["reasons"])
 
     def test_changed_candidate_cannot_retain_the_parent_tree(self) -> None:
         self.document["candidate"]["tree"] = self.document["request"]["material"][
@@ -549,8 +565,10 @@ class VF0RelationTests(unittest.TestCase):
         )
         doc["evidence"]["mode"] = "STRUCTURAL"
         doc["request"]["material"]["evidence_files"] = {}
+        doc["request"]["material"]["evidence_modes"] = {}
         doc["evidence"]["material"] = copy.deepcopy(doc["request"]["material"])
         doc["candidate"]["evidence_files"] = {}
+        doc["candidate"]["evidence_modes"] = {}
         doc["request"]["outcome"] = {"exit_code": 0, "cases": []}
         doc["evidence"]["outcome"] = {"exit_code": 0, "cases": []}
         doc["evidence"]["accountable_review"] = _ref("accountable-review")
