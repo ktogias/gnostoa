@@ -1,0 +1,80 @@
+name: PR319 pre-edit RED retained-mode and backend identity
+
+on:
+  push:
+    branches:
+      - agent-support/pr319-red-bindings-8413198f-20260926
+
+permissions:
+  contents: read
+
+jobs:
+  red:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 8413198f86a8576fea1a2047b2e59c5ea3ce2d84
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Bind exact source
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "8413198f86a8576fea1a2047b2e59c5ea3ce2d84"
+          test "$(git rev-parse HEAD^{tree})" = "e98b82c07bdba99a2d3168fed8180ee2e8c765d1"
+          test -z "$(git status --porcelain)"
+          git fsck --full
+      - name: Reproduce both current-head gaps before production edit
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          set +e
+          PYTHONPATH=. python - <<'PY' > "$RUNNER_TEMP/mode-red.txt" 2>&1
+          import copy
+          from tests.test_vf0_contract import _fixture, _rebind
+          from tools.vf0_contract import evaluate
+          doc=_fixture()
+          modes={"tests/test_target.py":"100755"}
+          doc["request"]["material"]["evidence_modes"]=copy.deepcopy(modes)
+          doc["evidence"]["material"]["evidence_modes"]=copy.deepcopy(modes)
+          doc["candidate"]["evidence_modes"]=copy.deepcopy(modes)
+          _rebind(doc)
+          result=evaluate(doc)
+          print(result)
+          if result["status"] != "MATCH":
+              raise SystemExit(1)
+          PY
+          MODE_RC=$?
+          PYTHONPATH=. python - <<'PY' > "$RUNNER_TEMP/backend-red.txt" 2>&1
+          import tools.vf0_execution as module
+          class ConfiguredBackend:
+              def __init__(self, runtime: str) -> None:
+                  self.runtime = runtime
+          first=module._backend_runtime_identities(ConfiguredBackend("/runtime/a"))
+          second=module._backend_runtime_identities(ConfiguredBackend("/runtime/b"))
+          print({"first":first,"second":second})
+          if first != (None, None) or second != (None, None):
+              raise SystemExit(1)
+          PY
+          BACKEND_RC=$?
+          set -e
+          printf 'mode_rc=%s\nbackend_rc=%s\n' "$MODE_RC" "$BACKEND_RC" | tee "$RUNNER_TEMP/summary.txt"
+          cat "$RUNNER_TEMP/mode-red.txt"
+          cat "$RUNNER_TEMP/backend-red.txt"
+          test "$MODE_RC" -eq 1
+          test "$BACKEND_RC" -eq 1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr319-pre-edit-red-bindings-8413198f
+          path: |
+            ${{ runner.temp }}/mode-red.txt
+            ${{ runner.temp }}/backend-red.txt
+            ${{ runner.temp }}/summary.txt
+          if-no-files-found: error
+          retention-days: 7
