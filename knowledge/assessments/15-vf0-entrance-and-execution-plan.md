@@ -821,6 +821,18 @@ suite remains **38 tests**, for **132 focused tests** total. All **132** pass
 normally and under `python -O`; ordinary exact-parent D0090 `fast` preparation is
 required before publication.
 
+The following review-convergence successor preserves exact evidence-file modes in
+the normalized relation material and final-candidate check, so a retained evidence
+file cannot silently change between executable and non-executable Git modes while
+keeping the same content digest. The execution component also stops inventing a
+runtime identity for arbitrary protocol implementations: only the exact
+controller-owned local and Docker backends emit concrete backend/runtime identities;
+custom conformance doubles remain executable but carry unbound `None` identities.
+Two relation regressions and one execution regression raise the focused corpus to
+**40 relation + 95 execution = 135 tests**. All **135** pass normally and under
+`python -O`; ordinary exact-parent D0090 `fast` preparation remains required
+before publication.
+
 This evidence still does **not** claim a live run of the new Docker specialization.
 `tests/vf0_execution_oci_smoke.py` is intentionally outside unittest discovery and
 must be executed after exact ordinary D0090 preparation/publication of this
