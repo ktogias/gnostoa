@@ -47,6 +47,9 @@ _CONTAINER_CLEANUP_LABEL = "gnostoa.vf0.cleanup-token"
 _OCI_WRAPPER_EXECUTABLE = "/usr/local/bin/python3"
 _OCI_EXIT_SENTINEL_PREFIX = b"\x1eGNOSTOA_VF0_EXIT_V1:"
 _OCI_EXIT_SENTINEL_SUFFIX = b"\x1f"
+_OCI_EXIT_TRAILER_MAX = (
+    len(_OCI_EXIT_SENTINEL_PREFIX) + 3 + len(_OCI_EXIT_SENTINEL_SUFFIX)
+)
 _OCI_WRAPPER_SOURCE = (
     "import os,subprocess,sys\n"
     "try:\n"
@@ -635,8 +638,14 @@ def _capture_process(
     *,
     cwd: Path | None,
     limits: ExecutionLimits,
+    output_headroom_bytes: int = 0,
 ) -> UntrustedCapture:
     _validate_command(argv)
+    _need(
+        0 <= output_headroom_bytes <= _OCI_EXIT_TRAILER_MAX,
+        "OUTPUT_HEADROOM_BOUND",
+    )
+    capture_output_bytes = limits.output_bytes + output_headroom_bytes
     try:
         # Intentional private execution primitive: validated list argv, no shell, scrubbed env.
         process = subprocess.Popen(  # nosec B603  # nosemgrep
@@ -659,34 +668,37 @@ def _capture_process(
     termination = "completed"
     deadline = time.monotonic() + limits.timeout_seconds
     try:
-        if process_stdout is None or process_stderr is None:
-            raise ExecutionRejected("BACKEND_PIPES")
-        selector = selectors.DefaultSelector()
-        selector.register(process_stdout, selectors.EVENT_READ, stdout)
-        selector.register(process_stderr, selectors.EVENT_READ, stderr)
-        while selector.get_map():
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                termination = "timeout"
-                break
-            for key, _ in selector.select(timeout=min(0.05, remaining)):
-                chunk = os.read(key.fd, 8192)
-                if not chunk:
-                    selector.unregister(key.fileobj)
-                    continue
-                observed += len(chunk)
-                room = limits.output_bytes - len(stdout) - len(stderr)
-                if room > 0:
-                    key.data.extend(chunk[:room])
-                if len(chunk) > room:
-                    termination = "output_limit"
+        try:
+            if process_stdout is None or process_stderr is None:
+                raise ExecutionRejected("BACKEND_PIPES")
+            selector = selectors.DefaultSelector()
+            selector.register(process_stdout, selectors.EVENT_READ, stdout)
+            selector.register(process_stderr, selectors.EVENT_READ, stderr)
+            while selector.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    termination = "timeout"
                     break
-            if termination != "completed":
-                break
-        if termination == "completed" and not _wait_for_exit_without_reap(
-            process, deadline
-        ):
-            termination = "timeout"
+                for key, _ in selector.select(timeout=min(0.05, remaining)):
+                    chunk = os.read(key.fd, 8192)
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        continue
+                    observed += len(chunk)
+                    room = capture_output_bytes - len(stdout) - len(stderr)
+                    if room > 0:
+                        key.data.extend(chunk[:room])
+                    if len(chunk) > room:
+                        termination = "output_limit"
+                        break
+                if termination != "completed":
+                    break
+            if termination == "completed" and not _wait_for_exit_without_reap(
+                process, deadline
+            ):
+                termination = "timeout"
+        except OSError as exc:
+            raise ExecutionRejected("BACKEND_CAPTURE_FAILED") from exc
     finally:
         # Everything after successful Popen is inside one owned-process cleanup
         # boundary. Selector construction/registration and stream processing may
@@ -1068,10 +1080,15 @@ class DockerBackend:
                 [self.docker_executable, "start", "--attach", container_id],
                 cwd=None,
                 limits=limits,
+                output_headroom_bytes=_OCI_EXIT_TRAILER_MAX,
             )
             attachment_finished = True
             if capture.termination == "completed":
-                capture = _unwrap_oci_completion(capture)
+                capture = _enforce_output_limit(
+                    _unwrap_oci_completion(capture), limits.output_bytes
+                )
+                if capture.termination != "completed":
+                    return capture
                 try:
                     state = json.loads(
                         self._checked(
@@ -1127,7 +1144,36 @@ def _unwrap_oci_completion(capture: UntrustedCapture) -> UntrustedCapture:
     exit_code = int(raw_code)
     _need(0 <= exit_code <= 255, "OCI_ATTACH_STATE")
     _need(capture.exit_code in {0, exit_code}, "OCI_ATTACH_STATE")
-    return replace(capture, exit_code=exit_code, stderr=stderr[:marker_start])
+    trailer_bytes = len(stderr) - marker_start
+    _need(capture.observed_bytes_at_least >= trailer_bytes, "OCI_ATTACH_STATE")
+    return replace(
+        capture,
+        exit_code=exit_code,
+        stderr=stderr[:marker_start],
+        observed_bytes_at_least=capture.observed_bytes_at_least - trailer_bytes,
+    )
+
+
+def _enforce_output_limit(
+    capture: UntrustedCapture, output_bytes: int
+) -> UntrustedCapture:
+    """Apply the caller evidence-byte budget after trusted transport metadata."""
+
+    _need(1 <= output_bytes <= 4 * 1024 * 1024, "OUTPUT_BOUND")
+    if capture.termination != "completed":
+        return capture
+    if len(capture.stdout) + len(capture.stderr) <= output_bytes:
+        return capture
+    stdout = capture.stdout[:output_bytes]
+    stderr_room = output_bytes - len(stdout)
+    stderr = capture.stderr[:stderr_room] if stderr_room > 0 else b""
+    return UntrustedCapture(
+        termination="output_limit",
+        exit_code=None,
+        stdout=stdout,
+        stderr=stderr,
+        observed_bytes_at_least=capture.observed_bytes_at_least,
+    )
 
 
 def _snapshot_evidence(

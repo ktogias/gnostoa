@@ -1024,7 +1024,7 @@ class VF0SubjectTests(unittest.TestCase):
                 side_effect=lambda _process: events.append("kill"),
             ),
         ):
-            with self.assertRaisesRegex(OSError, "selector"):
+            with self.assertRaisesRegex(ExecutionRejected, "BACKEND_CAPTURE_FAILED"):
                 module._capture_process(
                     ["/bin/true"], cwd=None, limits=ExecutionLimits()
                 )
@@ -1055,7 +1055,7 @@ class VF0SubjectTests(unittest.TestCase):
                 side_effect=lambda _process: events.append("kill"),
             ),
         ):
-            with self.assertRaisesRegex(OSError, "register"):
+            with self.assertRaisesRegex(ExecutionRejected, "BACKEND_CAPTURE_FAILED"):
                 module._capture_process(
                     ["/bin/true"], cwd=None, limits=ExecutionLimits()
                 )
@@ -1742,6 +1742,48 @@ class VF0DockerBackendTests(unittest.TestCase):
                 )
             self.assertEqual(("completed", 17), (result.termination, result.exit_code))
             self.assertEqual(b"child stderr\n", result.stderr)
+
+    def test_trusted_wrapper_trailer_does_not_consume_evidence_budget(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        limit = 64
+        marker = (
+            module._OCI_EXIT_SENTINEL_PREFIX + b"0" + module._OCI_EXIT_SENTINEL_SUFFIX
+        )
+        script = f"import os;os.write(1,b'x'*{limit});os.write(2,{marker!r})"
+        capture = module._capture_process(
+            [sys.executable, "-c", script],
+            cwd=None,
+            limits=ExecutionLimits(timeout_seconds=3.0, output_bytes=limit),
+            output_headroom_bytes=module._OCI_EXIT_TRAILER_MAX,
+        )
+        result = module._enforce_output_limit(
+            module._unwrap_oci_completion(capture), limit
+        )
+        self.assertEqual(("completed", 0), (result.termination, result.exit_code))
+        self.assertEqual(limit, len(result.stdout))
+        self.assertEqual(b"", result.stderr)
+        self.assertEqual(limit, result.observed_bytes_at_least)
+
+    def test_child_output_over_budget_is_limited_after_trailer_strip(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        limit = 64
+        marker = (
+            module._OCI_EXIT_SENTINEL_PREFIX + b"0" + module._OCI_EXIT_SENTINEL_SUFFIX
+        )
+        script = f"import os;os.write(1,b'x'*{limit + 1});os.write(2,{marker!r})"
+        capture = module._capture_process(
+            [sys.executable, "-c", script],
+            cwd=None,
+            limits=ExecutionLimits(timeout_seconds=3.0, output_bytes=limit),
+            output_headroom_bytes=module._OCI_EXIT_TRAILER_MAX,
+        )
+        result = module._enforce_output_limit(
+            module._unwrap_oci_completion(capture), limit
+        )
+        self.assertEqual("output_limit", result.termination)
+        self.assertIsNone(result.exit_code)
+        self.assertEqual(limit, len(result.stdout) + len(result.stderr))
+        self.assertEqual(limit + 1, result.observed_bytes_at_least)
 
     def test_spoofed_wrapper_trailer_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as td:
