@@ -113,7 +113,7 @@ def _identity_digest(value: object) -> str:
 
 
 def _git_sha1(value: str, reason: str) -> str:
-    _need(_GIT_SHA1_RE.fullmatch(value) is not None, reason)
+    _need(type(value) is str and _GIT_SHA1_RE.fullmatch(value) is not None, reason)
     return value
 
 
@@ -164,7 +164,10 @@ class EvidenceFile:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "path", _evidence_path(self.path))
-        _need(self.mode in {"100644", "100755"}, "EVIDENCE_MODE")
+        _need(
+            type(self.mode) is str and self.mode in {"100644", "100755"},
+            "EVIDENCE_MODE",
+        )
         raw_content = cast(object, self.content)
         if not isinstance(raw_content, (bytes, bytearray, memoryview)):
             raise ExecutionRejected("EVIDENCE_CONTENT")
@@ -1307,16 +1310,25 @@ def _snapshot_evidence(
     evidence: Sequence[EvidenceFile],
 ) -> tuple[EvidenceFile, ...]:
     snapshot: list[EvidenceFile] = []
-    iterator = iter(evidence)
-    for _ in range(_MAX_EVIDENCE_FILES + 1):
+    observed_paths: set[str] = set()
+    total_bytes = 0
+    try:
+        iterator = iter(evidence)
+    except TypeError as exc:
+        raise ExecutionRejected("EVIDENCE_CONTENT") from exc
+    for index in range(_MAX_EVIDENCE_FILES + 1):
         try:
             item = next(iterator)
         except StopIteration:
             break
+        _need(index < _MAX_EVIDENCE_FILES, "EVIDENCE_COUNT")
         _need(type(item) is EvidenceFile, "EVIDENCE_CONTENT")
-        snapshot.append(
-            EvidenceFile(path=item.path, content=item.content, mode=item.mode)
-        )
+        frozen = EvidenceFile(path=item.path, content=item.content, mode=item.mode)
+        _need(frozen.path not in observed_paths, "EVIDENCE_DUPLICATE")
+        observed_paths.add(frozen.path)
+        total_bytes += len(frozen.content)
+        _need(total_bytes <= _MAX_EVIDENCE_BYTES, "EVIDENCE_TOTAL_BOUND")
+        snapshot.append(frozen)
     _need(1 <= len(snapshot) <= _MAX_EVIDENCE_FILES, "EVIDENCE_COUNT")
     return tuple(snapshot)
 
@@ -1335,7 +1347,7 @@ def _snapshot_command(command: Sequence[str]) -> tuple[str, ...]:
             break
         if index >= _MAX_COMMAND_ARGS:
             raise ExecutionRejected("COMMAND_COUNT_BOUND")
-        _need(isinstance(part, str) and bool(part), "COMMAND")
+        _need(isinstance(part, str) and bool(part) and "\0" not in part, "COMMAND")
         try:
             encoded = part.encode("utf-8")
         except UnicodeEncodeError as exc:

@@ -145,6 +145,18 @@ class VF0SubjectTests(unittest.TestCase):
                 with self.assertRaises(ExecutionRejected):
                     GitSubject(commit=commit, tree=tree)
 
+    def test_git_subject_rejects_nonstring_identity_with_stable_reason(self) -> None:
+        for value in (None, True, 123, 1.5, b"a" * 40, [], {}):
+            for field, reason in (
+                ("commit", "SUBJECT_COMMIT"),
+                ("tree", "SUBJECT_TREE"),
+            ):
+                with self.subTest(field=field, value=value):
+                    identities = {"commit": "a" * 40, "tree": "b" * 40}
+                    identities[field] = cast(str, value)
+                    with self.assertRaisesRegex(ExecutionRejected, f"^{reason}$"):
+                        GitSubject(**identities)
+
     def test_evidence_is_tests_only_and_canonical(self) -> None:
         for path in (
             "tools/evidence.py",
@@ -164,6 +176,14 @@ class VF0SubjectTests(unittest.TestCase):
     def test_evidence_mode_is_bounded(self) -> None:
         with self.assertRaisesRegex(ExecutionRejected, "EVIDENCE_MODE"):
             EvidenceFile(path="tests/e.py", content=b"pass\n", mode="120000")
+
+    def test_evidence_mode_rejects_nonstring_with_stable_reason(self) -> None:
+        for mode in (None, True, 100644, b"100644", [], {}):
+            with self.subTest(mode=mode):
+                with self.assertRaisesRegex(ExecutionRejected, "^EVIDENCE_MODE$"):
+                    EvidenceFile(
+                        path="tests/e.py", content=b"pass\n", mode=cast(str, mode)
+                    )
 
     def test_execution_limits_are_bounded(self) -> None:
         for kwargs in (
@@ -623,6 +643,28 @@ class VF0SubjectTests(unittest.TestCase):
                     _DirectTestBackend(),
                 )
 
+    def test_noniterable_evidence_rejects_before_materialization(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        subject = GitSubject(commit="a" * 40, tree="b" * 40)
+        for evidence in (None, True, 123):
+            with self.subTest(evidence=evidence):
+                with mock.patch.object(
+                    module,
+                    "_materialize_subject",
+                    side_effect=AssertionError("materialized"),
+                ) as materialize:
+                    with self.assertRaisesRegex(
+                        ExecutionRejected, "^EVIDENCE_CONTENT$"
+                    ):
+                        execute(
+                            Path.cwd() / "unused-repository",
+                            subject,
+                            cast(Sequence[EvidenceFile], evidence),
+                            ["/bin/true"],
+                            _DirectTestBackend(),
+                        )
+                materialize.assert_not_called()
+
     def test_evidence_snapshot_revalidates_post_construction_path_mutation(
         self,
     ) -> None:
@@ -802,18 +844,23 @@ class VF0SubjectTests(unittest.TestCase):
                     _DirectTestBackend(),
                 )
 
-    def test_duplicate_evidence_path_rejects(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            repo, subject = _repo(Path(td))
-            item = _evidence("print('x')")
-            with self.assertRaisesRegex(ExecutionRejected, "EVIDENCE_DUPLICATE"):
+    def test_duplicate_evidence_path_rejects_before_materialization(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        subject = GitSubject(commit="a" * 40, tree="b" * 40)
+        first = _evidence("print('first')")
+        second = _evidence("print('second')")
+        with mock.patch.object(
+            module, "_materialize_subject", side_effect=AssertionError("materialized")
+        ) as materialize:
+            with self.assertRaisesRegex(ExecutionRejected, "^EVIDENCE_DUPLICATE$"):
                 execute(
-                    repo,
+                    Path.cwd() / "unused-repository",
                     subject,
-                    [item, item],
+                    [first, second],
                     [sys.executable, "-c", "pass"],
                     _DirectTestBackend(),
                 )
+        materialize.assert_not_called()
 
     def test_empty_evidence_set_rejects(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -861,19 +908,45 @@ class VF0SubjectTests(unittest.TestCase):
         with self.assertRaisesRegex(ExecutionRejected, "EVIDENCE_FILE_BOUND"):
             EvidenceFile(path="tests/large.bin", content=b"x" * (2 * 1024 * 1024 + 1))
 
-    def test_evidence_total_size_is_bounded(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            repo, subject = _repo(Path(td))
-            first = EvidenceFile(path="tests/a.bin", content=b"a" * (1024 * 1024 + 1))
-            second = EvidenceFile(path="tests/b.bin", content=b"b" * (1024 * 1024 + 1))
-            with self.assertRaisesRegex(ExecutionRejected, "EVIDENCE_TOTAL_BOUND"):
+    def test_evidence_total_size_is_bounded_before_materialization(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        subject = GitSubject(commit="a" * 40, tree="b" * 40)
+        first = EvidenceFile(path="tests/a.bin", content=b"a" * (1024 * 1024))
+        second = EvidenceFile(path="tests/b.bin", content=b"b" * (1024 * 1024 + 1))
+        with mock.patch.object(
+            module, "_materialize_subject", side_effect=AssertionError("materialized")
+        ) as materialize:
+            with self.assertRaisesRegex(ExecutionRejected, "^EVIDENCE_TOTAL_BOUND$"):
                 execute(
-                    repo,
+                    Path.cwd() / "unused-repository",
                     subject,
                     [first, second],
                     [sys.executable, "-c", "pass"],
                     _DirectTestBackend(),
                 )
+        materialize.assert_not_called()
+
+    def test_evidence_exact_total_byte_budget_can_execute(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo, subject = _repo(Path(td))
+            first = EvidenceFile(path="tests/a.bin", content=b"a" * (1024 * 1024))
+            second = EvidenceFile(path="tests/b.bin", content=b"b" * (1024 * 1024))
+            result = execute(
+                repo,
+                subject,
+                [first, second],
+                [
+                    sys.executable,
+                    "-I",
+                    "-c",
+                    "from pathlib import Path; print(sum(p.stat().st_size "
+                    "for p in (Path('tests/a.bin'), Path('tests/b.bin'))))",
+                ],
+                _DirectTestBackend(),
+            )
+            self.assertEqual("completed", result.capture.termination)
+            self.assertEqual(0, result.capture.exit_code)
+            self.assertEqual(b"2097152\n", result.capture.stdout)
 
     def test_executable_mode_is_preserved_for_admitted_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -1101,6 +1174,26 @@ class VF0SubjectTests(unittest.TestCase):
                     SubprocessBackend(),
                 )
         self.assertEqual(module._MAX_COMMAND_ARGS + 1, command.pulled)
+
+    def test_nul_command_rejects_before_materialization(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        subject = GitSubject(commit="a" * 40, tree="b" * 40)
+        for command in (["/bin/true\0"], ["/bin/true", "a\0b"]):
+            with self.subTest(command=command):
+                with mock.patch.object(
+                    module,
+                    "_materialize_subject",
+                    side_effect=AssertionError("materialized"),
+                ) as materialize:
+                    with self.assertRaisesRegex(ExecutionRejected, "^COMMAND$"):
+                        execute(
+                            Path.cwd() / "unused-repository",
+                            subject,
+                            [_evidence("pass")],
+                            command,
+                            _DirectTestBackend(),
+                        )
+                materialize.assert_not_called()
 
     def test_command_total_utf8_bytes_are_bounded_before_materialization(self) -> None:
         module = importlib.import_module("tools.vf0_execution")
@@ -2631,10 +2724,15 @@ def _load_smoke_success_checker() -> Callable[[ExecutionObservation, bytes], Non
 
 class _ReadOnlyProbeTransport:
     def __init__(
-        self, failure: BaseException | None = None, inspection: str = "owned"
+        self,
+        failure: BaseException | None = None,
+        inspection: str = "owned",
+        *,
+        auto_remove: bool = False,
     ) -> None:
         self.failure = failure
         self.inspection = inspection
+        self.auto_remove = auto_remove
         self.calls: list[list[str]] = []
         self.present = False
         self.name = ""
@@ -2664,6 +2762,8 @@ class _ReadOnlyProbeTransport:
             self.probe_mode = (self.root / "writable.txt").stat().st_mode & 0o777
             if self.failure is not None:
                 raise self.failure
+            if self.auto_remove and "--rm" in argv:
+                self.present = False
             return subprocess.CompletedProcess(
                 list(argv),
                 0,
@@ -2711,15 +2811,20 @@ class VF0SmokeContractTests(unittest.TestCase):
         ):
             with self.subTest(failure=type(failure).__name__):
                 transport = _ReadOnlyProbeTransport(failure=failure)
+                expected_type = (
+                    ExecutionRejected
+                    if isinstance(failure, subprocess.TimeoutExpired)
+                    else KeyboardInterrupt
+                )
                 with mock.patch("subprocess.run", side_effect=transport.run):
-                    with self.assertRaises(
-                        (
-                            subprocess.TimeoutExpired,
-                            ExecutionRejected,
-                            KeyboardInterrupt,
-                        )
-                    ):
+                    with self.assertRaises(expected_type) as caught:
                         module._probe_read_only_behavior(module.FIXED_IMAGE)
+                self.assertIs(type(caught.exception), expected_type)
+                if isinstance(failure, subprocess.TimeoutExpired):
+                    self.assertEqual("DOCKER_COMMAND_FAILED", str(caught.exception))
+                    self.assertIs(failure, caught.exception.__cause__)
+                else:
+                    self.assertIs(failure, caught.exception)
                 self.assertFalse(transport.present, "probe container survived failure")
                 self.assertTrue(transport.name)
                 self.assertTrue(transport.nonce)
@@ -2743,6 +2848,38 @@ class VF0SmokeContractTests(unittest.TestCase):
         self.assertIn("--read-only", transport.calls[0])
         mount = transport.calls[0][transport.calls[0].index("--mount") + 1]
         self.assertTrue(mount.endswith(",target=/probe,readonly"))
+
+    def test_read_only_probe_verifies_native_absence_after_successful_auto_remove(
+        self,
+    ) -> None:
+        module = _load_smoke_module()
+        transport = _ReadOnlyProbeTransport(auto_remove=True)
+        with (
+            mock.patch("subprocess.run", side_effect=transport.run),
+            mock.patch(
+                "tools.vf0_execution.time.monotonic", side_effect=[0.0, 0.0, 2.0]
+            ),
+            mock.patch("tools.vf0_execution.time.sleep") as sleep,
+        ):
+            result = module._probe_read_only_behavior(module.FIXED_IMAGE)
+        self.assertEqual(
+            {"rootfs_read_only": True, "workspace_bind_read_only": True}, result
+        )
+        run = transport.calls[0]
+        self.assertIn("--rm", run)
+        self.assertTrue(transport.name.startswith("gnostoa-vf0-readonly-"))
+        self.assertEqual(transport.name, run[run.index("--name") + 1])
+        self.assertEqual(
+            f"gnostoa.vf0.cleanup-token={transport.nonce}",
+            run[run.index("--label") + 1],
+        )
+        self.assertFalse(transport.present)
+        self.assertEqual(
+            ["run", "inspect", "inspect"], [call[1] for call in transport.calls]
+        )
+        for call in transport.calls[1:]:
+            self.assertEqual(transport.name, call[-1])
+        sleep.assert_called_once_with(0.1)
 
     def test_read_only_probe_does_not_ignore_unverified_cleanup(self) -> None:
         module = _load_smoke_module()

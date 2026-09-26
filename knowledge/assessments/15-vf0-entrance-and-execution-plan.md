@@ -676,7 +676,18 @@ temporary mount is removed. Native-response controls cover removal/reinspection,
 foreign ownership and unavailable cleanup while preserving the writable-target
 read-only oracle. This changes a verification helper, not a production producer.
 
-The corrected relation suite has 42 tests and the execution suite has 108.
+The [AUD12 grouped pre-change RED](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5850610512)
+then exposed six adjacent input-boundary defects in the execution component:
+non-string Git identities and evidence modes leaked `TypeError`, non-iterable
+evidence leaked `TypeError`, and duplicate evidence, NUL-containing command
+arguments and over-large aggregate evidence were rejected only after subject
+materialization. The snapshot now applies the existing stable refusal contract,
+duplicate/path, NUL-command and aggregate-byte checks before materialization;
+the lower-level overlay checks remain in place. Smoke tests also pin the
+original timeout cause/interrupt and the normal `--rm` absence branch. This is
+bounded input validation and test precision, not a new authority or producer.
+
+The corrected relation suite has 42 tests and the execution suite has 114.
 Development-container runs passed both suites; the execution suite also passed
 under optimization, with two explicit local-namespace skips. These are bounded
 checkpoint observations, not a claim that every future head was verified.
@@ -685,9 +696,9 @@ Exact source identities for those observations are:
 | Component source | SHA-256 |
 | --- | --- |
 | `tools/vf0_contract.py` | `6bebdc75e02ed47349d289fd9a32a4901aa8b5a4892a99c1ba7bcb50b84d5261` |
-| `tools/vf0_execution.py` | `a850ad4fff66ec3114f2f095d52565a4a96b46ee5016174dde7c9068584c2f59` |
+| `tools/vf0_execution.py` | `86b527dbb9bd69e327ad4b0ae1d6950c79d5f166f0a51fe0ce97260ed0a30cee` |
 | `tests/test_vf0_contract.py` | `4dbf4fdc072e1fca1b181a679ca96db880426b7e44bf0364b19c95ba77fcaf35` |
-| `tests/test_vf0_execution.py` | `b3beb59d28d27c3bec2d21491375cec7b112e8b13996544698187bbfa3b30e4b` |
+| `tests/test_vf0_execution.py` | `326a732b5beb7fc74652f12c503845971398a284f0d3b6d1b87e0a11cd5bfcc5` |
 | `tests/vf0_execution_oci_smoke.py` | `305a96ecae527bd638d098c592c2e8a041d4cc39fac46a0f8691377240caf1d6` |
 
 Preparation receipts, final normal/optimized results, live OCI observations,
@@ -725,9 +736,9 @@ mechanism, not authentication or semantic adequacy of a future admitted oracle.
 | C5 | Missing, unknown, unsupported or contradictory required acquisition guarantees reject matching relation | Guarantee and coverage evaluation; missing/contradictory/incomplete/latest-attempt tests | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | C6 | Unsafe/wrong-subject action links reject as mappings; missing or changed navigation does not change otherwise matching authority relation | `resolve_links`; link-mapping separation tests | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | C7 | Even self-consistent forged normalized data cannot authenticate, approve, prepare, publish or activate | `evaluate` fixed claim boundary; forged-data and no-effectful-import tests | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
-| R1 | Exact immutable Git subject and admitted bounded tests-only delta materialize without symlink, metadata, path or count escape; successive calls share no hidden subject | `tools/vf0_execution.py`: subject/evidence validation and materialization; real Git and bounded-input regressions | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
+| R1 | Exact immutable Git subject and admitted bounded tests-only delta materialize without symlink, metadata, path or count escape; successive calls share no hidden subject | `tools/vf0_execution.py`: stable Git identity, evidence mode/content/count/path/duplicate/aggregate and command/NUL validation before materialization; real Git and bounded-input regressions | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | R2 | Runtime, entrypoint, resource, mount and environment contract is checked before launch; identity binds the actually used runtime | Immutable backend configuration, Docker image/container inspection and command construction; reassignment/dispatch negatives, contract negatives and live read-only/import-routing probes | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
-| R3 | Command and effective limits bind controller-observed exit, output and termination; child bytes cannot certify RED or authority | Capture and observation construction; infrastructure/timeout/overflow/spoof/completion controls | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
+| R3 | Command and effective limits bind controller-observed exit, output and termination; child bytes cannot certify RED or authority | Snapshot command bounds including NUL rejection, capture and observation construction; infrastructure/timeout/overflow/spoof/completion controls | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | R4 | Owned attachment/process/container resources are terminated and reconciled on every admitted failure path | Capture cleanup and known-name/container ownership removal, also reused by the read-only smoke probe; selector/descendant/create/remove and probe-interruption controls plus live timeout | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | R5 | Before/after bytes and exact modes are checked; immutable-during-execution claims require enforced read-only subject; no provider or receipt effect is exposed | Snapshot/manifest plus controller backend claim; mutation/custom/local-backend negatives and live OCI conformance | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 
