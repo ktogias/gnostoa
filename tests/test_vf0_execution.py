@@ -1785,6 +1785,35 @@ class VF0DockerBackendTests(unittest.TestCase):
         self.assertEqual(limit, len(result.stdout) + len(result.stderr))
         self.assertEqual(limit + 1, result.observed_bytes_at_least)
 
+    def test_expanded_output_limit_is_rebounded_to_caller_evidence_budget(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td).resolve()
+            backend = FakeDockerBackend(self.image, root)
+            limit = 64
+            capture = UntrustedCapture(
+                "output_limit",
+                None,
+                b"x" * (limit + module._OCI_EXIT_TRAILER_MAX),
+                b"",
+                limit + module._OCI_EXIT_TRAILER_MAX + 8192,
+            )
+            with mock.patch(
+                "tools.vf0_execution._capture_process", return_value=capture
+            ):
+                result = backend.run(
+                    root,
+                    ["/bin/cat"],
+                    ExecutionLimits(output_bytes=limit),
+                    subject=self.subject,
+                )
+            self.assertEqual(
+                ("output_limit", None), (result.termination, result.exit_code)
+            )
+            self.assertEqual(limit, len(result.stdout) + len(result.stderr))
+            self.assertGreater(result.observed_bytes_at_least, limit)
+            self.assertTrue(backend.removed)
+
     def test_spoofed_wrapper_trailer_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td).resolve()

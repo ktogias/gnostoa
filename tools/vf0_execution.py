@@ -1084,11 +1084,9 @@ class DockerBackend:
             )
             attachment_finished = True
             if capture.termination == "completed":
-                capture = _enforce_output_limit(
-                    _unwrap_oci_completion(capture), limits.output_bytes
-                )
-                if capture.termination != "completed":
-                    return capture
+                capture = _unwrap_oci_completion(capture)
+            capture = _enforce_output_limit(capture, limits.output_bytes)
+            if capture.termination == "completed":
                 try:
                     state = json.loads(
                         self._checked(
@@ -1160,19 +1158,24 @@ def _enforce_output_limit(
     """Apply the caller evidence-byte budget after trusted transport metadata."""
 
     _need(1 <= output_bytes <= 4 * 1024 * 1024, "OUTPUT_BOUND")
-    if capture.termination != "completed":
-        return capture
-    if len(capture.stdout) + len(capture.stderr) <= output_bytes:
+    retained_bytes = len(capture.stdout) + len(capture.stderr)
+    if retained_bytes <= output_bytes:
         return capture
     stdout = capture.stdout[:output_bytes]
     stderr_room = output_bytes - len(stdout)
     stderr = capture.stderr[:stderr_room] if stderr_room > 0 else b""
+    observed_bytes_at_least = capture.observed_bytes_at_least
+    if capture.termination != "completed":
+        observed_bytes_at_least = max(
+            output_bytes + 1,
+            observed_bytes_at_least - _OCI_EXIT_TRAILER_MAX,
+        )
     return UntrustedCapture(
         termination="output_limit",
         exit_code=None,
         stdout=stdout,
         stderr=stderr,
-        observed_bytes_at_least=capture.observed_bytes_at_least,
+        observed_bytes_at_least=max(output_bytes + 1, observed_bytes_at_least),
     )
 
 

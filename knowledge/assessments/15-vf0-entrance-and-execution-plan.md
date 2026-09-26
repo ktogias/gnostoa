@@ -769,6 +769,23 @@ pass normally and under `python -O`; the full non-root `ci/verify fast` suite pa
 with **1,413 tests** and two declared skips before ordinary exact-parent D0090
 preparation.
 
+The later capture/output-budget convergence successor normalizes post-`Popen`
+selector failures into a stable bounded rejection and reserves private headroom
+for the trusted OCI completion trailer before reapplying the original caller
+evidence budget. Seven execution regressions raise the execution/fixture suite
+from **78 to 85 tests** while the relation suite remains **35 tests**, for **120
+focused tests** total. All **120** pass normally and under `python -O`; the full
+non-root `ci/verify fast` suite passes with **1,420 tests** and two declared skips
+before ordinary exact-parent D0090 preparation.
+
+The exact-head live OCI smoke on that successor then exposed a residual overflow
+case: private trailer headroom was still returned when attachment capture had
+already terminated as `output_limit`. The bounded successor adds one regression
+and reapplies the caller-visible byte budget to every attachment outcome, not only
+completed/unwrapped captures. The focused corpus is therefore **35 relation + 86
+execution = 121 tests**, and the full non-root `fast` suite executes **1,421 tests**
+with the same two declared skips before ordinary exact-parent D0090 preparation.
+
 This evidence still does **not** claim a live run of the new Docker specialization.
 `tests/vf0_execution_oci_smoke.py` is intentionally outside unittest discovery and
 must be executed after exact ordinary D0090 preparation/publication of this
