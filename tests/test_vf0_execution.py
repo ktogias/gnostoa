@@ -17,6 +17,7 @@ import unittest
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import fields
 from pathlib import Path
+from types import ModuleType
 from typing import cast
 from unittest import mock
 
@@ -2610,20 +2611,153 @@ class VF0DockerBackendTests(unittest.TestCase):
             )
 
 
-def _load_smoke_success_checker() -> Callable[[ExecutionObservation, bytes], None]:
+def _load_smoke_module() -> ModuleType:
     path = Path(__file__).with_name("vf0_execution_oci_smoke.py")
     spec = importlib.util.spec_from_file_location("_vf0_execution_oci_smoke", path)
     if spec is None or spec.loader is None:
         raise AssertionError("SMOKE_HELPER_LOAD")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    return module
+
+
+def _load_smoke_success_checker() -> Callable[[ExecutionObservation, bytes], None]:
+    module = _load_smoke_module()
     return cast(
         Callable[[ExecutionObservation, bytes], None],
         module._expect_completed_success,
     )
 
 
+class _ReadOnlyProbeTransport:
+    def __init__(
+        self, failure: BaseException | None = None, inspection: str = "owned"
+    ) -> None:
+        self.failure = failure
+        self.inspection = inspection
+        self.calls: list[list[str]] = []
+        self.present = False
+        self.name = ""
+        self.nonce = ""
+        self.root: Path | None = None
+        self.root_mode = 0
+        self.probe_mode = 0
+
+    def run(
+        self, argv: Sequence[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[bytes]:
+        del kwargs
+        self.calls.append(list(argv))
+        action = argv[1]
+        if action == "run":
+            self.present = True
+            if "--name" in argv:
+                self.name = argv[argv.index("--name") + 1]
+            if "--label" in argv:
+                self.nonce = argv[argv.index("--label") + 1].split("=", 1)[1]
+            mount = argv[argv.index("--mount") + 1]
+            source = next(
+                part[7:] for part in mount.split(",") if part.startswith("source=")
+            )
+            self.root = Path(source)
+            self.root_mode = self.root.stat().st_mode & 0o777
+            self.probe_mode = (self.root / "writable.txt").stat().st_mode & 0o777
+            if self.failure is not None:
+                raise self.failure
+            return subprocess.CompletedProcess(
+                list(argv),
+                0,
+                stdout=b'{"rootfs_read_only":true,"workspace_bind_read_only":true}',
+                stderr=b"",
+            )
+        if action == "inspect":
+            if self.inspection == "unavailable":
+                return subprocess.CompletedProcess(
+                    list(argv),
+                    1,
+                    stdout=b"",
+                    stderr=b"dial unix /var/run/docker.sock: connect: no such file or directory",
+                )
+            if not self.present:
+                return subprocess.CompletedProcess(
+                    list(argv),
+                    1,
+                    stdout=b"[]\n",
+                    stderr=f"Error: No such object: {self.name}\n".encode(),
+                )
+            nonce = "foreign" if self.inspection == "foreign" else self.nonce
+            return subprocess.CompletedProcess(
+                list(argv),
+                0,
+                stdout=json.dumps(
+                    [{"Config": {"Labels": {"gnostoa.vf0.cleanup-token": nonce}}}]
+                ).encode(),
+                stderr=b"",
+            )
+        if action == "rm":
+            if self.root is None or not self.root.is_dir():
+                raise AssertionError("PROBE_MOUNT_REMOVED_BEFORE_CONTAINER")
+            self.present = False
+            return subprocess.CompletedProcess(list(argv), 0, stdout=b"", stderr=b"")
+        raise AssertionError(f"Unexpected probe command: {argv}")
+
+
 class VF0SmokeContractTests(unittest.TestCase):
+    def test_read_only_probe_cleans_after_timeout_and_interruption(self) -> None:
+        module = _load_smoke_module()
+        for failure in (
+            subprocess.TimeoutExpired("/usr/bin/docker run", 30),
+            KeyboardInterrupt(),
+        ):
+            with self.subTest(failure=type(failure).__name__):
+                transport = _ReadOnlyProbeTransport(failure=failure)
+                with mock.patch("subprocess.run", side_effect=transport.run):
+                    with self.assertRaises(
+                        (
+                            subprocess.TimeoutExpired,
+                            ExecutionRejected,
+                            KeyboardInterrupt,
+                        )
+                    ):
+                        module._probe_read_only_behavior(module.FIXED_IMAGE)
+                self.assertFalse(transport.present, "probe container survived failure")
+                self.assertTrue(transport.name)
+                self.assertTrue(transport.nonce)
+                self.assertEqual(
+                    ["run", "inspect", "rm", "inspect"],
+                    [call[1] for call in transport.calls],
+                )
+                for call in transport.calls[1:]:
+                    self.assertEqual(transport.name, call[-1])
+
+    def test_read_only_probe_preserves_writable_target_success_control(self) -> None:
+        module = _load_smoke_module()
+        transport = _ReadOnlyProbeTransport()
+        with mock.patch("subprocess.run", side_effect=transport.run):
+            result = module._probe_read_only_behavior(module.FIXED_IMAGE)
+        self.assertEqual(
+            {"rootfs_read_only": True, "workspace_bind_read_only": True}, result
+        )
+        self.assertEqual(0o777, transport.root_mode)
+        self.assertEqual(0o666, transport.probe_mode)
+        self.assertIn("--read-only", transport.calls[0])
+        mount = transport.calls[0][transport.calls[0].index("--mount") + 1]
+        self.assertTrue(mount.endswith(",target=/probe,readonly"))
+
+    def test_read_only_probe_does_not_ignore_unverified_cleanup(self) -> None:
+        module = _load_smoke_module()
+        for inspection, reason in (
+            ("foreign", "OCI_CLEANUP_OWNERSHIP"),
+            ("unavailable", "OCI_CLEANUP_UNVERIFIED"),
+        ):
+            with self.subTest(inspection=inspection):
+                transport = _ReadOnlyProbeTransport(inspection=inspection)
+                with mock.patch("subprocess.run", side_effect=transport.run):
+                    with self.assertRaisesRegex(ExecutionRejected, reason):
+                        module._probe_read_only_behavior(module.FIXED_IMAGE)
+                self.assertTrue(transport.present)
+                self.assertNotIn("rm", [call[1] for call in transport.calls])
+
     def _observation(
         self, termination: str, exit_code: int | None, stdout: bytes
     ) -> ExecutionObservation:

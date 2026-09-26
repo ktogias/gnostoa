@@ -15,10 +15,12 @@ import json
 import subprocess  # nosec B404 -- fixed live-smoke Git helper and fixture payload
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any
 
 from tools.vf0_execution import (
+    _CONTAINER_CLEANUP_LABEL,
     DockerBackend,
     EvidenceFile,
     ExecutionLimits,
@@ -140,10 +142,16 @@ assert all(checks.values()), "READONLY_PROBE_FAILED"
         probe = root / "writable.txt"
         probe.write_bytes(b"original\n")
         probe.chmod(0o666)
-        result = subprocess.run(  # nosec B603 -- fixed /usr/bin/docker smoke probe, no shell
-            [
-                "/usr/bin/docker",
+        backend = DockerBackend(image)
+        cleanup_nonce = uuid.uuid4().hex
+        container_name = f"gnostoa-vf0-readonly-{cleanup_nonce}"
+        try:
+            result = backend._command(
                 "run",
+                "--name",
+                container_name,
+                "--label",
+                f"{_CONTAINER_CLEANUP_LABEL}={cleanup_nonce}",
                 "--rm",
                 "--pull=never",
                 "--read-only",
@@ -165,13 +173,10 @@ assert all(checks.values()), "READONLY_PROBE_FAILED"
                 "-I",
                 "-c",
                 payload,
-            ],
-            check=False,
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            env={"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/nonexistent"},
-            timeout=30,
-        )
+                timeout=30,
+            )
+        finally:
+            backend._cleanup_uncertain_create(container_name, cleanup_nonce)
         if result.returncode != 0:
             raise AssertionError("READONLY_BEHAVIOR_PROBE_FAILED")
         try:

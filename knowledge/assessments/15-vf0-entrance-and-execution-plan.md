@@ -668,7 +668,15 @@ no existing preparation or advisory authority is weakened. The
 also remove a dead cleanup conditional without changing helper selection or
 exception propagation.
 
-The corrected relation suite has 42 tests and the execution suite has 105.
+The [AUD11 pre-change RED](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5850415242)
+then exposed a resource leak in the standalone read-only smoke probe on client
+timeout or interruption. The probe now retains an owned name/nonce and reuses
+the execution component's command and cleanup helpers in `finally`, before its
+temporary mount is removed. Native-response controls cover removal/reinspection,
+foreign ownership and unavailable cleanup while preserving the writable-target
+read-only oracle. This changes a verification helper, not a production producer.
+
+The corrected relation suite has 42 tests and the execution suite has 108.
 Development-container runs passed both suites; the execution suite also passed
 under optimization, with two explicit local-namespace skips. These are bounded
 checkpoint observations, not a claim that every future head was verified.
@@ -679,7 +687,8 @@ Exact source identities for those observations are:
 | `tools/vf0_contract.py` | `6bebdc75e02ed47349d289fd9a32a4901aa8b5a4892a99c1ba7bcb50b84d5261` |
 | `tools/vf0_execution.py` | `a850ad4fff66ec3114f2f095d52565a4a96b46ee5016174dde7c9068584c2f59` |
 | `tests/test_vf0_contract.py` | `4dbf4fdc072e1fca1b181a679ca96db880426b7e44bf0364b19c95ba77fcaf35` |
-| `tests/test_vf0_execution.py` | `a00240d87bb6dbc65b42b46d166139e748acebb50491d6971a26825319bba8cc` |
+| `tests/test_vf0_execution.py` | `b3beb59d28d27c3bec2d21491375cec7b112e8b13996544698187bbfa3b30e4b` |
+| `tests/vf0_execution_oci_smoke.py` | `305a96ecae527bd638d098c592c2e8a041d4cc39fac46a0f8691377240caf1d6` |
 
 Preparation receipts, final normal/optimized results, live OCI observations,
 provider checks and individual reviewer dispositions belong to the **exact-head
@@ -719,7 +728,7 @@ mechanism, not authentication or semantic adequacy of a future admitted oracle.
 | R1 | Exact immutable Git subject and admitted bounded tests-only delta materialize without symlink, metadata, path or count escape; successive calls share no hidden subject | `tools/vf0_execution.py`: subject/evidence validation and materialization; real Git and bounded-input regressions | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | R2 | Runtime, entrypoint, resource, mount and environment contract is checked before launch; identity binds the actually used runtime | Immutable backend configuration, Docker image/container inspection and command construction; reassignment/dispatch negatives, contract negatives and live read-only/import-routing probes | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | R3 | Command and effective limits bind controller-observed exit, output and termination; child bytes cannot certify RED or authority | Capture and observation construction; infrastructure/timeout/overflow/spoof/completion controls | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
-| R4 | Owned attachment/process/container resources are terminated and reconciled on every admitted failure path | Capture cleanup and known-name/container ownership removal; selector/descendant/create/remove failure controls and live timeout | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
+| R4 | Owned attachment/process/container resources are terminated and reconciled on every admitted failure path | Capture cleanup and known-name/container ownership removal, also reused by the read-only smoke probe; selector/descendant/create/remove and probe-interruption controls plus live timeout | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | R5 | Before/after bytes and exact modes are checked; immutable-during-execution claims require enforced read-only subject; no provider or receipt effect is exposed | Snapshot/manifest plus controller backend claim; mutation/custom/local-backend negatives and live OCI conformance | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 
 Live OCI and independent review results must be rebound in the exact-head PR
