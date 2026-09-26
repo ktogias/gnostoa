@@ -656,7 +656,19 @@ The pure relation checker still
 cannot authenticate declared hashes or classify semantic sufficiency. No general
 runtime registry or new authority mechanism is introduced.
 
-The corrected relation suite has 42 tests and the execution suite has 103.
+The [AUD08 follow-up](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5850159967)
+first reproduced mutation of validated backend configuration, then froze the
+built-in image/executable values. Ordinary reassignment cannot substitute an
+unvalidated executable or race identity derivation. This does not sandbox hostile
+Python reflection inside the trusted controller itself. The
+[base-reconciliation checkpoint](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5850146165)
+retains the protected-main mismatch RED and the already integrated #320 lineage;
+no existing preparation or advisory authority is weakened. The
+[Claude review disposition and AUD10 characterization](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5850221438)
+also remove a dead cleanup conditional without changing helper selection or
+exception propagation.
+
+The corrected relation suite has 42 tests and the execution suite has 105.
 Development-container runs passed both suites; the execution suite also passed
 under optimization, with two explicit local-namespace skips. These are bounded
 checkpoint observations, not a claim that every future head was verified.
@@ -665,9 +677,9 @@ Exact source identities for those observations are:
 | Component source | SHA-256 |
 | --- | --- |
 | `tools/vf0_contract.py` | `6bebdc75e02ed47349d289fd9a32a4901aa8b5a4892a99c1ba7bcb50b84d5261` |
-| `tools/vf0_execution.py` | `e600cc929b29ba99ddd72139accfb06550627be7e41505a003052d6ac2c6f8da` |
+| `tools/vf0_execution.py` | `a850ad4fff66ec3114f2f095d52565a4a96b46ee5016174dde7c9068584c2f59` |
 | `tests/test_vf0_contract.py` | `4dbf4fdc072e1fca1b181a679ca96db880426b7e44bf0364b19c95ba77fcaf35` |
-| `tests/test_vf0_execution.py` | `3c6179a89eb74e3d9f49fc5d4a76a1dc4e7debf4030237cd14cb8dee9e2dc338` |
+| `tests/test_vf0_execution.py` | `a00240d87bb6dbc65b42b46d166139e748acebb50491d6971a26825319bba8cc` |
 
 Preparation receipts, final normal/optimized results, live OCI observations,
 provider checks and individual reviewer dispositions belong to the **exact-head
@@ -705,7 +717,7 @@ mechanism, not authentication or semantic adequacy of a future admitted oracle.
 | C6 | Unsafe/wrong-subject action links reject as mappings; missing or changed navigation does not change otherwise matching authority relation | `resolve_links`; link-mapping separation tests | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | C7 | Even self-consistent forged normalized data cannot authenticate, approve, prepare, publish or activate | `evaluate` fixed claim boundary; forged-data and no-effectful-import tests | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | R1 | Exact immutable Git subject and admitted bounded tests-only delta materialize without symlink, metadata, path or count escape; successive calls share no hidden subject | `tools/vf0_execution.py`: subject/evidence validation and materialization; real Git and bounded-input regressions | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
-| R2 | Runtime, entrypoint, resource, mount and environment contract is checked before launch; identity binds the actually used runtime | Docker image/container inspection and command construction; contract negatives and live read-only/import-routing probes | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
+| R2 | Runtime, entrypoint, resource, mount and environment contract is checked before launch; identity binds the actually used runtime | Immutable backend configuration, Docker image/container inspection and command construction; reassignment/dispatch negatives, contract negatives and live read-only/import-routing probes | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | R3 | Command and effective limits bind controller-observed exit, output and termination; child bytes cannot certify RED or authority | Capture and observation construction; infrastructure/timeout/overflow/spoof/completion controls | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | R4 | Owned attachment/process/container resources are terminated and reconciled on every admitted failure path | Capture cleanup and known-name/container ownership removal; selector/descendant/create/remove failure controls and live timeout | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | R5 | Before/after bytes and exact modes are checked; immutable-during-execution claims require enforced read-only subject; no provider or receipt effect is exposed | Snapshot/manifest plus controller backend claim; mutation/custom/local-backend negatives and live OCI conformance | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |

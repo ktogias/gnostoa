@@ -1822,6 +1822,37 @@ class VF0DockerBackendTests(unittest.TestCase):
         with self.assertRaisesRegex(ExecutionRejected, "DOCKER_EXECUTABLE"):
             DockerBackend(self.image, docker_executable="/usr/local/bin/docker")
 
+    def test_validated_backend_configuration_cannot_be_reassigned(self) -> None:
+        for backend in (
+            DockerBackend(self.image),
+            FakeDockerBackend(self.image, Path("/unused")),
+        ):
+            for attribute, replacement in (
+                ("image", "sha256:" + "f" * 64),
+                ("docker_executable", "/bin/echo"),
+            ):
+                with self.subTest(backend=type(backend).__name__, attribute=attribute):
+                    original = getattr(backend, attribute)
+                    with self.assertRaises(AttributeError):
+                        setattr(backend, attribute, replacement)
+                    self.assertEqual(original, getattr(backend, attribute))
+
+    def test_command_dispatch_retains_the_validated_docker_executable(self) -> None:
+        backend = DockerBackend(self.image)
+        attribute = "docker_executable"
+        try:
+            setattr(backend, attribute, "/bin/echo")
+        except AttributeError:
+            pass
+        completed = subprocess.CompletedProcess(
+            ["/usr/bin/docker"], 0, stdout=b"", stderr=b""
+        )
+        with mock.patch(
+            "tools.vf0_execution.subprocess.run", return_value=completed
+        ) as launched:
+            backend._command("version")
+        self.assertEqual(["/usr/bin/docker", "version"], launched.call_args.args[0])
+
     def test_cleanup_absence_requires_exact_native_inspect_diagnostic(self) -> None:
         container_id = "a" * 64
         native = f"Error: No such object: {container_id}\n".encode()
@@ -1840,7 +1871,7 @@ class VF0DockerBackendTests(unittest.TestCase):
                 missing = subprocess.CompletedProcess(
                     ["/usr/bin/docker"], 1, stdout=b"[]\n", stderr=diagnostic
                 )
-                with mock.patch.object(backend, "_command", return_value=missing):
+                with mock.patch.object(DockerBackend, "_command", return_value=missing):
                     self.assertIs(
                         expected, backend._cleanup_presence(container_id, "owned")
                     )

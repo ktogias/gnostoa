@@ -858,14 +858,16 @@ class SubprocessBackend:
             raise
 
 
+@dataclass(frozen=True, eq=False)
 class DockerBackend:
     """Linux/amd64 OCI specialization with a read-only, network-free subject."""
 
-    def __init__(self, image: str, docker_executable: str = "/usr/bin/docker") -> None:
-        _need(_IMAGE_RE.fullmatch(image) is not None, "OCI_IMAGE_PIN")
-        _need(docker_executable == "/usr/bin/docker", "DOCKER_EXECUTABLE")
-        self.image = image
-        self.docker_executable = docker_executable
+    image: str
+    docker_executable: str = "/usr/bin/docker"
+
+    def __post_init__(self) -> None:
+        _need(_IMAGE_RE.fullmatch(self.image) is not None, "OCI_IMAGE_PIN")
+        _need(self.docker_executable == "/usr/bin/docker", "DOCKER_EXECUTABLE")
 
     def _command(
         self, *args: str, timeout: float = 30
@@ -1163,7 +1165,6 @@ class DockerBackend:
             *command,
         ]
         container_id: str | None = None
-        attachment_finished = False
         try:
             observed_id = self._checked(*create).decode().strip().lower()
             _need(_DOCKER_ID_RE.fullmatch(observed_id) is not None, "OCI_CONTAINER_ID")
@@ -1177,7 +1178,6 @@ class DockerBackend:
                 limits=limits,
                 output_headroom_bytes=_OCI_EXIT_TRAILER_MAX,
             )
-            attachment_finished = True
             if capture.termination == "completed":
                 capture = _unwrap_oci_completion(capture)
             capture = _enforce_output_limit(capture, limits.output_bytes)
@@ -1207,15 +1207,10 @@ class DockerBackend:
             # _capture_process closes/reaps the attachment group before this point.
             # Even preflight/client failures still remove and independently verify
             # absence of the owned container.
-            try:
-                if container_id is None:
-                    self._cleanup_uncertain_create(container_name, cleanup_nonce)
-                else:
-                    self._remove_and_verify(container_id, cleanup_nonce)
-            except ExecutionRejected:
-                if attachment_finished:
-                    raise
-                raise
+            if container_id is None:
+                self._cleanup_uncertain_create(container_name, cleanup_nonce)
+            else:
+                self._remove_and_verify(container_id, cleanup_nonce)
 
 
 def _unwrap_oci_completion(capture: UntrustedCapture) -> UntrustedCapture:
