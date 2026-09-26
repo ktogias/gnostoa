@@ -98,7 +98,7 @@ jobs:
           test "$ACTUAL_DIFF_SHA" = "$PREPARED_DIFF_SHA"
           sha256sum "$RUNNER_TEMP/receipt.json" > "$RUNNER_TEMP/receipt-file.sha256"
           sha256sum "$RUNNER_TEMP/prepared.patch" > "$RUNNER_TEMP/prepared-patch.sha256"
-          python - "$RUNNER_TEMP/receipt.json" "$RUNNER_TEMP/summary.json" "$PATCH_SHA256" <<'PY'
+          python - "$RUNNER_TEMP/receipt.json" "$RUNNER_TEMP/summary.json" "b73f2ed12deb1c7cae22e6ad1b1841d8653914d7ec48a344c5266e3df33cf589" <<'PY'
           import hashlib,json,pathlib,sys
           receipt_path=pathlib.Path(sys.argv[1])
           receipt=json.loads(receipt_path.read_text())
