@@ -287,6 +287,46 @@ class VF0SubjectTests(unittest.TestCase):
                 result.evidence_sha256,
             )
 
+    def test_backend_attribute_cannot_claim_runtime_immutability(self) -> None:
+        evidence = _evidence(
+            """
+            from pathlib import Path
+            subject = Path('subject.txt')
+            original = subject.read_bytes()
+            subject.write_bytes(b'forged\\n')
+            assert subject.read_bytes() != original
+            subject.write_bytes(original)
+            print('TRANSIENT_FORGE_OBSERVED')
+            """
+        )
+        for backend in (_DirectTestBackend(), SubprocessBackend()):
+            with self.subTest(backend=type(backend).__name__):
+                with tempfile.TemporaryDirectory() as td:
+                    repo, subject = _repo(Path(td))
+                    backend.__dict__["subject_immutable_during_execution"] = True
+                    # Exercise real mutation/capture without depending on host
+                    # namespace availability; the local backend cannot enforce
+                    # immutability even when PID containment is available.
+                    with mock.patch.object(
+                        backend, "run", side_effect=_DirectTestBackend().run
+                    ):
+                        observation = execute(
+                            repo,
+                            subject,
+                            [evidence],
+                            [sys.executable, "-I", evidence.path],
+                            backend,
+                        )
+                    self.assertEqual(0, observation.capture.exit_code)
+                    self.assertEqual(
+                        b"TRANSIENT_FORGE_OBSERVED\n", observation.capture.stdout
+                    )
+                    self.assertEqual(
+                        observation.before_manifest_sha256,
+                        observation.after_manifest_sha256,
+                    )
+                    self.assertFalse(observation.subject_unchanged)
+
     def test_subject_file_count_is_bounded_before_materialization(self) -> None:
         module = importlib.import_module("tools.vf0_execution")
         with tempfile.TemporaryDirectory() as td:
@@ -1617,7 +1657,8 @@ class FakeDockerBackend(DockerBackend):
                 ["/usr/bin/docker"],
                 0,
                 stdout=(
-                    f'[{{"Id":"sha256:{"b" * 64}","RepoDigests":["{self.image}"]}}]'
+                    f'[{{"Id":"sha256:{"b" * 64}","RepoDigests":["{self.image}"],'
+                    '"Os":"linux","Architecture":"amd64"}]'
                 ).encode(),
                 stderr=b"",
             )
@@ -1649,7 +1690,7 @@ class FakeDockerBackend(DockerBackend):
                     ["/usr/bin/docker"],
                     1,
                     stdout=b"",
-                    stderr=b"Error: No such container",
+                    stderr=f"Error: No such object: {args[-1]}\n".encode(),
                 )
             import json
 
@@ -1675,9 +1716,10 @@ class FakeDockerBackend(DockerBackend):
                     ["/usr/bin/docker"],
                     1,
                     stdout=b"",
-                    stderr=b"Error: No such container",
+                    stderr=f"Error: No such object: {args[-1]}\n".encode(),
                 )
             contract = {
+                "Image": "sha256:" + "b" * 64,
                 "HostConfig": {
                     "ReadonlyRootfs": not self.invalid_contract,
                     "NetworkMode": "none",
@@ -1748,7 +1790,7 @@ class FakeDockerBackend(DockerBackend):
                 ["/usr/bin/docker"],
                 1,
                 stdout=b"",
-                stderr=b"Error: No such container",
+                stderr=f"Error: No such object: {args[-1]}\n".encode(),
             )
         raise AssertionError(args)
 
@@ -1780,6 +1822,156 @@ class VF0DockerBackendTests(unittest.TestCase):
         with self.assertRaisesRegex(ExecutionRejected, "DOCKER_EXECUTABLE"):
             DockerBackend(self.image, docker_executable="/usr/local/bin/docker")
 
+    def test_cleanup_absence_requires_exact_native_inspect_diagnostic(self) -> None:
+        container_id = "a" * 64
+        native = f"Error: No such object: {container_id}\n".encode()
+        for diagnostic, expected in (
+            (native, False),
+            (native.lower(), False),
+            (b"Error: No such object: other-container\n", None),
+            (
+                b"dial unix /var/run/docker.sock: connect: no such file or directory",
+                None,
+            ),
+            (native + b"daemon connection interrupted\n", None),
+        ):
+            with self.subTest(diagnostic=diagnostic):
+                backend = DockerBackend(self.image)
+                missing = subprocess.CompletedProcess(
+                    ["/usr/bin/docker"], 1, stdout=b"[]\n", stderr=diagnostic
+                )
+                with mock.patch.object(backend, "_command", return_value=missing):
+                    self.assertIs(
+                        expected, backend._cleanup_presence(container_id, "owned")
+                    )
+
+    def test_cleanup_cannot_infer_absence_from_transport_or_remove_errors(
+        self,
+    ) -> None:
+        class FailedCommand(FakeDockerBackend):
+            known_present: bool
+            diagnostic: bytes
+
+            def _command(
+                self, *args: str, timeout: float = 30
+            ) -> subprocess.CompletedProcess[bytes]:
+                if args[0] == "inspect" and self.known_present:
+                    return super()._command(*args, timeout=timeout)
+                self.calls.append(tuple(args))
+                return subprocess.CompletedProcess(
+                    ["/usr/bin/docker"], 1, stdout=b"", stderr=self.diagnostic
+                )
+
+        socket_error = (
+            b"dial unix /var/run/docker.sock: connect: no such file or directory"
+        )
+        remove_error = b"Error response from daemon: No such container: " + b"a" * 64
+        for operation, known_present, diagnostic in (
+            ("presence", False, socket_error),
+            ("remove", False, socket_error),
+            ("retry", True, socket_error),
+            ("create", False, socket_error),
+            ("remove", True, remove_error),
+            ("retry", True, remove_error),
+        ):
+            with self.subTest(operation=operation, diagnostic=diagnostic):
+                with tempfile.TemporaryDirectory() as td:
+                    backend = FailedCommand(self.image, Path(td).resolve())
+                    backend.known_present = known_present
+                    backend.diagnostic = diagnostic
+                    backend.cleanup_nonce = "owned"
+                    with (
+                        mock.patch(
+                            "tools.vf0_execution.time.monotonic",
+                            side_effect=[0.0, 0.0, 3.0],
+                        ),
+                        mock.patch("tools.vf0_execution.time.sleep"),
+                    ):
+                        if operation == "presence":
+                            self.assertIsNone(
+                                backend._cleanup_presence(backend.container_id, "owned")
+                            )
+                            continue
+                        action = {
+                            "remove": backend._remove_and_verify,
+                            "retry": backend._reconcile_uncertain_remove,
+                            "create": backend._cleanup_uncertain_create,
+                        }[operation]
+                        with self.assertRaisesRegex(
+                            ExecutionRejected, "OCI_CLEANUP_UNVERIFIED"
+                        ):
+                            action(backend.container_id, "owned")
+
+    def test_image_platform_must_be_linux_amd64_before_create(self) -> None:
+        class WrongPlatform(FakeDockerBackend):
+            platform: dict[str, str]
+
+            def _command(
+                self, *args: str, timeout: float = 30
+            ) -> subprocess.CompletedProcess[bytes]:
+                result = super()._command(*args, timeout=timeout)
+                if args[:2] == ("image", "inspect"):
+                    spec = json.loads(result.stdout)
+                    spec[0].pop("Os")
+                    spec[0].pop("Architecture")
+                    spec[0].update(self.platform)
+                    result.stdout = json.dumps(spec).encode()
+                return result
+
+        for platform in (
+            {"Os": "linux", "Architecture": "arm64"},
+            {"Os": "windows", "Architecture": "amd64"},
+            {},
+        ):
+            with self.subTest(platform=platform):
+                with tempfile.TemporaryDirectory() as td:
+                    root = Path(td).resolve()
+                    backend = WrongPlatform(self.image, root)
+                    backend.platform = platform
+                    with mock.patch(
+                        "tools.vf0_execution._capture_process",
+                        return_value=self._completed_capture(),
+                    ) as attached:
+                        with self.assertRaisesRegex(
+                            ExecutionRejected, "OCI_IMAGE_PLATFORM"
+                        ):
+                            backend.run(
+                                root,
+                                ["/bin/true"],
+                                ExecutionLimits(),
+                                subject=self.subject,
+                            )
+                    attached.assert_not_called()
+                    self.assertFalse(backend.created)
+
+    def test_created_container_uses_inspected_image_config_before_attachment(
+        self,
+    ) -> None:
+        class WrongContainerImage(FakeDockerBackend):
+            def _command(
+                self, *args: str, timeout: float = 30
+            ) -> subprocess.CompletedProcess[bytes]:
+                result = super()._command(*args, timeout=timeout)
+                if args == ("inspect", self.container_id) and not self.removed:
+                    spec = json.loads(result.stdout)
+                    spec[0]["Image"] = "sha256:" + "f" * 64
+                    result.stdout = json.dumps(spec).encode()
+                return result
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td).resolve()
+            backend = WrongContainerImage(self.image, root)
+            with mock.patch(
+                "tools.vf0_execution._capture_process",
+                return_value=self._completed_capture(),
+            ) as attached:
+                with self.assertRaisesRegex(ExecutionRejected, "OCI_IMAGE_IDENTITY"):
+                    backend.run(
+                        root, ["/bin/true"], ExecutionLimits(), subject=self.subject
+                    )
+            attached.assert_not_called()
+            self.assertTrue(backend.removed)
+
     def test_create_contract_is_read_only_network_free_nonroot_and_bounded(
         self,
     ) -> None:
@@ -1810,10 +2002,12 @@ class VF0DockerBackendTests(unittest.TestCase):
             )
             entrypoint_index = create.index("--entrypoint") + 1
             self.assertEqual("/usr/local/bin/python3", create[entrypoint_index])
+            self.assertEqual("sha256:" + "b" * 64, create[entrypoint_index + 1])
             self.assertEqual(
                 ("-I", "-c"), create[entrypoint_index + 2 : entrypoint_index + 4]
             )
             for fragment in (
+                "--platform linux/amd64",
                 "--read-only",
                 "--network none",
                 "--ipc none",
@@ -2155,7 +2349,7 @@ class VF0DockerBackendTests(unittest.TestCase):
                             ["/usr/bin/docker"],
                             1,
                             stdout=b"",
-                            stderr=b"Error: No such container",
+                            stderr=f"Error: No such object: {args[-1]}\n".encode(),
                         )
                 return super()._command(*args, timeout=timeout)
 

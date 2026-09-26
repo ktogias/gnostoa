@@ -76,7 +76,6 @@ def _fixture() -> dict[str, Any]:
             "parent_tree": "git-sha1:parent-tree",
             "evidence_tree": "git-sha1:evidence-tree",
             "evidence_patch_sha256": sha,
-            "production_sha256": sha,
             "command_sha256": sha,
             "oracle_sha256": sha,
             "evidence_files": {"tests/test_target.py": sha},
@@ -285,20 +284,45 @@ class VF0RelationTests(unittest.TestCase):
         result = self.assertRejected(self.document)
         self.assertEqual(["CANDIDATE_PRODUCTION_TREE_UNCHANGED"], result["reasons"])
 
-    def test_final_candidate_binds_declared_production_delta(self) -> None:
+    def test_pre_change_material_needs_no_final_production_bytes(self) -> None:
         doc = copy.deepcopy(self.document)
-        doc["candidate"]["tree"] = "git-sha1:final-candidate-tree"
-        doc["candidate"]["production_sha256"] = doc["request"]["material"][
-            "production_sha256"
-        ]
-        self.assertEqual("MATCH", self.core.evaluate(doc)["status"])
+        doc["request"]["material"].pop("production_sha256", None)
+        doc["evidence"]["material"].pop("production_sha256", None)
+        _rebind(doc)
+        result = self.core.evaluate(doc)
+        self.assertEqual("MATCH", result["status"], result)
 
-    def test_final_candidate_rejects_mismatched_production_delta(self) -> None:
+    def test_prior_evidence_allows_distinct_compatible_implementations(self) -> None:
+        original = self.core.evaluate(self.document)
+        self.assertEqual("MATCH", original["status"], original)
+        alternative = copy.deepcopy(self.document)
+        alternative["candidate"]["tree"] = "git-sha1:alternative-final-tree"
+        alternative["candidate"]["production_sha256"] = "sha256:" + "b" * 64
+        result = self.core.evaluate(alternative)
+        self.assertEqual("MATCH", result["status"], result)
+        for field in ("request", "admission", "evidence"):
+            self.assertEqual(self.document[field], alternative[field])
+        self.assertEqual(original["request_sha256"], result["request_sha256"])
+        self.assertFalse(result["compliance"])
+        self.assertEqual("NOT_ESTABLISHED", result["authentication"])
+
+    def test_nonempty_evidence_delta_cannot_retain_the_parent_tree(self) -> None:
         doc = copy.deepcopy(self.document)
-        doc["candidate"]["tree"] = "git-sha1:final-candidate-tree"
-        doc["candidate"]["production_sha256"] = "sha256:" + "b" * 64
+        doc["request"]["material"]["evidence_tree"] = doc["request"]["material"][
+            "parent_tree"
+        ]
+        doc["evidence"]["material"] = copy.deepcopy(doc["request"]["material"])
+        _rebind(doc)
         result = self.assertRejected(doc)
-        self.assertEqual(["CANDIDATE_PRODUCTION_BINDING"], result["reasons"])
+        self.assertEqual(["EVIDENCE_TREE_UNCHANGED"], result["reasons"])
+
+    def test_final_candidate_requires_a_well_formed_production_digest(self) -> None:
+        for digest in (None, "", "not-a-digest", "sha256:" + "b" * 63):
+            with self.subTest(digest=digest):
+                doc = copy.deepcopy(self.document)
+                doc["candidate"]["production_sha256"] = digest
+                result = self.assertRejected(doc)
+                self.assertEqual(["DIGEST_FORMAT"], result["reasons"])
 
     def test_evidence_only_candidate_retains_the_admitted_evidence_tree(self) -> None:
         doc = copy.deepcopy(self.document)

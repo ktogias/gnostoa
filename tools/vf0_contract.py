@@ -36,7 +36,6 @@ _MATERIAL_FIELDS = {
     "parent_tree",
     "evidence_tree",
     "evidence_patch_sha256",
-    "production_sha256",
     "command_sha256",
     "oracle_sha256",
     "evidence_files",
@@ -178,7 +177,6 @@ def _material(value: Any) -> dict[str, Any]:
         _text(material[key])
     for key in (
         "evidence_patch_sha256",
-        "production_sha256",
         "command_sha256",
         "oracle_sha256",
     ):
@@ -186,6 +184,10 @@ def _material(value: Any) -> dict[str, Any]:
     evidence_files = _files(material["evidence_files"])
     evidence_modes = _file_modes(material["evidence_modes"])
     _need(set(evidence_modes) == set(evidence_files), "EVIDENCE_MODE_MANIFEST")
+    _need(
+        not evidence_files or material["evidence_tree"] != material["parent_tree"],
+        "EVIDENCE_TREE_UNCHANGED",
+    )
     return material
 
 
@@ -425,11 +427,10 @@ def _candidate(value: Any, request: dict[str, Any]) -> dict[str, Any]:
             tree != request["material"]["evidence_tree"],
             "CANDIDATE_PRODUCTION_TREE_UNCHANGED",
         )
-        _need(
-            _sha(candidate["production_sha256"])
-            == request["material"]["production_sha256"],
-            "CANDIDATE_PRODUCTION_BINDING",
-        )
+        # Implementation follows the pre-change observation. Its digest cannot be
+        # a prerequisite of that earlier request; later protected preparation
+        # must acquire and bind these final bytes to the exact candidate tree.
+        _sha(candidate["production_sha256"])
     else:
         _need(candidate["production_sha256"] is None, "CANDIDATE_PRODUCTION_UNEXPECTED")
         _need(

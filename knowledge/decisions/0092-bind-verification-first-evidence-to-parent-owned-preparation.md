@@ -92,6 +92,15 @@ signals; and producer/execution/retention identities. Subsequent preparation
 binds the exact receipt and retained evidence bytes, plus the compatible semantic
 scope. Replacing the test, parent, policy or admission invalidates that relation.
 
+Pre-change admission does not require the future implementation's final bytes or
+production-delta digest. RED precedes implementation and compatible refactoring;
+the same prior observation can support different later implementations within
+the admitted scope while retaining the exact parent and evidence. Subsequent
+preparation binds and verifies the actual final candidate tree. A candidate's
+declared digest in the private relation fixture is not independently acquired
+source truth or preparation authority. A nonempty admitted evidence delta must
+also have a different tree identity from its unchanged parent.
+
 A matching digest proves integrity, not producer authentication. Neither a caller
 supplied hash, `trusted` boolean, issuer label nor timestamp is a trust root.
 The semantic verifier consumes an observation obtained by the trusted acquisition
@@ -216,6 +225,11 @@ stdout/stderr capture and records actual completion, timeout or overflow; child
 text never becomes RED certification, approval, compliance or a preparation
 receipt. The attachment process is closed/reaped before owned-container removal,
 and container absence is independently verified even after client failure.
+
+The Docker specialization requests and verifies `linux/amd64` and checks the
+created container against the resolved image configuration. Only that enforcing
+built-in backend may report subject immutability; a custom or local backend's
+declaration cannot substitute for the read-only execution boundary.
 
 Unit doubles establish command/cleanup contracts only. Live OCI support requires
 the fixed `tests/vf0_execution_oci_smoke.py` against the **exact published and

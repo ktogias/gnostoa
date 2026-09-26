@@ -119,6 +119,15 @@ or assume subscription merely to accommodate conflicting documentation.
 
 [Claude Code GitHub Actions][claude-actions] is a separately configured route;
 a general `@claude` response does not prove managed Code Review is enabled.
+Gnostoa's [mention workflow](https://github.com/ktogias/gnostoa/blob/main/.github/workflows/claude.yml)
+was integrated in #320 and its exact-pinned Actions allowlist was verified in
+[#321](https://github.com/ktogias/gnostoa/issues/321). For a review through that
+route, address `@claude` with a bounded read-only request naming the exact PR head,
+scope, required finding/report format and prohibition on source or metadata
+changes. Reconcile the returned run and substantive report with that head;
+the earlier head/WI smoke response is not review completion. This Actions route
+does not establish managed-review enablement or reviewer qualification.
+
 For dedicated security analysis, [Claude's security guide][claude-security]
 documents **`/security-review` inside Claude Code**, or the separately configured
 `anthropics/claude-code-security-review` Action. The slash command is not a
@@ -163,7 +172,7 @@ Where no dedicated security command was verified, keep that limitation explicit.
 
 | Provider | Code-review route | Security route and limits |
 | --- | --- | --- |
-| CodeRabbit | [`@coderabbitai review`][coderabbit-commands] is incremental; `@coderabbitai full review` requests a full pass. | PR review can raise security findings. The separate [Security Agent][coderabbit-security] has settings under Security → Repositories (AI Deep Scan) and results under Security → Agent Findings. The referenced launch guide also lists Scan repositories → Code findings; verify the installed UI labels. Keep its entitlement/credit check: this is not the PR command or automatically the PR head. No new scan subscription is selected here. |
+| CodeRabbit | [`@coderabbitai review`][coderabbit-commands] is incremental; `@coderabbitai full review` requests a full pass. | PR review can raise security findings. The separate [Security Agent][coderabbit-security] has settings under Security → Repositories (AI Deep Scan) and results under Security → Findings. The referenced launch guide also lists Scan repositories → Code findings; verify the installed UI labels. Keep its entitlement/credit check: this is not the PR command or automatically the PR head. No new scan subscription is selected here. |
 | Sourcery | Exact standalone `@sourcery-ai review`, as retained in the [registry observation][registry]. | [Security scanning][sourcery] is distinct from PR review. No dedicated security comment verified in this research cut; do not append a guessed suffix to the exact-only command. |
 | Qodo | Current v2 configuration uses [`/agentic_review`][qodo]; older PR-Agent uses `/review`. Verify installed generation/channel first. | Security scope/configuration is not a verified dedicated command here. Bare slash routes remain manually gated by repository-specific collision checks. |
 | CodeAnt | [`@codeant-ai: review`][codeant] in its own comment; Gnostoa has observed additional bounded instructions. | Ordinary review includes security. Separate [Scan Center security analysis][codeant-security] is not an invented PR-comment command. |

@@ -1,8 +1,9 @@
 """Fixed live-OCI smoke for the private VF0 bounded execution component.
 
-This file is intentionally not unittest-discovered.  It is executed only by the
-predeclared temporary provider smoke after an exact prepared candidate is
-published.  Its result is component-conformance evidence, never RED
+This file is intentionally not unittest-discovered. Run it with the available
+trusted Docker controller after an exact prepared candidate is published;
+temporary provider execution is a fallback for a measured local capability gap.
+Its result is component-conformance evidence, never RED
 certification, producer admission, approval, compliance, or VF0 activation.
 """
 

@@ -600,264 +600,146 @@ producer/consumer, does not make supplied records authoritative and cannot close
 VF0-01/03/07/08/09/10. Protected composition and the single introducing authority
 transition remain subsequent work under the already approved method.
 
-## VF0-A7 chronology, A8 and bounded execution candidate
+## VF0-A7/A8 history and current component boundary
 
-The **32-test** count above is intentionally preserved as the original A7
-checkpoint. A later retained-evidence-delta regression increased the published
-relation suite to **33 tests** before exact head
-`d217453ece7694eeaed0f9acb2d17bd5903e70e0`. Do not rewrite the earlier number
-as though those tests had already existed. The subsequent C2 review reproduced
-a contradictory MATCH when `changed_paths` was non-empty but the candidate tree
-was reset to the parent tree. On unchanged `d217`, the external pre-edit suite
-therefore observed four C2 assertion failures across the allowed synthetic modes,
-one missing-execution-entry assertion failure, one passing prior-fix control and
-zero errors/skips.
+This section is the replaceable current component view. The
+[immutable pre-reconciliation chronology](https://github.com/ktogias/gnostoa/blob/a859d597d1d2fcd30f68106e5532bdae537ae6ac/knowledge/assessments/15-vf0-entrance-and-execution-plan.md#vf0-a7-chronology-a8-and-bounded-execution-candidate)
+retains the original 32-test A7 checkpoint and the later 33–138-test results,
+individual repair descriptions and their limits. Removing their rolling prose
+from this view does not rewrite any earlier result. The original E1 RED, rejected
+E3 timestamp hypothesis, failed E5 runs and initial failed A8 run remain retained.
 
-[A8 run 36099667712](https://github.com/ktogias/gnostoa/actions/runs/36099667712)
-completed its three bounded jobs successfully, including the actual
-characterization and independent read-back of its native approval/result. That
-retained experiment remains bound to its historical subject; it is **not** a
-D0090 receipt for a later candidate and does not establish producer admission,
-credential separation, compliance or VF0 activation. No A8 rerun is required
-merely because the execution component changes.
+A7's [C1–C7 checkpoint](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5823516283)
+preceded relation-core production edits at parent
+`4ef62a31424bf9d58e49bb4e591f1a827a89a506`. Its interface-conformance assertion RED
+is not a producer behavioral RED receipt and does not replace E1. The later
+[R1–R5 checkpoint](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5827810399)
+and [exact-parent continuation](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5830270213)
+bound the private execution component before implementation.
 
-The current grouped R1-R5 candidate adds one C2 relation regression, bringing the
-relation suite to **34 tests**, and introduces a private bounded execution
-component plus fixed live-OCI smoke. Its local conformance suite contains **39
-execution/fixture tests**. Together, **73 focused tests** pass normally and with
-Python optimization as a non-root user; scoped Ruff 0.16.0 formatting/lint and
-strict mypy 2.3.0 also pass. The execution tests use real temporary Git subjects
-and finite local processes while Docker-specific paths use explicit doubles. They
-cover immutable per-call subjects, tests-only evidence bounds, complete byte/mode
-comparison before and after execution, environment scrubbing, bounded separate
-stdout/stderr, nonzero/timeout/overflow observations, descendant termination,
-read-only OCI contract inspection and attachment-before-container cleanup.
+The successful [A8 run 36099667712](https://github.com/ktogias/gnostoa/actions/runs/36099667712)
+composed a request-bound native approval, isolated characterization, retained
+publisher evidence and independent diagnostic relation evaluation on support
+source `223bc20bef6b3d0f4efb2c710b1ec202aa49aceb`. Its
+[retained result and limits](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5827762406)
+record one MATCH and six local negative substitutions. The first approved
+[run 36079920491](https://github.com/ktogias/gnostoa/actions/runs/36079920491)
+remains FAILURE; neither its approval nor its result is transferred to the repair.
+A8's fixture policy and guarantee assertions are diagnostic assumptions, and its
+MATCH still reports `authentication=NOT_ESTABLISHED`, `compliance=false`, and
+`vf0_active=false`. It establishes no production trust or effective D0090 gate.
 
-Successor chronology after the subsequent execution hardening and restrictive-umask
-regression, through exact head `f54cf89a0387856d441be3bfaa5a20783f03af36`:
-the relation suite remains **34 tests** and the execution/fixture suite is **45
-tests**, so the exact focused invocation executes **79 tests**. All 79 pass normally
-and under Python optimization. The preceding **39 / 73** account is retained as
-the earlier grouped-candidate checkpoint rather than rewritten.
+### Direction-correction checkpoint
 
-The bounded uncertain-create settling repair adds one execution/fixture regression
-for delayed Docker resource appearance after an initially negative inspect. The
-relation suite remains **34 tests** and the execution/fixture suite becomes **46
-tests**, so this candidate executes **80 focused tests**. All 80 pass normally and
-under Python optimization before ordinary D0090 preparation.
+The [whole-PR audit plan](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5849874637)
+reconciles the original scope with the owner's request for autonomous correction.
+[Relation RED](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5849891284)
+and [execution RED](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5849905214)
+were recorded against unchanged parent `a859d597d1d2fcd30f68106e5532bdae537ae6ac`
+before production edits. They expose four in-scope defects: final production
+bytes required before RED; a nonempty evidence delta retaining the parent's tree;
+a caller-mutable immutability claim; and an unconstrained OCI platform/config.
 
-The subsequent subject/snapshot boundedness repair adds three execution/fixture
-regressions: finite Git subject entry count, finite Git tree-listing bytes, and
-pre-read rejection of oversized post-execution files. The relation suite remains
-**34 tests** and the execution/fixture suite becomes **49 tests**, so this
-successor executes **83 focused tests**. All 83 pass normally and under Python
-optimization before ordinary D0090 preparation.
+The correction removes the future-production precommitment and mutable capability
+flags. It preserves parent/evidence/oracle/scope binding, distinguishes the later
+candidate from its evidence subject, and requires the actual Docker execution to
+use its inspected linux/amd64 image configuration.
 
-The next in-scope execution-hardening candidate adds six execution/fixture test
-methods for bounded post-execution entry traversal, subject Git-metadata path
-rejection, evidence-directory destination refusal, detached-session descendant
-containment, complete OCI mount validation, and uncertain Docker-remove
-reconciliation. Existing evidence-path and OCI create-contract tests are also
-strengthened to reject `.git` components and require exact mounted-subject
-routing (`KNOWLEDGE_KIT_ROOT`, `KNOWLEDGE_KIT_REVISION`, and `PYTHONPATH`). The
-relation suite remains **34 tests** and the execution/fixture suite becomes **55
-tests**, so the focused corpus is **89 tests**. All 89 pass normally and under
-Python optimization; the full non-root `fast` profile also passes before ordinary
-D0090 preparation.
+The subsequent [cleanup RED](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5849969494)
+exposed a fifth defect during the full Sonar/source audit: a missing Docker socket
+was misclassified as a missing container. Cleanup now requires the native inspect
+absence diagnostic for the exact owned reference and always inspects after removal;
+transport errors remain unknown and fail closed. Native Docker 26/29 diagnostic
+observations and all four cleanup branches are covered by the correction.
 
-Subsequent containment and evidence-identity hardening adds three more
-execution/fixture regressions. At exact head
-`d2b1a1e6c1e6a7d6cda479dd7fc1a8752c653793`, direct source count is **34
-relation tests + 58 execution/fixture tests = 92 focused tests**. The preceding
-**55 / 89** account is retained as its historical checkpoint; **92** is the
-current focused-test total before the isolated-subject import-routing repair.
+The pure relation checker still
+cannot authenticate declared hashes or classify semantic sufficiency. No general
+runtime registry or new authority mechanism is introduced.
 
-The later isolated-subject import-routing repair changes the live smoke but does
-not change unittest discovery, so exact head
-`95422b09becd8ee9edea25c14d5a24f8b564d41c` still has **34 + 58 = 92 focused
-tests**. The subsequent uncertain-create cleanup retry regression adds one
-execution/fixture test, bringing the bounded successor to **34 relation + 59
-execution/fixture = 93 focused tests**. All **93** pass normally and under
-`python -O` before ordinary exact-parent D0090 preparation.
+The corrected relation suite has 42 tests and the execution suite has 103.
+Development-container runs passed both suites; the execution suite also passed
+under optimization, with two explicit local-namespace skips. These are bounded
+checkpoint observations, not a claim that every future head was verified.
+Exact source identities for those observations are:
 
-The next snapshot-integrity successor adds three execution/fixture regressions:
-command sequences are snapshotted once before validation/materialization, empty
-directory creation is detected as subject mutation, and directory-mode changes
-are detected as subject mutation. The relation suite remains **34 tests** and the
-execution/fixture suite becomes **62 tests**, so the exact focused corpus is **96
-tests**. All **96** pass normally and under `python -O` before ordinary
-exact-parent D0090 preparation.
+| Component source | SHA-256 |
+| --- | --- |
+| `tools/vf0_contract.py` | `6bebdc75e02ed47349d289fd9a32a4901aa8b5a4892a99c1ba7bcb50b84d5261` |
+| `tools/vf0_execution.py` | `e600cc929b29ba99ddd72139accfb06550627be7e41505a003052d6ac2c6f8da` |
+| `tests/test_vf0_contract.py` | `4dbf4fdc072e1fca1b181a679ca96db880426b7e44bf0364b19c95ba77fcaf35` |
+| `tests/test_vf0_execution.py` | `3c6179a89eb74e3d9f49fc5d4a76a1dc4e7debf4030237cd14cb8dee9e2dc338` |
 
-The following exact-mode and Git-listing cleanup successor adds two more
-execution/fixture regressions: regular-file permission changes are retained at
-full mode precision, and selector-setup failure after `git ls-tree` spawn always
-terminates and reaps the owned child. The relation suite remains **34 tests** and
-the execution/fixture suite becomes **64 tests**, so the focused corpus is **98
-tests**. All **98** pass normally and under `python -O` before ordinary
-exact-parent D0090 preparation.
+Preparation receipts, final normal/optimized results, live OCI observations,
+provider checks and individual reviewer dispositions belong to the **exact-head
+review record on [PR #319](https://github.com/ktogias/gnostoa/pull/319)**. That record
+must bind the enclosing candidate/tree and this map before component convergence
+is claimed. Source changes invalidate the affected checkpoint rows; a source
+file cannot predict its own later publication or review result.
 
-The next evidence-payload snapshot successor adds one execution/fixture regression:
-caller-owned mutable bytes-like input is copied to immutable `bytes` when the
-`EvidenceFile` is constructed, so later caller/backend mutation cannot change the
-materialized bytes or the retained evidence digest. The relation suite remains **34
-tests** and the execution/fixture suite becomes **65 tests**, so the focused corpus
-is **99 tests**. All **99** pass normally and under `python -O` on the candidate
-bytes later D0090-prepared as tree
-`a5afe5d1c88040cf3ade5f0519bfcacaa2849b20` and published byte-identically as
-commit `4cf86acb854d48f458cee8173ee49e12a1aafe7d`.
+Historical executed support remains available separately: the
+[a859 candidate seal](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5847676712)
+records 40 relation plus 98 execution tests and D0090 preparation for tree
+`99463d012ebcafbb7cbb5e2d87726221cd4379c4`; the latest historical
+[live OCI result](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5847554790)
+in this source audit belongs to `c6732f652252e274d1cdc25758850fd0fb523523` / tree
+`d154f35bb4626f226b965807188aaeb6fbcc52f3`, run 36252630347. These are predecessor
+observations. Reuse requires an explicit unchanged-relevant-subject comparison;
+otherwise replay affected evidence on the reviewed successor.
 
-The later fixed-fixture OCI smoke [run 36193427786](https://github.com/ktogias/gnostoa/actions/runs/36193427786)
-uses temporary support-workflow head
-`dd48ff067d269412ee4fec23e4147de8c756c886`, but job `108263677959` explicitly
-checks out commit `4cf86acb854d48f458cee8173ee49e12a1aafe7d`, verifies tree
-`a5afe5d1c88040cf3ade5f0519bfcacaa2849b20`, and the retained result is bound to
-that exact subject. The run concluded successfully; the support-branch head is
-transport/workflow identity, not the subject under test.
+### Current component behavior reconciliation
 
-The following bounded-input/process-ownership successor batches two exact-head
-review repairs: oversized or lazy evidence input is capped at the declared limit
-plus one and rejected before subject materialization, and normal leader exit is
-observed without reaping so the owned process group is cleared before the leader
-PID can be reused. The relation suite remains **34 tests** and the
-execution/fixture suite becomes **67 tests**, so the focused corpus is **101
-tests**. All **101** pass normally and under `python -O` before ordinary
-exact-parent D0090 preparation.
+Task selectors are the linked pre-edit C1–C7 and R1–R5 records above and D0092's
+provider-neutral execution/relation contract. This map covers the private
+components. The checkpoint source identities above bind the local results; the exact-head PR
+record supplies final evidence and separate reviewer dispositions. Pending review
+grants no review-ready disposition. Tests establish the bounded
+mechanism, not authentication or semantic adequacy of a future admitted oracle.
 
-The following local-immutability review successor makes the local backend's
-claim boundary explicit: PID/user-namespace containment without a read-only
-subject mount may produce bounded local capture and equal pre/post snapshots,
-but it cannot assert that the subject stayed immutable throughout execution. A
-regression transiently forges and restores a production file and requires
-`subject_unchanged=false`; the read-only OCI backend remains capable of the true
-claim because its inspected bind mount and root filesystem are read-only. The
-relation suite remains **34 tests** and the execution/fixture suite becomes **68
-tests**, so the focused corpus is **102 tests**. The same successor removes the
-Codacy B108 scanner bait from the oversized-evidence test without changing its
-behavior.
+| ID | Required observable behavior | Canonical implementation and evidence | Execution / alignment | Executor / reviewer |
+| --- | --- | --- | --- | --- |
+| C1 | Closed, bounded normalized inputs reject ambiguous shapes and resource-bound violations | `tools/vf0_contract.py`: strict JSON and shape helpers; `tests/test_vf0_contract.py`: missing/unknown/duplicate/nonfinite/depth/size/cycle cases | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
+| C2 | Exact parent, evidence, policy and admission relation; evidence-only and final implementation subjects remain distinct without requiring future production-fix bytes before RED | `tools/vf0_contract.py`: material/request/evidence/candidate relation; exact binding, evidence-file byte/mode retention and chronology regressions | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
+| C3 | Effective-policy mode allowance, non-vacuous expected RED and truthful chronology remain separate from asserted data consistency | `_mode_relation`, `_time_relation`; mode matrix, late reconstruction, zero/skip/unrelated failure controls | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
+| C4 | Provider-neutral identities and two distinct synthetic mappings produce equivalent common results without native ID ordering | Reference/namespace relation; two-mapping and collision/opaque-attempt tests | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
+| C5 | Missing, unknown, unsupported or contradictory required acquisition guarantees reject matching relation | Guarantee and coverage evaluation; missing/contradictory/incomplete/latest-attempt tests | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
+| C6 | Unsafe/wrong-subject action links reject as mappings; missing or changed navigation does not change otherwise matching authority relation | `resolve_links`; link-mapping separation tests | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
+| C7 | Even self-consistent forged normalized data cannot authenticate, approve, prepare, publish or activate | `evaluate` fixed claim boundary; forged-data and no-effectful-import tests | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
+| R1 | Exact immutable Git subject and admitted bounded tests-only delta materialize without symlink, metadata, path or count escape; successive calls share no hidden subject | `tools/vf0_execution.py`: subject/evidence validation and materialization; real Git and bounded-input regressions | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
+| R2 | Runtime, entrypoint, resource, mount and environment contract is checked before launch; identity binds the actually used runtime | Docker image/container inspection and command construction; contract negatives and live read-only/import-routing probes | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
+| R3 | Command and effective limits bind controller-observed exit, output and termination; child bytes cannot certify RED or authority | Capture and observation construction; infrastructure/timeout/overflow/spoof/completion controls | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
+| R4 | Owned attachment/process/container resources are terminated and reconciled on every admitted failure path | Capture cleanup and known-name/container ownership removal; selector/descendant/create/remove failure controls and live timeout | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
+| R5 | Before/after bytes and exact modes are checked; immutable-during-execution claims require enforced read-only subject; no provider or receipt effect is exposed | Snapshot/manifest plus controller backend claim; mutation/custom/local-backend negatives and live OCI conformance | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 
-The next bounded review-convergence successor covers a deleted materialization
-root as a stable `SUBJECT_SNAPSHOT` rejection instead of leaking raw
-`FileNotFoundError`, and refines the live OCI isolation assertion so the actual
-subject file is required to be write-blocked at the fixed non-root identity
-(`EROFS` or `EACCES`) while independent writable probes continue to require
-strict `EROFS` for the read-only bind and root filesystem. The relation suite
-remains **34 tests** and the execution/fixture suite becomes **69 tests**, so the
-focused corpus is **103 tests**.
+Live OCI and independent review results must be rebound in the exact-head PR
+record; unit PASS alone does not close R2–R5 runtime obligations.
 
-The next bounded-input/cleanup successor caps command snapshotting at **256
-arguments** and **64 KiB UTF-8**, caps admitted evidence paths at **4 KiB UTF-8**
-and **256 components** before splitting, and removes anonymous Docker volumes on
-both initial and retry cleanup. Four new boundary regressions raise the
-execution/fixture suite to **73 tests**, for **107 focused tests** total; the
-existing rejected-extra-mount test also verifies `docker rm --force --volumes`.
+The local subprocess backend supplies bounded conformance execution only. It does
+not enforce a read-only subject or isolate the caller's host files and cannot
+establish immutable-subject or production security claims. Custom backend doubles
+have no authenticated runtime identity. OCI unit doubles prove command and cleanup
+contracts; only actual fixed-fixture OCI execution supports runtime conformance.
+Neither result admits a production evidence producer.
 
-The following exact-relation/materialization-bound successor binds the normalized
-relation candidate tree to the admitted evidence-only `evidence_tree`, and bounds
-Git-subject paths plus aggregate unique parent-directory entries before creating
-the materialization root. One relation regression and three execution regressions
-raise the relation suite to **35 tests** and the execution/fixture suite to **76
-tests**, for **111 focused tests** total. All **111** pass normally and under
-`python -O`; the full non-root `ci/verify fast` suite also passes with 1,411 tests
-and two declared skips before ordinary exact-parent D0090 preparation.
+### Remaining VF0 acceptance and integration boundary
 
-The subsequent Docker completion-state successor rejects a container that remains
-in `created` state after `docker start --attach` and refuses to overwrite an
-independent attachment/client failure with a later inspected container exit code.
-Two execution regressions raise the execution/fixture suite from **76 to 78 tests**;
-the relation suite remains **35 tests**, for **113 focused tests** total. All **113**
-pass normally and under `python -O`; the full non-root `ci/verify fast` suite passes
-with **1,413 tests** and two declared skips before ordinary exact-parent D0090
-preparation.
+The initial VF0-01–VF0-10 behavior map remains the aggregate acceptance contract.
+Component evidence can support portions of VF0-02/04/05/06, but does not close their
+production gate obligations. The current preparation entrance still lacks the
+VF0-01 prior-evidence refusal. Authenticated production acquisition (VF0-03),
+immutable authority membership (VF0-07), independent check-only consumption
+(VF0-08), ordinary preparation parity (VF0-09), and integrated bootstrap/availability/
+rollback proof (VF0-10) remain incomplete. No original row is exempted or silently
+narrowed.
 
-The later capture/output-budget convergence successor normalizes post-`Popen`
-selector failures into a stable bounded rejection and reserves private headroom
-for the trusted OCI completion trailer before reapplying the original caller
-evidence budget. Seven execution regressions raise the execution/fixture suite
-from **78 to 85 tests** while the relation suite remains **35 tests**, for **120
-focused tests** total. All **120** pass normally and under `python -O`; the full
-non-root `ci/verify fast` suite passes with **1,420 tests** and two declared skips
-before ordinary exact-parent D0090 preparation.
+The [A8 staging note](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5827762406)
+identified a possible non-authoritative component integration, explicitly subject
+to an owner decision on its exact scope and current reviews/CI. It did not approve
+that integration or declare complete VF0 ready. Component reviewer convergence
+must therefore be reported separately from D0092 aggregate acceptance and any
+protected Ready/merge, production-producer admission or activation effect.
 
-The exact-head live OCI smoke on that successor then exposed a residual overflow
-case: private trailer headroom was still returned when attachment capture had
-already terminated as `output_limit`. The bounded successor adds one regression
-and reapplies the caller-visible byte budget to every attachment outcome, not only
-completed/unwrapped captures. The focused corpus is therefore **35 relation + 86
-execution = 121 tests**, and the full non-root `fast` suite executes **1,421 tests**
-with the same two declared skips before ordinary exact-parent D0090 preparation.
-
-The subsequent final-candidate/cleanup convergence successor separates the RED
-`evidence_tree` from a production-containing final candidate by binding the latter
-to the admitted `production_sha256`, while evidence-only candidates retain the
-exact evidence tree. It also treats ambiguous nonzero Docker cleanup client
-results as unknown state and reconciles removal/absence through the existing
-bounded deadline instead of aborting immediately. Three relation regressions and
-two execution regressions raise the focused corpus to **38 relation + 88 execution
-= 126 tests**. All **126** pass normally and under `python -O`; the full non-root
-`ci/verify fast` suite passes with **1,426 tests** and two declared skips before
-ordinary exact-parent D0090 preparation.
-
-The subsequent actual-local-containment handshake successor distinguishes a
-successful preliminary namespace probe from the **actual** evidence invocation.
-The real `unshare` launch now runs a fixed controller wrapper that emits a trusted
-startup sentinel only after namespace setup and before `exec` of the evidence
-command; missing or malformed startup confirmation rejects as
-`LOCAL_CONTAINMENT_UNAVAILABLE`, and the sentinel is consumed as transport
-metadata rather than evidence output. Two execution regressions raise the
-execution/fixture suite to **90 tests** while the relation suite remains **38
-tests**, for **128 focused tests** total. All **128** pass normally and under
-`python -O`; the full non-root `ci/verify fast` suite passes with **1,428 tests**
-and two declared skips before ordinary exact-parent D0090 preparation.
-
-The next review-convergence successor binds the execution inputs that produced each
-controller-created observation and revalidates evidence objects at the execution
-boundary. The observation now carries canonical command and effective-limit
-digests plus controller-derived backend/runtime identities; the Docker runtime
-identity is the digest-pinned image selected by the backend. Exact `EvidenceFile`
-items are reconstructed before materialization so post-construction field mutation
-or duck typing cannot bypass path, mode or content validation. Four execution
-regressions raise the execution/fixture suite to **94 tests** while the relation
-suite remains **38 tests**, for **132 focused tests** total. All **132** pass
-normally and under `python -O`; ordinary exact-parent D0090 `fast` preparation is
-required before publication.
-
-The following review-convergence successor preserves exact evidence-file modes in
-the normalized relation material and final-candidate check, so a retained evidence
-file cannot silently change between executable and non-executable Git modes while
-keeping the same content digest. The execution component also stops inventing a
-runtime identity for arbitrary protocol implementations: only the exact
-controller-owned local and Docker backends emit concrete backend/runtime identities;
-custom conformance doubles remain executable but carry unbound `None` identities.
-Two relation regressions and one execution regression raise the focused corpus to
-**40 relation + 95 execution = 135 tests**. All **135** pass normally and under
-`python -O`; ordinary exact-parent D0090 `fast` preparation remains required
-before publication.
-
-The next review-convergence successor keeps the execution boundary fail-closed for
-malformed runtime limits and unavailable repository roots. Limit scalar types are
-validated before range comparisons, so nonnumeric values, booleans and wrong numeric
-categories reject through the existing bounded reason codes instead of raising raw
-Python exceptions. Repository-root discovery now translates filesystem resolution
-failures for both the supplied path and Git-reported top-level path into the stable
-`REPOSITORY_ROOT` refusal. Three execution regressions raise the focused corpus to
-**40 relation + 98 execution = 138 tests**. All **138** pass normally and under
-`python -O`; ordinary exact-parent D0090 `fast` preparation remains required before
-publication.
-
-This evidence still does **not** claim a live run of the new Docker specialization.
-`tests/vf0_execution_oci_smoke.py` is intentionally outside unittest discovery and
-must be executed after exact ordinary D0090 preparation/publication of this
-component. Its successive-subject success check requires `completed`, exit code
-`0` **and** exact expected stdout; matching bytes from a nonzero or timed-out run
-do not count. The smoke also exercises forged authority-looking output without
-replaying it as a workflow command or treating it as authority.
-
-The grouped scope is limited to `tools/vf0_execution.py`,
-`tests/test_vf0_execution.py`, `tests/vf0_execution_oci_smoke.py`, the C2 repair
-in `tools/vf0_contract.py`/`tests/test_vf0_contract.py`, this assessment, Decision
-0092 and the corresponding guardrail record. It changes no D0090 authority file,
-effective policy threshold, public CLI/schema, dependency, credential, permanent
-workflow or provider-specific common-core contract. Ordinary unchanged-parent
-D0090 preparation remains mandatory before publication; the previously approved
-bootstrap exception is unused. VF0 remains **critical and inactive** and still
-precedes #318.
+The one-time authority-evolution method remains selected and unused by ordinary
+helper-only candidates. No existing D0090 authority, effective threshold, public
+CLI/schema, dependency, credential or permanent producer workflow is changed by
+component convergence. VF0 remains critical and inactive; #318 stays dependent on
+its actual acceptance.

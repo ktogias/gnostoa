@@ -235,8 +235,8 @@ class UntrustedCapture:
 class ExecutionObservation:
     """Provider-neutral observation with conservative runtime-immutability signaling.
 
-    ``subject_unchanged`` is true only when the selected controller backend
-    declares that it enforces subject immutability throughout execution and the
+    ``subject_unchanged`` is true only for the exact built-in Docker backend,
+    which enforces subject immutability throughout execution, and when the
     before/after manifests also match. Snapshot equality alone is insufficient.
 
     Backend/runtime identities are emitted only for exact controller-owned built-in
@@ -834,8 +834,6 @@ def _probe_local_containment(root: Path) -> None:
 class SubprocessBackend:
     """Finite local backend with PID containment but no immutable subject mount."""
 
-    subject_immutable_during_execution = False
-
     def run(
         self,
         root: Path,
@@ -862,8 +860,6 @@ class SubprocessBackend:
 
 class DockerBackend:
     """Linux/amd64 OCI specialization with a read-only, network-free subject."""
-
-    subject_immutable_during_execution = True
 
     def __init__(self, image: str, docker_executable: str = "/usr/bin/docker") -> None:
         _need(_IMAGE_RE.fullmatch(image) is not None, "OCI_IMAGE_PIN")
@@ -892,7 +888,7 @@ class DockerBackend:
         _need(result.returncode == 0, "DOCKER_COMMAND_FAILED")
         return result.stdout
 
-    def _inspect_image(self) -> None:
+    def _inspect_image(self) -> str:
         try:
             spec = json.loads(self._checked("image", "inspect", self.image))
         except (json.JSONDecodeError, TypeError) as exc:
@@ -909,6 +905,17 @@ class DockerBackend:
             )
         else:
             _need(spec[0].get("Id") == self.image, "OCI_IMAGE_IDENTITY")
+        image_id = spec[0].get("Id")
+        _need(
+            isinstance(image_id, str)
+            and re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) is not None,
+            "OCI_IMAGE_IDENTITY",
+        )
+        _need(
+            spec[0].get("Os") == "linux" and spec[0].get("Architecture") == "amd64",
+            "OCI_IMAGE_PLATFORM",
+        )
+        return cast(str, image_id)
 
     def _validate_container(
         self,
@@ -917,6 +924,7 @@ class DockerBackend:
         limits: ExecutionLimits,
         cleanup_nonce: str,
         subject: GitSubject,
+        image_id: str,
     ) -> None:
         try:
             raw = json.loads(self._checked("inspect", container_id))
@@ -927,6 +935,7 @@ class DockerBackend:
             "OCI_INSPECT",
         )
         spec = raw[0]
+        _need(spec.get("Image") == image_id, "OCI_IMAGE_IDENTITY")
         host = spec.get("HostConfig", {})
         config = spec.get("Config", {})
         mounts = spec.get("Mounts", [])
@@ -981,14 +990,26 @@ class DockerBackend:
             "OCI_CONTRACT",
         )
 
+    @staticmethod
+    def _inspect_confirms_absence(
+        result: subprocess.CompletedProcess[bytes], container_ref: str
+    ) -> bool:
+        """Recognize the target-bound missing-object result of Docker inspect."""
+
+        expected = f"error: no such object: {container_ref}".encode("ascii")
+        return (
+            result.returncode != 0
+            and result.stdout.strip() in {b"", b"[]"}
+            and result.stderr.strip().lower() == expected
+        )
+
     def _cleanup_presence(self, container_id: str, cleanup_nonce: str) -> bool | None:
         try:
             inspected = self._command("inspect", container_id, timeout=15)
         except ExecutionRejected:
             return None
-        message = (inspected.stderr + b"\n" + inspected.stdout).lower()
         if inspected.returncode != 0:
-            if b"no such" in message:
+            if self._inspect_confirms_absence(inspected, container_id):
                 return False
             return None
         try:
@@ -1020,29 +1041,16 @@ class DockerBackend:
             if remaining <= 0:
                 raise ExecutionRejected("OCI_CLEANUP_UNVERIFIED")
             try:
-                retry = self._command(
-                    "rm", "--force", "--volumes", container_id, timeout=15
-                )
+                self._command("rm", "--force", "--volumes", container_id, timeout=15)
             except ExecutionRejected:
-                retry = None
-            if retry is not None and retry.returncode != 0:
-                message = (retry.stderr + b"\n" + retry.stdout).lower()
-                if b"no such" in message:
-                    return
+                pass
             time.sleep(min(_UNCERTAIN_REMOVE_POLL_SECONDS, remaining))
 
     def _remove_and_verify(self, container_id: str, cleanup_nonce: str) -> None:
         try:
-            result = self._command(
-                "rm", "--force", "--volumes", container_id, timeout=15
-            )
+            self._command("rm", "--force", "--volumes", container_id, timeout=15)
         except ExecutionRejected:
-            self._reconcile_uncertain_remove(container_id, cleanup_nonce)
-            return
-        if result.returncode != 0:
-            message = (result.stderr + b"\n" + result.stdout).lower()
-            if b"no such" in message:
-                return
+            pass
         self._reconcile_uncertain_remove(container_id, cleanup_nonce)
 
     def _cleanup_uncertain_create(
@@ -1060,7 +1068,6 @@ class DockerBackend:
                     raise ExecutionRejected("OCI_CLEANUP_UNVERIFIED")
                 time.sleep(min(_UNCERTAIN_CREATE_POLL_SECONDS, remaining))
                 continue
-            message = (inspected.stderr + b"\n" + inspected.stdout).lower()
             if inspected.returncode == 0:
                 try:
                     raw = json.loads(inspected.stdout)
@@ -1081,7 +1088,10 @@ class DockerBackend:
                 )
                 self._remove_and_verify(container_name, cleanup_nonce)
                 return
-            _need(b"no such" in message, "OCI_CLEANUP_UNVERIFIED")
+            _need(
+                self._inspect_confirms_absence(inspected, container_name),
+                "OCI_CLEANUP_UNVERIFIED",
+            )
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return
@@ -1096,11 +1106,13 @@ class DockerBackend:
         subject: GitSubject,
     ) -> UntrustedCapture:
         _validate_command(command)
-        self._inspect_image()
+        image_id = self._inspect_image()
         cleanup_nonce = uuid.uuid4().hex
         container_name = f"gnostoa-vf0-{cleanup_nonce}"
         create = [
             "create",
+            "--platform",
+            "linux/amd64",
             "--name",
             container_name,
             "--label",
@@ -1144,7 +1156,7 @@ class DockerBackend:
             "/workspace",
             "--entrypoint",
             _OCI_WRAPPER_EXECUTABLE,
-            self.image,
+            image_id,
             "-I",
             "-c",
             _OCI_WRAPPER_SOURCE,
@@ -1156,7 +1168,9 @@ class DockerBackend:
             observed_id = self._checked(*create).decode().strip().lower()
             _need(_DOCKER_ID_RE.fullmatch(observed_id) is not None, "OCI_CONTAINER_ID")
             container_id = observed_id
-            self._validate_container(container_id, root, limits, cleanup_nonce, subject)
+            self._validate_container(
+                container_id, root, limits, cleanup_nonce, subject, image_id
+            )
             capture = _capture_process(
                 [self.docker_executable, "start", "--attach", container_id],
                 cwd=None,
@@ -1381,7 +1395,5 @@ def execute(
             before_manifest_sha256=before_digest,
             after_manifest_sha256=after_digest,
             capture=capture,
-            subject_unchanged=(
-                getattr(backend, "subject_immutable_during_execution", False) is True
-            ),
+            subject_unchanged=(type(backend) is DockerBackend),
         )
