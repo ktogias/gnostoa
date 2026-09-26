@@ -1,0 +1,85 @@
+name: PR319 pre-edit RED execution boundary c6732f65
+
+on:
+  push:
+    branches:
+      - agent-support/pr319-red-boundary-c6732f65-20260926
+
+permissions:
+  contents: read
+
+jobs:
+  red:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: c6732f652252e274d1cdc25758850fd0fb523523
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Bind exact source
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "c6732f652252e274d1cdc25758850fd0fb523523"
+          test "$(git rev-parse HEAD^{tree})" = "d154f35bb4626f226b965807188aaeb6fbcc52f3"
+          test -z "$(git status --porcelain)"
+          git fsck --full
+      - name: Reproduce current-head stable-boundary gaps before edit
+        working-directory: candidate
+        run: |
+          set -euo pipefail
+          PYTHONPATH=. python - <<'PY' | tee "$RUNNER_TEMP/red.txt"
+          from pathlib import Path
+          from tools.vf0_execution import (
+              EvidenceFile, ExecutionLimits, ExecutionRejected, GitSubject,
+              SubprocessBackend, execute,
+          )
+
+          observed = {}
+
+          try:
+              ExecutionLimits(timeout_seconds="5")
+          except Exception as exc:
+              observed["string_limit_exception"] = type(exc).__name__
+          else:
+              observed["string_limit_exception"] = "NONE"
+
+          try:
+              value = ExecutionLimits(output_bytes=True)
+          except Exception as exc:
+              observed["boolean_limit"] = type(exc).__name__
+          else:
+              observed["boolean_limit"] = f"ACCEPTED:{value.output_bytes!r}"
+
+          missing = Path("/tmp/gnostoa-pr319-missing-repository")
+          try:
+              execute(
+                  missing,
+                  GitSubject("0"*40, "1"*40),
+                  [EvidenceFile("tests/e.py", b"pass\n")],
+                  ["/bin/true"],
+                  SubprocessBackend(),
+              )
+          except Exception as exc:
+              observed["missing_repository_exception"] = type(exc).__name__
+          else:
+              observed["missing_repository_exception"] = "NONE"
+
+          print(observed)
+          assert observed["string_limit_exception"] == "TypeError", observed
+          assert observed["boolean_limit"] == "ACCEPTED:True", observed
+          assert observed["missing_repository_exception"] == "FileNotFoundError", observed
+          print("EXPECTED_RED_CONFIRMED")
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr319-pre-edit-red-boundary-c6732f65
+          path: ${{ runner.temp }}/red.txt
+          if-no-files-found: error
+          retention-days: 7
