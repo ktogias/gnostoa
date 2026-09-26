@@ -1450,7 +1450,7 @@ class FakeDockerBackend(DockerBackend):
             return subprocess.CompletedProcess(
                 ["/usr/bin/docker"],
                 0,
-                stdout=b'{"Running":false,"ExitCode":17}\n',
+                stdout=b'{"Status":"exited","Running":false,"ExitCode":17}\n',
                 stderr=b"",
             )
         if args[:2] == ("rm", "--force"):
@@ -1573,6 +1573,52 @@ class VF0DockerBackendTests(unittest.TestCase):
                 ("rm", "--force", "--volumes", backend.container_id), backend.calls
             )
             self.assertIn(("inspect", backend.container_id), backend.calls)
+
+    def test_created_container_cannot_be_reported_as_completed(self) -> None:
+        class CreatedState(FakeDockerBackend):
+            def _command(
+                self, *args: str, timeout: float = 30
+            ) -> subprocess.CompletedProcess[bytes]:
+                if args[:3] == ("inspect", "--format", "{{json .State}}"):
+                    self.calls.append(tuple(args))
+                    return subprocess.CompletedProcess(
+                        ["/usr/bin/docker"],
+                        0,
+                        stdout=b'{"Status":"created","Running":false,"ExitCode":0}\n',
+                        stderr=b"",
+                    )
+                return super()._command(*args, timeout=timeout)
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td).resolve()
+            backend = CreatedState(self.image, root)
+            capture = UntrustedCapture(
+                "completed", 125, b"", b"daemon unavailable\n", 19
+            )
+            with mock.patch(
+                "tools.vf0_execution._capture_process", return_value=capture
+            ):
+                with self.assertRaisesRegex(ExecutionRejected, "OCI_EXIT_STATE"):
+                    backend.run(
+                        root, ["/bin/true"], ExecutionLimits(), subject=self.subject
+                    )
+            self.assertTrue(backend.removed)
+
+    def test_attachment_failure_cannot_be_overwritten_by_container_exit(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td).resolve()
+            backend = FakeDockerBackend(self.image, root)
+            capture = UntrustedCapture(
+                "completed", 125, b"", b"daemon unavailable\n", 19
+            )
+            with mock.patch(
+                "tools.vf0_execution._capture_process", return_value=capture
+            ):
+                with self.assertRaisesRegex(ExecutionRejected, "OCI_EXIT_STATE"):
+                    backend.run(
+                        root, ["/bin/true"], ExecutionLimits(), subject=self.subject
+                    )
+            self.assertTrue(backend.removed)
 
     def test_attachment_failure_still_removes_and_verifies_absence(self) -> None:
         with tempfile.TemporaryDirectory() as td:

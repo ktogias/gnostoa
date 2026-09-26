@@ -1060,7 +1060,9 @@ class DockerBackend:
                 except (json.JSONDecodeError, TypeError) as exc:
                     raise ExecutionRejected("OCI_EXIT_STATE") from exc
                 _need(
-                    isinstance(state, dict) and state.get("Running") is False,
+                    isinstance(state, dict)
+                    and state.get("Status") == "exited"
+                    and state.get("Running") is False,
                     "OCI_EXIT_STATE",
                 )
                 exit_code = state.get("ExitCode")
@@ -1068,6 +1070,7 @@ class DockerBackend:
                     isinstance(exit_code, int) and not isinstance(exit_code, bool),
                     "OCI_EXIT_STATE",
                 )
+                _need(capture.exit_code in {0, exit_code}, "OCI_EXIT_STATE")
                 capture = replace(capture, exit_code=exit_code)
             return capture
         finally:

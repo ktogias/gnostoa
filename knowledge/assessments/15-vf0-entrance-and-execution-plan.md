@@ -760,6 +760,15 @@ tests**, for **111 focused tests** total. All **111** pass normally and under
 `python -O`; the full non-root `ci/verify fast` suite also passes with 1,411 tests
 and two declared skips before ordinary exact-parent D0090 preparation.
 
+The subsequent Docker completion-state successor rejects a container that remains
+in `created` state after `docker start --attach` and refuses to overwrite an
+independent attachment/client failure with a later inspected container exit code.
+Two execution regressions raise the execution/fixture suite from **76 to 78 tests**;
+the relation suite remains **35 tests**, for **113 focused tests** total. All **113**
+pass normally and under `python -O`; the full non-root `ci/verify fast` suite passes
+with **1,413 tests** and two declared skips before ordinary exact-parent D0090
+preparation.
+
 This evidence still does **not** claim a live run of the new Docker specialization.
 `tests/vf0_execution_oci_smoke.py` is intentionally outside unittest discovery and
 must be executed after exact ordinary D0090 preparation/publication of this
