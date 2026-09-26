@@ -232,14 +232,18 @@ class ExecutionObservation:
     ``subject_unchanged`` is true only when the selected controller backend
     declares that it enforces subject immutability throughout execution and the
     before/after manifests also match. Snapshot equality alone is insufficient.
+
+    Backend/runtime identities are emitted only for exact controller-owned built-in
+    backends. Custom protocol implementations remain useful as conformance doubles
+    but carry ``None`` identities and cannot claim a bound execution runtime.
     """
 
     subject: GitSubject
     evidence_sha256: tuple[tuple[str, str], ...]
     command_sha256: str
     limits_sha256: str
-    backend_identity: str
-    runtime_identity: str
+    backend_identity: str | None
+    runtime_identity: str | None
     before_manifest_sha256: str
     after_manifest_sha256: str
     capture: UntrustedCapture
@@ -1258,7 +1262,9 @@ def _limits_identity(limits: ExecutionLimits) -> str:
     )
 
 
-def _backend_runtime_identities(backend: ExecutionBackend) -> tuple[str, str]:
+def _backend_runtime_identities(
+    backend: ExecutionBackend,
+) -> tuple[str | None, str | None]:
     backend_type = type(backend)
     if backend_type is SubprocessBackend:
         return (
@@ -1274,11 +1280,7 @@ def _backend_runtime_identities(backend: ExecutionBackend) -> tuple[str, str]:
     if backend_type is DockerBackend:
         docker_backend = cast(DockerBackend, backend)
         return "gnostoa-docker-oci-v1", docker_backend.image
-    class_identity = f"{backend_type.__module__}.{backend_type.__qualname__}"
-    return (
-        "gnostoa-python-backend-v1",
-        _identity_digest({"python_class": class_identity}),
-    )
+    return None, None
 
 
 def _snapshot_evidence(
