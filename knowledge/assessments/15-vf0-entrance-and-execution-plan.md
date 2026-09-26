@@ -751,6 +751,15 @@ both initial and retry cleanup. Four new boundary regressions raise the
 execution/fixture suite to **73 tests**, for **107 focused tests** total; the
 existing rejected-extra-mount test also verifies `docker rm --force --volumes`.
 
+The following exact-relation/materialization-bound successor binds the normalized
+relation candidate tree to the admitted evidence-only `evidence_tree`, and bounds
+Git-subject paths plus aggregate unique parent-directory entries before creating
+the materialization root. One relation regression and three execution regressions
+raise the relation suite to **35 tests** and the execution/fixture suite to **76
+tests**, for **111 focused tests** total. All **111** pass normally and under
+`python -O`; the full non-root `ci/verify fast` suite also passes with 1,411 tests
+and two declared skips before ordinary exact-parent D0090 preparation.
+
 This evidence still does **not** claim a live run of the new Docker specialization.
 `tests/vf0_execution_oci_smoke.py` is intentionally outside unittest discovery and
 must be executed after exact ordinary D0090 preparation/publication of this
