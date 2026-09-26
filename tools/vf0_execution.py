@@ -42,6 +42,12 @@ _MAX_COMMAND_ARGS = 256
 _MAX_COMMAND_BYTES = 64 * 1024
 _MAX_SNAPSHOT_ENTRIES = 65_536
 _LOCAL_CONTAINMENT_EXECUTABLE = "/usr/bin/unshare"
+_LOCAL_CONTAINMENT_WRAPPER_EXECUTABLE = "/bin/sh"
+_LOCAL_CONTAINMENT_READY_SENTINEL = b"\x1eGNOSTOA_LOCAL_READY_V1\x1f"
+_LOCAL_CONTAINMENT_WRAPPER_SOURCE = (
+    'printf "\\036GNOSTOA_LOCAL_READY_V1\\037" >&2; exec "$@"'
+)
+_LOCAL_CONTAINMENT_WRAPPER_ARG0 = "gnostoa-local-ready"
 _CONTAINER_TMP = "/tmp"  # nosec B108 -- isolated container tmpfs, never a host temp path
 _CONTAINER_CLEANUP_LABEL = "gnostoa.vf0.cleanup-token"
 _OCI_WRAPPER_EXECUTABLE = "/usr/local/bin/python3"
@@ -639,12 +645,15 @@ def _capture_process(
     cwd: Path | None,
     limits: ExecutionLimits,
     output_headroom_bytes: int = 0,
+    startup_sentinel: bytes | None = None,
 ) -> UntrustedCapture:
     _validate_command(argv)
     _need(
         0 <= output_headroom_bytes <= _OCI_EXIT_TRAILER_MAX,
         "OUTPUT_HEADROOM_BOUND",
     )
+    if startup_sentinel is not None:
+        _need(1 <= len(startup_sentinel) <= 256, "STARTUP_SENTINEL_BOUND")
     capture_output_bytes = limits.output_bytes + output_headroom_bytes
     try:
         # Intentional private execution primitive: validated list argv, no shell, scrubbed env.
@@ -672,6 +681,29 @@ def _capture_process(
             if process_stdout is None or process_stderr is None:
                 raise ExecutionRejected("BACKEND_PIPES")
             selector = selectors.DefaultSelector()
+            if startup_sentinel is not None:
+                selector.register(process_stderr, selectors.EVENT_READ)
+                startup = bytearray()
+                while len(startup) < len(startup_sentinel):
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise ExecutionRejected("BACKEND_STARTUP_HANDSHAKE")
+                    events = selector.select(timeout=min(0.05, remaining))
+                    if not events:
+                        continue
+                    try:
+                        chunk = os.read(
+                            process_stderr.fileno(),
+                            len(startup_sentinel) - len(startup),
+                        )
+                    except OSError as exc:
+                        raise ExecutionRejected("BACKEND_STARTUP_HANDSHAKE") from exc
+                    if not chunk:
+                        raise ExecutionRejected("BACKEND_STARTUP_HANDSHAKE")
+                    startup.extend(chunk)
+                    if not startup_sentinel.startswith(startup):
+                        raise ExecutionRejected("BACKEND_STARTUP_HANDSHAKE")
+                selector.unregister(process_stderr)
             selector.register(process_stdout, selectors.EVENT_READ, stdout)
             selector.register(process_stderr, selectors.EVENT_READ, stderr)
             while selector.get_map():
@@ -738,6 +770,17 @@ def _local_containment_argv(command: Sequence[str]) -> list[str]:
     ]
 
 
+def _local_containment_launch_argv(command: Sequence[str]) -> list[str]:
+    return [
+        *_local_containment_argv(()),
+        _LOCAL_CONTAINMENT_WRAPPER_EXECUTABLE,
+        "-c",
+        _LOCAL_CONTAINMENT_WRAPPER_SOURCE,
+        _LOCAL_CONTAINMENT_WRAPPER_ARG0,
+        *command,
+    ]
+
+
 def _probe_local_containment(root: Path) -> None:
     _need(
         Path(_LOCAL_CONTAINMENT_EXECUTABLE).is_file()
@@ -774,9 +817,17 @@ class SubprocessBackend:
         del subject
         _validate_command(command)
         _probe_local_containment(root)
-        return _capture_process(
-            _local_containment_argv(command), cwd=root, limits=limits
-        )
+        try:
+            return _capture_process(
+                _local_containment_launch_argv(command),
+                cwd=root,
+                limits=limits,
+                startup_sentinel=_LOCAL_CONTAINMENT_READY_SENTINEL,
+            )
+        except ExecutionRejected as exc:
+            if str(exc) in {"BACKEND_START_FAILED", "BACKEND_STARTUP_HANDSHAKE"}:
+                raise ExecutionRejected("LOCAL_CONTAINMENT_UNAVAILABLE") from exc
+            raise
 
 
 class DockerBackend:

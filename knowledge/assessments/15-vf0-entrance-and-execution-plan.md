@@ -797,6 +797,18 @@ two execution regressions raise the focused corpus to **38 relation + 88 executi
 `ci/verify fast` suite passes with **1,426 tests** and two declared skips before
 ordinary exact-parent D0090 preparation.
 
+The subsequent actual-local-containment handshake successor distinguishes a
+successful preliminary namespace probe from the **actual** evidence invocation.
+The real `unshare` launch now runs a fixed controller wrapper that emits a trusted
+startup sentinel only after namespace setup and before `exec` of the evidence
+command; missing or malformed startup confirmation rejects as
+`LOCAL_CONTAINMENT_UNAVAILABLE`, and the sentinel is consumed as transport
+metadata rather than evidence output. Two execution regressions raise the
+execution/fixture suite to **90 tests** while the relation suite remains **38
+tests**, for **128 focused tests** total. All **128** pass normally and under
+`python -O`; the full non-root `ci/verify fast` suite passes with **1,428 tests**
+and two declared skips before ordinary exact-parent D0090 preparation.
+
 This evidence still does **not** claim a live run of the new Docker specialization.
 `tests/vf0_execution_oci_smoke.py` is intentionally outside unittest discovery and
 must be executed after exact ordinary D0090 preparation/publication of this

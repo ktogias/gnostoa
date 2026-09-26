@@ -909,6 +909,59 @@ class VF0SubjectTests(unittest.TestCase):
                     SubprocessBackend(),
                 )
 
+    def test_actual_local_containment_launch_requires_ready_handshake(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td).resolve()
+            subject = GitSubject(commit="0" * 40, tree="1" * 40)
+            failed_launch = [sys.executable, "-I", "-c", "raise SystemExit(1)"]
+            with (
+                mock.patch.object(
+                    module, "_probe_local_containment", return_value=None
+                ),
+                mock.patch.object(
+                    module, "_local_containment_launch_argv", return_value=failed_launch
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    ExecutionRejected, "LOCAL_CONTAINMENT_UNAVAILABLE"
+                ):
+                    SubprocessBackend().run(
+                        root, ["/bin/true"], ExecutionLimits(), subject=subject
+                    )
+
+    def test_local_containment_ready_handshake_preserves_evidence_result(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        sentinel_literal = repr(module._LOCAL_CONTAINMENT_READY_SENTINEL)
+        script = (
+            "import os; "
+            f"os.write(2,{sentinel_literal}); "
+            "os.write(1,b'abc'); "
+            "raise SystemExit(1)"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td).resolve()
+            subject = GitSubject(commit="0" * 40, tree="1" * 40)
+            launch = [sys.executable, "-I", "-c", script]
+            with (
+                mock.patch.object(
+                    module, "_probe_local_containment", return_value=None
+                ),
+                mock.patch.object(
+                    module, "_local_containment_launch_argv", return_value=launch
+                ),
+            ):
+                result = SubprocessBackend().run(
+                    root,
+                    ["/bin/false"],
+                    ExecutionLimits(output_bytes=3),
+                    subject=subject,
+                )
+        self.assertEqual(("completed", 1), (result.termination, result.exit_code))
+        self.assertEqual(b"abc", result.stdout)
+        self.assertEqual(b"", result.stderr)
+        self.assertEqual(3, result.observed_bytes_at_least)
+
     def test_runtime_empty_directory_creation_is_rejected_after_observation(
         self,
     ) -> None:
