@@ -31,9 +31,11 @@ from __future__ import annotations
 import base64
 import json
 import pathlib
+import re
 import shutil
 import subprocess  # nosec B404 -- single audited boundary in _provider_json
 import sys
+import urllib.parse
 from typing import Any
 
 _GH = shutil.which("gh")
@@ -73,9 +75,26 @@ def _provider_json(endpoint: str) -> dict[str, Any] | None:
     return json.loads(completed.stdout)
 
 
-def base_endpoint(contents_url: str, base_sha: str) -> str:
-    """Rewrite a comparison's contents URL to point at the base revision."""
-    return f"{contents_url.split('?', 1)[0]}?ref={base_sha}"
+_SHA = re.compile(r"\A[0-9a-f]{40}\Z")
+# Each side must begin with an alphanumeric: a leading dash is precisely the shape
+# that would be read as a flag rather than as an endpoint.
+_REPOSITORY = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+
+
+def base_endpoint(repository: str, path: str, base_sha: str) -> str:
+    """Build the contents endpoint for ``path`` at ``base_sha``.
+
+    The endpoint is constructed from values this script was given rather than taken
+    from the comparison's own ``contents_url``: that field is provider-supplied data
+    reaching a subprocess argument, and an endpoint that begins with a dash would be
+    read as a flag. Every component is validated, and the path is percent-encoded.
+    """
+    if not _REPOSITORY.match(repository):
+        raise ValueError(f"refusing a malformed repository: {repository!r}")
+    if not _SHA.match(base_sha):
+        raise ValueError(f"refusing a non-exact base revision: {base_sha!r}")
+    encoded = urllib.parse.quote(str(safe_relative_path(path)), safe="/")
+    return f"repos/{repository}/contents/{encoded}?ref={base_sha}"
 
 
 _FILE_CAP = 300
@@ -111,7 +130,9 @@ def write_summaries(context: pathlib.Path, comparison: dict[str, Any]) -> None:
     )
 
 
-def collect(context: pathlib.Path, base_sha: str, budget: int) -> tuple[int, int]:
+def collect(
+    context: pathlib.Path, repository: str, base_sha: str, budget: int
+) -> tuple[int, int]:
     """Write base revisions under ``base/``; return files written and files skipped."""
     comparison = json.loads((context / "comparison.json").read_text(encoding="utf-8"))
     write_summaries(context, comparison)
@@ -124,7 +145,9 @@ def collect(context: pathlib.Path, base_sha: str, budget: int) -> tuple[int, int
         if entry.get("patch") is None:
             continue
         relative = safe_relative_path(str(entry["filename"]))
-        payload = _provider_json(base_endpoint(str(entry["contents_url"]), base_sha))
+        payload = _provider_json(
+            base_endpoint(repository, str(entry["filename"]), base_sha)
+        )
         if payload is None or "content" not in payload:
             skipped += 1
             continue
@@ -149,12 +172,13 @@ def collect(context: pathlib.Path, base_sha: str, budget: int) -> tuple[int, int
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 4:
+    if len(argv) != 5:
         print(
-            f"usage: {argv[0]} <context-dir> <base-sha> <budget-bytes>", file=sys.stderr
+            f"usage: {argv[0]} <context-dir> <repository> <base-sha> <budget-bytes>",
+            file=sys.stderr,
         )
         return 2
-    collect(pathlib.Path(argv[1]), argv[2], int(argv[3]))
+    collect(pathlib.Path(argv[1]), argv[2], argv[3], int(argv[4]))
     return 0
 
 

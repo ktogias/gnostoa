@@ -88,7 +88,10 @@ BASE_COLLECTOR = ROOT / ".github" / "review-context" / "build_review_context.py"
 def _load_script(path: pathlib.Path) -> Any:
     """Import a committed review-context script by path."""
     spec = importlib.util.spec_from_file_location(path.stem, path)
-    assert spec and spec.loader, path
+    if spec is None:
+        raise AssertionError(f"no import spec for {path}")
+    if spec.loader is None:
+        raise AssertionError(f"no loader for {path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -252,7 +255,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             with self.subTest(workflow=path.name):
                 workflow = load_yaml(path)
                 self.assertNotIn("permissions", workflow)
-                self.assertEqual(permissions, _single_job(workflow)["permissions"])
+                self.assertEqual(_single_job(workflow)["permissions"], permissions)
 
     def test_review_job_skips_forks_and_drafts_and_cancels_stale_runs(self) -> None:
         workflow = load_yaml(REVIEW_WORKFLOW)
@@ -564,9 +567,9 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 (context / "diff.full").write_bytes(payload)
                 written = chunker.split_diff(context, limit)
                 parts = sorted((context / "patches").glob("part-*"))
-                self.assertEqual(written, len(parts))
+                self.assertEqual(len(parts), written)
                 # Nothing lost, nothing reordered.
-                self.assertEqual(b"".join(p.read_bytes() for p in parts), payload)
+                self.assertEqual(payload, b"".join(p.read_bytes() for p in parts))
                 for part in parts:
                     self.assertLessEqual(len(part.read_bytes()), limit)
                     # Every part must stand alone as text.
@@ -589,15 +592,27 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                     collector.safe_relative_path(refused)
         self.assertEqual("src/app.py", str(collector.safe_relative_path("src/app.py")))
 
-    def test_base_collector_rewrites_the_contents_url_to_the_base(self) -> None:
+    def test_base_endpoint_is_built_from_validated_values(self) -> None:
+        # The comparison's own contents_url is provider-supplied data reaching a
+        # subprocess argument, and an endpoint beginning with a dash would be read as
+        # a flag. The endpoint is therefore constructed and every part validated.
         collector = _load_script(BASE_COLLECTOR)
         self.assertEqual(
-            "https://api.github.com/repos/o/r/contents/a.py?ref=" + "b" * 40,
-            collector.base_endpoint(
-                "https://api.github.com/repos/o/r/contents/a.py?ref=" + "h" * 40,
-                "b" * 40,
-            ),
+            "repos/o/r/contents/src/a%20b.py?ref=" + "b" * 40,
+            collector.base_endpoint("o/r", "src/a b.py", "b" * 40),
         )
+        for repository, path, sha in (
+            ("-o/r", "a.py", "b" * 40),
+            ("o/-r", "a.py", "b" * 40),
+            ("o", "a.py", "b" * 40),
+            ("o/r", "a.py", "short"),
+            ("o/r", "a.py", "B" * 40),
+            ("o/r", "/etc/passwd", "b" * 40),
+            ("o/r", "../outside", "b" * 40),
+        ):
+            with self.subTest(repository=repository, path=path, sha=sha):
+                with self.assertRaises(ValueError):
+                    collector.base_endpoint(repository, path, sha)
 
     def test_base_collector_writes_bounded_exact_base_content(self) -> None:
         # Behavioural: the exact pre-change bytes must land as regular files, the
@@ -616,7 +631,6 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                                 "deletions": 1,
                                 "sha": "1" * 40,
                                 "patch": "@@",
-                                "contents_url": "https://api/x/src/kept.py?ref=head",
                             },
                             {
                                 "filename": "src/added.py",
@@ -625,7 +639,6 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                                 "deletions": 0,
                                 "sha": "2" * 40,
                                 "patch": "@@",
-                                "contents_url": "https://api/x/src/added.py?ref=head",
                             },
                             {
                                 "filename": "big.bin",
@@ -634,7 +647,6 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                                 "deletions": 0,
                                 "sha": "3" * 40,
                                 "patch": "@@",
-                                "contents_url": "https://api/x/big.bin?ref=head",
                             },
                             {
                                 "filename": "asset.png",
@@ -643,7 +655,6 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                                 "deletions": 0,
                                 "sha": "4" * 40,
                                 "patch": None,
-                                "contents_url": "https://api/x/asset.png?ref=head",
                             },
                         ]
                     }
@@ -651,12 +662,12 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 encoding="utf-8",
             )
             payloads = {
-                "https://api/x/src/kept.py?ref=" + "b" * 40: {
+                "repos/o/r/contents/src/kept.py?ref=" + "b" * 40: {
                     "content": base64.b64encode(b"before\n").decode()
                 },
                 # The candidate added this one, so the base has no revision of it.
-                "https://api/x/src/added.py?ref=" + "b" * 40: None,
-                "https://api/x/big.bin?ref=" + "b" * 40: {
+                "repos/o/r/contents/src/added.py?ref=" + "b" * 40: None,
+                "repos/o/r/contents/big.bin?ref=" + "b" * 40: {
                     "content": base64.b64encode(b"x" * 4096).decode()
                 },
             }
@@ -667,9 +678,9 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 return payloads[endpoint]
 
             collector._provider_json = fake
-            written, skipped = collector.collect(context, "b" * 40, 64)
+            written, skipped = collector.collect(context, "o/r", "b" * 40, 64)
             # asset.png has no patch, so it is never asked for at all.
-            self.assertNotIn("https://api/x/asset.png?ref=" + "b" * 40, asked)
+            self.assertNotIn("repos/o/r/contents/asset.png?ref=" + "b" * 40, asked)
             self.assertEqual(1, written)
             self.assertEqual(2, skipped, asked)
             self.assertEqual(
@@ -905,7 +916,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                         "STUB_DIR": str(stub_dir),
                     },
                 )
-                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(0, result.returncode, result.stderr)
 
             context = work / "context"
             collect(context, big)
@@ -974,7 +985,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         path = ROOT / "knowledge" / "decisions" / "0094-bound-claude-review-context.md"
         decision = " ".join(path.read_text(encoding="utf-8").split())
         superseded = decision.split("**superseded:**", 1)
-        self.assertEqual(len(superseded), 2, "no superseded clause found")
+        self.assertEqual(2, len(superseded), "no superseded clause found")
         clause = superseded[1].split("**retained:**", 1)[0]
         for tool in granted.group(1).split(","):
             with self.subTest(tool=tool):

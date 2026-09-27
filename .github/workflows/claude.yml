@@ -192,7 +192,7 @@ jobs:
           # candidate never saw. Keeping this in Python also spares the step an
           # external jq.
           python3 .github/review-context/build_review_context.py \
-            "${CONTEXT_DIR}" "${BASE_SHA}" "${MAX_BYTES}"
+            "${CONTEXT_DIR}" "${REPOSITORY}" "${BASE_SHA}" "${MAX_BYTES}"
 
           gh api "${comparison}" -H "Accept: application/vnd.github.v3.diff" \
             > "${CONTEXT_DIR}/diff.full"

@@ -203,7 +203,13 @@ No new dependency, service or runtime is introduced.
    no mode, symlink or directory entry from either side reaches the runner. Names are
    validated before use, and anything absolute, empty, traversing or containing a
    backslash or NUL is refused rather than sanitised, because a name that should not
-   occur is a reason to stop. The collection is bounded by the same byte budget, and
+   occur is a reason to stop. The endpoint each file is fetched from is **constructed**
+   from the repository, the validated path and the exact base SHA rather than taken
+   from the comparison's own `contents_url`: that field is provider-supplied data
+   reaching a subprocess argument, and an endpoint beginning with a dash would be read
+   as a flag rather than an endpoint. The repository must match `owner/name` with each
+   side starting alphanumeric, the revision must be an exact 40-character lowercase
+   hex SHA, and the path is percent-encoded. The collection is bounded by the same byte budget, and
    a file that is absent -- added by the candidate, or over the budget -- is recorded
    as such in `base/README` rather than left to look like an empty file.
 
