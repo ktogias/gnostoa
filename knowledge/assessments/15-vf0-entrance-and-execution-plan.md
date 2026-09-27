@@ -5,7 +5,7 @@ description: Exact-main missing-pre-evidence reproduction, evolving component ev
 status: draft
 generated:
   by: agent:chatgpt
-  at: "2026-09-27T06:14:33Z"
+  at: "2026-09-27T07:23:15Z"
 sources:
   - id: owner-scope
     resource: https://github.com/ktogias/gnostoa/issues/15#issuecomment-5803831361
@@ -884,6 +884,59 @@ AUD14 or AUD15. These local observations still require exact-candidate
 preparation, provider checks and individual reviewer dispositions in the
 exact-head PR seal; they do not close aggregate VF0 acceptance.
 
+### AUD16 Git transport compatibility correction
+
+The exact-head [Gitar finding](https://github.com/ktogias/gnostoa/pull/319#discussion_r4114414834)
+identified a conditional R1 gap: trusted object reads use
+`GIT_NO_LAZY_FETCH=1`, but a Git build that does not implement that variable can
+still try a promisor fetch and execute the repository-local `core.sshCommand`
+before the isolation boundary. Its proposed fixed `2.44` version threshold is
+not reliable: upstream v2.44.0 omits the variable, v2.45.0 implements it, and
+older maintained releases include distribution backports. See the versioned
+[2.44 docs](https://git-scm.com/docs/git/2.44.0), [2.45 docs](https://git-scm.com/docs/git/2.45.0),
+[v2.45.0 implementation](https://github.com/git/git/blob/v2.45.0/environment.c#L211-L212)
+and [v2.39.4 backport](https://github.com/git/git/blob/v2.39.4/promisor-remote.c#L24).
+This repair therefore does not impose or infer a minimum Git version.
+
+The [AUD16 pre-edit checkpoint](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5853755289)
+bound the exact prior subject to PR head
+`280e9af307a8bed76f53ccf5aaf81178b6d16124`, tree
+`e8695fdd6785c836e77f69b7831af220878e8954`, parent
+`e73bd016a8c1248fa742b6de3d3d064b699e5912`, and
+`tools/vf0_execution.py` SHA-256
+`bf42d83cc5183a62b6ee6e724a60c92828eab4627813ca6e44328fa111dd6734`.
+The behavior-map objective remains R1: missing local subject objects must be
+rejected without launching configured remote commands. The focused control ran
+on Git 2.39.5 with the exact current module and test. The existing regression
+passed with the current environment; when only `GIT_NO_LAZY_FETCH` was removed
+from `_GIT_ENV`, it failed because the configured SSH marker ran. Adding an empty
+`GIT_ALLOW_PROTOCOL` value made that same test pass with no marker. This
+capability-absence simulation does not claim an unpatched older Git binary was
+executed. Result JSON SHA-256 is
+`b45370b5e08f012bcce3b8d1aa8e3853d383f790c8b3c59b1221a0348ee320f2`; the
+reproducer SHA-256 is
+`3591c4c2d6eede1d749dc9d6c3d2bbcd75bbd6336c2a75b85e0623ccf8517cc3`.
+
+The implementation reuses Git's existing `GIT_ALLOW_PROTOCOL` allowlist, which
+is documented in [Git 2.15.4](https://git-scm.com/docs/git/2.15.4) and remains
+documented in [Git 2.43](https://git-scm.com/docs/git/2.43.0). Setting the value
+to the empty list denies every transport and overrides repository protocol
+configuration. The regression explicitly sets repository-local
+`protocol.ssh.allow=always`, removes `GIT_NO_LAZY_FETCH` from the tested child
+environment, and requires a stable `GIT_COMMAND_FAILED` refusal with no SSH
+marker. This preserves local object reads and prevents a missing object from
+crossing into a remote helper on builds where the no-lazy-fetch guard is absent.
+No dependency, public contract, policy, authority, producer admission, activation
+or broader platform requirement is added. The unrelated finite R4 late-create
+limit remains partial and unchanged.
+
+Codacy's four current annotations were independently checked as inert test
+fixtures/result constructors. The 63 open SonarCloud code smells were separately
+reviewed, including 50 targeted exception-test controls and runtime controls for
+three type warnings; none substantiated another behavior/security repair. Their
+dispositions are retained separately from the R1 correction, rather than used
+to justify broad test refactoring.
+
 ### Current component behavior reconciliation
 
 Task selectors are the linked pre-edit C1–C7 and R1–R5 records above and D0092's
@@ -904,7 +957,7 @@ admitted oracle.
 | C5 | Missing, unknown, unsupported or contradictory required acquisition guarantees reject matching relation | Guarantee and coverage evaluation; missing/contradictory/incomplete/latest-attempt tests | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | C6 | Unsafe/wrong-subject action links reject as mappings; missing or changed navigation does not change otherwise matching authority relation | `resolve_links`; link-mapping separation tests | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | C7 | Even self-consistent forged normalized data cannot authenticate, approve, prepare, publish or activate | `evaluate` fixed claim boundary; forged-data and no-effectful-import tests | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
-| R1 | Exact immutable Git subject and admitted bounded tests-only delta materialize without symlink, metadata, path or count escape; successive calls share no hidden subject | `tools/vf0_execution.py`: stable Git identity; descriptor-relative `O_NOFOLLOW` traversal and opened/current inode revalidation; case-folded `.git` rejection; `GIT_NO_LAZY_FETCH=1` for trusted Git reads; scans close before descent; individual/aggregate path bytes, depth, entry, file and total-byte limits; no-read oversized-file refusal; real Git and adversarial swap/bound regressions | Local fixture PASS / bounded SUPPORTS on the prepared component tree | Exact-head independent review pending |
+| R1 | Exact immutable Git subject and admitted bounded tests-only delta materialize without symlink, metadata, path or count escape; successive calls share no hidden subject | `tools/vf0_execution.py`: stable Git identity; descriptor-relative `O_NOFOLLOW` traversal and opened/current inode revalidation; case-folded `.git` rejection; `GIT_NO_LAZY_FETCH=1` plus empty `GIT_ALLOW_PROTOCOL` allowlist for trusted Git reads; scans close before descent; individual/aggregate path bytes, depth, entry, file and total-byte limits; no-read oversized-file refusal; real Git and adversarial swap/bound regressions | Local fixture PASS / bounded SUPPORTS on the prepared component tree | Exact-head independent review pending |
 | R2 | Runtime, entrypoint, resource, mount and environment contract is checked before launch; identity binds the actually used runtime | Immutable backend configuration and Docker inspection compare resolved `Path`/`Args`, configured entrypoint/command/workdir/tmpfs, image, mount and resources before attachment; effective environment must equal inspected image values plus the five fixed controller overrides, with malformed/duplicate keys refused; injected-variable negative | Local fixture PASS / bounded SUPPORTS on the prepared component tree | Exact-head independent review pending |
 | R3 | Command and effective limits bind controller-observed exit, output and termination; child bytes cannot certify RED or authority | Snapshot command bounds including NUL rejection, capture and observation construction; infrastructure/timeout/overflow/spoof/completion controls; engine `OOMKilled=false` required before accepting the wrapper trailer | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | R4 | Owned attachment/process/container resources are terminated and reconciled on every admitted failure path | Capture cleanup and known-name/container ownership removal, also reused by the read-only smoke probe; successful `--rm` completion takes one exact absence read-back, while failed/uncertain creation retains bounded reconciliation; selector/descendant/create/remove and interruption controls plus live timeout | Local fixture PASS / partial SUPPORTS; an object appearing after the finite settlement window remains unproved | Supported for exercised cases / pending exact-head review |

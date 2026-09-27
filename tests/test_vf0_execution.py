@@ -440,6 +440,7 @@ class VF0SubjectTests(unittest.TestCase):
             _git(repo, "config", "extensions.partialClone", "origin")
             _git(repo, "config", "remote.origin.promisor", "true")
             _git(repo, "config", "remote.origin.url", "ssh://git@promisor.invalid/repo")
+            _git(repo, "config", "protocol.ssh.allow", "always")
             _git(
                 repo,
                 "config",
@@ -447,8 +448,12 @@ class VF0SubjectTests(unittest.TestCase):
                 "/bin/sh " + shlex.quote(str(ssh_command)),
             )
 
-            with self.assertRaisesRegex(ExecutionRejected, "GIT_COMMAND_FAILED"):
-                module._write_git_blob(repo, blob, root / "materialized", 14)
+            compatible_git_env = dict(module._GIT_ENV)
+            compatible_git_env.pop("GIT_NO_LAZY_FETCH", None)
+            self.assertEqual(compatible_git_env.get("GIT_ALLOW_PROTOCOL"), "")
+            with mock.patch.object(module, "_GIT_ENV", compatible_git_env):
+                with self.assertRaisesRegex(ExecutionRejected, "GIT_COMMAND_FAILED"):
+                    module._write_git_blob(repo, blob, root / "materialized", 14)
 
             self.assertFalse(marker.exists())
 

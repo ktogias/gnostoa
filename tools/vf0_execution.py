@@ -89,7 +89,12 @@ _CLEAN_ENV = {
     "PYTHONDONTWRITEBYTECODE": "1",
     "PYTHONNOUSERSITE": "1",
 }
-_GIT_ENV = {**_CLEAN_ENV, "GIT_NO_LAZY_FETCH": "1"}
+_GIT_ENV = {
+    **_CLEAN_ENV,
+    "GIT_NO_LAZY_FETCH": "1",
+    # Deny promisor transports even when the installed Git ignores the flag above.
+    "GIT_ALLOW_PROTOCOL": "",
+}
 
 
 class ExecutionRejected(RuntimeError):
