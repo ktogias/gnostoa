@@ -33,6 +33,7 @@ _BOUNDED_PROMPT_SOURCES = frozenset(
         "github.event.pull_request.body",
         "github.event.comment.body",
         "github.event.issue.body",
+        "github.event.review.body",
         "github.event.issue.title",
     }
 )
@@ -211,9 +212,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
     def test_mention_prompt_interpolates_only_bounded_sources(self) -> None:
         workflow = load_yaml(MENTION_WORKFLOW)
         prompt = _claude_step(workflow)["with"]["prompt"]
-        used = {
-            match.group(1).strip() for match in _PROMPT_EXPRESSION.finditer(prompt)
-        }
+        used = {match.group(1).strip() for match in _PROMPT_EXPRESSION.finditer(prompt)}
         unbounded = used - _BOUNDED_PROMPT_SOURCES
         self.assertEqual(
             set(),

@@ -681,6 +681,7 @@ guardrails:
       - knowledge/assessments/0082-secret-scan-triage-evidence.json
       - knowledge/decisions/0082-eliminate-host-persistence-for-protected-review-payloads-and-route-security-gates.md
       - knowledge/decisions/0093-harden-claude-code-github-actions-workflows.md
+      - knowledge/decisions/0094-bound-claude-review-context.md
       - tools/extended_route.py
       - tools/security_scan.py
     tests:

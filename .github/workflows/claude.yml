@@ -49,3 +49,36 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           additional_permissions: |
             actions: read
+          # Decision 0094: supplying `prompt` selects agent mode, which fetches no
+          # GitHub data. Tag mode instead retrieves every comment and review with
+          # no cap, which exhausted the request on a large Pull Request. Every
+          # interpolation below is independent of discussion length.
+          display_report: true
+          prompt: |
+            Read-only review of a Gnostoa Pull Request. You have no pre-loaded
+            discussion history; gather only what the request needs.
+
+            Repository: ${{ github.repository }}
+            Item: #${{ github.event.issue.number }}
+
+            Start with AGENTS.md and follow the route it names for the area under
+            review. Use your own tools for context:
+              git log --oneline origin/main..HEAD
+              git diff origin/main...HEAD --stat
+              git diff origin/main...HEAD -- <path>
+            and Read or Grep for the current state of any file.
+
+            You cannot see the discussion. If a point may already be dispositioned,
+            raise it as a question rather than an assertion.
+
+            Report correctness and security findings with file:line and a concrete
+            failure scenario for each. State plainly what you did not examine. You
+            supply no approval, merge authority or reviewer qualification, and a
+            green check is not semantic acceptance.
+
+            --- maintained current state ---
+            ${{ github.event.issue.body }}
+
+            --- request ---
+            ${{ github.event.comment.body }}
+            ${{ github.event.review.body }}
