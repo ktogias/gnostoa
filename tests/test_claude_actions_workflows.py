@@ -127,12 +127,12 @@ def _checkouts(workflow: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def _candidate_checkout(workflow: dict[str, Any]) -> dict[str, Any]:
-    """Return the checkout that materialises the reviewed candidate."""
-    for step in _checkouts(workflow):
-        if str(step.get("with", {}).get("path", "")):
-            return step
-    raise AssertionError("no checkout places the candidate in a subdirectory")
+def _base_checkout(workflow: dict[str, Any]) -> dict[str, Any]:
+    """Return the single checkout the mention job performs."""
+    checkouts = _checkouts(workflow)
+    if len(checkouts) != 1:
+        raise AssertionError(f"expected exactly one checkout, found {len(checkouts)}")
+    return checkouts[0]
 
 
 def _named_step(workflow: dict[str, Any], name: str) -> dict[str, Any]:
@@ -352,19 +352,23 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # default checkout lands on the default branch, so an unbound ref would
         # make the reviewer diff main against itself and report nothing.
         workflow = load_yaml(MENTION_WORKFLOW)
-        checkout = _candidate_checkout(workflow)
+        checkout = _base_checkout(workflow)
         ref = " ".join(str(checkout["with"]["ref"]).split())
-        # Superseded by the same-repository guard: the head is resolved with the
-        # read-only token rather than taken from the event payload, so the
-        # assertion is on the binding, not on a particular payload field.
-        self.assertIn("steps.review_head.outputs.head_sha", ref)
+        # Superseded twice. The head is resolved with the read-only token rather
+        # than taken from the event payload, and the head is no longer checked out at
+        # all -- the reviewed change reaches the reviewer as trusted artefacts. What
+        # must still hold is that the checkout is bound to a resolved identity rather
+        # than left to follow github.ref, which on the review triggers is the merge
+        # ref of the candidate.
+        self.assertIn("steps.review_head.outputs.base_sha", ref)
         resolve = next(
             step for step in _steps(workflow) if step.get("id") == "review_head"
         )
         run = str(resolve["run"])
         self.assertIn("PULL_NUMBER", run)
         self.assertIn("GITHUB_OUTPUT", run)
-        self.assertEqual(0, str(checkout["with"]["fetch-depth"]).count("1"))
+        # The resolved head is still what the change is described against.
+        self.assertIn("HEAD_SHA", str(_context_step(workflow)["env"]))
 
     def test_mention_prompt_covers_every_admitted_trigger_payload(self) -> None:
         # issue_comment carries github.event.issue.*; the review triggers carry
@@ -401,8 +405,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertTrue(
             guard, "mention job needs an explicit same-repository head guard"
         )
-        checkout = str(_candidate_checkout(workflow)["with"]["ref"])
-        ref = checkout
+        ref = str(_base_checkout(workflow)["with"]["ref"])
         # The ref must come from the guarded resolution, not straight from the
         # untrusted event payload.
         self.assertIn("steps.review_head.outputs", ref)
@@ -439,31 +442,42 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertIn("--allowedTools", args)
         self.assertNotIn("Bash", args)
 
-    def test_candidate_is_not_checked_out_at_the_workspace_root(self) -> None:
-        # docs/security.md of the pinned action: do not check out an untrusted ref
-        # into the workspace root before this action, because the action and the
-        # reviewer run with the root as their working directory. The documented
-        # pattern is the base at the root and the head in a subdirectory behind
-        # --add-dir, which also means the entry route the prompt names is the
-        # repository's own rather than one the candidate rewrote.
+    def test_no_candidate_tree_is_materialised(self) -> None:
+        # CodeQL flags the shape, not its placement: a credential-bearing workflow
+        # that materialises a contributor-controlled tree. Hardening inside that
+        # shape cannot remove it, so the shape is gone -- only the base is checked
+        # out, and the change arrives as artefacts built from the provider's
+        # comparison. No candidate file, mode or symlink reaches this filesystem.
         workflow = load_yaml(MENTION_WORKFLOW)
-        checkouts = _checkouts(workflow)
-        self.assertGreaterEqual(len(checkouts), 2, checkouts)
-        base, candidate = checkouts[0], _candidate_checkout(workflow)
-        self.assertIsNot(base, candidate)
-        # An earlier version of this test asserted `ref` was *absent* here, which
-        # pinned a defect rather than a contract: a bare checkout follows github.ref,
-        # and on the two review triggers that is refs/pull/N/merge -- the candidate
-        # merged into its base. The root must be bound to the resolved base instead.
+        base = _base_checkout(workflow)
         self.assertIn("steps.review_head.outputs.base_sha", str(base["with"]["ref"]))
         self.assertNotIn("path", base.get("with", {}))
-        self.assertEqual("candidate", str(candidate["with"]["path"]))
+        text = MENTION_WORKFLOW.read_text(encoding="utf-8")
+        # The head may still be named in the prompt and in the collection step; what
+        # must not happen is a checkout of it.
+        for checkout in _checkouts(workflow):
+            with self.subTest(checkout=str(checkout.get("name", ""))):
+                self.assertNotIn("outputs.head_sha", str(checkout.get("with", "")))
         args = str(_claude_step(workflow)["with"].get("claude_args", ""))
-        self.assertIn("--add-dir candidate", " ".join(args.split()))
-        for step_name in ("Reject candidate symlinks", "Collect review context"):
-            with self.subTest(step=step_name):
-                step = _named_step(workflow, step_name)
-                self.assertEqual("candidate", str(step["working-directory"]))
+        self.assertNotIn("--add-dir", args)
+        # No local materialisation of the head by any other means either.
+        for forbidden in ("git archive", "git fetch", "git checkout", "git worktree"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, text)
+
+    def test_context_is_built_from_the_provider_comparison(self) -> None:
+        # The two revisions must come from the trusted resolver, never the payload,
+        # and the retrieval must not reach a candidate working tree.
+        step = _context_step(load_yaml(MENTION_WORKFLOW))
+        script = str(step["run"])
+        self.assertIn("compare/${BASE_SHA}...${HEAD_SHA}", script)
+        self.assertIn("application/vnd.github.v3.diff", script)
+        self.assertNotIn("working-directory", step)
+        env = {key: str(value) for key, value in step["env"].items()}
+        self.assertIn("github.token", env["GH_TOKEN"])
+        for value in env.values():
+            with self.subTest(value=value):
+                self.assertNotIn("github.event.", value)
 
     def test_reviewed_commit_is_gated_on_the_submitted_review_event(self) -> None:
         # A pull_request_review_comment payload can also carry a review object, and
@@ -483,77 +497,6 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertNotIn("split -b", script)
         self.assertNotIn("head -c", script)
 
-    def test_candidate_symlinks_are_rejected_before_review(self) -> None:
-        # The prompt tells a credential-bearing agent to read candidate-controlled
-        # paths, and Read follows a symlink to its target before the report is
-        # published to a public step summary. The fork guard does not help: a
-        # same-repository branch can carry the symlink. The repository's own
-        # bounded-candidate contract rejects symlinks for the same reason.
-        if _GIT is None or _SH is None:  # pragma: no cover - toolchain guard
-            self.skipTest("git and sh are required to execute the guard")
-        workflow = load_yaml(MENTION_WORKFLOW)
-        step = _named_step(workflow, "Reject candidate symlinks")
-        script = str(step["run"])
-        steps = _steps(workflow)
-        names = [str(each.get("name", "")) for each in steps]
-        self.assertLess(
-            names.index("Reject candidate symlinks"),
-            next(
-                index
-                for index, each in enumerate(steps)
-                if "claude-code-action" in str(each.get("uses", ""))
-            ),
-            "the guard must run before the reviewer does",
-        )
-
-        with tempfile.TemporaryDirectory() as scratch:
-            work = pathlib.Path(scratch)
-
-            def build(name: str, with_symlink: bool) -> pathlib.Path:
-                repo = work / name
-                repo.mkdir()
-                env = {**os.environ, "HOME": scratch}
-                for argv in (
-                    ("init", "-q", "."),
-                    ("config", "user.email", "test@example.invalid"),
-                    ("config", "user.name", "test"),
-                ):
-                    subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
-                        [str(_GIT), *argv], cwd=repo, check=True, capture_output=True
-                    )
-                (repo / "README.md").write_text("real\n", encoding="utf-8")
-                if with_symlink:
-                    (repo / "AGENTS.md").symlink_to("/etc/hostname")
-                else:
-                    (repo / "AGENTS.md").write_text("real\n", encoding="utf-8")
-                subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
-                    [str(_GIT), "add", "-A"], cwd=repo, check=True, capture_output=True
-                )
-                subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
-                    [str(_GIT), "commit", "-q", "-m", "c"],
-                    cwd=repo,
-                    check=True,
-                    capture_output=True,
-                    env=env,
-                )
-                return repo
-
-            def guard(repo: pathlib.Path) -> subprocess.CompletedProcess[str]:
-                return subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
-                    [str(_SH), "-s"],
-                    input=script,
-                    cwd=repo,
-                    capture_output=True,
-                    text=True,
-                    env={**os.environ, "HOME": scratch},
-                )
-
-            clean = guard(build("clean", with_symlink=False))
-            self.assertEqual(clean.returncode, 0, clean.stderr)
-            tainted = guard(build("tainted", with_symlink=True))
-            self.assertNotEqual(tainted.returncode, 0, tainted.stdout)
-            self.assertIn("AGENTS.md", tainted.stderr + tainted.stdout)
-
     def test_review_context_is_collected_with_fixed_arguments(self) -> None:
         # The retrieval must take no candidate-controlled input, or the trusted
         # step becomes the injection surface the grant used to be.
@@ -570,63 +513,68 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 self.assertNotIn("github.event", value)
 
     def test_collected_review_context_is_bounded_and_complete(self) -> None:
-        # Behavioural: the step is executed, so the artefacts the prompt names must
-        # actually appear and the bound must actually apply.
-        if _GIT is None or _SH is None:  # pragma: no cover - toolchain guard
-            self.skipTest("git and sh are required to execute the collection step")
+        # Behavioural: the step is executed against a stubbed provider, so the
+        # artefacts the prompt names must actually appear, the bound must actually
+        # apply, and no region of the diff may become unreachable.
+        if _SH is None:  # pragma: no cover - toolchain guard
+            self.skipTest("sh is required to execute the collection step")
         script = str(_context_step(load_yaml(MENTION_WORKFLOW))["run"])
         with tempfile.TemporaryDirectory() as scratch:
             work = pathlib.Path(scratch)
-            repo = work / "repo"
-            repo.mkdir()
-            base_env = {**os.environ, "HOME": scratch}
+            stub_dir = work / "bin"
+            stub_dir.mkdir()
+            stub = stub_dir / "gh"
+            stub.write_text(
+                "#!/bin/sh\n"
+                'for a in "$@"; do\n'
+                '  case "$a" in *v3.diff*) cat "${FIXTURE_DIFF}"; exit 0;; esac\n'
+                "done\n"
+                'case "$*" in\n'
+                "  *files*) printf 'M +4000 -1 f.txt\\n' ;;\n"
+                "  *commits*) printf 'abcdef123 second\\n' ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            stub.chmod(0o755)
 
-            def git(*argv: str) -> str:
-                return subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
-                    [str(_GIT), *argv],
-                    cwd=repo,
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                    env=base_env,
-                ).stdout.strip()
+            big = work / "big.diff"
+            big.write_text(
+                "diff --git a/f.txt b/f.txt\n"
+                + "".join(f"+line {n}\n" for n in range(4000)),
+                encoding="utf-8",
+            )
+            empty = work / "empty.diff"
+            empty.write_text("", encoding="utf-8")
 
             def collect(
-                base: str, head: str, target: pathlib.Path, pull: str = "327"
+                target: pathlib.Path,
+                fixture: pathlib.Path,
+                pull: str = "327",
             ) -> None:
                 result = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
                     [str(_SH), "-s"],
                     input=script,
-                    cwd=repo,
+                    cwd=work,
                     capture_output=True,
                     text=True,
                     env={
-                        **base_env,
+                        **os.environ,
+                        "HOME": scratch,
+                        "PATH": f"{stub_dir}{os.pathsep}{os.environ['PATH']}",
+                        "GH_TOKEN": "stub",
+                        "REPOSITORY": "owner/repo",
                         "PULL_NUMBER": pull,
-                        "BASE_SHA": base,
-                        "HEAD_SHA": head,
+                        "BASE_SHA": "a" * 40,
+                        "HEAD_SHA": "b" * 40,
                         "CONTEXT_DIR": str(target),
                         "MAX_BYTES": "2048",
+                        "FIXTURE_DIFF": str(fixture),
                     },
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
 
-            git("init", "-q", ".")
-            git("config", "user.email", "test@example.invalid")
-            git("config", "user.name", "test")
-            (repo / "f.txt").write_text("base\n", encoding="utf-8")
-            git("add", "-A")
-            git("commit", "-q", "-m", "base")
-            base_sha = git("rev-parse", "HEAD")
-            (repo / "f.txt").write_text(
-                "".join(f"line {n}\n" for n in range(4000)), encoding="utf-8"
-            )
-            git("add", "-A")
-            git("commit", "-q", "-m", "second")
-            head_sha = git("rev-parse", "HEAD")
-
             context = work / "context"
-            collect(base_sha, head_sha, context)
+            collect(context, big)
             for name in ("diff.stat", "commits.log", "diff.patch"):
                 with self.subTest(artefact=name):
                     self.assertTrue((context / name).is_file(), name)
@@ -636,24 +584,17 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             self.assertIn("bounded", patch)
             self.assertLess(len(patch.encode("utf-8")), 2048 + 256)
 
-            # Nothing past the cutoff may be unreachable: the reviewer has no git,
-            # so a deletion beyond it could not be recovered any other way.
+            # Nothing past the cutoff may be unreachable: the reviewer has no git and
+            # no candidate tree, so a deletion beyond it exists nowhere else.
             parts = sorted((context / "patches").glob("part-*"))
             self.assertTrue(parts, "no diff parts were written")
-            rejoined = b"".join(part.read_bytes() for part in parts)
-            expected = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
-                [str(_GIT), "diff", f"{base_sha}...{head_sha}"],
-                cwd=repo,
-                check=True,
-                capture_output=True,
-                env=base_env,
-            ).stdout
-            self.assertEqual(rejoined, expected)
+            self.assertEqual(
+                b"".join(part.read_bytes() for part in parts), big.read_bytes()
+            )
 
             # An emptied Pull Request still gets every artefact the prompt names.
-            # Item type is keyed on the pull number, never on head/base equality.
             empty_context = work / "empty-context"
-            collect(head_sha, head_sha, empty_context)
+            collect(empty_context, empty)
             self.assertFalse((empty_context / "README").exists())
             for name in ("diff.stat", "commits.log", "diff.patch"):
                 with self.subTest(emptied=name):
@@ -665,7 +606,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
 
             # With no pull number the request is an issue, and says so.
             issue_context = work / "issue-context"
-            collect(base_sha, head_sha, issue_context, pull="")
+            collect(issue_context, big, pull="")
             self.assertFalse((issue_context / "diff.patch").exists())
             self.assertIn(
                 "No Pull Request",

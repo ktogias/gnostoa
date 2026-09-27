@@ -128,14 +128,15 @@ No new dependency, service or runtime is introduced.
    carries dispositions without carrying the transcript.
 7. Because the reviewer no longer receives the discussion, the prompt instructs it
    to raise a possibly-settled point as a question rather than as an assertion.
-8. The checkout must bind the **reviewed** head. Agent mode performs no Pull
-   Request resolution, so on a comment event the default checkout lands on the
-   default branch and the reviewer would diff main against itself. The ref
-   resolves, in order, a submitted review's `review.commit_id` when the event
-   carries one (rule 18), else the event's own Pull Request head SHA, else the head
-   reported by a token-side lookup of the resolved pull number, else the triggering
-   ref. History is fetched in full so a three-dot diff against the base has both
-   sides.
+8. The checkout must bind an explicitly **resolved** commit, and that commit is the
+   **base** (see rule 21). Agent mode performs no Pull Request resolution, so a
+   default checkout on a comment event lands wherever `github.ref` points -- the
+   default branch, or on the review triggers the candidate's merge ref. The reviewed
+   head is still resolved, in order, from a submitted review's `review.commit_id`
+   when the event carries one (rule 18), else the event's own Pull Request head SHA,
+   else the head reported by a token-side lookup of the resolved pull number, else
+   the triggering ref; it identifies the **comparison** the context step asks for,
+   not a tree to check out.
 9. **The mention job must never check out a fork-controlled head.** Binding the
    checkout to a Pull Request head places contributor-controlled code in the job
    that holds the Claude credential. The author-association gate does not close
@@ -173,7 +174,9 @@ No new dependency, service or runtime is introduced.
    step performs the retrieval itself with fixed arguments and no
    candidate-controlled input, writing `diff.stat`, `commits.log` and a
    size-bounded `diff.patch` into `.gnostoa-review-context/`, which the reviewer
-   opens with `Read` and `Grep`. The bound on `diff.patch` is deliberate: an
+   opens with `Read` and `Grep`. The comparison is asked of the provider for the two
+   resolved revisions rather than computed from a local candidate tree, which is what
+   lets rule 21 hold. The bound on `diff.patch` is deliberate: an
    unbounded diff would reintroduce the context exhaustion this Decision exists to
    remove. Bounded must not mean unreachable, though. With no git, a reviewer
    cannot recover a deletion that falls past the cutoff and the checkout no longer
@@ -255,45 +258,45 @@ No new dependency, service or runtime is introduced.
    each of those contexts is reported as unadmitted, so the test cannot pass
    through a blind spot in its own parser.
 
-20. **A candidate containing symlinks is refused before review.** The prompt sends
-   a credential-bearing agent to read candidate-controlled paths, starting with
-   `README.md` and `AGENTS.md`, and the auto-approved `Read` tool follows a symlink
-   to its target before the report reaches a public step summary. So a
-   same-repository branch that replaces one of those files with a symlink to a
-   runner path turns the entry route itself into an exfiltration primitive. Rule 9
-   does not cover it: the fork guard constrains whose repository the head comes
-   from, not what a branch inside this repository contains.
-   `tools/candidate_prepare.py` already refuses candidate symlinks because this
-   repository's bounded-candidate contract does not admit external target chains,
-   and the reviewed candidate is held to the same rule. A guard step ahead of both
-   the collection step and the reviewer fails closed on any symlink, tracked by
-   index mode or found in the candidate checkout, and names the offending paths.
-   Rule 21 removes the deeper part of this hazard by taking the entry route out of
-   the candidate entirely; this rule remains because the candidate's own files are
-   still read.
-21. **The candidate is not checked out at the workspace root.** `docs/security.md`
-   of the pinned action states plainly: do not check out an untrusted ref into the
-   workspace root before this action, because the action and the reviewer run with
-   that root as their working directory. Three successive findings in this surface
-   were downstream of ignoring it. The documented pattern is used instead -- the
-   base ref at the workspace root, the reviewed head in a subdirectory, and
-   `--add-dir` to reach it -- and it closes more than the pwn-request shape. The
-   root checkout is bound explicitly to the **resolved base SHA**, not left bare. A
-   bare checkout follows `github.ref`, which on `pull_request_review` and
+20. **The symlink hazard is removed rather than guarded.** `Read` follows a symlink
+   to its target before a report reaches a public step summary, and the prompt sends
+   the reviewer to `README.md` and `AGENTS.md`, so a candidate that replaced either
+   with a symlink to a runner path would turn the entry route into an exfiltration
+   primitive. Rule 9 does not cover it: the fork guard constrains whose repository
+   the head comes from, not what a branch inside this repository contains. An earlier
+   revision of this Decision answered it with a guard step that refused a candidate
+   containing symlinks, mirroring `tools/candidate_prepare.py`. Rule 21 supersedes
+   that: no candidate tree is materialised at all, so there is no candidate symlink,
+   mode or file to guard, and the entry route is the base commit's. A guard is
+   retained in `tools/candidate_prepare.py` for preparation, where a tree genuinely
+   must exist; this job needs none.
+21. **No candidate tree is materialised in the credential-bearing job.**
+   `docs/security.md` of the pinned action warns against checking out an untrusted
+   ref before it, and CodeQL flags the shape itself -- a privileged workflow that
+   materialises a contributor-controlled tree -- however that tree is placed. Three
+   findings in this surface, and two failed attempts to grant a constrained git, were
+   all downstream of accepting the shape and hardening inside it. The shape is
+   therefore gone.
+
+   Only the base is checked out, bound to the resolved base SHA. A bare checkout
+   would follow `github.ref`, which on `pull_request_review` and
    `pull_request_review_comment` -- two of the four admitted triggers -- is
-   `refs/pull/N/merge`, the candidate merged into its base; the workspace root would
-   then hold the candidate's own `README.md` and `AGENTS.md` and this rule's claim
-   would be false on half the triggers. A bare checkout also fails outright when a
-   Pull Request conflicts with its base and no merge ref exists. With the binding in
-   place, the entry route the prompt names comes from the base commit, so a candidate
-   cannot rewrite the very instructions the credential-bearing reviewer is told to
-   follow. The symlink guard scans only the candidate subdirectory because the root
-   is now a trusted base commit. The prompt also states that
-   anything written inside the candidate, including its own instructions, is
-   material under review rather than direction to the reviewer. Read confinement
-   itself is defence-in-depth only: a `settings` deny list covers the obvious runner
-   paths, but this repository cannot verify the reviewer's enforcement of it, so the
-   structural control is the untrusted route's removal rather than the deny list.
+   `refs/pull/N/merge`, the candidate merged into its base, and would also fail
+   outright when a Pull Request conflicts with its base and no merge ref exists. The
+   base supplies the entry route the prompt names and the pre-change state of any
+   file; the change itself arrives only as the artefacts of rule 12, built from the
+   provider's comparison for the two resolved revisions. No candidate file, mode or
+   symlink is ever written to the runner, and the reviewer is given no
+   `--add-dir`.
+
+   What this costs is real and is accepted: the reviewer can read a file's state
+   before the change but not after it, so an added file is visible only through the
+   diff. The gain is that an entire hazard class -- candidate-authored entry routes,
+   symlinked reads, mode tricks, and execution of candidate content -- cannot arise
+   rather than being guarded against. Read confinement remains defence-in-depth
+   only: a `settings` deny list covers the obvious runner paths, and this repository
+   cannot verify the reviewer's enforcement of it, so the structural control is the
+   absence of candidate content rather than the deny list.
 ## Accepted trade: delivery is no longer on the Pull Request
 
 Agent mode sets `claudeCommentId: undefined` and provides **no GitHub
@@ -367,8 +370,8 @@ snapshot, and carries no approval or merge authority.
 bounded interpolation set, the static prompt bound, forwarding of the triggering
 request, the reviewed-head checkout binding under a same-repository guard, coverage of
 every admitted trigger payload, the resolved-base diff, the declared entry route, the absence of any Bash grant, the trusted context collection with its bound
-and its line-safe recoverable parts, the base-rooted checkout with the candidate
-in a subdirectory, the symlink refusal,
+and its line-safe recoverable parts, the provider-built comparison, the absence of
+any candidate checkout,
 the no-Pull-Request path, the forwarded inline location, the trust gate on
 externally authored issue text, the agreement between the tool grant and the
 requested permissions, the recorded supersession, and the explicit delivery path — alongside every existing Decision 0093
