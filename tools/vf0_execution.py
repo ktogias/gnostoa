@@ -89,6 +89,7 @@ _CLEAN_ENV = {
     "PYTHONDONTWRITEBYTECODE": "1",
     "PYTHONNOUSERSITE": "1",
 }
+_GIT_ENV = {**_CLEAN_ENV, "GIT_NO_LAZY_FETCH": "1"}
 
 
 class ExecutionRejected(RuntimeError):
@@ -98,6 +99,29 @@ class ExecutionRejected(RuntimeError):
 def _need(condition: bool, reason: str) -> None:
     if not condition:
         raise ExecutionRejected(reason)
+
+
+def _environment_map(value: object, reason: str) -> dict[str, str]:
+    if value is None:
+        return {}
+    _need(type(value) is list, reason)
+    environment: dict[str, str] = {}
+    for item in cast(list[object], value):
+        _need(type(item) is str and "=" in item and "\0" not in item, reason)
+        key, value = cast(str, item).split("=", 1)
+        _need(bool(key) and key not in environment, reason)
+        environment[key] = value
+    return environment
+
+
+def _container_environment(subject: GitSubject) -> dict[str, str]:
+    return {
+        "HOME": _CONTAINER_TMP,
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "KNOWLEDGE_KIT_ROOT": "/workspace",
+        "KNOWLEDGE_KIT_REVISION": subject.commit,
+        "PYTHONPATH": "/workspace",
+    }
 
 
 def _sha256(raw: bytes) -> str:
@@ -296,7 +320,7 @@ def _trusted_git(repo: Path, *args: str) -> bytes:
             check=False,
             stdin=subprocess.DEVNULL,
             capture_output=True,
-            env=_CLEAN_ENV,
+            env=_GIT_ENV,
             timeout=30,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -316,7 +340,7 @@ def _trusted_git_tree_entries(repo: Path, commit: str) -> list[bytes]:
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=stderr,
-                env=_CLEAN_ENV,
+                env=_GIT_ENV,
             )
             if process.stdout is None:
                 process.kill()
@@ -406,7 +430,7 @@ def _write_git_blob(
                     stdin=subprocess.DEVNULL,
                     stdout=output,
                     stderr=subprocess.PIPE,
-                    env=_CLEAN_ENV,
+                    env=_GIT_ENV,
                     timeout=30,
                 )
             except (OSError, subprocess.TimeoutExpired) as exc:
@@ -582,6 +606,7 @@ def _snapshot(root: Path) -> tuple[dict[str, _MaterialFile], dict[str, str]]:
         def walk(directory_fd: int, prefix: str, depth: int, prefix_bytes: int) -> None:
             nonlocal total, observed_entries, total_path_bytes
             before_directory = os.fstat(directory_fd)
+            child_directories: list[tuple[str, str, int, int, os.stat_result]] = []
             with os.scandir(directory_fd) as entries:
                 for entry in entries:
                     observed_entries += 1
@@ -623,33 +648,15 @@ def _snapshot(root: Path) -> tuple[dict[str, _MaterialFile], dict[str, str]]:
                     _need(not stat.S_ISLNK(mode), "SUBJECT_SYMLINK")
 
                     if stat.S_ISDIR(mode):
-                        child_fd = os.open(
-                            child_name,
-                            directory_flags,
-                            dir_fd=directory_fd,
-                        )
-                        try:
-                            opened = os.fstat(child_fd)
-                            _need(
-                                stat.S_ISDIR(opened.st_mode)
-                                and _same_snapshot_stat(metadata, opened),
-                                "SUBJECT_SNAPSHOT",
-                            )
-                            directories[relative] = _directory_mode(opened.st_mode)
-                            walk(child_fd, relative, child_depth, relative_bytes)
-                            after = os.fstat(child_fd)
-                            current = os.stat(
+                        child_directories.append(
+                            (
                                 child_name,
-                                dir_fd=directory_fd,
-                                follow_symlinks=False,
+                                relative,
+                                child_depth,
+                                relative_bytes,
+                                metadata,
                             )
-                            _need(
-                                _same_snapshot_stat(opened, after)
-                                and _same_snapshot_stat(opened, current),
-                                "SUBJECT_SNAPSHOT",
-                            )
-                        finally:
-                            os.close(child_fd)
+                        )
                         continue
 
                     _need(stat.S_ISREG(mode), "SUBJECT_SPECIAL_FILE")
@@ -705,6 +712,41 @@ def _snapshot(root: Path) -> tuple[dict[str, _MaterialFile], dict[str, str]]:
                         )
                     finally:
                         os.close(file_fd)
+
+            for (
+                child_name,
+                relative,
+                child_depth,
+                relative_bytes,
+                metadata,
+            ) in child_directories:
+                child_fd = os.open(
+                    child_name,
+                    directory_flags,
+                    dir_fd=directory_fd,
+                )
+                try:
+                    opened = os.fstat(child_fd)
+                    _need(
+                        stat.S_ISDIR(opened.st_mode)
+                        and _same_snapshot_stat(metadata, opened),
+                        "SUBJECT_SNAPSHOT",
+                    )
+                    directories[relative] = _directory_mode(opened.st_mode)
+                    walk(child_fd, relative, child_depth, relative_bytes)
+                    after = os.fstat(child_fd)
+                    current = os.stat(
+                        child_name,
+                        dir_fd=directory_fd,
+                        follow_symlinks=False,
+                    )
+                    _need(
+                        _same_snapshot_stat(opened, after)
+                        and _same_snapshot_stat(opened, current),
+                        "SUBJECT_SNAPSHOT",
+                    )
+                finally:
+                    os.close(child_fd)
 
             after_directory = os.fstat(directory_fd)
             _need(
@@ -1043,7 +1085,7 @@ class DockerBackend:
         _need(result.returncode == 0, "DOCKER_COMMAND_FAILED")
         return result.stdout
 
-    def _inspect_image(self) -> str:
+    def _inspect_image(self) -> tuple[str, dict[str, str]]:
         try:
             spec = json.loads(self._checked("image", "inspect", self.image))
         except (json.JSONDecodeError, TypeError) as exc:
@@ -1070,7 +1112,12 @@ class DockerBackend:
             spec[0].get("Os") == "linux" and spec[0].get("Architecture") == "amd64",
             "OCI_IMAGE_PLATFORM",
         )
-        return cast(str, image_id)
+        image_config = spec[0].get("Config")
+        _need(isinstance(image_config, dict), "OCI_IMAGE_INSPECT")
+        image_environment = _environment_map(
+            image_config.get("Env"), "OCI_IMAGE_INSPECT"
+        )
+        return cast(str, image_id), image_environment
 
     def _validate_container(
         self,
@@ -1081,6 +1128,7 @@ class DockerBackend:
         cleanup_nonce: str,
         subject: GitSubject,
         image_id: str,
+        image_environment: dict[str, str],
     ) -> None:
         try:
             raw = json.loads(self._checked("inspect", container_id))
@@ -1112,8 +1160,7 @@ class DockerBackend:
         )
         security = host.get("SecurityOpt") or []
         labels = config.get("Labels") or {}
-        environment = config.get("Env") or []
-        _need(isinstance(labels, dict) and isinstance(environment, list), "OCI_INSPECT")
+        _need(isinstance(labels, dict), "OCI_INSPECT")
         expected_command = ["-I", "-c", _OCI_WRAPPER_SOURCE, *command]
         expected_tmpfs = f"rw,nosuid,nodev,noexec,mode=1777,size={limits.tmpfs_bytes}"
         _need(
@@ -1125,20 +1172,11 @@ class DockerBackend:
             and host.get("Tmpfs") == {_CONTAINER_TMP: expected_tmpfs},
             "OCI_CONTAINER_CONFIG",
         )
-        protected_environment: dict[str, str] = {}
-        for item in environment:
-            _need(isinstance(item, str) and "=" in item, "OCI_INSPECT")
-            key, value = item.split("=", 1)
-            if key in {"KNOWLEDGE_KIT_ROOT", "KNOWLEDGE_KIT_REVISION", "PYTHONPATH"}:
-                _need(key not in protected_environment, "OCI_ENV_CONTRACT")
-                protected_environment[key] = value
+        environment = _environment_map(config.get("Env"), "OCI_ENV_CONTRACT")
+        expected_environment = dict(image_environment)
+        expected_environment.update(_container_environment(subject))
         _need(
-            protected_environment
-            == {
-                "KNOWLEDGE_KIT_ROOT": "/workspace",
-                "KNOWLEDGE_KIT_REVISION": subject.commit,
-                "PYTHONPATH": "/workspace",
-            },
+            environment == expected_environment,
             "OCI_ENV_CONTRACT",
         )
         _need(
@@ -1278,9 +1316,15 @@ class DockerBackend:
         subject: GitSubject,
     ) -> UntrustedCapture:
         _validate_command(command)
-        image_id = self._inspect_image()
+        image_id, image_environment = self._inspect_image()
         cleanup_nonce = uuid.uuid4().hex
         container_name = f"gnostoa-vf0-{cleanup_nonce}"
+        controller_environment = _container_environment(subject)
+        environment_arguments = [
+            argument
+            for key, value in controller_environment.items()
+            for argument in ("--env", f"{key}={value}")
+        ]
         create = [
             "create",
             "--platform",
@@ -1312,16 +1356,7 @@ class DockerBackend:
             "none",
             "--tmpfs",
             f"{_CONTAINER_TMP}:rw,nosuid,nodev,noexec,mode=1777,size={limits.tmpfs_bytes}",
-            "--env",
-            f"HOME={_CONTAINER_TMP}",
-            "--env",
-            "PYTHONDONTWRITEBYTECODE=1",
-            "--env",
-            "KNOWLEDGE_KIT_ROOT=/workspace",
-            "--env",
-            f"KNOWLEDGE_KIT_REVISION={subject.commit}",
-            "--env",
-            "PYTHONPATH=/workspace",
+            *environment_arguments,
             "--mount",
             f"type=bind,source={root},target=/workspace,readonly",
             "--workdir",
@@ -1348,6 +1383,7 @@ class DockerBackend:
                 cleanup_nonce,
                 subject,
                 image_id,
+                image_environment,
             )
             container_validated = True
             capture = _capture_process(

@@ -357,6 +357,8 @@ class VF0RelationTests(unittest.TestCase):
             ("a/./b", "PATH_FORMAT"),
             ("a\\b", "PATH_FORMAT"),
             (".git/config", "PATH_FORMAT"),
+            (".GIT/config", "PATH_FORMAT"),
+            ("x/.Git/hooks/pre-commit", "PATH_FORMAT"),
             ("x/\x00", "TEXT_IDENTITY"),
         ]:
             with self.subTest(path=path):

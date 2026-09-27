@@ -7,6 +7,7 @@ import importlib
 import importlib.util
 import json
 import os
+import shlex
 import shutil
 import subprocess  # nosec B404 -- test-only fixed list-argv Git/process fixtures
 import sys
@@ -404,6 +405,53 @@ class VF0SubjectTests(unittest.TestCase):
                 with self.assertRaisesRegex(ExecutionRejected, "SUBJECT_TREE_BOUND"):
                     module._trusted_git_tree_entries(repo, subject.commit)
 
+    def test_missing_promised_blob_never_invokes_configured_ssh_command(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            repo = root / "repo"
+            repo.mkdir()
+            _git(repo, "init", "--quiet")
+            blob = (
+                subprocess.run(  # nosec B603 -- fixed Git plumbing fixture, no shell
+                    ["/usr/bin/git", "-C", str(repo), "hash-object", "-w", "--stdin"],
+                    check=True,
+                    input=b"promised blob\n",
+                    capture_output=True,
+                    env={
+                        "PATH": "/usr/local/bin:/usr/bin:/bin",
+                        "HOME": str(root),
+                        "GIT_CONFIG_NOSYSTEM": "1",
+                        "GIT_CONFIG_GLOBAL": "/dev/null",
+                        "GIT_NO_REPLACE_OBJECTS": "1",
+                    },
+                )
+                .stdout.decode("ascii")
+                .strip()
+            )
+            object_path = repo / ".git" / "objects" / blob[:2] / blob[2:]
+            object_path.unlink()
+            marker = root / "ssh-command-ran"
+            ssh_command = root / "ssh-command"
+            ssh_command.write_text(
+                "#!/bin/sh\n/usr/bin/touch " + shlex.quote(str(marker)) + "\nexit 1\n"
+            )
+            ssh_command.chmod(0o700)
+            _git(repo, "config", "extensions.partialClone", "origin")
+            _git(repo, "config", "remote.origin.promisor", "true")
+            _git(repo, "config", "remote.origin.url", "ssh://git@promisor.invalid/repo")
+            _git(
+                repo,
+                "config",
+                "core.sshCommand",
+                "/bin/sh " + shlex.quote(str(ssh_command)),
+            )
+
+            with self.assertRaisesRegex(ExecutionRejected, "GIT_COMMAND_FAILED"):
+                module._write_git_blob(repo, blob, root / "materialized", 14)
+
+            self.assertFalse(marker.exists())
+
     def test_subject_path_bytes_are_bounded_before_materialization(self) -> None:
         module = importlib.import_module("tools.vf0_execution")
         with tempfile.TemporaryDirectory() as td:
@@ -564,6 +612,36 @@ class VF0SubjectTests(unittest.TestCase):
                     ExecutionRejected, "SUBJECT_PATH_TOTAL_BOUND"
                 ):
                     module._snapshot(root)
+
+    def test_snapshot_handles_allowed_depth_under_bounded_descriptor_limit(
+        self,
+    ) -> None:
+        try:
+            import resource
+        except ImportError:
+            self.skipTest("resource limits are unavailable on this platform")
+
+        module = importlib.import_module("tools.vf0_execution")
+        previous_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if previous_limit[1] < 256:
+            self.skipTest("hard file-descriptor limit is below the test contract")
+        try:
+            resource.setrlimit(
+                resource.RLIMIT_NOFILE, (min(256, previous_limit[1]), previous_limit[1])
+            )
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                current = root
+                for _ in range(200):
+                    current = current / "d"
+                    current.mkdir()
+
+                files, directories = module._snapshot(root)
+
+            self.assertEqual({}, files)
+            self.assertEqual(201, len(directories))
+        finally:
+            resource.setrlimit(resource.RLIMIT_NOFILE, previous_limit)
 
     def test_snapshot_rejects_file_swap_between_classification_and_open(self) -> None:
         module = importlib.import_module("tools.vf0_execution")
@@ -1851,6 +1929,7 @@ class FakeDockerBackend(DockerBackend):
         nano_cpus: int = 500_000_000,
         create_mode: str = "success",
         extra_mount: bool = False,
+        extra_environment: tuple[str, ...] = (),
     ) -> None:
         super().__init__(image=image, docker_executable="/usr/bin/docker")
         self.calls: list[tuple[str, ...]] = []
@@ -1859,6 +1938,7 @@ class FakeDockerBackend(DockerBackend):
         self.nano_cpus = nano_cpus
         self.create_mode = create_mode
         self.extra_mount = extra_mount
+        self.extra_environment = extra_environment
         self.container_id = "a" * 64
         self.container_name: str | None = None
         self.cleanup_nonce: str | None = None
@@ -1879,9 +1959,16 @@ class FakeDockerBackend(DockerBackend):
             return subprocess.CompletedProcess(
                 ["/usr/bin/docker"],
                 0,
-                stdout=(
-                    f'[{{"Id":"sha256:{"b" * 64}","RepoDigests":["{self.image}"],'
-                    '"Os":"linux","Architecture":"amd64"}]'
+                stdout=json.dumps(
+                    [
+                        {
+                            "Id": "sha256:" + "b" * 64,
+                            "RepoDigests": [self.image],
+                            "Os": "linux",
+                            "Architecture": "amd64",
+                            "Config": {"Env": ["PATH=/usr/bin", "IMAGE_POLICY=bound"]},
+                        }
+                    ]
                 ).encode(),
                 stderr=b"",
             )
@@ -1924,8 +2011,6 @@ class FakeDockerBackend(DockerBackend):
                     stdout=b"",
                     stderr=f"Error: No such object: {args[-1]}\n".encode(),
                 )
-            import json
-
             return subprocess.CompletedProcess(
                 ["/usr/bin/docker"],
                 0,
@@ -1976,9 +2061,14 @@ class FakeDockerBackend(DockerBackend):
                     "User": "10001:10001",
                     "Labels": {"gnostoa.vf0.cleanup-token": self.cleanup_nonce},
                     "Env": [
+                        "PATH=/usr/bin",
+                        "IMAGE_POLICY=bound",
+                        "HOME=/tmp",
+                        "PYTHONDONTWRITEBYTECODE=1",
                         "KNOWLEDGE_KIT_ROOT=/workspace",
                         "KNOWLEDGE_KIT_REVISION=" + ("d" * 40),
                         "PYTHONPATH=/workspace",
+                        *self.extra_environment,
                     ],
                 },
                 "Mounts": [
@@ -2002,8 +2092,6 @@ class FakeDockerBackend(DockerBackend):
                     else []
                 ),
             }
-            import json
-
             return subprocess.CompletedProcess(
                 ["/usr/bin/docker"],
                 0,
@@ -2446,6 +2534,22 @@ class VF0DockerBackendTests(unittest.TestCase):
                 ("rm", "--force", "--volumes", backend.container_name),
                 backend.calls,
             )
+
+    def test_unbound_container_environment_is_rejected_before_attachment(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td).resolve()
+            backend = FakeDockerBackend(
+                self.image, root, extra_environment=("LD_PRELOAD=/tmp/unbound.so",)
+            )
+            capture = self._completed_capture()
+            with mock.patch(
+                "tools.vf0_execution._capture_process", return_value=capture
+            ) as attached:
+                with self.assertRaisesRegex(ExecutionRejected, "OCI_ENV_CONTRACT"):
+                    backend.run(
+                        root, ["/bin/true"], ExecutionLimits(), subject=self.subject
+                    )
+            attached.assert_not_called()
 
     def test_fractional_cpu_contract_uses_docker_nano_cpu_rounding(self) -> None:
         with tempfile.TemporaryDirectory() as td:

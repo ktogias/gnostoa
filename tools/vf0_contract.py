@@ -142,7 +142,10 @@ def _path(value: Any) -> str:
     path = _text(value, 512)
     _need("\\" not in path and all(ord(c) >= 33 for c in path), "PATH_FORMAT")
     _need(
-        all(part not in {"", ".", "..", ".git"} for part in path.split("/")),
+        all(
+            part not in {"", ".", ".."} and part.casefold() != ".git"
+            for part in path.split("/")
+        ),
         "PATH_FORMAT",
     )
     return path

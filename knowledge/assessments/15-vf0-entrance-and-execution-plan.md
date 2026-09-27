@@ -1,11 +1,11 @@
 ---
 type: Source
 title: VF0 entrance evidence and bounded execution plan
-description: Actual exact-main missing-pre-evidence reproduction, initial behavior map and unexecuted proof obligations for the proposed VF0 assurance gate.
+description: Exact-main missing-pre-evidence reproduction, evolving component evidence and unexecuted proof obligations for the proposed VF0 assurance gate.
 status: draft
 generated:
   by: agent:chatgpt
-  at: "2026-09-24T14:55:00Z"
+  at: "2026-09-27T06:14:33Z"
 sources:
   - id: owner-scope
     resource: https://github.com/ktogias/gnostoa/issues/15#issuecomment-5803831361
@@ -818,20 +818,82 @@ mutant result is retained separately at
 production passes with zero reads; a mutant that skips the pre-read refusal
 reads 33 bytes and fails the intended assertion.
 
+### AUD15 bounded reviewer corrections
+
+Owner direction remains the in-scope #15 component correction recorded in the
+[AUD15 pre-edit checkpoint](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5853057976).
+The exact pre-edit subject was PR head
+`e73bd016a8c1248fa742b6de3d3d064b699e5912`, tree
+`aeb8a9180f8cdde0451f5d607e6f7452be138466`. Independent exact-head reviews
+identified four bounded R1/R2 gaps: `.git` path rejection was case-sensitive;
+Git object reads could honor a repository-local `core.sshCommand` during a
+missing partial-clone object lookup; recursive snapshots used two open directory
+descriptors per level and failed below the admitted 256-descriptor cap; and an
+attached container could add environment keys outside the image-bound values and
+controller overrides. These observations came from
+[CodeRabbit](https://github.com/ktogias/gnostoa/pull/319#discussion_r4114076041),
+[Codex](https://github.com/ktogias/gnostoa/pull/319#discussion_r4114076085),
+[Greptile](https://github.com/ktogias/gnostoa/pull/319#discussion_r4114068755)
+and [CodeAnt](https://github.com/ktogias/gnostoa/pull/319#discussion_r4114066510).
+CodeAnt's separate finite late-create observation remains the recorded R4 limit
+below; this correction does not claim perpetual cleanup.
+
+The exact-parent RED evidence bound both production files to the hashes below.
+The relation module ran 42 tests and rejected both mixed-case `.GIT` and `.Git`
+cases unexpectedly accepted by the pre-edit normalizer. Three execution probes
+also ran against unchanged source: the missing promised blob case invoked the
+configured SSH marker, an extra `LD_PRELOAD` environment entry was accepted, and
+a 200-level allowed tree raised `SUBJECT_SNAPSHOT` after descriptor exhaustion.
+The two retained logs are `/tmp/gnostoa-pr319-e73-red-relation.log` (SHA-256
+`ec94dbfad03efd44fa46541e7ccb6a55eab8cb93a339c0d23884d403baef5e63`) and
+`/tmp/gnostoa-pr319-e73-red-execution.log` (SHA-256
+`b0413c17c8deda00bde30484502384ec3d0778a76c6e97b0c25e895c9c1740ad`).
+
+The bounded repair folds reserved `.git` matching, disables Git lazy fetch for
+trusted object/tree reads, closes each directory scan before descending, and
+requires the effective attached container environment to equal the digest-bound
+image environment with only the five controller values. Malformed and duplicate
+environment keys are refused. No public contract, trust policy, provider
+authority, producer or activation state changes. The separate finite R4
+late-create window remains unresolved and explicitly partial.
+
+The exact pre-edit source identities are:
+
+| Component source | SHA-256 |
+| --- | --- |
+| `tools/vf0_contract.py` | `6bebdc75e02ed47349d289fd9a32a4901aa8b5a4892a99c1ba7bcb50b84d5261` |
+| `tests/test_vf0_contract.py` | `4dbf4fdc072e1fca1b181a679ca96db880426b7e44bf0364b19c95ba77fcaf35` |
+| `tools/vf0_execution.py` | `9321deae2db77e8fbd9fa557c2bab3b2e67a48985578ed4e7915ed36c909c813` |
+| `tests/test_vf0_execution.py` | `f4368d4596c51a0396f4c05c05c2c6631c35256b3643c72272a9d43a10d26de0` |
+
+The parent-owned preparation wrapper from the exact PR head found one additional
+mechanical Ruff issue in the test fixture; iterable unpacking corrected it
+without changing test behavior. The verified code-only prepared tree is
+`78d9ba74e33f35615c871cc7e38b09f7b32fa4d6`, with prepared diff digest
+`sha256:d4662bfc3c13e5149767432cab00f8cb9093ee5e24805ab37cd237f10f2fe70a`,
+receipt identity
+`sha256:7375d1faf5a773f6087b360b63ca8f7a5ff0f88162bf2b5b9ec7ff060bbc54b4`,
+and `ci/verify fast`, style-fix, style-check and diff-check all returning zero.
+That receipt covers the four component source/test paths only; this assessment
+revision supersedes it for publication. A new exact-candidate receipt and full
+suite results must be bound in the final PR seal. No reviewer result at this
+checkpoint grants convergence or review-ready disposition.
+
 The AUD12 and AUD13 source tables above are historical and do not identify
-AUD14. These local observations still require exact-candidate preparation,
-provider checks and individual reviewer dispositions in the exact-head PR seal;
-they do not close aggregate VF0 acceptance.
+AUD14 or AUD15. These local observations still require exact-candidate
+preparation, provider checks and individual reviewer dispositions in the
+exact-head PR seal; they do not close aggregate VF0 acceptance.
 
 ### Current component behavior reconciliation
 
 Task selectors are the linked pre-edit C1–C7 and R1–R5 records above and D0092's
 provider-neutral execution/relation contract. This map covers the private
-components. The AUD12/AUD13 source tables are historical; current AUD14 source
-identities and evidence are bound separately in the exact-head PR record, which
-also supplies final results and individual reviewer dispositions. Pending review
-grants no review-ready disposition. Tests establish the bounded mechanism, not
-authentication or semantic adequacy of a future admitted oracle.
+components. The AUD12–AUD14 source tables are historical; AUD15 component
+evidence and the final prepared candidate must be bound separately in the
+exact-head PR record, which also supplies final results and individual reviewer
+dispositions. Pending review grants no review-ready disposition. Tests establish
+the bounded mechanism, not authentication or semantic adequacy of a future
+admitted oracle.
 
 | ID | Required observable behavior | Canonical implementation and evidence | Execution / alignment | Executor / reviewer |
 | --- | --- | --- | --- | --- |
@@ -842,8 +904,8 @@ authentication or semantic adequacy of a future admitted oracle.
 | C5 | Missing, unknown, unsupported or contradictory required acquisition guarantees reject matching relation | Guarantee and coverage evaluation; missing/contradictory/incomplete/latest-attempt tests | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | C6 | Unsafe/wrong-subject action links reject as mappings; missing or changed navigation does not change otherwise matching authority relation | `resolve_links`; link-mapping separation tests | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | C7 | Even self-consistent forged normalized data cannot authenticate, approve, prepare, publish or activate | `evaluate` fixed claim boundary; forged-data and no-effectful-import tests | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
-| R1 | Exact immutable Git subject and admitted bounded tests-only delta materialize without symlink, metadata, path or count escape; successive calls share no hidden subject | `tools/vf0_execution.py`: stable Git identity; descriptor-relative `O_NOFOLLOW` traversal and opened/current inode revalidation; individual/aggregate path bytes, depth, entry, file and total-byte limits; no-read oversized-file refusal; real Git and adversarial swap/bound regressions | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
-| R2 | Runtime, entrypoint, resource, mount and environment contract is checked before launch; identity binds the actually used runtime | Immutable backend configuration and Docker inspection now compare resolved `Path`/`Args`, configured entrypoint/command/workdir/tmpfs, image, mount, resource and environment contracts before attachment; mutation negatives and live read-only/import-routing probes | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
+| R1 | Exact immutable Git subject and admitted bounded tests-only delta materialize without symlink, metadata, path or count escape; successive calls share no hidden subject | `tools/vf0_execution.py`: stable Git identity; descriptor-relative `O_NOFOLLOW` traversal and opened/current inode revalidation; case-folded `.git` rejection; `GIT_NO_LAZY_FETCH=1` for trusted Git reads; scans close before descent; individual/aggregate path bytes, depth, entry, file and total-byte limits; no-read oversized-file refusal; real Git and adversarial swap/bound regressions | Local fixture PASS / bounded SUPPORTS on the prepared component tree | Exact-head independent review pending |
+| R2 | Runtime, entrypoint, resource, mount and environment contract is checked before launch; identity binds the actually used runtime | Immutable backend configuration and Docker inspection compare resolved `Path`/`Args`, configured entrypoint/command/workdir/tmpfs, image, mount and resources before attachment; effective environment must equal inspected image values plus the five fixed controller overrides, with malformed/duplicate keys refused; injected-variable negative | Local fixture PASS / bounded SUPPORTS on the prepared component tree | Exact-head independent review pending |
 | R3 | Command and effective limits bind controller-observed exit, output and termination; child bytes cannot certify RED or authority | Snapshot command bounds including NUL rejection, capture and observation construction; infrastructure/timeout/overflow/spoof/completion controls; engine `OOMKilled=false` required before accepting the wrapper trailer | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | R4 | Owned attachment/process/container resources are terminated and reconciled on every admitted failure path | Capture cleanup and known-name/container ownership removal, also reused by the read-only smoke probe; successful `--rm` completion takes one exact absence read-back, while failed/uncertain creation retains bounded reconciliation; selector/descendant/create/remove and interruption controls plus live timeout | Local fixture PASS / partial SUPPORTS; an object appearing after the finite settlement window remains unproved | Supported for exercised cases / pending exact-head review |
 | R5 | Before/after bytes and exact modes are checked; immutable-during-execution claims require enforced read-only subject; no provider or receipt effect is exposed | Snapshot/manifest plus controller backend claim; mutation/custom/local-backend negatives and live OCI conformance | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
