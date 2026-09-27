@@ -421,15 +421,17 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # credential and publishing its answer in a public step summary.
         workflow = load_yaml(MENTION_WORKFLOW)
         prompt = " ".join(_claude_step(workflow)["with"]["prompt"].split())
-        for field in (
-            "github.event.issue.body",
-            "github.event.issue.title",
-            "github.event.pull_request.body",
+        # Each field must be guarded by its own payload's association: an issue
+        # association guarding a Pull Request body would close nothing.
+        for shape, field in (
+            ("issue", "github.event.issue.body"),
+            ("issue", "github.event.issue.title"),
+            ("pull_request", "github.event.pull_request.body"),
         ):
             with self.subTest(field=field):
                 self.assertRegex(
                     prompt,
-                    r"github\.event\.(issue|pull_request)\.author_association"
+                    rf"github\.event\.{shape}\.author_association"
                     r"[^}]*" + re.escape(field),
                 )
 

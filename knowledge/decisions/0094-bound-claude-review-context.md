@@ -108,7 +108,7 @@ No new dependency, service or runtime is introduced.
    number, head and base SHAs, the issue or Pull Request body, the triggering
    comment body, the triggering review body, the issue title, the issue and Pull Request author associations, the reviewed head repository name, the
    Pull-Request-backed presence flag on an issue payload and the triggering review
-   comment's path, line and diff hunk. Each is one bounded field; none
+   comment's path, line, diff hunk, original commit id and original line. Each is one bounded field; none
    scales with the number of comments. Any expression outside that set fails the
    contract test.
 3. The static prompt is bounded at 4096 bytes. Total context is then the prompt
