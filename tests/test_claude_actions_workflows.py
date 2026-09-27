@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
+import pathlib
 import re
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -41,6 +44,7 @@ _BOUNDED_PROMPT_SOURCES = frozenset(
         "github.event.comment.diff_hunk",
         "github.event.comment.original_commit_id",
         "steps.review_head.outputs.pull_number",
+        "runner.temp",
         "github.event.comment.original_line",
         "github.event.issue.author_association",
         "github.event.pull_request.author_association",
@@ -75,6 +79,18 @@ def _outside_expressions(prompt: str) -> str:
     """Return the prompt with every ${{ ... }} expression removed."""
 
     return _PROMPT_EXPRESSION.sub("", prompt)
+
+
+def _installed_wrapper_source(workflow: dict[str, Any]) -> str:
+    """Return the wrapper body the mention job writes outside the checkout."""
+    for job in workflow["jobs"].values():
+        for step in job.get("steps", []):
+            script = str(step.get("run", ""))
+            if "<<'WRAPPER'" not in script:
+                continue
+            body = script.split("<<'WRAPPER'", 1)[1]
+            return body.split("\nWRAPPER", 1)[0].lstrip("\n")
+    raise AssertionError("no step installs a trusted git wrapper")
 
 
 def _claude_step(workflow: dict[str, Any]) -> dict[str, Any]:
@@ -345,23 +361,101 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertIn("steps.review_head.outputs.base_sha", prompt)
         self.assertNotIn("origin/main", prompt)
 
-    def test_mention_job_grants_the_read_only_git_tools_the_prompt_requires(
-        self,
-    ) -> None:
-        # The pinned action disables Bash by default, so a prompt that tells the
-        # reviewer to run git would leave it with a checkout it cannot inspect.
-        # Only read-only git verbs are granted: a broad Bash(git:*) would admit
-        # push, commit and reset.
+    def test_mention_job_grants_no_raw_git_command_prefix(self) -> None:
+        # A prefix grant is not read-only. `git log --output=.git/config` writes an
+        # attacker-authored commit message into repository config, and a following
+        # `git diff --ext-diff` then executes the configured diff.external, which
+        # is arbitrary execution inside the credential-bearing job.
         workflow = load_yaml(MENTION_WORKFLOW)
-        claude = _claude_step(workflow)
-        args = str(claude["with"].get("claude_args", ""))
+        args = str(_claude_step(workflow)["with"].get("claude_args", ""))
         self.assertIn("--allowedTools", args)
-        for verb in ("git diff", "git log", "git show"):
-            with self.subTest(verb=verb):
-                self.assertIn(f"Bash({verb}:*)", args)
-        for forbidden in ("git push", "git commit", "git reset", "Bash(git:*)"):
+        for forbidden in (
+            "Bash(git diff:*)",
+            "Bash(git log:*)",
+            "Bash(git show:*)",
+            "Bash(git:*)",
+        ):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, args)
+
+    def test_git_grant_points_outside_the_candidate_checkout(self) -> None:
+        # The wrapper must not be a checkout path: a candidate that can rewrite
+        # its own wrapper is back to an unconstrained git.
+        workflow = load_yaml(MENTION_WORKFLOW)
+        args = str(_claude_step(workflow)["with"].get("claude_args", ""))
+        granted = [
+            tool
+            for tool in re.findall(r'--allowedTools\s+"([^"]+)"', args)[0].split(",")
+            if tool.strip().startswith("Bash(")
+        ]
+        self.assertEqual(len(granted), 1, granted)
+        self.assertIn("runner.temp", granted[0])
+
+    def test_trusted_git_wrapper_refuses_execution_capable_options(self) -> None:
+        # Behavioural, not textual: the wrapper is extracted from the workflow and
+        # executed, including the exact chain that was reproduced against the
+        # prefix grant.
+        wrapper_source = _installed_wrapper_source(load_yaml(MENTION_WORKFLOW))
+        with tempfile.TemporaryDirectory() as scratch:
+            work = pathlib.Path(scratch)
+            wrapper = work / "review-git"
+            wrapper.write_text(wrapper_source, encoding="utf-8")
+            wrapper.chmod(0o755)
+            repo = work / "repo"
+            repo.mkdir()
+
+            def git(*argv: str) -> None:
+                subprocess.run(
+                    ["git", *argv],
+                    cwd=repo,
+                    check=True,
+                    capture_output=True,
+                    env={**os.environ, "HOME": scratch},
+                )
+
+            git("init", "-q", ".")
+            git("config", "user.email", "test@example.invalid")
+            git("config", "user.name", "test")
+            (repo / "f.txt").write_text("base\n", encoding="utf-8")
+            git("add", "-A")
+            git("commit", "-q", "-m", "base")
+            (repo / "f.txt").write_text("changed\n", encoding="utf-8")
+            git("add", "-A")
+            git("commit", "-q", "-m", "[diff]\n\texternal = /bin/false\n")
+
+            def run(*argv: str) -> subprocess.CompletedProcess[str]:
+                return subprocess.run(
+                    [str(wrapper), *argv],
+                    cwd=repo,
+                    capture_output=True,
+                    text=True,
+                    env={**os.environ, "HOME": scratch},
+                )
+
+            config = repo / ".git" / "config"
+            before = config.read_bytes()
+            for argv in (
+                ("log", "--output=.git/config", "--format=%B", "-1"),
+                ("diff", "--ext-diff", "HEAD~1", "HEAD"),
+                ("log", "-c", "diff.external=/bin/sh"),
+                ("diff", "--upload-pack=/bin/sh"),
+                ("log", "--format=%B"),
+                ("push", "origin", "main"),
+            ):
+                with self.subTest(refused=argv):
+                    result = run(*argv)
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertEqual(config.read_bytes(), before, "config was rewritten")
+
+            for argv in (
+                ("diff", "--stat", "HEAD~1", "HEAD"),
+                ("log", "--oneline", "-1"),
+                ("diff", "HEAD~1", "HEAD", "--", "f.txt"),
+            ):
+                with self.subTest(allowed=argv):
+                    result = run(*argv)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertTrue(result.stdout.strip(), result.stderr)
 
     def test_mention_prompt_handles_a_request_with_no_pull_request(self) -> None:
         # issues:opened is an admitted trigger and Decision 0093 rule 7 keeps it.

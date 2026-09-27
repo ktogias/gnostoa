@@ -94,6 +94,62 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Install the trusted read-only git wrapper
+        env:
+          WRAPPER_DIR: ${{ runner.temp }}/gnostoa-review-bin
+        run: |
+          set -eu
+          mkdir -p "${WRAPPER_DIR}"
+          # The body is written from this workflow file, which comes from the
+          # default branch, so the candidate cannot supply or rewrite it.
+          cat > "${WRAPPER_DIR}/review-git" <<'WRAPPER'
+          #!/bin/sh
+          # Trusted read-only git for the bounded reviewer.
+          #
+          # A prefix grant such as Bash(git log:*) is not read-only:
+          #   git log --output=.git/config --format=%B -1 <sha>
+          # writes an attacker-authored commit message into repository config, and
+          #   git diff --ext-diff <base> <head>
+          # then executes the diff.external it configured. In this credential-
+          # bearing job that turns candidate content into arbitrary execution.
+          #
+          # This wrapper therefore takes a positive allowlist: any option not
+          # named below is refused, so no new git option can reopen the hole.
+          set -eu
+          verb=${1:-}
+          case "${verb}" in
+            diff|log|show) shift ;;
+            *)
+              echo "refused: ${verb:-<none>} is not diff, log or show" >&2
+              exit 2
+              ;;
+          esac
+          for argument in "$@"; do
+            case "${argument}" in
+              --stat|--numstat|--name-only|--name-status|--oneline|--) ;;
+              -[0-9]|-[0-9][0-9]) ;;
+              -*)
+                echo "refused: option ${argument} is not allowlisted" >&2
+                exit 2
+                ;;
+            esac
+          done
+          GIT_CONFIG_NOSYSTEM=1 \
+          GIT_CONFIG_SYSTEM=/dev/null \
+          GIT_CONFIG_GLOBAL=/dev/null \
+          GIT_CONFIG_COUNT=0 \
+          GIT_ATTR_NOSYSTEM=1 \
+          GIT_NO_REPLACE_OBJECTS=1 \
+          GIT_EXTERNAL_DIFF= \
+          exec git --no-pager \
+            -c core.hooksPath=/dev/null \
+            -c diff.external= \
+            -c core.fsmonitor= \
+            -c uploadpack.packObjectsHook= \
+            "${verb}" --no-ext-diff "$@"
+          WRAPPER
+          chmod 0755 "${WRAPPER_DIR}/review-git"
+
       - name: Run Claude Code
         id: claude
         uses: anthropics/claude-code-action@9171db3e57d6a3140a37ddc2ba92788584e0ead6 # v1.0.234
@@ -107,10 +163,12 @@ jobs:
           # interpolation below is independent of discussion length.
           display_report: true
           # The pinned action disables Bash by default, so the retrieval the
-          # prompt asks for needs an explicit grant. Read-only verbs only:
-          # Bash(git:*) would admit push, commit and reset.
+          # prompt asks for needs an explicit grant. The grant is the trusted
+          # wrapper installed above, never a git prefix: Bash(git log:*) admits
+          # --output=.git/config, which a following --ext-diff turns into
+          # arbitrary execution.
           claude_args: >-
-            --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*),mcp__github_ci__get_ci_status,mcp__github_ci__get_workflow_run_details,mcp__github_ci__download_job_log"
+            --allowedTools "Read,Grep,Glob,Bash(${{ runner.temp }}/gnostoa-review-bin/review-git:*),mcp__github_ci__get_ci_status,mcp__github_ci__get_workflow_run_details,mcp__github_ci__download_job_log"
           prompt: |
             Read-only review of a Gnostoa Pull Request. You have no pre-loaded
             discussion history; gather only what the request needs.
@@ -132,10 +190,14 @@ jobs:
             Start with README.md, then AGENTS.md, and follow the route it names for
             the area under review. Use your own tools for context, diffing against
             the resolved base rather than a fixed branch:
-              git diff --stat ${{ steps.review_head.outputs.base_sha }}...HEAD
-              git diff ${{ steps.review_head.outputs.base_sha }}...HEAD -- <path>
-              git log --oneline ${{ steps.review_head.outputs.base_sha }}..HEAD
-            and Read or Grep for the current state of any file.
+              ${{ runner.temp }}/gnostoa-review-bin/review-git diff --stat ${{ steps.review_head.outputs.base_sha }}...HEAD
+              ${{ runner.temp }}/gnostoa-review-bin/review-git diff ${{ steps.review_head.outputs.base_sha }}...HEAD -- <path>
+              ${{ runner.temp }}/gnostoa-review-bin/review-git log --oneline ${{ steps.review_head.outputs.base_sha }}..HEAD
+            and Read or Grep for the current state of any file. That wrapper is the
+            only git you can run. It takes diff, log or show and an allowlist of
+            options -- --stat, --numstat, --name-only, --name-status, --oneline,
+            -<n> and -- -- and refuses anything else, so use Read and Grep rather
+            than a custom --format.
 
             If no Pull Request number is shown above, the request concerns the
             issue itself: answer it from the repository rather than from a diff.

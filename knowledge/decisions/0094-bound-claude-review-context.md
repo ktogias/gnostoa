@@ -149,11 +149,26 @@ No new dependency, service or runtime is introduced.
    `github.event.issue.*`, the review triggers carry `github.event.pull_request.*`,
    and `issues: opened` may hold the mention in the title alone. A template that
    reads only one shape silently loses the others.
-12. **The tools the prompt relies on must be granted.** The pinned action disables
-   Bash by default, so a retrieval-based prompt would otherwise leave the reviewer
-   with a checkout it cannot inspect. Only read-only verbs are granted --
-   `git diff`, `git log`, `git show` -- because `Bash(git:*)` would admit `push`,
-   `commit` and `reset`.
+12. **The tools the prompt relies on must be granted, and a git prefix is not a
+   read-only grant.** The pinned action disables Bash by default, so a
+   retrieval-based prompt would otherwise leave the reviewer with a checkout it
+   cannot inspect. A verb-prefix grant is nonetheless unsafe:
+   `git log --output=.git/config --format=%B -1 <sha>` writes an
+   attacker-authored commit message into repository config, and a following
+   `git diff --ext-diff <base> <head>` executes the `diff.external` it just
+   configured. Both commands are inside `Bash(git log:*)` and `Bash(git diff:*)`,
+   so in this credential-bearing job the prefix grant converts candidate content
+   into arbitrary execution and secret exfiltration. The reviewer is therefore
+   granted exactly one Bash target: a wrapper installed into `runner.temp` from
+   this workflow file, which comes from the default branch and so cannot be
+   supplied or rewritten by the candidate. The wrapper takes `diff`, `log` or
+   `show` and a **positive allowlist** of options -- `--stat`, `--numstat`,
+   `--name-only`, `--name-status`, `--oneline`, `-<n>` and `--` -- refusing
+   everything else, so no further git option can reopen the hole. It also runs git
+   with system, global and caller configuration disabled, replacement objects
+   disabled, and `--no-ext-diff` with `diff.external` emptied. A contract test
+   extracts the wrapper from the workflow and executes the reproduced attack
+   chain against it rather than asserting its text.
 13. Requests with **no Pull Request** are answered from the repository rather than
    from a diff. `issues: opened` stays an admitted trigger under Decision 0093
    rule 7, and there the resolved base equals the head, so a diff-shaped
@@ -217,9 +232,9 @@ and is not admitted by this Decision.
 ## Partial supersession of Decision 0093 rule 8
 
 Decision 0093 rule 8 requires that `allowed_bots`, `allowed_non_write_users`,
-`assignee_trigger` **and extra mention-job tools** be left unset. The read-only
-git grant in rule 12 and the read-only CI inspection grant in rule 16 above
-override the tool clause of that rule.
+`assignee_trigger` **and extra mention-job tools** be left unset. The trusted
+git-wrapper grant in rule 12 and the read-only CI inspection grant in rule 16
+above override the tool clause of that rule.
 
 This is recorded rather than left implicit because the alternative is two
 contradictory security contracts in the same repository, and because a test
@@ -228,19 +243,23 @@ asserting it enforces "every Decision 0093 invariant" would then be false.
 What is superseded is narrow:
 
 - **superseded:** the "extra mention-job tools unset" clause, and only for
-  `Read`, `Grep`, `Glob`, `Bash(git diff:*)`, `Bash(git log:*)`,
-  `Bash(git show:*)`, `mcp__github_ci__get_ci_status`,
+  `Read`, `Grep`, `Glob`,
+  `Bash(${{ runner.temp }}/gnostoa-review-bin/review-git:*)`,
+  `mcp__github_ci__get_ci_status`,
   `mcp__github_ci__get_workflow_run_details` and
   `mcp__github_ci__download_job_log`. A granted tool absent from this list would
   leave rule 8 and rule 16 demanding opposite things for it, so the contract test
-  requires every tool in `--allowedTools` to appear here;
+  requires every tool in `--allowedTools` to appear here. No raw `git` prefix is
+  granted, and rule 12 records why a prefix would not be read-only;
 - **retained:** `allowed_bots`, `allowed_non_write_users` and `assignee_trigger`
-  stay unset, and no write-capable tool is granted. `Bash(git:*)` is specifically
-  not used because it would admit `push`, `commit` and `reset`.
+  stay unset, and no write-capable tool is granted. No `git` prefix of any width
+  is used, including `Bash(git diff:*)`: rule 12 records the reproduced chain by
+  which such a prefix executes candidate code.
 
 The grant exists because rule 8 predates bounded context. Tag mode supplied the
 diff inside the prompt, so no tool was needed to see it; agent mode supplies no
-data at all, so a reviewer without read-only git has a checkout it cannot inspect.
+data at all, so a reviewer without a git of some kind has a checkout it cannot
+inspect.
 Rule 8's intent -- no unnecessary capability in the credential-bearing job -- is
 preserved by granting the smallest set that makes the design function.
 
