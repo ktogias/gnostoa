@@ -57,6 +57,13 @@ jobs:
           EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          # A push landing while an older review is open leaves the Pull Request
+          # head ahead of the commit the review actually describes.
+          # ci/review_github_current_state.py already treats review.commit_id as a
+          # review's head_commit, so the checkout follows the same identity.
+          REVIEWED_COMMIT: >-
+            ${{ github.event.review.commit_id
+              || github.event.comment.commit_id }}
         run: |
           set -eu
           # The prompt keys item type on this number, never on head/base
@@ -73,7 +80,11 @@ jobs:
               echo "ERROR: refusing a fork-controlled head (${EVENT_HEAD_REPO})" >&2
               exit 1
             fi
-            printf 'head_sha=%s\n' "${EVENT_HEAD_SHA}" >> "${GITHUB_OUTPUT}"
+            if [ -n "${REVIEWED_COMMIT}" ]; then
+              printf 'head_sha=%s\n' "${REVIEWED_COMMIT}" >> "${GITHUB_OUTPUT}"
+            else
+              printf 'head_sha=%s\n' "${EVENT_HEAD_SHA}" >> "${GITHUB_OUTPUT}"
+            fi
             printf 'base_sha=%s\n' "${EVENT_BASE_SHA}" >> "${GITHUB_OUTPUT}"
             exit 0
           fi

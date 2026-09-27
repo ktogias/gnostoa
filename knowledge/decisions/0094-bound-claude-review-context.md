@@ -211,6 +211,22 @@ No new dependency, service or runtime is introduced.
    its diff hunk can originate from an older commit, so without
    `original_commit_id` and `original_line` the reviewer cannot detect that it is
    interpreting the request against different code.
+18. **The checkout follows the reviewed commit, not the latest head.** A push that
+   lands while an older review is open leaves `pull_request.head.sha` ahead of the
+   commit the review describes, so checking out the head reviews different code
+   from the one the forwarded body, path, line and hunk refer to.
+   `ci/review_github_current_state.py` already treats `review.commit_id` as a
+   review's `head_commit`; the guard step follows the same identity, preferring
+   `review.commit_id` or `comment.commit_id` over the event head when present.
+19. **Every interpolated context is classified, and unknown ones fail closed.** A
+   contract test that recognises only the contexts already in use is not a
+   contract: an added `secrets.*`, `env.*`, `vars.*` or `needs.*` interpolation
+   would contribute no identifier and leave the exhaustive-source test green, in a
+   job that publishes its output publicly. The test therefore strips string
+   literals, classifies every remaining token as a known function, a keyword or a
+   context, and fails on anything it cannot place. Positive controls assert that
+   each of those contexts is reported as unadmitted, so the test cannot pass
+   through a blind spot in its own parser.
 
 ## Accepted trade: delivery is no longer on the Pull Request
 

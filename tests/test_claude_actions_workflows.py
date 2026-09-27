@@ -54,7 +54,29 @@ _BOUNDED_PROMPT_SOURCES = frozenset(
 # Expressions may be compound (a trust check guarding a field), so the contract
 # is on the identifiers they read, not on the expression text.
 _PROMPT_EXPRESSION = re.compile(r"\$\{\{(.+?)\}\}", re.DOTALL)
-_PROMPT_IDENTIFIER = re.compile(r"\b(?:github|steps)\.[A-Za-z0-9_.]+")
+# A parser that recognises only the contexts already in use is not a contract: a
+# future `secrets.*` or `env.*` interpolation would contribute no identifier and
+# leave the exhaustive-source test green. Every token an expression contains is
+# therefore classified, and anything unrecognised fails the test.
+_PROMPT_LITERAL = re.compile(r"'(?:[^']|'')*'")
+_PROMPT_TOKEN = re.compile(r"[A-Za-z_][A-Za-z0-9_.]*")
+_PROMPT_FUNCTIONS = frozenset(
+    {
+        "always",
+        "cancelled",
+        "contains",
+        "endsWith",
+        "failure",
+        "format",
+        "fromJSON",
+        "hashFiles",
+        "join",
+        "startsWith",
+        "success",
+        "toJSON",
+    }
+)
+_PROMPT_KEYWORDS = frozenset({"false", "null", "true"})
 _MAX_STATIC_PROMPT_BYTES = 4096
 
 
@@ -79,6 +101,18 @@ def _outside_expressions(prompt: str) -> str:
     """Return the prompt with every ${{ ... }} expression removed."""
 
     return _PROMPT_EXPRESSION.sub("", prompt)
+
+
+def _prompt_contexts(prompt: str) -> set[str]:
+    """Return every context an interpolation reads, classifying all tokens."""
+    contexts: set[str] = set()
+    for match in _PROMPT_EXPRESSION.finditer(prompt):
+        body = _PROMPT_LITERAL.sub(" ", match.group(1))
+        for token in _PROMPT_TOKEN.findall(body):
+            if token in _PROMPT_FUNCTIONS or token in _PROMPT_KEYWORDS:
+                continue
+            contexts.add(token)
+    return contexts
 
 
 def _installed_wrapper_source(workflow: dict[str, Any]) -> str:
@@ -247,17 +281,26 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
     def test_mention_prompt_interpolates_only_bounded_sources(self) -> None:
         workflow = load_yaml(MENTION_WORKFLOW)
         prompt = _claude_step(workflow)["with"]["prompt"]
-        used = {
-            identifier
-            for match in _PROMPT_EXPRESSION.finditer(prompt)
-            for identifier in _PROMPT_IDENTIFIER.findall(match.group(1))
-        }
-        unbounded = used - _BOUNDED_PROMPT_SOURCES
+        unbounded = _prompt_contexts(prompt) - _BOUNDED_PROMPT_SOURCES
         self.assertEqual(
             set(),
             unbounded,
             "prompt interpolates sources whose size grows with the discussion",
         )
+        # Positive controls: the contexts an earlier parser silently dropped must
+        # now be surfaced, so this test cannot stay green through a blind spot.
+        for injected in (
+            "${{ secrets.ANTHROPIC_API_KEY }}",
+            "${{ env.SOME_VALUE }}",
+            "${{ vars.SOME_VALUE }}",
+            "${{ needs.build.outputs.blob }}",
+            "${{ mystery }}",
+        ):
+            with self.subTest(injected=injected):
+                self.assertTrue(
+                    _prompt_contexts(injected) - _BOUNDED_PROMPT_SOURCES,
+                    f"{injected} was not classified as an unadmitted source",
+                )
 
     def test_mention_prompt_carries_the_triggering_request(self) -> None:
         # Agent mode ignores the comment body unless the template forwards it,
@@ -598,6 +641,18 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertIn("github.event.pull_request.head.sha", joined)
         self.assertIn("github.event.pull_request.base.sha", joined)
         self.assertIn("github.event.pull_request.head.repo.full_name", joined)
+        # A push landing while an older review is open leaves the Pull Request
+        # head ahead of the commit the review describes. The repository already
+        # treats review.commit_id as the review's head_commit, so the checkout
+        # must follow it rather than the newer head.
+        self.assertIn("github.event.review.commit_id", joined)
+        script = str(resolve["run"])
+        # Presence anywhere in the script is not enough: the reviewed commit must
+        # be what the step writes as the head the checkout will use.
+        # Non-greedy: the first ${...} after the format string is the value
+        # written, not the ${GITHUB_OUTPUT} the line redirects into.
+        head_writes = re.findall(r"head_sha=%s[^\n]*?\$\{([A-Z_]+)\}", script)
+        self.assertIn("REVIEWED_COMMIT", head_writes, head_writes)
 
     def test_withheld_marker_appears_only_when_text_is_withheld(self) -> None:
         # On the review triggers there is no github.event.issue, so an
