@@ -168,16 +168,30 @@ No new dependency, service or runtime is introduced.
    only when the issue author is `OWNER`, `MEMBER` or `COLLABORATOR`, and the prompt
    says so where the text would have been. The Pull Request body needs no separate
    gate: rule 9 already refuses a fork-controlled head, so a reviewed Pull Request
-   is authored inside this repository. On `issue_comment` the Pull Request
-   description arrives as `github.event.issue.body`, so a Pull-Request-backed issue
-   payload is exempted from the issue-author gate; otherwise a same-repository Pull
-   Request opened by a bot or any account without a trusted association would
-   silently lose its curated state.
+   is authored inside this repository -- but its *description* need not be. The gate
+   therefore keys on the author's association for both payload shapes, with no
+   exemption for a Pull-Request-backed issue payload.
+
+   Two reviewers took opposite positions here and both were right. Exempting Pull
+   Requests preserves the curated state for one opened by a bot or any account
+   without a trusted association; not exempting them keeps untrusted description
+   text out of a credential-bearing job that publishes publicly. Safety is chosen:
+   **a Pull Request whose description is authored by an untrusted association loses
+   its curated-state input**, and the prompt says so where the text would have been.
+   The diff, the files and the request itself remain fully available, so the review
+   is narrower rather than impossible.
+
 16. **The tool grant and the requested permissions must agree.** `actions: read`
    installs nothing on its own; agent mode installs the CI server only when
    `--allowedTools` names an `mcp__github_ci` tool. The three read-only CI tools are
    granted so the permission is used, rather than left as dead configuration that a
    reader would mistake for capability.
+
+17. The inline comment's **original** identity is forwarded alongside its current
+   one. An inline thread carried forward after a push identifies the new head while
+   its diff hunk can originate from an older commit, so without
+   `original_commit_id` and `original_line` the reviewer cannot detect that it is
+   interpreting the request against different code.
 
 ## Accepted trade: delivery is no longer on the Pull Request
 

@@ -39,10 +39,9 @@ _BOUNDED_PROMPT_SOURCES = frozenset(
         "github.event.comment.path",
         "github.event.comment.line",
         "github.event.comment.diff_hunk",
+        "github.event.comment.original_commit_id",
+        "github.event.comment.original_line",
         "github.event.issue.author_association",
-        # A presence flag, not content: it only distinguishes a Pull-Request-backed
-        # issue payload from an ordinary issue.
-        "github.event.issue.pull_request",
         "github.event.issue.title",
     }
 )
@@ -381,6 +380,8 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             "github.event.comment.path",
             "github.event.comment.line",
             "github.event.comment.diff_hunk",
+            "github.event.comment.original_commit_id",
+            "github.event.comment.original_line",
         ):
             with self.subTest(expression=expression):
                 self.assertIn(expression, prompt)

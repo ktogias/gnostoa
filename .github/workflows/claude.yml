@@ -114,8 +114,7 @@ jobs:
             Repository: ${{ github.repository }}
             Item: #${{ github.event.issue.number }}${{ github.event.pull_request.number }}
             Title: >-
-              ${{ (github.event.issue.pull_request && github.event.issue.title)
-                  || (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+              ${{ (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
                         github.event.issue.author_association)
                       && github.event.issue.title)
                   || (github.event.issue.title
@@ -145,8 +144,7 @@ jobs:
             green check is not semantic acceptance.
 
             --- maintained current state ---
-            ${{ (github.event.issue.pull_request && github.event.issue.body)
-                || (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+            ${{ (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
                       github.event.issue.author_association)
                     && github.event.issue.body)
                 || (github.event.issue.body
@@ -157,6 +155,7 @@ jobs:
 
             --- inline location, when the request came from a review comment ---
             ${{ github.event.comment.path }}:${{ github.event.comment.line }}
+            original commit ${{ github.event.comment.original_commit_id }} line ${{ github.event.comment.original_line }}
             ${{ github.event.comment.diff_hunk }}
 
             --- request ---
