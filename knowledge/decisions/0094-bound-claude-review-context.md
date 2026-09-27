@@ -108,7 +108,10 @@ No new dependency, service or runtime is introduced.
    number, head and base SHAs, the issue or Pull Request body, the triggering
    comment body, the triggering review body, the issue title, the issue and Pull Request author associations, the reviewed head repository name, the
    Pull-Request-backed presence flag on an issue payload and the triggering review
-   comment's path, line, diff hunk, original commit id and original line. Each is one bounded field; none
+   comment's path, line, diff hunk, original commit id and original line, and
+   the resolved pull number the guard step reports. Item type is keyed on that
+   number rather than on head/base equality, which a merged or empty Pull
+   Request can satisfy while still being a Pull Request. Each is one bounded field; none
    scales with the number of comments. Any expression outside that set fails the
    contract test.
 3. The static prompt is bounded at 4096 bytes. Total context is then the prompt
@@ -215,7 +218,8 @@ and is not admitted by this Decision.
 
 Decision 0093 rule 8 requires that `allowed_bots`, `allowed_non_write_users`,
 `assignee_trigger` **and extra mention-job tools** be left unset. The read-only
-git grant in rule 12 above overrides the tool clause of that rule.
+git grant in rule 12 and the read-only CI inspection grant in rule 16 above
+override the tool clause of that rule.
 
 This is recorded rather than left implicit because the alternative is two
 contradictory security contracts in the same repository, and because a test
@@ -224,8 +228,12 @@ asserting it enforces "every Decision 0093 invariant" would then be false.
 What is superseded is narrow:
 
 - **superseded:** the "extra mention-job tools unset" clause, and only for
-  `Read`, `Grep`, `Glob`, `Bash(git diff:*)`, `Bash(git log:*)` and
-  `Bash(git show:*)`;
+  `Read`, `Grep`, `Glob`, `Bash(git diff:*)`, `Bash(git log:*)`,
+  `Bash(git show:*)`, `mcp__github_ci__get_ci_status`,
+  `mcp__github_ci__get_workflow_run_details` and
+  `mcp__github_ci__download_job_log`. A granted tool absent from this list would
+  leave rule 8 and rule 16 demanding opposite things for it, so the contract test
+  requires every tool in `--allowedTools` to appear here;
 - **retained:** `allowed_bots`, `allowed_non_write_users` and `assignee_trigger`
   stay unset, and no write-capable tool is granted. `Bash(git:*)` is specifically
   not used because it would admit `push`, `commit` and `reset`.

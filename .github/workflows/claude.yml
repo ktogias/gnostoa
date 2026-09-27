@@ -59,11 +59,15 @@ jobs:
           EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         run: |
           set -eu
+          # The prompt keys item type on this number, never on head/base
+          # equality: a merged or empty Pull Request can report both the same.
           if [ -z "${PULL_NUMBER}" ]; then
+            printf 'pull_number=\n' >> "${GITHUB_OUTPUT}"
             printf 'head_sha=%s\n' "${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
             printf 'base_sha=%s\n' "${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
+          printf 'pull_number=%s\n' "${PULL_NUMBER}" >> "${GITHUB_OUTPUT}"
           if [ -n "${EVENT_HEAD_SHA}" ]; then
             if [ "${EVENT_HEAD_REPO}" != "${REPOSITORY}" ]; then
               echo "ERROR: refusing a fork-controlled head (${EVENT_HEAD_REPO})" >&2
@@ -113,6 +117,8 @@ jobs:
 
             Repository: ${{ github.repository }}
             Item: #${{ github.event.issue.number }}${{ github.event.pull_request.number }}
+            Pull Request: ${{ steps.review_head.outputs.pull_number
+              || '(none: this request concerns an issue)' }}
             Title: >-
               ${{ (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
                         github.event.issue.author_association)
@@ -131,9 +137,10 @@ jobs:
               git log --oneline ${{ steps.review_head.outputs.base_sha }}..HEAD
             and Read or Grep for the current state of any file.
 
-            If the Base and Head shown above are the same commit there is no Pull
-            Request: the request concerns the issue itself, so answer it from the
-            repository rather than from a diff.
+            If no Pull Request number is shown above, the request concerns the
+            issue itself: answer it from the repository rather than from a diff.
+            Do not infer this from Base and Head instead -- a merged or empty Pull
+            Request can report both as the same commit.
 
             You cannot see the discussion. If a point may already be dispositioned,
             raise it as a question rather than an assertion.

@@ -40,6 +40,7 @@ _BOUNDED_PROMPT_SOURCES = frozenset(
         "github.event.comment.line",
         "github.event.comment.diff_hunk",
         "github.event.comment.original_commit_id",
+        "steps.review_head.outputs.pull_number",
         "github.event.comment.original_line",
         "github.event.issue.author_association",
         "github.event.pull_request.author_association",
@@ -371,6 +372,50 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertIn("no Pull Request", prompt)
         # The instruction is only actionable if both sides are actually shown.
         self.assertIn("steps.review_head.outputs.head_sha", prompt)
+
+    def test_supersession_names_every_tool_the_mention_job_grants(self) -> None:
+        # Decision 0093 rule 8 requires every extra mention-job tool to be unset,
+        # so a granted tool that the supersession section does not name leaves two
+        # records demanding opposite things for that tool.
+        workflow = load_yaml(MENTION_WORKFLOW)
+        args = str(_claude_step(workflow)["with"].get("claude_args", ""))
+        granted = re.search(r'--allowedTools\s+"([^"]+)"', args)
+        self.assertIsNotNone(granted, args)
+        path = ROOT / "knowledge" / "decisions" / "0094-bound-claude-review-context.md"
+        decision = " ".join(path.read_text(encoding="utf-8").split())
+        superseded = decision.split("**superseded:**", 1)
+        self.assertEqual(len(superseded), 2, "no superseded clause found")
+        clause = superseded[1].split("**retained:**", 1)[0]
+        for tool in granted.group(1).split(","):
+            with self.subTest(tool=tool):
+                self.assertIn(tool.strip(), clause)
+
+    def test_mention_prompt_keys_item_type_on_the_resolved_pull_number(self) -> None:
+        # A merged or empty Pull Request can report an equal head and base, so
+        # inferring "this is not a Pull Request" from SHA equality misroutes a
+        # real Pull Request request as an ordinary issue.
+        workflow = load_yaml(MENTION_WORKFLOW)
+        prompt = " ".join(_claude_step(workflow)["with"]["prompt"].split())
+        self.assertIn("steps.review_head.outputs.pull_number", prompt)
+        self.assertNotIn("same commit there is no Pull Request", prompt)
+
+    def test_guard_step_reports_pull_presence_on_every_exit_path(self) -> None:
+        # The prompt can only key on the resolved pull number if every branch of
+        # the guard step writes it, including the early no-Pull-Request return.
+        workflow = load_yaml(MENTION_WORKFLOW)
+        steps = next(
+            job["steps"]
+            for job in workflow["jobs"].values()
+            if any(s.get("id") == "review_head" for s in job.get("steps", []))
+        )
+        script = next(s for s in steps if s.get("id") == "review_head")["run"]
+        branches = script.split("exit 0")
+        self.assertGreaterEqual(len(branches), 3, script)
+        # The script runs top to bottom, so a path is covered when the write
+        # happens at or before its own exit, not only inside its own block.
+        for index in range(len(branches)):
+            with self.subTest(exit_path=index):
+                self.assertIn("pull_number=", "exit 0".join(branches[: index + 1]))
 
     def test_mention_prompt_forwards_inline_review_location(self) -> None:
         # On pull_request_review_comment the request's meaning often lives in the
