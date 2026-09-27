@@ -15,6 +15,7 @@ import sys
 import tempfile
 import textwrap
 import time
+import tracemalloc
 import unittest
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import fields
@@ -1500,6 +1501,46 @@ class VF0SubjectTests(unittest.TestCase):
         with self.assertRaisesRegex(ExecutionRejected, "^COMMAND_BYTES_BOUND$"):
             module._snapshot_command(["/bin/true", argument])
         self.assertEqual([], encode_calls)
+
+    def test_command_snapshot_rejects_hidden_nul_string_subclass(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+
+        class HiddenNulString(str):
+            def __contains__(self, value: object) -> bool:
+                if value == "\0":
+                    return False
+                return super().__contains__(value)
+
+        command = [HiddenNulString("/bin/echo\0unexpected")]
+        with self.assertRaisesRegex(ExecutionRejected, "^COMMAND$"):
+            module._snapshot_command(command)
+
+    def test_command_validation_cannot_be_overridden_by_string_subclass(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+
+        class RelativeExecutableString(str):
+            def startswith(self, prefix: str, *args: object) -> bool:
+                return True
+
+        command = module._snapshot_command([RelativeExecutableString("relative")])
+        with self.assertRaisesRegex(ExecutionRejected, "^COMMAND_EXECUTABLE$"):
+            module._validate_command(command)
+        self.assertIs(type(command[0]), str)
+
+    def test_multibyte_command_argument_is_bounded_before_encoding(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        remaining_bytes = module._MAX_COMMAND_BYTES - len("/bin/true")
+        command = ["/bin/true", "\U0001f600" * remaining_bytes]
+
+        tracemalloc.start()
+        try:
+            with self.assertRaisesRegex(ExecutionRejected, "^COMMAND_BYTES_BOUND$"):
+                module._snapshot_command(command)
+            _, peak_bytes = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+
+        self.assertLess(peak_bytes, 2 * module._MAX_COMMAND_BYTES)
 
     def test_actual_local_containment_launch_requires_ready_handshake(self) -> None:
         module = importlib.import_module("tools.vf0_execution")

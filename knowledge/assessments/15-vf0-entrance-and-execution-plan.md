@@ -5,7 +5,7 @@ description: Exact-main missing-pre-evidence reproduction, evolving component ev
 status: draft
 generated:
   by: agent:chatgpt
-  at: "2026-09-27T14:10:24Z"
+  at: "2026-09-27T15:46:50Z"
 sources:
   - id: owner-scope
     resource: https://github.com/ktogias/gnostoa/issues/15#issuecomment-5803831361
@@ -1190,3 +1190,53 @@ receipt because its host interpreter path was not present in the container. It
 produced no receipt and did not mutate the source worktree. The documented
 Development Container route above was then used successfully; the failed host
 invocation is not treated as preparation evidence.
+
+### AUD21 exact-head review and repair disposition
+
+The next exact candidate was `633f7f947a7b188b1d1e0e5c14706a26e53975f6`.
+Fresh reviewer attribution, subject bindings, recommendations, missing
+environments, the Codacy/Sonar disposition and the pre-edit admission/reuse
+checkpoint are retained in the [AUD21 review checkpoint](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5857279606).
+The [AUD21 RED supplement](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5857322924)
+retains the exact failing subject and log digest.
+
+Codex reported a P2 in which `str` subclass overrides can hide an embedded NUL
+or make a relative executable pass validation, leaving an uncaught `Popen`
+error or PATH-based execution. CodeRabbit independently reported the same
+subclass boundary and noted that the earlier character-count precheck was not
+an exact UTF-8 byte bound. Both findings were confirmed before editing. The
+original AUD20 change checked character count before `str.encode`; it still
+allowed an over-budget multibyte allocation up to four times the byte limit.
+This repair supersedes that implementation: command inputs are first bounded by
+base `str` character count, copied to a plain built-in `str`, checked for NUL,
+then scanned for exact UTF-8 length without constructing encoded bytes. The
+scan rejects over-budget arguments before encoding/allocation and rejects
+surrogates with the stable `COMMAND` reason. Snapshots retain only canonical
+strings, so later path validation cannot invoke caller overrides. No public
+interface, admission, threshold or activation behavior changed.
+
+The three regression tests were added before production edits and failed on
+exact parent `633f7f9`: a hidden-NUL subclass passed, a `startswith` subclass
+made a relative executable pass, and a multibyte argument allocated 263,805
+traced bytes before rejection against a 131,072-byte test ceiling. After the
+implementation, the Development Container focused suite passed all 136 tests
+with two existing skips; `ci/style --check` reported 495 files already
+formatted and all checks passed.
+
+| Source/evidence | SHA-256 | Result |
+| --- | --- | --- |
+| AUD21 pre-edit `tools/vf0_execution.py` | `feb96babf754504766d8bb4ef7e2207538658e59e907a8b3a7b74bf50aa37b68` | Exact parent source before implementation |
+| AUD21 RED-only/final `tests/test_vf0_execution.py` | `a6c3f6dddf45b435def1f52a3d7f583e6c0e39af4647f9697c4454cf5b151850` | Three regression tests; RED then focused GREEN |
+| AUD21 RED log | `b93a1097091d16ae631b903673063a888f14dd20e63942a62f065acecf0d566d` | Exactly the three intended failures; production unchanged |
+| AUD21 fixed `tools/vf0_execution.py` | `fec59ee1f95d41e41036b7157530e45e78ffa4e141f1b563b368b3a6c569943a` | Canonical command strings and exact pre-allocation UTF-8 byte accounting |
+
+On `633f7f9`, CodeAnt found no concrete defects but supplied no overall
+recommendation; Gitar approved with medium risk and 7/7 findings closed, while
+reporting that rules and functional validation were not enabled. Greptile's
+code and security-focused ordinary reviews each completed with 12 files and zero
+comments, without an overall recommendation or a separate dedicated security
+check. CodeRabbit's full review produced the multibyte and subclass findings;
+its included allowance is now spent. Codex code review produced the P2 above;
+no Codex Security report is available. These are not convergence on this next
+candidate. The PR remains Draft and required human semantic review remains
+outstanding.

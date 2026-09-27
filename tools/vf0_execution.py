@@ -1613,6 +1613,24 @@ def _snapshot_evidence(
     return tuple(snapshot)
 
 
+def _bounded_utf8_length(text: str, maximum_bytes: int) -> int:
+    encoded_bytes = 0
+    for character in text:
+        codepoint = ord(character)
+        if codepoint <= 0x7F:
+            encoded_bytes += 1
+        elif codepoint <= 0x7FF:
+            encoded_bytes += 2
+        elif 0xD800 <= codepoint <= 0xDFFF:
+            raise ExecutionRejected("COMMAND")
+        elif codepoint <= 0xFFFF:
+            encoded_bytes += 3
+        else:
+            encoded_bytes += 4
+        _need(encoded_bytes <= maximum_bytes, "COMMAND_BYTES_BOUND")
+    return encoded_bytes
+
+
 def _snapshot_command(command: Sequence[str]) -> tuple[str, ...]:
     snapshot: list[str] = []
     total_bytes = 0
@@ -1627,14 +1645,21 @@ def _snapshot_command(command: Sequence[str]) -> tuple[str, ...]:
             break
         if index >= _MAX_COMMAND_ARGS:
             raise ExecutionRejected("COMMAND_COUNT_BOUND")
-        _need(isinstance(part, str) and bool(part) and "\0" not in part, "COMMAND")
-        remaining_bytes = _MAX_COMMAND_BYTES - total_bytes
-        _need(str.__len__(part) <= remaining_bytes, "COMMAND_BYTES_BOUND")
+        _need(isinstance(part, str), "COMMAND")
         try:
-            encoded = str.encode(part, "utf-8")
-        except UnicodeEncodeError as exc:
+            character_count = str.__len__(part)
+        except TypeError as exc:
             raise ExecutionRejected("COMMAND") from exc
-        total_bytes += len(encoded)
+        _need(character_count > 0, "COMMAND")
+        remaining_bytes = _MAX_COMMAND_BYTES - total_bytes
+        _need(character_count <= remaining_bytes, "COMMAND_BYTES_BOUND")
+        try:
+            part = str.__str__(part)
+        except TypeError as exc:
+            raise ExecutionRejected("COMMAND") from exc
+        _need("\0" not in part, "COMMAND")
+        encoded_bytes = _bounded_utf8_length(part, remaining_bytes)
+        total_bytes += encoded_bytes
         _need(total_bytes <= _MAX_COMMAND_BYTES, "COMMAND_BYTES_BOUND")
         snapshot.append(part)
     _need(bool(snapshot), "COMMAND")
