@@ -278,13 +278,19 @@ No new dependency, service or runtime is introduced.
    all downstream of accepting the shape and hardening inside it. The shape is
    therefore gone.
 
-   Only the base is checked out, bound to the resolved base SHA. A bare checkout
-   would follow `github.ref`, which on `pull_request_review` and
+   Only the **protected default branch** is checked out, named by a repository
+   property rather than by anything a trigger carries. Three alternatives were each
+   wrong. A bare checkout follows `github.ref`, which on `pull_request_review` and
    `pull_request_review_comment` -- two of the four admitted triggers -- is
-   `refs/pull/N/merge`, the candidate merged into its base, and would also fail
-   outright when a Pull Request conflicts with its base and no merge ref exists. The
-   base supplies the entry route the prompt names and the pre-change state of any
-   file; the change itself arrives only as the artefacts of rule 12, built from the
+   `refs/pull/N/merge`, the candidate merged into its base, and it fails outright when
+   a Pull Request conflicts with its base and has no merge ref. The resolved base SHA
+   is a step output, which CodeQL treats as untrusted provenance in a privileged
+   workflow, and it is in any case the base a contributor chose rather than the branch
+   this repository protects. The head is the candidate itself. The default branch
+   supplies the entry route the prompt names and a readable pre-change state; the
+   comparison is still asked for against the *resolved* base, so the diff is exact,
+   and only the readable file state is the default branch's -- a stated caveat for a
+   Pull Request targeting another branch rather than a defect; the change itself arrives only as the artefacts of rule 12, built from the
    provider's comparison for the two resolved revisions. No candidate file, mode or
    symlink is ever written to the runner, and the reviewer is given no
    `--add-dir`.

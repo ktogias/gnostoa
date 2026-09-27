@@ -78,8 +78,9 @@ _PROMPT_FUNCTIONS = frozenset(
 )
 _PROMPT_KEYWORDS = frozenset({"false", "null", "true"})
 _MAX_STATIC_PROMPT_BYTES = 4096
-# Resolved absolutely so the behavioural tests never depend on PATH order.
-_GIT = shutil.which("git")
+# Resolved absolutely so the behavioural test never depends on PATH order. Only sh
+# is needed now: the collection step is executed against a stubbed provider rather
+# than against a local repository.
 _SH = shutil.which("sh")
 
 
@@ -354,13 +355,14 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         workflow = load_yaml(MENTION_WORKFLOW)
         checkout = _base_checkout(workflow)
         ref = " ".join(str(checkout["with"]["ref"]).split())
-        # Superseded twice. The head is resolved with the read-only token rather
-        # than taken from the event payload, and the head is no longer checked out at
-        # all -- the reviewed change reaches the reviewer as trusted artefacts. What
-        # must still hold is that the checkout is bound to a resolved identity rather
-        # than left to follow github.ref, which on the review triggers is the merge
-        # ref of the candidate.
-        self.assertIn("steps.review_head.outputs.base_sha", ref)
+        # Superseded three times. The head is resolved with the read-only token
+        # rather than taken from the event payload; the head is no longer checked out
+        # at all, because the change reaches the reviewer as trusted artefacts; and
+        # the checkout is bound to the protected default branch rather than to a step
+        # output. What must still hold is that it is never left to follow github.ref,
+        # which on the review triggers is the candidate's merge ref.
+        self.assertNotIn("github.ref", ref)
+        self.assertEqual("${{ github.event.repository.default_branch }}", ref)
         resolve = next(
             step for step in _steps(workflow) if step.get("id") == "review_head"
         )
@@ -405,11 +407,19 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertTrue(
             guard, "mention job needs an explicit same-repository head guard"
         )
-        ref = str(_base_checkout(workflow)["with"]["ref"])
-        # The ref must come from the guarded resolution, not straight from the
-        # untrusted event payload.
-        self.assertIn("steps.review_head.outputs", ref)
-        self.assertNotIn("refs/pull/", ref)
+        ref = str(_base_checkout(workflow)["with"]["ref"]).strip()
+        # Nothing contributor-controlled may reach the checkout. The only tree
+        # materialised is the protected default branch, so no fork head, merge ref or
+        # payload-supplied SHA can be it; the guard still governs which head the
+        # comparison is asked for.
+        self.assertEqual("${{ github.event.repository.default_branch }}", ref)
+        for forbidden in ("refs/pull/", "head.sha", "head_sha", "github.ref"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, ref)
+        collect = _context_step(workflow)
+        self.assertIn(
+            "steps.review_head.outputs.head_sha", str(collect["env"]["HEAD_SHA"])
+        )
 
     def test_mention_prompt_names_the_declared_entry_route(self) -> None:
         # AGENTS.md itself begins "Start with README.md"; sending the reviewer
@@ -450,7 +460,12 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # comparison. No candidate file, mode or symlink reaches this filesystem.
         workflow = load_yaml(MENTION_WORKFLOW)
         base = _base_checkout(workflow)
-        self.assertIn("steps.review_head.outputs.base_sha", str(base["with"]["ref"]))
+        # Bound to the protected default branch, by a repository property rather
+        # than by a step output or anything a trigger carries.
+        self.assertEqual(
+            "${{ github.event.repository.default_branch }}",
+            str(base["with"]["ref"]).strip(),
+        )
         self.assertNotIn("path", base.get("with", {}))
         text = MENTION_WORKFLOW.read_text(encoding="utf-8")
         # The head may still be named in the prompt and in the collection step; what
@@ -561,7 +576,9 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                         **os.environ,
                         "HOME": scratch,
                         "PATH": f"{stub_dir}{os.pathsep}{os.environ['PATH']}",
-                        "GH_TOKEN": "stub",
+                        # nosec B105 -- literal placeholder for the stubbed
+                        # provider, not a credential
+                        "GH_TOKEN": "stub",  # nosec B105
                         "REPOSITORY": "owner/repo",
                         "PULL_NUMBER": pull,
                         "BASE_SHA": "a" * 40,
