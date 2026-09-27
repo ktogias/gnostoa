@@ -98,7 +98,6 @@ Two alternatives were measured or read before choosing:
 No new dependency, service or runtime is introduced.
 
 ## Decision
-
 1. The mention workflow supplies a `prompt` input. Per
    `src/modes/detector.ts`, supplying `prompt` selects **agent mode** even on
    comment events; per `src/modes/agent/index.ts` agent mode builds the prompt as
@@ -107,8 +106,9 @@ No new dependency, service or runtime is introduced.
 2. Every interpolated source in that prompt must be independent of discussion
    length. The admitted set is the repository identity, the issue or Pull Request
    number, head and base SHAs, the issue or Pull Request body, the triggering
-   comment body, the triggering review body, the issue title and the triggering
-   review comment's path, line and diff hunk. Each is one bounded field; none
+   comment body, the triggering review body, the issue title, the issue author's
+   association, the reviewed head repository name and the triggering review
+   comment's path, line and diff hunk. Each is one bounded field; none
    scales with the number of comments. Any expression outside that set fails the
    contract test.
 3. The static prompt is bounded at 4096 bytes. Total context is then the prompt
@@ -142,12 +142,10 @@ No new dependency, service or runtime is introduced.
 10. The reviewer diffs against the **resolved base**, not a fixed branch, and the
    prompt names the repository's declared entry route -- `README.md` first, as
    `AGENTS.md` itself states.
-
 11. The prompt must cover every admitted trigger payload. `issue_comment` carries
    `github.event.issue.*`, the review triggers carry `github.event.pull_request.*`,
    and `issues: opened` may hold the mention in the title alone. A template that
    reads only one shape silently loses the others.
-
 12. **The tools the prompt relies on must be granted.** The pinned action disables
    Bash by default, so a retrieval-based prompt would otherwise leave the reviewer
    with a checkout it cannot inspect. Only read-only verbs are granted --
@@ -161,6 +159,20 @@ No new dependency, service or runtime is introduced.
 14. Inline review location is forwarded. On `pull_request_review_comment` the
    meaning of a request often lives in the comment's path, line and hunk rather
    than its body, and agent mode fetches none of it.
+15. **Externally authored issue text is withheld.** The job gate validates the
+   replying author's association, not the issue author's. Since this job holds the
+   Claude credential, grants `Read`, and publishes its answer in a public step
+   summary, an external issue body would otherwise be an injection path into a
+   credentialed agent with public output. The issue body and title are interpolated
+   only when the issue author is `OWNER`, `MEMBER` or `COLLABORATOR`, and the prompt
+   says so where the text would have been. The Pull Request body needs no separate
+   gate: rule 9 already refuses a fork-controlled head, so a reviewed Pull Request
+   is authored inside this repository.
+16. **The tool grant and the requested permissions must agree.** `actions: read`
+   installs nothing on its own; agent mode installs the CI server only when
+   `--allowedTools` names an `mcp__github_ci` tool. The three read-only CI tools are
+   granted so the permission is used, rather than left as dead configuration that a
+   reader would mistake for capability.
 
 ## Accepted trade: delivery is no longer on the Pull Request
 
@@ -178,21 +190,6 @@ Pull Request delivery.** The review is durable and linkable from the run, but it
 is not in the Pull Request record and peer reviewers do not see it. Restoring
 on-Pull-Request delivery without widening `GITHUB_TOKEN` is a separate question
 and is not admitted by this Decision.
-
-15. **Externally authored issue text is withheld.** The job gate validates the
-   replying author's association, not the issue author's. Since this job holds the
-   Claude credential, grants `Read`, and publishes its answer in a public step
-   summary, an external issue body would otherwise be an injection path into a
-   credentialed agent with public output. The issue body and title are interpolated
-   only when the issue author is `OWNER`, `MEMBER` or `COLLABORATOR`, and the prompt
-   says so where the text would have been. The Pull Request body needs no separate
-   gate: rule 9 already refuses a fork-controlled head, so a reviewed Pull Request
-   is authored inside this repository.
-16. **The tool grant and the requested permissions must agree.** `actions: read`
-   installs nothing on its own; agent mode installs the CI server only when
-   `--allowedTools` names an `mcp__github_ci` tool. The three read-only CI tools are
-   granted so the permission is used, rather than left as dead configuration that a
-   reader would mistake for capability.
 
 ## Partial supersession of Decision 0093 rule 8
 

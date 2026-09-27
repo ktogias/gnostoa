@@ -428,6 +428,46 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         if "actions: read" in permissions:
             self.assertIn("mcp__github_ci", args)
 
+    def test_review_events_bind_to_the_triggering_commit(self) -> None:
+        # A live lookup would replace the event's head with the Pull Request's
+        # newer state if a commit lands between queue and execution, while the
+        # forwarded path, line and hunk still describe the triggering event.
+        workflow = load_yaml(MENTION_WORKFLOW)
+        resolve = next(
+            step for step in _steps(workflow) if step.get("id") == "review_head"
+        )
+        env = {key: str(value) for key, value in resolve["env"].items()}
+        joined = " ".join(env.values())
+        self.assertIn("github.event.pull_request.head.sha", joined)
+        self.assertIn("github.event.pull_request.base.sha", joined)
+        self.assertIn("github.event.pull_request.head.repo.full_name", joined)
+
+    def test_withheld_marker_appears_only_when_text_is_withheld(self) -> None:
+        # On the review triggers there is no github.event.issue, so an
+        # unconditional marker would tell the reviewer a trusted same-repository
+        # Pull Request has an untrusted author.
+        workflow = load_yaml(MENTION_WORKFLOW)
+        prompt = " ".join(_claude_step(workflow)["with"]["prompt"].split())
+        self.assertNotRegex(prompt, r"^[^$]*withheld")
+        occurrences = prompt.count("withheld")
+        self.assertTrue(occurrences)
+        # Every mention must sit inside a conditional expression.
+        for fragment in prompt.split("withheld")[:-1]:
+            self.assertIn("${{", fragment.rsplit("}}", 1)[-1] + "${{")
+
+    def test_decision_0094_keeps_every_rule_inside_the_decision_section(self) -> None:
+        path = ROOT / "knowledge" / "decisions" / "0094-bound-claude-review-context.md"
+        decision = path.read_text(encoding="utf-8")
+        start = decision.index("## Decision")
+        end = decision.index("## ", start + 3)
+        body = decision[start:end]
+        rules = re.findall(r"^(\d+)\. ", body, re.MULTILINE)
+        self.assertEqual([str(n) for n in range(1, len(rules) + 1)], rules)
+        after = decision[end:]
+        self.assertEqual([], re.findall(r"^\d+\. ", after, re.MULTILINE))
+        # Rule 2 enumerates the admitted set in prose, not as identifiers.
+        self.assertIn("author's association", body)
+
     def test_mention_workflow_has_no_unconfigured_assignment_trigger(self) -> None:
         # Without an assignee_trigger input the action never runs Claude for
         # `issues: assigned`; the trigger would only start an idle job.

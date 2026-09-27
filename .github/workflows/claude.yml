@@ -50,11 +50,27 @@ jobs:
           PULL_NUMBER: >-
             ${{ github.event.pull_request.number
               || (github.event.issue.pull_request && github.event.issue.number) }}
+          # Review triggers carry their own identities. Using them keeps the
+          # reviewed commit bound to the event, so a push between queue and
+          # execution cannot swap the candidate out from under a request whose
+          # forwarded path, line and hunk describe the older one.
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         run: |
           set -eu
           if [ -z "${PULL_NUMBER}" ]; then
             printf 'head_sha=%s\n' "${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
             printf 'base_sha=%s\n' "${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          if [ -n "${EVENT_HEAD_SHA}" ]; then
+            if [ "${EVENT_HEAD_REPO}" != "${REPOSITORY}" ]; then
+              echo "ERROR: refusing a fork-controlled head (${EVENT_HEAD_REPO})" >&2
+              exit 1
+            fi
+            printf 'head_sha=%s\n' "${EVENT_HEAD_SHA}" >> "${GITHUB_OUTPUT}"
+            printf 'base_sha=%s\n' "${EVENT_BASE_SHA}" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
           head_repo="$(gh api "repos/${REPOSITORY}/pulls/${PULL_NUMBER}" \
@@ -98,9 +114,12 @@ jobs:
             Repository: ${{ github.repository }}
             Item: #${{ github.event.issue.number }}${{ github.event.pull_request.number }}
             Title: >-
-              ${{ (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
-                    github.event.issue.author_association)
-                   && github.event.issue.title) || '(withheld: untrusted author)' }}
+              ${{ github.event.issue.title
+                  && (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                        github.event.issue.author_association)
+                      && github.event.issue.title
+                      || '(withheld: untrusted issue author)')
+                  || '' }}
             Base: ${{ steps.review_head.outputs.base_sha }}
             Head: ${{ steps.review_head.outputs.head_sha }}
 
@@ -125,12 +144,13 @@ jobs:
             green check is not semantic acceptance.
 
             --- maintained current state ---
-            Externally authored issue text is withheld: the job gate validates the
-            replying author, not the issue author, and this job holds a credential
-            and publishes its answer publicly.
-            ${{ (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
-                  github.event.issue.author_association)
-                 && github.event.issue.body) || '' }}
+            ${{ github.event.issue.body
+                && (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                      github.event.issue.author_association)
+                    && github.event.issue.body
+                    || '(withheld: the issue author is not a trusted association;
+                    this job holds a credential and publishes publicly)')
+                || '' }}
             ${{ github.event.pull_request.body }}
 
             --- inline location, when the request came from a review comment ---
