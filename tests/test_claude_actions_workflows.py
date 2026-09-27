@@ -518,7 +518,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                     ("config", "user.email", "test@example.invalid"),
                     ("config", "user.name", "test"),
                 ):
-                    subprocess.run(  # nosec B603 -- literal argv, no shell
+                    subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
                         [str(_GIT), *argv], cwd=repo, check=True, capture_output=True
                     )
                 (repo / "README.md").write_text("real\n", encoding="utf-8")
@@ -526,10 +526,10 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                     (repo / "AGENTS.md").symlink_to("/etc/hostname")
                 else:
                     (repo / "AGENTS.md").write_text("real\n", encoding="utf-8")
-                subprocess.run(  # nosec B603 -- literal argv, no shell
+                subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
                     [str(_GIT), "add", "-A"], cwd=repo, check=True, capture_output=True
                 )
-                subprocess.run(  # nosec B603 -- literal argv, no shell
+                subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
                     [str(_GIT), "commit", "-q", "-m", "c"],
                     cwd=repo,
                     check=True,
@@ -539,7 +539,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 return repo
 
             def guard(repo: pathlib.Path) -> subprocess.CompletedProcess[str]:
-                return subprocess.run(  # nosec B603 -- literal argv, no shell
+                return subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
                     [str(_SH), "-s"],
                     input=script,
                     cwd=repo,
@@ -582,7 +582,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             base_env = {**os.environ, "HOME": scratch}
 
             def git(*argv: str) -> str:
-                return subprocess.run(  # nosec B603 -- literal argv, no shell
+                return subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
                     [str(_GIT), *argv],
                     cwd=repo,
                     check=True,
@@ -594,7 +594,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             def collect(
                 base: str, head: str, target: pathlib.Path, pull: str = "327"
             ) -> None:
-                result = subprocess.run(  # nosec B603 -- literal argv, no shell
+                result = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
                     [str(_SH), "-s"],
                     input=script,
                     cwd=repo,
@@ -641,7 +641,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             parts = sorted((context / "patches").glob("part-*"))
             self.assertTrue(parts, "no diff parts were written")
             rejoined = b"".join(part.read_bytes() for part in parts)
-            expected = subprocess.run(  # nosec B603 -- literal argv, no shell
+            expected = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
                 [str(_GIT), "diff", f"{base_sha}...{head_sha}"],
                 cwd=repo,
                 check=True,
