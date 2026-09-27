@@ -764,8 +764,10 @@ container behind, and an overlong filesystem path was accepted. A separate
 descriptor harness also exercised file and directory replacement immediately
 before descriptor opening.
 
-The current bounded correction preserves non-UTF-8 repository paths through
-filesystem decoding; snapshots use descriptor-relative, no-follow traversal,
+The current bounded correction preserves valid non-UTF-8 checkout-root paths
+through operating-system filesystem decoding. Git tree entry names must decode
+as UTF-8; invalid tracked path bytes reject as `SUBJECT_TREE_ENTRY` before
+materialization. Snapshots use descriptor-relative, no-follow traversal,
 compare the classified/opened/current inode metadata, hash regular files in
 bounded chunks, and cap individual and aggregate path bytes, entry count and
 depth. OCI cleanup now checks the generated name's ownership token when an ID is
@@ -952,13 +954,13 @@ admitted oracle.
 | --- | --- | --- | --- | --- |
 | C1 | Closed, bounded normalized inputs reject ambiguous shapes and resource-bound violations | `tools/vf0_contract.py`: strict JSON and shape helpers; `tests/test_vf0_contract.py`: missing/unknown/duplicate/nonfinite/depth/size/cycle cases | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | C2 | Exact parent, evidence, policy and admission relation; evidence-only and final implementation subjects remain distinct without requiring future production-fix bytes before RED | `tools/vf0_contract.py`: material/request/evidence/candidate relation; exact binding, evidence-file byte/mode retention and chronology regressions | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
-| C3 | Effective-policy mode allowance, non-vacuous expected RED and truthful chronology remain separate from asserted data consistency | `_mode_relation`, `_time_relation`; mode matrix, late reconstruction, zero/skip/unrelated failure controls | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
+| C3 | Effective-policy mode allowance, non-vacuous expected RED and truthful chronology remain separate from asserted data consistency | `_mode_relation`, `_time_relation`; mode matrix, emergency admission-to-evidence ordering, late reconstruction, zero/skip/unrelated failure controls | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | C4 | Provider-neutral identities and two distinct synthetic mappings produce equivalent common results without native ID ordering | Reference/namespace relation; two-mapping and collision/opaque-attempt tests | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | C5 | Missing, unknown, unsupported or contradictory required acquisition guarantees reject matching relation | Guarantee and coverage evaluation; missing/contradictory/incomplete/latest-attempt tests | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | C6 | Unsafe/wrong-subject action links reject as mappings; missing or changed navigation does not change otherwise matching authority relation | `resolve_links`; link-mapping separation tests | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | C7 | Even self-consistent forged normalized data cannot authenticate, approve, prepare, publish or activate | `evaluate` fixed claim boundary; forged-data and no-effectful-import tests | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | R1 | Exact immutable Git subject and admitted bounded tests-only delta materialize without symlink, metadata, path or count escape; successive calls share no hidden subject | `tools/vf0_execution.py`: stable Git identity; descriptor-relative `O_NOFOLLOW` traversal and opened/current inode revalidation; case-folded `.git` rejection; `GIT_NO_LAZY_FETCH=1` plus empty `GIT_ALLOW_PROTOCOL` allowlist for trusted Git reads; scans close before descent; individual/aggregate path bytes, depth, entry, file and total-byte limits; no-read oversized-file refusal; real Git and adversarial swap/bound regressions | Local fixture PASS / bounded SUPPORTS on the prepared component tree | Exact-head independent review pending |
-| R2 | Runtime, entrypoint, resource, mount and environment contract is checked before launch; identity binds the actually used runtime | Immutable backend configuration and Docker inspection compare resolved `Path`/`Args`, configured entrypoint/command/workdir/tmpfs, image, mount and resources before attachment; effective environment must equal inspected image values plus the five fixed controller overrides, with malformed/duplicate keys refused; injected-variable negative | Local fixture PASS / bounded SUPPORTS on the prepared component tree | Exact-head independent review pending |
+| R2 | Only the fixed digest-pinned image is accepted by the live OCI smoke; runtime, entrypoint, resource, mount and environment contract is checked before launch, and identity binds the actually used runtime | The smoke CLI has no image override; `run_smoke()` binds both Docker probes and its reported identity to `FIXED_IMAGE`. Immutable backend configuration and Docker inspection compare resolved `Path`/`Args`, configured entrypoint/command/workdir/tmpfs, image, mount and resources before attachment; effective environment must equal inspected image values plus the five fixed controller overrides, with malformed/duplicate keys refused; alternate-image negative | Local fixture PASS / bounded SUPPORTS on the prepared component tree | Exact-head independent review pending |
 | R3 | Command and effective limits bind controller-observed exit, output and termination; child bytes cannot certify RED or authority | Snapshot command bounds including NUL rejection, capture and observation construction; infrastructure/timeout/overflow/spoof/completion controls; engine `OOMKilled=false` required before accepting the wrapper trailer | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | R4 | Owned attachment/process/container resources are terminated and reconciled on every admitted failure path | Capture cleanup and known-name/container ownership removal, also reused by the read-only smoke probe; successful `--rm` completion takes one exact absence read-back, while failed/uncertain creation retains bounded reconciliation; selector/descendant/create/remove and interruption controls plus live timeout | Local fixture PASS / partial SUPPORTS; an object appearing after the finite settlement window remains unproved | Supported for exercised cases / pending exact-head review |
 | R5 | Before/after bytes and exact modes are checked; immutable-during-execution claims require enforced read-only subject; no provider or receipt effect is exposed | Snapshot/manifest plus controller backend claim; mutation/custom/local-backend negatives and live OCI conformance | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
@@ -996,3 +998,46 @@ helper-only candidates. No existing D0090 authority, effective threshold, public
 CLI/schema, dependency, credential or permanent producer workflow is changed by
 component convergence. VF0 remains critical and inactive; #318 stays dependent on
 its actual acceptance.
+
+### AUD17 exact-head review disposition
+
+The [AUD17 pre-edit and RED checkpoints](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5854631836)
+and [focused RED supplement](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5854654491)
+bind the CodeAnt R2 fixed-image finding to candidate
+`309901546343d0cd793800455557899ca65a6c41` / tree
+`4f7194f107495b5e2e83abb50966f62edef58de5`. The pre-edit test-only run had one
+failure and one error: the CLI accepted `--image`, and `run_smoke()` required a
+caller-selected image. The correction removes that selector and fixes both
+runtime probes and the result identity to the one `FIXED_IMAGE` in D0092. The
+mocked alternate is never sent to Docker. Its final result and source hashes must
+be rebound after parent-owned preparation.
+
+Other exact-309901 review observations were reconciled against the current
+contract before editing:
+
+- CodeAnt's wording finding is corrected above. Valid non-UTF-8 checkout-root
+  filesystem bytes are preserved, while invalid UTF-8 Git tree entry names are
+  rejected with `SUBJECT_TREE_ENTRY` before materialization.
+- Codex's proposed emergency ordering change is not adopted. D0092 binds
+  `EMERGENCY_POST_EVENT` to effective approved emergency admission and its
+  follow-up. `_time_relation` requires the admission observation to precede the
+  evidence interval; the final candidate can be observed later. A container
+  characterization with admission at 200, evidence at 600–700 and candidate at
+  800 returned `MATCH`, consistent with that declared event boundary.
+- CodeAnt's cleanup-error observation is not adopted as an R4 repair. When
+  execution and cleanup both fail, the machine-visible refusal is
+  `OCI_CLEANUP_UNVERIFIED` because resource absence is unproved; the original
+  `OCI_EXECUTION_FAILED` remains in the exception context chain. The exact-head
+  mock control observed both. The late-create-after-settlement-window report
+  restates the existing partial R4 limitation from AUD14; no sweeper or
+  timeless-cleanup behavior is claimed.
+- CodeRabbit's report that the general Claude Actions mention route receives a
+  write-capable App token is already captured as an unadmitted finding on the
+  same-purpose reviewer-capability PR #297. It is outside this candidate's
+  admitted effect boundary and does not authorize a #319 change.
+
+These are dispositions of reviews at the predecessor head, not final convergence.
+Each provider result must be checked against the exact prepared successor; a
+stale finding may remain relevant when its source behavior is unchanged. None of
+the agent reports supplies human semantic approval or changes Draft, integration,
+producer-admission or VF0 activation state.

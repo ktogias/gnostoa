@@ -263,9 +263,9 @@ _ISOLATED_SUBJECT_BOOTSTRAP = (
 )
 
 
-def run_smoke(image: str) -> dict[str, Any]:
-    backend = DockerBackend(image)
-    read_only_behavior = _probe_read_only_behavior(image)
+def run_smoke() -> dict[str, Any]:
+    backend = DockerBackend(FIXED_IMAGE)
+    read_only_behavior = _probe_read_only_behavior(FIXED_IMAGE)
     limits = ExecutionLimits(timeout_seconds=5.0, output_bytes=65_536)
     evidence = EvidenceFile(EVIDENCE_PATH, EVIDENCE)
     command = (
@@ -357,7 +357,7 @@ def run_smoke(image: str) -> dict[str, Any]:
         "schema": "gnostoa-vf0-execution-oci-smoke/v1",
         "status": "PASS",
         "scope": "COMPONENT_CONFORMANCE_ONLY",
-        "image": image,
+        "image": FIXED_IMAGE,
         "cases": cases,
         "read_only_behavior": read_only_behavior,
         "wrong_tree": wrong_tree,
@@ -370,10 +370,9 @@ def run_smoke(image: str) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--image", default=FIXED_IMAGE)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    result = run_smoke(args.image)
+    result = run_smoke()
     raw = (json.dumps(result, sort_keys=True, separators=(",", ":")) + "\n").encode()
     if args.output is not None:
         args.output.write_bytes(raw)

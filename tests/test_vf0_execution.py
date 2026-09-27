@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import importlib.util
+import io
 import json
 import os
 import shlex
@@ -3263,6 +3264,70 @@ class _ReadOnlyProbeTransport:
 
 
 class VF0SmokeContractTests(unittest.TestCase):
+    def test_live_smoke_cli_rejects_caller_selected_image(self) -> None:
+        module = _load_smoke_module()
+        alternate_image = "ghcr.io/example/unapproved@sha256:" + "a" * 64
+        output = io.StringIO()
+        with (
+            mock.patch.object(
+                sys,
+                "argv",
+                ["vf0_execution_oci_smoke.py", "--image", alternate_image],
+            ),
+            mock.patch.object(
+                module, "run_smoke", return_value={"status": "PASS"}
+            ) as run_smoke,
+            mock.patch.object(sys, "stdout", output),
+        ):
+            with self.assertRaises(SystemExit) as caught:
+                module.main()
+
+        self.assertEqual(2, caught.exception.code)
+        run_smoke.assert_not_called()
+
+    def test_live_smoke_runner_uses_only_the_fixed_image(self) -> None:
+        module = _load_smoke_module()
+        first = GitSubject(commit="a" * 40, tree="b" * 40)
+        second = GitSubject(commit="c" * 40, tree="d" * 40)
+
+        def fake_execute(
+            _repo: Path,
+            subject: GitSubject,
+            _evidence: list[EvidenceFile],
+            command: Sequence[str],
+            _backend: object,
+            _limits: ExecutionLimits,
+        ) -> ExecutionObservation:
+            if subject == GitSubject(commit=second.commit, tree=first.tree):
+                raise ExecutionRejected("SUBJECT_TREE")
+            case = command[-1]
+            termination, exit_code, stdout = {
+                "timeout": ("timeout", None, b""),
+                "overflow": ("output_limit", None, b""),
+                "nonzero": ("completed", 17, b""),
+                "spoof": ("completed", 0, b"approved"),
+            }.get(case, ("completed", 0, b""))
+            return self._observation(termination, exit_code, stdout)
+
+        with (
+            mock.patch.object(module, "DockerBackend") as docker_backend,
+            mock.patch.object(
+                module,
+                "_probe_read_only_behavior",
+                return_value={"rootfs_read_only": True},
+            ) as read_only_probe,
+            mock.patch.object(module, "_git"),
+            mock.patch.object(module, "_commit", side_effect=[first, second]),
+            mock.patch.object(module, "execute", side_effect=fake_execute),
+            mock.patch.object(module, "_summary", return_value={"case": "checked"}),
+            mock.patch.object(module, "_expect_completed_success"),
+        ):
+            result = module.run_smoke()
+
+        docker_backend.assert_called_once_with(module.FIXED_IMAGE)
+        read_only_probe.assert_called_once_with(module.FIXED_IMAGE)
+        self.assertEqual(module.FIXED_IMAGE, result["image"])
+
     def test_read_only_probe_cleans_after_timeout_and_interruption(self) -> None:
         module = _load_smoke_module()
         for failure in (
