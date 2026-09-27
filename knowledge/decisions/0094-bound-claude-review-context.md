@@ -104,8 +104,10 @@ No new dependency, service or runtime is introduced.
 2. Every interpolated source in that prompt must be independent of discussion
    length. The admitted set is the repository identity, the issue or Pull Request
    number, head and base SHAs, the issue or Pull Request body, the triggering
-   comment body, the triggering review body and the issue title. Any expression
-   outside that set fails the contract test.
+   comment body, the triggering review body, the issue title and the triggering
+   review comment's path, line and diff hunk. Each is one bounded field; none
+   scales with the number of comments. Any expression outside that set fails the
+   contract test.
 3. The static prompt is bounded at 4096 bytes. Total context is then the prompt
    plus one comment body plus one Pull Request description, none of which scales
    with the number of comments.

@@ -36,7 +36,7 @@ jobs:
       id-token: write # OIDC exchange for the Claude GitHub App token
       actions: read # Required for Claude to read CI results on PRs
     steps:
-      # Decision 0094 rules 8 and 10. Agent mode resolves no Pull Request of its
+      # Decision 0094 rules 8 and 9. Agent mode resolves no Pull Request of its
       # own, so the head must be bound explicitly -- but binding it would place
       # contributor-controlled code in the job that holds the Claude credential.
       # This step resolves the head with the read-only token and fails closed on
@@ -109,7 +109,7 @@ jobs:
               git log --oneline ${{ steps.review_head.outputs.base_sha }}..HEAD
             and Read or Grep for the current state of any file.
 
-            If the base and head below are the same commit there is no Pull
+            If the Base and Head shown above are the same commit there is no Pull
             Request: the request concerns the issue itself, so answer it from the
             repository rather than from a diff.
 
