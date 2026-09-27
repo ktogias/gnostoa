@@ -451,7 +451,11 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertGreaterEqual(len(checkouts), 2, checkouts)
         base, candidate = checkouts[0], _candidate_checkout(workflow)
         self.assertIsNot(base, candidate)
-        self.assertNotIn("ref", base.get("with", {}))
+        # An earlier version of this test asserted `ref` was *absent* here, which
+        # pinned a defect rather than a contract: a bare checkout follows github.ref,
+        # and on the two review triggers that is refs/pull/N/merge -- the candidate
+        # merged into its base. The root must be bound to the resolved base instead.
+        self.assertIn("steps.review_head.outputs.base_sha", str(base["with"]["ref"]))
         self.assertNotIn("path", base.get("with", {}))
         self.assertEqual("candidate", str(candidate["with"]["path"]))
         args = str(_claude_step(workflow)["with"].get("claude_args", ""))

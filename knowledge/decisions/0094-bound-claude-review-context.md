@@ -278,9 +278,17 @@ No new dependency, service or runtime is introduced.
    were downstream of ignoring it. The documented pattern is used instead -- the
    base ref at the workspace root, the reviewed head in a subdirectory, and
    `--add-dir` to reach it -- and it closes more than the pwn-request shape. The
-   entry route the prompt names, `README.md` and `AGENTS.md`, then comes from the
-   base branch, so a candidate can no longer rewrite the very instructions the
-   credential-bearing reviewer is told to follow. The prompt also states that
+   root checkout is bound explicitly to the **resolved base SHA**, not left bare. A
+   bare checkout follows `github.ref`, which on `pull_request_review` and
+   `pull_request_review_comment` -- two of the four admitted triggers -- is
+   `refs/pull/N/merge`, the candidate merged into its base; the workspace root would
+   then hold the candidate's own `README.md` and `AGENTS.md` and this rule's claim
+   would be false on half the triggers. A bare checkout also fails outright when a
+   Pull Request conflicts with its base and no merge ref exists. With the binding in
+   place, the entry route the prompt names comes from the base commit, so a candidate
+   cannot rewrite the very instructions the credential-bearing reviewer is told to
+   follow. The symlink guard scans only the candidate subdirectory because the root
+   is now a trusted base commit. The prompt also states that
    anything written inside the candidate, including its own instructions, is
    material under review rather than direction to the reviewer. Read confinement
    itself is defence-in-depth only: a `settings` deny list covers the obvious runner
