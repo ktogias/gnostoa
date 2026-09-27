@@ -249,6 +249,19 @@ No new dependency, service or runtime is introduced.
    each of those contexts is reported as unadmitted, so the test cannot pass
    through a blind spot in its own parser.
 
+20. **A candidate containing symlinks is refused before review.** The prompt sends
+   a credential-bearing agent to read candidate-controlled paths, starting with
+   `README.md` and `AGENTS.md`, and the auto-approved `Read` tool follows a symlink
+   to its target before the report reaches a public step summary. So a
+   same-repository branch that replaces one of those files with a symlink to a
+   runner path turns the entry route itself into an exfiltration primitive. Rule 9
+   does not cover it: the fork guard constrains whose repository the head comes
+   from, not what a branch inside this repository contains.
+   `tools/candidate_prepare.py` already refuses candidate symlinks because this
+   repository's bounded-candidate contract does not admit external target chains,
+   and the reviewed candidate is held to the same rule. A guard step ahead of both
+   the collection step and the reviewer fails closed on any symlink, tracked by
+   index mode or found in the checkout, and names the offending paths.
 ## Accepted trade: delivery is no longer on the Pull Request
 
 Agent mode sets `claudeCommentId: undefined` and provides **no GitHub

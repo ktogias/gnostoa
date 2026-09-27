@@ -118,6 +118,15 @@ def _prompt_contexts(prompt: str) -> set[str]:
     return contexts
 
 
+def _named_step(workflow: dict[str, Any], name: str) -> dict[str, Any]:
+    """Return the mention job's step with this exact name."""
+    for job in workflow["jobs"].values():
+        for step in job.get("steps", []):
+            if str(step.get("name", "")) == name:
+                return step
+    raise AssertionError(f"no step named {name!r}")
+
+
 def _context_step(workflow: dict[str, Any]) -> dict[str, Any]:
     """Return the step that retrieves review context on the reviewer's behalf."""
     for job in workflow["jobs"].values():
@@ -420,6 +429,77 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         args = str(_claude_step(workflow)["with"].get("claude_args", ""))
         self.assertIn("--allowedTools", args)
         self.assertNotIn("Bash", args)
+
+    def test_candidate_symlinks_are_rejected_before_review(self) -> None:
+        # The prompt tells a credential-bearing agent to read candidate-controlled
+        # paths, and Read follows a symlink to its target before the report is
+        # published to a public step summary. The fork guard does not help: a
+        # same-repository branch can carry the symlink. The repository's own
+        # bounded-candidate contract rejects symlinks for the same reason.
+        if _GIT is None or _SH is None:  # pragma: no cover - toolchain guard
+            self.skipTest("git and sh are required to execute the guard")
+        workflow = load_yaml(MENTION_WORKFLOW)
+        step = _named_step(workflow, "Reject candidate symlinks")
+        script = str(step["run"])
+        steps = _steps(workflow)
+        names = [str(each.get("name", "")) for each in steps]
+        self.assertLess(
+            names.index("Reject candidate symlinks"),
+            next(
+                index
+                for index, each in enumerate(steps)
+                if "claude-code-action" in str(each.get("uses", ""))
+            ),
+            "the guard must run before the reviewer does",
+        )
+
+        with tempfile.TemporaryDirectory() as scratch:
+            work = pathlib.Path(scratch)
+
+            def build(name: str, with_symlink: bool) -> pathlib.Path:
+                repo = work / name
+                repo.mkdir()
+                env = {**os.environ, "HOME": scratch}
+                for argv in (
+                    ("init", "-q", "."),
+                    ("config", "user.email", "test@example.invalid"),
+                    ("config", "user.name", "test"),
+                ):
+                    subprocess.run(  # nosec B603 -- literal argv, no shell
+                        [str(_GIT), *argv], cwd=repo, check=True, capture_output=True
+                    )
+                (repo / "README.md").write_text("real\n", encoding="utf-8")
+                if with_symlink:
+                    (repo / "AGENTS.md").symlink_to("/etc/hostname")
+                else:
+                    (repo / "AGENTS.md").write_text("real\n", encoding="utf-8")
+                subprocess.run(  # nosec B603 -- literal argv, no shell
+                    [str(_GIT), "add", "-A"], cwd=repo, check=True, capture_output=True
+                )
+                subprocess.run(  # nosec B603 -- literal argv, no shell
+                    [str(_GIT), "commit", "-q", "-m", "c"],
+                    cwd=repo,
+                    check=True,
+                    capture_output=True,
+                    env=env,
+                )
+                return repo
+
+            def guard(repo: pathlib.Path) -> subprocess.CompletedProcess[str]:
+                return subprocess.run(  # nosec B603 -- literal argv, no shell
+                    [str(_SH), "-s"],
+                    input=script,
+                    cwd=repo,
+                    capture_output=True,
+                    text=True,
+                    env={**os.environ, "HOME": scratch},
+                )
+
+            clean = guard(build("clean", with_symlink=False))
+            self.assertEqual(clean.returncode, 0, clean.stderr)
+            tainted = guard(build("tainted", with_symlink=True))
+            self.assertNotEqual(tainted.returncode, 0, tainted.stdout)
+            self.assertIn("AGENTS.md", tainted.stderr + tainted.stdout)
 
     def test_review_context_is_collected_with_fixed_arguments(self) -> None:
         # The retrieval must take no candidate-controlled input, or the trusted

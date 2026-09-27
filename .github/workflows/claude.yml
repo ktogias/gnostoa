@@ -112,6 +112,30 @@ jobs:
       # checks. The reviewer therefore gets no shell at all. This step runs the
       # retrieval itself with fixed arguments and no candidate-controlled input,
       # and writes bounded artefacts the reviewer opens with Read and Grep.
+      # The prompt sends a credential-bearing agent to read candidate-controlled
+      # paths, and Read follows a symlink to its target before the report reaches a
+      # public step summary. The fork guard does not cover this: a same-repository
+      # branch can carry the symlink. tools/candidate_prepare.py already refuses
+      # candidate symlinks because this repository's bounded-candidate contract does
+      # not admit external target chains; the reviewed candidate is held to the same
+      # rule, and fails closed.
+      - name: Reject candidate symlinks
+        run: |
+          set -eu
+          found="$(git -c core.quotePath=false ls-files -s \
+            | awk '$1 == "120000" { $1=""; $2=""; $3=""; sub(/^ +/, ""); print }')"
+          if [ -n "${found}" ]; then
+            echo "ERROR: refusing a candidate containing symlinks:" >&2
+            printf '%s\n' "${found}" >&2
+            exit 1
+          fi
+          untracked="$(find . -path ./.git -prune -o -type l -print)"
+          if [ -n "${untracked}" ]; then
+            echo "ERROR: refusing a checkout containing symlinks:" >&2
+            printf '%s\n' "${untracked}" >&2
+            exit 1
+          fi
+
       - name: Collect review context
         env:
           # Item type is keyed on the resolved pull number, never on head/base
