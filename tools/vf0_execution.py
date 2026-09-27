@@ -927,6 +927,7 @@ class DockerBackend:
         container_id: str,
         root: Path,
         limits: ExecutionLimits,
+        command: Sequence[str],
         cleanup_nonce: str,
         subject: GitSubject,
         image_id: str,
@@ -963,6 +964,17 @@ class DockerBackend:
         labels = config.get("Labels") or {}
         environment = config.get("Env") or []
         _need(isinstance(labels, dict) and isinstance(environment, list), "OCI_INSPECT")
+        expected_command = ["-I", "-c", _OCI_WRAPPER_SOURCE, *command]
+        expected_tmpfs = f"rw,nosuid,nodev,noexec,mode=1777,size={limits.tmpfs_bytes}"
+        _need(
+            spec.get("Path") == _OCI_WRAPPER_EXECUTABLE
+            and spec.get("Args") == expected_command
+            and config.get("Entrypoint") == [_OCI_WRAPPER_EXECUTABLE]
+            and config.get("Cmd") == expected_command
+            and config.get("WorkingDir") == "/workspace"
+            and host.get("Tmpfs") == {_CONTAINER_TMP: expected_tmpfs},
+            "OCI_CONTAINER_CONFIG",
+        )
         protected_environment: dict[str, str] = {}
         for item in environment:
             _need(isinstance(item, str) and "=" in item, "OCI_INSPECT")
@@ -1059,7 +1071,11 @@ class DockerBackend:
         self._reconcile_uncertain_remove(container_id, cleanup_nonce)
 
     def _cleanup_uncertain_create(
-        self, container_name: str, cleanup_nonce: str
+        self,
+        container_name: str,
+        cleanup_nonce: str,
+        *,
+        completion_observed: bool = False,
     ) -> None:
         deadline = time.monotonic() + _UNCERTAIN_CREATE_SETTLE_SECONDS
         while True:
@@ -1097,6 +1113,8 @@ class DockerBackend:
                 self._inspect_confirms_absence(inspected, container_name),
                 "OCI_CLEANUP_UNVERIFIED",
             )
+            if completion_observed:
+                return
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return
@@ -1173,7 +1191,13 @@ class DockerBackend:
             _need(_DOCKER_ID_RE.fullmatch(observed_id) is not None, "OCI_CONTAINER_ID")
             container_id = observed_id
             self._validate_container(
-                container_id, root, limits, cleanup_nonce, subject, image_id
+                container_id,
+                root,
+                limits,
+                command,
+                cleanup_nonce,
+                subject,
+                image_id,
             )
             capture = _capture_process(
                 [self.docker_executable, "start", "--attach", container_id],
@@ -1196,7 +1220,8 @@ class DockerBackend:
                 _need(
                     isinstance(state, dict)
                     and state.get("Status") == "exited"
-                    and state.get("Running") is False,
+                    and state.get("Running") is False
+                    and state.get("OOMKilled") is False,
                     "OCI_EXIT_STATE",
                 )
                 exit_code = state.get("ExitCode")

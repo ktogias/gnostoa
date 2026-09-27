@@ -687,6 +687,18 @@ the lower-level overlay checks remain in place. Smoke tests also pin the
 original timeout cause/interrupt and the normal `--rm` absence branch. This is
 bounded input validation and test precision, not a new authority or producer.
 
+The [AUD13 pre-change RED and admission checkpoint](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5851047580)
+reproduced three in-scope review findings against the exact prior subject: the
+created OCI config accepted changed resolved entrypoint/arguments/workdir/tmpfs,
+an OOM-killed wrapper exit 137 could be mistaken for its completion trailer, and
+the successful `--rm` probe spent the full uncertainty-settle window polling an
+already absent container. The execution component now verifies the effective
+runtime fields before attachment, requires the engine's `OOMKilled` state to be
+false, and uses a single exact absence read-back only after the smoke command
+returned success. Failure, interruption and uncertain-create paths retain their
+bounded reconciliation. These changes close existing R2–R4 acceptance criteria;
+they do not add a producer or activate VF0.
+
 The corrected relation suite has 42 tests and the execution suite has 114.
 Development-container runs passed both suites; the execution suite also passed
 under optimization, with two explicit local-namespace skips. These are bounded
@@ -707,6 +719,21 @@ review record on [PR #319](https://github.com/ktogias/gnostoa/pull/319)**. That 
 must bind the enclosing candidate/tree and this map before component convergence
 is claimed. Source changes invalidate the affected checkpoint rows; a source
 file cannot predict its own later publication or review result.
+
+AUD13's grouped pre-change reproducer recorded `R2_MISMATCH=ACCEPTED_UNEXPECTEDLY`,
+`R3_OOM_FORGED_TRAILER=ACCEPTED_UNEXPECTEDLY`, and 20 absence polls (2.0 seconds)
+for the successful auto-remove probe. The repaired execution suite passed all
+117 tests in the development container (two local-namespace skips); the
+exact-parent preparation receipt also records `ci/verify fast`, style-fix,
+style-check and diff-check success. Live OCI conformance and fresh exact-head
+independent review remain pending. The normalized Python source hashes for this
+AUD13 implementation are:
+
+| Component source | SHA-256 |
+| --- | --- |
+| `tools/vf0_execution.py` | `1287abedab8880c2e03ef62b793f1b04b8f24302fe2e266fa5e6bdc814baa80c` |
+| `tests/test_vf0_execution.py` | `a1c500acb3706291731bd571758b6da896dee5eebf0dedec11a58b291389fc92` |
+| `tests/vf0_execution_oci_smoke.py` | `6a675e4ab8034a325dbe794beb1ecf239581b3a19a2a8956f27794471772af98` |
 
 Historical executed support remains available separately: the
 [a859 candidate seal](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5847676712)
@@ -737,9 +764,9 @@ mechanism, not authentication or semantic adequacy of a future admitted oracle.
 | C6 | Unsafe/wrong-subject action links reject as mappings; missing or changed navigation does not change otherwise matching authority relation | `resolve_links`; link-mapping separation tests | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | C7 | Even self-consistent forged normalized data cannot authenticate, approve, prepare, publish or activate | `evaluate` fixed claim boundary; forged-data and no-effectful-import tests | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | R1 | Exact immutable Git subject and admitted bounded tests-only delta materialize without symlink, metadata, path or count escape; successive calls share no hidden subject | `tools/vf0_execution.py`: stable Git identity, evidence mode/content/count/path/duplicate/aggregate and command/NUL validation before materialization; real Git and bounded-input regressions | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
-| R2 | Runtime, entrypoint, resource, mount and environment contract is checked before launch; identity binds the actually used runtime | Immutable backend configuration, Docker image/container inspection and command construction; reassignment/dispatch negatives, contract negatives and live read-only/import-routing probes | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
-| R3 | Command and effective limits bind controller-observed exit, output and termination; child bytes cannot certify RED or authority | Snapshot command bounds including NUL rejection, capture and observation construction; infrastructure/timeout/overflow/spoof/completion controls | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
-| R4 | Owned attachment/process/container resources are terminated and reconciled on every admitted failure path | Capture cleanup and known-name/container ownership removal, also reused by the read-only smoke probe; selector/descendant/create/remove and probe-interruption controls plus live timeout | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
+| R2 | Runtime, entrypoint, resource, mount and environment contract is checked before launch; identity binds the actually used runtime | Immutable backend configuration and Docker inspection now compare resolved `Path`/`Args`, configured entrypoint/command/workdir/tmpfs, image, mount, resource and environment contracts before attachment; mutation negatives and live read-only/import-routing probes | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
+| R3 | Command and effective limits bind controller-observed exit, output and termination; child bytes cannot certify RED or authority | Snapshot command bounds including NUL rejection, capture and observation construction; infrastructure/timeout/overflow/spoof/completion controls; engine `OOMKilled=false` required before accepting the wrapper trailer | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
+| R4 | Owned attachment/process/container resources are terminated and reconciled on every admitted failure path | Capture cleanup and known-name/container ownership removal, also reused by the read-only smoke probe; successful `--rm` completion takes one exact absence read-back, while failed/uncertain creation retains bounded reconciliation; selector/descendant/create/remove and interruption controls plus live timeout | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | R5 | Before/after bytes and exact modes are checked; immutable-during-execution claims require enforced read-only subject; no provider or receipt effect is exposed | Snapshot/manifest plus controller backend claim; mutation/custom/local-backend negatives and live OCI conformance | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 
 Live OCI and independent review results must be rebound in the exact-head PR

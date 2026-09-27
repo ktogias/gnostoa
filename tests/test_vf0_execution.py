@@ -1738,6 +1738,11 @@ class FakeDockerBackend(DockerBackend):
         self.container_id = "a" * 64
         self.container_name: str | None = None
         self.cleanup_nonce: str | None = None
+        self.created_entrypoint: str | None = None
+        self.created_command: list[str] = []
+        self.created_working_dir: str | None = None
+        self.created_tmpfs_destination: str | None = None
+        self.created_tmpfs_options: str | None = None
         self.created = False
         self.removed = False
 
@@ -1765,6 +1770,15 @@ class FakeDockerBackend(DockerBackend):
             if key != "gnostoa.vf0.cleanup-token":
                 raise AssertionError(label)
             self.cleanup_nonce = token
+            entrypoint_index = args.index("--entrypoint") + 1
+            image_index = entrypoint_index + 1
+            self.created_entrypoint = args[entrypoint_index]
+            self.created_command = list(args[image_index + 1 :])
+            self.created_working_dir = args[args.index("--workdir") + 1]
+            tmpfs_spec = args[args.index("--tmpfs") + 1]
+            self.created_tmpfs_destination, self.created_tmpfs_options = (
+                tmpfs_spec.split(":", 1)
+            )
             self.created = True
             if self.create_mode == "exception":
                 raise ExecutionRejected("DOCKER_COMMAND_FAILED")
@@ -1814,7 +1828,12 @@ class FakeDockerBackend(DockerBackend):
                 )
             contract = {
                 "Image": "sha256:" + "b" * 64,
+                "Path": self.created_entrypoint,
+                "Args": self.created_command,
                 "HostConfig": {
+                    "Tmpfs": {
+                        self.created_tmpfs_destination: self.created_tmpfs_options
+                    },
                     "ReadonlyRootfs": not self.invalid_contract,
                     "NetworkMode": "none",
                     "IpcMode": "none",
@@ -1827,6 +1846,9 @@ class FakeDockerBackend(DockerBackend):
                     "NanoCpus": self.nano_cpus,
                 },
                 "Config": {
+                    "Entrypoint": [self.created_entrypoint],
+                    "Cmd": self.created_command,
+                    "WorkingDir": self.created_working_dir,
                     "User": "10001:10001",
                     "Labels": {"gnostoa.vf0.cleanup-token": self.cleanup_nonce},
                     "Env": [
@@ -1868,7 +1890,10 @@ class FakeDockerBackend(DockerBackend):
             return subprocess.CompletedProcess(
                 ["/usr/bin/docker"],
                 0,
-                stdout=b'{"Status":"exited","Running":false,"ExitCode":17}\n',
+                stdout=(
+                    b'{"Status":"exited","Running":false,"ExitCode":17,'
+                    b'"OOMKilled":false}\n'
+                ),
                 stderr=b"",
             )
         if args[:2] == ("rm", "--force"):
@@ -2097,6 +2122,60 @@ class VF0DockerBackendTests(unittest.TestCase):
             attached.assert_not_called()
             self.assertTrue(backend.removed)
 
+    def test_effective_container_runtime_config_is_verified_before_attachment(
+        self,
+    ) -> None:
+        class WrongRuntimeConfig(FakeDockerBackend):
+            field: str
+
+            def _command(
+                self, *args: str, timeout: float = 30
+            ) -> subprocess.CompletedProcess[bytes]:
+                result = super()._command(*args, timeout=timeout)
+                if args == ("inspect", self.container_id) and not self.removed:
+                    spec = json.loads(result.stdout)[0]
+                    if self.field == "Path":
+                        spec["Path"] = "/bin/sh"
+                    elif self.field == "Args":
+                        spec["Args"] = ["-c", "unexpected"]
+                    elif self.field == "Config.Entrypoint":
+                        spec["Config"]["Entrypoint"] = ["/bin/sh"]
+                    elif self.field == "Config.Cmd":
+                        spec["Config"]["Cmd"] = ["-c", "unexpected"]
+                    elif self.field == "Config.WorkingDir":
+                        spec["Config"]["WorkingDir"] = "/tmp"
+                    elif self.field == "HostConfig.Tmpfs":
+                        spec["HostConfig"]["Tmpfs"] = {"/tmp": "rw"}
+                    else:
+                        raise AssertionError(self.field)
+                    result.stdout = json.dumps([spec]).encode()
+                return result
+
+        for field in (
+            "Path",
+            "Args",
+            "Config.Entrypoint",
+            "Config.Cmd",
+            "Config.WorkingDir",
+            "HostConfig.Tmpfs",
+        ):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as td:
+                root = Path(td).resolve()
+                backend = WrongRuntimeConfig(self.image, root)
+                backend.field = field
+                with mock.patch(
+                    "tools.vf0_execution._capture_process",
+                    return_value=self._completed_capture(),
+                ) as attached:
+                    with self.assertRaisesRegex(
+                        ExecutionRejected, "OCI_CONTAINER_CONFIG"
+                    ):
+                        backend.run(
+                            root, ["/bin/true"], ExecutionLimits(), subject=self.subject
+                        )
+                attached.assert_not_called()
+                self.assertTrue(backend.removed)
+
     def test_create_contract_is_read_only_network_free_nonroot_and_bounded(
         self,
     ) -> None:
@@ -2222,6 +2301,71 @@ class VF0DockerBackendTests(unittest.TestCase):
                         root, ["/bin/true"], ExecutionLimits(), subject=self.subject
                     )
             self.assertTrue(backend.removed)
+
+    def test_oom_killed_container_cannot_be_reported_from_wrapper_trailer(
+        self,
+    ) -> None:
+        class OomKilled(FakeDockerBackend):
+            def _command(
+                self, *args: str, timeout: float = 30
+            ) -> subprocess.CompletedProcess[bytes]:
+                if args[:3] == ("inspect", "--format", "{{json .State}}"):
+                    self.calls.append(tuple(args))
+                    return subprocess.CompletedProcess(
+                        ["/usr/bin/docker"],
+                        0,
+                        stdout=(
+                            b'{"Status":"exited","Running":false,'
+                            b'"ExitCode":137,"OOMKilled":true}\n'
+                        ),
+                        stderr=b"",
+                    )
+                return super()._command(*args, timeout=timeout)
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td).resolve()
+            backend = OomKilled(self.image, root)
+            capture = self._completed_capture(137)
+            with mock.patch(
+                "tools.vf0_execution._capture_process", return_value=capture
+            ) as attached:
+                with self.assertRaisesRegex(ExecutionRejected, "OCI_EXIT_STATE"):
+                    backend.run(
+                        root, ["/bin/true"], ExecutionLimits(), subject=self.subject
+                    )
+            attached.assert_called_once()
+            self.assertTrue(backend.removed)
+
+    def test_successful_rm_smoke_accepts_a_single_exact_absence_read_back(
+        self,
+    ) -> None:
+        class AlreadyRemoved(FakeDockerBackend):
+            def _command(
+                self, *args: str, timeout: float = 30
+            ) -> subprocess.CompletedProcess[bytes]:
+                self.calls.append(tuple(args))
+                return subprocess.CompletedProcess(
+                    ["/usr/bin/docker"],
+                    1,
+                    stdout=b"",
+                    stderr=f"Error: No such object: {args[-1]}\n".encode(),
+                )
+
+        backend = AlreadyRemoved(self.image, Path("/unused"))
+        with (
+            mock.patch("tools.vf0_execution.time.monotonic", return_value=10.0),
+            mock.patch("tools.vf0_execution.time.sleep") as sleep,
+        ):
+            backend._cleanup_uncertain_create(
+                "gnostoa-vf0-readonly-" + "a" * 32,
+                "a" * 32,
+                completion_observed=True,
+            )
+        self.assertEqual(1, len(backend.calls))
+        self.assertEqual(
+            ("inspect", "gnostoa-vf0-readonly-" + "a" * 32), backend.calls[0]
+        )
+        sleep.assert_not_called()
 
     def test_attachment_failure_cannot_be_overwritten_by_container_exit(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -2874,12 +3018,10 @@ class VF0SmokeContractTests(unittest.TestCase):
             run[run.index("--label") + 1],
         )
         self.assertFalse(transport.present)
-        self.assertEqual(
-            ["run", "inspect", "inspect"], [call[1] for call in transport.calls]
-        )
+        self.assertEqual(["run", "inspect"], [call[1] for call in transport.calls])
         for call in transport.calls[1:]:
             self.assertEqual(transport.name, call[-1])
-        sleep.assert_called_once_with(0.1)
+        sleep.assert_not_called()
 
     def test_read_only_probe_does_not_ignore_unverified_cleanup(self) -> None:
         module = _load_smoke_module()

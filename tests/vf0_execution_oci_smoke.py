@@ -145,6 +145,7 @@ assert all(checks.values()), "READONLY_PROBE_FAILED"
         backend = DockerBackend(image)
         cleanup_nonce = uuid.uuid4().hex
         container_name = f"gnostoa-vf0-readonly-{cleanup_nonce}"
+        completion_observed = False
         try:
             result = backend._command(
                 "run",
@@ -175,8 +176,13 @@ assert all(checks.values()), "READONLY_PROBE_FAILED"
                 payload,
                 timeout=30,
             )
+            completion_observed = result.returncode == 0
         finally:
-            backend._cleanup_uncertain_create(container_name, cleanup_nonce)
+            backend._cleanup_uncertain_create(
+                container_name,
+                cleanup_nonce,
+                completion_observed=completion_observed,
+            )
         if result.returncode != 0:
             raise AssertionError("READONLY_BEHAVIOR_PROBE_FAILED")
         try:
