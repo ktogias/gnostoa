@@ -239,6 +239,38 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         claude = _claude_step(workflow)
         self.assertEqual("true", str(claude["with"].get("display_report")).lower())
 
+    def test_mention_checkout_binds_the_reviewed_pull_request_head(self) -> None:
+        # Agent mode does no PR resolution of its own. On a comment event the
+        # default checkout lands on the default branch, so an unbound ref would
+        # make the reviewer diff main against itself and report nothing.
+        workflow = load_yaml(MENTION_WORKFLOW)
+        checkout = next(
+            step
+            for step in _steps(workflow)
+            if step.get("uses", "").startswith("actions/checkout@")
+        )
+        ref = " ".join(str(checkout["with"]["ref"]).split())
+        self.assertIn("github.event.pull_request.head.sha", ref)
+        self.assertIn("refs/pull/", ref)
+        self.assertIn("github.event.issue.number", ref)
+
+    def test_mention_prompt_covers_every_admitted_trigger_payload(self) -> None:
+        # issue_comment carries github.event.issue.*; the review triggers carry
+        # github.event.pull_request.*; issues:opened may put the mention in the
+        # title alone. A template that reads only one shape silently loses the
+        # other two.
+        workflow = load_yaml(MENTION_WORKFLOW)
+        prompt = _claude_step(workflow)["with"]["prompt"]
+        for expression in (
+            "github.event.issue.number",
+            "github.event.pull_request.number",
+            "github.event.issue.body",
+            "github.event.pull_request.body",
+            "github.event.issue.title",
+        ):
+            with self.subTest(expression=expression):
+                self.assertIn(expression, prompt)
+
     def test_mention_workflow_has_no_unconfigured_assignment_trigger(self) -> None:
         # Without an assignee_trigger input the action never runs Claude for
         # `issues: assigned`; the trigger would only start an idle job.

@@ -120,6 +120,16 @@ No new dependency, service or runtime is introduced.
    carries dispositions without carrying the transcript.
 7. Because the reviewer no longer receives the discussion, the prompt instructs it
    to raise a possibly-settled point as a question rather than as an assertion.
+8. The checkout must bind the **reviewed** head. Agent mode performs no Pull
+   Request resolution, so on a comment event the default checkout lands on the
+   default branch and the reviewer would diff main against itself. The ref
+   resolves the review head SHA when present, else the Pull Request number of a
+   commented Pull Request, else the triggering ref; history is fetched in full so
+   a three-dot diff against the base has both sides.
+9. The prompt must cover every admitted trigger payload. `issue_comment` carries
+   `github.event.issue.*`, the review triggers carry `github.event.pull_request.*`,
+   and `issues: opened` may hold the mention in the title alone. A template that
+   reads only one shape silently loses the others.
 
 ## Accepted trade: delivery is no longer on the Pull Request
 
@@ -158,7 +168,8 @@ snapshot, and carries no approval or merge authority.
 
 `tests/test_claude_actions_workflows.py` enforces agent-mode selection, the
 bounded interpolation set, the static prompt bound, forwarding of the triggering
-request, and the explicit delivery path — alongside every existing Decision 0093
+request, the reviewed-head checkout binding, coverage of every admitted trigger
+payload, and the explicit delivery path — alongside every existing Decision 0093
 invariant. The `immutable-provider-ci-adapters` guardrail owns the workflows,
 both Decisions and that test.
 

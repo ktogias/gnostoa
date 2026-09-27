@@ -39,7 +39,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          fetch-depth: 1
+          # Decision 0094: agent mode resolves no Pull Request of its own. On a
+          # comment event the default checkout lands on the default branch, so an
+          # unbound ref would have the reviewer diff main against itself. Review
+          # events carry the head SHA; a comment on a Pull Request carries only
+          # its number; an issue falls back to the triggering ref.
+          ref: >-
+            ${{ github.event.pull_request.head.sha
+              || (github.event.issue.pull_request
+                  && format('refs/pull/{0}/head', github.event.issue.number))
+              || github.ref }}
+          # A three-dot diff against the base needs both sides present.
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Run Claude Code
@@ -59,7 +70,8 @@ jobs:
             discussion history; gather only what the request needs.
 
             Repository: ${{ github.repository }}
-            Item: #${{ github.event.issue.number }}
+            Item: #${{ github.event.issue.number }}${{ github.event.pull_request.number }}
+            Title: ${{ github.event.issue.title }}
 
             Start with AGENTS.md and follow the route it names for the area under
             review. Use your own tools for context:
@@ -78,6 +90,7 @@ jobs:
 
             --- maintained current state ---
             ${{ github.event.issue.body }}
+            ${{ github.event.pull_request.body }}
 
             --- request ---
             ${{ github.event.comment.body }}
