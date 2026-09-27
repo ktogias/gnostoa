@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import importlib.util
 import json
 import os
@@ -81,6 +82,18 @@ _PROMPT_FUNCTIONS = frozenset(
 _PROMPT_KEYWORDS = frozenset({"false", "null", "true"})
 _MAX_STATIC_PROMPT_BYTES = 4096
 CHUNKER = ROOT / ".github" / "review-context" / "chunk_diff.py"
+BASE_COLLECTOR = ROOT / ".github" / "review-context" / "build_review_context.py"
+
+
+def _load_script(path: pathlib.Path) -> Any:
+    """Import a committed review-context script by path."""
+    spec = importlib.util.spec_from_file_location(path.stem, path)
+    assert spec and spec.loader, path
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 # Resolved absolutely so the behavioural test never depends on PATH order. Only sh
 # is needed now: the collection step is executed against a stubbed provider rather
 # than against a local repository.
@@ -510,9 +523,11 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
     def test_change_status_is_not_abbreviated_to_one_letter(self) -> None:
         # "removed" and "renamed" share a first letter, so an abbreviated status
         # would make a deletion indistinguishable from a rename in diff.stat.
-        script = str(_context_step(load_yaml(MENTION_WORKFLOW))["run"])
-        self.assertIn("\\(.status)", script)
-        self.assertNotIn(".status[0:1]", script)
+        # The summary moved into the committed script, so that is where the
+        # contract lives now.
+        source = BASE_COLLECTOR.read_text(encoding="utf-8")
+        self.assertIn("entry['status']", source)
+        self.assertNotIn("[0:1]", source)
 
     def test_a_capped_commit_list_says_so(self) -> None:
         # The provider caps the commits it returns; a short list must not read as a
@@ -534,10 +549,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # The oversized-line case is the one `split -C` gets wrong, so it is the one
         # exercised: a run of ASCII that ends one byte before the bound, followed by a
         # two-byte character straddling it.
-        spec = importlib.util.spec_from_file_location("chunk_diff", CHUNKER)
-        assert spec and spec.loader
-        chunker = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(chunker)
+        chunker = _load_script(CHUNKER)
         limit = 64
         oversized = b"a" * (limit - 1) + "é".encode() + b"b" * limit + b"\n"
         cases = {
@@ -560,21 +572,194 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                     # Every part must stand alone as text.
                     part.read_bytes().decode("utf-8")
 
+    def test_base_collector_refuses_paths_that_could_escape(self) -> None:
+        # Provider-supplied names are data. A path that should not occur is a reason
+        # to stop, not something to sanitise into a guess.
+        collector = _load_script(BASE_COLLECTOR)
+        for refused in (
+            "/etc/passwd",
+            "../outside",
+            "a/../../outside",
+            "",
+            "a//b",
+            ".",
+        ):
+            with self.subTest(refused=refused):
+                with self.assertRaises(ValueError):
+                    collector.safe_relative_path(refused)
+        self.assertEqual("src/app.py", str(collector.safe_relative_path("src/app.py")))
+
+    def test_base_collector_rewrites_the_contents_url_to_the_base(self) -> None:
+        collector = _load_script(BASE_COLLECTOR)
+        self.assertEqual(
+            "https://api.github.com/repos/o/r/contents/a.py?ref=" + "b" * 40,
+            collector.base_endpoint(
+                "https://api.github.com/repos/o/r/contents/a.py?ref=" + "h" * 40,
+                "b" * 40,
+            ),
+        )
+
+    def test_base_collector_writes_bounded_exact_base_content(self) -> None:
+        # Behavioural: the exact pre-change bytes must land as regular files, the
+        # budget must hold, and an added file must be skipped rather than invented.
+        collector = _load_script(BASE_COLLECTOR)
+        with tempfile.TemporaryDirectory() as scratch:
+            context = pathlib.Path(scratch)
+            (context / "comparison.json").write_text(
+                json.dumps(
+                    {
+                        "files": [
+                            {
+                                "filename": "src/kept.py",
+                                "status": "modified",
+                                "additions": 1,
+                                "deletions": 1,
+                                "sha": "1" * 40,
+                                "patch": "@@",
+                                "contents_url": "https://api/x/src/kept.py?ref=head",
+                            },
+                            {
+                                "filename": "src/added.py",
+                                "status": "added",
+                                "additions": 2,
+                                "deletions": 0,
+                                "sha": "2" * 40,
+                                "patch": "@@",
+                                "contents_url": "https://api/x/src/added.py?ref=head",
+                            },
+                            {
+                                "filename": "big.bin",
+                                "status": "modified",
+                                "additions": 3,
+                                "deletions": 0,
+                                "sha": "3" * 40,
+                                "patch": "@@",
+                                "contents_url": "https://api/x/big.bin?ref=head",
+                            },
+                            {
+                                "filename": "asset.png",
+                                "status": "added",
+                                "additions": 0,
+                                "deletions": 0,
+                                "sha": "4" * 40,
+                                "patch": None,
+                                "contents_url": "https://api/x/asset.png?ref=head",
+                            },
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            payloads = {
+                "https://api/x/src/kept.py?ref=" + "b" * 40: {
+                    "content": base64.b64encode(b"before\n").decode()
+                },
+                # The candidate added this one, so the base has no revision of it.
+                "https://api/x/src/added.py?ref=" + "b" * 40: None,
+                "https://api/x/big.bin?ref=" + "b" * 40: {
+                    "content": base64.b64encode(b"x" * 4096).decode()
+                },
+            }
+            asked: list[str] = []
+
+            def fake(endpoint: str) -> dict[str, object] | None:
+                asked.append(endpoint)
+                return payloads[endpoint]
+
+            collector._provider_json = fake
+            written, skipped = collector.collect(context, "b" * 40, 64)
+            # asset.png has no patch, so it is never asked for at all.
+            self.assertNotIn("https://api/x/asset.png?ref=" + "b" * 40, asked)
+            self.assertEqual(1, written)
+            self.assertEqual(2, skipped, asked)
+            self.assertEqual(
+                "before\n",
+                (context / "base" / "src" / "kept.py").read_text(encoding="utf-8"),
+            )
+            self.assertFalse((context / "base" / "src" / "added.py").exists())
+            self.assertFalse((context / "base" / "big.bin").exists())
+            notice = (context / "base" / "README").read_text(encoding="utf-8")
+            self.assertIn("Written: 1", notice)
+            self.assertIn("2", notice)
+
+    def test_prompt_and_guardrail_cover_the_base_context(self) -> None:
+        workflow = load_yaml(MENTION_WORKFLOW)
+        script = str(_context_step(workflow)["run"])
+        self.assertIn("build_review_context.py", script)
+        prompt = " ".join(_claude_step(workflow)["with"]["prompt"].split())
+        self.assertIn(".gnostoa-review-context/base/", prompt)
+        self.assertIn("read base/", prompt)
+        guardrails = load_yaml(ROOT / "policy" / "guardrails.yaml")
+        entry = next(
+            item
+            for item in guardrails["guardrails"]
+            if item["id"] == "immutable-provider-ci-adapters"
+        )
+        self.assertIn(
+            ".github/review-context/build_review_context.py", entry["implementation"]
+        )
+
     def test_commit_list_is_paginated_and_a_capped_file_list_says_so(self) -> None:
         # The provider paginates commits at 250 per page but caps files at 300 with no
         # pagination, so one needs every page and the other needs a notice.
-        script = str(_context_step(load_yaml(MENTION_WORKFLOW))["run"])
-        self.assertIn("--paginate", script)
-        self.assertIn("300", script)
-        self.assertIn("caps the changed-file list", script)
+        self.assertIn(
+            "--paginate", str(_context_step(load_yaml(MENTION_WORKFLOW))["run"])
+        )
+        collector = _load_script(BASE_COLLECTOR)
+        self.assertEqual(300, collector._FILE_CAP)
+        entry = {
+            "status": "modified",
+            "additions": 1,
+            "deletions": 0,
+            "filename": "f.txt",
+            "sha": "a" * 40,
+            "patch": "@@",
+        }
+        with tempfile.TemporaryDirectory() as scratch:
+            context = pathlib.Path(scratch)
+            collector.write_summaries(context, {"files": [dict(entry)] * 300})
+            self.assertIn(
+                "caps the changed-file list at 300",
+                (context / "diff.stat").read_text(encoding="utf-8"),
+            )
+            collector.write_summaries(context, {"files": [dict(entry)]})
+            self.assertNotIn(
+                "caps", (context / "diff.stat").read_text(encoding="utf-8")
+            )
 
     def test_files_without_a_patch_are_listed_as_unreviewable(self) -> None:
         # A binary or oversized file has no patch, and its bytes are in neither the
         # diff nor the base checkout, so it cannot be reviewed from this context.
         workflow = load_yaml(MENTION_WORKFLOW)
-        script = str(_context_step(workflow)["run"])
-        self.assertIn("select(.patch == null)", script)
-        self.assertIn("unreviewable.txt", script)
+        collector = _load_script(BASE_COLLECTOR)
+        with tempfile.TemporaryDirectory() as scratch:
+            context = pathlib.Path(scratch)
+            collector.write_summaries(
+                context,
+                {
+                    "files": [
+                        {
+                            "status": "modified",
+                            "additions": 1,
+                            "deletions": 0,
+                            "filename": "code.py",
+                            "sha": "c" * 40,
+                            "patch": "@@",
+                        },
+                        {
+                            "status": "added",
+                            "additions": 0,
+                            "deletions": 0,
+                            "filename": "asset.png",
+                            "sha": "d" * 40,
+                            "patch": None,
+                        },
+                    ]
+                },
+            )
+            listed = (context / "unreviewable.txt").read_text(encoding="utf-8")
+            self.assertIn("asset.png", listed)
+            self.assertNotIn("code.py", listed)
         prompt = " ".join(_claude_step(workflow)["with"]["prompt"].split())
         self.assertIn("unreviewable.txt", prompt)
         self.assertIn("not examined", prompt)
@@ -640,15 +825,42 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             stub_dir = work / "bin"
             stub_dir.mkdir()
             stub = stub_dir / "gh"
+            # The stub answers from files, so no response has to survive nested
+            # shell quoting inside a Python string.
+            (stub_dir / "total_commits").write_text("3\n", encoding="utf-8")
+            (stub_dir / "commits").write_text("abcdef123 second\n", encoding="utf-8")
+            (stub_dir / "contents").write_text(
+                json.dumps({"content": base64.b64encode(b"before\n").decode()}),
+                encoding="utf-8",
+            )
+            (stub_dir / "comparison").write_text(
+                json.dumps(
+                    {
+                        "files": [
+                            {
+                                "filename": "f.txt",
+                                "patch": "@@",
+                                "status": "modified",
+                                "additions": 4000,
+                                "deletions": 1,
+                                "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                                "contents_url": "https://api/x/contents/f.txt?ref=head",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
             stub.write_text(
                 "#!/bin/sh\n"
                 'for a in "$@"; do\n'
                 '  case "$a" in *v3.diff*) cat "${FIXTURE_DIFF}"; exit 0;; esac\n'
                 "done\n"
                 'case "$*" in\n'
-                "  *total_commits*) printf '3\\n' ;;\n"
-                "  *files*) printf 'modified +4000 -1 f.txt\\n' ;;\n"
-                "  *commits*) printf 'abcdef123 second\\n' ;;\n"
+                '  *total_commits*) cat "${STUB_DIR}/total_commits" ;;\n'
+                '  *commits*) cat "${STUB_DIR}/commits" ;;\n'
+                '  *contents*) cat "${STUB_DIR}/contents" ;;\n'
+                '  *compare*) cat "${STUB_DIR}/comparison" ;;\n'
                 "esac\n",
                 encoding="utf-8",
             )
@@ -690,6 +902,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                         "CONTEXT_DIR": str(target),
                         "MAX_BYTES": "2048",
                         "FIXTURE_DIFF": str(fixture),
+                        "STUB_DIR": str(stub_dir),
                     },
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)

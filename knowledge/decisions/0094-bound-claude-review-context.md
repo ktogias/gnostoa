@@ -190,7 +190,25 @@ No new dependency, service or runtime is introduced.
    `unreviewable.txt` and the prompt requires the reviewer to report it as not
    examined rather than imply it was reviewed.
 
-   The parts are cut by a committed script, `.github/review-context/chunk_diff.py`,
+   One committed script, `.github/review-context/build_review_context.py`, derives
+   `diff.stat`, `unreviewable.txt` and `base/` from a single comparison payload. That
+   keeps the comparison to one request and keeps the step free of an external `jq`,
+   and it puts the field semantics somewhere the suite can exercise directly.
+
+   `base/` holds the **exact base revision of every changed file**, as
+   provider-supplied bytes. It exists because the checkout is the default branch and
+   not this Pull Request's base (rule 21), so unchanged code read from disk can come
+   from a revision the candidate never saw -- which yields interaction findings that
+   are not real. Writing bytes rather than checking out a tree keeps rule 21 intact:
+   no mode, symlink or directory entry from either side reaches the runner. Names are
+   validated before use, and anything absolute, empty, traversing or containing a
+   backslash or NUL is refused rather than sanitised, because a name that should not
+   occur is a reason to stop. The collection is bounded by the same byte budget, and
+   a file that is absent -- added by the candidate, or over the budget -- is recorded
+   as such in `base/README` rather than left to look like an empty file.
+
+   The parts are cut by a second committed script,
+   `.github/review-context/chunk_diff.py`,
    rather than by coreutils. Line boundaries are still preferred, but a single line
    longer than the bound must be cut somewhere, and the record mode of `split` cuts it
    by bytes -- halving a multibyte character and leaving two parts a text reader
@@ -333,7 +351,11 @@ No new dependency, service or runtime is introduced.
    before and after state lives only in the artefacts, and the prompt says so. This
    also answers the residual on trusting the entry route: the route is a **known
    protected revision** rather than a base a contributor chose, and the resolved base
-   is used only for the comparison.
+   is used only for the comparison and for `base/`. The prompt directs the reviewer to
+   `base/` for pre-change state and reserves the checkout for the route and general
+   context, so the tree being non-authoritative is stated to the reviewer rather than
+   only recorded here -- which is what an earlier revision of this Decision got wrong
+   by calling it a "stated caveat" while never stating it.
 ## Accepted trade: delivery is no longer on the Pull Request
 
 Agent mode sets `claudeCommentId: undefined` and provides **no GitHub
@@ -410,8 +432,9 @@ snapshot, and carries no approval or merge authority.
 bounded interpolation set, the static prompt bound, forwarding of the triggering
 request, the reviewed-head checkout binding under a same-repository guard, coverage of
 every admitted trigger payload, the resolved-base diff, the declared entry route, the absence of any Bash grant, the trusted context collection with its bound
-and its line-safe recoverable parts, the provider-built comparison, the absence of
-any candidate checkout,
+and its line-safe recoverable parts, the provider-built comparison and its cap
+notices, the exact-base file context and its path refusals, the absence of any
+candidate checkout,
 the no-Pull-Request path, the forwarded inline location, the trust gate on
 externally authored issue text, the agreement between the tool grant and the
 requested permissions, the recorded supersession, and the explicit delivery path — alongside every existing Decision 0093
