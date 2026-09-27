@@ -126,6 +126,18 @@ No new dependency, service or runtime is introduced.
    resolves the review head SHA when present, else the Pull Request number of a
    commented Pull Request, else the triggering ref; history is fetched in full so
    a three-dot diff against the base has both sides.
+10. **The mention job must never check out a fork-controlled head.** Binding the
+   checkout to a Pull Request head places contributor-controlled code in the job
+   that holds the Claude credential. The author-association gate does not close
+   this: it constrains who comments, not whose code runs. The head is therefore
+   resolved with the read-only token in a step that fails closed when the head
+   repository differs from this repository, before any candidate byte is checked
+   out, reaching the same boundary Decision 0093 rule 5 sets for the automatic
+   review.
+11. The reviewer diffs against the **resolved base**, not a fixed branch, and the
+   prompt names the repository's declared entry route -- `README.md` first, as
+   `AGENTS.md` itself states.
+
 9. The prompt must cover every admitted trigger payload. `issue_comment` carries
    `github.event.issue.*`, the review triggers carry `github.event.pull_request.*`,
    and `issues: opened` may hold the mention in the title alone. A template that
@@ -168,8 +180,9 @@ snapshot, and carries no approval or merge authority.
 
 `tests/test_claude_actions_workflows.py` enforces agent-mode selection, the
 bounded interpolation set, the static prompt bound, forwarding of the triggering
-request, the reviewed-head checkout binding, coverage of every admitted trigger
-payload, and the explicit delivery path — alongside every existing Decision 0093
+request, the reviewed-head checkout binding under a same-repository guard, coverage of
+every admitted trigger payload, the resolved-base diff, the declared entry route,
+and the explicit delivery path — alongside every existing Decision 0093
 invariant. The `immutable-provider-ci-adapters` guardrail owns the workflows,
 both Decisions and that test.
 

@@ -36,19 +36,40 @@ jobs:
       id-token: write # OIDC exchange for the Claude GitHub App token
       actions: read # Required for Claude to read CI results on PRs
     steps:
+      # Decision 0094 rules 8 and 10. Agent mode resolves no Pull Request of its
+      # own, so the head must be bound explicitly -- but binding it would place
+      # contributor-controlled code in the job that holds the Claude credential.
+      # This step resolves the head with the read-only token and fails closed on
+      # a fork, before any candidate byte is checked out. The author-association
+      # gate is not sufficient: it constrains who comments, not whose code runs.
+      - name: Resolve trusted review head
+        id: review_head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PULL_NUMBER: >-
+            ${{ github.event.pull_request.number
+              || (github.event.issue.pull_request && github.event.issue.number) }}
+        run: |
+          set -eu
+          if [ -z "${PULL_NUMBER}" ]; then
+            printf 'head_sha=%s\n' "${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
+            printf 'base_sha=%s\n' "${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          head_repo="$(gh api "repos/${REPOSITORY}/pulls/${PULL_NUMBER}" \
+            --jq '.head.repo.full_name')"
+          if [ "${head_repo}" != "${REPOSITORY}" ]; then
+            echo "ERROR: refusing to check out a fork-controlled head (${head_repo})" >&2
+            exit 1
+          fi
+          gh api "repos/${REPOSITORY}/pulls/${PULL_NUMBER}" \
+            --jq '"head_sha=\(.head.sha)\nbase_sha=\(.base.sha)"' >> "${GITHUB_OUTPUT}"
+
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          # Decision 0094: agent mode resolves no Pull Request of its own. On a
-          # comment event the default checkout lands on the default branch, so an
-          # unbound ref would have the reviewer diff main against itself. Review
-          # events carry the head SHA; a comment on a Pull Request carries only
-          # its number; an issue falls back to the triggering ref.
-          ref: >-
-            ${{ github.event.pull_request.head.sha
-              || (github.event.issue.pull_request
-                  && format('refs/pull/{0}/head', github.event.issue.number))
-              || github.ref }}
+          ref: ${{ steps.review_head.outputs.head_sha }}
           # A three-dot diff against the base needs both sides present.
           fetch-depth: 0
           persist-credentials: false
@@ -73,11 +94,12 @@ jobs:
             Item: #${{ github.event.issue.number }}${{ github.event.pull_request.number }}
             Title: ${{ github.event.issue.title }}
 
-            Start with AGENTS.md and follow the route it names for the area under
-            review. Use your own tools for context:
-              git log --oneline origin/main..HEAD
-              git diff origin/main...HEAD --stat
-              git diff origin/main...HEAD -- <path>
+            Start with README.md, then AGENTS.md, and follow the route it names for
+            the area under review. Use your own tools for context, diffing against
+            the resolved base rather than a fixed branch:
+              git diff --stat ${{ steps.review_head.outputs.base_sha }}...HEAD
+              git diff ${{ steps.review_head.outputs.base_sha }}...HEAD -- <path>
+              git log --oneline ${{ steps.review_head.outputs.base_sha }}..HEAD
             and Read or Grep for the current state of any file.
 
             You cannot see the discussion. If a point may already be dispositioned,

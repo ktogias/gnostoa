@@ -34,6 +34,7 @@ _BOUNDED_PROMPT_SOURCES = frozenset(
         "github.event.comment.body",
         "github.event.issue.body",
         "github.event.review.body",
+        "steps.review_head.outputs.base_sha",
         "github.event.issue.title",
     }
 )
@@ -250,9 +251,17 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             if step.get("uses", "").startswith("actions/checkout@")
         )
         ref = " ".join(str(checkout["with"]["ref"]).split())
-        self.assertIn("github.event.pull_request.head.sha", ref)
-        self.assertIn("refs/pull/", ref)
-        self.assertIn("github.event.issue.number", ref)
+        # Superseded by the same-repository guard: the head is resolved with the
+        # read-only token rather than taken from the event payload, so the
+        # assertion is on the binding, not on a particular payload field.
+        self.assertIn("steps.review_head.outputs.head_sha", ref)
+        resolve = next(
+            step for step in _steps(workflow) if step.get("id") == "review_head"
+        )
+        run = str(resolve["run"])
+        self.assertIn("PULL_NUMBER", run)
+        self.assertIn("GITHUB_OUTPUT", run)
+        self.assertEqual(0, str(checkout["with"]["fetch-depth"]).count("1"))
 
     def test_mention_prompt_covers_every_admitted_trigger_payload(self) -> None:
         # issue_comment carries github.event.issue.*; the review triggers carry
@@ -270,6 +279,49 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         ):
             with self.subTest(expression=expression):
                 self.assertIn(expression, prompt)
+
+    def test_mention_job_never_checks_out_a_fork_controlled_head(self) -> None:
+        # Binding the checkout to a Pull Request head puts contributor-controlled
+        # code in the job that holds the Claude credential. Decision 0093 rule 5
+        # already restricts the automatic review to same-repository heads; the
+        # mention job must reach the same boundary, and its author-association
+        # gate does not, because it constrains who comments rather than whose code
+        # is checked out.
+        workflow = load_yaml(MENTION_WORKFLOW)
+        text = MENTION_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("github.repository", text)
+        guard = [
+            step
+            for step in _steps(workflow)
+            if "full_name" in str(step.get("run", "")) + str(step.get("if", ""))
+        ]
+        self.assertTrue(
+            guard, "mention job needs an explicit same-repository head guard"
+        )
+        checkout = next(
+            step
+            for step in _steps(workflow)
+            if step.get("uses", "").startswith("actions/checkout@")
+        )
+        ref = str(checkout["with"]["ref"])
+        # The ref must come from the guarded resolution, not straight from the
+        # untrusted event payload.
+        self.assertIn("steps.review_head.outputs", ref)
+        self.assertNotIn("refs/pull/", ref)
+
+    def test_mention_prompt_names_the_declared_entry_route(self) -> None:
+        # AGENTS.md itself begins "Start with README.md"; sending the reviewer
+        # somewhere else skips the router the repository declares.
+        workflow = load_yaml(MENTION_WORKFLOW)
+        prompt = _claude_step(workflow)["with"]["prompt"]
+        self.assertIn("README.md", prompt)
+
+    def test_mention_prompt_diffs_against_the_resolved_base(self) -> None:
+        # A hardcoded branch is wrong for any Pull Request that does not target it.
+        workflow = load_yaml(MENTION_WORKFLOW)
+        prompt = _claude_step(workflow)["with"]["prompt"]
+        self.assertIn("steps.review_head.outputs.base_sha", prompt)
+        self.assertNotIn("origin/main", prompt)
 
     def test_mention_workflow_has_no_unconfigured_assignment_trigger(self) -> None:
         # Without an assignee_trigger input the action never runs Claude for
