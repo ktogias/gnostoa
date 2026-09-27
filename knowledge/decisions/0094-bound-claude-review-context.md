@@ -162,13 +162,24 @@ No new dependency, service or runtime is introduced.
    granted exactly one Bash target: a wrapper installed into `runner.temp` from
    this workflow file, which comes from the default branch and so cannot be
    supplied or rewritten by the candidate. The wrapper takes `diff`, `log` or
-   `show` and a **positive allowlist** of options -- `--stat`, `--numstat`,
-   `--name-only`, `--name-status`, `--oneline`, `-<n>` and `--` -- refusing
-   everything else, so no further git option can reopen the hole. It also runs git
+   `show` and classifies **every** argument, not only the options. Options come
+   from a positive allowlist -- `--stat`, `--numstat`, `--name-only`,
+   `--name-status`, `--oneline`, `-<n>` -- and everything else beginning with `-`
+   is refused. Restricting options alone is insufficient: `git diff <pathA>
+   <pathB>` implies `--no-index` when a path lies outside the working tree, so an
+   unchecked path argument reads arbitrary host files, including the credential-
+   bearing process's own environment, into a public step summary. A bare argument
+   must therefore be a **revision** -- a 7-to-40 character hex commit or `HEAD`,
+   optionally with `~<n>`/`^<n>` and a `..`/`...` range -- which removes the
+   two-path form entirely, and a **path** is admitted only after `--` and only
+   when it is relative, free of `..` components and free of a leading `-`. It also runs git
    with system, global and caller configuration disabled, replacement objects
    disabled, and `--no-ext-diff` with `diff.external` emptied. A contract test
-   extracts the wrapper from the workflow and executes the reproduced attack
-   chain against it rather than asserting its text.
+   extracts the wrapper from the workflow and executes both reproduced attacks
+   against it -- the config-write chain and a host-file read through implicit
+   no-index -- rather than asserting its text, checking that a sentinel outside
+   the checkout never appears in the output and that the admitted forms still
+   return output.
 13. Requests with **no Pull Request** are answered from the repository rather than
    from a diff. `issues: opened` stays an admitted trigger under Decision 0093
    rule 7, and there the resolved base equals the head, so a diff-shaped

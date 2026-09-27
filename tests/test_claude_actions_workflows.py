@@ -475,6 +475,12 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                     env={**os.environ, "HOME": scratch},
                 )
 
+            # A sentinel outside the repository: `git diff <a> <b>` implies
+            # --no-index when a path lies outside the working tree, so an
+            # unchecked path argument reads arbitrary host files into the public
+            # step summary.
+            sentinel = work / "outside-the-checkout"
+            sentinel.write_text("SENTINEL-TOKEN-VALUE\n", encoding="utf-8")
             config = repo / ".git" / "config"
             before = config.read_bytes()
             for argv in (
@@ -484,10 +490,17 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 ("diff", "--upload-pack=/bin/sh"),
                 ("log", "--format=%B"),
                 ("push", "origin", "main"),
+                ("diff", str(sentinel), "f.txt"),
+                ("diff", str(sentinel), "/dev/null"),
+                ("diff", "--", str(sentinel)),
+                ("diff", "--", "../outside-the-checkout"),
+                ("diff", "--", "/etc/hostname"),
+                ("show", "$(id)"),
             ):
                 with self.subTest(refused=argv):
                     result = run(*argv)
                     self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertNotIn("SENTINEL-TOKEN-VALUE", result.stdout)
             self.assertEqual(config.read_bytes(), before, "config was rewritten")
 
             for argv in (

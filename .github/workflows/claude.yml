@@ -135,15 +135,47 @@ jobs:
               exit 2
               ;;
           esac
+          # Options are not the only hazard. `git diff <pathA> <pathB>` implies
+          # --no-index when a path lies outside the working tree, so an unchecked
+          # path argument reads arbitrary host files into a public step summary.
+          # Every argument is therefore classified: an allowlisted option, a
+          # revision, or -- after `--` -- a relative in-tree path.
+          is_revision() {
+            printf '%s' "$1" | grep -Eq \
+              '^(HEAD|[0-9a-fA-F]{7,40})(~[0-9]+|\^[0-9]*)?(\.\.\.?(HEAD|[0-9a-fA-F]{7,40})(~[0-9]+|\^[0-9]*)?)?$'
+          }
+          is_in_tree_path() {
+            case "$1" in
+              -*|/*|..|../*|*/..|*/../*) return 1 ;;
+            esac
+            printf '%s' "$1" | grep -Eq '^[A-Za-z0-9._][A-Za-z0-9._/-]*$'
+          }
+          after_separator=0
           for argument in "$@"; do
+            if [ "${after_separator}" -eq 1 ]; then
+              if is_in_tree_path "${argument}"; then
+                continue
+              fi
+              echo "refused: path ${argument} is not a relative in-tree path" >&2
+              exit 2
+            fi
             case "${argument}" in
-              --stat|--numstat|--name-only|--name-status|--oneline|--) ;;
-              -[0-9]|-[0-9][0-9]) ;;
+              --)
+                after_separator=1
+                continue
+                ;;
+              --stat|--numstat|--name-only|--name-status|--oneline) continue ;;
+              -[0-9]|-[0-9][0-9]) continue ;;
               -*)
                 echo "refused: option ${argument} is not allowlisted" >&2
                 exit 2
                 ;;
             esac
+            if is_revision "${argument}"; then
+              continue
+            fi
+            echo "refused: ${argument} is neither an option nor a revision" >&2
+            exit 2
           done
           GIT_CONFIG_NOSYSTEM=1 \
           GIT_CONFIG_SYSTEM=/dev/null \
