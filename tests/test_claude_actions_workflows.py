@@ -39,10 +39,14 @@ _BOUNDED_PROMPT_SOURCES = frozenset(
         "github.event.comment.path",
         "github.event.comment.line",
         "github.event.comment.diff_hunk",
+        "github.event.issue.author_association",
         "github.event.issue.title",
     }
 )
-_PROMPT_EXPRESSION = re.compile(r"\$\{\{\s*([^}]+?)\s*\}\}")
+# Expressions may be compound (a trust check guarding a field), so the contract
+# is on the identifiers they read, not on the expression text.
+_PROMPT_EXPRESSION = re.compile(r"\$\{\{(.+?)\}\}", re.DOTALL)
+_PROMPT_IDENTIFIER = re.compile(r"\b(?:github|steps)\.[A-Za-z0-9_.]+")
 _MAX_STATIC_PROMPT_BYTES = 4096
 
 
@@ -217,7 +221,11 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
     def test_mention_prompt_interpolates_only_bounded_sources(self) -> None:
         workflow = load_yaml(MENTION_WORKFLOW)
         prompt = _claude_step(workflow)["with"]["prompt"]
-        used = {match.group(1).strip() for match in _PROMPT_EXPRESSION.finditer(prompt)}
+        used = {
+            identifier
+            for match in _PROMPT_EXPRESSION.finditer(prompt)
+            for identifier in _PROMPT_IDENTIFIER.findall(match.group(1))
+        }
         unbounded = used - _BOUNDED_PROMPT_SOURCES
         self.assertEqual(
             set(),
@@ -395,6 +403,30 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # The superseded claim must be gone, not merely contradicted later.
         self.assertNotIn("Decision 0093's eight hardening rules", normalised)
         self.assertNotIn("its eight hardening rules and", normalised)
+
+    def test_mention_prompt_gates_externally_authored_issue_text(self) -> None:
+        # The job gate validates the replying author, not the issue author. An
+        # external issue body would otherwise reach a job holding the Claude
+        # credential and publishing its answer in a public step summary.
+        workflow = load_yaml(MENTION_WORKFLOW)
+        prompt = " ".join(_claude_step(workflow)["with"]["prompt"].split())
+        for field in ("github.event.issue.body", "github.event.issue.title"):
+            with self.subTest(field=field):
+                self.assertRegex(
+                    prompt,
+                    r"github\.event\.issue\.author_association[^}]*" + re.escape(field),
+                )
+
+    def test_mention_tool_grant_matches_the_requested_permissions(self) -> None:
+        # additional_permissions grants actions: read, but agent mode installs the
+        # CI server only when --allowedTools names an mcp__github_ci tool. The
+        # permission and the tool list must agree, or one of them is dead config.
+        workflow = load_yaml(MENTION_WORKFLOW)
+        claude = _claude_step(workflow)
+        args = str(claude["with"].get("claude_args", ""))
+        permissions = str(claude["with"].get("additional_permissions", ""))
+        if "actions: read" in permissions:
+            self.assertIn("mcp__github_ci", args)
 
     def test_mention_workflow_has_no_unconfigured_assignment_trigger(self) -> None:
         # Without an assignee_trigger input the action never runs Claude for

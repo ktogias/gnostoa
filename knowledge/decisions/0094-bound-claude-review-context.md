@@ -179,6 +179,21 @@ is not in the Pull Request record and peer reviewers do not see it. Restoring
 on-Pull-Request delivery without widening `GITHUB_TOKEN` is a separate question
 and is not admitted by this Decision.
 
+15. **Externally authored issue text is withheld.** The job gate validates the
+   replying author's association, not the issue author's. Since this job holds the
+   Claude credential, grants `Read`, and publishes its answer in a public step
+   summary, an external issue body would otherwise be an injection path into a
+   credentialed agent with public output. The issue body and title are interpolated
+   only when the issue author is `OWNER`, `MEMBER` or `COLLABORATOR`, and the prompt
+   says so where the text would have been. The Pull Request body needs no separate
+   gate: rule 9 already refuses a fork-controlled head, so a reviewed Pull Request
+   is authored inside this repository.
+16. **The tool grant and the requested permissions must agree.** `actions: read`
+   installs nothing on its own; agent mode installs the CI server only when
+   `--allowedTools` names an `mcp__github_ci` tool. The three read-only CI tools are
+   granted so the permission is used, rather than left as dead configuration that a
+   reader would mistake for capability.
+
 ## Partial supersession of Decision 0093 rule 8
 
 Decision 0093 rule 8 requires that `allowed_bots`, `allowed_non_write_users`,
@@ -226,8 +241,9 @@ snapshot, and carries no approval or merge authority.
 bounded interpolation set, the static prompt bound, forwarding of the triggering
 request, the reviewed-head checkout binding under a same-repository guard, coverage of
 every admitted trigger payload, the resolved-base diff, the declared entry route, the read-only git tool grant,
-the no-Pull-Request path, the forwarded inline location, and the explicit
-delivery path — alongside every existing Decision 0093
+the no-Pull-Request path, the forwarded inline location, the trust gate on
+externally authored issue text, the agreement between the tool grant and the
+requested permissions, the recorded supersession, and the explicit delivery path — alongside every existing Decision 0093
 invariant. The `immutable-provider-ci-adapters` guardrail owns the workflows,
 both Decisions and that test.
 

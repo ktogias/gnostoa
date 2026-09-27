@@ -90,14 +90,17 @@ jobs:
           # prompt asks for needs an explicit grant. Read-only verbs only:
           # Bash(git:*) would admit push, commit and reset.
           claude_args: >-
-            --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)"
+            --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*),mcp__github_ci__get_ci_status,mcp__github_ci__get_workflow_run_details,mcp__github_ci__download_job_log"
           prompt: |
             Read-only review of a Gnostoa Pull Request. You have no pre-loaded
             discussion history; gather only what the request needs.
 
             Repository: ${{ github.repository }}
             Item: #${{ github.event.issue.number }}${{ github.event.pull_request.number }}
-            Title: ${{ github.event.issue.title }}
+            Title: >-
+              ${{ (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                    github.event.issue.author_association)
+                   && github.event.issue.title) || '(withheld: untrusted author)' }}
             Base: ${{ steps.review_head.outputs.base_sha }}
             Head: ${{ steps.review_head.outputs.head_sha }}
 
@@ -122,7 +125,12 @@ jobs:
             green check is not semantic acceptance.
 
             --- maintained current state ---
-            ${{ github.event.issue.body }}
+            Externally authored issue text is withheld: the job gate validates the
+            replying author, not the issue author, and this job holds a credential
+            and publishes its answer publicly.
+            ${{ (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                  github.event.issue.author_association)
+                 && github.event.issue.body) || '' }}
             ${{ github.event.pull_request.body }}
 
             --- inline location, when the request came from a review comment ---
