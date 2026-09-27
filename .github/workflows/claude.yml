@@ -169,12 +169,22 @@ jobs:
           # candidate's files, modes or symlinks ever existing on this runner. The
           # two revisions come from the trusted resolver, never from the payload.
           comparison="repos/${REPOSITORY}/compare/${BASE_SHA}...${HEAD_SHA}"
+          # The full status word, not its first letter: "removed" and "renamed" share
+          # one, and a reviewer must be able to tell a deletion from a rename.
           gh api "${comparison}" \
-            --jq '.files[]? | "\(.status[0:1]) +\(.additions) -\(.deletions) \(.filename)"' \
+            --jq '.files[]? | "\(.status) +\(.additions) -\(.deletions) \(.filename)"' \
             > "${CONTEXT_DIR}/diff.stat"
           gh api "${comparison}" \
             --jq '.commits[]? | "\(.sha[0:9]) \(.commit.message | split("\n")[0])"' \
             > "${CONTEXT_DIR}/commits.log"
+          # The provider caps the commits it returns. Say so rather than letting the
+          # reviewer read a short list as a complete one.
+          total_commits="$(gh api "${comparison}" --jq '.total_commits // 0')"
+          listed_commits="$(wc -l < "${CONTEXT_DIR}/commits.log")"
+          if [ "${total_commits}" -gt "${listed_commits}" ]; then
+            printf '[provider listed %s of %s commits]\n' \
+              "${listed_commits}" "${total_commits}" >> "${CONTEXT_DIR}/commits.log"
+          fi
           gh api "${comparison}" -H "Accept: application/vnd.github.v3.diff" \
             > "${CONTEXT_DIR}/diff.full"
           full_bytes="$(wc -c < "${CONTEXT_DIR}/diff.full")"

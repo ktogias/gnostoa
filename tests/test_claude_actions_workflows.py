@@ -504,6 +504,19 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertIn("github.event_name == 'pull_request_review'", reviewed)
         self.assertIn("github.event.review.commit_id", reviewed)
 
+    def test_change_status_is_not_abbreviated_to_one_letter(self) -> None:
+        # "removed" and "renamed" share a first letter, so an abbreviated status
+        # would make a deletion indistinguishable from a rename in diff.stat.
+        script = str(_context_step(load_yaml(MENTION_WORKFLOW))["run"])
+        self.assertIn("\\(.status)", script)
+        self.assertNotIn(".status[0:1]", script)
+
+    def test_a_capped_commit_list_says_so(self) -> None:
+        # The provider caps the commits it returns; a short list must not read as a
+        # complete one.
+        script = str(_context_step(load_yaml(MENTION_WORKFLOW))["run"])
+        self.assertIn("total_commits", script)
+
     def test_diff_parts_split_on_line_boundaries(self) -> None:
         # The reviewer reads the parts as text. A byte split can cut a multibyte
         # character across two files, and a deletion is only recoverable there.
@@ -545,7 +558,8 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 '  case "$a" in *v3.diff*) cat "${FIXTURE_DIFF}"; exit 0;; esac\n'
                 "done\n"
                 'case "$*" in\n'
-                "  *files*) printf 'M +4000 -1 f.txt\\n' ;;\n"
+                "  *total_commits*) printf '3\\n' ;;\n"
+                "  *files*) printf 'modified +4000 -1 f.txt\\n' ;;\n"
                 "  *commits*) printf 'abcdef123 second\\n' ;;\n"
                 "esac\n",
                 encoding="utf-8",
@@ -619,6 +633,12 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             self.assertIn(
                 "No changes",
                 (empty_context / "diff.patch").read_text(encoding="utf-8"),
+            )
+            # The stub reports three commits while listing one, so the cap notice
+            # must appear rather than the short list passing as complete.
+            self.assertIn(
+                "provider listed 1 of 3 commits",
+                (context / "commits.log").read_text(encoding="utf-8"),
             )
 
             # With no pull number the request is an issue, and says so.

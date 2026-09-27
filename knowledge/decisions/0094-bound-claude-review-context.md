@@ -176,7 +176,12 @@ No new dependency, service or runtime is introduced.
    size-bounded `diff.patch` into `.gnostoa-review-context/`, which the reviewer
    opens with `Read` and `Grep`. The comparison is asked of the provider for the two
    resolved revisions rather than computed from a local candidate tree, which is what
-   lets rule 21 hold. The bound on `diff.patch` is deliberate: an
+   lets rule 21 hold. Two properties of that source are recorded because they were
+   found by exercising it rather than by reading about it: a file's status is written
+   as the full word, since `removed` and `renamed` share a first letter and a reviewer
+   must be able to tell a deletion from a rename; and the provider caps the commits it
+   returns, so when it reports more than it lists, `commits.log` says how many of how
+   many, rather than letting a short list read as complete. The bound on `diff.patch` is deliberate: an
    unbounded diff would reintroduce the context exhaustion this Decision exists to
    remove. Bounded must not mean unreachable, though. With no git, a reviewer
    cannot recover a deletion that falls past the cutoff and the checkout no longer
