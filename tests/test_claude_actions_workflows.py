@@ -40,6 +40,9 @@ _BOUNDED_PROMPT_SOURCES = frozenset(
         "github.event.comment.line",
         "github.event.comment.diff_hunk",
         "github.event.issue.author_association",
+        # A presence flag, not content: it only distinguishes a Pull-Request-backed
+        # issue payload from an ordinary issue.
+        "github.event.issue.pull_request",
         "github.event.issue.title",
     }
 )
@@ -65,6 +68,12 @@ def _action_references(workflow: dict[str, Any]) -> list[str]:
     references = [job["uses"] for job in workflow["jobs"].values() if "uses" in job]
     references.extend(step["uses"] for step in _steps(workflow) if "uses" in step)
     return references
+
+
+def _outside_expressions(prompt: str) -> str:
+    """Return the prompt with every ${{ ... }} expression removed."""
+
+    return _PROMPT_EXPRESSION.sub("", prompt)
 
 
 def _claude_step(workflow: dict[str, Any]) -> dict[str, Any]:
@@ -447,13 +456,12 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # unconditional marker would tell the reviewer a trusted same-repository
         # Pull Request has an untrusted author.
         workflow = load_yaml(MENTION_WORKFLOW)
-        prompt = " ".join(_claude_step(workflow)["with"]["prompt"].split())
-        self.assertNotRegex(prompt, r"^[^$]*withheld")
-        occurrences = prompt.count("withheld")
-        self.assertTrue(occurrences)
-        # Every mention must sit inside a conditional expression.
-        for fragment in prompt.split("withheld")[:-1]:
-            self.assertIn("${{", fragment.rsplit("}}", 1)[-1] + "${{")
+        prompt = _claude_step(workflow)["with"]["prompt"]
+        self.assertIn("withheld", prompt)
+        self.assertNotIn("withheld", _outside_expressions(prompt))
+        # Positive control: the same check must reject an unconditional marker,
+        # otherwise a vacuous assertion would look like coverage.
+        self.assertIn("withheld", _outside_expressions("Title: withheld always"))
 
     def test_decision_0094_keeps_every_rule_inside_the_decision_section(self) -> None:
         path = ROOT / "knowledge" / "decisions" / "0094-bound-claude-review-context.md"

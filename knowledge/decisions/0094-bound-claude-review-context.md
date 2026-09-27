@@ -107,7 +107,8 @@ No new dependency, service or runtime is introduced.
    length. The admitted set is the repository identity, the issue or Pull Request
    number, head and base SHAs, the issue or Pull Request body, the triggering
    comment body, the triggering review body, the issue title, the issue author's
-   association, the reviewed head repository name and the triggering review
+   association, the reviewed head repository name, the
+   Pull-Request-backed presence flag on an issue payload and the triggering review
    comment's path, line and diff hunk. Each is one bounded field; none
    scales with the number of comments. Any expression outside that set fails the
    contract test.
@@ -167,7 +168,11 @@ No new dependency, service or runtime is introduced.
    only when the issue author is `OWNER`, `MEMBER` or `COLLABORATOR`, and the prompt
    says so where the text would have been. The Pull Request body needs no separate
    gate: rule 9 already refuses a fork-controlled head, so a reviewed Pull Request
-   is authored inside this repository.
+   is authored inside this repository. On `issue_comment` the Pull Request
+   description arrives as `github.event.issue.body`, so a Pull-Request-backed issue
+   payload is exempted from the issue-author gate; otherwise a same-repository Pull
+   Request opened by a bot or any account without a trusted association would
+   silently lose its curated state.
 16. **The tool grant and the requested permissions must agree.** `actions: read`
    installs nothing on its own; agent mode installs the CI server only when
    `--allowedTools` names an `mcp__github_ci` tool. The three read-only CI tools are

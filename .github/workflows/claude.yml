@@ -114,11 +114,12 @@ jobs:
             Repository: ${{ github.repository }}
             Item: #${{ github.event.issue.number }}${{ github.event.pull_request.number }}
             Title: >-
-              ${{ github.event.issue.title
-                  && (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+              ${{ (github.event.issue.pull_request && github.event.issue.title)
+                  || (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
                         github.event.issue.author_association)
-                      && github.event.issue.title
-                      || '(withheld: untrusted issue author)')
+                      && github.event.issue.title)
+                  || (github.event.issue.title
+                      && '(withheld: untrusted issue author)')
                   || '' }}
             Base: ${{ steps.review_head.outputs.base_sha }}
             Head: ${{ steps.review_head.outputs.head_sha }}
@@ -144,11 +145,12 @@ jobs:
             green check is not semantic acceptance.
 
             --- maintained current state ---
-            ${{ github.event.issue.body
-                && (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+            ${{ (github.event.issue.pull_request && github.event.issue.body)
+                || (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
                       github.event.issue.author_association)
-                    && github.event.issue.body
-                    || '(withheld: the issue author is not a trusted association;
+                    && github.event.issue.body)
+                || (github.event.issue.body
+                    && '(withheld: the issue author is not a trusted association;
                     this job holds a credential and publishes publicly)')
                 || '' }}
             ${{ github.event.pull_request.body }}
