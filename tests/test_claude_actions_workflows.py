@@ -379,6 +379,23 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertEqual(sorted(numbers), numbers)
         self.assertEqual(list(range(1, len(numbers) + 1)), numbers)
 
+    def test_decision_0094_records_its_partial_supersession_of_0093(self) -> None:
+        # The read-only git grant overrides the tool clause of Decision 0093
+        # rule 8. Leaving both records asserting their own version would give an
+        # auditor two contradictory security contracts.
+        path = ROOT / "knowledge" / "decisions" / "0094-bound-claude-review-context.md"
+        decision = path.read_text(encoding="utf-8")
+        self.assertIn("supersedes", decision)
+        self.assertIn(
+            "0093-harden-claude-code-github-actions-workflows.md",
+            decision,
+        )
+        normalised = " ".join(decision.split())
+        self.assertIn("rule 8", normalised)
+        # The superseded claim must be gone, not merely contradicted later.
+        self.assertNotIn("Decision 0093's eight hardening rules", normalised)
+        self.assertNotIn("its eight hardening rules and", normalised)
+
     def test_mention_workflow_has_no_unconfigured_assignment_trigger(self) -> None:
         # Without an assignee_trigger input the action never runs Claude for
         # `issues: assigned`; the trigger would only start an idle job.

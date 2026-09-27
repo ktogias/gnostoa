@@ -37,6 +37,8 @@ x-project-knowledge:
   relations:
     - kind: references
       target: /decisions/0093-harden-claude-code-github-actions-workflows.md
+    - kind: supersedes
+      target: /decisions/0093-harden-claude-code-github-actions-workflows.md
     - kind: governed-by
       target: /decisions/0018-adopt-evidence-gated-capability-evolution-for-gnostoa-self-governance.md
     - kind: governed-by
@@ -76,10 +78,11 @@ bots removes roughly 30% and cannot approach the size that worked.
 
 ## Prior-art and reuse disposition
 
-Reuse Decision 0093 unchanged: its eight hardening rules and
-`tests/test_claude_actions_workflows.py` remain the authority for pins,
-credential-free checkouts, token scope, trigger gating and bounded execution.
-This Decision adds one orthogonal property and touches none of them.
+Reuse Decision 0093 as the authority for pins, credential-free checkouts, token
+scope, trigger gating and bounded execution, with
+`tests/test_claude_actions_workflows.py` as its enforcement. Seven of its eight
+rules are carried unchanged. **Rule 8's tool clause is partly superseded here**
+-- see the supersession section below -- and no other rule is touched.
 
 Two alternatives were measured or read before choosing:
 
@@ -176,6 +179,31 @@ is not in the Pull Request record and peer reviewers do not see it. Restoring
 on-Pull-Request delivery without widening `GITHUB_TOKEN` is a separate question
 and is not admitted by this Decision.
 
+## Partial supersession of Decision 0093 rule 8
+
+Decision 0093 rule 8 requires that `allowed_bots`, `allowed_non_write_users`,
+`assignee_trigger` **and extra mention-job tools** be left unset. The read-only
+git grant in rule 12 above overrides the tool clause of that rule.
+
+This is recorded rather than left implicit because the alternative is two
+contradictory security contracts in the same repository, and because a test
+asserting it enforces "every Decision 0093 invariant" would then be false.
+
+What is superseded is narrow:
+
+- **superseded:** the "extra mention-job tools unset" clause, and only for
+  `Read`, `Grep`, `Glob`, `Bash(git diff:*)`, `Bash(git log:*)` and
+  `Bash(git show:*)`;
+- **retained:** `allowed_bots`, `allowed_non_write_users` and `assignee_trigger`
+  stay unset, and no write-capable tool is granted. `Bash(git:*)` is specifically
+  not used because it would admit `push`, `commit` and `reset`.
+
+The grant exists because rule 8 predates bounded context. Tag mode supplied the
+diff inside the prompt, so no tool was needed to see it; agent mode supplies no
+data at all, so a reviewer without read-only git has a checkout it cannot inspect.
+Rule 8's intent -- no unnecessary capability in the credential-bearing job -- is
+preserved by granting the smallest set that makes the design function.
+
 ## Consequences
 
 Bounded review context becomes available on Pull Requests of any size, and the
@@ -186,9 +214,9 @@ delivery without widening `GITHUB_TOKEN` remains open.
 
 ## What this Decision does not change
 
-Decision 0093's hardening rules; the automatic review workflow's triggers;
+Decision 0093 rules 1 to 7; the automatic review workflow's triggers;
 `GITHUB_TOKEN` scope; `allowed_bots`, `allowed_non_write_users` or
-`assignee_trigger`. A Claude review remains advisory evidence. It is not reviewer
+`assignee_trigger`, all of which stay unset. A Claude review remains advisory evidence. It is not reviewer
 qualification under Decision 0089, does not populate a protected qualification
 snapshot, and carries no approval or merge authority.
 
