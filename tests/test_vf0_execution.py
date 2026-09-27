@@ -230,17 +230,14 @@ class VF0SubjectTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as td:
             repo, subject = _repo(Path(td))
+            evidence = [_evidence("pass")]
+            command = ["/bin/true"]
+            backend = OversizedBackend()
+            limits = ExecutionLimits(output_bytes=16)
             with self.assertRaisesRegex(
                 ExecutionRejected, "^BACKEND_CAPTURE_OUTPUT_BOUND$"
             ):
-                execute(
-                    repo,
-                    subject,
-                    [_evidence("pass")],
-                    ["/bin/true"],
-                    OversizedBackend(),
-                    ExecutionLimits(output_bytes=16),
-                )
+                execute(repo, subject, evidence, command, backend, limits)
 
     def test_custom_completed_capture_rejects_inconsistent_byte_count(self) -> None:
         class InconsistentBackend:
@@ -257,14 +254,12 @@ class VF0SubjectTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as td:
             repo, subject = _repo(Path(td))
+            evidence = [_evidence("pass")]
+            command = ["/bin/true"]
+            backend = InconsistentBackend()
+            limits = ExecutionLimits()
             with self.assertRaisesRegex(ExecutionRejected, "^BACKEND_CAPTURE_COUNT$"):
-                execute(
-                    repo,
-                    subject,
-                    [_evidence("pass")],
-                    ["/bin/true"],
-                    InconsistentBackend(),
-                )
+                execute(repo, subject, evidence, command, backend, limits)
 
     def test_evidence_payload_is_snapshotted_to_immutable_bytes(self) -> None:
         payload = bytearray(b"print('original')\n")
@@ -1167,6 +1162,28 @@ class VF0SubjectTests(unittest.TestCase):
         with self.assertRaisesRegex(ExecutionRejected, "EVIDENCE_FILE_BOUND"):
             EvidenceFile(path="tests/large.bin", content=b"x" * (2 * 1024 * 1024 + 1))
 
+    def test_evidence_buffer_is_bounded_before_copy(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        content = memoryview(bytearray(module._MAX_EVIDENCE_BYTES + 1))
+        copy_attempts: list[int] = []
+        real_bytes = bytes
+
+        class BytesProbeMeta(type):
+            def __instancecheck__(self, value: object) -> bool:
+                return isinstance(value, real_bytes)
+
+            def __call__(self, value: object = b"") -> bytes:
+                copy_attempts.append(memoryview(value).nbytes)
+                return real_bytes(value)
+
+        class BytesProbe(metaclass=BytesProbeMeta):
+            pass
+
+        with mock.patch.object(module, "bytes", BytesProbe, create=True):
+            with self.assertRaisesRegex(ExecutionRejected, "^EVIDENCE_FILE_BOUND$"):
+                EvidenceFile(path="tests/oversized.bin", content=content)
+        self.assertEqual([], copy_attempts)
+
     def test_evidence_total_size_is_bounded_before_materialization(self) -> None:
         module = importlib.import_module("tools.vf0_execution")
         subject = GitSubject(commit="a" * 40, tree="b" * 40)
@@ -1469,6 +1486,20 @@ class VF0SubjectTests(unittest.TestCase):
                     command,
                     SubprocessBackend(),
                 )
+
+    def test_command_argument_is_bounded_before_encoding(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        encode_calls: list[str] = []
+
+        class InstrumentedString(str):
+            def encode(self, encoding: str = "utf-8", errors: str = "strict") -> bytes:
+                encode_calls.append(encoding)
+                return super().encode(encoding, errors)
+
+        argument = InstrumentedString("x" * module._MAX_COMMAND_BYTES)
+        with self.assertRaisesRegex(ExecutionRejected, "^COMMAND_BYTES_BOUND$"):
+            module._snapshot_command(["/bin/true", argument])
+        self.assertEqual([], encode_calls)
 
     def test_actual_local_containment_launch_requires_ready_handshake(self) -> None:
         module = importlib.import_module("tools.vf0_execution")

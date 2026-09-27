@@ -5,7 +5,7 @@ description: Exact-main missing-pre-evidence reproduction, evolving component ev
 status: draft
 generated:
   by: agent:chatgpt
-  at: "2026-09-27T07:23:15Z"
+  at: "2026-09-27T14:10:24Z"
 sources:
   - id: owner-scope
     resource: https://github.com/ktogias/gnostoa/issues/15#issuecomment-5803831361
@@ -1102,3 +1102,91 @@ This is not reviewer convergence. Codacy's four issues still need provider
 detail and disposition, unavailable reviews remain unknown, and human semantic
 review is required. VF0 remains critical, inactive and incomplete; PR #319 stays
 Draft.
+
+### AUD20 exact-head review and repair disposition
+
+The owner-directed, in-scope review repairs continue under Issue #15 and Decision
+0092. The current review evidence and chronology are retained in the Issue #15
+[AUD20 pre-edit checkpoint](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5856211957),
+[RED supplement](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5856275984),
+and [review/static-analysis disposition](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5856363804).
+Those exact-head results belong to candidate `0da4933722a836b7a858b4f8d9fe4dbf60e6cd14`;
+they are not presented as fresh review of its successor.
+
+Codex's two P2 resource-bound findings were reproduced before production edits.
+The first RED observed a 2,097,153-byte buffer conversion before
+`EVIDENCE_FILE_BOUND`; the second observed `.encode()` called before
+`COMMAND_BYTES_BOUND`. The correction now measures `memoryview.nbytes` before
+materialization, and compares a command argument's base-string character count
+with the remaining byte budget before UTF-8 encoding. It uses base `str` methods
+so a string-subclass override cannot defeat either measurement or encoding.
+After the fix, the focused Development Container suite ran 133 tests, passed
+with two existing skips, and `ci/style --check` passed with 495 files already
+formatted.
+
+| Source/evidence | SHA-256 | Result |
+| --- | --- | --- |
+| Pre-fix `tools/vf0_execution.py` | `5cd2ebdb33376ba38ca8bff278b4dabb6717151390c4a1091d9a0cd5f9b1c2fa` | Exact parent-candidate source before RED |
+| RED-only `tests/test_vf0_execution.py` | `af2329365b054777561b40ffa682a5f8d56f02e285270b080afbfd72a5b2b4cc` | Two new regression assertions; both fail against pre-fix production source |
+| Retained RED log | `dc328172d28792cd5a6a7bc21834b850ca94e655b3acb2e61bbb5ec116a2d7f3` | 133 tests; exactly two intended failures; two existing skips |
+| Fixed `tools/vf0_execution.py` | `feb96babf754504766d8bb4ef7e2207538658e59e907a8b3a7b74bf50aa37b68` | Bound checks precede allocation/encoding |
+| Fixed and cleaned `tests/test_vf0_execution.py` | `89712aed0a5a7c616290741f620318140658ce746cc526354544315fca7b1c36` | 133 passed; two existing skips |
+| Retained focused GREEN log | `53fd3269e57047228f13135dfad01706f0b06e780fcd7d6cb96b85969cca2ca1` | Post-fix Development Container run |
+
+The exact-head SonarCloud result passed its quality gate but reported 66 open
+issues, all `CODE_SMELL` in the public issue query, with zero security hotspots
+and 0.0% coverage on new code. Two `python:S5778` MAJOR findings
+(`AaDgXW4ns4mYgcx9W4hF` and `AaDi5_yalacU-vKYSq_r`) pointed into the custom
+backend exception tests. The declared pre-edit mode was a non-executable
+structural criterion; setup that could itself raise now occurs before each
+`assertRaises` context, leaving only the single `execute` invocation inside.
+The focused GREEN and formatting results above followed this refactor. The
+remaining complexity findings are recorded as maintainability concerns, not
+classified as demonstrated bugs or vulnerabilities.
+
+Codacy's exact-head `action_required` status reported four annotations. Two
+`/tmp` warnings point to string values in an in-memory fake Docker inspect
+configuration; two `CompletedProcess` failures construct synthetic command
+results in a fake backend without executing subprocesses. These contexts appear
+to be scanner false positives, but the Codacy-native issue disposition remains
+unavailable, so the four alerts remain provider-open. The AI Reviewer status
+acknowledged a first request but supplied no substantive report.
+
+| Reviewer / analyzer on `0da4933` | Exact result and limit |
+| --- | --- |
+| Codex code review | Two P2 allocation-order findings reproduced and repaired as above. |
+| Codex Security | Reported no security findings; report remains in the reviewer's private task. |
+| CodeAnt | Reported emergency candidate-before-admission ordering. No change was made: D0092 defines `EMERGENCY_POST_EVENT` as post-event follow-up, requires admission before evidence execution, and permits the observed candidate to predate post-event admission. This concern alone does not establish unauthorized execution. |
+| Greptile | Check reports 12 files reviewed and zero comments. The separately worded security-focused request did not produce a distinct certified security-check record. |
+| Gitar | Medium risk; seven findings closed and no open findings. Provider reports rules and functional validation were not enabled. |
+| CodeRabbit | Full-review command was rate-limited; next included review was stated to be available in 41 minutes. No report for this head. |
+| Sourcery | Manual current-head request declined because the PR diff exceeds 150,000 characters. |
+| DeepSource | Analysis skipped because the account quota is exhausted; no substantive AI review result. |
+| Codacy | Static findings remain open as described; no substantive AI Reviewer report. |
+| Bito, Qodo and Cubic | Unavailable under the observed fair-use limit, ended trial and exceeded monthly line allowance, respectively. |
+| Claude | No review was posted: auto-review rejected the `@claude` trigger because the configured workflow can make source or PR changes. Explicit owner authorization is still required. |
+
+These are outcomes on `0da4933`, not convergence on the next candidate. Fresh
+exact-head results remain necessary after preparation. No report establishes
+human semantic approval, changes PR #319 from Draft, admits a producer, activates
+VF0 or authorizes integration.
+
+The corrected exact-parent preparation ran from the recommended Development
+Container as checkout owner UID/GID `1000:1000`, with `HOME=/tmp`, using the
+trusted wrapper retrieved from parent
+`0da4933722a836b7a858b4f8d9fe4dbf60e6cd14`. The `extended` profile, safe style
+fix, final style check and diff check all returned zero. The verified prepared
+tree is `a1b4ea56e792fbfad7e01294f8d03cc350339edb`, with parent tree
+`acbec9d7d1834a8c68b29a7f5704ca22cb3f8060` and prepared-diff digest
+`sha256:4146174e43b74b3c22ecce0db4ecaaeb5b36b09855b2bdb164b761cfd0d18029`.
+The retained receipt identity is
+`sha256:2fa784f54aadc4d8ceca99928d1ebb31fd2b43522a4e880f6c816413ac4f582d`;
+the receipt file hash is
+`6fc152cc513888e68eabe50c9ca771abe351e9a0323423bbb782323c1a1b5ddb`, rooted by
+`refs/gnostoa/prepared/0da4933722a836b7a858b4f8d9fe4dbf60e6cd14/a1b4ea56e792fbfad7e01294f8d03cc350339edb/523560c7f0e6c63e9395f339c405a030`.
+
+An initial attempt invoked the helper on the host and failed before issuing a
+receipt because its host interpreter path was not present in the container. It
+produced no receipt and did not mutate the source worktree. The documented
+Development Container route above was then used successfully; the failed host
+invocation is not treated as preparation evidence.

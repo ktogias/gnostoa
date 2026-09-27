@@ -207,8 +207,12 @@ class EvidenceFile:
         raw_content = cast(object, self.content)
         if not isinstance(raw_content, (bytes, bytearray, memoryview)):
             raise ExecutionRejected("EVIDENCE_CONTENT")
-        content = bytes(raw_content)
-        _need(len(content) <= _MAX_EVIDENCE_BYTES, "EVIDENCE_FILE_BOUND")
+        try:
+            buffer_view = memoryview(raw_content)
+        except (TypeError, ValueError) as exc:
+            raise ExecutionRejected("EVIDENCE_CONTENT") from exc
+        _need(buffer_view.nbytes <= _MAX_EVIDENCE_BYTES, "EVIDENCE_FILE_BOUND")
+        content = raw_content if type(raw_content) is bytes else buffer_view.tobytes()
         object.__setattr__(self, "content", content)
 
 
@@ -1624,8 +1628,10 @@ def _snapshot_command(command: Sequence[str]) -> tuple[str, ...]:
         if index >= _MAX_COMMAND_ARGS:
             raise ExecutionRejected("COMMAND_COUNT_BOUND")
         _need(isinstance(part, str) and bool(part) and "\0" not in part, "COMMAND")
+        remaining_bytes = _MAX_COMMAND_BYTES - total_bytes
+        _need(str.__len__(part) <= remaining_bytes, "COMMAND_BYTES_BOUND")
         try:
-            encoded = part.encode("utf-8")
+            encoded = str.encode(part, "utf-8")
         except UnicodeEncodeError as exc:
             raise ExecutionRejected("COMMAND") from exc
         total_bytes += len(encoded)
