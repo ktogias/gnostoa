@@ -149,37 +149,33 @@ No new dependency, service or runtime is introduced.
    `github.event.issue.*`, the review triggers carry `github.event.pull_request.*`,
    and `issues: opened` may hold the mention in the title alone. A template that
    reads only one shape silently loses the others.
-12. **The tools the prompt relies on must be granted, and a git prefix is not a
-   read-only grant.** The pinned action disables Bash by default, so a
-   retrieval-based prompt would otherwise leave the reviewer with a checkout it
-   cannot inspect. A verb-prefix grant is nonetheless unsafe:
-   `git log --output=.git/config --format=%B -1 <sha>` writes an
-   attacker-authored commit message into repository config, and a following
-   `git diff --ext-diff <base> <head>` executes the `diff.external` it just
-   configured. Both commands are inside `Bash(git log:*)` and `Bash(git diff:*)`,
-   so in this credential-bearing job the prefix grant converts candidate content
-   into arbitrary execution and secret exfiltration. The reviewer is therefore
-   granted exactly one Bash target: a wrapper installed into `runner.temp` from
-   this workflow file, which comes from the default branch and so cannot be
-   supplied or rewritten by the candidate. The wrapper takes `diff`, `log` or
-   `show` and classifies **every** argument, not only the options. Options come
-   from a positive allowlist -- `--stat`, `--numstat`, `--name-only`,
-   `--name-status`, `--oneline`, `-<n>` -- and everything else beginning with `-`
-   is refused. Restricting options alone is insufficient: `git diff <pathA>
-   <pathB>` implies `--no-index` when a path lies outside the working tree, so an
-   unchecked path argument reads arbitrary host files, including the credential-
-   bearing process's own environment, into a public step summary. A bare argument
-   must therefore be a **revision** -- a 7-to-40 character hex commit or `HEAD`,
-   optionally with `~<n>`/`^<n>` and a `..`/`...` range -- which removes the
-   two-path form entirely, and a **path** is admitted only after `--` and only
-   when it is relative, free of `..` components and free of a leading `-`. It also runs git
-   with system, global and caller configuration disabled, replacement objects
-   disabled, and `--no-ext-diff` with `diff.external` emptied. A contract test
-   extracts the wrapper from the workflow and executes both reproduced attacks
-   against it -- the config-write chain and a host-file read through implicit
-   no-index -- rather than asserting its text, checking that a sentinel outside
-   the checkout never appears in the output and that the admitted forms still
-   return output.
+12. **The reviewer gets no shell, and retrieval happens in a trusted step.** The
+   pinned action disables Bash by default, so a retrieval-based prompt would
+   otherwise leave the reviewer with a checkout it cannot inspect. Two successive
+   attempts to grant a safe git were both wrong, and the second failure is the
+   instructive one.
+
+   A verb-prefix grant is not read-only:
+   `git log --output=.git/config --format=%B -1 <sha>` writes an attacker-authored
+   commit message into repository config and a following
+   `git diff --ext-diff <base> <head>` executes the `diff.external` it configured.
+   Replacing the prefix with a wrapper that validated its arguments then still
+   read arbitrary host files, because `git diff <pathA> <pathB>` implies
+   `--no-index` when a path lies outside the working tree. Both were reproduced.
+
+   The second fix was patched rather than replaced, and that was the error. A
+   `Bash(<program>:*)` grant is a grant of **a shell**: redirection, pipes and
+   substitution remain available no matter what the invoked program validates, so
+   an argument allowlist is the wrong kind of control for this hazard and each
+   patch only moved the boundary. **No Bash of any shape is granted.** A trusted
+   step performs the retrieval itself with fixed arguments and no
+   candidate-controlled input, writing `diff.stat`, `commits.log` and a
+   size-bounded `diff.patch` into `.gnostoa-review-context/`, which the reviewer
+   opens with `Read` and `Grep`. The diff bound is deliberate: an unbounded diff
+   would reintroduce the context exhaustion this Decision exists to remove. The
+   contract test executes that step and checks the artefacts, the bound and the
+   no-Pull-Request path, and asserts the step interpolates no event data.
+
 13. Requests with **no Pull Request** are answered from the repository rather than
    from a diff. `issues: opened` stays an admitted trigger under Decision 0093
    rule 7, and there the resolved base equals the head, so a diff-shaped
@@ -222,13 +218,17 @@ No new dependency, service or runtime is introduced.
    its diff hunk can originate from an older commit, so without
    `original_commit_id` and `original_line` the reviewer cannot detect that it is
    interpreting the request against different code.
-18. **The checkout follows the reviewed commit, not the latest head.** A push that
-   lands while an older review is open leaves `pull_request.head.sha` ahead of the
-   commit the review describes, so checking out the head reviews different code
-   from the one the forwarded body, path, line and hunk refer to.
+18. **The checkout follows a submitted review's commit, but not an inline
+   comment's.** A push landing while an older *submitted review* is open leaves
+   `pull_request.head.sha` ahead of the commit that review describes, so checking
+   out the head reviews different code from the one the forwarded body refers to.
    `ci/review_github_current_state.py` already treats `review.commit_id` as a
-   review's `head_commit`; the guard step follows the same identity, preferring
-   `review.commit_id` or `comment.commit_id` over the event head when present.
+   review's `head_commit`, and the guard step follows the same identity.
+   `comment.commit_id` is deliberately **not** used the same way: an inline comment
+   can hang off an earlier commit of a multi-commit Pull Request, so treating it as
+   the head would silently drop the later commits while the report still reads as a
+   review of the whole Pull Request. The comment's own commit identity is forwarded
+   in the prompt for interpreting its hunk instead, which is what rule 17 is for.
 19. **Every interpolated context is classified, and unknown ones fail closed.** A
    contract test that recognises only the contexts already in use is not a
    contract: an added `secrets.*`, `env.*`, `vars.*` or `needs.*` interpolation
@@ -270,23 +270,23 @@ asserting it enforces "every Decision 0093 invariant" would then be false.
 What is superseded is narrow:
 
 - **superseded:** the "extra mention-job tools unset" clause, and only for
-  `Read`, `Grep`, `Glob`,
-  `Bash(${{ runner.temp }}/gnostoa-review-bin/review-git:*)`,
-  `mcp__github_ci__get_ci_status`,
+  `Read`, `Grep`, `Glob`, `mcp__github_ci__get_ci_status`,
   `mcp__github_ci__get_workflow_run_details` and
   `mcp__github_ci__download_job_log`. A granted tool absent from this list would
   leave rule 8 and rule 16 demanding opposite things for it, so the contract test
   requires every tool in `--allowedTools` to appear here. No raw `git` prefix is
   granted, and rule 12 records why a prefix would not be read-only;
 - **retained:** `allowed_bots`, `allowed_non_write_users` and `assignee_trigger`
-  stay unset, and no write-capable tool is granted. No `git` prefix of any width
-  is used, including `Bash(git diff:*)`: rule 12 records the reproduced chain by
-  which such a prefix executes candidate code.
+  stay unset, and no write-capable tool is granted. Rule 8's intent is in fact
+  **strengthened** rather than weakened on tools: no `Bash` is granted at all, of
+  any shape, because a granted command is run through a shell. Rule 12 records the
+  two reproduced chains that led there.
 
 The grant exists because rule 8 predates bounded context. Tag mode supplied the
 diff inside the prompt, so no tool was needed to see it; agent mode supplies no
-data at all, so a reviewer without a git of some kind has a checkout it cannot
-inspect.
+data at all, so a reviewer with neither retrieval nor supplied context has a
+checkout it cannot inspect. The retrieval is therefore moved into a trusted step
+rather than granted to the reviewer.
 Rule 8's intent -- no unnecessary capability in the credential-bearing job -- is
 preserved by granting the smallest set that makes the design function.
 

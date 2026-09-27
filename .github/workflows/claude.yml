@@ -57,13 +57,15 @@ jobs:
           EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-          # A push landing while an older review is open leaves the Pull Request
-          # head ahead of the commit the review actually describes.
+          # A push landing while an older *submitted review* is open leaves the
+          # Pull Request head ahead of the commit that review describes, and
           # ci/review_github_current_state.py already treats review.commit_id as a
-          # review's head_commit, so the checkout follows the same identity.
-          REVIEWED_COMMIT: >-
-            ${{ github.event.review.commit_id
-              || github.event.comment.commit_id }}
+          # review's head_commit. An inline comment is different: it can be
+          # attached to an earlier commit of a multi-commit Pull Request, so using
+          # comment.commit_id as the head would silently drop the later commits
+          # from the diff. The comment's own commit identity is forwarded in the
+          # prompt for interpreting its hunk instead.
+          REVIEWED_COMMIT: ${{ github.event.review.commit_id }}
         run: |
           set -eu
           # The prompt keys item type on this number, never on head/base
@@ -105,93 +107,52 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Install the trusted read-only git wrapper
+      # An argument allowlist cannot constrain a shell: a Bash grant admits
+      # redirection, pipes and substitution regardless of what the invoked program
+      # checks. The reviewer therefore gets no shell at all. This step runs the
+      # retrieval itself with fixed arguments and no candidate-controlled input,
+      # and writes bounded artefacts the reviewer opens with Read and Grep.
+      - name: Collect review context
         env:
-          WRAPPER_DIR: ${{ runner.temp }}/gnostoa-review-bin
+          BASE_SHA: ${{ steps.review_head.outputs.base_sha }}
+          HEAD_SHA: ${{ steps.review_head.outputs.head_sha }}
+          CONTEXT_DIR: ${{ github.workspace }}/.gnostoa-review-context
+          MAX_BYTES: "524288"
         run: |
           set -eu
-          mkdir -p "${WRAPPER_DIR}"
-          # The body is written from this workflow file, which comes from the
-          # default branch, so the candidate cannot supply or rewrite it.
-          cat > "${WRAPPER_DIR}/review-git" <<'WRAPPER'
-          #!/bin/sh
-          # Trusted read-only git for the bounded reviewer.
-          #
-          # A prefix grant such as Bash(git log:*) is not read-only:
-          #   git log --output=.git/config --format=%B -1 <sha>
-          # writes an attacker-authored commit message into repository config, and
-          #   git diff --ext-diff <base> <head>
-          # then executes the diff.external it configured. In this credential-
-          # bearing job that turns candidate content into arbitrary execution.
-          #
-          # This wrapper therefore takes a positive allowlist: any option not
-          # named below is refused, so no new git option can reopen the hole.
-          set -eu
-          verb=${1:-}
-          case "${verb}" in
-            diff|log|show) shift ;;
-            *)
-              echo "refused: ${verb:-<none>} is not diff, log or show" >&2
-              exit 2
-              ;;
-          esac
-          # Options are not the only hazard. `git diff <pathA> <pathB>` implies
-          # --no-index when a path lies outside the working tree, so an unchecked
-          # path argument reads arbitrary host files into a public step summary.
-          # Every argument is therefore classified: an allowlisted option, a
-          # revision, or -- after `--` -- a relative in-tree path.
-          is_revision() {
-            printf '%s' "$1" | grep -Eq \
-              '^(HEAD|[0-9a-fA-F]{7,40})(~[0-9]+|\^[0-9]*)?(\.\.\.?(HEAD|[0-9a-fA-F]{7,40})(~[0-9]+|\^[0-9]*)?)?$'
+          rm -rf "${CONTEXT_DIR}"
+          mkdir -p "${CONTEXT_DIR}"
+          run_git() {
+            GIT_CONFIG_NOSYSTEM=1 \
+            GIT_CONFIG_SYSTEM=/dev/null \
+            GIT_CONFIG_GLOBAL=/dev/null \
+            GIT_CONFIG_COUNT=0 \
+            GIT_ATTR_NOSYSTEM=1 \
+            GIT_NO_REPLACE_OBJECTS=1 \
+            GIT_EXTERNAL_DIFF= \
+            git --no-pager \
+              -c core.hooksPath=/dev/null \
+              -c diff.external= \
+              -c core.fsmonitor= \
+              "$@" --no-ext-diff --no-textconv
           }
-          is_in_tree_path() {
-            case "$1" in
-              -*|/*|..|../*|*/..|*/../*) return 1 ;;
-            esac
-            printf '%s' "$1" | grep -Eq '^[A-Za-z0-9._][A-Za-z0-9._/-]*$'
-          }
-          after_separator=0
-          for argument in "$@"; do
-            if [ "${after_separator}" -eq 1 ]; then
-              if is_in_tree_path "${argument}"; then
-                continue
-              fi
-              echo "refused: path ${argument} is not a relative in-tree path" >&2
-              exit 2
-            fi
-            case "${argument}" in
-              --)
-                after_separator=1
-                continue
-                ;;
-              --stat|--numstat|--name-only|--name-status|--oneline) continue ;;
-              -[0-9]|-[0-9][0-9]) continue ;;
-              -*)
-                echo "refused: option ${argument} is not allowlisted" >&2
-                exit 2
-                ;;
-            esac
-            if is_revision "${argument}"; then
-              continue
-            fi
-            echo "refused: ${argument} is neither an option nor a revision" >&2
-            exit 2
-          done
-          GIT_CONFIG_NOSYSTEM=1 \
-          GIT_CONFIG_SYSTEM=/dev/null \
-          GIT_CONFIG_GLOBAL=/dev/null \
-          GIT_CONFIG_COUNT=0 \
-          GIT_ATTR_NOSYSTEM=1 \
-          GIT_NO_REPLACE_OBJECTS=1 \
-          GIT_EXTERNAL_DIFF= \
-          exec git --no-pager \
-            -c core.hooksPath=/dev/null \
-            -c diff.external= \
-            -c core.fsmonitor= \
-            -c uploadpack.packObjectsHook= \
-            "${verb}" --no-ext-diff "$@"
-          WRAPPER
-          chmod 0755 "${WRAPPER_DIR}/review-git"
+          if [ "${BASE_SHA}" = "${HEAD_SHA}" ]; then
+            printf 'No Pull Request: this request concerns the issue itself.\n' \
+              > "${CONTEXT_DIR}/README"
+            exit 0
+          fi
+          run_git diff --stat "${BASE_SHA}...${HEAD_SHA}" > "${CONTEXT_DIR}/diff.stat"
+          run_git log --oneline "${BASE_SHA}..${HEAD_SHA}" > "${CONTEXT_DIR}/commits.log"
+          run_git diff "${BASE_SHA}...${HEAD_SHA}" > "${CONTEXT_DIR}/diff.patch.full"
+          # Bounded on purpose: an unbounded diff would reintroduce the context
+          # exhaustion this Decision exists to remove.
+          head -c "${MAX_BYTES}" "${CONTEXT_DIR}/diff.patch.full" \
+            > "${CONTEXT_DIR}/diff.patch"
+          if [ "$(wc -c < "${CONTEXT_DIR}/diff.patch.full")" -gt "${MAX_BYTES}" ]; then
+            printf '\n[truncated at %s bytes; read files directly for the rest]\n' \
+              "${MAX_BYTES}" >> "${CONTEXT_DIR}/diff.patch"
+          fi
+          rm -f "${CONTEXT_DIR}/diff.patch.full"
 
       - name: Run Claude Code
         id: claude
@@ -205,13 +166,12 @@ jobs:
           # no cap, which exhausted the request on a large Pull Request. Every
           # interpolation below is independent of discussion length.
           display_report: true
-          # The pinned action disables Bash by default, so the retrieval the
-          # prompt asks for needs an explicit grant. The grant is the trusted
-          # wrapper installed above, never a git prefix: Bash(git log:*) admits
-          # --output=.git/config, which a following --ext-diff turns into
-          # arbitrary execution.
+          # No Bash of any shape. The action disables Bash by default and it stays
+          # disabled: a granted command is run through a shell, so redirection and
+          # substitution remain available whatever the invoked program validates.
+          # Retrieval happens in the trusted step above instead.
           claude_args: >-
-            --allowedTools "Read,Grep,Glob,Bash(${{ runner.temp }}/gnostoa-review-bin/review-git:*),mcp__github_ci__get_ci_status,mcp__github_ci__get_workflow_run_details,mcp__github_ci__download_job_log"
+            --allowedTools "Read,Grep,Glob,mcp__github_ci__get_ci_status,mcp__github_ci__get_workflow_run_details,mcp__github_ci__download_job_log"
           prompt: |
             Read-only review of a Gnostoa Pull Request. You have no pre-loaded
             discussion history; gather only what the request needs.
@@ -233,14 +193,13 @@ jobs:
             Start with README.md, then AGENTS.md, and follow the route it names for
             the area under review. Use your own tools for context, diffing against
             the resolved base rather than a fixed branch:
-              ${{ runner.temp }}/gnostoa-review-bin/review-git diff --stat ${{ steps.review_head.outputs.base_sha }}...HEAD
-              ${{ runner.temp }}/gnostoa-review-bin/review-git diff ${{ steps.review_head.outputs.base_sha }}...HEAD -- <path>
-              ${{ runner.temp }}/gnostoa-review-bin/review-git log --oneline ${{ steps.review_head.outputs.base_sha }}..HEAD
-            and Read or Grep for the current state of any file. That wrapper is the
-            only git you can run. It takes diff, log or show and an allowlist of
-            options -- --stat, --numstat, --name-only, --name-status, --oneline,
-            -<n> and -- -- and refuses anything else, so use Read and Grep rather
-            than a custom --format.
+              .gnostoa-review-context/diff.stat     -- changed files and counts
+              .gnostoa-review-context/commits.log   -- one line per commit
+              .gnostoa-review-context/diff.patch    -- the diff, bounded in size
+            and Read or Grep the checkout for the current state of any file. You
+            have no shell and no git; that context was produced for you by a
+            trusted step. If diff.patch says it was truncated, read the files it
+            names directly rather than asking for more of the patch.
 
             If no Pull Request number is shown above, the request concerns the
             issue itself: answer it from the repository rather than from a diff.

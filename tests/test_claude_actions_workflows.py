@@ -44,7 +44,6 @@ _BOUNDED_PROMPT_SOURCES = frozenset(
         "github.event.comment.diff_hunk",
         "github.event.comment.original_commit_id",
         "steps.review_head.outputs.pull_number",
-        "runner.temp",
         "github.event.comment.original_line",
         "github.event.issue.author_association",
         "github.event.pull_request.author_association",
@@ -115,16 +114,13 @@ def _prompt_contexts(prompt: str) -> set[str]:
     return contexts
 
 
-def _installed_wrapper_source(workflow: dict[str, Any]) -> str:
-    """Return the wrapper body the mention job writes outside the checkout."""
+def _context_step(workflow: dict[str, Any]) -> dict[str, Any]:
+    """Return the step that retrieves review context on the reviewer's behalf."""
     for job in workflow["jobs"].values():
         for step in job.get("steps", []):
-            script = str(step.get("run", ""))
-            if "<<'WRAPPER'" not in script:
-                continue
-            body = script.split("<<'WRAPPER'", 1)[1]
-            return body.split("\nWRAPPER", 1)[0].lstrip("\n")
-    raise AssertionError("no step installs a trusted git wrapper")
+            if str(step.get("name", "")) == "Collect review context":
+                return step
+    raise AssertionError("no step collects review context")
 
 
 def _claude_step(workflow: dict[str, Any]) -> dict[str, Any]:
@@ -397,6 +393,13 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         prompt = _claude_step(workflow)["with"]["prompt"]
         self.assertIn("README.md", prompt)
 
+    def test_mention_prompt_names_the_collected_context(self) -> None:
+        workflow = load_yaml(MENTION_WORKFLOW)
+        prompt = " ".join(_claude_step(workflow)["with"]["prompt"].split())
+        for artefact in ("diff.stat", "commits.log", "diff.patch"):
+            with self.subTest(artefact=artefact):
+                self.assertIn(f".gnostoa-review-context/{artefact}", prompt)
+
     def test_mention_prompt_diffs_against_the_resolved_base(self) -> None:
         # A hardcoded branch is wrong for any Pull Request that does not target it.
         workflow = load_yaml(MENTION_WORKFLOW)
@@ -404,57 +407,63 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertIn("steps.review_head.outputs.base_sha", prompt)
         self.assertNotIn("origin/main", prompt)
 
-    def test_mention_job_grants_no_raw_git_command_prefix(self) -> None:
-        # A prefix grant is not read-only. `git log --output=.git/config` writes an
-        # attacker-authored commit message into repository config, and a following
-        # `git diff --ext-diff` then executes the configured diff.external, which
-        # is arbitrary execution inside the credential-bearing job.
+    def test_mention_job_grants_no_shell_at_all(self) -> None:
+        # An argument allowlist cannot constrain a shell. A granted Bash command is
+        # run through one, so redirection, pipes and substitution stay available
+        # whatever the invoked program validates. Retrieval therefore happens in a
+        # trusted step and the reviewer gets no Bash of any shape.
         workflow = load_yaml(MENTION_WORKFLOW)
         args = str(_claude_step(workflow)["with"].get("claude_args", ""))
         self.assertIn("--allowedTools", args)
-        for forbidden in (
-            "Bash(git diff:*)",
-            "Bash(git log:*)",
-            "Bash(git show:*)",
-            "Bash(git:*)",
-        ):
-            with self.subTest(forbidden=forbidden):
-                self.assertNotIn(forbidden, args)
+        self.assertNotIn("Bash", args)
 
-    def test_git_grant_points_outside_the_candidate_checkout(self) -> None:
-        # The wrapper must not be a checkout path: a candidate that can rewrite
-        # its own wrapper is back to an unconstrained git.
-        workflow = load_yaml(MENTION_WORKFLOW)
-        args = str(_claude_step(workflow)["with"].get("claude_args", ""))
-        granted = [
-            tool
-            for tool in re.findall(r'--allowedTools\s+"([^"]+)"', args)[0].split(",")
-            if tool.strip().startswith("Bash(")
-        ]
-        self.assertEqual(len(granted), 1, granted)
-        self.assertIn("runner.temp", granted[0])
+    def test_review_context_is_collected_with_fixed_arguments(self) -> None:
+        # The retrieval must take no candidate-controlled input, or the trusted
+        # step becomes the injection surface the grant used to be.
+        step = _context_step(load_yaml(MENTION_WORKFLOW))
+        script = str(step["run"])
+        self.assertNotIn("github.event", script)
+        self.assertNotIn("${{", script)
+        for value in (str(v) for v in step["env"].values()):
+            with self.subTest(value=value):
+                self.assertNotIn("github.event", value)
 
-    def test_trusted_git_wrapper_refuses_execution_capable_options(self) -> None:
-        # Behavioural, not textual: the wrapper is extracted from the workflow and
-        # executed, including the exact chain that was reproduced against the
-        # prefix grant.
-        wrapper_source = _installed_wrapper_source(load_yaml(MENTION_WORKFLOW))
+    def test_collected_review_context_is_bounded_and_complete(self) -> None:
+        # Behavioural: the step is executed, so the artefacts the prompt names must
+        # actually appear and the bound must actually apply.
+        script = str(_context_step(load_yaml(MENTION_WORKFLOW))["run"])
         with tempfile.TemporaryDirectory() as scratch:
             work = pathlib.Path(scratch)
-            wrapper = work / "review-git"
-            wrapper.write_text(wrapper_source, encoding="utf-8")
-            wrapper.chmod(0o755)
             repo = work / "repo"
             repo.mkdir()
+            base_env = {**os.environ, "HOME": scratch}
 
-            def git(*argv: str) -> None:
-                subprocess.run(
+            def git(*argv: str) -> str:
+                return subprocess.run(
                     ["git", *argv],
                     cwd=repo,
                     check=True,
                     capture_output=True,
-                    env={**os.environ, "HOME": scratch},
+                    text=True,
+                    env=base_env,
+                ).stdout.strip()
+
+            def collect(base: str, head: str, target: pathlib.Path) -> None:
+                result = subprocess.run(
+                    ["sh", "-s"],
+                    input=script,
+                    cwd=repo,
+                    capture_output=True,
+                    text=True,
+                    env={
+                        **base_env,
+                        "BASE_SHA": base,
+                        "HEAD_SHA": head,
+                        "CONTEXT_DIR": str(target),
+                        "MAX_BYTES": "2048",
+                    },
                 )
+                self.assertEqual(result.returncode, 0, result.stderr)
 
             git("init", "-q", ".")
             git("config", "user.email", "test@example.invalid")
@@ -462,56 +471,33 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             (repo / "f.txt").write_text("base\n", encoding="utf-8")
             git("add", "-A")
             git("commit", "-q", "-m", "base")
-            (repo / "f.txt").write_text("changed\n", encoding="utf-8")
+            base_sha = git("rev-parse", "HEAD")
+            (repo / "f.txt").write_text(
+                "".join(f"line {n}\n" for n in range(4000)), encoding="utf-8"
+            )
             git("add", "-A")
-            git("commit", "-q", "-m", "[diff]\n\texternal = /bin/false\n")
+            git("commit", "-q", "-m", "second")
+            head_sha = git("rev-parse", "HEAD")
 
-            def run(*argv: str) -> subprocess.CompletedProcess[str]:
-                return subprocess.run(
-                    [str(wrapper), *argv],
-                    cwd=repo,
-                    capture_output=True,
-                    text=True,
-                    env={**os.environ, "HOME": scratch},
-                )
+            context = work / "context"
+            collect(base_sha, head_sha, context)
+            for name in ("diff.stat", "commits.log", "diff.patch"):
+                with self.subTest(artefact=name):
+                    self.assertTrue((context / name).is_file(), name)
+                    self.assertTrue((context / name).read_text(encoding="utf-8"))
+            self.assertFalse((context / "diff.patch.full").exists())
+            patch = (context / "diff.patch").read_text(encoding="utf-8")
+            self.assertIn("truncated", patch)
+            self.assertLess(len(patch.encode("utf-8")), 2048 + 256)
 
-            # A sentinel outside the repository: `git diff <a> <b>` implies
-            # --no-index when a path lies outside the working tree, so an
-            # unchecked path argument reads arbitrary host files into the public
-            # step summary.
-            sentinel = work / "outside-the-checkout"
-            sentinel.write_text("SENTINEL-TOKEN-VALUE\n", encoding="utf-8")
-            config = repo / ".git" / "config"
-            before = config.read_bytes()
-            for argv in (
-                ("log", "--output=.git/config", "--format=%B", "-1"),
-                ("diff", "--ext-diff", "HEAD~1", "HEAD"),
-                ("log", "-c", "diff.external=/bin/sh"),
-                ("diff", "--upload-pack=/bin/sh"),
-                ("log", "--format=%B"),
-                ("push", "origin", "main"),
-                ("diff", str(sentinel), "f.txt"),
-                ("diff", str(sentinel), "/dev/null"),
-                ("diff", "--", str(sentinel)),
-                ("diff", "--", "../outside-the-checkout"),
-                ("diff", "--", "/etc/hostname"),
-                ("show", "$(id)"),
-            ):
-                with self.subTest(refused=argv):
-                    result = run(*argv)
-                    self.assertNotEqual(result.returncode, 0, result.stdout)
-                    self.assertNotIn("SENTINEL-TOKEN-VALUE", result.stdout)
-            self.assertEqual(config.read_bytes(), before, "config was rewritten")
-
-            for argv in (
-                ("diff", "--stat", "HEAD~1", "HEAD"),
-                ("log", "--oneline", "-1"),
-                ("diff", "HEAD~1", "HEAD", "--", "f.txt"),
-            ):
-                with self.subTest(allowed=argv):
-                    result = run(*argv)
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertTrue(result.stdout.strip(), result.stderr)
+            # With no Pull Request the step says so rather than writing an empty diff.
+            issue_context = work / "issue-context"
+            collect(head_sha, head_sha, issue_context)
+            self.assertFalse((issue_context / "diff.patch").exists())
+            self.assertIn(
+                "No Pull Request",
+                (issue_context / "README").read_text(encoding="utf-8"),
+            )
 
     def test_mention_prompt_handles_a_request_with_no_pull_request(self) -> None:
         # issues:opened is an admitted trigger and Decision 0093 rule 7 keeps it.
@@ -659,6 +645,9 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # treats review.commit_id as the review's head_commit, so the checkout
         # must follow it rather than the newer head.
         self.assertIn("github.event.review.commit_id", joined)
+        # An inline comment can hang off an earlier commit of a multi-commit Pull
+        # Request, so using it as the head would silently drop the later commits.
+        self.assertNotIn("github.event.comment.commit_id", joined)
         script = str(resolve["run"])
         # Presence anywhere in the script is not enough: the reviewed commit must
         # be what the step writes as the head the checkout will use.
