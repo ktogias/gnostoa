@@ -118,6 +118,23 @@ def _prompt_contexts(prompt: str) -> set[str]:
     return contexts
 
 
+def _checkouts(workflow: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the checkout steps, in the order the job runs them."""
+    return [
+        step
+        for step in _steps(workflow)
+        if str(step.get("uses", "")).startswith("actions/checkout@")
+    ]
+
+
+def _candidate_checkout(workflow: dict[str, Any]) -> dict[str, Any]:
+    """Return the checkout that materialises the reviewed candidate."""
+    for step in _checkouts(workflow):
+        if str(step.get("with", {}).get("path", "")):
+            return step
+    raise AssertionError("no checkout places the candidate in a subdirectory")
+
+
 def _named_step(workflow: dict[str, Any], name: str) -> dict[str, Any]:
     """Return the mention job's step with this exact name."""
     for job in workflow["jobs"].values():
@@ -335,11 +352,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # default checkout lands on the default branch, so an unbound ref would
         # make the reviewer diff main against itself and report nothing.
         workflow = load_yaml(MENTION_WORKFLOW)
-        checkout = next(
-            step
-            for step in _steps(workflow)
-            if step.get("uses", "").startswith("actions/checkout@")
-        )
+        checkout = _candidate_checkout(workflow)
         ref = " ".join(str(checkout["with"]["ref"]).split())
         # Superseded by the same-repository guard: the head is resolved with the
         # read-only token rather than taken from the event payload, so the
@@ -388,12 +401,8 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertTrue(
             guard, "mention job needs an explicit same-repository head guard"
         )
-        checkout = next(
-            step
-            for step in _steps(workflow)
-            if step.get("uses", "").startswith("actions/checkout@")
-        )
-        ref = str(checkout["with"]["ref"])
+        checkout = str(_candidate_checkout(workflow)["with"]["ref"])
+        ref = checkout
         # The ref must come from the guarded resolution, not straight from the
         # untrusted event payload.
         self.assertIn("steps.review_head.outputs", ref)
@@ -429,6 +438,46 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         args = str(_claude_step(workflow)["with"].get("claude_args", ""))
         self.assertIn("--allowedTools", args)
         self.assertNotIn("Bash", args)
+
+    def test_candidate_is_not_checked_out_at_the_workspace_root(self) -> None:
+        # docs/security.md of the pinned action: do not check out an untrusted ref
+        # into the workspace root before this action, because the action and the
+        # reviewer run with the root as their working directory. The documented
+        # pattern is the base at the root and the head in a subdirectory behind
+        # --add-dir, which also means the entry route the prompt names is the
+        # repository's own rather than one the candidate rewrote.
+        workflow = load_yaml(MENTION_WORKFLOW)
+        checkouts = _checkouts(workflow)
+        self.assertGreaterEqual(len(checkouts), 2, checkouts)
+        base, candidate = checkouts[0], _candidate_checkout(workflow)
+        self.assertIsNot(base, candidate)
+        self.assertNotIn("ref", base.get("with", {}))
+        self.assertNotIn("path", base.get("with", {}))
+        self.assertEqual("candidate", str(candidate["with"]["path"]))
+        args = str(_claude_step(workflow)["with"].get("claude_args", ""))
+        self.assertIn("--add-dir candidate", " ".join(args.split()))
+        for step_name in ("Reject candidate symlinks", "Collect review context"):
+            with self.subTest(step=step_name):
+                step = _named_step(workflow, step_name)
+                self.assertEqual("candidate", str(step["working-directory"]))
+
+    def test_reviewed_commit_is_gated_on_the_submitted_review_event(self) -> None:
+        # A pull_request_review_comment payload can also carry a review object, and
+        # selecting it there would drop the later commits of a multi-commit Pull
+        # Request. Presence is not the right condition; the event name is.
+        workflow = load_yaml(MENTION_WORKFLOW)
+        resolve = _named_step(workflow, "Resolve trusted review head")
+        reviewed = " ".join(str(resolve["env"]["REVIEWED_COMMIT"]).split())
+        self.assertIn("github.event_name == 'pull_request_review'", reviewed)
+        self.assertIn("github.event.review.commit_id", reviewed)
+
+    def test_diff_parts_split_on_line_boundaries(self) -> None:
+        # The reviewer reads the parts as text. A byte split can cut a multibyte
+        # character across two files, and a deletion is only recoverable there.
+        script = str(_context_step(load_yaml(MENTION_WORKFLOW))["run"])
+        self.assertIn("split -C", script)
+        self.assertNotIn("split -b", script)
+        self.assertNotIn("head -c", script)
 
     def test_candidate_symlinks_are_rejected_before_review(self) -> None:
         # The prompt tells a credential-bearing agent to read candidate-controlled

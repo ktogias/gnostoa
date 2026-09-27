@@ -178,7 +178,10 @@ No new dependency, service or runtime is introduced.
    remove. Bounded must not mean unreachable, though. With no git, a reviewer
    cannot recover a deletion that falls past the cutoff and the checkout no longer
    holds the removed content, so the whole diff is also written as fixed-size parts
-   under `patches/`, read in name order. The reviewer therefore pages the diff by
+   under `patches/`, read in name order. Those parts are split on line boundaries
+   under the byte bound rather than at exact byte counts, because the reviewer reads
+   them as text and a byte cut can leave a multibyte character split across two
+   files; the overview is the first whole part for the same reason. The reviewer therefore pages the diff by
    its own choice, which is what bounded context is supposed to mean. Item type is
    keyed on the resolved pull number here too, never on head/base equality, and an
    emptied Pull Request still receives every artefact the prompt names. The
@@ -233,7 +236,10 @@ No new dependency, service or runtime is introduced.
    `pull_request.head.sha` ahead of the commit that review describes, so checking
    out the head reviews different code from the one the forwarded body refers to.
    `ci/review_github_current_state.py` already treats `review.commit_id` as a
-   review's `head_commit`, and the guard step follows the same identity.
+   review's `head_commit`, and the guard step follows the same identity -- gated on
+   `github.event_name == 'pull_request_review'`, not on the field's presence, since
+   a `pull_request_review_comment` payload can carry a review object too and
+   selecting it there would reintroduce exactly the dropped-commits defect below.
    `comment.commit_id` is deliberately **not** used the same way: an inline comment
    can hang off an earlier commit of a multi-commit Pull Request, so treating it as
    the head would silently drop the later commits while the report still reads as a
@@ -261,7 +267,25 @@ No new dependency, service or runtime is introduced.
    repository's bounded-candidate contract does not admit external target chains,
    and the reviewed candidate is held to the same rule. A guard step ahead of both
    the collection step and the reviewer fails closed on any symlink, tracked by
-   index mode or found in the checkout, and names the offending paths.
+   index mode or found in the candidate checkout, and names the offending paths.
+   Rule 21 removes the deeper part of this hazard by taking the entry route out of
+   the candidate entirely; this rule remains because the candidate's own files are
+   still read.
+21. **The candidate is not checked out at the workspace root.** `docs/security.md`
+   of the pinned action states plainly: do not check out an untrusted ref into the
+   workspace root before this action, because the action and the reviewer run with
+   that root as their working directory. Three successive findings in this surface
+   were downstream of ignoring it. The documented pattern is used instead -- the
+   base ref at the workspace root, the reviewed head in a subdirectory, and
+   `--add-dir` to reach it -- and it closes more than the pwn-request shape. The
+   entry route the prompt names, `README.md` and `AGENTS.md`, then comes from the
+   base branch, so a candidate can no longer rewrite the very instructions the
+   credential-bearing reviewer is told to follow. The prompt also states that
+   anything written inside the candidate, including its own instructions, is
+   material under review rather than direction to the reviewer. Read confinement
+   itself is defence-in-depth only: a `settings` deny list covers the obvious runner
+   paths, but this repository cannot verify the reviewer's enforcement of it, so the
+   structural control is the untrusted route's removal rather than the deny list.
 ## Accepted trade: delivery is no longer on the Pull Request
 
 Agent mode sets `claudeCommentId: undefined` and provides **no GitHub
@@ -335,7 +359,8 @@ snapshot, and carries no approval or merge authority.
 bounded interpolation set, the static prompt bound, forwarding of the triggering
 request, the reviewed-head checkout binding under a same-repository guard, coverage of
 every admitted trigger payload, the resolved-base diff, the declared entry route, the absence of any Bash grant, the trusted context collection with its bound
-and its recoverable parts,
+and its line-safe recoverable parts, the base-rooted checkout with the candidate
+in a subdirectory, the symlink refusal,
 the no-Pull-Request path, the forwarded inline location, the trust gate on
 externally authored issue text, the agreement between the tool grant and the
 requested permissions, the recorded supersession, and the explicit delivery path — alongside every existing Decision 0093
