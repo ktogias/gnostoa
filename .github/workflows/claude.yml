@@ -114,6 +114,9 @@ jobs:
       # and writes bounded artefacts the reviewer opens with Read and Grep.
       - name: Collect review context
         env:
+          # Item type is keyed on the resolved pull number, never on head/base
+          # equality: a merged or emptied Pull Request reports both the same.
+          PULL_NUMBER: ${{ steps.review_head.outputs.pull_number }}
           BASE_SHA: ${{ steps.review_head.outputs.base_sha }}
           HEAD_SHA: ${{ steps.review_head.outputs.head_sha }}
           CONTEXT_DIR: ${{ github.workspace }}/.gnostoa-review-context
@@ -136,23 +139,37 @@ jobs:
               -c core.fsmonitor= \
               "$@" --no-ext-diff --no-textconv
           }
-          if [ "${BASE_SHA}" = "${HEAD_SHA}" ]; then
+          if [ -z "${PULL_NUMBER}" ]; then
             printf 'No Pull Request: this request concerns the issue itself.\n' \
               > "${CONTEXT_DIR}/README"
             exit 0
           fi
           run_git diff --stat "${BASE_SHA}...${HEAD_SHA}" > "${CONTEXT_DIR}/diff.stat"
           run_git log --oneline "${BASE_SHA}..${HEAD_SHA}" > "${CONTEXT_DIR}/commits.log"
-          run_git diff "${BASE_SHA}...${HEAD_SHA}" > "${CONTEXT_DIR}/diff.patch.full"
-          # Bounded on purpose: an unbounded diff would reintroduce the context
-          # exhaustion this Decision exists to remove.
-          head -c "${MAX_BYTES}" "${CONTEXT_DIR}/diff.patch.full" \
-            > "${CONTEXT_DIR}/diff.patch"
-          if [ "$(wc -c < "${CONTEXT_DIR}/diff.patch.full")" -gt "${MAX_BYTES}" ]; then
-            printf '\n[truncated at %s bytes; read files directly for the rest]\n' \
-              "${MAX_BYTES}" >> "${CONTEXT_DIR}/diff.patch"
+          run_git diff "${BASE_SHA}...${HEAD_SHA}" > "${CONTEXT_DIR}/diff.full"
+          full_bytes="$(wc -c < "${CONTEXT_DIR}/diff.full")"
+          if [ "${full_bytes}" -eq 0 ]; then
+            # A Pull Request whose head already reaches its base still gets every
+            # artefact the prompt names, so the prompt and the context agree.
+            printf 'No changes between base and head for this Pull Request.\n' \
+              > "${CONTEXT_DIR}/diff.patch"
+          else
+            # diff.patch is bounded on purpose: an unbounded diff would reintroduce
+            # the context exhaustion this Decision exists to remove. Nothing is
+            # lost, though -- the whole diff is also written as fixed-size parts,
+            # because the reviewer has no git with which to recover a deletion that
+            # falls past the cutoff, and the checkout cannot show removed content.
+            mkdir -p "${CONTEXT_DIR}/patches"
+            split -b "${MAX_BYTES}" "${CONTEXT_DIR}/diff.full" \
+              "${CONTEXT_DIR}/patches/part-"
+            head -c "${MAX_BYTES}" "${CONTEXT_DIR}/diff.full" \
+              > "${CONTEXT_DIR}/diff.patch"
+            if [ "${full_bytes}" -gt "${MAX_BYTES}" ]; then
+              printf '\n[bounded at %s bytes of %s; the whole diff is in patches/, read in name order]\n' \
+                "${MAX_BYTES}" "${full_bytes}" >> "${CONTEXT_DIR}/diff.patch"
+            fi
           fi
-          rm -f "${CONTEXT_DIR}/diff.patch.full"
+          rm -f "${CONTEXT_DIR}/diff.full"
 
       - name: Run Claude Code
         id: claude
@@ -196,10 +213,12 @@ jobs:
               .gnostoa-review-context/diff.stat     -- changed files and counts
               .gnostoa-review-context/commits.log   -- one line per commit
               .gnostoa-review-context/diff.patch    -- the diff, bounded in size
+              .gnostoa-review-context/patches/      -- the whole diff, in parts
             and Read or Grep the checkout for the current state of any file. You
             have no shell and no git; that context was produced for you by a
-            trusted step. If diff.patch says it was truncated, read the files it
-            names directly rather than asking for more of the patch.
+            trusted step. If diff.patch says it was bounded, read patches/ in name
+            order for the rest; a removed file's old content is only there, since
+            the checkout no longer holds it.
 
             If no Pull Request number is shown above, the request concerns the
             issue itself: answer it from the repository rather than from a diff.

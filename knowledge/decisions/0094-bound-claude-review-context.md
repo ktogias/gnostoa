@@ -131,9 +131,11 @@ No new dependency, service or runtime is introduced.
 8. The checkout must bind the **reviewed** head. Agent mode performs no Pull
    Request resolution, so on a comment event the default checkout lands on the
    default branch and the reviewer would diff main against itself. The ref
-   resolves the review head SHA when present, else the Pull Request number of a
-   commented Pull Request, else the triggering ref; history is fetched in full so
-   a three-dot diff against the base has both sides.
+   resolves, in order, a submitted review's `review.commit_id` when the event
+   carries one (rule 18), else the event's own Pull Request head SHA, else the head
+   reported by a token-side lookup of the resolved pull number, else the triggering
+   ref. History is fetched in full so a three-dot diff against the base has both
+   sides.
 9. **The mention job must never check out a fork-controlled head.** Binding the
    checkout to a Pull Request head places contributor-controlled code in the job
    that holds the Claude credential. The author-association gate does not close
@@ -171,10 +173,18 @@ No new dependency, service or runtime is introduced.
    step performs the retrieval itself with fixed arguments and no
    candidate-controlled input, writing `diff.stat`, `commits.log` and a
    size-bounded `diff.patch` into `.gnostoa-review-context/`, which the reviewer
-   opens with `Read` and `Grep`. The diff bound is deliberate: an unbounded diff
-   would reintroduce the context exhaustion this Decision exists to remove. The
-   contract test executes that step and checks the artefacts, the bound and the
-   no-Pull-Request path, and asserts the step interpolates no event data.
+   opens with `Read` and `Grep`. The bound on `diff.patch` is deliberate: an
+   unbounded diff would reintroduce the context exhaustion this Decision exists to
+   remove. Bounded must not mean unreachable, though. With no git, a reviewer
+   cannot recover a deletion that falls past the cutoff and the checkout no longer
+   holds the removed content, so the whole diff is also written as fixed-size parts
+   under `patches/`, read in name order. The reviewer therefore pages the diff by
+   its own choice, which is what bounded context is supposed to mean. Item type is
+   keyed on the resolved pull number here too, never on head/base equality, and an
+   emptied Pull Request still receives every artefact the prompt names. The
+   contract test executes the step, checks each artefact, the bound, the emptied
+   and no-Pull-Request paths, asserts the concatenated parts equal the full
+   `git diff`, and asserts the step interpolates no event data.
 
 13. Requests with **no Pull Request** are answered from the repository rather than
    from a diff. `issues: opened` stays an admitted trigger under Decision 0093
@@ -311,7 +321,8 @@ snapshot, and carries no approval or merge authority.
 `tests/test_claude_actions_workflows.py` enforces agent-mode selection, the
 bounded interpolation set, the static prompt bound, forwarding of the triggering
 request, the reviewed-head checkout binding under a same-repository guard, coverage of
-every admitted trigger payload, the resolved-base diff, the declared entry route, the read-only git tool grant,
+every admitted trigger payload, the resolved-base diff, the declared entry route, the absence of any Bash grant, the trusted context collection with its bound
+and its recoverable parts,
 the no-Pull-Request path, the forwarded inline location, the trust gate on
 externally authored issue text, the agreement between the tool grant and the
 requested permissions, the recorded supersession, and the explicit delivery path — alongside every existing Decision 0093

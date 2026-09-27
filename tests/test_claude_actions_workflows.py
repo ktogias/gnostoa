@@ -3,7 +3,8 @@ from __future__ import annotations
 import os
 import pathlib
 import re
-import subprocess
+import shutil
+import subprocess  # nosec B404 -- test-only boundary; every argv below is literal
 import tempfile
 import unittest
 from pathlib import Path
@@ -77,6 +78,9 @@ _PROMPT_FUNCTIONS = frozenset(
 )
 _PROMPT_KEYWORDS = frozenset({"false", "null", "true"})
 _MAX_STATIC_PROMPT_BYTES = 4096
+# Resolved absolutely so the behavioural tests never depend on PATH order.
+_GIT = shutil.which("git")
+_SH = shutil.which("sh")
 
 
 def _workflow_paths(directory: Path) -> list[Path]:
@@ -396,7 +400,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
     def test_mention_prompt_names_the_collected_context(self) -> None:
         workflow = load_yaml(MENTION_WORKFLOW)
         prompt = " ".join(_claude_step(workflow)["with"]["prompt"].split())
-        for artefact in ("diff.stat", "commits.log", "diff.patch"):
+        for artefact in ("diff.stat", "commits.log", "diff.patch", "patches/"):
             with self.subTest(artefact=artefact):
                 self.assertIn(f".gnostoa-review-context/{artefact}", prompt)
 
@@ -422,6 +426,10 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # step becomes the injection surface the grant used to be.
         step = _context_step(load_yaml(MENTION_WORKFLOW))
         script = str(step["run"])
+        # Item type comes from the resolved pull number, not from SHA equality:
+        # a merged or emptied Pull Request reports an equal base and head.
+        self.assertIn("PULL_NUMBER", script)
+        self.assertNotIn('"${BASE_SHA}" = "${HEAD_SHA}"', script)
         self.assertNotIn("github.event", script)
         self.assertNotIn("${{", script)
         for value in (str(v) for v in step["env"].values()):
@@ -431,6 +439,8 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
     def test_collected_review_context_is_bounded_and_complete(self) -> None:
         # Behavioural: the step is executed, so the artefacts the prompt names must
         # actually appear and the bound must actually apply.
+        if _GIT is None or _SH is None:  # pragma: no cover - toolchain guard
+            self.skipTest("git and sh are required to execute the collection step")
         script = str(_context_step(load_yaml(MENTION_WORKFLOW))["run"])
         with tempfile.TemporaryDirectory() as scratch:
             work = pathlib.Path(scratch)
@@ -439,8 +449,8 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             base_env = {**os.environ, "HOME": scratch}
 
             def git(*argv: str) -> str:
-                return subprocess.run(
-                    ["git", *argv],
+                return subprocess.run(  # nosec B603 -- literal argv, no shell
+                    [str(_GIT), *argv],
                     cwd=repo,
                     check=True,
                     capture_output=True,
@@ -448,15 +458,18 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                     env=base_env,
                 ).stdout.strip()
 
-            def collect(base: str, head: str, target: pathlib.Path) -> None:
-                result = subprocess.run(
-                    ["sh", "-s"],
+            def collect(
+                base: str, head: str, target: pathlib.Path, pull: str = "327"
+            ) -> None:
+                result = subprocess.run(  # nosec B603 -- literal argv, no shell
+                    [str(_SH), "-s"],
                     input=script,
                     cwd=repo,
                     capture_output=True,
                     text=True,
                     env={
                         **base_env,
+                        "PULL_NUMBER": pull,
                         "BASE_SHA": base,
                         "HEAD_SHA": head,
                         "CONTEXT_DIR": str(target),
@@ -485,14 +498,41 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 with self.subTest(artefact=name):
                     self.assertTrue((context / name).is_file(), name)
                     self.assertTrue((context / name).read_text(encoding="utf-8"))
-            self.assertFalse((context / "diff.patch.full").exists())
+            self.assertFalse((context / "diff.full").exists())
             patch = (context / "diff.patch").read_text(encoding="utf-8")
-            self.assertIn("truncated", patch)
+            self.assertIn("bounded", patch)
             self.assertLess(len(patch.encode("utf-8")), 2048 + 256)
 
-            # With no Pull Request the step says so rather than writing an empty diff.
+            # Nothing past the cutoff may be unreachable: the reviewer has no git,
+            # so a deletion beyond it could not be recovered any other way.
+            parts = sorted((context / "patches").glob("part-*"))
+            self.assertTrue(parts, "no diff parts were written")
+            rejoined = b"".join(part.read_bytes() for part in parts)
+            expected = subprocess.run(  # nosec B603 -- literal argv, no shell
+                [str(_GIT), "diff", f"{base_sha}...{head_sha}"],
+                cwd=repo,
+                check=True,
+                capture_output=True,
+                env=base_env,
+            ).stdout
+            self.assertEqual(rejoined, expected)
+
+            # An emptied Pull Request still gets every artefact the prompt names.
+            # Item type is keyed on the pull number, never on head/base equality.
+            empty_context = work / "empty-context"
+            collect(head_sha, head_sha, empty_context)
+            self.assertFalse((empty_context / "README").exists())
+            for name in ("diff.stat", "commits.log", "diff.patch"):
+                with self.subTest(emptied=name):
+                    self.assertTrue((empty_context / name).is_file(), name)
+            self.assertIn(
+                "No changes",
+                (empty_context / "diff.patch").read_text(encoding="utf-8"),
+            )
+
+            # With no pull number the request is an issue, and says so.
             issue_context = work / "issue-context"
-            collect(head_sha, head_sha, issue_context)
+            collect(base_sha, head_sha, issue_context, pull="")
             self.assertFalse((issue_context / "diff.patch").exists())
             self.assertIn(
                 "No Pull Request",
