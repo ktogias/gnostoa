@@ -306,6 +306,53 @@ class ExecutionBackend(Protocol):
     ) -> UntrustedCapture: ...
 
 
+def _validate_backend_capture(
+    capture: object, limits: ExecutionLimits
+) -> UntrustedCapture:
+    """Enforce the caller's output envelope on every backend result."""
+
+    _need(type(capture) is UntrustedCapture, "BACKEND_CAPTURE_TYPE")
+    result = cast(UntrustedCapture, capture)
+    _need(
+        type(result.termination) is str
+        and result.termination in {"completed", "timeout", "output_limit"},
+        "BACKEND_CAPTURE_STATE",
+    )
+    if result.termination == "completed":
+        _need(type(result.exit_code) is int, "BACKEND_CAPTURE_STATE")
+    else:
+        _need(result.exit_code is None, "BACKEND_CAPTURE_STATE")
+    _need(
+        type(result.stdout) is bytes and type(result.stderr) is bytes,
+        "BACKEND_CAPTURE_BYTES",
+    )
+    _need(
+        type(result.observed_bytes_at_least) is int
+        and result.observed_bytes_at_least >= 0,
+        "BACKEND_CAPTURE_COUNT",
+    )
+    retained_bytes = len(result.stdout) + len(result.stderr)
+    _need(
+        result.observed_bytes_at_least >= retained_bytes,
+        "BACKEND_CAPTURE_COUNT",
+    )
+    _need(
+        retained_bytes <= limits.output_bytes,
+        "BACKEND_CAPTURE_OUTPUT_BOUND",
+    )
+    if result.termination == "output_limit":
+        _need(
+            result.observed_bytes_at_least > limits.output_bytes,
+            "BACKEND_CAPTURE_COUNT",
+        )
+    else:
+        _need(
+            result.observed_bytes_at_least == retained_bytes,
+            "BACKEND_CAPTURE_COUNT",
+        )
+    return result
+
+
 @dataclass(frozen=True)
 class _MaterialFile:
     mode: str
@@ -1612,7 +1659,10 @@ def execute(
         before_files, before_directories = _snapshot(root)
         _need(before_files == expected, "SUBJECT_BEFORE_EXECUTION")
         before_digest = _manifest_digest(before_files, before_directories)
-        capture = backend.run(root, command_snapshot, chosen_limits, subject=subject)
+        capture = _validate_backend_capture(
+            backend.run(root, command_snapshot, chosen_limits, subject=subject),
+            chosen_limits,
+        )
         after_files, after_directories = _snapshot(root)
         _need(after_files == expected, "SUBJECT_MUTATED")
         _need(after_directories == before_directories, "SUBJECT_MUTATED")

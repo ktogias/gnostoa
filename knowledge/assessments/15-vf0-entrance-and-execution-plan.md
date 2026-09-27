@@ -1041,3 +1041,64 @@ Each provider result must be checked against the exact prepared successor; a
 stale finding may remain relevant when its source behavior is unchanged. None of
 the agent reports supplies human semantic approval or changes Draft, integration,
 producer-admission or VF0 activation state.
+
+### AUD18 exact-head review disposition
+
+The pre-edit checkpoints, RED evidence and reuse analysis for candidate
+`93957cc32188408df515a0f77e2b250c0810107d` are retained in Issue #15 comments
+[AUD18](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5855210274),
+its [RED supplement](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5855220850),
+the [reuse checkpoint](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5855233264),
+and [AUD19](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5855486865)
+with its [test-only RED](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5855521577).
+Those records bind CodeAnt's R3 custom-backend capture finding, Codex's final
+evidence-record finding and CodeRabbit's tests-only evidence-path finding to the
+existing #15 / D0092 scope. The owner had already admitted bounded corrections
+to in-scope findings. No public interface, evidence authority, producer,
+threshold, workflow or activation gate changed.
+
+The relation validator now rejects every nonempty evidence path outside
+`tests/` as `EVIDENCE_PATH_SCOPE` in `_material`, before those paths can be
+subtracted from the production delta. This makes request, evidence and candidate
+material share the tests-only boundary already present in the execution
+component. `test_evidence_files_are_limited_to_tests_paths` reproduces the
+formerly accepted `tools/target.py` evidence substitution. CodeAnt's custom
+backend correction validates returned capture type, state, byte/count
+consistency and the declared output bound once at `execute()`, while preserving
+the existing backend protocol and stable refusal codes. The `#308` Decision
+paragraph was rewrapped to prevent Markdown from rendering it as a heading; its
+meaning and authority are unchanged.
+
+Exact changed source identities and focused verification on those source/test
+bytes are:
+
+| File | SHA-256 | Development Container result |
+| --- | --- | --- |
+| `tools/vf0_contract.py` | `b20715b980ad684c474fa9258c499ea5f4c88d03bc191f9020670d99bdfb6cba` | 43 contract tests passed |
+| `tests/test_vf0_contract.py` | `1a1fc8925e532be512b9495838ea96dd0c9d4519624364c0feda30da0a3d2dd8` | Includes the new `EVIDENCE_PATH_SCOPE` regression |
+| `tools/vf0_execution.py` | `5cd2ebdb33376ba38ca8bff278b4dabb6717151390c4a1091d9a0cd5f9b1c2fa` | Execution module passed |
+| `tests/test_vf0_execution.py` | `e3db8bd2d98c1baf9d33be190b251cd11aea065d7868fb20d28344fc4fd8a3c4` | 131 tests passed, 2 skipped |
+
+`ci/style --check` passed in the Development Container. The exact prepared-tree,
+receipt, commit and full-suite result are bound in the separate top-level exact
+review-candidate record; that record avoids embedding its own tree identity here.
+
+The exact-93957 reviewer reconciliation is:
+
+| Reviewer | Result and disposition |
+| --- | --- |
+| Codex code review | P3 requested binding final source/test evidence; the table above records both hashes and focused results. The exact tree and complete candidate verification are in the external candidate record. |
+| Codex Security | Reported no security findings; this is bounded by its report and publication threshold. |
+| CodeAnt | Major R3 custom-backend capture finding verified and fixed as described above. |
+| CodeRabbit | Both actionable findings verified and fixed: D0092 Markdown wrapping and tests-only evidence paths. |
+| Greptile | Completed review of 12 files with zero comments; no stronger assurance is inferred. |
+| Gitar | Exact-head read-only review reports seven closed findings and no open findings; no approval authority is inferred. |
+| Codacy | Static check reports four new issues (two critical, two medium), but the GitHub result does not expose their individual details. The AI Reviewer request was acknowledged, with no separate result yet; these issues remain unclosed. |
+| DeepSource | Analysis check was skipped because quota is exhausted; the read-only AI request has no substantive response. |
+| Sourcery, Bito, Qodo and Cubic | Sourcery declined the oversized diff; Bito's fair-use limit, Qodo's ended trial and Cubic's exceeded monthly line allowance made fresh reviews unavailable. |
+| Claude | No exact-head report is available. The repository's `@claude` Actions route can obtain a write-capable GitHub App token; its review-only prompt does not enforce read-only access. A separate owner authorization is required before triggering it. |
+
+This is not reviewer convergence. Codacy's four issues still need provider
+detail and disposition, unavailable reviews remain unknown, and human semantic
+review is required. VF0 remains critical, inactive and incomplete; PR #319 stays
+Draft.

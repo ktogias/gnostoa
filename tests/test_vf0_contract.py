@@ -367,6 +367,23 @@ class VF0RelationTests(unittest.TestCase):
                 _rebind(doc)
                 self.assertEqual([reason], self.assertRejected(doc)["reasons"])
 
+    def test_evidence_files_are_limited_to_tests_paths(self) -> None:
+        doc = copy.deepcopy(self.document)
+        sha = "sha256:" + "b" * 64
+        evidence_files = {"tools/target.py": sha}
+        evidence_modes = {"tools/target.py": "100644"}
+        doc["request"]["material"]["evidence_files"] = evidence_files
+        doc["request"]["material"]["evidence_modes"] = evidence_modes
+        doc["evidence"]["material"] = copy.deepcopy(doc["request"]["material"])
+        doc["candidate"]["evidence_files"] = evidence_files
+        doc["candidate"]["evidence_modes"] = evidence_modes
+        doc["candidate"]["changed_paths"] = ["tools/target.py"]
+        doc["candidate"]["tree"] = doc["request"]["material"]["evidence_tree"]
+        doc["candidate"]["production_sha256"] = None
+        _rebind(doc)
+        result = self.assertRejected(doc)
+        self.assertEqual(["EVIDENCE_PATH_SCOPE"], result["reasons"])
+
     def test_guarantee_missing_unknown_unsupported_or_contradicted_rejects(
         self,
     ) -> None:

@@ -188,6 +188,10 @@ def _material(value: Any) -> dict[str, Any]:
     evidence_modes = _file_modes(material["evidence_modes"])
     _need(set(evidence_modes) == set(evidence_files), "EVIDENCE_MODE_MANIFEST")
     _need(
+        all(path.startswith("tests/") for path in evidence_files),
+        "EVIDENCE_PATH_SCOPE",
+    )
+    _need(
         not evidence_files or material["evidence_tree"] != material["parent_tree"],
         "EVIDENCE_TREE_UNCHANGED",
     )

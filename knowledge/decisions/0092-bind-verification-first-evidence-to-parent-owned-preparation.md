@@ -52,8 +52,8 @@ final-verification contract worked; the additional VF0 invariant is not enforced
 
 The aggregate enforcement change is **critical**. Keeping this first record
 non-executable does not lower the eventual assurance-gate risk. Scope is private
-Gnostoa-self preparation and its independent CI consumer, not the public CLI,
-#308 writer leases, reviewer qualification, secret migration or a workflow engine.
+Gnostoa-self preparation and its independent CI consumer, not the public CLI, #308
+writer leases, reviewer qualification, secret migration or a workflow engine.
 VF0 remains the mandatory #15 child before #318 and the next critical activation.
 
 ## Decision

@@ -215,6 +215,57 @@ class VF0SubjectTests(unittest.TestCase):
                 with self.assertRaisesRegex(ExecutionRejected, reason):
                     ExecutionLimits(**kwargs)
 
+    def test_custom_backend_capture_respects_declared_output_limit(self) -> None:
+        class OversizedBackend:
+            def run(
+                self,
+                root: Path,
+                command: Sequence[str],
+                limits: ExecutionLimits,
+                *,
+                subject: GitSubject,
+            ) -> UntrustedCapture:
+                del root, command, limits, subject
+                return UntrustedCapture("completed", 0, b"x" * 17, b"", 17)
+
+        with tempfile.TemporaryDirectory() as td:
+            repo, subject = _repo(Path(td))
+            with self.assertRaisesRegex(
+                ExecutionRejected, "^BACKEND_CAPTURE_OUTPUT_BOUND$"
+            ):
+                execute(
+                    repo,
+                    subject,
+                    [_evidence("pass")],
+                    ["/bin/true"],
+                    OversizedBackend(),
+                    ExecutionLimits(output_bytes=16),
+                )
+
+    def test_custom_completed_capture_rejects_inconsistent_byte_count(self) -> None:
+        class InconsistentBackend:
+            def run(
+                self,
+                root: Path,
+                command: Sequence[str],
+                limits: ExecutionLimits,
+                *,
+                subject: GitSubject,
+            ) -> UntrustedCapture:
+                del root, command, limits, subject
+                return UntrustedCapture("completed", 0, b"x", b"", 2)
+
+        with tempfile.TemporaryDirectory() as td:
+            repo, subject = _repo(Path(td))
+            with self.assertRaisesRegex(ExecutionRejected, "^BACKEND_CAPTURE_COUNT$"):
+                execute(
+                    repo,
+                    subject,
+                    [_evidence("pass")],
+                    ["/bin/true"],
+                    InconsistentBackend(),
+                )
+
     def test_evidence_payload_is_snapshotted_to_immutable_bytes(self) -> None:
         payload = bytearray(b"print('original')\n")
         original = bytes(payload)
