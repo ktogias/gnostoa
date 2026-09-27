@@ -2304,14 +2304,63 @@ class VF0DockerBackendTests(unittest.TestCase):
             setattr(backend, attribute, "/bin/echo")
         except AttributeError:
             pass
-        completed = subprocess.CompletedProcess(
-            ["/usr/bin/docker"], 0, stdout=b"", stderr=b""
+        capture = UntrustedCapture(
+            "completed", 17, b"stdout", b"stderr", len(b"stdout") + len(b"stderr")
         )
-        with mock.patch(
-            "tools.vf0_execution.subprocess.run", return_value=completed
-        ) as launched:
-            backend._command("version")
-        self.assertEqual(["/usr/bin/docker", "version"], launched.call_args.args[0])
+        with (
+            mock.patch(
+                "tools.vf0_execution.subprocess.run",
+                side_effect=AssertionError("Docker control output must be bounded"),
+            ) as unbounded,
+            mock.patch(
+                "tools.vf0_execution._capture_process", return_value=capture
+            ) as launched,
+        ):
+            result = backend._command("version")
+        unbounded.assert_not_called()
+        argv, kwargs = launched.call_args
+        self.assertEqual(["/usr/bin/docker", "version"], argv[0])
+        self.assertEqual(30, kwargs["limits"].timeout_seconds)
+        self.assertEqual(1024 * 1024, kwargs["limits"].output_bytes)
+        self.assertEqual(0, kwargs.get("output_headroom_bytes", 0))
+        self.assertEqual(17, result.returncode)
+        self.assertEqual(b"stdout", result.stdout)
+        self.assertEqual(b"stderr", result.stderr)
+
+    def test_docker_control_output_overflow_is_refused_before_unbounded_capture(
+        self,
+    ) -> None:
+        backend = DockerBackend(self.image)
+        limit = 1024 * 1024
+        overflow = UntrustedCapture(
+            "output_limit",
+            None,
+            b"x" * (limit // 2),
+            b"y" * (limit // 2),
+            limit + 1,
+        )
+        unbounded = subprocess.CompletedProcess(
+            ["/usr/bin/docker"], 0, stdout=b"x" * (limit + 1), stderr=b""
+        )
+        with (
+            mock.patch(
+                "tools.vf0_execution.subprocess.run", return_value=unbounded
+            ) as launched,
+            mock.patch(
+                "tools.vf0_execution._capture_process", return_value=overflow
+            ) as captured,
+        ):
+            with self.assertRaisesRegex(
+                ExecutionRejected, "^DOCKER_CONTROL_OUTPUT_BOUND$"
+            ):
+                backend._command("image", "inspect", self.image)
+
+        launched.assert_not_called()
+        captured.assert_called_once()
+        argv, kwargs = captured.call_args
+        self.assertEqual(["/usr/bin/docker", "image", "inspect", self.image], argv[0])
+        self.assertEqual(limit, kwargs["limits"].output_bytes)
+        self.assertEqual(0, kwargs.get("output_headroom_bytes", 0))
 
     def test_cleanup_absence_requires_exact_native_inspect_diagnostic(self) -> None:
         container_id = "a" * 64
@@ -3385,6 +3434,24 @@ class _ReadOnlyProbeTransport:
             return subprocess.CompletedProcess(list(argv), 0, stdout=b"", stderr=b"")
         raise AssertionError(f"Unexpected probe command: {argv}")
 
+    def capture(
+        self,
+        argv: Sequence[str],
+        *,
+        cwd: Path | None,
+        limits: ExecutionLimits,
+        output_headroom_bytes: int = 0,
+    ) -> UntrustedCapture:
+        del cwd, output_headroom_bytes
+        try:
+            result = self.run(argv, timeout=limits.timeout_seconds)
+        except subprocess.TimeoutExpired:
+            return UntrustedCapture("timeout", None, b"", b"", 0)
+        retained = len(result.stdout) + len(result.stderr)
+        return UntrustedCapture(
+            "completed", result.returncode, result.stdout, result.stderr, retained
+        )
+
 
 class VF0SmokeContractTests(unittest.TestCase):
     def test_live_smoke_cli_rejects_caller_selected_image(self) -> None:
@@ -3464,13 +3531,16 @@ class VF0SmokeContractTests(unittest.TestCase):
                     if isinstance(failure, subprocess.TimeoutExpired)
                     else KeyboardInterrupt
                 )
-                with mock.patch("subprocess.run", side_effect=transport.run):
+                with mock.patch(
+                    "tools.vf0_execution._capture_process",
+                    side_effect=transport.capture,
+                ):
                     with self.assertRaises(expected_type) as caught:
                         module._probe_read_only_behavior(module.FIXED_IMAGE)
                 self.assertIs(type(caught.exception), expected_type)
                 if isinstance(failure, subprocess.TimeoutExpired):
                     self.assertEqual("DOCKER_COMMAND_FAILED", str(caught.exception))
-                    self.assertIs(failure, caught.exception.__cause__)
+                    self.assertIsNone(caught.exception.__cause__)
                 else:
                     self.assertIs(failure, caught.exception)
                 self.assertFalse(transport.present, "probe container survived failure")
@@ -3486,7 +3556,9 @@ class VF0SmokeContractTests(unittest.TestCase):
     def test_read_only_probe_preserves_writable_target_success_control(self) -> None:
         module = _load_smoke_module()
         transport = _ReadOnlyProbeTransport()
-        with mock.patch("subprocess.run", side_effect=transport.run):
+        with mock.patch(
+            "tools.vf0_execution._capture_process", side_effect=transport.capture
+        ):
             result = module._probe_read_only_behavior(module.FIXED_IMAGE)
         self.assertEqual(
             {"rootfs_read_only": True, "workspace_bind_read_only": True}, result
@@ -3503,7 +3575,9 @@ class VF0SmokeContractTests(unittest.TestCase):
         module = _load_smoke_module()
         transport = _ReadOnlyProbeTransport(auto_remove=True)
         with (
-            mock.patch("subprocess.run", side_effect=transport.run),
+            mock.patch(
+                "tools.vf0_execution._capture_process", side_effect=transport.capture
+            ),
             mock.patch(
                 "tools.vf0_execution.time.monotonic", side_effect=[0.0, 0.0, 2.0]
             ),
@@ -3535,7 +3609,10 @@ class VF0SmokeContractTests(unittest.TestCase):
         ):
             with self.subTest(inspection=inspection):
                 transport = _ReadOnlyProbeTransport(inspection=inspection)
-                with mock.patch("subprocess.run", side_effect=transport.run):
+                with mock.patch(
+                    "tools.vf0_execution._capture_process",
+                    side_effect=transport.capture,
+                ):
                     with self.assertRaisesRegex(ExecutionRejected, reason):
                         module._probe_read_only_behavior(module.FIXED_IMAGE)
                 self.assertTrue(transport.present)

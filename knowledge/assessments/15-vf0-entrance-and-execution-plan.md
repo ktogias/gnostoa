@@ -1240,3 +1240,61 @@ its included allowance is now spent. Codex code review produced the P2 above;
 no Codex Security report is available. These are not convergence on this next
 candidate. The PR remains Draft and required human semantic review remains
 outstanding.
+
+### AUD22 exact-head review and Docker control-output repair
+
+The [AUD22 pre-edit checkpoint](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5857879852)
+binds owner admission, current provider identities, Decision 0092, the critical
+classification, expected behavior and local reuse to exact parent
+`e6541044be667e3c8e00411ab8e6a96e60e594ee` / tree
+`d22c97bea53f6c83e85f994b2b019ead10a7274f`. The
+[RED supplement](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5857907405)
+retains the single failing regression against that unchanged production parent.
+
+Codex's exact-e654 P2 identified unbounded `subprocess.run(capture_output=True)`
+for Docker control commands. `docker image inspect` and container inspections
+return metadata that can be influenced by the pinned image; complete stdout and
+stderr were buffered before JSON or resource-state validation. This violated
+D0092's existing requirement that the controller own bounded output capture.
+The correction reuses `_capture_process()` and its process-group termination and
+reaping, with a 1 MiB aggregate stdout/stderr ceiling. Overflow raises
+`DOCKER_CONTROL_OUTPUT_BOUND` before decoding or cleanup-state interpretation;
+completed bounded commands retain exit status and their separate stdout/stderr.
+The existing read-only smoke transport tests now characterize that same bounded
+capture boundary. No public interface, producer admission, preparation authority,
+activation gate or VF0 status changed.
+
+The new regression failed before the production edit because the exact-parent
+`_command()` returned without raising the expected overflow refusal. After the
+fix, the focused Development Container run passed 137 tests with two existing
+skips, and `ci/style --check` passed with 495 files already formatted. The exact
+source identities after that focused GREEN are:
+
+| Source/evidence | SHA-256 | Result |
+| --- | --- | --- |
+| Pre-edit `tools/vf0_execution.py` | `fec59ee1f95d41e41036b7157530e45e78ffa4e141f1b563b368b3a6c569943a` | Exact parent production source before RED |
+| RED-only `tests/test_vf0_execution.py` | `c80bcc04e112033f7f5d7fdd9776ab749cf8337158471b17d6fd64ab18e7d8a7` | One new aggregate-overflow refusal regression |
+| Retained RED log | `0be02e93039018e415739eddf8a84f26f2a55f8492b234e0c395dc9c4d88df58` | Expected `ExecutionRejected not raised`; production unchanged |
+| Focused-GREEN `tools/vf0_execution.py` | `ce40ef1645e31a595ac04ec757ee40971c01e8912b7b44adf3ad13e179b19df0` | Existing streaming capture reused by Docker control commands |
+| Focused-GREEN `tests/test_vf0_execution.py` | `f1b8e15d3d53e82536c3b3b93ea6838d2fed7d6d9fde0915a01ae1e9ec46bcf0` | 137 passed, two skipped; smoke transport uses the bounded capture seam |
+
+The exact-e654 review reconciliation is:
+
+| Reviewer or analyzer | Result and limit |
+| --- | --- |
+| Codex code review | P2 on unbounded Docker control output; reproduced before editing and fixed as described. |
+| CodeAnt | Repeated its prior cleanup-error observation as a Major finding. The exact-e654 runtime characterization retained both execution and validation errors in the `__context__` chain while correctly refusing `OCI_CLEANUP_UNVERIFIED`; see the [thread and disposition](https://github.com/ktogias/gnostoa/pull/319#discussion_r4116104607). No source change was warranted. |
+| CodeRabbit | The isolated full-review command completed and reported no new inline comments. No separate overall approval or test environment was supplied. |
+| Greptile | Code review and security-focused ordinary review each completed with 12 files reviewed and zero comments. Neither result is a dedicated Security Check or an explicit approval. |
+| Gitar | Approved, medium risk, seven closed findings and none open. Its report does not supply human approval. |
+| Codacy | Exact-e654 static check passed and its summary reported zero new issues. Its AI Reviewer acknowledged a first request; no distinct substantive report was returned. |
+| SonarCloud | Quality gate passed; it reported 64 new code smells, zero security hotspots and 0% coverage on new code. These analyzer results are not reviewer approval. |
+| CodeQL and hosted suites | CodeQL, fast, extended, regression, smoke, policy, security-fast, Python 3.11/3.12 compatibility, protected-current advisory, and both branch-advisory checks passed on e654. Sourcery and DeepSource were skipped. |
+| Codex Security | A separate `@codex security review` was posted once but produced no report or associated check. State remains unknown; it was not retriggered. |
+| Claude | Automatic Claude review remained skipped on Draft. The prior automatic approval review rejected the general `@claude` Actions route because its configured token can modify source or PR state. Public source visibility does not reduce that token's authority; a human authorization is still required before using that route. |
+
+The prepared successor, its full verification/runtime results and fresh
+post-repair reviews must be read from the separate exact-candidate seal; this
+AUD22 record does not predict those later provider effects. No result above
+establishes human semantic approval, PR readiness, producer admission, VF0
+activation or merge authority.

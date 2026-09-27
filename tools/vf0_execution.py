@@ -40,6 +40,7 @@ _MAX_EVIDENCE_PATH_BYTES = 4 * 1024
 _MAX_EVIDENCE_PATH_COMPONENTS = 256
 _MAX_COMMAND_ARGS = 256
 _MAX_COMMAND_BYTES = 64 * 1024
+_MAX_DOCKER_CONTROL_OUTPUT_BYTES = 1024 * 1024
 _MAX_SNAPSHOT_ENTRIES = 65_536
 _MAX_SNAPSHOT_DEPTH = 256
 _MAX_SNAPSHOT_TOTAL_PATH_BYTES = _MAX_SUBJECT_TREE_LISTING_BYTES
@@ -1123,18 +1124,30 @@ class DockerBackend:
     def _command(
         self, *args: str, timeout: float = 30
     ) -> subprocess.CompletedProcess[bytes]:
+        argv = [self.docker_executable, *args]
         try:
-            # Fixed /usr/bin/docker, list argv, scrubbed env, no shell: intentional audit boundary.
-            return subprocess.run(  # nosec B603  # nosemgrep
-                [self.docker_executable, *args],
-                check=False,
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                env=_CLEAN_ENV,
-                timeout=timeout,
+            capture = _capture_process(
+                argv,
+                cwd=None,
+                limits=ExecutionLimits(
+                    timeout_seconds=timeout,
+                    output_bytes=_MAX_DOCKER_CONTROL_OUTPUT_BYTES,
+                ),
             )
-        except (OSError, subprocess.TimeoutExpired) as exc:
+        except ExecutionRejected as exc:
             raise ExecutionRejected("DOCKER_COMMAND_FAILED") from exc
+        if capture.termination == "output_limit":
+            raise ExecutionRejected("DOCKER_CONTROL_OUTPUT_BOUND")
+        _need(
+            capture.termination == "completed" and type(capture.exit_code) is int,
+            "DOCKER_COMMAND_FAILED",
+        )
+        return subprocess.CompletedProcess(
+            argv,
+            cast(int, capture.exit_code),
+            stdout=capture.stdout,
+            stderr=capture.stderr,
+        )
 
     def _checked(self, *args: str, timeout: float = 30) -> bytes:
         result = self._command(*args, timeout=timeout)
