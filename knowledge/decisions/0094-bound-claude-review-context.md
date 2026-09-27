@@ -106,8 +106,7 @@ No new dependency, service or runtime is introduced.
 2. Every interpolated source in that prompt must be independent of discussion
    length. The admitted set is the repository identity, the issue or Pull Request
    number, head and base SHAs, the issue or Pull Request body, the triggering
-   comment body, the triggering review body, the issue title, the issue author's
-   association, the reviewed head repository name, the
+   comment body, the triggering review body, the issue title, the issue and Pull Request author associations, the reviewed head repository name, the
    Pull-Request-backed presence flag on an issue payload and the triggering review
    comment's path, line and diff hunk. Each is one bounded field; none
    scales with the number of comments. Any expression outside that set fails the
@@ -169,8 +168,10 @@ No new dependency, service or runtime is introduced.
    says so where the text would have been. The Pull Request body needs no separate
    gate: rule 9 already refuses a fork-controlled head, so a reviewed Pull Request
    is authored inside this repository -- but its *description* need not be. The gate
-   therefore keys on the author's association for both payload shapes, with no
-   exemption for a Pull-Request-backed issue payload.
+   therefore keys on the author's association for **both** payload shapes -- the
+   issue body and title on `issue_comment`, and the Pull Request body on the review
+   triggers -- with no exemption for a Pull-Request-backed issue payload. Gating one
+   shape and leaving the other open closes nothing.
 
    Two reviewers took opposite positions here and both were right. Exempting Pull
    Requests preserves the curated state for one opened by a bot or any account

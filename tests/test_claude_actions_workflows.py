@@ -42,6 +42,7 @@ _BOUNDED_PROMPT_SOURCES = frozenset(
         "github.event.comment.original_commit_id",
         "github.event.comment.original_line",
         "github.event.issue.author_association",
+        "github.event.pull_request.author_association",
         "github.event.issue.title",
     }
 )
@@ -420,11 +421,16 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # credential and publishing its answer in a public step summary.
         workflow = load_yaml(MENTION_WORKFLOW)
         prompt = " ".join(_claude_step(workflow)["with"]["prompt"].split())
-        for field in ("github.event.issue.body", "github.event.issue.title"):
+        for field in (
+            "github.event.issue.body",
+            "github.event.issue.title",
+            "github.event.pull_request.body",
+        ):
             with self.subTest(field=field):
                 self.assertRegex(
                     prompt,
-                    r"github\.event\.issue\.author_association[^}]*" + re.escape(field),
+                    r"github\.event\.(issue|pull_request)\.author_association"
+                    r"[^}]*" + re.escape(field),
                 )
 
     def test_mention_tool_grant_matches_the_requested_permissions(self) -> None:

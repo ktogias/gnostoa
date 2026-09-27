@@ -151,7 +151,14 @@ jobs:
                     && '(withheld: the issue author is not a trusted association;
                     this job holds a credential and publishes publicly)')
                 || '' }}
-            ${{ github.event.pull_request.body }}
+            ${{ (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                      github.event.pull_request.author_association)
+                    && github.event.pull_request.body)
+                || (github.event.pull_request.body
+                    && '(withheld: the Pull Request author is not a trusted
+                    association; this job holds a credential and publishes
+                    publicly)')
+                || '' }}
 
             --- inline location, when the request came from a review comment ---
             ${{ github.event.comment.path }}:${{ github.event.comment.line }}
