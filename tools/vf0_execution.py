@@ -41,6 +41,13 @@ _MAX_EVIDENCE_PATH_COMPONENTS = 256
 _MAX_COMMAND_ARGS = 256
 _MAX_COMMAND_BYTES = 64 * 1024
 _MAX_SNAPSHOT_ENTRIES = 65_536
+_MAX_SNAPSHOT_DEPTH = 256
+_MAX_SNAPSHOT_TOTAL_PATH_BYTES = _MAX_SUBJECT_TREE_LISTING_BYTES
+_SNAPSHOT_READ_BYTES = 64 * 1024
+_OPEN_ACCEPTS_DIR_FD = os.open in os.supports_dir_fd
+_STAT_ACCEPTS_DIR_FD = os.stat in os.supports_dir_fd
+_STAT_ACCEPTS_NOFOLLOW = os.stat in os.supports_follow_symlinks
+_SCANDIR_ACCEPTS_FILE_DESCRIPTOR = os.scandir in os.supports_fd
 _LOCAL_CONTAINMENT_EXECUTABLE = "/usr/bin/unshare"
 _LOCAL_CONTAINMENT_WRAPPER_EXECUTABLE = "/bin/sh"
 _LOCAL_CONTAINMENT_READY_SENTINEL = b"\x1eGNOSTOA_LOCAL_READY_V1\x1f"
@@ -447,12 +454,14 @@ def _normalize_subject_parents(root: Path, destination: Path) -> None:
 def _repo_root(repo: Path) -> Path:
     try:
         resolved = repo.resolve(strict=True)
-    except OSError as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         raise ExecutionRejected("REPOSITORY_ROOT") from exc
-    top_value = _trusted_git(resolved, "rev-parse", "--show-toplevel").decode().strip()
+    top_value = _trusted_git(resolved, "rev-parse", "--show-toplevel").removesuffix(
+        b"\n"
+    )
     try:
-        top = Path(top_value).resolve(strict=True)
-    except OSError as exc:
+        top = Path(os.fsdecode(top_value)).resolve(strict=True)
+    except (OSError, RuntimeError, ValueError) as exc:
         raise ExecutionRejected("REPOSITORY_ROOT") from exc
     _need(top == resolved, "REPOSITORY_ROOT")
     return resolved
@@ -529,49 +538,190 @@ def _file_mode(mode: int) -> str:
     return f"{stat.S_IFREG | stat.S_IMODE(mode):06o}"
 
 
+def _same_snapshot_stat(left: os.stat_result, right: os.stat_result) -> bool:
+    return (
+        left.st_dev == right.st_dev
+        and left.st_ino == right.st_ino
+        and stat.S_IFMT(left.st_mode) == stat.S_IFMT(right.st_mode)
+        and stat.S_IMODE(left.st_mode) == stat.S_IMODE(right.st_mode)
+        and left.st_size == right.st_size
+        and left.st_mtime_ns == right.st_mtime_ns
+        and left.st_ctime_ns == right.st_ctime_ns
+    )
+
+
 def _snapshot(root: Path) -> tuple[dict[str, _MaterialFile], dict[str, str]]:
     files: dict[str, _MaterialFile] = {}
+    directory_flag = getattr(os, "O_DIRECTORY", 0)
+    nofollow_flag = getattr(os, "O_NOFOLLOW", 0)
+    nonblock_flag = getattr(os, "O_NONBLOCK", 0)
+    _need(
+        directory_flag != 0
+        and nofollow_flag != 0
+        and _OPEN_ACCEPTS_DIR_FD
+        and _STAT_ACCEPTS_DIR_FD
+        and _STAT_ACCEPTS_NOFOLLOW
+        and _SCANDIR_ACCEPTS_FILE_DESCRIPTOR,
+        "SUBJECT_SNAPSHOT",
+    )
+    directory_flags = os.O_RDONLY | directory_flag | nofollow_flag
+    file_flags = os.O_RDONLY | nofollow_flag | nonblock_flag
     try:
-        root_mode = root.lstat().st_mode
-        _need(stat.S_ISDIR(root_mode), "SUBJECT_SNAPSHOT")
-        directories = {".": _directory_mode(root_mode)}
+        root_fd = os.open(root, directory_flags)
+    except OSError as exc:
+        raise ExecutionRejected("SUBJECT_SNAPSHOT") from exc
+
+    try:
+        root_metadata = os.fstat(root_fd)
+        _need(stat.S_ISDIR(root_metadata.st_mode), "SUBJECT_SNAPSHOT")
+        directories = {".": _directory_mode(root_metadata.st_mode)}
         total = 0
         observed_entries = 0
-        pending = [root]
-        while pending:
-            directory = pending.pop()
-            with os.scandir(directory) as entries:
+        total_path_bytes = 0
+
+        def walk(directory_fd: int, prefix: str, depth: int, prefix_bytes: int) -> None:
+            nonlocal total, observed_entries, total_path_bytes
+            before_directory = os.fstat(directory_fd)
+            with os.scandir(directory_fd) as entries:
                 for entry in entries:
                     observed_entries += 1
                     _need(
-                        observed_entries <= _MAX_SNAPSHOT_ENTRIES, "SUBJECT_ENTRY_BOUND"
+                        observed_entries <= _MAX_SNAPSHOT_ENTRIES,
+                        "SUBJECT_ENTRY_BOUND",
                     )
-                    metadata = entry.stat(follow_symlinks=False)
+                    child_name = entry.name
+                    _need(
+                        isinstance(child_name, str)
+                        and child_name not in {"", ".", ".."},
+                        "SUBJECT_SNAPSHOT",
+                    )
+                    try:
+                        component_bytes = len(os.fsencode(child_name))
+                    except UnicodeError as exc:
+                        raise ExecutionRejected("SUBJECT_PATH") from exc
+                    relative_bytes = (
+                        prefix_bytes + (1 if prefix else 0) + component_bytes
+                    )
+                    _need(
+                        relative_bytes <= _MAX_SUBJECT_PATH_BYTES,
+                        "SUBJECT_PATH_BOUND",
+                    )
+                    total_path_bytes += relative_bytes
+                    _need(
+                        total_path_bytes <= _MAX_SNAPSHOT_TOTAL_PATH_BYTES,
+                        "SUBJECT_PATH_TOTAL_BOUND",
+                    )
+                    relative = f"{prefix}/{child_name}" if prefix else child_name
+                    child_depth = depth + 1
+                    _need(child_depth <= _MAX_SNAPSHOT_DEPTH, "SUBJECT_PATH_BOUND")
+                    metadata = os.stat(
+                        child_name,
+                        dir_fd=directory_fd,
+                        follow_symlinks=False,
+                    )
                     mode = metadata.st_mode
                     _need(not stat.S_ISLNK(mode), "SUBJECT_SYMLINK")
-                    item = Path(entry.path)
-                    name = item.relative_to(root).as_posix()
+
                     if stat.S_ISDIR(mode):
-                        directories[name] = _directory_mode(mode)
-                        pending.append(item)
+                        child_fd = os.open(
+                            child_name,
+                            directory_flags,
+                            dir_fd=directory_fd,
+                        )
+                        try:
+                            opened = os.fstat(child_fd)
+                            _need(
+                                stat.S_ISDIR(opened.st_mode)
+                                and _same_snapshot_stat(metadata, opened),
+                                "SUBJECT_SNAPSHOT",
+                            )
+                            directories[relative] = _directory_mode(opened.st_mode)
+                            walk(child_fd, relative, child_depth, relative_bytes)
+                            after = os.fstat(child_fd)
+                            current = os.stat(
+                                child_name,
+                                dir_fd=directory_fd,
+                                follow_symlinks=False,
+                            )
+                            _need(
+                                _same_snapshot_stat(opened, after)
+                                and _same_snapshot_stat(opened, current),
+                                "SUBJECT_SNAPSHOT",
+                            )
+                        finally:
+                            os.close(child_fd)
                         continue
+
                     _need(stat.S_ISREG(mode), "SUBJECT_SPECIAL_FILE")
                     _need(metadata.st_size <= _MAX_FILE_BYTES, "SUBJECT_FILE_BOUND")
-                    with item.open("rb") as stream:
-                        raw = stream.read(_MAX_FILE_BYTES + 1)
-                    _need(len(raw) <= _MAX_FILE_BYTES, "SUBJECT_FILE_BOUND")
-                    total += len(raw)
-                    _need(
-                        total <= _MAX_SUBJECT_BYTES + _MAX_EVIDENCE_BYTES,
-                        "SUBJECT_TOTAL_BOUND",
+                    file_fd = os.open(
+                        child_name,
+                        file_flags,
+                        dir_fd=directory_fd,
                     )
-                    files[name] = _MaterialFile(
-                        mode=_file_mode(mode),
-                        sha256=_sha256(raw),
-                        size=len(raw),
-                    )
-    except OSError as exc:
+                    try:
+                        opened = os.fstat(file_fd)
+                        _need(
+                            stat.S_ISREG(opened.st_mode)
+                            and _same_snapshot_stat(metadata, opened),
+                            "SUBJECT_SNAPSHOT",
+                        )
+                        digest = hashlib.sha256()
+                        file_size = 0
+                        while True:
+                            chunk = os.read(
+                                file_fd,
+                                min(
+                                    _SNAPSHOT_READ_BYTES,
+                                    _MAX_FILE_BYTES + 1 - file_size,
+                                ),
+                            )
+                            if not chunk:
+                                break
+                            file_size += len(chunk)
+                            _need(file_size <= _MAX_FILE_BYTES, "SUBJECT_FILE_BOUND")
+                            total += len(chunk)
+                            _need(
+                                total <= _MAX_SUBJECT_BYTES + _MAX_EVIDENCE_BYTES,
+                                "SUBJECT_TOTAL_BOUND",
+                            )
+                            digest.update(chunk)
+                        after = os.fstat(file_fd)
+                        current = os.stat(
+                            child_name,
+                            dir_fd=directory_fd,
+                            follow_symlinks=False,
+                        )
+                        _need(
+                            file_size == opened.st_size
+                            and _same_snapshot_stat(opened, after)
+                            and _same_snapshot_stat(opened, current),
+                            "SUBJECT_SNAPSHOT",
+                        )
+                        files[relative] = _MaterialFile(
+                            mode=_file_mode(opened.st_mode),
+                            sha256=digest.hexdigest(),
+                            size=file_size,
+                        )
+                    finally:
+                        os.close(file_fd)
+
+            after_directory = os.fstat(directory_fd)
+            _need(
+                _same_snapshot_stat(before_directory, after_directory),
+                "SUBJECT_SNAPSHOT",
+            )
+
+        walk(root_fd, "", 0, 0)
+        current_root = os.stat(root, follow_symlinks=False)
+        _need(_same_snapshot_stat(root_metadata, current_root), "SUBJECT_SNAPSHOT")
+    except (OSError, NotImplementedError, TypeError) as exc:
         raise ExecutionRejected("SUBJECT_SNAPSHOT") from exc
+    finally:
+        try:
+            os.close(root_fd)
+        except OSError as exc:
+            raise ExecutionRejected("SUBJECT_SNAPSHOT") from exc
     return files, directories
 
 
@@ -1057,17 +1207,16 @@ class DockerBackend:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise ExecutionRejected("OCI_CLEANUP_UNVERIFIED")
-            try:
-                self._command("rm", "--force", "--volumes", container_id, timeout=15)
-            except ExecutionRejected:
-                pass
+            if presence is True:
+                try:
+                    self._command(
+                        "rm", "--force", "--volumes", container_id, timeout=15
+                    )
+                except ExecutionRejected:
+                    pass
             time.sleep(min(_UNCERTAIN_REMOVE_POLL_SECONDS, remaining))
 
     def _remove_and_verify(self, container_id: str, cleanup_nonce: str) -> None:
-        try:
-            self._command("rm", "--force", "--volumes", container_id, timeout=15)
-        except ExecutionRejected:
-            pass
         self._reconcile_uncertain_remove(container_id, cleanup_nonce)
 
     def _cleanup_uncertain_create(
@@ -1186,6 +1335,7 @@ class DockerBackend:
             *command,
         ]
         container_id: str | None = None
+        container_validated = False
         try:
             observed_id = self._checked(*create).decode().strip().lower()
             _need(_DOCKER_ID_RE.fullmatch(observed_id) is not None, "OCI_CONTAINER_ID")
@@ -1199,6 +1349,7 @@ class DockerBackend:
                 subject,
                 image_id,
             )
+            container_validated = True
             capture = _capture_process(
                 [self.docker_executable, "start", "--attach", container_id],
                 cwd=None,
@@ -1235,10 +1386,22 @@ class DockerBackend:
             # _capture_process closes/reaps the attachment group before this point.
             # Even preflight/client failures still remove and independently verify
             # absence of the owned container.
-            if container_id is None:
+            if container_id is None or not container_validated:
                 self._cleanup_uncertain_create(container_name, cleanup_nonce)
             else:
-                self._remove_and_verify(container_id, cleanup_nonce)
+                try:
+                    self._remove_and_verify(container_id, cleanup_nonce)
+                except ExecutionRejected as exc:
+                    if str(exc) not in {
+                        "OCI_CLEANUP_OWNERSHIP",
+                        "OCI_CLEANUP_UNVERIFIED",
+                    }:
+                        raise
+                    self._cleanup_uncertain_create(container_name, cleanup_nonce)
+                else:
+                    self._cleanup_uncertain_create(
+                        container_name, cleanup_nonce, completion_observed=True
+                    )
 
 
 def _unwrap_oci_completion(capture: UntrustedCapture) -> UntrustedCapture:

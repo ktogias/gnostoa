@@ -503,23 +503,17 @@ class VF0SubjectTests(unittest.TestCase):
             process.kill.assert_called_once_with()
             process.wait.assert_called_once_with()
 
-    def test_snapshot_rejects_oversized_file_before_read_bytes(self) -> None:
+    def test_snapshot_rejects_oversized_file_before_content_read(self) -> None:
         module = importlib.import_module("tools.vf0_execution")
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             oversized = root / "oversized.bin"
             with oversized.open("wb") as handle:
                 handle.truncate(module._MAX_FILE_BYTES + 1)
-            original_read_bytes = Path.read_bytes
-
-            def guarded_read_bytes(path: Path) -> bytes:
-                if path == oversized:
-                    raise AssertionError("oversized file read before size bound")
-                return original_read_bytes(path)
-
-            with mock.patch.object(Path, "read_bytes", guarded_read_bytes):
+            with mock.patch.object(module.os, "read", wraps=os.read) as content_read:
                 with self.assertRaisesRegex(ExecutionRejected, "SUBJECT_FILE_BOUND"):
                     module._snapshot(root)
+            content_read.assert_not_called()
 
     def test_snapshot_bounds_entry_count_before_manifest_growth(self) -> None:
         import tools.vf0_execution as module
@@ -531,6 +525,125 @@ class VF0SubjectTests(unittest.TestCase):
             with mock.patch.object(module, "_MAX_SNAPSHOT_ENTRIES", 2):
                 with self.assertRaisesRegex(ExecutionRejected, "SUBJECT_ENTRY_BOUND"):
                     module._snapshot(root)
+
+    def test_snapshot_bounds_individual_relative_path_bytes(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        directory_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "root"
+            root.mkdir()
+            open_directories = [os.open(root, directory_flags)]
+            try:
+                parent_fd = open_directories[-1]
+                for _ in range(43):
+                    name = "d" * 100
+                    os.mkdir(name, dir_fd=parent_fd)
+                    parent_fd = os.open(name, directory_flags, dir_fd=parent_fd)
+                    open_directories.append(parent_fd)
+                leaf_fd = os.open(
+                    "leaf",
+                    os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+                    0o644,
+                    dir_fd=parent_fd,
+                )
+                os.close(leaf_fd)
+                with self.assertRaisesRegex(ExecutionRejected, "SUBJECT_PATH_BOUND"):
+                    module._snapshot(root)
+            finally:
+                for descriptor in reversed(open_directories):
+                    os.close(descriptor)
+
+    def test_snapshot_bounds_aggregate_path_bytes_before_manifest_growth(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "a").write_bytes(b"")
+            (root / "b").write_bytes(b"")
+            with mock.patch.object(module, "_MAX_SNAPSHOT_TOTAL_PATH_BYTES", 1):
+                with self.assertRaisesRegex(
+                    ExecutionRejected, "SUBJECT_PATH_TOTAL_BOUND"
+                ):
+                    module._snapshot(root)
+
+    def test_snapshot_rejects_file_swap_between_classification_and_open(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "root"
+            root.mkdir()
+            victim = root / "victim.txt"
+            victim.write_text("inside\n")
+            outside = Path(td) / "outside.txt"
+            outside.write_text("outside secret\n")
+            original_open = os.open
+            replacement_attempted = False
+
+            def replace_before_open(
+                path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+                flags: int,
+                mode: int = 0o777,
+                *,
+                dir_fd: int | None = None,
+            ) -> int:
+                nonlocal replacement_attempted
+                if (
+                    path == victim.name
+                    and dir_fd is not None
+                    and not replacement_attempted
+                ):
+                    replacement_attempted = True
+                    victim.unlink()
+                    victim.symlink_to(outside)
+                if dir_fd is None:
+                    return original_open(path, flags, mode)
+                return original_open(path, flags, mode, dir_fd=dir_fd)
+
+            with mock.patch.object(module.os, "open", side_effect=replace_before_open):
+                with self.assertRaisesRegex(ExecutionRejected, "SUBJECT_SNAPSHOT"):
+                    module._snapshot(root)
+
+            self.assertTrue(replacement_attempted)
+
+    def test_snapshot_rejects_directory_swap_between_classification_and_open(
+        self,
+    ) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "root"
+            root.mkdir()
+            victim = root / "nested"
+            victim.mkdir()
+            (victim / "inside.txt").write_text("inside\n")
+            outside = Path(td) / "outside"
+            outside.mkdir()
+            (outside / "secret.txt").write_text("outside secret\n")
+            original_open = os.open
+            replacement_attempted = False
+
+            def replace_before_open(
+                path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+                flags: int,
+                mode: int = 0o777,
+                *,
+                dir_fd: int | None = None,
+            ) -> int:
+                nonlocal replacement_attempted
+                if (
+                    path == victim.name
+                    and dir_fd is not None
+                    and not replacement_attempted
+                ):
+                    replacement_attempted = True
+                    victim.rename(root / "displaced")
+                    victim.symlink_to(outside, target_is_directory=True)
+                if dir_fd is None:
+                    return original_open(path, flags, mode)
+                return original_open(path, flags, mode, dir_fd=dir_fd)
+
+            with mock.patch.object(module.os, "open", side_effect=replace_before_open):
+                with self.assertRaisesRegex(ExecutionRejected, "SUBJECT_SNAPSHOT"):
+                    module._snapshot(root)
+
+            self.assertTrue(replacement_attempted)
 
     def test_restrictive_umask_normalizes_materialization_directory_modes(self) -> None:
         class ModeBackend:
@@ -772,6 +885,17 @@ class VF0SubjectTests(unittest.TestCase):
                     [sys.executable, "-c", "pass"],
                     _DirectTestBackend(),
                 )
+
+    def test_repository_root_preserves_valid_non_utf8_filesystem_bytes(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        with tempfile.TemporaryDirectory() as td:
+            raw_repo = os.fsencode(td) + b"/repo-\xff"
+            repo = Path(os.fsdecode(raw_repo))
+            repo.mkdir()
+            _git(repo, "init", "--quiet")
+            expected = repo.resolve(strict=True)
+
+            self.assertEqual(expected, module._repo_root(repo))
 
     def test_missing_repository_root_is_a_bounded_rejection(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -2052,6 +2176,87 @@ class VF0DockerBackendTests(unittest.TestCase):
                         ):
                             action(backend.container_id, "owned")
 
+    def test_foreign_returned_container_id_is_never_force_removed(self) -> None:
+        class ForeignReturnedId(FakeDockerBackend):
+            def __init__(self, root: Path) -> None:
+                super().__init__(VF0DockerBackendTests.image, root)
+                self.container_id = "f" * 64
+
+            def _command(
+                self, *args: str, timeout: float = 30
+            ) -> subprocess.CompletedProcess[bytes]:
+                result = super()._command(*args, timeout=timeout)
+                if args == ("inspect", self.container_id) and result.returncode == 0:
+                    payload = json.loads(result.stdout)
+                    payload[0]["Config"]["Labels"]["gnostoa.vf0.cleanup-token"] = (
+                        "foreign-owner"
+                    )
+                    result.stdout = json.dumps(payload).encode()
+                return result
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td).resolve()
+            backend = ForeignReturnedId(root)
+            with mock.patch("tools.vf0_execution._capture_process") as attached:
+                with self.assertRaisesRegex(ExecutionRejected, "OCI_CONTRACT"):
+                    backend.run(
+                        root,
+                        ["/usr/local/bin/python3", "-I", "/workspace/tests/e.py"],
+                        ExecutionLimits(),
+                        subject=self.subject,
+                    )
+
+            attached.assert_not_called()
+            remove_targets = [
+                call[-1] for call in backend.calls if call[:2] == ("rm", "--force")
+            ]
+            self.assertEqual([backend.container_name], remove_targets)
+            self.assertNotIn(backend.container_id, remove_targets)
+
+    def test_absent_returned_container_id_still_cleans_owned_generated_name(
+        self,
+    ) -> None:
+        class AbsentReturnedId(FakeDockerBackend):
+            reported_id = "f" * 64
+
+            def _command(
+                self, *args: str, timeout: float = 30
+            ) -> subprocess.CompletedProcess[bytes]:
+                if args == ("inspect", self.reported_id):
+                    self.calls.append(tuple(args))
+                    return subprocess.CompletedProcess(
+                        ["/usr/bin/docker", *args],
+                        1,
+                        stdout=b"[]\n",
+                        stderr=(
+                            f"error: no such object: {self.reported_id}\n"
+                        ).encode(),
+                    )
+                result = super()._command(*args, timeout=timeout)
+                if args and args[0] == "create":
+                    result.stdout = (self.reported_id + "\n").encode()
+                return result
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td).resolve()
+            backend = AbsentReturnedId(self.image, root)
+            with mock.patch("tools.vf0_execution._capture_process") as attached:
+                with self.assertRaisesRegex(ExecutionRejected, "DOCKER_COMMAND_FAILED"):
+                    backend.run(
+                        root,
+                        ["/usr/local/bin/python3", "-I", "/workspace/tests/e.py"],
+                        ExecutionLimits(),
+                        subject=self.subject,
+                    )
+
+            attached.assert_not_called()
+            self.assertTrue(backend.removed)
+            remove_targets = [
+                call[-1] for call in backend.calls if call[:2] == ("rm", "--force")
+            ]
+            self.assertEqual([backend.container_name], remove_targets)
+            self.assertNotIn(backend.reported_id, remove_targets)
+
     def test_image_platform_must_be_linux_amd64_before_create(self) -> None:
         class WrongPlatform(FakeDockerBackend):
             platform: dict[str, str]
@@ -2238,7 +2443,8 @@ class VF0DockerBackendTests(unittest.TestCase):
                     )
             attached.assert_not_called()
             self.assertIn(
-                ("rm", "--force", "--volumes", backend.container_id), backend.calls
+                ("rm", "--force", "--volumes", backend.container_name),
+                backend.calls,
             )
 
     def test_fractional_cpu_contract_uses_docker_nano_cpu_rounding(self) -> None:
@@ -2268,7 +2474,8 @@ class VF0DockerBackendTests(unittest.TestCase):
                     )
             attached.assert_not_called()
             self.assertIn(
-                ("rm", "--force", "--volumes", backend.container_id), backend.calls
+                ("rm", "--force", "--volumes", backend.container_name),
+                backend.calls,
             )
             self.assertIn(("inspect", backend.container_id), backend.calls)
 
@@ -2628,7 +2835,7 @@ class VF0DockerBackendTests(unittest.TestCase):
             with (
                 mock.patch(
                     "tools.vf0_execution.time.monotonic",
-                    side_effect=[0.0, 0.0, 0.1, 0.1],
+                    side_effect=[0.0, 0.0, 0.1, 0.1, 0.2],
                 ),
                 mock.patch("tools.vf0_execution.time.sleep"),
             ):
@@ -2973,7 +3180,7 @@ class VF0SmokeContractTests(unittest.TestCase):
                 self.assertTrue(transport.name)
                 self.assertTrue(transport.nonce)
                 self.assertEqual(
-                    ["run", "inspect", "rm", "inspect"],
+                    ["run", "inspect", "inspect", "rm", "inspect"],
                     [call[1] for call in transport.calls],
                 )
                 for call in transport.calls[1:]:

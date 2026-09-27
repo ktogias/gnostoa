@@ -35,7 +35,7 @@ x-project-knowledge:
 # VF0 entrance evidence and bounded execution plan
 
 **VF0 is not implemented or active.** This is the initial record for the existing
-#15 child, not a new Work Item, public contract or reduced-risk replacement.
+Issue #15 child, not a new Work Item, public contract or reduced-risk replacement.
 The proposed [Decision 0092](../decisions/0092-bind-verification-first-evidence-to-parent-owned-preparation.md)
 is separate from the observed experiment below.
 
@@ -696,13 +696,15 @@ already absent container. The execution component now verifies the effective
 runtime fields before attachment, requires the engine's `OOMKilled` state to be
 false, and uses a single exact absence read-back only after the smoke command
 returned success. Failure, interruption and uncertain-create paths retain their
-bounded reconciliation. These changes close existing R2–R4 acceptance criteria;
-they do not add a producer or activate VF0.
+bounded reconciliation. These changes address the recorded R2–R4 findings; the
+finite late-create edge remains unproved as stated in AUD14. They do not add a
+producer or activate VF0.
 
-The corrected relation suite has 42 tests and the execution suite has 114.
-Development-container runs passed both suites; the execution suite also passed
-under optimization, with two explicit local-namespace skips. These are bounded
-checkpoint observations, not a claim that every future head was verified.
+At the AUD12 checkpoint, the corrected relation suite had 42 tests and the
+execution suite ran 114 tests, including two explicit local-namespace skips.
+All non-skipped tests passed in the development container; the execution suite
+also passed under optimization. These are bounded checkpoint observations, not
+a claim that every future head was verified.
 Exact source identities for those observations are:
 
 | Component source | SHA-256 |
@@ -713,21 +715,25 @@ Exact source identities for those observations are:
 | `tests/test_vf0_execution.py` | `326a732b5beb7fc74652f12c503845971398a284f0d3b6d1b87e0a11cd5bfcc5` |
 | `tests/vf0_execution_oci_smoke.py` | `305a96ecae527bd638d098c592c2e8a041d4cc39fac46a0f8691377240caf1d6` |
 
-Preparation receipts, final normal/optimized results, live OCI observations,
-provider checks and individual reviewer dispositions belong to the **exact-head
-review record on [PR #319](https://github.com/ktogias/gnostoa/pull/319)**. That record
-must bind the enclosing candidate/tree and this map before component convergence
-is claimed. Source changes invalidate the affected checkpoint rows; a source
-file cannot predict its own later publication or review result.
+These source hashes bind the AUD12 local observations only. Preparation receipts,
+final normal/optimized results, live OCI observations, provider checks and
+individual reviewer dispositions belong to the **exact-head review record on
+[PR #319](https://github.com/ktogias/gnostoa/pull/319)**. That record must bind
+the enclosing candidate/tree and this map before component convergence is
+claimed. Source changes invalidate the affected checkpoint rows; a source file
+cannot predict its own later publication or review result.
 
 AUD13's grouped pre-change reproducer recorded `R2_MISMATCH=ACCEPTED_UNEXPECTEDLY`,
 `R3_OOM_FORGED_TRAILER=ACCEPTED_UNEXPECTEDLY`, and 20 absence polls (2.0 seconds)
-for the successful auto-remove probe. The repaired execution suite passed all
-117 tests in the development container (two local-namespace skips); the
-exact-parent preparation receipt also records `ci/verify fast`, style-fix,
-style-check and diff-check success. Live OCI conformance and fresh exact-head
-independent review remain pending. The normalized Python source hashes for this
-AUD13 implementation are:
+for the successful auto-remove probe. At that checkpoint the repaired execution
+suite ran 117 tests in the development container: 115 passed and two
+local-namespace tests were skipped. The exact-parent preparation receipt also
+records `ci/verify fast`, style-fix, style-check and diff-check success. Live OCI
+conformance and fresh exact-head independent review were pending at the AUD13
+checkpoint; the later exact-b6 seal records the predecessor's component-only
+live OCI result and broader verification, without activating VF0 or admitting a
+producer. See [the exact-b6 PR seal](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5851447787).
+The normalized Python source hashes for this AUD13 implementation are:
 
 | Component source | SHA-256 |
 | --- | --- |
@@ -738,21 +744,94 @@ AUD13 implementation are:
 Historical executed support remains available separately: the
 [a859 candidate seal](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5847676712)
 records 40 relation plus 98 execution tests and D0090 preparation for tree
-`99463d012ebcafbb7cbb5e2d87726221cd4379c4`; the latest historical
-[live OCI result](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5847554790)
+`99463d012ebcafbb7cbb5e2d87726221cd4379c4`; the
+[earlier historical live OCI result](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5847554790)
 in this source audit belongs to `c6732f652252e274d1cdc25758850fd0fb523523` / tree
 `d154f35bb4626f226b965807188aaeb6fbcc52f3`, run 36252630347. These are predecessor
 observations. Reuse requires an explicit unchanged-relevant-subject comparison;
 otherwise replay affected evidence on the reviewed successor.
 
+### AUD14 bounded correction
+
+Two further in-scope gaps were reproduced against exact prior source before the
+corresponding edits. The [AUD14 pre-change record](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5851937739)
+captures the first RED set and its exact source identity; its count is 121 tests
+run, four expected failures, two skips and 115 passes. The
+[supplemental pre-change record](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5852058263)
+corrects that arithmetic and records two more exact-source observations: an
+absent-looking returned container ID could leave the owned generated-name
+container behind, and an overlong filesystem path was accepted. A separate
+descriptor harness also exercised file and directory replacement immediately
+before descriptor opening.
+
+The current bounded correction preserves non-UTF-8 repository paths through
+filesystem decoding; snapshots use descriptor-relative, no-follow traversal,
+compare the classified/opened/current inode metadata, hash regular files in
+bounded chunks, and cap individual and aggregate path bytes, entry count and
+depth. OCI cleanup now checks the generated name's ownership token when an ID is
+invalid or unvalidated, and never removes by ID unless the ownership read-back
+matches. These changes remain within D0092's existing R1/R4 behavior. Cleanup
+reconciliation is intentionally finite: an engine object appearing after the
+settlement window may remain, so this does not claim perpetual cleanup or add a
+sweeper.
+
+Final independent contract review then found that the existing oversized-file
+regression patched `Path.read_bytes`, although `_snapshot` reads through
+`os.read`. Against this current pre-edit pair (`tools/vf0_execution.py` SHA-256
+`4bedebc2a725514ad705e0efd6138db3e45238061214a87f4b64778aa62c1267`,
+`tests/test_vf0_execution.py` SHA-256
+`a94b870899260fcb0eed318dfc82b869025f8aeea0566daff0f47dfd438a2278`), an
+isolated control suppressed the metadata-size refusal: it read 33 bytes, yet the
+old test still passed. On unchanged production the same control observed zero
+reads. Script `/tmp/gnostoa-pr319-audit/aud14-pre-read-test-control.py` SHA-256
+`2da3d999f2daff187dbba04899cbfeade53efa514a04931a1a194c4d6797f408`, result
+`/tmp/gnostoa-pr319-audit/aud14-pre-read-test-control.json` SHA-256
+`ac3fbcca1e71277909fa6abc7673c1e67f24800bae6c1bd0ea0f4b55b9f6e5c6`. The
+verification-only correction will observe the actual `os.read` boundary and
+fail if an oversized file is read before the stable refusal; production
+behavior remains unchanged. Its pre-edit evidence mode is green characterization
+of the correct current behavior plus a controlled mutant that the strengthened
+oracle must reject.
+
+The exact AUD14 local-source identities are:
+
+| Component source | SHA-256 |
+| --- | --- |
+| `tools/vf0_execution.py` | `9321deae2db77e8fbd9fa557c2bab3b2e67a48985578ed4e7915ed36c909c813` |
+| `tests/test_vf0_execution.py` | `f4368d4596c51a0396f4c05c05c2c6631c35256b3643c72272a9d43a10d26de0` |
+
+The combined relation/execution modules ran 166 tests in the development
+container: 164 passed and two local-namespace cases skipped. Full `fast`,
+`extended` and `regression` each ran 1,476 tests, passed, and recorded four
+skips. Policy, security-fast, smoke and the extended documentation build passed;
+security-fast reported four reviewed findings and zero unresolved findings.
+The exact pinned-image live-OCI result is retained at
+`/tmp/gnostoa-pr319-aud14-live-oci.json`, SHA-256
+`c384103b517d6fe10cb318aa9a05216c30721def13961afa480e8a0f141f5b26`. It is
+`PASS` for `COMPONENT_CONFORMANCE_ONLY`, covers isolation, spoofing, nonzero,
+timeout, overflow and exact subject/import binding, and reports
+`vf0_active=false`, `producer_admitted=false` and
+`production_receipt_issued=false`. The corrected pre-read oracle's controlled
+mutant result is retained separately at
+`/tmp/gnostoa-pr319-audit/aud14-pre-read-test-control-final.json`, SHA-256
+`592ea1753a0e468eae401a5ba811e77415d96ed990eceafca57b509720251162`: current
+production passes with zero reads; a mutant that skips the pre-read refusal
+reads 33 bytes and fails the intended assertion.
+
+The AUD12 and AUD13 source tables above are historical and do not identify
+AUD14. These local observations still require exact-candidate preparation,
+provider checks and individual reviewer dispositions in the exact-head PR seal;
+they do not close aggregate VF0 acceptance.
+
 ### Current component behavior reconciliation
 
 Task selectors are the linked pre-edit C1–C7 and R1–R5 records above and D0092's
 provider-neutral execution/relation contract. This map covers the private
-components. The checkpoint source identities above bind the local results; the exact-head PR
-record supplies final evidence and separate reviewer dispositions. Pending review
-grants no review-ready disposition. Tests establish the bounded
-mechanism, not authentication or semantic adequacy of a future admitted oracle.
+components. The AUD12/AUD13 source tables are historical; current AUD14 source
+identities and evidence are bound separately in the exact-head PR record, which
+also supplies final results and individual reviewer dispositions. Pending review
+grants no review-ready disposition. Tests establish the bounded mechanism, not
+authentication or semantic adequacy of a future admitted oracle.
 
 | ID | Required observable behavior | Canonical implementation and evidence | Execution / alignment | Executor / reviewer |
 | --- | --- | --- | --- | --- |
@@ -763,10 +842,10 @@ mechanism, not authentication or semantic adequacy of a future admitted oracle.
 | C5 | Missing, unknown, unsupported or contradictory required acquisition guarantees reject matching relation | Guarantee and coverage evaluation; missing/contradictory/incomplete/latest-attempt tests | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | C6 | Unsafe/wrong-subject action links reject as mappings; missing or changed navigation does not change otherwise matching authority relation | `resolve_links`; link-mapping separation tests | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | C7 | Even self-consistent forged normalized data cannot authenticate, approve, prepare, publish or activate | `evaluate` fixed claim boundary; forged-data and no-effectful-import tests | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
-| R1 | Exact immutable Git subject and admitted bounded tests-only delta materialize without symlink, metadata, path or count escape; successive calls share no hidden subject | `tools/vf0_execution.py`: stable Git identity, evidence mode/content/count/path/duplicate/aggregate and command/NUL validation before materialization; real Git and bounded-input regressions | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
+| R1 | Exact immutable Git subject and admitted bounded tests-only delta materialize without symlink, metadata, path or count escape; successive calls share no hidden subject | `tools/vf0_execution.py`: stable Git identity; descriptor-relative `O_NOFOLLOW` traversal and opened/current inode revalidation; individual/aggregate path bytes, depth, entry, file and total-byte limits; no-read oversized-file refusal; real Git and adversarial swap/bound regressions | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | R2 | Runtime, entrypoint, resource, mount and environment contract is checked before launch; identity binds the actually used runtime | Immutable backend configuration and Docker inspection now compare resolved `Path`/`Args`, configured entrypoint/command/workdir/tmpfs, image, mount, resource and environment contracts before attachment; mutation negatives and live read-only/import-routing probes | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 | R3 | Command and effective limits bind controller-observed exit, output and termination; child bytes cannot certify RED or authority | Snapshot command bounds including NUL rejection, capture and observation construction; infrastructure/timeout/overflow/spoof/completion controls; engine `OOMKilled=false` required before accepting the wrapper trailer | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
-| R4 | Owned attachment/process/container resources are terminated and reconciled on every admitted failure path | Capture cleanup and known-name/container ownership removal, also reused by the read-only smoke probe; successful `--rm` completion takes one exact absence read-back, while failed/uncertain creation retains bounded reconciliation; selector/descendant/create/remove and interruption controls plus live timeout | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
+| R4 | Owned attachment/process/container resources are terminated and reconciled on every admitted failure path | Capture cleanup and known-name/container ownership removal, also reused by the read-only smoke probe; successful `--rm` completion takes one exact absence read-back, while failed/uncertain creation retains bounded reconciliation; selector/descendant/create/remove and interruption controls plus live timeout | Local fixture PASS / partial SUPPORTS; an object appearing after the finite settlement window remains unproved | Supported for exercised cases / pending exact-head review |
 | R5 | Before/after bytes and exact modes are checked; immutable-during-execution claims require enforced read-only subject; no provider or receipt effect is exposed | Snapshot/manifest plus controller backend claim; mutation/custom/local-backend negatives and live OCI conformance | Local fixture PASS / bounded SUPPORTS | Supported at checkpoint / pending exact-head review |
 
 Live OCI and independent review results must be rebound in the exact-head PR
