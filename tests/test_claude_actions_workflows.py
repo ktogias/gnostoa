@@ -20,6 +20,24 @@ _ASSOCIATION_FIELDS = (
     "github.event.review.author_association",
     "github.event.issue.author_association",
 )
+# Decision 0094: agent mode fetches no GitHub data, so every context byte the
+# reviewer receives is interpolated here. Only sources whose size is independent
+# of the discussion length are admitted.
+_BOUNDED_PROMPT_SOURCES = frozenset(
+    {
+        "github.repository",
+        "github.event.issue.number",
+        "github.event.pull_request.number",
+        "github.event.pull_request.head.sha",
+        "github.event.pull_request.base.sha",
+        "github.event.pull_request.body",
+        "github.event.comment.body",
+        "github.event.issue.body",
+        "github.event.issue.title",
+    }
+)
+_PROMPT_EXPRESSION = re.compile(r"\$\{\{\s*([^}]+?)\s*\}\}")
+_MAX_STATIC_PROMPT_BYTES = 4096
 
 
 def _workflow_paths(directory: Path) -> list[Path]:
@@ -37,6 +55,14 @@ def _action_references(workflow: dict[str, Any]) -> list[str]:
     references = [job["uses"] for job in workflow["jobs"].values() if "uses" in job]
     references.extend(step["uses"] for step in _steps(workflow) if "uses" in step)
     return references
+
+
+def _claude_step(workflow: dict[str, Any]) -> dict[str, Any]:
+    return next(
+        step
+        for step in _steps(workflow)
+        if step.get("uses", "").startswith("anthropics/claude-code-action@")
+    )
 
 
 def _single_job(workflow: dict[str, Any]) -> dict[str, Any]:
@@ -169,6 +195,51 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertNotIn("concurrency", workflow)
         self.assertNotIn("concurrency", job)
 
+    def test_mention_job_runs_in_bounded_agent_mode(self) -> None:
+        # src/modes/detector.ts selects agent mode when a prompt input is present,
+        # including on comment events; src/modes/agent/index.ts then fetches no
+        # GitHub data. Tag mode instead retrieves every comment and review with no
+        # cap, which is what exhausted the request on a large Pull Request.
+        workflow = load_yaml(MENTION_WORKFLOW)
+        claude = _claude_step(workflow)
+        prompt = claude["with"].get("prompt")
+        self.assertIsInstance(
+            prompt, str, "mention job must supply a prompt to select agent mode"
+        )
+        self.assertTrue(prompt.strip())
+
+    def test_mention_prompt_interpolates_only_bounded_sources(self) -> None:
+        workflow = load_yaml(MENTION_WORKFLOW)
+        prompt = _claude_step(workflow)["with"]["prompt"]
+        used = {
+            match.group(1).strip() for match in _PROMPT_EXPRESSION.finditer(prompt)
+        }
+        unbounded = used - _BOUNDED_PROMPT_SOURCES
+        self.assertEqual(
+            set(),
+            unbounded,
+            "prompt interpolates sources whose size grows with the discussion",
+        )
+
+    def test_mention_prompt_carries_the_triggering_request(self) -> None:
+        # Agent mode ignores the comment body unless the template forwards it,
+        # so an unforwarded mention would silently review nothing.
+        workflow = load_yaml(MENTION_WORKFLOW)
+        prompt = _claude_step(workflow)["with"]["prompt"]
+        self.assertIn("github.event.comment.body", prompt)
+
+    def test_mention_prompt_is_statically_bounded(self) -> None:
+        workflow = load_yaml(MENTION_WORKFLOW)
+        prompt = _claude_step(workflow)["with"]["prompt"]
+        self.assertLessEqual(len(prompt.encode("utf-8")), _MAX_STATIC_PROMPT_BYTES)
+
+    def test_mention_job_replaces_the_tag_mode_tracking_comment(self) -> None:
+        # Agent mode sets claudeCommentId to undefined, so results need an
+        # explicit delivery path rather than the tag-mode tracking comment.
+        workflow = load_yaml(MENTION_WORKFLOW)
+        claude = _claude_step(workflow)
+        self.assertEqual("true", str(claude["with"].get("display_report")).lower())
+
     def test_mention_workflow_has_no_unconfigured_assignment_trigger(self) -> None:
         # Without an assignee_trigger input the action never runs Claude for
         # `issues: assigned`; the trigger would only start an idle job.
@@ -192,6 +263,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             ".github/workflows/claude-code-review.yml",
             ".github/workflows/claude.yml",
             "knowledge/decisions/0093-harden-claude-code-github-actions-workflows.md",
+            "knowledge/decisions/0094-bound-claude-review-context.md",
         ):
             self.assertIn(path, entry["implementation"])
         self.assertIn("tests/test_claude_actions_workflows.py", entry["tests"])
