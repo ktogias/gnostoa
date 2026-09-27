@@ -672,6 +672,7 @@ guardrails:
       - .github/workflows/publish-current-advisory-restoration-runtime.yml
       - .github/workflows/claude-code-review.yml
       - .github/workflows/claude.yml
+      - .github/review-context/chunk_diff.py
       - ci/github-actions.yml
       - ci/gitlab-ci.yml
       - ci/security_scan.py

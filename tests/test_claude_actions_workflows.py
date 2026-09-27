@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib.util
+import json
 import os
 import pathlib
 import re
@@ -78,6 +80,7 @@ _PROMPT_FUNCTIONS = frozenset(
 )
 _PROMPT_KEYWORDS = frozenset({"false", "null", "true"})
 _MAX_STATIC_PROMPT_BYTES = 4096
+CHUNKER = ROOT / ".github" / "review-context" / "chunk_diff.py"
 # Resolved absolutely so the behavioural test never depends on PATH order. Only sh
 # is needed now: the collection step is executed against a stubbed provider rather
 # than against a local repository.
@@ -517,13 +520,98 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         script = str(_context_step(load_yaml(MENTION_WORKFLOW))["run"])
         self.assertIn("total_commits", script)
 
-    def test_diff_parts_split_on_line_boundaries(self) -> None:
-        # The reviewer reads the parts as text. A byte split can cut a multibyte
-        # character across two files, and a deletion is only recoverable there.
+    def test_diff_parts_use_the_encoding_aware_chunker(self) -> None:
+        # The reviewer reads the parts as text. `split -C` still cuts an oversized
+        # single line by bytes, which halves a multibyte character.
         script = str(_context_step(load_yaml(MENTION_WORKFLOW))["run"])
-        self.assertIn("split -C", script)
-        self.assertNotIn("split -b", script)
-        self.assertNotIn("head -c", script)
+        self.assertIn("chunk_diff.py", script)
+        for forbidden in ("split -C", "split -b", "head -c"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, script)
+        self.assertTrue(CHUNKER.is_file(), CHUNKER)
+
+    def test_chunker_never_splits_a_character_or_loses_a_byte(self) -> None:
+        # The oversized-line case is the one `split -C` gets wrong, so it is the one
+        # exercised: a run of ASCII that ends one byte before the bound, followed by a
+        # two-byte character straddling it.
+        spec = importlib.util.spec_from_file_location("chunk_diff", CHUNKER)
+        assert spec and spec.loader
+        chunker = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(chunker)
+        limit = 64
+        oversized = b"a" * (limit - 1) + "é".encode() + b"b" * limit + b"\n"
+        cases = {
+            "oversized single line": oversized,
+            "many short lines": b"".join(b"line %d\n" % n for n in range(200)),
+            "exactly at the bound": b"x" * limit,
+            "one byte over": b"x" * (limit + 1),
+        }
+        for name, payload in cases.items():
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as scratch:
+                context = pathlib.Path(scratch)
+                (context / "diff.full").write_bytes(payload)
+                written = chunker.split_diff(context, limit)
+                parts = sorted((context / "patches").glob("part-*"))
+                self.assertEqual(written, len(parts))
+                # Nothing lost, nothing reordered.
+                self.assertEqual(b"".join(p.read_bytes() for p in parts), payload)
+                for part in parts:
+                    self.assertLessEqual(len(part.read_bytes()), limit)
+                    # Every part must stand alone as text.
+                    part.read_bytes().decode("utf-8")
+
+    def test_commit_list_is_paginated_and_a_capped_file_list_says_so(self) -> None:
+        # The provider paginates commits at 250 per page but caps files at 300 with no
+        # pagination, so one needs every page and the other needs a notice.
+        script = str(_context_step(load_yaml(MENTION_WORKFLOW))["run"])
+        self.assertIn("--paginate", script)
+        self.assertIn("300", script)
+        self.assertIn("caps the changed-file list", script)
+
+    def test_files_without_a_patch_are_listed_as_unreviewable(self) -> None:
+        # A binary or oversized file has no patch, and its bytes are in neither the
+        # diff nor the base checkout, so it cannot be reviewed from this context.
+        workflow = load_yaml(MENTION_WORKFLOW)
+        script = str(_context_step(workflow)["run"])
+        self.assertIn("select(.patch == null)", script)
+        self.assertIn("unreviewable.txt", script)
+        prompt = " ".join(_claude_step(workflow)["with"]["prompt"].split())
+        self.assertIn("unreviewable.txt", prompt)
+        self.assertIn("not examined", prompt)
+
+    def test_deny_rules_cover_every_granted_filesystem_tool(self) -> None:
+        # A Read deny rule does not constrain Grep: ripgrep would return matching
+        # lines from the same path. Every granted filesystem tool needs the boundary.
+        workflow = load_yaml(MENTION_WORKFLOW)
+        claude = _claude_step(workflow)
+        settings = json.loads(str(claude["with"]["settings"]))
+        denied = settings["permissions"]["deny"]
+        args = str(claude["with"].get("claude_args", ""))
+        granted = [
+            tool.strip()
+            for tool in re.findall(r'--allowedTools\s+"([^"]+)"', args)[0].split(",")
+            if tool.strip() in {"Read", "Grep", "Glob"}
+        ]
+        self.assertEqual({"Read", "Grep", "Glob"}, set(granted))
+        paths = {
+            rule[rule.index("(") + 1 : rule.rindex(")")]
+            for rule in denied
+            if rule.startswith("Read(")
+        }
+        self.assertTrue(paths)
+        for tool in granted:
+            for path in paths:
+                with self.subTest(tool=tool, path=path):
+                    self.assertIn(f"{tool}({path})", denied)
+
+    def test_prompt_does_not_claim_the_checkout_is_the_pull_request_base(self) -> None:
+        # The checkout is the default branch's current tip, which may have advanced
+        # past the Pull Request's base or belong to a different branch entirely.
+        prompt = " ".join(
+            _claude_step(load_yaml(MENTION_WORKFLOW))["with"]["prompt"].split()
+        )
+        self.assertIn("default branch at its current tip", prompt)
+        self.assertNotIn("checkout is the Pull Request's **base**", prompt)
 
     def test_review_context_is_collected_with_fixed_arguments(self) -> None:
         # The retrieval must take no candidate-controlled input, or the trusted
@@ -583,7 +671,9 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 result = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
                     [str(_SH), "-s"],
                     input=script,
-                    cwd=work,
+                    # The step invokes the committed chunker by repository-relative
+                    # path, exactly as it does at the workspace root in CI.
+                    cwd=ROOT,
                     capture_output=True,
                     text=True,
                     env={
@@ -854,6 +944,9 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         for path in (
             ".github/workflows/claude-code-review.yml",
             ".github/workflows/claude.yml",
+            # The chunker is part of the same provider surface: the reviewer's only
+            # path to a diff region past the bound runs through it.
+            ".github/review-context/chunk_diff.py",
             "knowledge/decisions/0093-harden-claude-code-github-actions-workflows.md",
             "knowledge/decisions/0094-bound-claude-review-context.md",
         ):

@@ -179,9 +179,24 @@ No new dependency, service or runtime is introduced.
    lets rule 21 hold. Two properties of that source are recorded because they were
    found by exercising it rather than by reading about it: a file's status is written
    as the full word, since `removed` and `renamed` share a first letter and a reviewer
-   must be able to tell a deletion from a rename; and the provider caps the commits it
-   returns, so when it reports more than it lists, `commits.log` says how many of how
-   many, rather than letting a short list read as complete. The bound on `diff.patch` is deliberate: an
+   must be able to tell a deletion from a rename; and the provider's two collection
+   limits differ, so they are handled differently. Commits are paginated at 250 per
+   page, so every page is requested, and `commits.log` still states how many of how
+   many when the reported total exceeds the listed count. The changed-file list is
+   capped at 300 and is **not** paginable, so `diff.stat` carries an explicit notice
+   once it reaches that cap rather than letting a capped summary read as the whole
+   change. A file the comparison returns with no patch is binary or oversized: its
+   bytes are in neither the diff nor the checkout, so it is listed in
+   `unreviewable.txt` and the prompt requires the reviewer to report it as not
+   examined rather than imply it was reviewed.
+
+   The parts are cut by a committed script, `.github/review-context/chunk_diff.py`,
+   rather than by coreutils. Line boundaries are still preferred, but a single line
+   longer than the bound must be cut somewhere, and the record mode of `split` cuts it
+   by bytes -- halving a multibyte character and leaving two parts a text reader
+   cannot decode. The script retreats off any UTF-8 continuation byte instead. Being
+   committed, it comes from the default branch exactly as this workflow does, and the
+   suite exercises it directly rather than by extracting it from YAML. The bound on `diff.patch` is deliberate: an
    unbounded diff would reintroduce the context exhaustion this Decision exists to
    remove. Bounded must not mean unreachable, though. With no git, a reviewer
    cannot recover a deletion that falls past the cutoff and the checkout no longer
@@ -305,9 +320,20 @@ No new dependency, service or runtime is introduced.
    diff. The gain is that an entire hazard class -- candidate-authored entry routes,
    symlinked reads, mode tricks, and execution of candidate content -- cannot arise
    rather than being guarded against. Read confinement remains defence-in-depth
-   only: a `settings` deny list covers the obvious runner paths, and this repository
-   cannot verify the reviewer's enforcement of it, so the structural control is the
-   absence of candidate content rather than the deny list.
+   only: a `settings` deny list covers the obvious runner paths **for every granted
+   filesystem tool**, since a `Read` rule does not constrain `Grep`, whose
+   ripgrep-backed search would return matching lines from the same path. This
+   repository still cannot verify the reviewer's enforcement of those rules, so the
+   structural control is the absence of candidate content rather than the deny list.
+
+   The prompt states what the checkout actually is: the default branch at its current
+   tip, which may have advanced past the Pull Request's base or belong to a different
+   branch. Saying "the Pull Request's base" was false in both cases and would have had
+   the reviewer read unrelated upstream state as the pre-change state. The exact
+   before and after state lives only in the artefacts, and the prompt says so. This
+   also answers the residual on trusting the entry route: the route is a **known
+   protected revision** rather than a base a contributor chose, and the resolved base
+   is used only for the comparison.
 ## Accepted trade: delivery is no longer on the Pull Request
 
 Agent mode sets `claudeCommentId: undefined` and provides **no GitHub
@@ -328,9 +354,12 @@ and is not admitted by this Decision.
 ## Partial supersession of Decision 0093 rule 8
 
 Decision 0093 rule 8 requires that `allowed_bots`, `allowed_non_write_users`,
-`assignee_trigger` **and extra mention-job tools** be left unset. The trusted
-git-wrapper grant in rule 12 and the read-only CI inspection grant in rule 16
-above override the tool clause of that rule.
+`assignee_trigger` **and extra mention-job tools** be left unset. Rule 12 grants no
+Bash and no git of any shape -- an earlier revision of this Decision granted a git
+wrapper and that grant is gone -- so what overrides the tool clause is narrower than
+it once was: the read-only filesystem tools `Read`, `Grep` and `Glob`, and the
+read-only CI inspection tools of rule 16. Retrieval happens in a trusted workflow step
+instead of through any grant.
 
 This is recorded rather than left implicit because the alternative is two
 contradictory security contracts in the same repository, and because a test
