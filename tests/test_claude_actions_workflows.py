@@ -35,6 +35,10 @@ _BOUNDED_PROMPT_SOURCES = frozenset(
         "github.event.issue.body",
         "github.event.review.body",
         "steps.review_head.outputs.base_sha",
+        "steps.review_head.outputs.head_sha",
+        "github.event.comment.path",
+        "github.event.comment.line",
+        "github.event.comment.diff_hunk",
         "github.event.issue.title",
     }
 )
@@ -322,6 +326,58 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         prompt = _claude_step(workflow)["with"]["prompt"]
         self.assertIn("steps.review_head.outputs.base_sha", prompt)
         self.assertNotIn("origin/main", prompt)
+
+    def test_mention_job_grants_the_read_only_git_tools_the_prompt_requires(
+        self,
+    ) -> None:
+        # The pinned action disables Bash by default, so a prompt that tells the
+        # reviewer to run git would leave it with a checkout it cannot inspect.
+        # Only read-only git verbs are granted: a broad Bash(git:*) would admit
+        # push, commit and reset.
+        workflow = load_yaml(MENTION_WORKFLOW)
+        claude = _claude_step(workflow)
+        args = str(claude["with"].get("claude_args", ""))
+        self.assertIn("--allowedTools", args)
+        for verb in ("git diff", "git log", "git show"):
+            with self.subTest(verb=verb):
+                self.assertIn(f"Bash({verb}:*)", args)
+        for forbidden in ("git push", "git commit", "git reset", "Bash(git:*)"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, args)
+
+    def test_mention_prompt_handles_a_request_with_no_pull_request(self) -> None:
+        # issues:opened is an admitted trigger and Decision 0093 rule 7 keeps it.
+        # With no Pull Request the resolved base equals the head, so a diff-shaped
+        # instruction would have nothing to compare.
+        workflow = load_yaml(MENTION_WORKFLOW)
+        prompt = " ".join(_claude_step(workflow)["with"]["prompt"].split())
+        self.assertIn("no Pull Request", prompt)
+        # The instruction is only actionable if both sides are actually shown.
+        self.assertIn("steps.review_head.outputs.head_sha", prompt)
+
+    def test_mention_prompt_forwards_inline_review_location(self) -> None:
+        # On pull_request_review_comment the request's meaning often lives in the
+        # comment's path, line and hunk rather than its body.
+        workflow = load_yaml(MENTION_WORKFLOW)
+        prompt = _claude_step(workflow)["with"]["prompt"]
+        for expression in (
+            "github.event.comment.path",
+            "github.event.comment.line",
+            "github.event.comment.diff_hunk",
+        ):
+            with self.subTest(expression=expression):
+                self.assertIn(expression, prompt)
+
+    def test_decision_0094_rules_are_numbered_in_order(self) -> None:
+        decision = (
+            ROOT / "knowledge" / "decisions" / "0094-bound-claude-review-context.md"
+        ).read_text(encoding="utf-8")
+        numbers = [
+            int(match.group(1))
+            for match in re.finditer(r"^(\d+)\. ", decision, re.MULTILINE)
+        ]
+        self.assertEqual(sorted(numbers), numbers)
+        self.assertEqual(list(range(1, len(numbers) + 1)), numbers)
 
     def test_mention_workflow_has_no_unconfigured_assignment_trigger(self) -> None:
         # Without an assignee_trigger input the action never runs Claude for

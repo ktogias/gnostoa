@@ -86,6 +86,11 @@ jobs:
           # no cap, which exhausted the request on a large Pull Request. Every
           # interpolation below is independent of discussion length.
           display_report: true
+          # The pinned action disables Bash by default, so the retrieval the
+          # prompt asks for needs an explicit grant. Read-only verbs only:
+          # Bash(git:*) would admit push, commit and reset.
+          claude_args: >-
+            --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)"
           prompt: |
             Read-only review of a Gnostoa Pull Request. You have no pre-loaded
             discussion history; gather only what the request needs.
@@ -93,6 +98,8 @@ jobs:
             Repository: ${{ github.repository }}
             Item: #${{ github.event.issue.number }}${{ github.event.pull_request.number }}
             Title: ${{ github.event.issue.title }}
+            Base: ${{ steps.review_head.outputs.base_sha }}
+            Head: ${{ steps.review_head.outputs.head_sha }}
 
             Start with README.md, then AGENTS.md, and follow the route it names for
             the area under review. Use your own tools for context, diffing against
@@ -101,6 +108,10 @@ jobs:
               git diff ${{ steps.review_head.outputs.base_sha }}...HEAD -- <path>
               git log --oneline ${{ steps.review_head.outputs.base_sha }}..HEAD
             and Read or Grep for the current state of any file.
+
+            If the base and head below are the same commit there is no Pull
+            Request: the request concerns the issue itself, so answer it from the
+            repository rather than from a diff.
 
             You cannot see the discussion. If a point may already be dispositioned,
             raise it as a question rather than an assertion.
@@ -113,6 +124,10 @@ jobs:
             --- maintained current state ---
             ${{ github.event.issue.body }}
             ${{ github.event.pull_request.body }}
+
+            --- inline location, when the request came from a review comment ---
+            ${{ github.event.comment.path }}:${{ github.event.comment.line }}
+            ${{ github.event.comment.diff_hunk }}
 
             --- request ---
             ${{ github.event.comment.body }}

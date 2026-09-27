@@ -126,7 +126,7 @@ No new dependency, service or runtime is introduced.
    resolves the review head SHA when present, else the Pull Request number of a
    commented Pull Request, else the triggering ref; history is fetched in full so
    a three-dot diff against the base has both sides.
-10. **The mention job must never check out a fork-controlled head.** Binding the
+9. **The mention job must never check out a fork-controlled head.** Binding the
    checkout to a Pull Request head places contributor-controlled code in the job
    that holds the Claude credential. The author-association gate does not close
    this: it constrains who comments, not whose code runs. The head is therefore
@@ -134,14 +134,28 @@ No new dependency, service or runtime is introduced.
    repository differs from this repository, before any candidate byte is checked
    out, reaching the same boundary Decision 0093 rule 5 sets for the automatic
    review.
-11. The reviewer diffs against the **resolved base**, not a fixed branch, and the
+10. The reviewer diffs against the **resolved base**, not a fixed branch, and the
    prompt names the repository's declared entry route -- `README.md` first, as
    `AGENTS.md` itself states.
 
-9. The prompt must cover every admitted trigger payload. `issue_comment` carries
+11. The prompt must cover every admitted trigger payload. `issue_comment` carries
    `github.event.issue.*`, the review triggers carry `github.event.pull_request.*`,
    and `issues: opened` may hold the mention in the title alone. A template that
    reads only one shape silently loses the others.
+
+12. **The tools the prompt relies on must be granted.** The pinned action disables
+   Bash by default, so a retrieval-based prompt would otherwise leave the reviewer
+   with a checkout it cannot inspect. Only read-only verbs are granted --
+   `git diff`, `git log`, `git show` -- because `Bash(git:*)` would admit `push`,
+   `commit` and `reset`.
+13. Requests with **no Pull Request** are answered from the repository rather than
+   from a diff. `issues: opened` stays an admitted trigger under Decision 0093
+   rule 7, and there the resolved base equals the head, so a diff-shaped
+   instruction would compare nothing. The prompt shows both SHAs so the
+   distinction is observable rather than implied.
+14. Inline review location is forwarded. On `pull_request_review_comment` the
+   meaning of a request often lives in the comment's path, line and hunk rather
+   than its body, and agent mode fetches none of it.
 
 ## Accepted trade: delivery is no longer on the Pull Request
 
@@ -181,8 +195,9 @@ snapshot, and carries no approval or merge authority.
 `tests/test_claude_actions_workflows.py` enforces agent-mode selection, the
 bounded interpolation set, the static prompt bound, forwarding of the triggering
 request, the reviewed-head checkout binding under a same-repository guard, coverage of
-every admitted trigger payload, the resolved-base diff, the declared entry route,
-and the explicit delivery path — alongside every existing Decision 0093
+every admitted trigger payload, the resolved-base diff, the declared entry route, the read-only git tool grant,
+the no-Pull-Request path, the forwarded inline location, and the explicit
+delivery path — alongside every existing Decision 0093
 invariant. The `immutable-provider-ci-adapters` guardrail owns the workflows,
 both Decisions and that test.
 
