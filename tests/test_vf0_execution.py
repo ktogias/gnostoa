@@ -575,6 +575,44 @@ class VF0SubjectTests(unittest.TestCase):
                     module._materialize_subject(repo, subject, target)
             self.assertFalse(target.exists())
 
+    def test_shared_subject_directories_are_normalized_once(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        with tempfile.TemporaryDirectory() as td:
+            repo, subject = _repo(Path(td))
+            shared_parts = [f"directory-{index:03d}" for index in range(200)]
+            entries = [
+                b"100644 blob "
+                + b"0" * 40
+                + b" 0\t"
+                + "/".join([*shared_parts, f"file-{index:02d}.txt"]).encode()
+                for index in range(12)
+            ]
+            target = Path(td) / "materialized"
+
+            def write_empty_blob(
+                _repo: Path, _oid: str, destination: Path, _size: int
+            ) -> bytes:
+                destination.write_bytes(b"")
+                return b""
+
+            with (
+                mock.patch.object(
+                    module, "_trusted_git_tree_entries", return_value=entries
+                ),
+                mock.patch.object(
+                    module, "_write_git_blob", side_effect=write_empty_blob
+                ),
+                mock.patch.object(
+                    module,
+                    "_normalize_subject_directory",
+                    wraps=module._normalize_subject_directory,
+                ) as normalize_directory,
+            ):
+                observed = module._materialize_subject(repo, subject, target)
+
+            self.assertEqual(len(entries), len(observed))
+            self.assertLessEqual(normalize_directory.call_count, len(shared_parts) + 1)
+
     def test_subject_tree_listing_selector_setup_failure_reaps_child(self) -> None:
         module = importlib.import_module("tools.vf0_execution")
 
@@ -2277,6 +2315,15 @@ class VF0DockerBackendTests(unittest.TestCase):
             with self.subTest(image=image):
                 with self.assertRaisesRegex(ExecutionRejected, "OCI_IMAGE_PIN"):
                     DockerBackend(image)
+
+    def test_image_rejects_equality_spoofing_string_subclass(self) -> None:
+        class SpoofedImage(str):
+            def __eq__(self, other: object) -> bool:
+                del other
+                return True
+
+        with self.assertRaisesRegex(ExecutionRejected, "^OCI_IMAGE_PIN$"):
+            DockerBackend(SpoofedImage(self.image))
 
     def test_docker_executable_is_fixed(self) -> None:
         with self.assertRaisesRegex(ExecutionRejected, "DOCKER_EXECUTABLE"):

@@ -602,9 +602,12 @@ def _materialize_subject(
 
     expected: dict[str, _MaterialFile] = {}
     _normalize_subject_directory(target, exist_ok=False)
+    for directory_parts in sorted(
+        planned_directories, key=lambda parts: (len(parts), parts)
+    ):
+        _normalize_subject_directory(target.joinpath(*directory_parts), exist_ok=True)
     for name, mode, oid, size in planned:
         destination = target / name
-        _normalize_subject_parents(target, destination)
         payload = _write_git_blob(root, oid, destination, size)
         destination.chmod(0o755 if mode == "100755" else 0o644)
         expected[name] = _MaterialFile(mode=mode, sha256=_sha256(payload), size=size)
@@ -1118,7 +1121,11 @@ class DockerBackend:
     docker_executable: str = "/usr/bin/docker"
 
     def __post_init__(self) -> None:
-        _need(_IMAGE_RE.fullmatch(self.image) is not None, "OCI_IMAGE_PIN")
+        _need(
+            type(self.image) is str and _IMAGE_RE.fullmatch(self.image) is not None,
+            "OCI_IMAGE_PIN",
+        )
+        object.__setattr__(self, "image", str(self.image))
         _need(
             type(self.docker_executable) is str
             and self.docker_executable == "/usr/bin/docker",
@@ -1147,7 +1154,8 @@ class DockerBackend:
             capture.termination == "completed" and type(capture.exit_code) is int,
             "DOCKER_COMMAND_FAILED",
         )
-        return subprocess.CompletedProcess(
+        # This records the bounded capture; process launch happened above.
+        return subprocess.CompletedProcess(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use
             argv,
             cast(int, capture.exit_code),
             stdout=capture.stdout,
