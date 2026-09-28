@@ -161,7 +161,12 @@ def _git_sha1(value: str, reason: str) -> str:
 
 
 def _evidence_path(value: str) -> str:
-    _need(isinstance(value, str) and bool(value), "EVIDENCE_PATH")
+    _need(isinstance(value, str), "EVIDENCE_PATH")
+    try:
+        value = str.__str__(value)
+    except TypeError as exc:
+        raise ExecutionRejected("EVIDENCE_PATH") from exc
+    _need(type(value) is str and bool(value), "EVIDENCE_PATH")
     _need(len(value) <= _MAX_EVIDENCE_PATH_BYTES, "EVIDENCE_PATH_BOUND")
     try:
         encoded = value.encode("utf-8")

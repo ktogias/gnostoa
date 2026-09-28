@@ -1128,6 +1128,62 @@ class VF0SubjectTests(unittest.TestCase):
                     _DirectTestBackend(),
                 )
 
+    def test_evidence_path_subclass_cannot_escape_subject_root(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+
+        class LyingPath(str):
+            def __new__(cls, value: str):
+                instance = super().__new__(cls, value)
+                instance.split_calls = 0
+                return instance
+
+            def __len__(self) -> int:
+                return len("tests/probe.py")
+
+            def encode(self, *args, **kwargs):
+                return "tests/probe.py".encode(*args, **kwargs)
+
+            def count(self, separator: str) -> int:
+                return "tests/probe.py".count(separator)
+
+            def split(self, separator=None, maxsplit=-1):
+                self.split_calls += 1
+                if self.split_calls == 1:
+                    return "tests/probe.py".split(separator, maxsplit)
+                return str.split(self, separator, maxsplit)
+
+            def casefold(self) -> str:
+                return "tests/probe.py".casefold()
+
+        evidence = _evidence("pass")
+        object.__setattr__(evidence, "path", LyingPath("tests/../../outside.txt"))
+        outside_writes: list[bool] = []
+        original_overlay = module._overlay_evidence
+
+        def observe_overlay(root, baseline, admitted_evidence):
+            try:
+                return original_overlay(root, baseline, admitted_evidence)
+            finally:
+                outside_writes.append((root.parent / "outside.txt").is_file())
+
+        with tempfile.TemporaryDirectory() as td:
+            repo, subject = _repo(Path(td))
+            with mock.patch.object(
+                module, "_overlay_evidence", side_effect=observe_overlay
+            ):
+                try:
+                    execute(
+                        repo,
+                        subject,
+                        [evidence],
+                        ["/bin/true"],
+                        _DirectTestBackend(),
+                    )
+                except ExecutionRejected:
+                    pass
+
+        self.assertFalse(any(outside_writes))
+
     def test_evidence_sequence_is_snapshotted_before_backend_execution(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             repo, subject = _repo(Path(td))
