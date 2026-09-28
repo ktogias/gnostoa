@@ -60,11 +60,19 @@ def _within(raw: str, root_variable: str, *, must_exist: bool) -> pathlib.Path:
     resolved path must sit inside it; otherwise it must at least be absolute with an
     existing parent, which is what a local test run gives.
     """
+    if not raw or not raw.strip():
+        # An empty argument resolves to the working directory, which is a real path and
+        # would sail through every check below. A degenerate input is a reason to stop.
+        raise ValueError("refusing an empty path")
     path = pathlib.Path(raw).resolve()
     if must_exist and not path.exists():
         raise ValueError(f"refusing a path that does not exist: {raw!r}")
     if not path.parent.exists():
         raise ValueError(f"refusing a path whose parent does not exist: {raw!r}")
+    if path.is_dir() and not must_exist:
+        # A file is expected here; a directory would fail later with a confusing error
+        # or, worse, silently name something writable.
+        raise ValueError(f"refusing a directory where a file is expected: {raw!r}")
     root = os.environ.get(root_variable)
     if root:
         resolved_root = pathlib.Path(root).resolve()

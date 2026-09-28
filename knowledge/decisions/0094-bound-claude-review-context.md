@@ -510,7 +510,10 @@ No new dependency, service or runtime is introduced.
    set. Each resolves its argument and refuses anything outside the runner area it
    belongs to: the workspace for the collectors, the runner temporary directory for the
    publisher's execution file, with an absolute path and an existing parent as the floor
-   when no root applies. The step summary's own path is deliberately **not** pinned to a
+   when no root applies. Degenerate arguments are refused before any of that: an empty
+   string resolves to the working directory, which is a real path that would otherwise
+   satisfy every check, and a directory where a file is expected is refused here rather
+   than failing later with a confusing error or naming something writable. The step summary's own path is deliberately **not** pinned to a
    root: it lives under the runner temporary directory today, but that is an
    implementation detail, and refusing to publish because the runner moved a file would
    lose the review over an assumption about its layout. A later edit of the workflow therefore cannot point

@@ -1624,6 +1624,16 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                         module._within(
                             str(inside / "absent"), variable, must_exist=True
                         )
+                    # An empty argument resolves to the working directory, which is a
+                    # real path and would otherwise pass every check below it.
+                    for degenerate in ("", "   "):
+                        with self.subTest(degenerate=repr(degenerate)):
+                            with self.assertRaises(ValueError):
+                                module._within(degenerate, variable, must_exist=False)
+                    # A directory where a file is expected is refused here rather than
+                    # failing later with a confusing error.
+                    with self.assertRaises(ValueError):
+                        module._within(str(inside), variable, must_exist=False)
                 finally:
                     if previous is None:
                         del os.environ[variable]
@@ -1792,6 +1802,11 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                     env={
                         **os.environ,
                         "HOME": scratch,
+                        # The scripts confine their paths to the workspace, so the
+                        # scratch directory has to *be* the workspace here. Without
+                        # this the test passes locally, where GITHUB_WORKSPACE is
+                        # unset, and fails in CI, where it points at the checkout.
+                        "GITHUB_WORKSPACE": scratch,
                         "PATH": f"{stub_dir}{os.pathsep}{os.environ['PATH']}",
                         # nosec B105 -- literal placeholder for the stubbed
                         # provider, not a credential
