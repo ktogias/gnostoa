@@ -59,8 +59,11 @@ def final_report(turns: list[Any]) -> str:
     for turn in reversed(turns):
         if not isinstance(turn, dict):
             continue
-        if turn.get("type") == "result" and isinstance(turn.get("result"), str):
-            return turn["result"]
+        result = turn.get("result")
+        # A result turn carrying an empty string is not a report. Returning it shadowed
+        # real assistant text and published "the reviewer produced no final text".
+        if turn.get("type") == "result" and isinstance(result, str) and result.strip():
+            return result
     # Fall back to the last assistant text block.
     for turn in reversed(turns):
         if not isinstance(turn, dict):

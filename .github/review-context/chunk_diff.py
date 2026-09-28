@@ -77,7 +77,13 @@ def wrap_long_records(data: bytes) -> tuple[bytes, int, int]:
 
 
 def next_cut(buffer: bytes, limit: int) -> int:
-    """Return how many bytes of ``buffer`` the next part may hold."""
+    """Return how many bytes of ``buffer`` the next part may hold.
+
+    A non-positive limit means there is no room at all, which the overview asks for
+    when its notices already fill the bound. That is an empty answer, not an error.
+    """
+    if limit <= 0:
+        return 0
     if len(buffer) <= limit:
         return len(buffer)
     newline = buffer.rfind(b"\n", 0, limit)
@@ -88,7 +94,12 @@ def next_cut(buffer: bytes, limit: int) -> int:
     end = limit
     while end > 0 and (buffer[end] & 0xC0) == 0x80:
         end -= 1
-    return end or limit
+    if end == 0:
+        # Falling back to the raw limit here split the character this retreat exists to
+        # keep whole, and did it silently. A bound that cannot hold one character is a
+        # configuration error, not something to paper over.
+        raise ValueError("the byte bound is smaller than one character")
+    return end
 
 
 def split_diff(context: pathlib.Path, limit: int) -> int:

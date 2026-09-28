@@ -686,6 +686,66 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             with self.subTest(owned=owned):
                 self.assertIn(owned, entry["implementation"])
 
+    def test_a_transient_provider_error_does_not_lose_the_review(self) -> None:
+        # The comparison request ran unguarded under `set -eu`, so one 5xx from the
+        # provider ended the step, Claude never started, and the Pull Request got no
+        # review -- the failure this whole workflow exists to remove, reached by a
+        # transient error rather than by size.
+        if _SH is None:  # pragma: no cover - toolchain guard
+            self.skipTest("sh is required to execute the collection step")
+        script = str(_context_step(load_yaml(MENTION_WORKFLOW))["run"])
+        with tempfile.TemporaryDirectory() as scratch:
+            work = pathlib.Path(scratch)
+            stub_dir = work / "bin"
+            stub_dir.mkdir()
+            (stub_dir / "comparison").write_text(
+                json.dumps({"files": []}), encoding="utf-8"
+            )
+            # Fails once for the comparison, then succeeds: a retry must recover it.
+            (stub_dir / "gh").write_text(
+                "#!/bin/sh\n"
+                'for a in "$@"; do\n'
+                '  case "$a" in *v3.diff*) exit 0;; esac\n'
+                "done\n"
+                'case "$*" in\n'
+                "  *compare*)\n"
+                '    if [ ! -f "${STUB_DIR}/failed-once" ]; then\n'
+                '      : > "${STUB_DIR}/failed-once"\n'
+                '      echo "server error" >&2\n'
+                "      exit 1\n"
+                "    fi\n"
+                '    cat "${STUB_DIR}/comparison" ;;\n'
+                "esac\n",
+                encoding="utf-8",
+            )
+            (stub_dir / "gh").chmod(0o755)
+            context = work / "context"
+            result = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
+                [str(_SH), "-s"],
+                input=script,
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                env={
+                    **os.environ,
+                    "HOME": scratch,
+                    "GITHUB_WORKSPACE": scratch,
+                    "PATH": f"{stub_dir}{os.pathsep}{os.environ['PATH']}",
+                    "GH_TOKEN": "stub",  # nosec B105
+                    "REPOSITORY": "owner/repo",
+                    "PULL_NUMBER": "329",
+                    "BASE_SHA": "a" * 40,
+                    "HEAD_SHA": "b" * 40,
+                    "CONTEXT_DIR": str(context),
+                    "MAX_BYTES": "2048",
+                    "STUB_DIR": str(stub_dir),
+                    "RETRY_SLEEP": "0",
+                },
+            )
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertTrue((stub_dir / "failed-once").exists(), "no failure injected")
+            self.assertTrue((context / "diff.stat").is_file(), result.stderr)
+
     def test_a_refused_diff_does_not_fail_the_step(self) -> None:
         # The step runs under `set -eu`, and the provider can refuse the diff of a very
         # large comparison. Exiting there would reproduce the large-Pull-Request
@@ -961,6 +1021,42 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             starts = [line.split("/", 1)[0] for line in assembled.splitlines()]
             self.assertEqual(2, starts.count("--- a"), assembled)
             self.assertEqual(2, starts.count("+++ b"), assembled)
+
+    def test_unicode_line_separators_cannot_break_a_record(self) -> None:
+        # Git's own rule is not sufficient here. `git -c core.quotePath=false` prints
+        # U+2028, U+2029 and U+0085 raw, because Git splits lines on bytes -- but these
+        # artefacts are read by a Unicode-aware reader, and Python's splitlines() (what
+        # the reviewer's tools use) treats all three as line breaks. A name carrying one
+        # therefore recreates the forged-header problem the C0 quoting closed.
+        builder = _load_script(BASE_COLLECTOR)
+        for separator in ("\u2028", "\u2029", "\u0085"):
+            with self.subTest(separator=repr(separator)):
+                name = f"evil{separator}+++ b/innocent.py"
+                quoted = builder.quote_path(name)
+                self.assertEqual(1, len(quoted.splitlines()), repr(quoted))
+                self.assertNotIn(separator, quoted)
+
+    def test_a_bound_too_small_for_one_character_is_refused(self) -> None:
+        # The whole point of this cut is that no character is split across two parts.
+        # Retreating off continuation bytes and then falling back to the raw limit did
+        # exactly what the function exists to prevent, silently.
+        chunker = _load_script(CHUNKER)
+        payload = "\u00e9abc".encode()
+        with self.assertRaises(ValueError):
+            chunker.next_cut(payload, 1)
+        # A bound that can hold the character is unaffected.
+        self.assertEqual(2, chunker.next_cut(payload, 2))
+
+    def test_an_empty_result_turn_does_not_hide_the_report(self) -> None:
+        # The reviewer's final text was taken from the last result turn even when that
+        # turn carried an empty string, so real assistant output was dropped and the
+        # summary said the reviewer produced nothing.
+        publisher = _load_script(PUBLISHER)
+        turns = [
+            {"type": "assistant", "message": {"content": [{"text": "real findings"}]}},
+            {"type": "result", "result": "   "},
+        ]
+        self.assertEqual("real findings", publisher.final_report(turns))
 
     def test_paths_are_quoted_the_way_git_quotes_them(self) -> None:
         # `git -c core.quotePath=false ls-files` was run against a repository holding

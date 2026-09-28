@@ -174,16 +174,46 @@ jobs:
           # candidate's files, modes or symlinks ever existing on this runner. The
           # two revisions come from the trusted resolver, never from the payload.
           comparison="repos/${REPOSITORY}/compare/${BASE_SHA}...${HEAD_SHA}"
+          # These requests ran unguarded under `set -eu`, so a single transient
+          # provider error ended the step, Claude never started, and the Pull Request
+          # got no review -- the failure this workflow exists to remove, reached by a
+          # 5xx rather than by size. Each attempt writes to its own file and is moved
+          # into place only on success, so a partial body can never be left behind or
+          # appended to by the next attempt. A persistent failure still stops: there
+          # is nothing to review without the comparison, and a silent partial context
+          # would be worse than a visible red check.
+          api_to_file() {
+            api_target=$1
+            shift
+            api_attempt=1
+            while :; do
+              if gh api "$@" > "${api_target}.attempt" 2>"${api_target}.err"; then
+                mv "${api_target}.attempt" "${api_target}"
+                rm -f "${api_target}.err"
+                return 0
+              fi
+              rm -f "${api_target}.attempt"
+              if [ "${api_attempt}" -ge 3 ]; then
+                cat "${api_target}.err" >&2
+                rm -f "${api_target}.err"
+                return 1
+              fi
+              sleep "$(( api_attempt * ${RETRY_SLEEP:-5} ))"
+              api_attempt=$(( api_attempt + 1 ))
+            done
+          }
           # One request for the comparison; the committed script derives every
           # file-level artefact from this payload.
-          gh api "${comparison}" > "${CONTEXT_DIR}/comparison.json"
+          api_to_file "${CONTEXT_DIR}/comparison.json" "${comparison}"
           # Commits *are* paginated, at 250 per page, so ask for every page.
-          gh api --paginate "${comparison}" \
-            --jq '.commits[]? | "\(.sha[0:9]) \(.commit.message | split("\n")[0])"' \
-            > "${CONTEXT_DIR}/commits.log"
+          api_to_file "${CONTEXT_DIR}/commits.log" --paginate "${comparison}" \
+            --jq '.commits[]? | "\(.sha[0:9]) \(.commit.message | split("\n")[0])"'
           # The provider caps the commits it returns. Say so rather than letting the
           # reviewer read a short list as a complete one.
-          total_commits="$(gh api "${comparison}" --jq '.total_commits // 0')"
+          api_to_file "${CONTEXT_DIR}/total_commits" "${comparison}" \
+            --jq '.total_commits // 0'
+          total_commits="$(cat "${CONTEXT_DIR}/total_commits")"
+          rm -f "${CONTEXT_DIR}/total_commits"
           listed_commits="$(wc -l < "${CONTEXT_DIR}/commits.log")"
           if [ "${total_commits}" -gt "${listed_commits}" ]; then
             printf '[provider listed %s of %s commits]\n' \

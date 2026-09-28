@@ -47,6 +47,20 @@ _C_ESCAPES = {
 }
 
 
+# Git's own rule is not sufficient here. `git -c core.quotePath=false` prints U+0085,
+# U+2028 and U+2029 raw, because Git orients on bytes -- but these artefacts are read by
+# a Unicode-aware reader, and Python's ``str.splitlines`` treats all three as line
+# breaks. A name carrying one would recreate exactly the forged-record problem that
+# escaping the C0 controls closed.
+_UNICODE_BREAKS = frozenset("\u0085\u2028\u2029")
+
+
+def _must_escape(ch: str) -> bool:
+    """Return whether ``ch`` could end a line for some reader of these artefacts."""
+    code = ord(ch)
+    return code < 0x20 or code == 0x7F or ch in _UNICODE_BREAKS
+
+
 def quote_path(name: str) -> str:
     """Return ``name`` the way ``git -c core.quotePath=false`` would print it.
 
@@ -62,7 +76,7 @@ def quote_path(name: str) -> str:
     filename is not a line-injection risk, and quoting it would only make the artefacts
     harder to read.
     """
-    if not any(ord(ch) < 0x20 or ord(ch) == 0x7F or ch in '"\\' for ch in name):
+    if not any(_must_escape(ch) or ch in '"\\' for ch in name):
         return name
     out = ['"']
     for ch in name:
@@ -71,6 +85,11 @@ def quote_path(name: str) -> str:
             out.append(_C_ESCAPES[code])
         elif code < 0x20 or code == 0x7F:
             out.append(f"\\{code:03o}")
+        elif _must_escape(ch):
+            # Octal of the UTF-8 bytes, which is how `git -c core.quotePath=true`
+            # renders a non-ASCII byte -- so the escape stays in Git's own vocabulary
+            # even though Git itself does not escape these.
+            out.extend(f"\\{byte:03o}" for byte in ch.encode())
         else:
             out.append(ch)
     out.append('"')
