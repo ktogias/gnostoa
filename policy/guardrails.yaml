@@ -672,6 +672,9 @@ guardrails:
       - .github/workflows/publish-current-advisory-restoration-runtime.yml
       - .github/workflows/claude-code-review.yml
       - .github/workflows/claude.yml
+      - .github/review-context/chunk_diff.py
+      - .github/review-context/build_review_context.py
+      - .github/review-context/publish_report.py
       - ci/github-actions.yml
       - ci/gitlab-ci.yml
       - ci/security_scan.py
@@ -681,6 +684,7 @@ guardrails:
       - knowledge/assessments/0082-secret-scan-triage-evidence.json
       - knowledge/decisions/0082-eliminate-host-persistence-for-protected-review-payloads-and-route-security-gates.md
       - knowledge/decisions/0093-harden-claude-code-github-actions-workflows.md
+      - knowledge/decisions/0094-bound-claude-review-context.md
       - tools/extended_route.py
       - tools/security_scan.py
     tests:
