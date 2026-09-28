@@ -225,9 +225,45 @@ No new dependency, service or runtime is introduced.
    unrelated text look like a change to a different file. The reviewer has no git and
    no candidate tree, so it has nothing to check that against. The quoting is the one
    `git -c core.quotePath=false` uses: control characters, a double quote and a
-   backslash are C-quoted, and UTF-8 is left alone, because a legitimate international
-   filename is not a line-injection risk and quoting it would only make the artefacts
-   harder to read. Quoting rather than refusal, because such a name is a legal path and
+   backslash are C-quoted, and ordinary UTF-8 is left alone, because a legitimate
+   international filename is not a line-injection risk and quoting it would only make
+   the artefacts harder to read.
+
+   Git's rule alone is **not sufficient**, and this is the one place this Decision
+   deliberately goes beyond it. `git -c core.quotePath=false` prints U+0085, U+2028 and
+   U+2029 raw -- verified against Git itself -- because Git orients on bytes. These
+   artefacts are read by a Unicode-aware reader, and Python's `str.splitlines`, which
+   the reviewer's tools use, treats all three as line breaks, so a name carrying one
+   recreated exactly the forged-record problem the C0 quoting closed. They are escaped
+   too, as the octal of their UTF-8 bytes, which is how `git -c core.quotePath=true`
+   renders a non-ASCII byte: the escape stays in Git's own vocabulary even where Git
+   itself does not apply it.
+
+   **A commit subject is candidate-controlled text too**, and `commits.log` is read
+   line by line like every other artefact here. Splitting a message on `\n` in the step
+   left a Unicode line separator intact, so a subject could add a standalone fake commit
+   -- or a fake `[provider listed ...]` notice -- to a file the reviewer trusts.
+   Subjects are therefore carried base64-encoded out of the provider request and
+   rendered by the same committed script, through the same escaping as a pathname. The
+   cap notice is appended after that rendering, so the count it states is a count of
+   records the reviewer will actually read. One undecodable subject is that commit's
+   gap, recorded as `[subject unavailable]`, not the step's failure.
+
+   The prompt asks for **no verdict these artefacts cannot support**. A real unified
+   diff separates a binary content change from a mode-only one, by its mode lines and
+   its binary notice; the assembled fallback carries neither, so when `patches-source`
+   is present the honest answer is "not examined" rather than a guess. Demanding
+   "report which" unconditionally was the same false-claim defect this rule records
+   elsewhere, in the one place the reviewer would have had to invent an answer.
+
+   The provider requests are **retried a bounded number of times**. They ran unguarded
+   under `set -eu`, so one transient 5xx ended the step, the reviewer never started, and
+   the Pull Request got no review -- this Decision's own failure mode, reached by a
+   transient error rather than by size. Each attempt writes to its own file and is moved
+   into place only on success, so a partial body is never left behind nor appended to by
+   the next attempt. A persistent failure still stops: there is nothing to review
+   without the comparison, and a silent partial context would be worse than a visible
+   red check. Quoting rather than refusal, because such a name is a legal path and
    dropping the file would hide a real change. The contract test builds the artefacts
    from a comparison whose filename carries `\n+++ b/innocent.py` and asserts no forged
    line reaches the start of a line in any artefact.
@@ -282,7 +318,13 @@ No new dependency, service or runtime is introduced.
    rather than by coreutils. Line boundaries are still preferred, but a single line
    longer than the bound must be cut somewhere, and the record mode of `split` cuts it
    by bytes -- halving a multibyte character and leaving two parts a text reader
-   cannot decode. The script retreats off any UTF-8 continuation byte instead. Being
+   cannot decode. The script retreats off any UTF-8 continuation byte instead. A bound
+   that cannot hold a single character is **refused rather than papered over**: that
+   retreat previously fell back to the raw limit on reaching the start of the buffer,
+   splitting the very character it exists to keep whole, silently. That is a
+   configuration error and now says so. A non-positive bound is different and stays
+   legal -- it is what the overview asks for when its notices already fill the limit,
+   and the answer there is "no room", not an error. Being
    committed, it comes from the default branch exactly as this workflow does, and the
    suite exercises it directly rather than by extracting it from YAML. The bound on `diff.patch` is deliberate: an
    unbounded diff would reintroduce the context exhaustion this Decision exists to
@@ -460,8 +502,11 @@ No new dependency, service or runtime is introduced.
    as Markdown or HTML, so no image, `<img>`, link or scheme in the report can cause a
    fetch. The report is bounded and truncated with a notice -- before the block is
    built, so a cut can never land inside the closing fence and leave the rest of the
-   summary unterminated. The step runs on `always()`, so a failed reviewer is visible
-   rather than silent.
+   summary unterminated. The reviewer's final text is taken from the last result turn
+   that actually carries text: an empty result turn was being returned as the report,
+   which shadowed real assistant output and published "the reviewer produced no final
+   text" over a review that existed. The step runs on `always()`, so a failed reviewer
+   is visible rather than silent.
 
    **The fence is chosen longer than the longest run of backticks anywhere in the
    report**, so no line in it can close the block, whatever containers the text puts

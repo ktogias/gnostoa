@@ -24,6 +24,8 @@ the repository's default branch, so this file is not candidate-supplied.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import pathlib
 import sys
@@ -178,9 +180,39 @@ def write_assembled(context: pathlib.Path, comparison: dict[str, Any]) -> None:
     )
 
 
+def write_commits(context: pathlib.Path) -> None:
+    """Render commits.log from the base64-carried subjects the step collected.
+
+    A commit subject is candidate-controlled text and this artefact is read line by
+    line, so it is escaped exactly as a pathname is. The step cannot do it: splitting a
+    message on "\\n" leaves a Unicode line separator intact, and the subject could then
+    add a standalone fake commit, or a fake provider-cap notice, to a file the reviewer
+    trusts.
+    """
+    source = context / "commits.b64"
+    if not source.exists():
+        return
+    records = []
+    for line in source.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        sha, _, encoded = line.partition(" ")
+        try:
+            raw = base64.b64decode(encoded, validate=True) if encoded else b""
+        except (ValueError, binascii.Error):
+            # One unreadable subject is that commit's gap, not the step's. Saying so
+            # keeps the record count honest, which is what the cap notice counts.
+            records.append(f"{sha} [subject unavailable]\n")
+            continue
+        records.append(f"{sha} {quote_path(raw.decode('utf-8', 'replace'))}\n")
+    (context / "commits.log").write_text("".join(records), encoding="utf-8")
+    source.unlink()
+
+
 def build(context: pathlib.Path) -> None:
     """Derive every file-level artefact from the retained comparison payload."""
     comparison = json.loads((context / "comparison.json").read_text(encoding="utf-8"))
+    write_commits(context)
     write_summaries(context, comparison)
     write_assembled(context, comparison)
 
