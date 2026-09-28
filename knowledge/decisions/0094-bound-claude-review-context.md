@@ -190,9 +190,24 @@ No new dependency, service or runtime is introduced.
    equally for a metadata-only change -- a mode bit, an empty file, a pure rename --
    which is perfectly reviewable from its status. Calling every such entry binary made
    the prompt require a real change to be reported as not examined, and dropped it from
-   the assembled fallback entirely. The artefact is therefore `no-patch.txt`, it states
-   both possibilities and leaves the status to distinguish them, and the fallback keeps
-   a header for every changed file whether or not it carried hunks.
+   the assembled fallback entirely. The artefact is therefore `no-patch.txt`, and the fallback
+   keeps a header for every changed file whether or not it carried hunks.
+
+   `status` cannot distinguish the two cases -- a mode-only change and a binary content
+   change both arrive as `modified` with no hunks -- so leaving the reviewer to infer it
+   from the status was itself a false claim. The **blob identity** does distinguish
+   them, and the directory listing already carries it: an identical blob means a
+   metadata-only change, reviewable from `base/` and `diff.stat`, while a differing blob
+   means content changed that no artefact here can show. `base.manifest` records which,
+   and the prompt requires the reviewer to report a `content-changed-without-hunks`
+   entry as not examined.
+
+   Such an entry is also no longer skipped by the collection. A mode change or a pure
+   rename of a text file has pre-change bytes, and those bytes are exactly what the
+   prompt sends the reviewer to `base/` for; skipping them left no content and no
+   recorded gap for a change the prompt had just called reviewable. Entries carrying
+   hunks are fetched first, so a large binary cannot consume the budget ahead of the
+   textual change the review is about.
 
    One committed script, `.github/review-context/build_review_context.py`, derives
    `diff.stat`, `no-patch.txt` and `base/` from a single comparison payload. That

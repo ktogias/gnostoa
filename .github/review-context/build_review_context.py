@@ -116,17 +116,20 @@ def listing_endpoint(repository: str, directory: str, base_sha: str) -> str:
     return f"{_API}/repos/{repository}/contents/{encoded}?ref={base_sha}"
 
 
-def entry_type(
-    listing: Any,
-    name: str,
-) -> str | None:
-    """Return the declared type of ``name`` within a directory ``listing``."""
+def listing_entry(listing: Any, name: str) -> dict[str, Any] | None:
+    """Return the ``listing`` record for ``name``, or None when it is not there."""
     if not isinstance(listing, list):
         return None
     for item in listing:
         if isinstance(item, dict) and str(item.get("name")) == name:
-            return str(item.get("type"))
+            return item
     return None
+
+
+def entry_type(listing: Any, name: str) -> str | None:
+    """Return the declared type of ``name`` within a directory ``listing``."""
+    item = listing_entry(listing, name)
+    return str(item.get("type")) if item else None
 
 
 def base_path_of(entry: dict[str, Any]) -> str:
@@ -285,12 +288,18 @@ def collect(
     target.mkdir(exist_ok=True)
     written = 0
     unavailable: list[str] = []
+    classified: list[str] = []
     remaining = budget
-    for entry in comparison.get("files") or []:
+    # Files with hunks are fetched first so that a large binary cannot consume the
+    # budget ahead of a textual change. Entries without hunks are not skipped: a mode
+    # change or a pure rename of a text file has pre-change bytes, and those bytes are
+    # exactly what the reviewer is told to read from base/. Skipping them left the
+    # reviewer with no content and no gap recorded for a change it was told to review.
+    ordered = sorted(
+        comparison.get("files") or [], key=lambda item: item.get("patch") is None
+    )
+    for entry in ordered:
         name = str(entry["filename"])
-        if entry.get("patch") is None:
-            # Already named in no-patch.txt.
-            continue
         if entry.get("status") == "added":
             unavailable.append(f"added-by-candidate {name}")
             continue
@@ -306,7 +315,8 @@ def collect(
                 listing_endpoint(repository, directory, merge_base)
             )
         listing = listings[directory]
-        declared = entry_type(listing, pathlib.PurePosixPath(source).name)
+        record = listing_entry(listing, pathlib.PurePosixPath(source).name)
+        declared = str(record.get("type")) if record else None
         if declared is None:
             if isinstance(listing, list) and len(listing) >= _LISTING_CAP:
                 # The name may be present in the part the provider did not return.
@@ -335,6 +345,18 @@ def collect(
         destination.write_bytes(content)
         remaining -= len(content)
         written += 1
+        if entry.get("patch") is None:
+            # `status` cannot tell a mode-only change from a binary content change:
+            # both arrive as "modified" with no hunks. The blob identity can. Claiming
+            # the status distinguishes them would leave the reviewer able to call a
+            # binary change examined without ever seeing what changed.
+            base_blob = str(record.get("sha") or "") if record else ""
+            head_blob = str(entry.get("sha") or "")
+            classified.append(
+                f"metadata-only {name}"
+                if base_blob and base_blob == head_blob
+                else f"content-changed-without-hunks {name}"
+            )
     renames = [
         f"renamed {entry['previous_filename']} -> {entry['filename']}"
         for entry in comparison.get("files") or []
@@ -347,6 +369,12 @@ def collect(
         "bytes under a new name came from the old one.",
         f"Written: {written}. Unavailable: {len(unavailable)}. Renamed: {len(renames)}.",
         "",
+        "A change the comparison gave no hunks for is classified below by blob",
+        "identity, because its status cannot distinguish the cases: identical blobs",
+        "mean a metadata-only change, which is reviewable from base/ plus diff.stat,",
+        "while differing blobs mean content changed that no artefact here can show.",
+        "",
+        *classified,
         *renames,
         *unavailable,
     ]

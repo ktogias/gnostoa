@@ -775,7 +775,9 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             self.assertFalse(
                 any(f"contents/link?ref={merge_base}" in url for url in asked), asked
             )
-            self.assertFalse(any("asset.png" in line for line in unavailable))
+            # A hunkless entry is now accounted for rather than skipped in silence:
+            # this one is an addition, so the base genuinely has nothing for it.
+            self.assertIn("added-by-candidate asset.png", unavailable)
 
             manifest = (context / "base.manifest").read_text(encoding="utf-8")
             self.assertIn(merge_base, manifest)
@@ -834,6 +836,129 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             )
             _, unavailable = collector.collect(context, "o/r", 4096)
             self.assertEqual(["absent-at-merge-base vendor/late.py"], unavailable)
+
+    def test_a_change_without_hunks_still_gets_its_pre_change_bytes(self) -> None:
+        # A mode change or a pure rename of a text file has no hunks but does have
+        # pre-change bytes, and those bytes are what the prompt sends the reviewer to
+        # base/ for. Skipping such entries left the reviewer with no content and no gap
+        # recorded for a change it had just been told was reviewable.
+        collector = _load_script(BASE_COLLECTOR)
+        with tempfile.TemporaryDirectory() as scratch:
+            context = pathlib.Path(scratch)
+            _comparison(
+                context,
+                "d" * 40,
+                [
+                    _file("text.py", "modified"),
+                    _file("moved.py", "renamed", previous="was.py", patch=None),
+                    _file("exe.sh", "modified", patch=None),
+                ],
+            )
+            collector._provider_json = _provider(
+                [],
+                listings={
+                    "": [
+                        {"name": "text.py", "type": "file"},
+                        {"name": "was.py", "type": "file"},
+                        {"name": "exe.sh", "type": "file"},
+                    ]
+                },
+                contents={
+                    "text.py": _payload(b"text body\n"),
+                    "was.py": _payload(b"renamed body\n"),
+                    "exe.sh": _payload(b"script body\n"),
+                },
+            )
+            written, unavailable = collector.collect(context, "o/r", 4096)
+            self.assertEqual(3, written)
+            self.assertEqual([], unavailable)
+            # The rename's bytes come from the old path and land under the new one.
+            self.assertEqual(
+                "renamed body\n",
+                (context / "base" / "moved.py").read_text(encoding="utf-8"),
+            )
+            self.assertEqual(
+                "script body\n",
+                (context / "base" / "exe.sh").read_text(encoding="utf-8"),
+            )
+            manifest = (context / "base.manifest").read_text(encoding="utf-8")
+            self.assertIn("Written: 3", manifest)
+            self.assertIn("renamed was.py -> moved.py", manifest)
+
+    def test_a_hunkless_change_is_classified_by_blob_identity(self) -> None:
+        # `status` is "modified" for both a mode-only change and a binary content
+        # change, so it cannot distinguish them. Claiming it could would let the
+        # reviewer call a binary change examined without seeing what changed.
+        collector = _load_script(BASE_COLLECTOR)
+        same = "1" * 40
+        with tempfile.TemporaryDirectory() as scratch:
+            context = pathlib.Path(scratch)
+            mode_only = _file("mode.sh", "modified", patch=None)
+            mode_only["sha"] = same
+            binary = _file("image.png", "modified", patch=None)
+            binary["sha"] = "2" * 40
+            _comparison(context, "d" * 40, [mode_only, binary])
+            collector._provider_json = _provider(
+                [],
+                listings={
+                    "": [
+                        # Identical blob: only the mode changed.
+                        {"name": "mode.sh", "type": "file", "sha": same},
+                        # Different blob: the content changed with no hunks.
+                        {"name": "image.png", "type": "file", "sha": "3" * 40},
+                    ]
+                },
+                contents={
+                    "mode.sh": _payload(b"#!/bin/sh\n"),
+                    "image.png": _payload(b"\x89PNG\r\n"),
+                },
+            )
+            collector.collect(context, "o/r", 4096)
+            manifest = (context / "base.manifest").read_text(encoding="utf-8")
+            self.assertIn("metadata-only mode.sh", manifest)
+            self.assertIn("content-changed-without-hunks image.png", manifest)
+            self.assertNotIn("metadata-only image.png", manifest)
+
+    def test_prompt_defers_the_hunkless_verdict_to_the_manifest(self) -> None:
+        prompt = " ".join(
+            _claude_step(load_yaml(MENTION_WORKFLOW))["with"]["prompt"].split()
+        )
+        self.assertIn("base.manifest classifies it by blob identity", prompt)
+        self.assertIn("content-changed-without-hunks as not", prompt)
+        # The earlier claim was false and must not come back.
+        self.assertNotIn("reviewable from its status", prompt)
+
+    def test_hunked_files_get_the_budget_before_hunkless_ones(self) -> None:
+        # Otherwise a large binary, which has no hunks, could consume the budget ahead
+        # of the textual change the review is actually about.
+        collector = _load_script(BASE_COLLECTOR)
+        with tempfile.TemporaryDirectory() as scratch:
+            context = pathlib.Path(scratch)
+            _comparison(
+                context,
+                "d" * 40,
+                [
+                    _file("blob.bin", "modified", patch=None),
+                    _file("code.py", "modified"),
+                ],
+            )
+            collector._provider_json = _provider(
+                [],
+                listings={
+                    "": [
+                        {"name": "blob.bin", "type": "file"},
+                        {"name": "code.py", "type": "file"},
+                    ]
+                },
+                contents={
+                    "blob.bin": _payload(b"B" * 64),
+                    "code.py": _payload(b"C" * 16),
+                },
+            )
+            written, unavailable = collector.collect(context, "o/r", 32)
+            self.assertEqual(1, written)
+            self.assertTrue((context / "base" / "code.py").is_file())
+            self.assertEqual(["over-budget blob.bin"], unavailable)
 
     def test_the_budget_names_the_files_it_drops(self) -> None:
         collector = _load_script(BASE_COLLECTOR)
@@ -1248,12 +1373,12 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                     {
                         "files": [
                             {
-                                # No patch, so the step needs no network for base/:
-                                # the exact-base fetch is covered by its own test with
-                                # the provider call replaced.
+                                # Added, so the base holds nothing and the step needs
+                                # no network: the fetch paths have their own tests,
+                                # including one against a real HTTP server.
                                 "filename": "f.txt",
                                 "patch": None,
-                                "status": "modified",
+                                "status": "added",
                                 "additions": 4000,
                                 "deletions": 1,
                                 "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
