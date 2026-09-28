@@ -424,46 +424,57 @@ No new dependency, service or runtime is introduced.
    preserves Markdown images.
 
    A committed script therefore reads the execution file the action exposes, extracts
-   the reviewer's final text, and neutralises every render-time fetch vector before
-   appending it to the summary: an image becomes literal text whether inline or
-   reference-style, raw HTML is escaped since GitHub's Markdown admits `<img>`,
-   and `javascript:`, `data:` and `vbscript:` URLs are defused. Fenced code is passed
-   through unchanged, because nothing inside a fence renders and a report about code is
-   unreadable if its code is escaped. The report is bounded and truncated with a
-   notice. The step runs on `always()`, so a failed reviewer is visible rather than
-   silent.
+   the reviewer's final text, and appends it to the summary as **literal text inside
+   one fenced block that the script owns**. Nothing inside a code fence is interpreted
+   as Markdown or HTML, so no image, `<img>`, link or scheme in the report can cause a
+   fetch. The report is bounded and truncated with a notice -- before the block is
+   built, so a cut can never land inside the closing fence and leave the rest of the
+   summary unterminated. The step runs on `always()`, so a failed reviewer is visible
+   rather than silent.
 
-   Fence tracking follows CommonMark exactly, because an approximation of it is a
-   bypass. An earlier version normalised every fence to three characters, so a
-   four-backtick opening could be "closed" by three and reopened by four: Markdown had
-   left the code block while the scanner still believed it was inside, and everything
-   after was published raw. A closing fence must therefore use the same character, be at
-   least as long as the opening one, and carry nothing but whitespace after it. The
-   scanner is deliberately **strict about openings** and lenient about closings, because
-   failing to recognise an opening merely escapes text that would not have rendered,
-   while inventing one passes rendered content through untouched.
+   **The fence is chosen longer than the longest run of backticks anywhere in the
+   report**, so no line in it can close the block, whatever containers the text puts
+   around it. That is the whole safety argument: one invariant, checkable in a line,
+   with no model of Markdown's block structure behind it.
 
-   The contract test asserts the neutralised output carries none of those vectors
-   **and** that the same checks fire on the raw input, since a sanitiser test that
-   cannot fail proves nothing. It also checks the property that actually matters rather
-   than the one that is easy to check: every line CommonMark would *render* must have
-   been sanitised.
+   The shape it replaced scanned for fences and escaped only the lines it believed were
+   outside them, and it was **wrong twice**. First, normalising every fence to three
+   characters let a four-backtick opening be "closed" by three and reopened by four.
+   Following CommonMark exactly fixed that one -- and the second is the instructive one,
+   because it was not a coding mistake at all. CommonMark scopes a fence to its
+   container: `- a`, then two spaces and a fence, opens a fence **inside the list item**,
+   and the next unindented line cannot continue the item lazily, so the item and its
+   fence both close and what follows renders. The scanner, which tracked fences without
+   tracking containers, still believed it was inside and published an image raw. It was
+   reimplementing CommonMark block structure, and each fix made it a slightly better
+   implementation of the wrong thing. Removing the need to know where Markdown is
+   removes the class, which is the same move rules 20 and 21 make.
 
-   That check is evaluated against a fence tracker written separately in the test --
-   which is a re-implementation, not an independent authority. It is written by the same
-   author as the subject and therefore shares any misreading of CommonMark the subject
-   has. It catches a coding mistake, which is what a suite can do offline; it cannot
-   catch a wrong reading of the specification.
+   The cost is real and is accepted: the report renders as monospace text, so its
+   headings are not headings and its `file:line` references are not links. A report
+   whose content is exact and unrendered is worth more here than a rendered one whose
+   safety rests on matching another parser's block structure.
 
-   The real oracle is GitHub's own renderer, and it was used. Against head `8ba1aaca`,
-   each vector was rendered through `gh api /markdown` with `mode=gfm` before and after
-   sanitisation: inline image, reference image, raw `<img>`, the four-then-three-then-four
-   fence, a backtick fence with a backtick in its info string, and a tab-indented run.
-   **Every raw form rendered an `<img>`; no sanitised form did.** That check needs the
-   network and so cannot run in the suite, which is why it is recorded here with the
-   head it was run against rather than asserted by a test.
+   The contract test asserts the block's boundaries, that the report survives **byte for
+   byte** inside it, and that no line of the report can close the fence -- over the
+   vectors above, both regressions included. The closing rule it checks against is
+   re-implemented in the test and so shares any misreading of CommonMark with the
+   subject: it catches a coding mistake, which is what a suite can do offline, not a
+   wrong reading of the specification.
 
-23. **Each review-context script confines its own paths.** The three committed scripts
+   The real oracle is GitHub's own renderer, and it was used. Against the head that
+   introduced this shape, thirteen vectors were rendered through `gh api /markdown`
+   with `mode=gfm`: inline and reference images, raw `<img>`, `<iframe>`, `javascript:`
+   and `data:` links, an HTML comment, closing `</code></pre>` tags, a fence inside a
+   list item, a fence inside a blockquote, the four-then-three-then-four escalation, a
+   tab-indented fence, a backtick in the info string, a tilde fence, and a report that
+   closes its own fence. **None rendered an `<img>`, a camo URL or an anchor.** The
+   same list-item vector rendered a camo `<img>` through the previous shape, which is
+   how the second defect was confirmed rather than argued. That check needs the network
+   and so cannot run in the suite, which is why it is recorded here.
+
+23. **Every review-context script confines its paths, through one check.** The
+   committed scripts
    take their directories and files from the workflow, which is trusted -- but a value
    that reaches a file read or write is checked where it is **used**, not where it was
    set. Each resolves its argument and refuses anything outside the runner area it
@@ -478,6 +489,16 @@ No new dependency, service or runtime is introduced.
    lose the review over an assumption about its layout. A later edit of the workflow therefore cannot point
    a collector at `/etc` or the publisher at an arbitrary file, and a static analyser
    reading these scripts in isolation sees the validation rather than an unchecked path.
+
+   There is exactly **one implementation**, in
+   `.github/review-context/review_context_paths.py`, which the scripts import. It began
+   as a copy in each, and that check has since been wrong twice -- it accepted a leading
+   dash, and it accepted an empty argument -- with each fix having to be made in three
+   places. A second copy is a second chance to fix one and miss another. Each script is
+   run as `python3 .github/review-context/<name>.py`, so the directory holding all of
+   them is what Python puts first on its own search path: the import needs no path
+   manipulation and never consults the caller's `PATH`. The module is owned by the same
+   guardrail as the scripts that import it.
 
 24. **The session is bounded in turns.** `--max-turns` caps how long the reviewer may
    iterate. The prompt bound of rule 3 limits what the session starts with; this limits

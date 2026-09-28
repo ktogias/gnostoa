@@ -25,42 +25,13 @@ the repository's default branch, so this file is not candidate-supplied.
 from __future__ import annotations
 
 import json
-import os
 import pathlib
 import sys
 from typing import Any
 
+from review_context_paths import within
+
 _FILE_CAP = 300
-
-
-def _within(raw: str, root_variable: str, *, must_exist: bool) -> pathlib.Path:
-    """Resolve ``raw`` and refuse anything outside the runner area it belongs to.
-
-    This script takes its path from the workflow, which is trusted -- but a value that
-    reaches a file read or write is worth checking where it is used, not where it was
-    set, and the check costs nothing. When the environment names the root, the resolved
-    path must sit inside it; otherwise it must at least be absolute with an existing
-    parent, which is what a local test run gives.
-    """
-    if not raw or not raw.strip():
-        # An empty argument resolves to the working directory, which is a real path and
-        # would sail through every check below. A degenerate input is a reason to stop.
-        raise ValueError("refusing an empty path")
-    path = pathlib.Path(raw).resolve()
-    if must_exist and not path.exists():
-        raise ValueError(f"refusing a path that does not exist: {raw!r}")
-    if not path.parent.exists():
-        raise ValueError(f"refusing a path whose parent does not exist: {raw!r}")
-    if path.is_dir() and not must_exist:
-        # A file is expected here; a directory would fail later with a confusing error
-        # or, worse, silently name something writable.
-        raise ValueError(f"refusing a directory where a file is expected: {raw!r}")
-    root = os.environ.get(root_variable)
-    if root:
-        resolved_root = pathlib.Path(root).resolve()
-        if not path.is_relative_to(resolved_root):
-            raise ValueError(f"refusing {raw!r}: outside {root_variable}")
-    return path
 
 
 def base_path_of(entry: dict[str, Any]) -> str:
@@ -153,7 +124,7 @@ def main(argv: list[str]) -> int:
     if len(argv) != 2:
         print(f"usage: {argv[0]} <context-dir>", file=sys.stderr)
         return 2
-    build(_within(argv[1], "GITHUB_WORKSPACE", must_exist=True))
+    build(within(argv[1], "GITHUB_WORKSPACE", must_exist=True))
     return 0
 
 

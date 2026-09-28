@@ -13,14 +13,25 @@ rendered, with no click. That is an exfiltration channel out of a credential-bea
 job, and it is the one channel none of the other controls in Decision 0094 touch: they
 all govern what the reviewer *reads*, not what it *publishes*.
 
-So the action's own rendering is disabled and the report is published here instead,
-after every render-time fetch vector is neutralised:
+So the action's own rendering is disabled and the report is published here instead, as
+**literal text inside one fenced code block that this script owns**. Nothing inside a
+code fence is interpreted as Markdown or HTML, so no image, no `<img>`, no link and no
+scheme in the report can cause a fetch -- there is nothing to neutralise line by line.
 
-* an image becomes literal text, inline or reference-style, so nothing is requested;
-* raw HTML is escaped, since GitHub's Markdown allows `<img>` and friends;
-* `javascript:` and `data:` URLs are defused;
-* fenced code is left alone, because nothing inside a fence renders -- and a report
-  about code is unreadable if its code is mangled.
+That shape replaced one that scanned for fences and escaped only the lines it believed
+were outside them. It was wrong twice, and the second time is the instructive one: a
+fence opened inside a list item (`- a` then two spaces and a fence) is closed by the
+next unindented line, because that line cannot continue the item lazily. Markdown left
+the code block; the scanner did not, and passed an image through. The scanner was
+reimplementing CommonMark block structure, and every fix made it a slightly better
+implementation of the wrong thing. The fence is chosen **longer than the longest run of
+backticks anywhere in the report**, so no line in it can close the block -- one
+invariant, checkable in one line, rather than a container-aware parser.
+
+The cost is real and is accepted: the report renders as monospace text, so its headings
+are not headings and its `file:line` references are not links. A report whose content is
+exact and unrendered is worth more here than a rendered one whose safety rests on
+matching another parser's block structure.
 
 Bounded, too: a report is truncated with a notice rather than pasted at any length.
 
@@ -31,54 +42,16 @@ the repository's default branch, so this file is not candidate-supplied.
 from __future__ import annotations
 
 import json
-import os
 import pathlib
 import re
 import sys
 from typing import Any
 
+from review_context_paths import within
+
 _MAX_BYTES = 65536
-# CommonMark: an opening fence is up to three spaces of indent then at least three
-# backticks or tildes, and a **closing** fence must use the same character and be at
-# least as long, with nothing but whitespace after it. Normalising every fence to three
-# characters let a four-backtick open be "closed" by three and then re-opened by four --
-# at which point Markdown had left the code block while this scanner believed it was
-# still inside, and anything after passed through unsanitised.
-_FENCE = re.compile(r"\A {0,3}(`{3,}|~{3,})(.*)\Z")
-# Escaping the bracket, not the bang: `!\[x](u)` renders as literal text,
-# whereas escaping only the bang would leave a clickable link behind.
-_IMAGE = re.compile(r"!\[")
-_DANGEROUS_SCHEME = re.compile(r"(?i)\b(javascript|data|vbscript)\s*:")
-
-
-def _within(raw: str, root_variable: str, *, must_exist: bool) -> pathlib.Path:
-    """Resolve ``raw`` and refuse anything outside the runner area it belongs to.
-
-    These scripts take their paths from the workflow, which is trusted -- but a value
-    that reaches a file read or write is worth checking where it is used, not where it
-    was set, and the check costs nothing. When the environment names the root, the
-    resolved path must sit inside it; otherwise it must at least be absolute with an
-    existing parent, which is what a local test run gives.
-    """
-    if not raw or not raw.strip():
-        # An empty argument resolves to the working directory, which is a real path and
-        # would sail through every check below. A degenerate input is a reason to stop.
-        raise ValueError("refusing an empty path")
-    path = pathlib.Path(raw).resolve()
-    if must_exist and not path.exists():
-        raise ValueError(f"refusing a path that does not exist: {raw!r}")
-    if not path.parent.exists():
-        raise ValueError(f"refusing a path whose parent does not exist: {raw!r}")
-    if path.is_dir() and not must_exist:
-        # A file is expected here; a directory would fail later with a confusing error
-        # or, worse, silently name something writable.
-        raise ValueError(f"refusing a directory where a file is expected: {raw!r}")
-    root = os.environ.get(root_variable)
-    if root:
-        resolved_root = pathlib.Path(root).resolve()
-        if not path.is_relative_to(resolved_root):
-            raise ValueError(f"refusing {raw!r}: outside {root_variable}")
-    return path
+_MIN_FENCE = 3
+_BACKTICK_RUN = re.compile(r"`+")
 
 
 def final_report(turns: list[Any]) -> str:
@@ -106,46 +79,24 @@ def final_report(turns: list[Any]) -> str:
     return ""
 
 
-def neutralise(text: str) -> str:
-    """Return ``text`` with every render-time fetch vector defused.
+def enclosing_fence(text: str) -> str:
+    """Return a backtick fence no line of ``text`` can close.
 
-    Fenced code is passed through: nothing inside a fence renders, and mangling it
-    would make a report about code unreadable. A fence the report opens and never
-    closes therefore protects nothing an attacker gains by -- the content simply stays
-    unrendered.
+    CommonMark closes a fenced block at a line whose first non-space run is the same
+    character and **at least as long** as the opening one. A fence longer than the
+    longest run of backticks anywhere in ``text`` therefore has no possible closing
+    line, whatever containers -- lists, blockquotes -- the text puts around it.
     """
-    out: list[str] = []
-    fence: tuple[str, int] | None = None
-    for line in text.splitlines():
-        marker = _FENCE.match(line)
-        run = marker.group(1) if marker else ""
-        trailing = marker.group(2) if marker else ""
-        if fence is None:
-            # Strict about opening: recognising a fence Markdown does not would pass
-            # rendered content through untouched. Failing to recognise one merely
-            # escapes text inside a code block, which is safe.
-            opens = bool(marker) and not (run[0] == "`" and "`" in trailing)
-            if opens:
-                fence = (run[0], len(run))
-                out.append(line)
-                continue
-        else:
-            character, length = fence
-            closes = (
-                bool(marker)
-                and run[0] == character
-                and len(run) >= length
-                and not trailing.strip()
-            )
-            out.append(line)
-            if closes:
-                fence = None
-            continue
-        safe = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        safe = _IMAGE.sub(r"!\\[", safe)
-        safe = _DANGEROUS_SCHEME.sub(r"\1&#58;", safe)
-        out.append(safe)
-    return "\n".join(out)
+    longest = max((len(run) for run in _BACKTICK_RUN.findall(text)), default=0)
+    return "`" * max(_MIN_FENCE, longest + 1)
+
+
+def neutralise(text: str) -> str:
+    """Return ``text`` as literal content of a fenced block nothing can escape."""
+    fence = enclosing_fence(text)
+    # `text` as the info string, so a renderer applies no syntax highlighting and, more
+    # to the point, treats the content as data rather than as a language it knows.
+    return f"{fence}text\n{text}\n{fence}"
 
 
 def render(execution_file: pathlib.Path) -> str:
@@ -159,16 +110,18 @@ def render(execution_file: pathlib.Path) -> str:
     report = final_report(turns)
     if not report.strip():
         return "## Review report unavailable\n\nThe reviewer produced no final text.\n"
-    body = neutralise(report)
-    encoded = body.encode("utf-8")
+    # Truncated *before* the block is built, so the cut can never land inside the
+    # closing fence and leave the rest of the summary inside an unterminated block.
+    encoded = report.encode("utf-8")
     if len(encoded) > _MAX_BYTES:
-        body = encoded[:_MAX_BYTES].decode("utf-8", "ignore")
-        body += f"\n\n[report truncated at {_MAX_BYTES} bytes]"
+        report = encoded[:_MAX_BYTES].decode("utf-8", "ignore")
+        report += f"\n\n[report truncated at {_MAX_BYTES} bytes]"
     return (
         "## Claude review report\n\n"
-        "Published by the repository, not by the action: images and raw HTML are\n"
-        "neutralised because a step summary is public and renders Markdown.\n\n"
-        f"{body}\n"
+        "Published by the repository, not by the action. The report is shown as literal\n"
+        "text: a step summary is public and renders Markdown, so an image in reviewer\n"
+        "output would be fetched at render time.\n\n"
+        f"{neutralise(report)}\n"
     )
 
 
@@ -176,13 +129,13 @@ def main(argv: list[str]) -> int:
     if len(argv) != 3:
         print(f"usage: {argv[0]} <execution-file> <summary-file>", file=sys.stderr)
         return 2
-    execution = _within(argv[1], "RUNNER_TEMP", must_exist=True)
+    execution = within(argv[1], "RUNNER_TEMP", must_exist=True)
     # The summary path is not held to a root. GITHUB_STEP_SUMMARY happens to live under
     # RUNNER_TEMP on today's hosted runners, but that is an implementation detail, and
     # refusing the report because the runner moved a file would lose the review over an
     # assumption about its layout. It is still resolved, required to be absolute with an
     # existing parent, and refused if it traverses.
-    summary = _within(argv[2], "", must_exist=False)
+    summary = within(argv[2], "", must_exist=False)
     with summary.open("a", encoding="utf-8") as handle:
         handle.write(render(execution))
     return 0

