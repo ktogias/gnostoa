@@ -254,7 +254,15 @@ jobs:
           # GitHub data. Tag mode instead retrieves every comment and review with
           # no cap, which exhausted the request on a large Pull Request. Every
           # interpolation below is independent of discussion length.
-          display_report: true
+          # The action's own input documents that this "outputs Claude-authored
+          # content in the GitHub Step Summary" and "should only be used in cases
+          # where the action is used solely with trusted input". This job's input is a
+          # candidate Pull Request, which is untrusted by definition, and a step
+          # summary renders Markdown including images -- so a report echoing
+          # attacker-supplied text could carry an image URL that the browser fetches on
+          # render, with no click. The report is published by the step below instead,
+          # with every render-time fetch vector neutralised.
+          display_report: false
           # No Bash of any shape. The action disables Bash by default and it stays
           # disabled: a granted command is run through a shell, so redirection and
           # substitution remain available whatever the invoked program validates.
@@ -287,6 +295,7 @@ jobs:
               }
             }
           claude_args: >-
+            --max-turns 40
             --allowedTools "Read,Grep,Glob,mcp__github_ci__get_ci_status,mcp__github_ci__get_workflow_run_details,mcp__github_ci__download_job_log"
           prompt: |
             Read-only review of a Gnostoa Pull Request. You have no pre-loaded
@@ -368,3 +377,15 @@ jobs:
             --- request ---
             ${{ github.event.comment.body }}
             ${{ github.event.review.body }}
+
+      # Published by the repository rather than by the action, so the report passes
+      # through a sanitiser first. Runs even when the reviewer failed, so a failure is
+      # visible rather than silent.
+      - name: Publish the review report
+        if: always() && steps.claude.outputs.execution_file != ''
+        env:
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+        run: |
+          set -eu
+          python3 .github/review-context/publish_report.py \
+            "${EXECUTION_FILE}" "${GITHUB_STEP_SUMMARY}"

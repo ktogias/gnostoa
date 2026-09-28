@@ -674,6 +674,7 @@ guardrails:
       - .github/workflows/claude.yml
       - .github/review-context/chunk_diff.py
       - .github/review-context/build_review_context.py
+      - .github/review-context/publish_report.py
       - ci/github-actions.yml
       - ci/gitlab-ci.yml
       - ci/security_scan.py
