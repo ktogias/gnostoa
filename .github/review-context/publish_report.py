@@ -31,17 +31,46 @@ the repository's default branch, so this file is not candidate-supplied.
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import re
 import sys
 from typing import Any
 
 _MAX_BYTES = 65536
-_FENCE = re.compile(r"\A\s{0,3}(`{3,}|~{3,})")
+# CommonMark: an opening fence is up to three spaces of indent then at least three
+# backticks or tildes, and a **closing** fence must use the same character and be at
+# least as long, with nothing but whitespace after it. Normalising every fence to three
+# characters let a four-backtick open be "closed" by three and then re-opened by four --
+# at which point Markdown had left the code block while this scanner believed it was
+# still inside, and anything after passed through unsanitised.
+_FENCE = re.compile(r"\A {0,3}(`{3,}|~{3,})(.*)\Z")
 # Escaping the bracket, not the bang: `!\[x](u)` renders as literal text,
 # whereas escaping only the bang would leave a clickable link behind.
 _IMAGE = re.compile(r"!\[")
 _DANGEROUS_SCHEME = re.compile(r"(?i)\b(javascript|data|vbscript)\s*:")
+
+
+def _within(raw: str, root_variable: str, *, must_exist: bool) -> pathlib.Path:
+    """Resolve ``raw`` and refuse anything outside the runner area it belongs to.
+
+    These scripts take their paths from the workflow, which is trusted -- but a value
+    that reaches a file read or write is worth checking where it is used, not where it
+    was set, and the check costs nothing. When the environment names the root, the
+    resolved path must sit inside it; otherwise it must at least be absolute with an
+    existing parent, which is what a local test run gives.
+    """
+    path = pathlib.Path(raw).resolve()
+    if must_exist and not path.exists():
+        raise ValueError(f"refusing a path that does not exist: {raw!r}")
+    if not path.parent.exists():
+        raise ValueError(f"refusing a path whose parent does not exist: {raw!r}")
+    root = os.environ.get(root_variable)
+    if root:
+        resolved_root = pathlib.Path(root).resolve()
+        if not path.is_relative_to(resolved_root):
+            raise ValueError(f"refusing {raw!r}: outside {root_variable}")
+    return path
 
 
 def final_report(turns: list[Any]) -> str:
@@ -78,16 +107,30 @@ def neutralise(text: str) -> str:
     unrendered.
     """
     out: list[str] = []
-    fence: str | None = None
+    fence: tuple[str, int] | None = None
     for line in text.splitlines():
         marker = _FENCE.match(line)
-        if fence is None and marker:
-            fence = marker.group(1)[0] * 3
+        run = marker.group(1) if marker else ""
+        trailing = marker.group(2) if marker else ""
+        if fence is None:
+            # Strict about opening: recognising a fence Markdown does not would pass
+            # rendered content through untouched. Failing to recognise one merely
+            # escapes text inside a code block, which is safe.
+            opens = bool(marker) and not (run[0] == "`" and "`" in trailing)
+            if opens:
+                fence = (run[0], len(run))
+                out.append(line)
+                continue
+        else:
+            character, length = fence
+            closes = (
+                bool(marker)
+                and run[0] == character
+                and len(run) >= length
+                and not trailing.strip()
+            )
             out.append(line)
-            continue
-        if fence is not None:
-            out.append(line)
-            if marker and marker.group(1)[0] * 3 == fence:
+            if closes:
                 fence = None
             continue
         safe = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -125,9 +168,15 @@ def main(argv: list[str]) -> int:
     if len(argv) != 3:
         print(f"usage: {argv[0]} <execution-file> <summary-file>", file=sys.stderr)
         return 2
-    summary = pathlib.Path(argv[2])
+    execution = _within(argv[1], "RUNNER_TEMP", must_exist=True)
+    # The summary path is not held to a root. GITHUB_STEP_SUMMARY happens to live under
+    # RUNNER_TEMP on today's hosted runners, but that is an implementation detail, and
+    # refusing the report because the runner moved a file would lose the review over an
+    # assumption about its layout. It is still resolved, required to be absolute with an
+    # existing parent, and refused if it traverses.
+    summary = _within(argv[2], "", must_exist=False)
     with summary.open("a", encoding="utf-8") as handle:
-        handle.write(render(pathlib.Path(argv[1])))
+        handle.write(render(execution))
     return 0
 
 
