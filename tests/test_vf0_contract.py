@@ -641,11 +641,33 @@ class VF0RelationTests(unittest.TestCase):
             started_at=600,
             completed_at=700,
         )
+        doc["candidate"]["observed_at"] = 500
         _rebind(doc)
         self.assertEqual("MATCH", self.core.evaluate(doc)["status"])
         doc["request"]["follow_up"] = None
         _rebind(doc)
         self.assertRejected(doc)
+
+    def test_emergency_evidence_must_follow_the_exact_candidate(self) -> None:
+        doc = self.document
+        doc["request"].update(
+            change_class="emergency",
+            mode="EMERGENCY_POST_EVENT",
+            follow_up=_ref("required-followup"),
+        )
+        doc["evidence"].update(
+            mode="EMERGENCY_POST_EVENT",
+            chronology="EMERGENCY_POST_EVENT",
+            started_at=600,
+            completed_at=700,
+        )
+        doc["candidate"]["observed_at"] = 800
+        _rebind(doc)
+        self.assertRejected(doc)
+
+        doc["candidate"]["observed_at"] = 500
+        _rebind(doc)
+        self.assertEqual("MATCH", self.core.evaluate(doc)["status"])
 
     def test_json_duplicate_nonfinite_invalid_utf8_and_nonobject_reject(self) -> None:
         for raw in [

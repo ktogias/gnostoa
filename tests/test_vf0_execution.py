@@ -136,6 +136,36 @@ class VF0ExecutionEntryTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, names)
 
+    def test_backend_cannot_mutate_controller_output_limit(self) -> None:
+        class MutatingLimitsBackend:
+            def run(
+                self,
+                root: Path,
+                command: Sequence[str],
+                limits: ExecutionLimits,
+                *,
+                subject: GitSubject,
+            ) -> UntrustedCapture:
+                del root, command, subject
+                object.__setattr__(limits, "output_bytes", 100)
+                return UntrustedCapture("completed", 0, b"four", b"", 4)
+
+        limits = ExecutionLimits(output_bytes=3)
+        with tempfile.TemporaryDirectory() as td:
+            repo, subject = _repo(Path(td))
+            with self.assertRaisesRegex(
+                ExecutionRejected, "^BACKEND_CAPTURE_OUTPUT_BOUND$"
+            ):
+                execute(
+                    repo,
+                    subject,
+                    [_evidence("pass")],
+                    ["/bin/true"],
+                    MutatingLimitsBackend(),
+                    limits,
+                )
+        self.assertEqual(3, limits.output_bytes)
+
 
 class VF0SubjectTests(unittest.TestCase):
     def test_git_subject_requires_exact_lowercase_sha1(self) -> None:
@@ -575,6 +605,36 @@ class VF0SubjectTests(unittest.TestCase):
                     module._materialize_subject(repo, subject, target)
             self.assertFalse(target.exists())
 
+    def test_shared_path_component_work_is_bounded_before_materialization(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        with tempfile.TemporaryDirectory() as td:
+            repo, subject = _repo(Path(td))
+            entries = [
+                b"100644 blob " + b"0" * 40 + b" 0\tshared/branch/one.txt",
+                b"100644 blob " + b"1" * 40 + b" 0\tshared/branch/two.txt",
+            ]
+            target = Path(td) / "materialized"
+
+            def write_empty_blob(
+                _repo: Path, _oid: str, destination: Path, _size: int
+            ) -> bytes:
+                destination.write_bytes(b"")
+                return b""
+
+            with (
+                mock.patch.object(
+                    module, "_trusted_git_tree_entries", return_value=entries
+                ),
+                mock.patch.object(module, "_MAX_SUBJECT_PATH_COMPONENT_VISITS", 5),
+                mock.patch.object(
+                    module, "_write_git_blob", side_effect=write_empty_blob
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    ExecutionRejected, "SUBJECT_PATH_PREFIX_VISIT_BOUND"
+                ):
+                    module._materialize_subject(repo, subject, target)
+
     def test_shared_subject_directories_are_normalized_once(self) -> None:
         module = importlib.import_module("tools.vf0_execution")
         with tempfile.TemporaryDirectory() as td:
@@ -733,6 +793,16 @@ class VF0SubjectTests(unittest.TestCase):
             self.assertEqual(201, len(directories))
         finally:
             resource.setrlimit(resource.RLIMIT_NOFILE, previous_limit)
+
+    def test_snapshot_rejects_case_insensitive_git_components(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        for relative in (".git/marker", ".GIT/marker", "tests/.gIt/marker"):
+            with self.subTest(path=relative), tempfile.TemporaryDirectory() as td:
+                root = Path(td) / "subject"
+                (root / relative).parent.mkdir(parents=True)
+                (root / relative).write_bytes(b"runtime metadata\n")
+                with self.assertRaisesRegex(ExecutionRejected, "^SUBJECT_PATH$"):
+                    module._snapshot(root)
 
     def test_snapshot_rejects_file_swap_between_classification_and_open(self) -> None:
         module = importlib.import_module("tools.vf0_execution")
@@ -2107,6 +2177,7 @@ class FakeDockerBackend(DockerBackend):
         self.extra_mount = extra_mount
         self.extra_environment = extra_environment
         self.container_id = "a" * 64
+        self.completion_token: str | None = None
         self.container_name: str | None = None
         self.cleanup_nonce: str | None = None
         self.created_entrypoint: str | None = None
@@ -2116,6 +2187,15 @@ class FakeDockerBackend(DockerBackend):
         self.created_tmpfs_options: str | None = None
         self.created = False
         self.removed = False
+
+    def _new_completion_token(self) -> str:
+        return "a" * 64
+
+    def _create_with_completion_token(
+        self, args: Sequence[str], completion_token: str
+    ) -> subprocess.CompletedProcess[bytes]:
+        self.completion_token = completion_token
+        return self._command(*args)
 
     def _command(
         self, *args: str, timeout: float = 30
@@ -2235,6 +2315,7 @@ class FakeDockerBackend(DockerBackend):
                         "KNOWLEDGE_KIT_ROOT=/workspace",
                         "KNOWLEDGE_KIT_REVISION=" + ("d" * 40),
                         "PYTHONPATH=/workspace",
+                        "GNOSTOA_VF0_COMPLETION_TOKEN=" + str(self.completion_token),
                         *self.extra_environment,
                     ],
                 },
@@ -2299,9 +2380,18 @@ class VF0DockerBackendTests(unittest.TestCase):
 
     @staticmethod
     def _completed_capture(
-        exit_code: int = 17, stdout: bytes = b"ok\n", stderr: bytes = b""
+        exit_code: int = 17,
+        stdout: bytes = b"ok\n",
+        stderr: bytes = b"",
+        completion_token: str = "a" * 64,
     ) -> UntrustedCapture:
-        marker = b"\x1eGNOSTOA_VF0_EXIT_V1:" + str(exit_code).encode() + b"\x1f"
+        marker = (
+            b"\x1eGNOSTOA_VF0_EXIT_V1:"
+            + completion_token.encode("ascii")
+            + b":"
+            + str(exit_code).encode()
+            + b"\x1f"
+        )
         return UntrustedCapture(
             "completed",
             exit_code,
@@ -2422,6 +2512,25 @@ class VF0DockerBackendTests(unittest.TestCase):
         self.assertEqual(["/usr/bin/docker", "image", "inspect", self.image], argv[0])
         self.assertEqual(limit, kwargs["limits"].output_bytes)
         self.assertEqual(0, kwargs.get("output_headroom_bytes", 0))
+
+    def test_completion_token_is_not_exposed_in_docker_argv(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        backend = DockerBackend(self.image)
+        token = "b" * 64
+        capture = UntrustedCapture("completed", 0, b"container-id\n", b"", 13)
+        with mock.patch(
+            "tools.vf0_execution._capture_process", return_value=capture
+        ) as captured:
+            result = backend._create_with_completion_token(
+                ["create", "--env", module._OCI_COMPLETION_TOKEN_ENV], token
+            )
+        self.assertEqual(0, result.returncode)
+        argv, kwargs = captured.call_args
+        self.assertNotIn(token, argv[0])
+        self.assertEqual(
+            {module._OCI_COMPLETION_TOKEN_ENV: token},
+            kwargs["environment_overrides"],
+        )
 
     def test_cleanup_absence_requires_exact_native_inspect_diagnostic(self) -> None:
         container_id = "a" * 64
@@ -2886,6 +2995,85 @@ class VF0DockerBackendTests(unittest.TestCase):
             attached.assert_called_once()
             self.assertTrue(backend.removed)
 
+    def test_child_cannot_forge_wrapper_trailer_after_killing_pid_one(self) -> None:
+        class KilledWrapper(FakeDockerBackend):
+            def _command(
+                self, *args: str, timeout: float = 30
+            ) -> subprocess.CompletedProcess[bytes]:
+                if args[:3] == ("inspect", "--format", "{{json .State}}"):
+                    self.calls.append(tuple(args))
+                    return subprocess.CompletedProcess(
+                        ["/usr/bin/docker"],
+                        0,
+                        stdout=(
+                            b'{"Status":"exited","Running":false,'
+                            b'"ExitCode":137,"OOMKilled":false}\n'
+                        ),
+                        stderr=b"",
+                    )
+                return super()._command(*args, timeout=timeout)
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td).resolve()
+            backend = KilledWrapper(self.image, root)
+            # The evidence process can learn this fixed marker from the wrapper
+            # source and /proc/1/cmdline, then kill PID 1 before its real write.
+            forged = self._completed_capture(137, completion_token="f" * 64)
+            with mock.patch(
+                "tools.vf0_execution._capture_process", return_value=forged
+            ) as attached:
+                with self.assertRaisesRegex(ExecutionRejected, "OCI_ATTACH_STATE"):
+                    backend.run(
+                        root, ["/bin/true"], ExecutionLimits(), subject=self.subject
+                    )
+            attached.assert_called_once()
+            self.assertTrue(backend.removed)
+
+    def test_wrapper_hides_completion_token_from_evidence_process(self) -> None:
+        module = importlib.import_module("tools.vf0_execution")
+        token = "a" * 64
+        token_name = "GNOSTOA_VF0_COMPLETION_TOKEN"
+        environment = {**module._CLEAN_ENV, token_name: token}
+        child = (
+            "import os\n"
+            f"token = {token!r}\n"
+            f"if os.environ.get({token_name!r}) == token:\n"
+            "    print('INHERITED')\n"
+            "    raise SystemExit(11)\n"
+            "try:\n"
+            "    with open(f'/proc/{os.getppid()}/environ', 'rb') as stream:\n"
+            "        visible = token.encode() in stream.read()\n"
+            "except OSError:\n"
+            "    print('DENIED')\n"
+            "else:\n"
+            "    print('VISIBLE' if visible else 'READABLE')\n"
+        )
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                module._OCI_WRAPPER_SOURCE,
+                sys.executable,
+                "-I",
+                "-c",
+                child,
+            ],
+            check=False,
+            capture_output=True,
+            env=environment,
+            timeout=5,
+        )
+        self.assertEqual(0, result.returncode)
+        self.assertEqual(b"DENIED\n", result.stdout)
+        expected_marker = (
+            module._OCI_EXIT_SENTINEL_PREFIX
+            + token.encode("ascii")
+            + b":0"
+            + module._OCI_EXIT_SENTINEL_SUFFIX
+        )
+        self.assertTrue(result.stderr.endswith(expected_marker))
+
     def test_successful_rm_smoke_accepts_a_single_exact_absence_read_back(
         self,
     ) -> None:
@@ -2980,8 +3168,12 @@ class VF0DockerBackendTests(unittest.TestCase):
     def test_trusted_wrapper_trailer_does_not_consume_evidence_budget(self) -> None:
         module = importlib.import_module("tools.vf0_execution")
         limit = 64
+        completion_token = "a" * 64
         marker = (
-            module._OCI_EXIT_SENTINEL_PREFIX + b"0" + module._OCI_EXIT_SENTINEL_SUFFIX
+            module._OCI_EXIT_SENTINEL_PREFIX
+            + completion_token.encode("ascii")
+            + b":0"
+            + module._OCI_EXIT_SENTINEL_SUFFIX
         )
         script = f"import os;os.write(1,b'x'*{limit});os.write(2,{marker!r})"
         capture = module._capture_process(
@@ -2991,7 +3183,7 @@ class VF0DockerBackendTests(unittest.TestCase):
             output_headroom_bytes=module._OCI_EXIT_TRAILER_MAX,
         )
         result = module._enforce_output_limit(
-            module._unwrap_oci_completion(capture), limit
+            module._unwrap_oci_completion(capture, completion_token), limit
         )
         self.assertEqual(("completed", 0), (result.termination, result.exit_code))
         self.assertEqual(limit, len(result.stdout))
@@ -3001,8 +3193,12 @@ class VF0DockerBackendTests(unittest.TestCase):
     def test_child_output_over_budget_is_limited_after_trailer_strip(self) -> None:
         module = importlib.import_module("tools.vf0_execution")
         limit = 64
+        completion_token = "a" * 64
         marker = (
-            module._OCI_EXIT_SENTINEL_PREFIX + b"0" + module._OCI_EXIT_SENTINEL_SUFFIX
+            module._OCI_EXIT_SENTINEL_PREFIX
+            + completion_token.encode("ascii")
+            + b":0"
+            + module._OCI_EXIT_SENTINEL_SUFFIX
         )
         script = f"import os;os.write(1,b'x'*{limit + 1});os.write(2,{marker!r})"
         capture = module._capture_process(
@@ -3012,7 +3208,7 @@ class VF0DockerBackendTests(unittest.TestCase):
             output_headroom_bytes=module._OCI_EXIT_TRAILER_MAX,
         )
         result = module._enforce_output_limit(
-            module._unwrap_oci_completion(capture), limit
+            module._unwrap_oci_completion(capture, completion_token), limit
         )
         self.assertEqual("output_limit", result.termination)
         self.assertIsNone(result.exit_code)

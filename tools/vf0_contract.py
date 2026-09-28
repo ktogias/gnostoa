@@ -516,7 +516,12 @@ def _time_relation(
     _need(now < evidence["expires_at"], "EVIDENCE_EXPIRED")
     _need(now - evidence["completed_at"] <= policy["max_age_seconds"], "EVIDENCE_STALE")
     _need(request["valid_from"] <= candidate["observed_at"] <= now, "CANDIDATE_TIME")
-    if request["mode"] != "EMERGENCY_POST_EVENT":
+    if request["mode"] == "EMERGENCY_POST_EVENT":
+        _need(
+            candidate["observed_at"] <= evidence["started_at"],
+            "EVIDENCE_AFTER_CANDIDATE",
+        )
+    else:
         _need(
             evidence["completed_at"] <= candidate["observed_at"],
             "EVIDENCE_AFTER_CANDIDATE",

@@ -1298,3 +1298,103 @@ post-repair reviews must be read from the separate exact-candidate seal; this
 AUD22 record does not predict those later provider effects. No result above
 establishes human semantic approval, PR readiness, producer admission, VF0
 activation or merge authority.
+
+### AUD29–AUD31 exact-head safety corrections
+
+The exact `cbe3108276da553a42a3b95ed6bbb72eeefa8580` parent exposed three
+remaining bounded corrections. RED evidence was recorded before production
+edits in the isolated exact-parent checkpoints; the Development Container was
+unavailable in this execution context because access to `/var/run/docker.sock`
+returned `permission denied`.
+
+- **AUD29, completion-trailer forgery.** The Codex P2
+  ([thread](https://github.com/ktogias/gnostoa/pull/319)) was reproduced: a
+  child-authored static trailer plus an inspected exit code of 137 and
+  `OOMKilled=false` returned `completed`. A second RED test showed that a child
+  inherited the controller marker. The bounded repair uses a per-run random
+  token, passes it through the Docker client's clean environment rather than
+  argv, removes it before spawning evidence, sets the wrapper non-dumpable, and
+  accepts only the matching final token trailer. The existing OOMKilled check
+  remains. This is unit evidence for the wrapper process boundary, not live
+  pinned-image OCI conformance; no live Docker daemon was available here.
+- **AUD30, aggregate subject path work.** The Codex Security P2
+  ([thread](https://github.com/ktogias/gnostoa/pull/319)) describes repeated
+  filesystem normalization, but exact-parent code already normalized each
+  unique directory once. The still-unbounded repeated path-component planning
+  work was real: the new exact-parent RED fixture was accepted. The repair adds
+  a 65,536 aggregate component-visit ceiling before materialization while
+  retaining unique-directory normalization.
+- **AUD31, emergency chronology.** The earlier AUD17/AUD21 disposition that a
+  final candidate could be observed after its post-event evidence was too weak:
+  the relation had no bound from that evidence to the exact candidate. On the
+  exact parent, candidate observation at 800 with evidence at 600–700 returned
+  `MATCH`; the positive control at candidate observation 500 is valid. The
+  proposed relation now requires the exact candidate and approved emergency
+  admission to precede evidence start. This is still post-change emergency
+  follow-up, not a RED/pre-change claim, and the result remains unauthenticated,
+  non-compliant and inactive. The prior candidate-after-evidence disposition is
+  superseded for future exact candidates; historical results are not promoted.
+
+The fixes also carry the AUD28 exact-head regressions: controller and backend
+receive separate `ExecutionLimits` snapshots, snapshots reject case-insensitive
+`.git` path components, and Docker control results use a bounded controller
+owned result type. The existing `GIT_ALLOW_PROTOCOL=""` denial and prior AUD16
+reproducer already cover the promisor-fetch finding; no additional change was
+needed. The repeated cleanup-error report remains dispositioned by the retained
+dual-failure characterization. The finite late-create window remains a known
+R4 limitation: no perpetual cleanup or sweeper is claimed, so it cannot be
+treated as a production activation proof. Exact prepared-tree identity,
+post-change verification and reviewer dispositions are retained only in the
+new exact-candidate seal after preparation; this assessment cannot predict
+those provider results.
+
+| Checkpoint | Exact-parent production/Decision source SHA-256 | RED-only test SHA-256 | RED log SHA-256 |
+| --- | --- | --- | --- |
+| AUD29 trailer forgery | `tools/vf0_execution.py`: `030387bfd588291eacfcc4a921734a36fcd21cb1464b2350b0c6e22d2459f67a` | `tests/test_vf0_execution.py`: `ba184c5418bab6a407a0bdc2302a4cf43f328f4e6c098de4f8922c809dfb4fed` | `5faa70f1c1614e1143357fc518dc29b4ce5e9aa055da782b9592fee8e7f8398c` |
+| AUD29 token isolation | same exact-parent production source | `tests/test_vf0_execution.py`: `840f1ae2c5a073cf40bf6a707184241178981db5cb8b140c614a9057ea7c3029` | `9b16b89f436d166b1b819ec8f15f60e682283a090529710b895b00839295fa07` |
+| AUD30 path-component bound | same exact-parent production source | `tests/test_vf0_execution.py`: `940b74bd16cfefa173b2f770750567491d1b9603d95c7b08c5bc1634edbb2de8` | `e578977ad2f1f28ffb54320e3aceb87634a710e8cb5a7adb8f5bd7e2774ea8b1` |
+| AUD31 emergency ordering | `tools/vf0_contract.py`: `b20715b980ad684c474fa9258c499ea5f4c88d03bc191f9020670d99bdfb6cba`; D0092: `7ffeb7cc4130fd10892b86ddef60d212f9790fdaaff086981f904924a88fa2aa` | `tests/test_vf0_contract.py`: `1e6e2921c3b446301d76f54b9cee9aa109900eb22d4cc07700bed15b13e3b14e` | `85ad7c2555d9f6c3c993a7fab760f10e5bed64c5ad834e723093fddbb3fdb856` |
+
+Each RED test-only file was run against production code at exact cbe parent; the
+first test-selection typo in AUD30 was discarded and is not part of its
+retained result. The final candidate source hashes and verification results
+must be appended after the exact parent-owned preparation completes.
+
+### AUD29–AUD31 prepared-tree verification follow-up
+
+The earlier note that the Development Container was unavailable records the
+initial attempt, when the host Docker socket denied access. The host fallback
+also failed before issuing a receipt because its interpreter lacked Ruff. A
+first container preparation included the separate, untracked Issue #15 provider
+preview; that tree was rejected, its receipt was released through the exact
+parent wrapper, and the preview was moved outside this candidate checkout.
+
+After that correction, the exact parent wrapper prepared only the six intended
+paths below from parent `cbe3108276da553a42a3b95ed6bbb72eeefa8580` / tree
+`2406a56747601c899731e2d2f6872c8100610d0c`. The retained receipt identity is
+`sha256:cdeb7801cc04101cededc70430fcaa0b9fc4e041fc729036be2229cd2393f68a`;
+the receipt file SHA-256 is
+`2229619d7c5d21c0f786f456ee0a54454bd716a1b09cd7aa5c52544731676457`, and its
+prepared tree is `833391f8e2cf86e63df0d5e3f8c0647d19cd1599`. The exact-parent
+verification command accepted the receipt and tree. Its fast profile, `ci/style
+--fix`, final style check and diff check all passed. The prepared diff contains
+only this assessment, Decision 0092, the two VF0 test files and the two VF0
+implementation modules.
+
+The Development Container was then rebuilt for local verification commit
+`27834d73f1b8ce0ce4ff382b233d783d27a74045`, whose tree is exactly the prepared
+tree above. `ci/verify extended` passed all 1,500 tests with four skips, Ruff
+formatted 495 files, mypy passed, coverage was 78% against the 65% gate, both
+dependency audits reported no known vulnerabilities, and the documentation
+build passed. The fixed live-OCI smoke is not represented by this unit/extended
+result; it remains a separate component-conformance check after publishing the
+exact PR candidate. This does not close R4's finite late-create limitation or
+activate VF0.
+
+| Prepared-tree source | SHA-256 |
+| --- | --- |
+| `knowledge/decisions/0092-bind-verification-first-evidence-to-parent-owned-preparation.md` | `c4a9bbf6316d720a7aee95781e6b992c98030ceda2ca37c2c172250af37ff342` |
+| `tests/test_vf0_contract.py` | `74a22f5747da0e45f88c6388372a8fef1e2a08011122b3b3331a54167d418a46` |
+| `tests/test_vf0_execution.py` | `3c3b40168d721d52c577487bd0fc37c3d62303efa47c93386d7d4b1ab4b51f2c` |
+| `tools/vf0_contract.py` | `8d8acb22f182836cf4f992c0df7a6e56342a8fc1ea1436bbf0af5441c5469d3a` |
+| `tools/vf0_execution.py` | `0a93c4119a92509136d4f34e5f1c85c007adeee7668af53848954d510df24a46` |

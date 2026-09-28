@@ -78,6 +78,13 @@ receipt is easiest to obtain. Unknown applicability denies the compliance claim.
 | STRUCTURAL | Unmet non-executable criterion with accountable review where executable failure is inapplicable | A bypass for changed executable or normative behavior |
 | EMERGENCY_POST_EVENT | Effective emergency admission with its declared follow-up obligation | An executor-selected escape from ordinary chronology |
 
+For `EMERGENCY_POST_EVENT`, the exact candidate must be provider-observed before
+the post-event evidence starts. This exception permits evidence after the
+emergency change; it does not permit evidence gathered for an unobserved or
+different candidate. Admission and candidate must both precede the evidence
+interval. This relation still does not prove private edit time or independently
+authenticate the admission.
+
 An explicitly late reconstruction remains useful evidence but cannot satisfy
 ordinary chronology compliance. No receipt proves private editor-keystroke order
 or discovers an undisclosed private edit. The claim is restricted to authenticated

@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import selectors
 import signal
 import stat
@@ -44,6 +45,7 @@ _MAX_DOCKER_CONTROL_OUTPUT_BYTES = 1024 * 1024
 _MAX_SNAPSHOT_ENTRIES = 65_536
 _MAX_SNAPSHOT_DEPTH = 256
 _MAX_SNAPSHOT_TOTAL_PATH_BYTES = _MAX_SUBJECT_TREE_LISTING_BYTES
+_MAX_SUBJECT_PATH_COMPONENT_VISITS = 65_536
 _SNAPSHOT_READ_BYTES = 64 * 1024
 _OPEN_ACCEPTS_DIR_FD = os.open in os.supports_dir_fd
 _STAT_ACCEPTS_DIR_FD = os.stat in os.supports_dir_fd
@@ -59,22 +61,26 @@ _LOCAL_CONTAINMENT_WRAPPER_ARG0 = "gnostoa-local-ready"
 _CONTAINER_TMP = "/tmp"  # nosec B108 -- isolated container tmpfs, never a host temp path
 _CONTAINER_CLEANUP_LABEL = "gnostoa.vf0.cleanup-token"
 _OCI_WRAPPER_EXECUTABLE = "/usr/local/bin/python3"
+_OCI_COMPLETION_TOKEN_ENV = "GNOSTOA_VF0_COMPLETION_TOKEN"
 _OCI_EXIT_SENTINEL_PREFIX = b"\x1eGNOSTOA_VF0_EXIT_V1:"
 _OCI_EXIT_SENTINEL_SUFFIX = b"\x1f"
 _OCI_EXIT_TRAILER_MAX = (
-    len(_OCI_EXIT_SENTINEL_PREFIX) + 3 + len(_OCI_EXIT_SENTINEL_SUFFIX)
+    len(_OCI_EXIT_SENTINEL_PREFIX) + 64 + 1 + 3 + len(_OCI_EXIT_SENTINEL_SUFFIX)
 )
 _OCI_WRAPPER_SOURCE = (
-    "import os,subprocess,sys\n"
+    "import ctypes,os,subprocess,sys\n"
+    f"token=os.environ.pop({_OCI_COMPLETION_TOKEN_ENV!r},None)\n"
+    "if type(token) is not str or len(token)!=64 or any(c not in '0123456789abcdef' for c in token): raise SystemExit(125)\n"
+    "if ctypes.CDLL(None).prctl(4,0,0,0,0) != 0: raise SystemExit(125)\n"
     "try:\n"
-    "    process=subprocess.Popen(sys.argv[1:])\n"
+    "    process=subprocess.Popen(sys.argv[1:],env=os.environ.copy())\n"
     "    code=process.wait()\n"
     "except FileNotFoundError:\n"
     "    code=127\n"
     "except PermissionError:\n"
     "    code=126\n"
     "code=128-code if code < 0 else code\n"
-    "os.write(2,b'\x1eGNOSTOA_VF0_EXIT_V1:'+str(code).encode('ascii')+b'\x1f')\n"
+    "os.write(2,b'\x1eGNOSTOA_VF0_EXIT_V1:'+token.encode('ascii')+b':'+str(code).encode('ascii')+b'\x1f')\n"
     "raise SystemExit(code)\n"
 )
 _UNCERTAIN_CREATE_SETTLE_SECONDS = 2.0
@@ -309,6 +315,24 @@ class ExecutionBackend(Protocol):
         *,
         subject: GitSubject,
     ) -> UntrustedCapture: ...
+
+
+class _DockerCommandResult(Protocol):
+    @property
+    def returncode(self) -> int: ...
+
+    @property
+    def stdout(self) -> bytes: ...
+
+    @property
+    def stderr(self) -> bytes: ...
+
+
+@dataclass(frozen=True)
+class _BoundedDockerCommandResult:
+    returncode: int
+    stdout: bytes
+    stderr: bytes
 
 
 def _validate_backend_capture(
@@ -570,14 +594,21 @@ def _materialize_subject(
     planned_names: set[str] = set()
     planned_directories: set[tuple[str, ...]] = set()
     total = 0
+    component_visits = 0
     for entry in entries:
         try:
             meta, raw_name = entry.split(b"\t", 1)
             mode, kind, oid, raw_size = meta.decode("ascii").split()
             _need(len(raw_name) <= _MAX_SUBJECT_PATH_BYTES, "SUBJECT_PATH_BOUND")
+            component_count = raw_name.count(b"/") + 1
             _need(
-                raw_name.count(b"/") + 1 <= _MAX_SUBJECT_PATH_COMPONENTS,
+                component_count <= _MAX_SUBJECT_PATH_COMPONENTS,
                 "SUBJECT_PATH_COMPONENT_BOUND",
+            )
+            component_visits += component_count
+            _need(
+                component_visits <= _MAX_SUBJECT_PATH_COMPONENT_VISITS,
+                "SUBJECT_PATH_PREFIX_VISIT_BOUND",
             )
             name = raw_name.decode("utf-8")
             size = int(raw_size)
@@ -676,10 +707,10 @@ def _snapshot(root: Path) -> tuple[dict[str, _MaterialFile], dict[str, str]]:
                     )
                     child_name = entry.name
                     _need(
-                        isinstance(child_name, str)
-                        and child_name not in {"", ".", ".."},
+                        type(child_name) is str and child_name not in {"", ".", ".."},
                         "SUBJECT_SNAPSHOT",
                     )
+                    _need(str.casefold(child_name) != ".git", "SUBJECT_PATH")
                     try:
                         component_bytes = len(os.fsencode(child_name))
                     except UnicodeError as exc:
@@ -931,6 +962,7 @@ def _capture_process(
     limits: ExecutionLimits,
     output_headroom_bytes: int = 0,
     startup_sentinel: bytes | None = None,
+    environment_overrides: dict[str, str] | None = None,
 ) -> UntrustedCapture:
     _validate_command(argv)
     _need(
@@ -939,13 +971,30 @@ def _capture_process(
     )
     if startup_sentinel is not None:
         _need(1 <= len(startup_sentinel) <= 256, "STARTUP_SENTINEL_BOUND")
+    process_environment = _CLEAN_ENV
+    if environment_overrides is not None:
+        _need(
+            type(environment_overrides) is dict
+            and set(environment_overrides) == {_OCI_COMPLETION_TOKEN_ENV},
+            "BACKEND_ENVIRONMENT",
+        )
+        completion_token = environment_overrides[_OCI_COMPLETION_TOKEN_ENV]
+        _need(
+            type(completion_token) is str
+            and re.fullmatch(r"[0-9a-f]{64}", completion_token) is not None,
+            "BACKEND_ENVIRONMENT",
+        )
+        process_environment = {
+            **_CLEAN_ENV,
+            _OCI_COMPLETION_TOKEN_ENV: completion_token,
+        }
     capture_output_bytes = limits.output_bytes + output_headroom_bytes
     try:
         # Intentional private execution primitive: validated list argv, no shell, scrubbed env.
         process = subprocess.Popen(  # nosec B603  # nosemgrep
             list(argv),
             cwd=str(cwd) if cwd is not None else None,
-            env=_CLEAN_ENV,
+            env=process_environment,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -1133,19 +1182,32 @@ class DockerBackend:
         )
         object.__setattr__(self, "docker_executable", "/usr/bin/docker")
 
-    def _command(
-        self, *args: str, timeout: float = 30
-    ) -> subprocess.CompletedProcess[bytes]:
+    @staticmethod
+    def _new_completion_token() -> str:
+        return secrets.token_hex(32)
+
+    def _run_control_command(
+        self,
+        args: Sequence[str],
+        *,
+        timeout: float = 30,
+        environment_overrides: dict[str, str] | None = None,
+    ) -> _DockerCommandResult:
         argv = [self.docker_executable, *args]
+        limits = ExecutionLimits(
+            timeout_seconds=timeout,
+            output_bytes=_MAX_DOCKER_CONTROL_OUTPUT_BYTES,
+        )
         try:
-            capture = _capture_process(
-                argv,
-                cwd=None,
-                limits=ExecutionLimits(
-                    timeout_seconds=timeout,
-                    output_bytes=_MAX_DOCKER_CONTROL_OUTPUT_BYTES,
-                ),
-            )
+            if environment_overrides is None:
+                capture = _capture_process(argv, cwd=None, limits=limits)
+            else:
+                capture = _capture_process(
+                    argv,
+                    cwd=None,
+                    limits=limits,
+                    environment_overrides=environment_overrides,
+                )
         except ExecutionRejected as exc:
             raise ExecutionRejected("DOCKER_COMMAND_FAILED") from exc
         if capture.termination == "output_limit":
@@ -1154,12 +1216,23 @@ class DockerBackend:
             capture.termination == "completed" and type(capture.exit_code) is int,
             "DOCKER_COMMAND_FAILED",
         )
-        # This records the bounded capture; process launch happened above.
-        return subprocess.CompletedProcess(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use
-            argv,
-            cast(int, capture.exit_code),
+        return _BoundedDockerCommandResult(
+            returncode=cast(int, capture.exit_code),
             stdout=capture.stdout,
             stderr=capture.stderr,
+        )
+
+    def _command(self, *args: str, timeout: float = 30) -> _DockerCommandResult:
+        return self._run_control_command(args, timeout=timeout)
+
+    def _create_with_completion_token(
+        self, args: Sequence[str], completion_token: str
+    ) -> _DockerCommandResult:
+        return self._run_control_command(
+            args,
+            environment_overrides={
+                _OCI_COMPLETION_TOKEN_ENV: completion_token,
+            },
         )
 
     def _checked(self, *args: str, timeout: float = 30) -> bytes:
@@ -1211,6 +1284,7 @@ class DockerBackend:
         subject: GitSubject,
         image_id: str,
         image_environment: dict[str, str],
+        completion_token: str,
     ) -> None:
         try:
             raw = json.loads(self._checked("inspect", container_id))
@@ -1257,6 +1331,7 @@ class DockerBackend:
         environment = _environment_map(config.get("Env"), "OCI_ENV_CONTRACT")
         expected_environment = dict(image_environment)
         expected_environment.update(_container_environment(subject))
+        expected_environment[_OCI_COMPLETION_TOKEN_ENV] = completion_token
         _need(
             environment == expected_environment,
             "OCI_ENV_CONTRACT",
@@ -1279,7 +1354,7 @@ class DockerBackend:
 
     @staticmethod
     def _inspect_confirms_absence(
-        result: subprocess.CompletedProcess[bytes], container_ref: str
+        result: _DockerCommandResult, container_ref: str
     ) -> bool:
         """Recognize the target-bound missing-object result of Docker inspect."""
 
@@ -1400,6 +1475,12 @@ class DockerBackend:
         _validate_command(command)
         image_id, image_environment = self._inspect_image()
         cleanup_nonce = uuid.uuid4().hex
+        completion_token = self._new_completion_token()
+        _need(
+            type(completion_token) is str
+            and re.fullmatch(r"[0-9a-f]{64}", completion_token) is not None,
+            "OCI_COMPLETION_TOKEN",
+        )
         container_name = f"gnostoa-vf0-{cleanup_nonce}"
         controller_environment = _container_environment(subject)
         environment_arguments = [
@@ -1439,6 +1520,8 @@ class DockerBackend:
             "--tmpfs",
             f"{_CONTAINER_TMP}:rw,nosuid,nodev,noexec,mode=1777,size={limits.tmpfs_bytes}",
             *environment_arguments,
+            "--env",
+            _OCI_COMPLETION_TOKEN_ENV,
             "--mount",
             f"type=bind,source={root},target=/workspace,readonly",
             "--workdir",
@@ -1454,7 +1537,9 @@ class DockerBackend:
         container_id: str | None = None
         container_validated = False
         try:
-            observed_id = self._checked(*create).decode().strip().lower()
+            created = self._create_with_completion_token(create, completion_token)
+            _need(created.returncode == 0, "DOCKER_COMMAND_FAILED")
+            observed_id = created.stdout.decode().strip().lower()
             _need(_DOCKER_ID_RE.fullmatch(observed_id) is not None, "OCI_CONTAINER_ID")
             container_id = observed_id
             self._validate_container(
@@ -1466,6 +1551,7 @@ class DockerBackend:
                 subject,
                 image_id,
                 image_environment,
+                completion_token,
             )
             container_validated = True
             capture = _capture_process(
@@ -1475,7 +1561,7 @@ class DockerBackend:
                 output_headroom_bytes=_OCI_EXIT_TRAILER_MAX,
             )
             if capture.termination == "completed":
-                capture = _unwrap_oci_completion(capture)
+                capture = _unwrap_oci_completion(capture, completion_token)
             capture = _enforce_output_limit(capture, limits.output_bytes)
             if capture.termination == "completed":
                 try:
@@ -1522,20 +1608,30 @@ class DockerBackend:
                     )
 
 
-def _unwrap_oci_completion(capture: UntrustedCapture) -> UntrustedCapture:
+def _unwrap_oci_completion(
+    capture: UntrustedCapture, completion_token: str
+) -> UntrustedCapture:
     """Require and strip the trusted wrapper's unique final completion trailer."""
 
     if capture.termination != "completed":
         return capture
+    _need(
+        type(completion_token) is str
+        and re.fullmatch(r"[0-9a-f]{64}", completion_token) is not None,
+        "OCI_ATTACH_STATE",
+    )
     stderr = capture.stderr
     _need(stderr.count(_OCI_EXIT_SENTINEL_PREFIX) == 1, "OCI_ATTACH_STATE")
-    marker_start = stderr.find(_OCI_EXIT_SENTINEL_PREFIX)
+    expected_prefix = (
+        _OCI_EXIT_SENTINEL_PREFIX + completion_token.encode("ascii") + b":"
+    )
+    marker_start = stderr.find(expected_prefix)
     _need(
         marker_start >= 0 and stderr.endswith(_OCI_EXIT_SENTINEL_SUFFIX),
         "OCI_ATTACH_STATE",
     )
     raw_code = stderr[
-        marker_start + len(_OCI_EXIT_SENTINEL_PREFIX) : -len(_OCI_EXIT_SENTINEL_SUFFIX)
+        marker_start + len(expected_prefix) : -len(_OCI_EXIT_SENTINEL_SUFFIX)
     ]
     _need(1 <= len(raw_code) <= 3 and raw_code.isdigit(), "OCI_ATTACH_STATE")
     exit_code = int(raw_code)
@@ -1576,6 +1672,26 @@ def _enforce_output_limit(
         stderr=stderr,
         observed_bytes_at_least=max(output_bytes + 1, observed_bytes_at_least),
     )
+
+
+def _snapshot_limits(limits: ExecutionLimits) -> ExecutionLimits:
+    """Copy caller limits once, before any backend receives a mutable object reference."""
+
+    _need(type(limits) is ExecutionLimits, "EXECUTION_LIMITS")
+    try:
+        values = object.__getattribute__(limits, "__dict__").copy()
+    except (AttributeError, TypeError) as exc:
+        raise ExecutionRejected("EXECUTION_LIMITS") from exc
+    fields = {
+        "timeout_seconds",
+        "output_bytes",
+        "memory_bytes",
+        "cpus",
+        "pids",
+        "tmpfs_bytes",
+    }
+    _need(type(values) is dict and set(values) == fields, "EXECUTION_LIMITS")
+    return ExecutionLimits(**values)
 
 
 def _limits_identity(limits: ExecutionLimits) -> str:
@@ -1702,11 +1818,13 @@ def execute(
 ) -> ExecutionObservation:
     """Execute one explicit subject and return only bounded untrusted observations."""
 
-    chosen_limits = limits or ExecutionLimits()
+    configured_limits = ExecutionLimits() if limits is None else limits
+    controller_limits = _snapshot_limits(configured_limits)
+    backend_limits = _snapshot_limits(controller_limits)
     command_snapshot = _snapshot_command(command)
     evidence_snapshot = _snapshot_evidence(evidence)
     command_sha256 = _identity_digest(list(command_snapshot))
-    limits_sha256 = _limits_identity(chosen_limits)
+    limits_sha256 = _limits_identity(controller_limits)
     backend_identity, runtime_identity = _backend_runtime_identities(backend)
     with tempfile.TemporaryDirectory(prefix="gnostoa-vf0-execution-") as temporary:
         temp = Path(temporary)
@@ -1717,8 +1835,8 @@ def execute(
         _need(before_files == expected, "SUBJECT_BEFORE_EXECUTION")
         before_digest = _manifest_digest(before_files, before_directories)
         capture = _validate_backend_capture(
-            backend.run(root, command_snapshot, chosen_limits, subject=subject),
-            chosen_limits,
+            backend.run(root, command_snapshot, backend_limits, subject=subject),
+            controller_limits,
         )
         after_files, after_directories = _snapshot(root)
         _need(after_files == expected, "SUBJECT_MUTATED")
