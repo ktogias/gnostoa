@@ -3385,6 +3385,42 @@ class VF0DockerBackendTests(unittest.TestCase):
             self.assertGreaterEqual(backend.name_inspects, 3)
             self.assertTrue(backend.removed)
 
+    def test_uncertain_create_deadline_reports_unverified_cleanup(self) -> None:
+        class NeverAppears(FakeDockerBackend):
+            def _command(
+                self, *args: str, timeout: float = 30
+            ) -> subprocess.CompletedProcess[bytes]:
+                del timeout
+                self.calls.append(tuple(args))
+                return subprocess.CompletedProcess(
+                    ["/usr/bin/docker"],
+                    1,
+                    stdout=b"",
+                    stderr=f"Error: No such object: {args[-1]}\n".encode(),
+                )
+
+        with tempfile.TemporaryDirectory() as td:
+            backend = NeverAppears(self.image, Path(td).resolve())
+            container_name = "gnostoa-vf0-" + "c" * 32
+            cleanup_nonce = "c" * 32
+            with (
+                mock.patch(
+                    "tools.vf0_execution.time.monotonic",
+                    side_effect=[0.0, 0.0, 0.5, 1.0, 1.5, 2.0],
+                ),
+                mock.patch("tools.vf0_execution.time.sleep") as sleep,
+            ):
+                with self.assertRaisesRegex(
+                    ExecutionRejected, "OCI_CLEANUP_UNVERIFIED"
+                ):
+                    backend._cleanup_uncertain_create(container_name, cleanup_nonce)
+
+            self.assertEqual(
+                [("inspect", container_name)] * 5,
+                backend.calls,
+            )
+            sleep.assert_called()
+
     def test_timeout_has_no_container_exit_claim_and_cleanup_still_occurs(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td).resolve()

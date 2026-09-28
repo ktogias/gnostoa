@@ -1461,7 +1461,7 @@ class DockerBackend:
                 return
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                return
+                raise ExecutionRejected("OCI_CLEANUP_UNVERIFIED")
             time.sleep(min(_UNCERTAIN_CREATE_POLL_SECONDS, remaining))
 
     def run(
