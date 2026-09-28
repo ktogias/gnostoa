@@ -227,7 +227,11 @@ No new dependency, service or runtime is introduced.
    `git -c core.quotePath=false` uses: control characters, a double quote and a
    backslash are C-quoted, and ordinary UTF-8 is left alone, because a legitimate
    international filename is not a line-injection risk and quoting it would only make
-   the artefacts harder to read.
+   the artefacts harder to read. Quoting rather than refusal, because such a
+   name is a legal path and dropping the file would hide a real change. The contract
+   test builds the artefacts from a comparison whose filename carries
+   `\n+++ b/innocent.py` and asserts no forged line reaches the start of a line in any
+   artefact.
 
    Git's rule alone is **not sufficient**, and this is the one place this Decision
    deliberately goes beyond it. `git -c core.quotePath=false` prints U+0085, U+2028 and
@@ -263,10 +267,7 @@ No new dependency, service or runtime is introduced.
    into place only on success, so a partial body is never left behind nor appended to by
    the next attempt. A persistent failure still stops: there is nothing to review
    without the comparison, and a silent partial context would be worse than a visible
-   red check. Quoting rather than refusal, because such a name is a legal path and
-   dropping the file would hide a real change. The contract test builds the artefacts
-   from a comparison whose filename carries `\n+++ b/innocent.py` and asserts no forged
-   line reaches the start of a line in any artefact.
+   red check.
 
    The parts are also **hard-wrapped** at a reader-visible line length. Fixing the
    UTF-8 split was not sufficient: the reviewer's `Read` truncates a physical line
