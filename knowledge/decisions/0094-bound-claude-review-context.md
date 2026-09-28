@@ -218,6 +218,20 @@ No new dependency, service or runtime is introduced.
    raises: `diff.stat` shows `old -> new` and the assembled fallback uses `--- a/<old>`
    against `+++ b/<new>`.
 
+   **Every path is quoted before it enters one of these artefacts.** Git permits a
+   newline in a pathname and the comparison carries it through as JSON, while every
+   artefact here is read line by line -- so a name interpolated verbatim could add a
+   `+++ b/other.py` header, a diff line, or an extra `diff.stat` record, and make
+   unrelated text look like a change to a different file. The reviewer has no git and
+   no candidate tree, so it has nothing to check that against. The quoting is the one
+   `git -c core.quotePath=false` uses: control characters, a double quote and a
+   backslash are C-quoted, and UTF-8 is left alone, because a legitimate international
+   filename is not a line-injection risk and quoting it would only make the artefacts
+   harder to read. Quoting rather than refusal, because such a name is a legal path and
+   dropping the file would hide a real change. The contract test builds the artefacts
+   from a comparison whose filename carries `\n+++ b/innocent.py` and asserts no forged
+   line reaches the start of a line in any artefact.
+
    The parts are also **hard-wrapped** at a reader-visible line length. Fixing the
    UTF-8 split was not sufficient: the reviewer's `Read` truncates a physical line
    beyond roughly two thousand characters and indexes by line, so a minified or

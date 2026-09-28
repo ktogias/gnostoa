@@ -323,6 +323,8 @@ jobs:
               patches/         the whole diff, in parts, read in name order
               no-patch.txt     changed files the comparison gave no hunks for
               patches-source   present only when the diff came from per-file hunks
+            Paths are quoted as git does when they hold control characters, so a name
+            can never start a line of its own.
             A file's state before the change is only what the diff shows: the checkout
             is not it. A file in no-patch.txt carried no hunks, which means either a
             binary or oversized blob or a metadata-only change such as a mode bit or a

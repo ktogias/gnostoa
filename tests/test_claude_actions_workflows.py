@@ -845,6 +845,84 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 "caps", (context / "diff.stat").read_text(encoding="utf-8")
             )
 
+    def test_a_path_cannot_forge_a_record_in_a_line_oriented_artefact(self) -> None:
+        # Git permits a newline in a pathname, and the comparison carries it through as
+        # JSON. Every artefact here is read line by line, so interpolating such a name
+        # verbatim lets a branch add a `+++ b/...` header, a diff line, or an extra
+        # summary record and make unrelated text look like a change to another file --
+        # to a reviewer that has no git and no candidate tree to check it against.
+        builder = _load_script(BASE_COLLECTOR)
+        hostile = "src/evil.py\n+++ b/innocent.py\n+not really added"
+        comparison = {
+            "files": [
+                {
+                    "filename": hostile,
+                    "status": "modified",
+                    "additions": 1,
+                    "deletions": 0,
+                    "patch": "@@ -1 +1 @@\n-a\n+b",
+                    "sha": "e" * 40,
+                },
+                {
+                    "filename": 'src/quiet"quote.py',
+                    "status": "modified",
+                    "additions": 0,
+                    "deletions": 0,
+                    "patch": None,
+                    "sha": "f" * 40,
+                },
+            ]
+        }
+        with tempfile.TemporaryDirectory() as scratch:
+            context = pathlib.Path(scratch)
+            (context / "comparison.json").write_text(
+                json.dumps(comparison), encoding="utf-8"
+            )
+            builder.build(context)
+
+            # One changed file is one record. A name that spans lines would be two.
+            stat = (context / "diff.stat").read_text(encoding="utf-8")
+            self.assertEqual(2, len(stat.splitlines()), stat)
+            # Nothing the path carries may reach the start of a line anywhere.
+            for artefact in ("diff.stat", "no-patch.txt", "assembled.diff"):
+                text = (context / artefact).read_text(encoding="utf-8")
+                for line in text.splitlines():
+                    with self.subTest(artefact=artefact, line=line):
+                        self.assertFalse(
+                            line.startswith("+++ b/innocent.py"),
+                            f"{artefact}: a path forged a file header",
+                        )
+                        self.assertFalse(
+                            line.startswith("+not really added"),
+                            f"{artefact}: a path forged a diff line",
+                        )
+            # The assembled fallback keeps one header pair per file. Counted at line
+            # starts, because a quoted name may legitimately contain the header text --
+            # that it can no longer *begin* a line is exactly the property that matters.
+            assembled = (context / "assembled.diff").read_text(encoding="utf-8")
+            starts = [line.split("/", 1)[0] for line in assembled.splitlines()]
+            self.assertEqual(2, starts.count("--- a"), assembled)
+            self.assertEqual(2, starts.count("+++ b"), assembled)
+
+    def test_paths_are_quoted_the_way_git_quotes_them(self) -> None:
+        # `git -c core.quotePath=false ls-files` was run against a repository holding
+        # each of these names, and returned exactly the right-hand side. Control
+        # characters, a double quote and a backslash are C-quoted; UTF-8 is left alone,
+        # because a legitimate international filename is not a line-injection risk and
+        # quoting it would only make the artefacts harder to read.
+        builder = _load_script(BASE_COLLECTOR)
+        for raw, quoted in (
+            ("plain.py", "plain.py"),
+            ("\u00fcn\u00efcode.py", "\u00fcn\u00efcode.py"),
+            ("evil\nnext.py", '"evil\\nnext.py"'),
+            ("cr\rhere.py", '"cr\\rhere.py"'),
+            ("tab\there.py", '"tab\\there.py"'),
+            ('q"uote.py', '"q\\"uote.py"'),
+            ("back\\slash.py", '"back\\\\slash.py"'),
+        ):
+            with self.subTest(raw=raw):
+                self.assertEqual(quoted, builder.quote_path(raw))
+
     def test_a_missing_patch_is_recorded_without_inferring_the_file_type(self) -> None:
         # A binary or oversized file has no patch, and its bytes are in neither the
         # diff nor the base checkout, so it cannot be reviewed from this context.

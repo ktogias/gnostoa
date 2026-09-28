@@ -34,6 +34,49 @@ from review_context_paths import within
 _FILE_CAP = 300
 
 
+_C_ESCAPES = {
+    0x07: "\\a",
+    0x08: "\\b",
+    0x09: "\\t",
+    0x0A: "\\n",
+    0x0B: "\\v",
+    0x0C: "\\f",
+    0x0D: "\\r",
+    0x22: '\\"',
+    0x5C: "\\\\",
+}
+
+
+def quote_path(name: str) -> str:
+    """Return ``name`` the way ``git -c core.quotePath=false`` would print it.
+
+    Git permits a newline in a pathname and the comparison carries it through as JSON,
+    but every artefact this script writes is read line by line. A name interpolated
+    verbatim could therefore add a `+++ b/other.py` header, a diff line or an extra
+    summary record, and a reviewer with no git and no candidate tree has nothing to
+    check that against. Quoting is used rather than refusal because such a name is a
+    legal path: dropping the file would hide a real change.
+
+    Control characters, a double quote and a backslash are C-quoted; UTF-8 is left
+    alone, exactly as Git does with `core.quotePath=false`. A legitimate international
+    filename is not a line-injection risk, and quoting it would only make the artefacts
+    harder to read.
+    """
+    if not any(ord(ch) < 0x20 or ord(ch) == 0x7F or ch in '"\\' for ch in name):
+        return name
+    out = ['"']
+    for ch in name:
+        code = ord(ch)
+        if code in _C_ESCAPES:
+            out.append(_C_ESCAPES[code])
+        elif code < 0x20 or code == 0x7F:
+            out.append(f"\\{code:03o}")
+        else:
+            out.append(ch)
+    out.append('"')
+    return "".join(out)
+
+
 def base_path_of(entry: dict[str, Any]) -> str:
     """Return the path the base revision holds this entry under."""
     if entry.get("status") == "renamed":
@@ -53,9 +96,10 @@ def write_summaries(context: pathlib.Path, comparison: dict[str, Any]) -> None:
     lines = [
         f"{entry['status']} +{entry['additions']} -{entry['deletions']} "
         + (
-            f"{entry['previous_filename']} -> {entry['filename']}"
+            f"{quote_path(str(entry['previous_filename']))} -> "
+            f"{quote_path(str(entry['filename']))}"
             if entry.get("status") == "renamed" and entry.get("previous_filename")
-            else str(entry["filename"])
+            else quote_path(str(entry["filename"]))
         )
         for entry in files
     ]
@@ -83,10 +127,11 @@ def write_summaries(context: pathlib.Path, comparison: dict[str, Any]) -> None:
             + [
                 f"{entry['status']} {str(entry['sha'])[:9]} "
                 + (
-                    f"{entry['previous_filename']} -> {entry['filename']}\n"
+                    f"{quote_path(str(entry['previous_filename']))} -> "
+                    f"{quote_path(str(entry['filename']))}\n"
                     if entry.get("status") == "renamed"
                     and entry.get("previous_filename")
-                    else f"{entry['filename']}\n"
+                    else f"{quote_path(str(entry['filename']))}\n"
                 )
                 for entry in without_patch
             ]
@@ -99,7 +144,8 @@ def write_assembled(context: pathlib.Path, comparison: dict[str, Any]) -> None:
     """Write the per-file hunks, so a refused unified diff still carries the change."""
     (context / "assembled.diff").write_text(
         "".join(
-            f"--- a/{base_path_of(entry)}\n+++ b/{entry['filename']}\n"
+            f"--- a/{quote_path(base_path_of(entry))}\n"
+            f"+++ b/{quote_path(str(entry['filename']))}\n"
             + (
                 f"{entry['patch']}\n"
                 if entry.get("patch") is not None
