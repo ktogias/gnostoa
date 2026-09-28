@@ -198,6 +198,24 @@ def decoded_file(payload: dict[str, Any]) -> bytes | None:
     return base64.b64decode(content)
 
 
+def _hunkless_label(entry: dict[str, Any], record: dict[str, Any], name: str) -> str:
+    """Classify a change the comparison gave no hunks for.
+
+    ``status`` cannot distinguish a mode-only change from a binary content change:
+    both arrive as ``modified`` with no hunks. Blob identity can -- except for a
+    removal, where the comparison's ``sha`` *is* the deleted base-side blob and so
+    always equals the listing's. Comparing them there would label a deleted file
+    ``metadata-only`` and have the reviewer treat a deletion as reviewable metadata.
+    """
+    if entry.get("status") == "removed":
+        return f"removed-without-hunks {name}"
+    base_blob = str(record.get("sha") or "")
+    head_blob = str(entry.get("sha") or "")
+    if base_blob and base_blob == head_blob:
+        return f"metadata-only {name}"
+    return f"content-changed-without-hunks {name}"
+
+
 def write_summaries(context: pathlib.Path, comparison: dict[str, Any]) -> None:
     """Write diff.stat and no-patch.txt from the comparison payload."""
     files = comparison.get("files") or []
@@ -300,8 +318,11 @@ def collect(
     )
     for entry in ordered:
         name = str(entry["filename"])
+        hunkless = entry.get("patch") is None
         if entry.get("status") == "added":
             unavailable.append(f"added-by-candidate {name}")
+            if hunkless:
+                classified.append(f"added-without-hunks {name}")
             continue
         source = base_path_of(entry)
         # The parent listing declares the entry's real type. Asking the contents API
@@ -325,9 +346,25 @@ def collect(
                 unavailable.append(f"listing-truncated {source}")
             else:
                 unavailable.append(f"absent-at-merge-base {source}")
+            if hunkless:
+                classified.append(f"unclassified-no-base-record {name}")
             continue
+        if hunkless:
+            # Classified here, before any fetch and regardless of whether the bytes are
+            # ultimately written, so a budget rejection or a decode failure cannot leave
+            # the reviewer without a verdict on whether content changed.
+            classified.append(_hunkless_label(entry, record, name))
         if declared != "file":
             unavailable.append(f"not-a-plain-file {source}")
+            continue
+        # The budget is checked against the size the listing already reports, so a file
+        # the budget will reject costs no request at all. Fetching first made a large
+        # Pull Request full of binaries issue an avoidable request per file, and a
+        # rate-limit response there would fail the step -- leaving that Pull Request
+        # without a review, which is the failure this Decision exists to remove.
+        declared_size = record.get("size")
+        if isinstance(declared_size, int) and declared_size > remaining:
+            unavailable.append(f"over-budget {source}")
             continue
         payload = _provider_json(base_endpoint(repository, source, merge_base))
         if payload is None:
@@ -338,6 +375,7 @@ def collect(
             unavailable.append(f"not-a-plain-file {source}")
             continue
         if len(content) > remaining:
+            # Backstop for a listing that reported no size.
             unavailable.append(f"over-budget {source}")
             continue
         destination = target / safe_relative_path(name)
@@ -345,18 +383,6 @@ def collect(
         destination.write_bytes(content)
         remaining -= len(content)
         written += 1
-        if entry.get("patch") is None:
-            # `status` cannot tell a mode-only change from a binary content change:
-            # both arrive as "modified" with no hunks. The blob identity can. Claiming
-            # the status distinguishes them would leave the reviewer able to call a
-            # binary change examined without ever seeing what changed.
-            base_blob = str(record.get("sha") or "") if record else ""
-            head_blob = str(entry.get("sha") or "")
-            classified.append(
-                f"metadata-only {name}"
-                if base_blob and base_blob == head_blob
-                else f"content-changed-without-hunks {name}"
-            )
     renames = [
         f"renamed {entry['previous_filename']} -> {entry['filename']}"
         for entry in comparison.get("files") or []

@@ -200,14 +200,25 @@ No new dependency, service or runtime is introduced.
    metadata-only change, reviewable from `base/` and `diff.stat`, while a differing blob
    means content changed that no artefact here can show. `base.manifest` records which,
    and the prompt requires the reviewer to report a `content-changed-without-hunks`
-   entry as not examined.
+   entry as not examined. A **removal** is excluded from that comparison: the
+   comparison's `sha` for a removed entry *is* the deleted base-side blob, so it always
+   equals the listing's, and comparing them would label a deletion `metadata-only` and
+   have the reviewer treat a deleted file as reviewable metadata. It is labelled
+   `removed-without-hunks` instead. Classification happens **before any fetch and
+   regardless of whether the bytes are written**, so a budget rejection or a decode
+   failure cannot leave the reviewer without a verdict on whether content changed.
 
    Such an entry is also no longer skipped by the collection. A mode change or a pure
    rename of a text file has pre-change bytes, and those bytes are exactly what the
    prompt sends the reviewer to `base/` for; skipping them left no content and no
    recorded gap for a change the prompt had just called reviewable. Entries carrying
    hunks are fetched first, so a large binary cannot consume the budget ahead of the
-   textual change the review is about.
+   textual change the review is about, and the budget is checked against the **size the
+   listing already reports** so a file the budget will reject costs no request at all.
+   Fetching first made a large Pull Request full of binaries issue an avoidable request
+   per file, and a rate-limit response there would fail the step -- leaving that Pull
+   Request without a review, which is precisely the failure this Decision exists to
+   remove.
 
    One committed script, `.github/review-context/build_review_context.py`, derives
    `diff.stat`, `no-patch.txt` and `base/` from a single comparison payload. That

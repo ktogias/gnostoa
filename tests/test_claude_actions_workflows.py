@@ -928,6 +928,83 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # The earlier claim was false and must not come back.
         self.assertNotIn("reviewable from its status", prompt)
 
+    def test_a_file_the_budget_rejects_costs_no_request(self) -> None:
+        # Fetching first made a large Pull Request full of binaries issue an avoidable
+        # request per file, and a rate limit there fails the step -- leaving that Pull
+        # Request without a review, which is the failure this workflow exists to remove.
+        collector = _load_script(BASE_COLLECTOR)
+        asked: list[str] = []
+        with tempfile.TemporaryDirectory() as scratch:
+            context = pathlib.Path(scratch)
+            _comparison(context, "d" * 40, [_file("huge.bin", "modified", patch=None)])
+            collector._provider_json = _provider(
+                asked,
+                listings={
+                    "": [{"name": "huge.bin", "type": "file", "size": 1_000_000}]
+                },
+                contents={"huge.bin": _payload(b"never fetched")},
+            )
+            written, unavailable = collector.collect(context, "o/r", 4096)
+            self.assertEqual(0, written)
+            self.assertEqual(["over-budget huge.bin"], unavailable)
+            self.assertFalse(
+                any("contents/huge.bin?" in url for url in asked),
+                f"the content must not be requested at all: {asked}",
+            )
+
+    def test_a_removal_without_hunks_is_not_called_metadata_only(self) -> None:
+        # For a removed entry the comparison's sha *is* the deleted base-side blob, so
+        # it always equals the listing's. Comparing them would label a deletion
+        # metadata-only and have the reviewer treat it as reviewable metadata.
+        collector = _load_script(BASE_COLLECTOR)
+        blob = "9" * 40
+        with tempfile.TemporaryDirectory() as scratch:
+            context = pathlib.Path(scratch)
+            gone = _file("gone.bin", "removed", patch=None)
+            gone["sha"] = blob
+            _comparison(context, "d" * 40, [gone])
+            collector._provider_json = _provider(
+                [],
+                listings={
+                    "": [{"name": "gone.bin", "type": "file", "sha": blob, "size": 4}]
+                },
+                contents={"gone.bin": _payload(b"gone")},
+            )
+            collector.collect(context, "o/r", 4096)
+            manifest = (context / "base.manifest").read_text(encoding="utf-8")
+            self.assertIn("removed-without-hunks gone.bin", manifest)
+            self.assertNotIn("metadata-only gone.bin", manifest)
+
+    def test_a_hunkless_entry_is_classified_even_when_not_written(self) -> None:
+        # A budget rejection or a decode failure must not leave the reviewer without a
+        # verdict on whether the content changed.
+        collector = _load_script(BASE_COLLECTOR)
+        with tempfile.TemporaryDirectory() as scratch:
+            context = pathlib.Path(scratch)
+            rejected = _file("big.png", "modified", patch=None)
+            rejected["sha"] = "a" * 40
+            _comparison(context, "d" * 40, [rejected])
+            collector._provider_json = _provider(
+                [],
+                listings={
+                    "": [
+                        {
+                            "name": "big.png",
+                            "type": "file",
+                            "sha": "b" * 40,
+                            "size": 999_999,
+                        }
+                    ]
+                },
+                contents={},
+            )
+            written, unavailable = collector.collect(context, "o/r", 16)
+            self.assertEqual(0, written)
+            self.assertEqual(["over-budget big.png"], unavailable)
+            manifest = (context / "base.manifest").read_text(encoding="utf-8")
+            self.assertIn("content-changed-without-hunks big.png", manifest)
+            self.assertIn("over-budget big.png", manifest)
+
     def test_hunked_files_get_the_budget_before_hunkless_ones(self) -> None:
         # Otherwise a large binary, which has no hunks, could consume the budget ahead
         # of the textual change the review is actually about.
@@ -946,8 +1023,8 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 [],
                 listings={
                     "": [
-                        {"name": "blob.bin", "type": "file"},
-                        {"name": "code.py", "type": "file"},
+                        {"name": "blob.bin", "type": "file", "size": 64},
+                        {"name": "code.py", "type": "file", "size": 16},
                     ]
                 },
                 contents={
@@ -967,7 +1044,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             _comparison(context, "d" * 40, [_file("big.py", "modified")])
             collector._provider_json = _provider(
                 [],
-                listings={"": [{"name": "big.py", "type": "file"}]},
+                listings={"": [{"name": "big.py", "type": "file", "size": 64}]},
                 contents={"big.py": _payload(b"x" * 64)},
             )
             written, unavailable = collector.collect(context, "o/r", 8)
