@@ -252,6 +252,14 @@ No new dependency, service or runtime is introduced.
    `diff.patch` claimed to be the whole thing -- the reviewer would finish without ever
    learning a tail existed.
 
+   The notices come **out of the same bound**, not on top of it. Taking a whole part
+   as the overview and appending afterwards let `diff.patch` exceed the very number it
+   prints -- an artefact asserting something false about itself, which is the defect
+   class this rule keeps closing. The overview is therefore a line-boundary prefix
+   sized with its notices rather than part one verbatim; it is still whole lines, so it
+   still decodes as text, and if reserving that room is what makes it short, it says it
+   is bounded and points at `patches/` like any other truncation.
+
    **Wrapping is disclosed on its own**, whenever a record was wrapped, and not only
    when the size bound was also crossed. A diff holding one very long record can fit in
    a single part, and then `diff.patch` carried inserted newlines and continuation
@@ -284,7 +292,7 @@ No new dependency, service or runtime is introduced.
    under `patches/`, read in name order. Those parts are split on line boundaries
    under the byte bound rather than at exact byte counts, because the reviewer reads
    them as text and a byte cut can leave a multibyte character split across two
-   files; the overview is the first whole part for the same reason. The reviewer therefore pages the diff by
+   files; the overview is cut on the same line boundaries for the same reason. The reviewer therefore pages the diff by
    its own choice, which is what bounded context is supposed to mean. Item type is
    keyed on the resolved pull number here too, never on head/base equality, and an
    emptied Pull Request still receives every artefact the prompt names. The

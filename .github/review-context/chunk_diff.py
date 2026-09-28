@@ -128,13 +128,7 @@ def split_diff(context: pathlib.Path, limit: int) -> int:
     # only this function knows how many parts exist. Deciding from the *input* size
     # would miss a diff that fits the bound until wrapping pushes it past: the
     # reviewer would then read part one with nothing saying a tail exists.
-    overview = (parts / "part-0001").read_bytes() if index else b""
-    notices = []
-    if index > 1:
-        notices.append(
-            f"[bounded at {limit} bytes of {len(data)}; the whole diff is in "
-            "patches/, read in name order]"
-        )
+    wrap_notice = b""
     if wrapped:
         # Disclosed whenever wrapping happened, not only when the size bound was also
         # crossed. A diff holding one very long record can fit in a single part, and
@@ -142,14 +136,29 @@ def split_diff(context: pathlib.Path, limit: int) -> int:
         # nothing saying they are synthetic -- the reviewer reads them as real diff
         # content and computes line numbers from them. The bound notice is also what
         # sends it to patches/README, so without this it never learns the rule.
-        notices.append(
-            f"[{wrapped} long record(s) hard-wrapped over {continuations} "
+        wrap_notice = (
+            f"\n[{wrapped} long record(s) hard-wrapped over {continuations} "
             f"continuation line(s) beginning {_CONTINUATION.decode()!r}; no byte was "
             "removed or reordered, but a line number inside a wrapped record is "
-            "approximate -- see patches/README]"
-        )
-    if notices:
-        overview += ("\n" + "\n".join(notices) + "\n").encode()
+            "approximate -- see patches/README]\n"
+        ).encode()
+    bound_notice = (
+        f"\n[bounded at {limit} bytes of {len(data)}; the whole diff is in "
+        "patches/, read in name order]\n"
+    ).encode()
+    # The notices are part of diff.patch, so their room comes out of the same bound.
+    # Taking a whole part and appending afterwards let the file exceed the very number
+    # it prints -- an artefact asserting something false about itself. The overview is
+    # therefore a line-boundary prefix sized with the notices, rather than part one
+    # verbatim; it is still whole lines, so it still decodes as text.
+    body = data[: next_cut(data, max(0, limit - len(wrap_notice)))]
+    if index > 1 or len(body) < len(data):
+        body = data[
+            : next_cut(data, max(0, limit - len(wrap_notice) - len(bound_notice)))
+        ]
+        overview = body + bound_notice + wrap_notice
+    else:
+        overview = body + wrap_notice
     (context / "diff.patch").write_bytes(overview)
     return index
 

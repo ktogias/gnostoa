@@ -791,6 +791,39 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertNotIn("bounded at", script)
         self.assertIn("chunk_diff.py", script)
 
+    def test_the_overview_honours_its_own_stated_bound(self) -> None:
+        # diff.patch prints "bounded at N bytes". Appending the notices after taking a
+        # whole part let the file exceed N while saying it did not -- an artefact
+        # asserting something about itself that is false, which is the defect class
+        # this Decision keeps closing elsewhere.
+        chunker = _load_script(CHUNKER)
+        limit = 2048
+        cases = {
+            # Part one exactly fills the limit, so any appended notice overflows it.
+            "exact fill": b"".join(
+                b"+" + b"y" * 62 + b"\n" for _ in range(limit // 64 * 3)
+            ),
+            # Wrapped, single part, and close enough to the limit that the wrapping
+            # notice alone would push it over.
+            "wrapped near the limit": b"+" + b"z" * (limit - 8) + b"\n",
+        }
+        for name, payload in cases.items():
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as scratch:
+                context = pathlib.Path(scratch)
+                (context / "diff.full").write_bytes(payload)
+                chunker.split_diff(context, limit)
+                patch = (context / "diff.patch").read_bytes()
+                self.assertLessEqual(len(patch), limit, f"{name}: overview over bound")
+                # And it must not become silently short: if it does not hold the whole
+                # diff, it has to say so and point at the parts.
+                whole = b"".join(
+                    part.read_bytes()
+                    for part in sorted((context / "patches").glob("part-*"))
+                )
+                if patch.rstrip() != whole.rstrip():
+                    self.assertIn(b"bounded at", patch, name)
+                    self.assertIn(b"patches/", patch, name)
+
     def test_wrapping_is_disclosed_even_when_the_diff_fits_one_part(self) -> None:
         # The bound notice is what sends the reviewer to patches/README, where the
         # wrapping and its consequence for line numbering are explained. A diff that
