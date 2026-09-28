@@ -3421,6 +3421,53 @@ class VF0DockerBackendTests(unittest.TestCase):
             )
             sleep.assert_called()
 
+    def test_create_failure_without_container_preserves_cleanup_context(self) -> None:
+        class NeverAppears(FakeDockerBackend):
+            def _command(
+                self, *args: str, timeout: float = 30
+            ) -> subprocess.CompletedProcess[bytes]:
+                if self.container_name is not None and args == (
+                    "inspect",
+                    self.container_name,
+                ):
+                    self.calls.append(tuple(args))
+                    return subprocess.CompletedProcess(
+                        ["/usr/bin/docker"],
+                        1,
+                        stdout=b"",
+                        stderr=f"Error: No such object: {args[-1]}\n".encode(),
+                    )
+                return super()._command(*args, timeout=timeout)
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td).resolve()
+            backend = NeverAppears(self.image, root, create_mode="exception")
+            with (
+                mock.patch(
+                    "tools.vf0_execution.time.monotonic",
+                    side_effect=[0.0, 0.0, 0.5, 1.0, 1.5, 2.0],
+                ),
+                mock.patch("tools.vf0_execution.time.sleep"),
+            ):
+                with self.assertRaisesRegex(
+                    ExecutionRejected, "^OCI_CLEANUP_UNVERIFIED$"
+                ) as caught:
+                    backend.run(
+                        root, ["/bin/true"], ExecutionLimits(), subject=self.subject
+                    )
+
+            self.assertIsInstance(caught.exception.__context__, ExecutionRejected)
+            self.assertEqual("DOCKER_COMMAND_FAILED", str(caught.exception.__context__))
+            self.assertEqual(
+                [("inspect", backend.container_name)] * 5,
+                [
+                    call
+                    for call in backend.calls
+                    if call == ("inspect", backend.container_name)
+                ],
+            )
+            self.assertFalse(backend.removed)
+
     def test_timeout_has_no_container_exit_claim_and_cleanup_still_occurs(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td).resolve()
