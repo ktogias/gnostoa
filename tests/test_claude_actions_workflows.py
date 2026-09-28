@@ -614,6 +614,24 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     collector.base_endpoint(repository, path, sha)
 
+    def test_provider_endpoint_is_validated_at_the_point_of_use(self) -> None:
+        # Validating where the endpoint is built is not enough: the argument reaching
+        # the subprocess is what matters, so the sink checks it too.
+        collector = _load_script(BASE_COLLECTOR)
+        good = collector.base_endpoint("o/r", "src/a b.py", "b" * 40)
+        self.assertRegex(good, collector._ENDPOINT)
+        for refused in (
+            "--version",
+            "repos/o/r/contents/a.py?ref=short",
+            "repos/-o/r/contents/a.py?ref=" + "b" * 40,
+            "https://api.github.com/repos/o/r/contents/a.py?ref=" + "b" * 40,
+            "repos/o/r/contents/a.py?ref=" + "B" * 40,
+        ):
+            with self.subTest(refused=refused):
+                self.assertNotRegex(refused, collector._ENDPOINT)
+                with self.assertRaises(ValueError):
+                    collector._provider_json(refused)
+
     def test_base_collector_writes_bounded_exact_base_content(self) -> None:
         # Behavioural: the exact pre-change bytes must land as regular files, the
         # budget must hold, and an added file must be skipped rather than invented.

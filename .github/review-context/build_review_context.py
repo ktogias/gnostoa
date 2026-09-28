@@ -58,12 +58,31 @@ def safe_relative_path(name: str) -> pathlib.PurePosixPath:
     return pathlib.PurePosixPath(*components)
 
 
+# Checked again at the point of use, not only where the endpoint is built. The
+# argument reaching a subprocess is the thing that matters, so it is validated at that
+# boundary rather than trusted because an earlier function was careful.
+_ENDPOINT = re.compile(
+    r"\Arepos/[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*"
+    r"/contents/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+\?ref=[0-9a-f]{40}\Z"
+)
+
+
 def _provider_json(endpoint: str) -> dict[str, Any] | None:
     """Return the provider's JSON for ``endpoint``, or None when it has none."""
+    # Validated before anything else: whether the input is acceptable does not depend
+    # on whether the tool that would consume it happens to be installed.
+    if not _ENDPOINT.match(endpoint):
+        raise ValueError(f"refusing an unexpected endpoint: {endpoint!r}")
     if _GH is None:  # pragma: no cover - the workflow always provides gh
         raise RuntimeError("gh is required to reach the provider")
-    completed = subprocess.run(  # nosec B603  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
-        [_GH, "api", endpoint],
+    completed = subprocess.run(  # nosec B603
+        # The argv is a fixed executable, a fixed verb and an endpoint matched against
+        # _ENDPOINT immediately above, so no argument can be read as a flag.
+        [
+            _GH,
+            "api",
+            endpoint,
+        ],  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
         capture_output=True,
         text=True,
         check=False,
