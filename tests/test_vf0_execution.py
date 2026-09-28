@@ -363,6 +363,53 @@ class VF0SubjectTests(unittest.TestCase):
             ):
                 execute(repo, subject, evidence, command, backend, limits)
 
+    def test_backend_retained_capture_cannot_change_returned_observation(self) -> None:
+        class RetainingBackend:
+            def __init__(self, capture: UntrustedCapture) -> None:
+                self.capture = capture
+
+            def run(
+                self,
+                root: Path,
+                command: Sequence[str],
+                limits: ExecutionLimits,
+                *,
+                subject: GitSubject,
+            ) -> UntrustedCapture:
+                del root, command, limits, subject
+                return self.capture
+
+        for termination, exit_code, observed in (
+            ("completed", 0, 1),
+            ("timeout", None, 1),
+            ("output_limit", None, 2),
+        ):
+            with self.subTest(termination=termination):
+                expected = UntrustedCapture(termination, exit_code, b"x", b"", observed)
+                backend = RetainingBackend(
+                    UntrustedCapture(termination, exit_code, b"x", b"", observed)
+                )
+                with tempfile.TemporaryDirectory() as td:
+                    repo, subject = _repo(Path(td))
+                    observation = execute(
+                        repo,
+                        subject,
+                        [_evidence("pass")],
+                        ["/bin/true"],
+                        backend,
+                        ExecutionLimits(output_bytes=1),
+                    )
+
+                object.__setattr__(backend.capture, "stdout", b"oversized")
+                object.__setattr__(backend.capture, "stderr", b"changed")
+                object.__setattr__(backend.capture, "observed_bytes_at_least", 0)
+                object.__setattr__(backend.capture, "exit_code", 999)
+                object.__setattr__(backend.capture, "termination", "invalid")
+
+                self.assertEqual(b"x", observation.capture.stdout)
+                self.assertEqual(expected, observation.capture)
+                self.assertIsNot(backend.capture, observation.capture)
+
     def test_custom_completed_capture_rejects_inconsistent_byte_count(self) -> None:
         class InconsistentBackend:
             def run(

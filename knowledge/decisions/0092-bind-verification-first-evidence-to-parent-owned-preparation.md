@@ -19,6 +19,9 @@ sources:
   - id: owner-provider-neutral-direction
     resource: https://github.com/ktogias/gnostoa/pull/319#issuecomment-5821298046
     title: Native A6 approval read-back and owner-selected abstraction requirements
+  - id: inactive-component-disposition
+    resource: https://github.com/ktogias/gnostoa/issues/15#issuecomment-5880532347
+    title: Owner-selected bounded inactive component integration
 x-project-knowledge:
   id: kit.decision.0092.bind-verification-first-evidence-to-parent-owned-preparation
   owners:
@@ -316,8 +319,10 @@ and admission relation, not trust the preparer's snapshot.
 
 The owner has now [approved the bounded bootstrap-preparation method](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5823426881)
 proposed in [5822958067](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5822958067).
-This permits implementation, bounded validation and publication on the existing
-PR, not merge, producer-trust admission or activation. The introducing transition
+That historical approval permits authoring, bounded validation and publication
+only within the linked bootstrap proposal. It supplies no general Issue #15
+implementation admission, change to Issue #6's ownership, merge authority,
+producer-trust admission or activation. The introducing transition
 must freeze its exact parent, file set, patch and tool/runtime identities before
 execution. Validate it externally with the unmodified parent's tools; never have
 the modified preparer certify itself, invent a v1 receipt, disable an existing
@@ -339,6 +344,35 @@ trip and its negative controls on that actual subject before declaring VF0 activ
 or advancing #318. Failure leaves VF0 incomplete, not a successful documentation
 substitute. Existing v1 preparation receipts remain historical D0090 evidence;
 they are not silently upgraded to verification-first receipts.
+
+#### Separately selected inactive component integration
+
+The owner subsequently selected [bounded inactive component integration](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5880532347)
+after the [exact-head dependency review](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5879777030).
+This disposition covers the existing private relation and execution components,
+their in-scope corrections, verification, review and protected source integration
+when exact-candidate reviews and required checks permit it. It does not admit
+the broad WI-DET-01 implementation, implement Issue #6 or activate VF0. The
+canonical multipart Work Item and its broad implementation gate remain intact;
+this separately admitted child is not a general waiver of that gate.
+
+Readiness, dependency, WIP and exception decisions remain external admission
+responsibilities. No such decision is added to the executor. The existing
+network-free relation seam can consume supplied observations but cannot establish
+their authority. Before activation, protected composition must bind the actual
+requested effect, exact Work Item/Decision/effective-policy revisions and current
+authenticated admission, including revocation and required source revalidation.
+The present private input does not yet establish these bindings; a protected
+external binding or a bounded private input-contract extension must be verified.
+Asserted guarantee flags alone do not satisfy them.
+
+Source integration retains reusable components without wiring them into the
+preparer, public CLI or production CI. The original VF0-01–VF0-10 obligations,
+critical classification, introducing-authority controls and actual integrated
+producer/consumer round trip remain required. Issue #15 stays open and #318's
+VF0 dependency is not satisfied by inactive component integration. The linked
+disposition is an agent-authored record of the owner's chat instruction, not a
+native provider approval or cryptographic human-presence proof.
 
 ## Alternatives, reuse and license boundary
 

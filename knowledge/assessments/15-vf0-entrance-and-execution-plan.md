@@ -34,7 +34,9 @@ x-project-knowledge:
 
 # VF0 entrance evidence and bounded execution plan
 
-**VF0 is not implemented or active.** This is the initial record for the existing
+**VF0's enforcement gate is not implemented or active.** Private relation and
+execution components exist without production invocation. This is the initial
+record for the existing
 Issue #15 child, not a new Work Item, public contract or reduced-risk replacement.
 The proposed [Decision 0092](../decisions/0092-bind-verification-first-evidence-to-parent-owned-preparation.md)
 is separate from the observed experiment below.
@@ -993,6 +995,13 @@ that integration or declare complete VF0 ready. Component reviewer convergence
 must therefore be reported separately from D0092 aggregate acceptance and any
 protected Ready/merge, production-producer admission or activation effect.
 
+The later [owner disposition](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5880532347)
+selects bounded inactive component integration after in-scope correction,
+exact-candidate reviews and protected checks. It resolves that staging choice
+only; the original production obligations above remain incomplete. Decision
+0092's [separate component boundary](../decisions/0092-bind-verification-first-evidence-to-parent-owned-preparation.md#separately-selected-inactive-component-integration)
+keeps this source integration apart from full Work Item admission and activation.
+
 The one-time authority-evolution method remains selected and unused by ordinary
 helper-only candidates. No existing D0090 authority, effective threshold, public
 CLI/schema, dependency, credential or permanent producer workflow is changed by
@@ -1398,3 +1407,20 @@ activate VF0.
 | `tests/test_vf0_execution.py` | `3c3b40168d721d52c577487bd0fc37c3d62303efa47c93386d7d4b1ab4b51f2c` |
 | `tools/vf0_contract.py` | `8d8acb22f182836cf4f992c0df7a6e56342a8fc1ea1436bbf0af5441c5469d3a` |
 | `tools/vf0_execution.py` | `0a93c4119a92509136d4f34e5f1c85c007adeee7668af53848954d510df24a46` |
+
+### AUD39 capture ownership and bounded component disposition
+
+The [owner disposition](https://github.com/ktogias/gnostoa/issues/15#issuecomment-5880532347)
+and [pre-edit RED checkpoint](https://github.com/ktogias/gnostoa/pull/319#issuecomment-5880559943)
+bind this correction to exact parent `8ff1bfb344450f30ddfde5427de7d3ab146138f9`.
+Before production edits, an execute-level regression failed in all three
+completion/timeout/output-limit subcases because later backend mutation changed
+the returned stdout from one byte to nine. The controller now snapshots each
+capture field once, validates those exact primitive values and constructs a
+distinct result. The same regression passes; the focused Development Container
+suite ran 196 relation/execution tests successfully with two environment skips.
+This closes the reproduced R3 capture-alias behavior locally, pending prepared
+exact-candidate verification and review. Final prepared-tree, receipt, full-suite
+and live-OCI identities remain outside the prepared tree in the PR record.
+No production gate, public command, admission adapter or original VF0 obligation
+is activated or satisfied by this component correction.
