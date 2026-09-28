@@ -1456,7 +1456,19 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         tick = "`"
 
         def rendered_lines(text: str) -> list[str]:
-            """Return the lines CommonMark would render, tracked independently."""
+            """Return the lines CommonMark would render, tracked separately here.
+
+            This is a re-implementation of the rule, not an independent authority: it
+            is written by the same author as the subject and so shares any
+            misconception about CommonMark that the subject has. It catches a *coding*
+            mistake in the sanitiser, which is what a suite can do offline, and it
+            cannot catch a wrong reading of the specification.
+
+            The real oracle is GitHub's own renderer, which needs the network and so
+            cannot run here. Decision 0094 rule 22 records that check, when it was run
+            and against which head: every vector below renders an image before
+            sanitisation and none renders one after.
+            """
             inside: tuple[str, int] | None = None
             visible: list[str] = []
             for line in text.splitlines():

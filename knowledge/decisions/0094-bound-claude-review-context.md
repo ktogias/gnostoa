@@ -501,8 +501,21 @@ No new dependency, service or runtime is introduced.
    **and** that the same checks fire on the raw input, since a sanitiser test that
    cannot fail proves nothing. It also checks the property that actually matters rather
    than the one that is easy to check: every line CommonMark would *render* must have
-   been sanitised, evaluated against a fence tracker written independently in the test
-   so the subject cannot grade its own work.
+   been sanitised.
+
+   That check is evaluated against a fence tracker written separately in the test --
+   which is a re-implementation, not an independent authority. It is written by the same
+   author as the subject and therefore shares any misreading of CommonMark the subject
+   has. It catches a coding mistake, which is what a suite can do offline; it cannot
+   catch a wrong reading of the specification.
+
+   The real oracle is GitHub's own renderer, and it was used. Against head `8ba1aaca`,
+   each vector was rendered through `gh api /markdown` with `mode=gfm` before and after
+   sanitisation: inline image, reference image, raw `<img>`, the four-then-three-then-four
+   fence, a backtick fence with a backtick in its info string, and a tab-indented run.
+   **Every raw form rendered an `<img>`; no sanitised form did.** That check needs the
+   network and so cannot run in the suite, which is why it is recorded here with the
+   head it was run against rather than asserted by a test.
 
 23. **Each review-context script confines its own paths.** The three committed scripts
    take their directories and files from the workflow, which is trusted -- but a value
