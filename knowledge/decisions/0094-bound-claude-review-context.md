@@ -195,8 +195,22 @@ No new dependency, service or runtime is introduced.
    keeps the comparison to one request and keeps the step free of an external `jq`,
    and it puts the field semantics somewhere the suite can exercise directly.
 
-   `base/` holds the **exact base revision of every changed file**, as
-   provider-supplied bytes. It exists because the checkout is the default branch and
+   `base/` holds the **exact pre-change revision of every changed file**, as
+   provider-supplied bytes. Four properties of that collection are load-bearing, and
+   each exists because getting it wrong hands the reviewer something *false* rather
+   than something missing: the revision fetched is the **merge base**, since a
+   three-dot comparison is computed from there and the base branch tip would be a
+   different revision whenever the target branch has advanced; a **renamed** entry is
+   fetched under `previous_filename`, because that is where the base holds it and
+   fetching the new path could return whatever unrelated file a swap or overwrite
+   rename replaced; a response that is not an ordinary base64 `file` -- a symlink the
+   contents API resolved to its target, or a large file returned with
+   `encoding: "none"` -- is recorded as unavailable rather than written, because
+   resolved or empty bytes presented as the exact base are worse than an acknowledged
+   gap; and only a 404 means the base does not hold a path, so any other provider
+   failure propagates rather than being recorded as an addition. Every path not written
+   is named with its reason in `base.manifest`, which lives **outside** `base/` so it
+   cannot overwrite a repository file of the same name. It exists because the checkout is the default branch and
    not this Pull Request's base (rule 21), so unchanged code read from disk can come
    from a revision the candidate never saw -- which yields interaction findings that
    are not real. Writing bytes rather than checking out a tree keeps rule 21 intact:
@@ -222,6 +236,11 @@ No new dependency, service or runtime is introduced.
    sink that cannot take a flag is better than a sink whose arguments must be policed. The collection is bounded by the same byte budget, and
    a file that is absent -- added by the candidate, or over the budget -- is recorded
    as such in `base/README` rather than left to look like an empty file.
+
+   A refused diff does not fail the step. The provider can decline the diff of a very
+   large comparison, and exiting there would reproduce the large-Pull-Request failure
+   this Decision exists to remove, so the refusal is written into `diff.patch` and the
+   review continues on the summaries and `base/`.
 
    The parts are cut by a second committed script,
    `.github/review-context/chunk_diff.py`,
@@ -356,13 +375,23 @@ No new dependency, service or runtime is introduced.
    rather than being guarded against. Read confinement remains defence-in-depth
    only: a `settings` deny list covers the obvious runner paths **for every granted
    filesystem tool**, since a `Read` rule does not constrain `Grep`, whose
-   ripgrep-backed search would return matching lines from the same path. This
+   ripgrep-backed search would return matching lines from the same path. The runner's
+   own working areas are included, because the raw event payload under `_temp` still
+   contains the issue and Pull Request bodies that rule 15 deliberately withholds --
+   denying only `.ssh` beneath `/home` left the trust gate reachable around. This
    repository still cannot verify the reviewer's enforcement of those rules, so the
    structural control is the absence of candidate content rather than the deny list.
 
-   The prompt states what the checkout actually is: the default branch at its current
-   tip, which may have advanced past the Pull Request's base or belong to a different
-   branch. Saying "the Pull Request's base" was false in both cases and would have had
+   The checkout is pinned to `github.workflow_sha`, the revision GitHub bound the run
+   to, rather than to a branch name resolved when the job executes: a queued run whose
+   default branch has since advanced would otherwise execute newer collection scripts
+   than the workflow and Decision it started under, silently moving this boundary.
+
+   The prompt states what the checkout actually is: the default branch, which may have
+   advanced past the Pull Request's base or belong to a different branch, and it directs
+   pre-change reads to `base/` **and away from the checkout**. Declaring the tree
+   non-authoritative while still instructing the reviewer to read it for pre-change
+   state was the same defect in a second place. Saying "the Pull Request's base" was false in both cases and would have had
    the reviewer read unrelated upstream state as the pre-change state. The exact
    before and after state lives only in the artefacts, and the prompt says so. This
    also answers the residual on trusting the entry route: the route is a **known
@@ -449,7 +478,8 @@ bounded interpolation set, the static prompt bound, forwarding of the triggering
 request, the reviewed-head checkout binding under a same-repository guard, coverage of
 every admitted trigger payload, the resolved-base diff, the declared entry route, the absence of any Bash grant, the trusted context collection with its bound
 and its line-safe recoverable parts, the provider-built comparison and its cap
-notices, the exact-base file context and its path refusals, the absence of any
+notices, the exact-base file context with its merge-base source, rename handling, non-plain-file
+refusals, named budget drops and collision-free manifest, the absence of any
 candidate checkout,
 the no-Pull-Request path, the forwarded inline location, the trust gate on
 externally authored issue text, the agreement between the tool grant and the

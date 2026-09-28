@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import http.server
 import importlib.util
 import json
 import os
@@ -9,7 +10,9 @@ import re
 import shutil
 import subprocess  # nosec B404 -- test-only boundary; every argv below is literal
 import tempfile
+import threading
 import unittest
+import urllib.error
 from pathlib import Path
 from typing import Any
 
@@ -136,6 +139,36 @@ def _prompt_contexts(prompt: str) -> set[str]:
                 continue
             contexts.add(token)
     return contexts
+
+
+def _file(
+    name: str,
+    status: str,
+    *,
+    previous: str | None = None,
+    patch: str | None = "@@",
+) -> dict[str, Any]:
+    """Return one comparison file entry with the fields the collector reads."""
+    entry: dict[str, Any] = {
+        "filename": name,
+        "status": status,
+        "additions": 1,
+        "deletions": 1,
+        "sha": "f" * 40,
+        "patch": patch,
+    }
+    if previous is not None:
+        entry["previous_filename"] = previous
+    return entry
+
+
+def _payload(content: bytes) -> dict[str, Any]:
+    """Return a contents response for an ordinary base64 file."""
+    return {
+        "type": "file",
+        "encoding": "base64",
+        "content": base64.b64encode(content).decode(),
+    }
 
 
 def _checkouts(workflow: dict[str, Any]) -> list[dict[str, Any]]:
@@ -381,7 +414,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # output. What must still hold is that it is never left to follow github.ref,
         # which on the review triggers is the candidate's merge ref.
         self.assertNotIn("github.ref", ref)
-        self.assertEqual("${{ github.event.repository.default_branch }}", ref)
+        self.assertEqual("${{ github.workflow_sha }}", ref)
         resolve = next(
             step for step in _steps(workflow) if step.get("id") == "review_head"
         )
@@ -431,7 +464,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # materialised is the protected default branch, so no fork head, merge ref or
         # payload-supplied SHA can be it; the guard still governs which head the
         # comparison is asked for.
-        self.assertEqual("${{ github.event.repository.default_branch }}", ref)
+        self.assertEqual("${{ github.workflow_sha }}", ref)
         for forbidden in ("refs/pull/", "head.sha", "head_sha", "github.ref"):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, ref)
@@ -450,9 +483,19 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
     def test_mention_prompt_names_the_collected_context(self) -> None:
         workflow = load_yaml(MENTION_WORKFLOW)
         prompt = " ".join(_claude_step(workflow)["with"]["prompt"].split())
-        for artefact in ("diff.stat", "commits.log", "diff.patch", "patches/"):
+        # The directory is named once and the artefacts are listed under it.
+        self.assertIn(".gnostoa-review-context/", prompt)
+        for artefact in (
+            "diff.stat",
+            "commits.log",
+            "diff.patch",
+            "patches/",
+            "unreviewable.txt",
+            "base/",
+            "base.manifest",
+        ):
             with self.subTest(artefact=artefact):
-                self.assertIn(f".gnostoa-review-context/{artefact}", prompt)
+                self.assertIn(artefact, prompt)
 
     def test_mention_prompt_diffs_against_the_resolved_base(self) -> None:
         # A hardcoded branch is wrong for any Pull Request that does not target it.
@@ -481,10 +524,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         base = _base_checkout(workflow)
         # Bound to the protected default branch, by a repository property rather
         # than by a step output or anything a trigger carries.
-        self.assertEqual(
-            "${{ github.event.repository.default_branch }}",
-            str(base["with"]["ref"]).strip(),
-        )
+        self.assertEqual("${{ github.workflow_sha }}", str(base["with"]["ref"]).strip())
         self.assertNotIn("path", base.get("with", {}))
         text = MENTION_WORKFLOW.read_text(encoding="utf-8")
         # The head may still be named in the prompt and in the collection step; what
@@ -635,95 +675,219 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     collector._provider_json(refused)
 
-    def test_base_collector_writes_bounded_exact_base_content(self) -> None:
-        # Behavioural: the exact pre-change bytes must land as regular files, the
-        # budget must hold, and an added file must be skipped rather than invented.
+    def test_base_collector_writes_what_it_can_and_names_what_it_cannot(self) -> None:
+        # Every branch that would otherwise hand the reviewer something false rather
+        # than something missing.
+        collector = _load_script(BASE_COLLECTOR)
+        merge_base = "d" * 40
+        with tempfile.TemporaryDirectory() as scratch:
+            context = pathlib.Path(scratch)
+            (context / "comparison.json").write_text(
+                json.dumps(
+                    {
+                        "merge_base_commit": {"sha": merge_base},
+                        "files": [
+                            _file("src/kept.py", "modified"),
+                            _file("new.py", "renamed", previous="old.py"),
+                            _file("fresh.py", "added"),
+                            _file("link", "modified"),
+                            _file("huge.py", "modified"),
+                            _file("asset.png", "added", patch=None),
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            responses = {
+                f"src/kept.py?ref={merge_base}": _payload(b"before\n"),
+                # The base holds a renamed file under its previous path only.
+                f"old.py?ref={merge_base}": _payload(b"old body\n"),
+                # The contents API resolves a symlink to its target's bytes.
+                f"link?ref={merge_base}": {
+                    "type": "symlink",
+                    "encoding": "base64",
+                    "content": base64.b64encode(b"resolved target\n").decode(),
+                    "target": "/etc/hostname",
+                },
+                # Files around a megabyte come back with no usable content.
+                f"huge.py?ref={merge_base}": {
+                    "type": "file",
+                    "encoding": "none",
+                    "content": "",
+                },
+            }
+            asked: list[str] = []
+
+            def fake(url: str) -> dict[str, object] | None:
+                asked.append(url)
+                for suffix, payload in responses.items():
+                    if url.endswith(suffix):
+                        return payload
+                return None
+
+            collector._provider_json = fake
+            written, unavailable = collector.collect(context, "o/r", 4096)
+
+            self.assertEqual(1 + 1, written)
+            self.assertEqual(
+                "before\n",
+                (context / "base" / "src" / "kept.py").read_text(encoding="utf-8"),
+            )
+            # Fetched under the old path, written under the new one.
+            self.assertEqual(
+                "old body\n",
+                (context / "base" / "new.py").read_text(encoding="utf-8"),
+            )
+            self.assertFalse((context / "base" / "old.py").exists())
+            self.assertTrue(any("old.py?ref=" + merge_base in u for u in asked))
+
+            # Each unavailable path is named with its reason, never only counted.
+            self.assertIn("added-by-candidate fresh.py", unavailable)
+            self.assertIn("not-a-plain-file link", unavailable)
+            self.assertIn("not-a-plain-file huge.py", unavailable)
+            self.assertFalse((context / "base" / "link").exists())
+            self.assertFalse((context / "base" / "huge.py").exists())
+            # A file with no patch is unreviewable, not a base gap.
+            self.assertFalse(any("asset.png" in line for line in unavailable))
+
+            manifest = (context / "base.manifest").read_text(encoding="utf-8")
+            self.assertIn(merge_base, manifest)
+            for line in unavailable:
+                with self.subTest(line=line):
+                    self.assertIn(line, manifest)
+
+    def test_the_budget_names_the_files_it_drops(self) -> None:
+        collector = _load_script(BASE_COLLECTOR)
+        merge_base = "d" * 40
+        with tempfile.TemporaryDirectory() as scratch:
+            context = pathlib.Path(scratch)
+            (context / "comparison.json").write_text(
+                json.dumps(
+                    {
+                        "merge_base_commit": {"sha": merge_base},
+                        "files": [_file("big.py", "modified")],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            collector._provider_json = lambda url: _payload(b"x" * 64)
+            written, unavailable = collector.collect(context, "o/r", 8)
+            self.assertEqual(0, written)
+            self.assertEqual(["over-budget big.py"], unavailable)
+            self.assertIn(
+                "over-budget big.py",
+                (context / "base.manifest").read_text(encoding="utf-8"),
+            )
+
+    def test_collector_metadata_cannot_collide_with_a_repository_path(self) -> None:
+        # A Pull Request that modifies a root-level README must still get its exact
+        # pre-change bytes; the manifest lives outside base/ so it cannot overwrite it.
+        collector = _load_script(BASE_COLLECTOR)
+        merge_base = "d" * 40
+        with tempfile.TemporaryDirectory() as scratch:
+            context = pathlib.Path(scratch)
+            (context / "comparison.json").write_text(
+                json.dumps(
+                    {
+                        "merge_base_commit": {"sha": merge_base},
+                        "files": [_file("README", "modified")],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            collector._provider_json = lambda url: _payload(b"the real README\n")
+            written, unavailable = collector.collect(context, "o/r", 4096)
+            self.assertEqual(1, written)
+            self.assertEqual([], unavailable)
+            self.assertEqual(
+                "the real README\n",
+                (context / "base" / "README").read_text(encoding="utf-8"),
+            )
+            self.assertTrue((context / "base.manifest").is_file())
+
+    def test_a_provider_failure_is_not_mistaken_for_an_added_file(self) -> None:
+        # Only 404 means "the base does not hold this". A rate limit or server error
+        # must stop the step rather than be recorded as an addition.
         collector = _load_script(BASE_COLLECTOR)
         with tempfile.TemporaryDirectory() as scratch:
             context = pathlib.Path(scratch)
             (context / "comparison.json").write_text(
                 json.dumps(
                     {
-                        "files": [
-                            {
-                                "filename": "src/kept.py",
-                                "status": "modified",
-                                "additions": 1,
-                                "deletions": 1,
-                                "sha": "1" * 40,
-                                "patch": "@@",
-                            },
-                            {
-                                "filename": "src/added.py",
-                                "status": "added",
-                                "additions": 2,
-                                "deletions": 0,
-                                "sha": "2" * 40,
-                                "patch": "@@",
-                            },
-                            {
-                                "filename": "big.bin",
-                                "status": "modified",
-                                "additions": 3,
-                                "deletions": 0,
-                                "sha": "3" * 40,
-                                "patch": "@@",
-                            },
-                            {
-                                "filename": "asset.png",
-                                "status": "added",
-                                "additions": 0,
-                                "deletions": 0,
-                                "sha": "4" * 40,
-                                "patch": None,
-                            },
-                        ]
+                        "merge_base_commit": {"sha": "d" * 40},
+                        "files": [_file("src/a.py", "modified")],
                     }
                 ),
                 encoding="utf-8",
             )
-            payloads = {
-                "https://api.github.com/repos/o/r/contents/src/kept.py?ref="
-                + "b" * 40: {"content": base64.b64encode(b"before\n").decode()},
-                # The candidate added this one, so the base has no revision of it.
-                "https://api.github.com/repos/o/r/contents/src/added.py?ref="
-                + "b" * 40: None,
-                "https://api.github.com/repos/o/r/contents/big.bin?ref=" + "b" * 40: {
-                    "content": base64.b64encode(b"x" * 4096).decode()
-                },
-            }
-            asked: list[str] = []
 
-            def fake(endpoint: str) -> dict[str, object] | None:
-                asked.append(endpoint)
-                return payloads[endpoint]
+            def boom(url: str) -> dict[str, object] | None:
+                raise urllib.error.HTTPError(url, 403, "rate limited", {}, None)  # type: ignore[arg-type]
 
-            collector._provider_json = fake
-            written, skipped = collector.collect(context, "o/r", "b" * 40, 64)
-            # asset.png has no patch, so it is never asked for at all.
-            self.assertNotIn(
-                "https://api.github.com/repos/o/r/contents/asset.png?ref=" + "b" * 40,
-                asked,
+            collector._provider_json = boom
+            with self.assertRaises(urllib.error.HTTPError):
+                collector.collect(context, "o/r", 4096)
+
+    def test_the_real_request_path_is_exercised(self) -> None:
+        # The ordinary modified-file fetch must not be reachable only through a fake:
+        # this serves a contents response over real HTTP and lets urllib retrieve it.
+        collector = _load_script(BASE_COLLECTOR)
+        merge_base = "d" * 40
+        body = json.dumps(_payload(b"served over http\n")).encode()
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_: object) -> None:
+                return
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            host, port = server.server_address[0], server.server_address[1]
+            collector._API = f"http://{host}:{port}"
+            collector._URL = re.compile(
+                rf"\Ahttp://{re.escape(str(host))}:{port}/repos/\S+\?ref=[0-9a-f]{{40}}\Z"
             )
-            self.assertEqual(1, written)
-            self.assertEqual(2, skipped, asked)
-            self.assertEqual(
-                "before\n",
-                (context / "base" / "src" / "kept.py").read_text(encoding="utf-8"),
-            )
-            self.assertFalse((context / "base" / "src" / "added.py").exists())
-            self.assertFalse((context / "base" / "big.bin").exists())
-            notice = (context / "base" / "README").read_text(encoding="utf-8")
-            self.assertIn("Written: 1", notice)
-            self.assertIn("2", notice)
+            with tempfile.TemporaryDirectory() as scratch:
+                context = pathlib.Path(scratch)
+                (context / "comparison.json").write_text(
+                    json.dumps(
+                        {
+                            "merge_base_commit": {"sha": merge_base},
+                            "files": [_file("src/a.py", "modified")],
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                written, unavailable = collector.collect(context, "o/r", 4096)
+                self.assertEqual(1, written)
+                self.assertEqual([], unavailable)
+                self.assertEqual(
+                    "served over http\n",
+                    (context / "base" / "src" / "a.py").read_text(encoding="utf-8"),
+                )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
 
     def test_prompt_and_guardrail_cover_the_base_context(self) -> None:
         workflow = load_yaml(MENTION_WORKFLOW)
         script = str(_context_step(workflow)["run"])
         self.assertIn("build_review_context.py", script)
         prompt = " ".join(_claude_step(workflow)["with"]["prompt"].split())
-        self.assertIn(".gnostoa-review-context/base/", prompt)
-        self.assertIn("read base/", prompt)
+        self.assertIn("base/", prompt)
+        # Pre-change reads are directed at base/ and away from the checkout: an
+        # earlier prompt declared the checkout non-authoritative and then told the
+        # reviewer to read it anyway.
+        self.assertIn("Read base/, never the checkout", prompt)
         guardrails = load_yaml(ROOT / "policy" / "guardrails.yaml")
         entry = next(
             item
@@ -732,6 +896,43 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         )
         self.assertIn(
             ".github/review-context/build_review_context.py", entry["implementation"]
+        )
+
+    def test_a_refused_diff_does_not_fail_the_step(self) -> None:
+        # The step runs under `set -eu`, and the provider can refuse the diff of a very
+        # large comparison. Exiting there would reproduce the large-Pull-Request
+        # failure this whole Decision exists to remove.
+        script = str(_context_step(load_yaml(MENTION_WORKFLOW))["run"])
+        self.assertIn("if ! gh api", script)
+        self.assertIn("did not return a diff", script)
+
+    def test_the_runner_event_payload_is_denied_to_every_tool(self) -> None:
+        # The withheld issue and Pull Request bodies are still present in the raw event
+        # payload on the runner, so denying only .ssh under /home leaves the gate the
+        # prompt implements reachable around.
+        claude = _claude_step(load_yaml(MENTION_WORKFLOW))
+        denied = json.loads(str(claude["with"]["settings"]))["permissions"]["deny"]
+        for fragment in ("_temp", "_actions", "event.json"):
+            for tool in ("Read", "Grep", "Glob"):
+                with self.subTest(fragment=fragment, tool=tool):
+                    self.assertTrue(
+                        any(
+                            rule.startswith(f"{tool}(") and fragment in rule
+                            for rule in denied
+                        ),
+                        f"no {tool} deny rule covers {fragment}",
+                    )
+
+    def test_base_content_comes_from_the_merge_base(self) -> None:
+        # A three-dot comparison is computed from the merge base, so pre-change content
+        # taken from the base branch tip would describe a different revision.
+        source = BASE_COLLECTOR.read_text(encoding="utf-8")
+        self.assertIn("merge_base_commit", source)
+        # The step must not pass a base SHA of its own for this purpose.
+        script = str(_context_step(load_yaml(MENTION_WORKFLOW))["run"])
+        self.assertNotIn(
+            'build_review_context.py \\\n            "${CONTEXT_DIR}" "${REPOSITORY}" "${BASE_SHA}"',
+            script,
         )
 
     def test_commit_list_is_paginated_and_a_capped_file_list_says_so(self) -> None:
@@ -830,8 +1031,10 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         prompt = " ".join(
             _claude_step(load_yaml(MENTION_WORKFLOW))["with"]["prompt"].split()
         )
-        self.assertIn("default branch at its current tip", prompt)
+        self.assertIn("default branch", prompt)
+        self.assertIn("may have advanced past Base", prompt)
         self.assertNotIn("checkout is the Pull Request's **base**", prompt)
+        self.assertNotIn("Read or Grep the checkout for the pre-change", prompt)
 
     def test_review_context_is_collected_with_fixed_arguments(self) -> None:
         # The retrieval must take no candidate-controlled input, or the trusted
@@ -980,9 +1183,12 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 "provider listed 1 of 3 commits",
                 (context / "commits.log").read_text(encoding="utf-8"),
             )
-            # Every artefact the prompt names exists, including the base notice.
+            # Every artefact the prompt names exists, including the manifest, which
+            # lives outside base/ so it cannot collide with a repository path.
             self.assertIn("f.txt", (context / "unreviewable.txt").read_text())
-            self.assertIn("Written: 0", (context / "base" / "README").read_text())
+            manifest = (context / "base.manifest").read_text(encoding="utf-8")
+            self.assertIn("Written: 0", manifest)
+            self.assertFalse((context / "base" / "base.manifest").exists())
 
             # With no pull number the request is an issue, and says so.
             issue_context = work / "issue-context"
