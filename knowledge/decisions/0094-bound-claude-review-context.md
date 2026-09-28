@@ -209,13 +209,17 @@ No new dependency, service or runtime is introduced.
    reaching a subprocess argument, and an endpoint beginning with a dash would be read
    as a flag rather than an endpoint. The repository must match `owner/name` with each
    side starting alphanumeric, the revision must be an exact 40-character lowercase
-   hex SHA, and the path is percent-encoded. The endpoint is then matched against its
-   expected shape **again at the point of use**, before the subprocess call, because
-   the argument reaching a subprocess is what matters and trusting it because an
-   earlier function was careful is how the first version of this check came to accept
-   a leading dash. That validation runs before the tool-availability check, so whether
-   an input is acceptable does not depend on whether the tool that would consume it
-   happens to be installed. The collection is bounded by the same byte budget, and
+   hex SHA, and the path is percent-encoded. The URL is then matched, **at the point of
+   use**, against a pattern that pins scheme, host and shape together: trusting a value
+   because an earlier function was careful is how the first version of this check came
+   to accept a leading dash, and validating before any environment lookup keeps "is
+   this input acceptable" independent of "is the environment configured".
+
+   There is no subprocess in this script at all. The request is an ordinary HTTPS GET,
+   so no argument can be mistaken for a flag and no other origin is representable. That
+   replaced an earlier version that shelled out to the provider CLI; two scanners
+   flagged the argument as tainted, and although the validation was by then real, a
+   sink that cannot take a flag is better than a sink whose arguments must be policed. The collection is bounded by the same byte budget, and
    a file that is absent -- added by the candidate, or over the budget -- is recorded
    as such in `base/README` rather than left to look like an empty file.
 

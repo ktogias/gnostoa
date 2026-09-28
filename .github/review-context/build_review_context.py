@@ -1,49 +1,61 @@
 """Build the bounded review context from one provider comparison payload.
 
-Writes ``diff.stat``, ``unreviewable.txt`` and ``base/``. Doing all three from one
-payload keeps the comparison to a single request and keeps the workflow step free of
-an external ``jq``.
+Writes ``diff.stat``, ``unreviewable.txt`` and ``base/``. Deriving all three from a
+single payload keeps the comparison to one request and keeps the workflow step free of
+an external ``jq``, and it puts the field semantics somewhere the suite can exercise
+directly rather than by scraping YAML.
 
-The ``base/`` part matters most. Materialise the exact pre-change content of every
-changed file.
+``base/`` matters most. The bounded reviewer of Decision 0094 reads the repository's
+default branch for its entry route and general context, and that tree is deliberately
+**not** the Pull Request's base: the branch may have advanced, or the Pull Request may
+target another branch. Unchanged code read from it can therefore come from a revision
+the candidate never saw, which produces interaction findings that are not real. So the
+exact base revision of every changed file is written here, as provider-supplied bytes.
 
-The bounded reviewer of Decision 0094 reads the repository's default branch for its
-entry route and general context, and that tree is deliberately **not** the Pull
-Request's base: the branch may have advanced, or the Pull Request may target another
-branch. Surrounding unchanged code read from it can therefore come from a revision the
-candidate never saw, which produces interaction findings that are not real.
+Bytes, not a checkout: no mode, symlink or directory entry from either side reaches the
+runner, which is what keeps rule 21 intact. Provider-supplied names are refused rather
+than sanitised when absolute, empty, traversing, or carrying a backslash or NUL,
+because a name that should not occur is a reason to stop instead of to guess.
 
-This script writes the exact base revision of each changed file under
-``base/`` in the review context, so the reviewer has an authoritative
-pre-change state without a candidate working tree ever existing.
+There is no subprocess here. The request is an ordinary HTTPS GET whose URL is matched
+against a pattern pinning scheme, host and shape, so no argument can be mistaken for a
+flag and no other origin is representable.
 
-Content is written as regular files from provider-supplied bytes, so no mode, symlink
-or directory entry from either side reaches the runner. Paths are validated before
-use: anything absolute, empty, or containing a parent-directory component is refused
-rather than sanitised, because a path that should not occur is a reason to stop.
-
-It is invoked from ``.github/workflows/claude.yml``, which for the mention triggers
-runs from the repository's default branch, so it is not candidate-supplied.
+Invoked from ``.github/workflows/claude.yml``, which for the mention triggers runs from
+the repository's default branch, so this file is not candidate-supplied.
 """
 
 from __future__ import annotations
 
 import base64
 import json
+import os
 import pathlib
 import re
-import shutil
-import subprocess  # nosec B404 -- single audited boundary in _provider_json
 import sys
+import urllib.error
 import urllib.parse
+import urllib.request
 from typing import Any
 
-_GH = shutil.which("gh")
-
+_API = "https://api.github.com"
+_FILE_CAP = 300
+_TIMEOUT_SECONDS = 30
 
 # Validated on the raw string. PurePosixPath normalises "a//b" and "." away, so
 # inspecting its parts would accept names that should never have been produced.
 _REFUSED_COMPONENTS = frozenset({"", ".", ".."})
+_SHA = re.compile(r"\A[0-9a-f]{40}\Z")
+# Each side must begin with an alphanumeric. A leading dash is precisely the shape an
+# earlier version of this check accepted, and the reason it is spelled out here.
+_REPOSITORY = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+# Pins scheme, host and shape together, so the request cannot be pointed at another
+# origin whatever reaches this function.
+_URL = re.compile(
+    r"\Ahttps://api\.github\.com/repos/[A-Za-z0-9][A-Za-z0-9._-]*"
+    r"/[A-Za-z0-9][A-Za-z0-9._-]*"
+    r"/contents/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+\?ref=[0-9a-f]{40}\Z"
+)
 
 
 def safe_relative_path(name: str) -> pathlib.PurePosixPath:
@@ -58,65 +70,52 @@ def safe_relative_path(name: str) -> pathlib.PurePosixPath:
     return pathlib.PurePosixPath(*components)
 
 
-# Checked again at the point of use, not only where the endpoint is built. The
-# argument reaching a subprocess is the thing that matters, so it is validated at that
-# boundary rather than trusted because an earlier function was careful.
-_ENDPOINT = re.compile(
-    r"\Arepos/[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*"
-    r"/contents/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+\?ref=[0-9a-f]{40}\Z"
-)
-
-
-def _provider_json(endpoint: str) -> dict[str, Any] | None:
-    """Return the provider's JSON for ``endpoint``, or None when it has none."""
-    # Validated before anything else: whether the input is acceptable does not depend
-    # on whether the tool that would consume it happens to be installed.
-    if not _ENDPOINT.match(endpoint):
-        raise ValueError(f"refusing an unexpected endpoint: {endpoint!r}")
-    if _GH is None:  # pragma: no cover - the workflow always provides gh
-        raise RuntimeError("gh is required to reach the provider")
-    completed = subprocess.run(  # nosec B603
-        # The argv is a fixed executable, a fixed verb and an endpoint matched against
-        # _ENDPOINT immediately above, so no argument can be read as a flag.
-        [
-            _GH,
-            "api",
-            endpoint,
-        ],  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit, python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if completed.returncode != 0:
-        # A file added by the candidate has no base revision. That is expected, and
-        # the diff already carries its content.
-        return None
-    return json.loads(completed.stdout)
-
-
-_SHA = re.compile(r"\A[0-9a-f]{40}\Z")
-# Each side must begin with an alphanumeric: a leading dash is precisely the shape
-# that would be read as a flag rather than as an endpoint.
-_REPOSITORY = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*\Z")
-
-
 def base_endpoint(repository: str, path: str, base_sha: str) -> str:
-    """Build the contents endpoint for ``path`` at ``base_sha``.
+    """Build the contents URL for ``path`` at ``base_sha``.
 
-    The endpoint is constructed from values this script was given rather than taken
-    from the comparison's own ``contents_url``: that field is provider-supplied data
-    reaching a subprocess argument, and an endpoint that begins with a dash would be
-    read as a flag. Every component is validated, and the path is percent-encoded.
+    Constructed from values this script was given rather than taken from the
+    comparison's own ``contents_url``, which is provider-supplied data.
     """
     if not _REPOSITORY.match(repository):
         raise ValueError(f"refusing a malformed repository: {repository!r}")
     if not _SHA.match(base_sha):
         raise ValueError(f"refusing a non-exact base revision: {base_sha!r}")
     encoded = urllib.parse.quote(str(safe_relative_path(path)), safe="/")
-    return f"repos/{repository}/contents/{encoded}?ref={base_sha}"
+    return f"{_API}/repos/{repository}/contents/{encoded}?ref={base_sha}"
 
 
-_FILE_CAP = 300
+def _authorization() -> dict[str, str]:
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
+def _provider_json(url: str) -> dict[str, Any] | None:
+    """Return the provider's JSON for ``url``, or None when it has none."""
+    # Checked here, at the point of use, and before anything else. The value that
+    # reaches the request is what matters, and trusting it because an earlier function
+    # was careful is how the first version of this validation came to accept a leading
+    # dash; validating before any environment lookup also keeps "is this input
+    # acceptable" independent of "is the environment configured".
+    if not _URL.match(url):
+        raise ValueError(f"refusing an unexpected provider URL: {url!r}")
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            **_authorization(),
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            # A file the candidate added has no base revision. That is expected, and
+            # the diff already carries its content.
+            return None
+        raise
 
 
 def write_summaries(context: pathlib.Path, comparison: dict[str, Any]) -> None:
@@ -163,10 +162,8 @@ def collect(
     for entry in comparison.get("files") or []:
         if entry.get("patch") is None:
             continue
-        relative = safe_relative_path(str(entry["filename"]))
-        payload = _provider_json(
-            base_endpoint(repository, str(entry["filename"]), base_sha)
-        )
+        name = str(entry["filename"])
+        payload = _provider_json(base_endpoint(repository, name, base_sha))
         if payload is None or "content" not in payload:
             skipped += 1
             continue
@@ -174,13 +171,12 @@ def collect(
         if len(content) > remaining:
             skipped += 1
             continue
-        destination = target / relative
+        destination = target / safe_relative_path(name)
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(content)
         remaining -= len(content)
         written += 1
-    notice = target / "README"
-    notice.write_text(
+    (target / "README").write_text(
         "Exact base revision of each changed file, as provider-supplied bytes.\n"
         f"Written: {written}. Not available or over the budget: {skipped}.\n"
         "A file absent here was added by the candidate, or exceeded the budget; the\n"

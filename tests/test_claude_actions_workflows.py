@@ -598,7 +598,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # a flag. The endpoint is therefore constructed and every part validated.
         collector = _load_script(BASE_COLLECTOR)
         self.assertEqual(
-            "repos/o/r/contents/src/a%20b.py?ref=" + "b" * 40,
+            "https://api.github.com/repos/o/r/contents/src/a%20b.py?ref=" + "b" * 40,
             collector.base_endpoint("o/r", "src/a b.py", "b" * 40),
         )
         for repository, path, sha in (
@@ -619,16 +619,19 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # the subprocess is what matters, so the sink checks it too.
         collector = _load_script(BASE_COLLECTOR)
         good = collector.base_endpoint("o/r", "src/a b.py", "b" * 40)
-        self.assertRegex(good, collector._ENDPOINT)
+        self.assertRegex(good, collector._URL)
         for refused in (
             "--version",
-            "repos/o/r/contents/a.py?ref=short",
-            "repos/-o/r/contents/a.py?ref=" + "b" * 40,
-            "https://api.github.com/repos/o/r/contents/a.py?ref=" + "b" * 40,
-            "repos/o/r/contents/a.py?ref=" + "B" * 40,
+            "repos/o/r/contents/a.py?ref=" + "b" * 40,
+            "https://api.github.com/repos/o/r/contents/a.py?ref=short",
+            "https://api.github.com/repos/-o/r/contents/a.py?ref=" + "b" * 40,
+            "https://api.github.com/repos/o/r/contents/a.py?ref=" + "B" * 40,
+            # Another origin must not be representable at all.
+            "https://evil.example/repos/o/r/contents/a.py?ref=" + "b" * 40,
+            "http://api.github.com/repos/o/r/contents/a.py?ref=" + "b" * 40,
         ):
             with self.subTest(refused=refused):
-                self.assertNotRegex(refused, collector._ENDPOINT)
+                self.assertNotRegex(refused, collector._URL)
                 with self.assertRaises(ValueError):
                     collector._provider_json(refused)
 
@@ -680,12 +683,12 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 encoding="utf-8",
             )
             payloads = {
-                "repos/o/r/contents/src/kept.py?ref=" + "b" * 40: {
-                    "content": base64.b64encode(b"before\n").decode()
-                },
+                "https://api.github.com/repos/o/r/contents/src/kept.py?ref="
+                + "b" * 40: {"content": base64.b64encode(b"before\n").decode()},
                 # The candidate added this one, so the base has no revision of it.
-                "repos/o/r/contents/src/added.py?ref=" + "b" * 40: None,
-                "repos/o/r/contents/big.bin?ref=" + "b" * 40: {
+                "https://api.github.com/repos/o/r/contents/src/added.py?ref="
+                + "b" * 40: None,
+                "https://api.github.com/repos/o/r/contents/big.bin?ref=" + "b" * 40: {
                     "content": base64.b64encode(b"x" * 4096).decode()
                 },
             }
@@ -698,7 +701,10 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             collector._provider_json = fake
             written, skipped = collector.collect(context, "o/r", "b" * 40, 64)
             # asset.png has no patch, so it is never asked for at all.
-            self.assertNotIn("repos/o/r/contents/asset.png?ref=" + "b" * 40, asked)
+            self.assertNotIn(
+                "https://api.github.com/repos/o/r/contents/asset.png?ref=" + "b" * 40,
+                asked,
+            )
             self.assertEqual(1, written)
             self.assertEqual(2, skipped, asked)
             self.assertEqual(
@@ -867,13 +873,15 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                     {
                         "files": [
                             {
+                                # No patch, so the step needs no network for base/:
+                                # the exact-base fetch is covered by its own test with
+                                # the provider call replaced.
                                 "filename": "f.txt",
-                                "patch": "@@",
+                                "patch": None,
                                 "status": "modified",
                                 "additions": 4000,
                                 "deletions": 1,
                                 "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                                "contents_url": "https://api/x/contents/f.txt?ref=head",
                             }
                         ]
                     }
@@ -972,6 +980,9 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 "provider listed 1 of 3 commits",
                 (context / "commits.log").read_text(encoding="utf-8"),
             )
+            # Every artefact the prompt names exists, including the base notice.
+            self.assertIn("f.txt", (context / "unreviewable.txt").read_text())
+            self.assertIn("Written: 0", (context / "base" / "README").read_text())
 
             # With no pull number the request is an issue, and says so.
             issue_context = work / "issue-context"
