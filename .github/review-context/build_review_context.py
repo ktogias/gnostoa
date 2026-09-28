@@ -72,7 +72,7 @@ _REPOSITORY = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-
 _URL = re.compile(
     r"\Ahttps://api\.github\.com/repos/[A-Za-z0-9][A-Za-z0-9._-]*"
     r"/[A-Za-z0-9][A-Za-z0-9._-]*"
-    r"/contents/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+\?ref=[0-9a-f]{40}\Z"
+    r"/contents/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*\?ref=[0-9a-f]{40}\Z"
 )
 
 
@@ -98,6 +98,33 @@ def base_endpoint(repository: str, path: str, base_sha: str) -> str:
     return f"{_API}/repos/{repository}/contents/{encoded}?ref={base_sha}"
 
 
+def listing_endpoint(repository: str, directory: str, base_sha: str) -> str:
+    """Build the contents URL for a directory listing at ``base_sha``."""
+    if not _REPOSITORY.match(repository):
+        raise ValueError(f"refusing a malformed repository: {repository!r}")
+    if not _SHA.match(base_sha):
+        raise ValueError(f"refusing a non-exact base revision: {base_sha!r}")
+    encoded = (
+        urllib.parse.quote(str(safe_relative_path(directory)), safe="/")
+        if directory
+        else ""
+    )
+    return f"{_API}/repos/{repository}/contents/{encoded}?ref={base_sha}"
+
+
+def entry_type(
+    listing: Any,
+    name: str,
+) -> str | None:
+    """Return the declared type of ``name`` within a directory ``listing``."""
+    if not isinstance(listing, list):
+        return None
+    for item in listing:
+        if isinstance(item, dict) and str(item.get("name")) == name:
+            return str(item.get("type"))
+    return None
+
+
 def base_path_of(entry: dict[str, Any]) -> str:
     """Return the path the base revision holds this entry under."""
     if entry.get("status") == "renamed":
@@ -113,7 +140,7 @@ def _authorization() -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"} if token else {}
 
 
-def _provider_json(url: str) -> dict[str, Any] | None:
+def _provider_json(url: str) -> Any:
     """Return the provider's JSON for ``url``, or None when it reports 404.
 
     Every other failure propagates. A rate limit, an authentication failure or a server
@@ -146,10 +173,14 @@ def _provider_json(url: str) -> dict[str, Any] | None:
 
 
 def decoded_file(payload: dict[str, Any]) -> bytes | None:
-    """Return the payload's bytes, or None when it is not an ordinary file."""
+    """Return the payload's bytes, or None when the response is not usable.
+
+    The response *shape* cannot identify a symlink: the contents API answers a symlink
+    to a regular file with the target's content under an ordinary ``type: file``. The
+    authoritative check is the parent directory's listing, which declares
+    ``type: symlink``; this function only rejects what the response itself rules out.
+    """
     if payload.get("type") != "file":
-        # A symlink is returned resolved to its target; a submodule is not a file at
-        # all. Either way these are not the bytes the base holds at this path.
         return None
     if payload.get("encoding") != "base64":
         # Files above roughly 1 MB come back with `encoding: "none"` and empty content.
@@ -203,6 +234,18 @@ def collect(
     # must come from there too. The base branch tip would be a different revision
     # whenever the target branch has advanced since the candidate diverged.
     merge_base = str((comparison.get("merge_base_commit") or {}).get("sha") or "")
+    # Per-file patches, so a provider that refuses the whole diff still leaves the
+    # changed content reachable. Without this, a refusal produced a context with paths
+    # and pre-change bytes but nothing about what the candidate actually changed.
+    (context / "assembled.diff").write_text(
+        "".join(
+            f"--- a/{entry['filename']}\n+++ b/{entry['filename']}\n{entry['patch']}\n"
+            for entry in comparison.get("files") or []
+            if entry.get("patch") is not None
+        ),
+        encoding="utf-8",
+    )
+    listings: dict[str, Any] = {}
     target = context / "base"
     target.mkdir(exist_ok=True)
     written = 0
@@ -217,6 +260,23 @@ def collect(
             unavailable.append(f"added-by-candidate {name}")
             continue
         source = base_path_of(entry)
+        # The parent listing declares the entry's real type. Asking the contents API
+        # alone cannot: it answers a symlink to a regular file with the target's bytes
+        # under an ordinary `type: file`, so accepting that response would write
+        # unrelated content and call it the exact pre-change state.
+        directory = str(pathlib.PurePosixPath(source).parent)
+        directory = "" if directory == "." else directory
+        if directory not in listings:
+            listings[directory] = _provider_json(
+                listing_endpoint(repository, directory, merge_base)
+            )
+        declared = entry_type(listings[directory], pathlib.PurePosixPath(source).name)
+        if declared is None:
+            unavailable.append(f"absent-at-merge-base {source}")
+            continue
+        if declared != "file":
+            unavailable.append(f"not-a-plain-file {source}")
+            continue
         payload = _provider_json(base_endpoint(repository, source, merge_base))
         if payload is None:
             unavailable.append(f"absent-at-merge-base {source}")

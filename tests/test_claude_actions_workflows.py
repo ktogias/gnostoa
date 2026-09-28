@@ -162,6 +162,34 @@ def _file(
     return entry
 
 
+def _comparison(
+    context: pathlib.Path, merge_base: str, files: list[dict[str, Any]]
+) -> None:
+    """Write the comparison payload the collector reads."""
+    (context / "comparison.json").write_text(
+        json.dumps({"merge_base_commit": {"sha": merge_base}, "files": files}),
+        encoding="utf-8",
+    )
+
+
+def _provider(
+    asked: list[str],
+    *,
+    listings: dict[str, Any],
+    contents: dict[str, Any],
+) -> Any:
+    """Answer provider URLs by their path, recording each one asked for."""
+
+    def answer(url: str) -> Any:
+        asked.append(url)
+        path = url.split("/contents/", 1)[1].split("?", 1)[0]
+        if path in listings:
+            return listings[path]
+        return contents.get(path)
+
+    return answer
+
+
 def _payload(content: bytes) -> dict[str, Any]:
     """Return a contents response for an ordinary base64 file."""
     return {
@@ -680,74 +708,73 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # than something missing.
         collector = _load_script(BASE_COLLECTOR)
         merge_base = "d" * 40
+        asked: list[str] = []
         with tempfile.TemporaryDirectory() as scratch:
             context = pathlib.Path(scratch)
-            (context / "comparison.json").write_text(
-                json.dumps(
-                    {
-                        "merge_base_commit": {"sha": merge_base},
-                        "files": [
-                            _file("src/kept.py", "modified"),
-                            _file("new.py", "renamed", previous="old.py"),
-                            _file("fresh.py", "added"),
-                            _file("link", "modified"),
-                            _file("huge.py", "modified"),
-                            _file("asset.png", "added", patch=None),
-                        ],
-                    }
-                ),
-                encoding="utf-8",
+            _comparison(
+                context,
+                merge_base,
+                [
+                    _file("src/kept.py", "modified"),
+                    _file("new.py", "renamed", previous="old.py"),
+                    _file("fresh.py", "added"),
+                    _file("link", "modified"),
+                    _file("huge.py", "modified"),
+                    _file("asset.png", "added", patch=None),
+                ],
             )
-            responses = {
-                f"src/kept.py?ref={merge_base}": _payload(b"before\n"),
-                # The base holds a renamed file under its previous path only.
-                f"old.py?ref={merge_base}": _payload(b"old body\n"),
-                # The contents API resolves a symlink to its target's bytes.
-                f"link?ref={merge_base}": {
-                    "type": "symlink",
-                    "encoding": "base64",
-                    "content": base64.b64encode(b"resolved target\n").decode(),
-                    "target": "/etc/hostname",
+            collector._provider_json = _provider(
+                asked,
+                listings={
+                    "": [
+                        {"name": "new.py", "type": "file"},
+                        {"name": "old.py", "type": "file"},
+                        {"name": "fresh.py", "type": "file"},
+                        # The listing is the only authoritative statement of type.
+                        {"name": "link", "type": "symlink"},
+                        {"name": "huge.py", "type": "file"},
+                        {"name": "asset.png", "type": "file"},
+                    ],
+                    "src": [{"name": "kept.py", "type": "file"}],
                 },
-                # Files around a megabyte come back with no usable content.
-                f"huge.py?ref={merge_base}": {
-                    "type": "file",
-                    "encoding": "none",
-                    "content": "",
+                contents={
+                    "src/kept.py": _payload(b"before\n"),
+                    # The base holds a renamed file under its previous path only.
+                    "old.py": _payload(b"old body\n"),
+                    # A resolved symlink is shaped exactly like an ordinary file, so
+                    # this response would be accepted if the listing were not checked.
+                    "link": _payload(b"resolved target\n"),
+                    # Files around a megabyte come back with no usable content.
+                    "huge.py": {"type": "file", "encoding": "none", "content": ""},
                 },
-            }
-            asked: list[str] = []
-
-            def fake(url: str) -> dict[str, object] | None:
-                asked.append(url)
-                for suffix, payload in responses.items():
-                    if url.endswith(suffix):
-                        return payload
-                return None
-
-            collector._provider_json = fake
+            )
             written, unavailable = collector.collect(context, "o/r", 4096)
 
-            self.assertEqual(1 + 1, written)
+            self.assertEqual(2, written)
             self.assertEqual(
                 "before\n",
                 (context / "base" / "src" / "kept.py").read_text(encoding="utf-8"),
             )
             # Fetched under the old path, written under the new one.
             self.assertEqual(
-                "old body\n",
-                (context / "base" / "new.py").read_text(encoding="utf-8"),
+                "old body\n", (context / "base" / "new.py").read_text(encoding="utf-8")
             )
             self.assertFalse((context / "base" / "old.py").exists())
-            self.assertTrue(any("old.py?ref=" + merge_base in u for u in asked))
+            self.assertTrue(
+                any(f"contents/old.py?ref={merge_base}" in url for url in asked), asked
+            )
 
-            # Each unavailable path is named with its reason, never only counted.
             self.assertIn("added-by-candidate fresh.py", unavailable)
             self.assertIn("not-a-plain-file link", unavailable)
             self.assertIn("not-a-plain-file huge.py", unavailable)
             self.assertFalse((context / "base" / "link").exists())
-            self.assertFalse((context / "base" / "huge.py").exists())
-            # A file with no patch is unreviewable, not a base gap.
+            # Refused from the listing, before its content was ever requested. The
+            # previous version of this test fabricated a `type: symlink` contents
+            # response, which the provider does not send for a symlink to a file, so
+            # it confirmed the check rather than exercising it.
+            self.assertFalse(
+                any(f"contents/link?ref={merge_base}" in url for url in asked), asked
+            )
             self.assertFalse(any("asset.png" in line for line in unavailable))
 
             manifest = (context / "base.manifest").read_text(encoding="utf-8")
@@ -756,21 +783,22 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 with self.subTest(line=line):
                     self.assertIn(line, manifest)
 
+            # Per-file hunks are assembled whether or not the unified diff arrives, so
+            # a refused diff still leaves the changed content reachable.
+            assembled = (context / "assembled.diff").read_text(encoding="utf-8")
+            self.assertIn("+++ b/src/kept.py", assembled)
+            self.assertNotIn("asset.png", assembled)
+
     def test_the_budget_names_the_files_it_drops(self) -> None:
         collector = _load_script(BASE_COLLECTOR)
-        merge_base = "d" * 40
         with tempfile.TemporaryDirectory() as scratch:
             context = pathlib.Path(scratch)
-            (context / "comparison.json").write_text(
-                json.dumps(
-                    {
-                        "merge_base_commit": {"sha": merge_base},
-                        "files": [_file("big.py", "modified")],
-                    }
-                ),
-                encoding="utf-8",
+            _comparison(context, "d" * 40, [_file("big.py", "modified")])
+            collector._provider_json = _provider(
+                [],
+                listings={"": [{"name": "big.py", "type": "file"}]},
+                contents={"big.py": _payload(b"x" * 64)},
             )
-            collector._provider_json = lambda url: _payload(b"x" * 64)
             written, unavailable = collector.collect(context, "o/r", 8)
             self.assertEqual(0, written)
             self.assertEqual(["over-budget big.py"], unavailable)
@@ -783,19 +811,14 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # A Pull Request that modifies a root-level README must still get its exact
         # pre-change bytes; the manifest lives outside base/ so it cannot overwrite it.
         collector = _load_script(BASE_COLLECTOR)
-        merge_base = "d" * 40
         with tempfile.TemporaryDirectory() as scratch:
             context = pathlib.Path(scratch)
-            (context / "comparison.json").write_text(
-                json.dumps(
-                    {
-                        "merge_base_commit": {"sha": merge_base},
-                        "files": [_file("README", "modified")],
-                    }
-                ),
-                encoding="utf-8",
+            _comparison(context, "d" * 40, [_file("README", "modified")])
+            collector._provider_json = _provider(
+                [],
+                listings={"": [{"name": "README", "type": "file"}]},
+                contents={"README": _payload(b"the real README\n")},
             )
-            collector._provider_json = lambda url: _payload(b"the real README\n")
             written, unavailable = collector.collect(context, "o/r", 4096)
             self.assertEqual(1, written)
             self.assertEqual([], unavailable)
@@ -811,17 +834,9 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         collector = _load_script(BASE_COLLECTOR)
         with tempfile.TemporaryDirectory() as scratch:
             context = pathlib.Path(scratch)
-            (context / "comparison.json").write_text(
-                json.dumps(
-                    {
-                        "merge_base_commit": {"sha": "d" * 40},
-                        "files": [_file("src/a.py", "modified")],
-                    }
-                ),
-                encoding="utf-8",
-            )
+            _comparison(context, "d" * 40, [_file("src/a.py", "modified")])
 
-            def boom(url: str) -> dict[str, object] | None:
+            def boom(url: str) -> Any:
                 raise urllib.error.HTTPError(url, 403, "rate limited", {}, None)  # type: ignore[arg-type]
 
             collector._provider_json = boom
@@ -830,13 +845,20 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
 
     def test_the_real_request_path_is_exercised(self) -> None:
         # The ordinary modified-file fetch must not be reachable only through a fake:
-        # this serves a contents response over real HTTP and lets urllib retrieve it.
+        # this serves the provider's responses over real HTTP and lets urllib retrieve
+        # them, so the request, the decode and the write all run for real.
         collector = _load_script(BASE_COLLECTOR)
         merge_base = "d" * 40
-        body = json.dumps(_payload(b"served over http\n")).encode()
+        listing = json.dumps([{"name": "a.py", "type": "file"}]).encode()
+        content = json.dumps(_payload(b"served over http\n")).encode()
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self) -> None:
+                body = (
+                    listing
+                    if self.path.startswith("/repos/o/r/contents/src?")
+                    else content
+                )
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))
@@ -853,19 +875,11 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             host, port = server.server_address[0], server.server_address[1]
             collector._API = f"http://{host}:{port}"
             collector._URL = re.compile(
-                rf"\Ahttp://{re.escape(str(host))}:{port}/repos/\S+\?ref=[0-9a-f]{{40}}\Z"
+                rf"\Ahttp://{re.escape(str(host))}:{port}/repos/\S*\?ref=[0-9a-f]{{40}}\Z"
             )
             with tempfile.TemporaryDirectory() as scratch:
                 context = pathlib.Path(scratch)
-                (context / "comparison.json").write_text(
-                    json.dumps(
-                        {
-                            "merge_base_commit": {"sha": merge_base},
-                            "files": [_file("src/a.py", "modified")],
-                        }
-                    ),
-                    encoding="utf-8",
-                )
+                _comparison(context, merge_base, [_file("src/a.py", "modified")])
                 written, unavailable = collector.collect(context, "o/r", 4096)
                 self.assertEqual(1, written)
                 self.assertEqual([], unavailable)
@@ -904,7 +918,11 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         # failure this whole Decision exists to remove.
         script = str(_context_step(load_yaml(MENTION_WORKFLOW))["run"])
         self.assertIn("if ! gh api", script)
-        self.assertIn("did not return a diff", script)
+        # The refusal must not leave the reviewer without the change itself: the
+        # per-file hunks assembled from the comparison take the diff's place.
+        self.assertIn("refused the unified diff", script)
+        self.assertIn("assembled.diff", script)
+        self.assertIn("patches-source", script)
 
     def test_the_runner_event_payload_is_denied_to_every_tool(self) -> None:
         # The withheld issue and Pull Request bodies are still present in the raw event
@@ -934,6 +952,50 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             'build_review_context.py \\\n            "${CONTEXT_DIR}" "${REPOSITORY}" "${BASE_SHA}"',
             script,
         )
+
+    def test_oversized_records_are_wrapped_below_the_reader_line_cap(self) -> None:
+        # Fixing the UTF-8 split was not enough. The reviewer's Read tool truncates a
+        # physical line beyond roughly two thousand characters and indexes by line, so
+        # a minified or generated record would leave its tail unreachable while the
+        # prompt claimed patches/ holds the whole diff.
+        chunker = _load_script(CHUNKER)
+        cap = chunker._LINE_CAP
+        cases = {
+            "short lines": b"alpha\nbeta\n",
+            "one oversized record": b"x" * (cap * 3) + b"\ntail\n",
+            "multibyte across the cap": b"a" * (cap - 1) + "é".encode() + b"b" * cap,
+            "no trailing newline": b"y" * (cap + 5),
+        }
+        for name, payload in cases.items():
+            with self.subTest(case=name):
+                wrapped, count = chunker.wrap_long_records(payload)
+                # Only newlines are inserted: nothing removed, nothing reordered.
+                self.assertEqual(
+                    payload.replace(b"\n", b""), wrapped.replace(b"\n", b"")
+                )
+                for line in wrapped.split(b"\n"):
+                    self.assertLessEqual(len(line), cap)
+                # Every part must still stand alone as text.
+                wrapped.decode("utf-8")
+                self.assertEqual(
+                    count > 0, any(len(r) > cap for r in payload.split(b"\n"))
+                )
+
+    def test_wrapping_is_disclosed_and_parts_stay_readable(self) -> None:
+        chunker = _load_script(CHUNKER)
+        cap = chunker._LINE_CAP
+        with tempfile.TemporaryDirectory() as scratch:
+            context = pathlib.Path(scratch)
+            payload = b"z" * (cap * 2) + b"\n"
+            (context / "diff.full").write_bytes(payload)
+            chunker.split_diff(context, cap * 4)
+            parts = sorted((context / "patches").glob("part-*"))
+            self.assertTrue(parts)
+            rejoined = b"".join(part.read_bytes() for part in parts)
+            self.assertEqual(payload.replace(b"\n", b""), rejoined.replace(b"\n", b""))
+            notice = (context / "patches" / "README").read_text(encoding="utf-8")
+            self.assertIn("hard-wrapped", notice)
+            self.assertIn(str(cap), notice)
 
     def test_commit_list_is_paginated_and_a_capped_file_list_says_so(self) -> None:
         # The provider paginates commits at 250 per page but caps files at 300 with no

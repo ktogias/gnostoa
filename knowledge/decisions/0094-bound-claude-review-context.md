@@ -203,11 +203,12 @@ No new dependency, service or runtime is introduced.
    different revision whenever the target branch has advanced; a **renamed** entry is
    fetched under `previous_filename`, because that is where the base holds it and
    fetching the new path could return whatever unrelated file a swap or overwrite
-   rename replaced; a response that is not an ordinary base64 `file` -- a symlink the
-   contents API resolved to its target, or a large file returned with
-   `encoding: "none"` -- is recorded as unavailable rather than written, because
-   resolved or empty bytes presented as the exact base are worse than an acknowledged
-   gap; and only a 404 means the base does not hold a path, so any other provider
+   rename replaced; a path's real type is read from its **parent directory listing**, not
+   from the shape of the contents response, because the contents API answers a symlink
+   to a regular file with the target's bytes under an ordinary `type: file` -- so a
+   symlink, a submodule, or a large file returned with `encoding: "none"` is recorded as
+   unavailable rather than written, and resolved or empty bytes are never presented as
+   the exact base; and only a 404 means the base does not hold a path, so any other provider
    failure propagates rather than being recorded as an addition. Every path not written
    is named with its reason in `base.manifest`, which lives **outside** `base/` so it
    cannot overwrite a repository file of the same name. It exists because the checkout is the default branch and
@@ -235,12 +236,22 @@ No new dependency, service or runtime is introduced.
    flagged the argument as tainted, and although the validation was by then real, a
    sink that cannot take a flag is better than a sink whose arguments must be policed. The collection is bounded by the same byte budget, and
    a file that is absent -- added by the candidate, or over the budget -- is recorded
-   as such in `base/README` rather than left to look like an empty file.
+   with its reason in `base.manifest` rather than left to look like an empty file.
 
-   A refused diff does not fail the step. The provider can decline the diff of a very
+   The parts are also **hard-wrapped** at a reader-visible line length. Fixing the
+   UTF-8 split was not sufficient: the reviewer's `Read` truncates a physical line
+   beyond roughly two thousand characters and indexes by line, so a minified or
+   generated record would leave its tail unreachable while the prompt claimed
+   `patches/` holds the whole diff. Only newlines are inserted -- no byte is removed or
+   reordered -- and the wrapping is disclosed in `patches/README`.
+
+   A refused diff does not fail the step, and does not leave the reviewer without the
+   change either. The provider can decline the diff of a very
    large comparison, and exiting there would reproduce the large-Pull-Request failure
-   this Decision exists to remove, so the refusal is written into `diff.patch` and the
-   review continues on the summaries and `base/`.
+   this Decision exists to remove, The per-file patches assembled from the same comparison payload take
+   the unified diff's place, so the changed content is still reachable; `patches-source`
+   says so, and that context outside each hunk is absent. Writing only a notice would
+   have let a review complete without ever seeing the change.
 
    The parts are cut by a second committed script,
    `.github/review-context/chunk_diff.py`,

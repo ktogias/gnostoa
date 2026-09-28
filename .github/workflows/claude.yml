@@ -200,18 +200,21 @@ jobs:
             "${CONTEXT_DIR}" "${REPOSITORY}" "${MAX_BYTES}"
 
           # The provider can refuse the diff of a very large comparison. Failing the
-          # step here would reproduce the large-Pull-Request failure this Decision
-          # exists to remove, so the refusal is recorded and the review continues on
-          # the summaries and base/ instead.
+          # step would reproduce the large-Pull-Request failure this Decision exists to
+          # remove -- but continuing with no changed content at all would let a review
+          # complete without seeing the change. So the per-file patches the builder
+          # assembled from the comparison are used instead, and the reviewer is told.
           if ! gh api "${comparison}" -H "Accept: application/vnd.github.v3.diff" \
             > "${CONTEXT_DIR}/diff.full"; then
-            printf 'The provider did not return a diff for this comparison; it is\n' \
-              > "${CONTEXT_DIR}/diff.patch"
-            printf 'most likely too large. Review from diff.stat, base/ and the files.\n' \
-              >> "${CONTEXT_DIR}/diff.patch"
-            rm -f "${CONTEXT_DIR}/diff.full" "${CONTEXT_DIR}/comparison.json"
-            exit 0
+            mv "${CONTEXT_DIR}/assembled.diff" "${CONTEXT_DIR}/diff.full"
+            printf 'NOTE: the provider refused the unified diff for this comparison.\n' \
+              > "${CONTEXT_DIR}/patches-source"
+            printf 'These hunks come from the per-file patches instead, so context\n' \
+              >> "${CONTEXT_DIR}/patches-source"
+            printf 'outside each hunk is absent and capped files may be missing.\n' \
+              >> "${CONTEXT_DIR}/patches-source"
           fi
+          rm -f "${CONTEXT_DIR}/assembled.diff"
           full_bytes="$(wc -c < "${CONTEXT_DIR}/diff.full")"
           if [ "${full_bytes}" -eq 0 ]; then
             # A Pull Request whose head already reaches its base still gets every
@@ -318,6 +321,7 @@ jobs:
               unreviewable.txt changed files the diff cannot show
               base/            exact pre-change bytes, at the merge base
               base.manifest    what base/ lacks, and why
+              patches-source   present only when the diff came from per-file hunks
             Read base/, never the checkout, for pre-change state, and check
             base.manifest for gaps. A file in unreviewable.txt is binary or oversized,
             so report it as not examined. If diff.patch says it was bounded, the rest is

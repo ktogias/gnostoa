@@ -16,6 +16,46 @@ import pathlib
 import sys
 
 _MAX_PARTS = 9999
+# The reviewer's Read tool truncates a physical line beyond roughly this length and
+# offsets into a file by line, so a single very long record -- a minified bundle, a
+# generated lockfile -- would leave its tail unreachable even though the bytes are
+# present. Such records are therefore hard-wrapped at a reader-visible boundary. Only
+# newlines are inserted: no byte of the diff is removed or reordered.
+_LINE_CAP = 1900
+
+
+def _wrap_point(record: bytes) -> int:
+    """Return how many bytes of an oversized record may go on one physical line."""
+    end = _LINE_CAP
+    while end > 0 and (record[end] & 0xC0) == 0x80:
+        end -= 1
+    return end or _LINE_CAP
+
+
+def wrap_long_records(data: bytes) -> tuple[bytes, int]:
+    """Hard-wrap records longer than the readable cap; return the text and the count."""
+    out = bytearray()
+    wrapped = 0
+    for record in data.split(b"\n"):
+        if len(record) <= _LINE_CAP:
+            out += record + b"\n"
+            continue
+        wrapped += 1
+        offset = 0
+        while offset < len(record):
+            take = (
+                _wrap_point(record[offset:])
+                if len(record) - offset > _LINE_CAP
+                else len(record) - offset
+            )
+            out += record[offset : offset + take] + b"\n"
+            offset += take
+    if data.endswith(b"\n"):
+        # split() produced a trailing empty record, which added one newline too many.
+        del out[-1:]
+    elif out.endswith(b"\n"):
+        del out[-1:]
+    return bytes(out), wrapped
 
 
 def next_cut(buffer: bytes, limit: int) -> int:
@@ -37,9 +77,16 @@ def split_diff(context: pathlib.Path, limit: int) -> int:
     """Write ``diff.full`` as bounded parts and return how many were written."""
     if limit < 1:
         raise ValueError("the byte bound must be positive")
-    data = (context / "diff.full").read_bytes()
+    data, wrapped = wrap_long_records((context / "diff.full").read_bytes())
     parts = context / "patches"
     parts.mkdir(exist_ok=True)
+    if wrapped:
+        (parts / "README").write_text(
+            f"{wrapped} diff record(s) exceeded {_LINE_CAP} bytes on one line and were\n"
+            "hard-wrapped so a line-oriented reader can reach all of them. Only\n"
+            "newlines were inserted; no byte was removed or reordered.\n",
+            encoding="utf-8",
+        )
     offset = 0
     index = 0
     while offset < len(data):
