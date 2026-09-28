@@ -788,6 +788,47 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             assembled = (context / "assembled.diff").read_text(encoding="utf-8")
             self.assertIn("+++ b/src/kept.py", assembled)
             self.assertNotIn("asset.png", assembled)
+            # A rename's old path must survive every retained artefact: without it the
+            # reviewer cannot say where the file came from, which is exactly what the
+            # swap and overwrite cases turn on.
+            self.assertIn("--- a/old.py\n+++ b/new.py", assembled)
+            self.assertRegex(
+                (context / "diff.stat").read_text(encoding="utf-8"),
+                r"renamed \S+ \S+ old\.py -> new\.py",
+            )
+            self.assertIn("renamed old.py -> new.py", manifest)
+
+    def test_a_truncated_listing_is_not_reported_as_absence(self) -> None:
+        # The contents API caps a directory listing and does not paginate it, so a
+        # changed file in a larger directory is simply missing from the response.
+        # Calling that "absent at the merge base" would be the false base-state claim
+        # this collection exists to avoid.
+        collector = _load_script(BASE_COLLECTOR)
+        crowd = [
+            {"name": f"other{index}.py", "type": "file"}
+            for index in range(collector._LISTING_CAP)
+        ]
+        with tempfile.TemporaryDirectory() as scratch:
+            context = pathlib.Path(scratch)
+            _comparison(context, "d" * 40, [_file("vendor/late.py", "modified")])
+            collector._provider_json = _provider(
+                [], listings={"vendor": crowd}, contents={}
+            )
+            written, unavailable = collector.collect(context, "o/r", 4096)
+            self.assertEqual(0, written)
+            self.assertEqual(["listing-truncated vendor/late.py"], unavailable)
+
+        # A short listing that genuinely lacks the name still reports absence.
+        with tempfile.TemporaryDirectory() as scratch:
+            context = pathlib.Path(scratch)
+            _comparison(context, "d" * 40, [_file("vendor/late.py", "modified")])
+            collector._provider_json = _provider(
+                [],
+                listings={"vendor": [{"name": "other.py", "type": "file"}]},
+                contents={},
+            )
+            _, unavailable = collector.collect(context, "o/r", 4096)
+            self.assertEqual(["absent-at-merge-base vendor/late.py"], unavailable)
 
     def test_the_budget_names_the_files_it_drops(self) -> None:
         collector = _load_script(BASE_COLLECTOR)
@@ -968,10 +1009,13 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         }
         for name, payload in cases.items():
             with self.subTest(case=name):
-                wrapped, count = chunker.wrap_long_records(payload)
-                # Only newlines are inserted: nothing removed, nothing reordered.
+                wrapped, count, continuations = chunker.wrap_long_records(payload)
+                # Nothing removed, nothing reordered: a continuation adds exactly one
+                # newline and one marker, and nothing else changes.
+                marker = chunker._CONTINUATION
                 self.assertEqual(
-                    payload.replace(b"\n", b""), wrapped.replace(b"\n", b"")
+                    payload.replace(b"\n", b""),
+                    wrapped.replace(b"\n" + marker, b"").replace(b"\n", b""),
                 )
                 for line in wrapped.split(b"\n"):
                     self.assertLessEqual(len(line), cap)
@@ -980,6 +1024,51 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 self.assertEqual(
                     count > 0, any(len(r) > cap for r in payload.split(b"\n"))
                 )
+                self.assertEqual(count > 0, continuations > 0)
+
+    def test_wrapped_continuations_cannot_read_as_diff_lines(self) -> None:
+        # A continuation carries no diff prefix, so a segment beginning with "-" or
+        # "+" would be attributed to the wrong side of the change, or a "+++ b/"
+        # segment to the wrong file.
+        chunker = _load_script(CHUNKER)
+        cap = chunker._LINE_CAP
+        marker = chunker._CONTINUATION
+        record = b"-" + b"x" * (cap - 1) + b"-y" + b"z" * (cap - 3) + b"+tail"
+        wrapped, count, continuations = chunker.wrap_long_records(record + b"\n")
+        self.assertEqual(1, count)
+        self.assertGreaterEqual(continuations, 2)
+        lines = [line for line in wrapped.split(b"\n") if line]
+        self.assertFalse(lines[0].startswith(marker))
+        for line in lines[1:]:
+            with self.subTest(line=line[:8]):
+                self.assertTrue(line.startswith(marker), line[:8])
+
+    def test_a_bound_crossed_only_by_wrapping_is_still_disclosed(self) -> None:
+        # The bound notice must follow the number of parts produced, not the size of
+        # the input. A diff that fits the bound until wrapping pushes it past would
+        # otherwise yield several parts with diff.patch claiming to be the whole thing.
+        chunker = _load_script(CHUNKER)
+        cap = chunker._LINE_CAP
+        payload = (b"w" * (cap + 1) + b"\n") * 2
+        limit = len(payload) + 1
+        self.assertLessEqual(len(payload), limit, "the input must fit before wrapping")
+        wrapped, _, _ = chunker.wrap_long_records(payload)
+        self.assertGreater(len(wrapped), limit, "wrapping must cross the bound")
+        with tempfile.TemporaryDirectory() as scratch:
+            context = pathlib.Path(scratch)
+            (context / "diff.full").write_bytes(payload)
+            parts = chunker.split_diff(context, limit)
+            self.assertGreater(parts, 1)
+            self.assertIn(
+                "bounded at", (context / "diff.patch").read_text(encoding="utf-8")
+            )
+
+    def test_the_overview_is_written_by_the_chunker(self) -> None:
+        # The step must not decide the notice from the pre-wrap byte count.
+        script = str(_context_step(load_yaml(MENTION_WORKFLOW))["run"])
+        self.assertNotIn("cp ", script)
+        self.assertNotIn("bounded at", script)
+        self.assertIn("chunk_diff.py", script)
 
     def test_wrapping_is_disclosed_and_parts_stay_readable(self) -> None:
         chunker = _load_script(CHUNKER)
@@ -992,10 +1081,20 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             parts = sorted((context / "patches").glob("part-*"))
             self.assertTrue(parts)
             rejoined = b"".join(part.read_bytes() for part in parts)
-            self.assertEqual(payload.replace(b"\n", b""), rejoined.replace(b"\n", b""))
+            marker = chunker._CONTINUATION
+            self.assertEqual(
+                payload.replace(b"\n", b""),
+                rejoined.replace(b"\n" + marker, b"").replace(b"\n", b""),
+            )
             notice = (context / "patches" / "README").read_text(encoding="utf-8")
             self.assertIn("hard-wrapped", notice)
             self.assertIn(str(cap), notice)
+            # The marker is disclosed, and why it is needed.
+            self.assertIn(marker.decode(), notice)
+            self.assertIn("continuation", notice)
+            # Wrapping breaks line arithmetic inside the affected hunk, so the caveat
+            # has to reach the reviewer rather than stay in the Decision.
+            self.assertIn("approximate", notice)
 
     def test_commit_list_is_paginated_and_a_capped_file_list_says_so(self) -> None:
         # The provider paginates commits at 250 per page but caps files at 300 with no

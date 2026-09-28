@@ -57,6 +57,10 @@ from typing import Any
 
 _API = "https://api.github.com"
 _FILE_CAP = 300
+# The contents API returns at most this many entries for a directory and does not
+# paginate it. A changed file in a larger directory is simply missing from the listing,
+# which must not be reported as "the base did not hold this".
+_LISTING_CAP = 1000
 _TIMEOUT_SECONDS = 30
 _MANIFEST = "base.manifest"
 
@@ -194,9 +198,16 @@ def decoded_file(payload: dict[str, Any]) -> bytes | None:
 def write_summaries(context: pathlib.Path, comparison: dict[str, Any]) -> None:
     """Write diff.stat and unreviewable.txt from the comparison payload."""
     files = comparison.get("files") or []
+    # A rename's old path is part of what changed. Emitting only the new name leaves
+    # the reviewer unable to say where the file came from, which matters most in the
+    # swap and overwrite cases where another file already occupied the new path.
     lines = [
         f"{entry['status']} +{entry['additions']} -{entry['deletions']} "
-        f"{entry['filename']}"
+        + (
+            f"{entry['previous_filename']} -> {entry['filename']}"
+            if entry.get("status") == "renamed" and entry.get("previous_filename")
+            else str(entry["filename"])
+        )
         for entry in files
     ]
     if len(files) >= _FILE_CAP:
@@ -239,7 +250,7 @@ def collect(
     # and pre-change bytes but nothing about what the candidate actually changed.
     (context / "assembled.diff").write_text(
         "".join(
-            f"--- a/{entry['filename']}\n+++ b/{entry['filename']}\n{entry['patch']}\n"
+            f"--- a/{base_path_of(entry)}\n+++ b/{entry['filename']}\n{entry['patch']}\n"
             for entry in comparison.get("files") or []
             if entry.get("patch") is not None
         ),
@@ -270,9 +281,16 @@ def collect(
             listings[directory] = _provider_json(
                 listing_endpoint(repository, directory, merge_base)
             )
-        declared = entry_type(listings[directory], pathlib.PurePosixPath(source).name)
+        listing = listings[directory]
+        declared = entry_type(listing, pathlib.PurePosixPath(source).name)
         if declared is None:
-            unavailable.append(f"absent-at-merge-base {source}")
+            if isinstance(listing, list) and len(listing) >= _LISTING_CAP:
+                # The name may be present in the part the provider did not return.
+                # Saying "absent" here would be the false base-state claim this
+                # collection exists to avoid.
+                unavailable.append(f"listing-truncated {source}")
+            else:
+                unavailable.append(f"absent-at-merge-base {source}")
             continue
         if declared != "file":
             unavailable.append(f"not-a-plain-file {source}")
@@ -293,12 +311,19 @@ def collect(
         destination.write_bytes(content)
         remaining -= len(content)
         written += 1
+    renames = [
+        f"renamed {entry['previous_filename']} -> {entry['filename']}"
+        for entry in comparison.get("files") or []
+        if entry.get("status") == "renamed" and entry.get("previous_filename")
+    ]
     lines = [
         "Exact pre-change bytes of each changed file, taken at the merge base",
         f"({merge_base or 'unknown'}). A renamed file is fetched under its previous",
-        "path and written under its new one.",
-        f"Written: {written}. Unavailable: {len(unavailable)}.",
+        "path and written under its new one, so the mapping is listed here: the",
+        "bytes under a new name came from the old one.",
+        f"Written: {written}. Unavailable: {len(unavailable)}. Renamed: {len(renames)}.",
         "",
+        *renames,
         *unavailable,
     ]
     (context / _MANIFEST).write_text(

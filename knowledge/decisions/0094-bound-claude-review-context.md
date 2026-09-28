@@ -203,7 +203,11 @@ No new dependency, service or runtime is introduced.
    different revision whenever the target branch has advanced; a **renamed** entry is
    fetched under `previous_filename`, because that is where the base holds it and
    fetching the new path could return whatever unrelated file a swap or overwrite
-   rename replaced; a path's real type is read from its **parent directory listing**, not
+   rename replaced -- and the old path is kept in every retained artefact, since bytes
+   written under a new name with no record of where they came from leave the reviewer
+   unable to reason about precisely the swap and overwrite cases the rename handling
+   exists for: `diff.stat` shows `old -> new`, the assembled fallback diff uses
+   `--- a/<old>` against `+++ b/<new>`, and `base.manifest` lists the mapping; a path's real type is read from its **parent directory listing**, not
    from the shape of the contents response, because the contents API answers a symlink
    to a regular file with the target's bytes under an ordinary `type: file` -- so a
    symlink, a submodule, or a large file returned with `encoding: "none"` is recorded as
@@ -242,8 +246,21 @@ No new dependency, service or runtime is introduced.
    UTF-8 split was not sufficient: the reviewer's `Read` truncates a physical line
    beyond roughly two thousand characters and indexes by line, so a minified or
    generated record would leave its tail unreachable while the prompt claimed
-   `patches/` holds the whole diff. Only newlines are inserted -- no byte is removed or
-   reordered -- and the wrapping is disclosed in `patches/README`.
+   `patches/` holds the whole diff. No byte is removed or reordered, and each continuation line is
+   marked with a character that never begins a line of unified diff output: without it
+   a segment starting with `-` or `+` would read as a deletion or an addition, and one
+   starting with `+++ b/` as a different file, so the reviewer could attribute content
+   to the wrong side of the change. The wrapping, its count and the marker's purpose are
+   disclosed in `patches/README`, together with the consequence for line numbering: a
+   wrapped record occupies several displayed lines, so counting lines within its hunk
+   no longer matches the file's own numbering, and a finding there cites the hunk
+   header with the line number called approximate.
+
+   The bound notice follows the **number of parts produced**, not the size of the
+   input, and the chunker writes `diff.patch` itself for that reason. A diff that fits
+   the bound until wrapping pushes it past would otherwise be split into parts while
+   `diff.patch` claimed to be the whole thing -- the reviewer would finish without ever
+   learning a tail existed.
 
    A refused diff does not fail the step, and does not leave the reviewer without the
    change either. The provider can decline the diff of a very

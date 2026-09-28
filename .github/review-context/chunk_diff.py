@@ -22,40 +22,56 @@ _MAX_PARTS = 9999
 # present. Such records are therefore hard-wrapped at a reader-visible boundary. Only
 # newlines are inserted: no byte of the diff is removed or reordered.
 _LINE_CAP = 1900
+# A wrapped continuation carries no diff prefix, so a segment beginning with "-", "+",
+# "@@" or "+++ b/" would read as a deletion, an addition or a new hunk or file header
+# and be attributed to the wrong side of the change. Continuations are therefore marked
+# with a byte that never begins a line of unified diff output.
+_CONTINUATION = b">"
 
 
-def _wrap_point(record: bytes) -> int:
-    """Return how many bytes of an oversized record may go on one physical line."""
-    end = _LINE_CAP
+def _wrap_point(record: bytes, room: int) -> int:
+    """Return how many bytes of an oversized record fit on one line without splitting."""
+    end = room
     while end > 0 and (record[end] & 0xC0) == 0x80:
         end -= 1
-    return end or _LINE_CAP
+    return end or room
 
 
-def wrap_long_records(data: bytes) -> tuple[bytes, int]:
-    """Hard-wrap records longer than the readable cap; return the text and the count."""
+def wrap_long_records(data: bytes) -> tuple[bytes, int, int]:
+    """Hard-wrap records longer than the readable cap.
+
+    Returns the wrapped text, how many records were wrapped, and how many continuation
+    lines were introduced. Each continuation costs exactly two bytes -- one newline and
+    one marker -- which is what lets a test assert that nothing else changed.
+    """
     out = bytearray()
     wrapped = 0
+    continuations = 0
     for record in data.split(b"\n"):
         if len(record) <= _LINE_CAP:
             out += record + b"\n"
             continue
         wrapped += 1
         offset = 0
+        first = True
         while offset < len(record):
+            room = _LINE_CAP if first else _LINE_CAP - len(_CONTINUATION)
+            remaining = len(record) - offset
             take = (
-                _wrap_point(record[offset:])
-                if len(record) - offset > _LINE_CAP
-                else len(record) - offset
+                remaining if remaining <= room else _wrap_point(record[offset:], room)
             )
+            if not first:
+                out += _CONTINUATION
+                continuations += 1
             out += record[offset : offset + take] + b"\n"
             offset += take
+            first = False
     if data.endswith(b"\n"):
         # split() produced a trailing empty record, which added one newline too many.
         del out[-1:]
     elif out.endswith(b"\n"):
         del out[-1:]
-    return bytes(out), wrapped
+    return bytes(out), wrapped, continuations
 
 
 def next_cut(buffer: bytes, limit: int) -> int:
@@ -77,14 +93,24 @@ def split_diff(context: pathlib.Path, limit: int) -> int:
     """Write ``diff.full`` as bounded parts and return how many were written."""
     if limit < 1:
         raise ValueError("the byte bound must be positive")
-    data, wrapped = wrap_long_records((context / "diff.full").read_bytes())
+    data, wrapped, continuations = wrap_long_records(
+        (context / "diff.full").read_bytes()
+    )
     parts = context / "patches"
     parts.mkdir(exist_ok=True)
     if wrapped:
         (parts / "README").write_text(
             f"{wrapped} diff record(s) exceeded {_LINE_CAP} bytes on one line and were\n"
-            "hard-wrapped so a line-oriented reader can reach all of them. Only\n"
-            "newlines were inserted; no byte was removed or reordered.\n",
+            f"hard-wrapped over {continuations} continuation line(s) so a line-oriented\n"
+            "reader can reach all of them. No byte of the diff was removed or\n"
+            f"reordered. Each continuation begins with {_CONTINUATION.decode()!r},\n"
+            "which never begins a line of unified diff output: without it a segment\n"
+            "starting with '-' or '+' would read as a deletion or an addition.\n"
+            "\n"
+            "A wrapped record occupies several displayed lines, so counting lines\n"
+            "within its hunk no longer matches the file's own numbering. For a\n"
+            "finding inside a wrapped record, cite the hunk header and say the line\n"
+            "number is approximate rather than computing one from this text.\n",
             encoding="utf-8",
         )
     offset = 0
@@ -96,6 +122,17 @@ def split_diff(context: pathlib.Path, limit: int) -> int:
             raise ValueError("diff needs more parts than the naming allows")
         (parts / f"part-{index:04d}").write_bytes(data[offset : offset + take])
         offset += take
+    # The overview and its notice are written here rather than by the caller, because
+    # only this function knows how many parts exist. Deciding from the *input* size
+    # would miss a diff that fits the bound until wrapping pushes it past: the
+    # reviewer would then read part one with nothing saying a tail exists.
+    overview = (parts / "part-0001").read_bytes() if index else b""
+    if index > 1:
+        overview += (
+            f"\n[bounded at {limit} bytes of {len(data)}; the whole diff is in "
+            "patches/, read in name order]\n"
+        ).encode()
+    (context / "diff.patch").write_bytes(overview)
     return index
 
 

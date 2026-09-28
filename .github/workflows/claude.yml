@@ -234,14 +234,12 @@ jobs:
             # reader cannot decode. The chunker is encoding-aware instead. It is a
             # committed script, so it comes from the default branch like this workflow
             # does, and the suite exercises it directly rather than by extraction.
+            # The chunker writes diff.patch and its bound notice as well, because
+            # only it knows how many parts wrapping actually produced. Deciding here
+            # from the pre-wrap byte count missed a diff that fitted the bound until
+            # wrapping pushed it past.
             python3 .github/review-context/chunk_diff.py \
               "${CONTEXT_DIR}" "${MAX_BYTES}"
-            # The overview is the first whole part, for the same reason.
-            cp "${CONTEXT_DIR}/patches/part-0001" "${CONTEXT_DIR}/diff.patch"
-            if [ "${full_bytes}" -gt "${MAX_BYTES}" ]; then
-              printf '\n[bounded at %s bytes of %s; the whole diff is in patches/, read in name order]\n' \
-                "${MAX_BYTES}" "${full_bytes}" >> "${CONTEXT_DIR}/diff.patch"
-            fi
           fi
           rm -f "${CONTEXT_DIR}/diff.full" "${CONTEXT_DIR}/comparison.json"
 
