@@ -2282,6 +2282,20 @@ class VF0DockerBackendTests(unittest.TestCase):
         with self.assertRaisesRegex(ExecutionRejected, "DOCKER_EXECUTABLE"):
             DockerBackend(self.image, docker_executable="/usr/local/bin/docker")
 
+    def test_docker_executable_rejects_equality_spoofing_string_subclass(
+        self,
+    ) -> None:
+        class SpoofedExecutable(str):
+            def __eq__(self, other: object) -> bool:
+                del other
+                return True
+
+        with self.assertRaisesRegex(ExecutionRejected, "^DOCKER_EXECUTABLE$"):
+            DockerBackend(
+                self.image,
+                docker_executable=SpoofedExecutable("/tmp/not-docker"),
+            )
+
     def test_validated_backend_configuration_cannot_be_reassigned(self) -> None:
         for backend in (
             DockerBackend(self.image),

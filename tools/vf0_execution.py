@@ -1119,7 +1119,12 @@ class DockerBackend:
 
     def __post_init__(self) -> None:
         _need(_IMAGE_RE.fullmatch(self.image) is not None, "OCI_IMAGE_PIN")
-        _need(self.docker_executable == "/usr/bin/docker", "DOCKER_EXECUTABLE")
+        _need(
+            type(self.docker_executable) is str
+            and self.docker_executable == "/usr/bin/docker",
+            "DOCKER_EXECUTABLE",
+        )
+        object.__setattr__(self, "docker_executable", "/usr/bin/docker")
 
     def _command(
         self, *args: str, timeout: float = 30

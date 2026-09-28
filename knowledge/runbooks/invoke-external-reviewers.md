@@ -122,11 +122,15 @@ a general `@claude` response does not prove managed Code Review is enabled.
 Gnostoa's [mention workflow](https://github.com/ktogias/gnostoa/blob/main/.github/workflows/claude.yml)
 was integrated in #320 and its exact-pinned Actions allowlist was verified in
 [#321](https://github.com/ktogias/gnostoa/issues/321). For a review through that
-route, address `@claude` with a bounded read-only request naming the exact PR head,
-scope, required finding/report format and prohibition on source or metadata
-changes. Reconcile the returned run and substantive report with that head;
-the earlier head/WI smoke response is not review completion. This Actions route
-does not establish managed-review enablement or reviewer qualification.
+route, note that it is write-capable: the action exchanges OIDC for a GitHub App
+token with `contents`, `pull_requests` and `issues` write, and the mention job
+has no enforced review-only tool allowlist. A prompt that requests review and
+prohibits edits does not constrain that token. **Do not trigger this route on an
+untrusted PR or issue, even when a trusted collaborator is the caller.** For
+trusted content, a bounded request can name the exact head, scope and report
+format; reconcile the returned run and substantive report with that head. The
+earlier head/WI smoke response is not review completion. This Actions route does
+not establish managed-review enablement or reviewer qualification.
 
 For dedicated security analysis, [Claude's security guide][claude-security]
 documents **`/security-review` inside Claude Code**, or the separately configured
