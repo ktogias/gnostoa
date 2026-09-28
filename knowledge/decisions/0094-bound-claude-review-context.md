@@ -185,13 +185,17 @@ No new dependency, service or runtime is introduced.
    many when the reported total exceeds the listed count. The changed-file list is
    capped at 300 and is **not** paginable, so `diff.stat` carries an explicit notice
    once it reaches that cap rather than letting a capped summary read as the whole
-   change. A file the comparison returns with no patch is binary or oversized: its
-   bytes are in neither the diff nor the checkout, so it is listed in
-   `unreviewable.txt` and the prompt requires the reviewer to report it as not
-   examined rather than imply it was reviewed.
+   change. A missing per-file patch is a **neutral fact, not a file type**. It occurs for a
+   binary or oversized blob, whose bytes are in neither the diff nor the checkout, and
+   equally for a metadata-only change -- a mode bit, an empty file, a pure rename --
+   which is perfectly reviewable from its status. Calling every such entry binary made
+   the prompt require a real change to be reported as not examined, and dropped it from
+   the assembled fallback entirely. The artefact is therefore `no-patch.txt`, it states
+   both possibilities and leaves the status to distinguish them, and the fallback keeps
+   a header for every changed file whether or not it carried hunks.
 
    One committed script, `.github/review-context/build_review_context.py`, derives
-   `diff.stat`, `unreviewable.txt` and `base/` from a single comparison payload. That
+   `diff.stat`, `no-patch.txt` and `base/` from a single comparison payload. That
    keeps the comparison to one request and keeps the step free of an external `jq`,
    and it puts the field semantics somewhere the suite can exercise directly.
 

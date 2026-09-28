@@ -518,7 +518,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             "commits.log",
             "diff.patch",
             "patches/",
-            "unreviewable.txt",
+            "no-patch.txt",
             "base/",
             "base.manifest",
         ):
@@ -787,7 +787,12 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             # a refused diff still leaves the changed content reachable.
             assembled = (context / "assembled.diff").read_text(encoding="utf-8")
             self.assertIn("+++ b/src/kept.py", assembled)
-            self.assertNotIn("asset.png", assembled)
+            # A file with no hunks stays in the fallback as a header recording the
+            # change. Dropping it -- which this assertion previously required --
+            # removed a reviewable metadata-only change from the only artefact that
+            # carries the diff when the provider refuses the unified one.
+            self.assertIn("+++ b/asset.png", assembled)
+            self.assertIn("[no hunks: added", assembled)
             # A rename's old path must survive every retained artefact: without it the
             # reviewer cannot say where the file came from, which is exactly what the
             # swap and overwrite cases turn on.
@@ -1124,7 +1129,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                 "caps", (context / "diff.stat").read_text(encoding="utf-8")
             )
 
-    def test_files_without_a_patch_are_listed_as_unreviewable(self) -> None:
+    def test_a_missing_patch_is_recorded_without_inferring_the_file_type(self) -> None:
         # A binary or oversized file has no patch, and its bytes are in neither the
         # diff nor the base checkout, so it cannot be reviewed from this context.
         workflow = load_yaml(MENTION_WORKFLOW)
@@ -1154,11 +1159,17 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
                     ]
                 },
             )
-            listed = (context / "unreviewable.txt").read_text(encoding="utf-8")
+            listed = (context / "no-patch.txt").read_text(encoding="utf-8")
             self.assertIn("asset.png", listed)
             self.assertNotIn("code.py", listed)
+            # The listing must not assert a file type: a metadata-only change -- a mode
+            # bit, an empty file, a pure rename -- also arrives without hunks and is
+            # perfectly reviewable, so calling every such entry binary made the
+            # reviewer report a real change as not examined.
+            self.assertIn("metadata-only", listed)
+            self.assertNotIn("must report it as not examined", listed)
         prompt = " ".join(_claude_step(workflow)["with"]["prompt"].split())
-        self.assertIn("unreviewable.txt", prompt)
+        self.assertIn("no-patch.txt", prompt)
         self.assertIn("not examined", prompt)
 
     def test_deny_rules_cover_every_granted_filesystem_tool(self) -> None:
@@ -1346,7 +1357,7 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
             )
             # Every artefact the prompt names exists, including the manifest, which
             # lives outside base/ so it cannot collide with a repository path.
-            self.assertIn("f.txt", (context / "unreviewable.txt").read_text())
+            self.assertIn("f.txt", (context / "no-patch.txt").read_text())
             manifest = (context / "base.manifest").read_text(encoding="utf-8")
             self.assertIn("Written: 0", manifest)
             self.assertFalse((context / "base" / "base.manifest").exists())

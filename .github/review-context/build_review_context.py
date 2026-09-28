@@ -1,6 +1,6 @@
 """Build the bounded review context from one provider comparison payload.
 
-Writes ``diff.stat``, ``unreviewable.txt``, ``base.manifest`` and ``base/``. Deriving
+Writes ``diff.stat``, ``no-patch.txt``, ``base.manifest`` and ``base/``. Deriving
 them from a single payload keeps the comparison to one request, keeps the workflow step
 free of an external ``jq``, and puts the field semantics somewhere the suite can
 exercise directly rather than by scraping YAML.
@@ -196,7 +196,7 @@ def decoded_file(payload: dict[str, Any]) -> bytes | None:
 
 
 def write_summaries(context: pathlib.Path, comparison: dict[str, Any]) -> None:
-    """Write diff.stat and unreviewable.txt from the comparison payload."""
+    """Write diff.stat and no-patch.txt from the comparison payload."""
     files = comparison.get("files") or []
     # A rename's old path is part of what changed. Emitting only the new name leaves
     # the reviewer unable to say where the file came from, which matters most in the
@@ -220,13 +220,31 @@ def write_summaries(context: pathlib.Path, comparison: dict[str, Any]) -> None:
     (context / "diff.stat").write_text(
         "".join(f"{line}\n" for line in lines), encoding="utf-8"
     )
-    # A file with no patch is binary or oversized: its bytes are in neither the diff
-    # nor the checkout, so the reviewer must report it as not examined.
-    (context / "unreviewable.txt").write_text(
+    # A missing per-file patch is a neutral fact, not a file type. It happens for a
+    # binary or oversized blob, and equally for a metadata-only change -- a mode bit, an
+    # empty file, a rename with no textual edit -- which is perfectly reviewable. Saying
+    # "binary or oversized" here made the reviewer report a real change as not examined.
+    without_patch = [entry for entry in files if entry.get("patch") is None]
+    (context / "no-patch.txt").write_text(
         "".join(
-            f"{entry['status']} {str(entry['sha'])[:9]} {entry['filename']}\n"
-            for entry in files
-            if entry.get("patch") is None
+            [
+                "Changed files for which the comparison carried no hunks. This means\n",
+                "either a binary or oversized blob, whose bytes are in neither the diff\n",
+                "nor the checkout, or a metadata-only change such as a mode bit, an\n",
+                "empty file or a pure rename. The status below distinguishes them; the\n",
+                "unified diff may still describe the change.\n",
+                "\n",
+            ]
+            + [
+                f"{entry['status']} {str(entry['sha'])[:9]} "
+                + (
+                    f"{entry['previous_filename']} -> {entry['filename']}\n"
+                    if entry.get("status") == "renamed"
+                    and entry.get("previous_filename")
+                    else f"{entry['filename']}\n"
+                )
+                for entry in without_patch
+            ]
         ),
         encoding="utf-8",
     )
@@ -250,9 +268,15 @@ def collect(
     # and pre-change bytes but nothing about what the candidate actually changed.
     (context / "assembled.diff").write_text(
         "".join(
-            f"--- a/{base_path_of(entry)}\n+++ b/{entry['filename']}\n{entry['patch']}\n"
+            f"--- a/{base_path_of(entry)}\n+++ b/{entry['filename']}\n"
+            + (
+                f"{entry['patch']}\n"
+                if entry.get("patch") is not None
+                # A metadata-only change has no hunks, and dropping it here would have
+                # removed a reviewable change from the fallback entirely.
+                else f"[no hunks: {entry['status']}; see no-patch.txt]\n"
+            )
             for entry in comparison.get("files") or []
-            if entry.get("patch") is not None
         ),
         encoding="utf-8",
     )
@@ -265,7 +289,7 @@ def collect(
     for entry in comparison.get("files") or []:
         name = str(entry["filename"])
         if entry.get("patch") is None:
-            # Already named in unreviewable.txt.
+            # Already named in no-patch.txt.
             continue
         if entry.get("status") == "added":
             unavailable.append(f"added-by-candidate {name}")
