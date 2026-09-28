@@ -129,11 +129,27 @@ def split_diff(context: pathlib.Path, limit: int) -> int:
     # would miss a diff that fits the bound until wrapping pushes it past: the
     # reviewer would then read part one with nothing saying a tail exists.
     overview = (parts / "part-0001").read_bytes() if index else b""
+    notices = []
     if index > 1:
-        overview += (
-            f"\n[bounded at {limit} bytes of {len(data)}; the whole diff is in "
-            "patches/, read in name order]\n"
-        ).encode()
+        notices.append(
+            f"[bounded at {limit} bytes of {len(data)}; the whole diff is in "
+            "patches/, read in name order]"
+        )
+    if wrapped:
+        # Disclosed whenever wrapping happened, not only when the size bound was also
+        # crossed. A diff holding one very long record can fit in a single part, and
+        # then diff.patch carried inserted newlines and continuation markers with
+        # nothing saying they are synthetic -- the reviewer reads them as real diff
+        # content and computes line numbers from them. The bound notice is also what
+        # sends it to patches/README, so without this it never learns the rule.
+        notices.append(
+            f"[{wrapped} long record(s) hard-wrapped over {continuations} "
+            f"continuation line(s) beginning {_CONTINUATION.decode()!r}; no byte was "
+            "removed or reordered, but a line number inside a wrapped record is "
+            "approximate -- see patches/README]"
+        )
+    if notices:
+        overview += ("\n" + "\n".join(notices) + "\n").encode()
     (context / "diff.patch").write_bytes(overview)
     return index
 

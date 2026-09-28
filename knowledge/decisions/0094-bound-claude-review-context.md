@@ -252,6 +252,15 @@ No new dependency, service or runtime is introduced.
    `diff.patch` claimed to be the whole thing -- the reviewer would finish without ever
    learning a tail existed.
 
+   **Wrapping is disclosed on its own**, whenever a record was wrapped, and not only
+   when the size bound was also crossed. A diff holding one very long record can fit in
+   a single part, and then `diff.patch` carried inserted newlines and continuation
+   markers with nothing saying they are synthetic: the reviewer would read them as real
+   diff content and compute line numbers from them. Tying the disclosure to the bound
+   notice also hid the pointer to `patches/README`, where the consequence for line
+   numbering is explained -- so the one case that most needs the rule was the one case
+   that never received it.
+
    A refused diff does not fail the step, and does not leave the reviewer without the
    change either. The provider can decline the diff of a very
    large comparison, and exiting there would reproduce the large-Pull-Request failure

@@ -791,6 +791,31 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertNotIn("bounded at", script)
         self.assertIn("chunk_diff.py", script)
 
+    def test_wrapping_is_disclosed_even_when_the_diff_fits_one_part(self) -> None:
+        # The bound notice is what sends the reviewer to patches/README, where the
+        # wrapping and its consequence for line numbering are explained. A diff that
+        # holds one very long record but still fits the bound produced no notice at
+        # all, so diff.patch carried inserted newlines and continuation markers with
+        # nothing saying they are synthetic -- the reviewer would read them as real
+        # diff content and compute line numbers from them.
+        chunker = _load_script(CHUNKER)
+        with tempfile.TemporaryDirectory() as scratch:
+            context = pathlib.Path(scratch)
+            long_record = b"+" + b"x" * (chunker._LINE_CAP * 2)
+            (context / "diff.full").write_bytes(
+                b"diff --git a/m.js b/m.js\n" + long_record + b"\n"
+            )
+            parts = chunker.split_diff(context, 1 << 20)
+            patch = (context / "diff.patch").read_text(encoding="utf-8")
+
+        # One part: the size bound was never crossed, so the old notice stays away.
+        self.assertEqual(1, parts)
+        self.assertNotIn("bounded at", patch)
+        # But the wrapping happened and must be disclosed where the reviewer reads.
+        self.assertIn(chunker._CONTINUATION.decode(), patch)
+        self.assertIn("wrapped", patch)
+        self.assertIn("patches/README", patch)
+
     def test_wrapping_is_disclosed_and_parts_stay_readable(self) -> None:
         chunker = _load_script(CHUNKER)
         cap = chunker._LINE_CAP
