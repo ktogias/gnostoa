@@ -1728,6 +1728,18 @@ def _backend_runtime_identities(
     return None, None
 
 
+def _controller_owned_backend(backend: ExecutionBackend) -> ExecutionBackend:
+    """Discard caller-added instance state before built-in identity claims."""
+    if type(backend) is SubprocessBackend:
+        return SubprocessBackend()
+    if type(backend) is DockerBackend:
+        return DockerBackend(
+            image=backend.image,
+            docker_executable=backend.docker_executable,
+        )
+    return backend
+
+
 def _snapshot_evidence(
     evidence: Sequence[EvidenceFile],
 ) -> tuple[EvidenceFile, ...]:
@@ -1818,24 +1830,36 @@ def execute(
 ) -> ExecutionObservation:
     """Execute one explicit subject and return only bounded untrusted observations."""
 
+    _need(type(subject) is GitSubject, "SUBJECT")
+    controller_subject = GitSubject(commit=subject.commit, tree=subject.tree)
+    backend_subject = GitSubject(
+        commit=controller_subject.commit,
+        tree=controller_subject.tree,
+    )
     configured_limits = ExecutionLimits() if limits is None else limits
     controller_limits = _snapshot_limits(configured_limits)
     backend_limits = _snapshot_limits(controller_limits)
     command_snapshot = _snapshot_command(command)
     evidence_snapshot = _snapshot_evidence(evidence)
+    controller_backend = _controller_owned_backend(backend)
     command_sha256 = _identity_digest(list(command_snapshot))
     limits_sha256 = _limits_identity(controller_limits)
-    backend_identity, runtime_identity = _backend_runtime_identities(backend)
+    backend_identity, runtime_identity = _backend_runtime_identities(controller_backend)
     with tempfile.TemporaryDirectory(prefix="gnostoa-vf0-execution-") as temporary:
         temp = Path(temporary)
         root = temp / "subject"
-        baseline = _materialize_subject(repository, subject, root)
+        baseline = _materialize_subject(repository, controller_subject, root)
         expected = _overlay_evidence(root, baseline, evidence_snapshot)
         before_files, before_directories = _snapshot(root)
         _need(before_files == expected, "SUBJECT_BEFORE_EXECUTION")
         before_digest = _manifest_digest(before_files, before_directories)
         capture = _validate_backend_capture(
-            backend.run(root, command_snapshot, backend_limits, subject=subject),
+            controller_backend.run(
+                root,
+                command_snapshot,
+                backend_limits,
+                subject=backend_subject,
+            ),
             controller_limits,
         )
         after_files, after_directories = _snapshot(root)
@@ -1847,7 +1871,7 @@ def execute(
             sorted((item.path, _sha256(item.content)) for item in evidence_snapshot)
         )
         return ExecutionObservation(
-            subject=subject,
+            subject=controller_subject,
             evidence_sha256=evidence_digests,
             command_sha256=command_sha256,
             limits_sha256=limits_sha256,
@@ -1856,5 +1880,5 @@ def execute(
             before_manifest_sha256=before_digest,
             after_manifest_sha256=after_digest,
             capture=capture,
-            subject_unchanged=(type(backend) is DockerBackend),
+            subject_unchanged=(type(controller_backend) is DockerBackend),
         )
