@@ -1901,6 +1901,14 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         self.assertIn("default branch", prompt)
         self.assertIn("may have advanced past Base", prompt)
         self.assertNotIn("checkout is the Pull Request's **base**", prompt)
+        # The same claim lived in three places -- the prompt, the Decision, and the
+        # workflow's own comment -- and correcting two left the third contradicting
+        # them. A reader of the security rationale must not be told the checkout
+        # supplies pre-change state either.
+        workflow_text = MENTION_WORKFLOW.read_text(encoding="utf-8")
+        checkout_rationale = workflow_text.split("- name: Checkout", 1)[0]
+        self.assertNotIn("pre-change state of any file", checkout_rationale)
+        self.assertIn("NOT a pre-change state", checkout_rationale)
         self.assertNotIn("Read or Grep the checkout for the pre-change", prompt)
 
     def test_review_context_is_collected_with_fixed_arguments(self) -> None:

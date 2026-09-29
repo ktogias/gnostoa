@@ -41,10 +41,14 @@ jobs:
       # docs/security.md of the pinned action warns against checking out an untrusted
       # ref before it, and CodeQL flags the shape itself -- a credential-bearing
       # workflow that materialises a contributor-controlled tree -- however the tree
-      # is placed. So only the base is checked out: it supplies the entry route the
-      # prompt names and the pre-change state of any file. The change itself arrives
-      # as trusted artefacts built from the provider's compare API, so no candidate
-      # file, symlink or mode ever reaches this runner's filesystem.
+      # is placed. So only the protected default branch is checked out, and it supplies
+      # the entry route the prompt names -- nothing else. It is NOT this Pull Request's
+      # base and NOT a pre-change state: for a candidate targeting another branch, or
+      # whose base predates this workflow revision, these bytes can be unrelated to the
+      # change. The prompt tells the reviewer exactly that, and this comment used to say
+      # the opposite. Everything about the change arrives as trusted artefacts built
+      # from the provider's compare API, so no candidate file, symlink or mode ever
+      # reaches this runner's filesystem.
       - name: Checkout the base for the entry route
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
