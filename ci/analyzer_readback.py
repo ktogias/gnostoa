@@ -232,7 +232,7 @@ def _review_comments(
 ) -> list[Mapping[str, Any]]:
     return _collect_pages(
         client,
-        f"{_API_ROOT}/repos/{repository}/pulls/{pull_number}/comments?per_page=100",
+        f"{_API_ROOT}/repos/{repository}/pulls/{pull_number}/comments?per_page=50",
         extract=_list_payload,
     )
 

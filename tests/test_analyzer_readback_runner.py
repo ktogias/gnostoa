@@ -13,6 +13,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 
 from tools.analyzer_readback import canonical_json
 
@@ -56,7 +57,7 @@ def _github_urls() -> dict[str, str]:
         "pr": f"{root}/pulls/312",
         "statuses": f"{root}/commits/{HEAD}/statuses?per_page=100",
         "checks": f"{root}/commits/{HEAD}/check-runs?per_page=100",
-        "comments": f"{root}/pulls/312/comments?per_page=100",
+        "comments": f"{root}/pulls/312/comments?per_page=50",
     }
 
 
@@ -444,6 +445,43 @@ class AnalyzerTransportCredentialTests(unittest.TestCase):
 
 
 class AnalyzerReadbackRunnerTests(unittest.TestCase):
+    def test_review_comment_pages_fit_bound_and_retain_all_comments(self) -> None:
+        endpoint = "https://api.github.com/repos/ktogias/gnostoa/pulls/312/comments"
+        total_comments = 234
+
+        class _BoundedReviewCommentPages:
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            def get(self, url: str) -> tuple[Any, Mapping[str, str]]:
+                self.calls.append(url)
+                query = parse_qs(urlsplit(url).query)
+                page_size = int(query["per_page"][0])
+                if page_size > 50:
+                    raise runner.RunnerError("GitHub API response exceeds bounded size")
+                page = int(query.get("page", ["1"])[0])
+                start = (page - 1) * page_size
+                stop = min(start + page_size, total_comments)
+                comments = [{"id": comment_id} for comment_id in range(start, stop)]
+                headers: dict[str, str] = {}
+                if stop < total_comments:
+                    headers["link"] = (
+                        f'<{endpoint}?per_page={page_size}&page={page + 1}>; rel="next"'
+                    )
+                return comments, headers
+
+        client = _BoundedReviewCommentPages()
+        comments = runner._review_comments(client, "ktogias/gnostoa", 312)
+
+        self.assertEqual(list(range(total_comments)), [item["id"] for item in comments])
+        self.assertEqual(5, len(client.calls))
+        self.assertTrue(
+            all(
+                parse_qs(urlsplit(url).query)["per_page"] == ["50"]
+                for url in client.calls
+            )
+        )
+
     def test_github_client_maps_http_protocol_failure_to_runner_error(self) -> None:
         client = runner.GitHubReadClient("test-token")
 
