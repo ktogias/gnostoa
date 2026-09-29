@@ -1262,7 +1262,7 @@ class DockerBackend:
         return self._run_control_command(
             args,
             environment_overrides={
-                _OCI_COMPLETION_TOKEN_ENV: completion_token,
+                _OCI_COMPLETION_TOKEN_ENV: completion_token,  # nosemgrep: Semgrep_codacy.yaml.security.hard-coded-tokens -- generated per-run nonce, not a literal
             },
         )
 
