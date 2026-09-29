@@ -137,10 +137,15 @@ No new dependency, service or runtime is introduced.
    carries dispositions without carrying the transcript.
 7. Because the reviewer no longer receives the discussion, the prompt instructs it
    to raise a possibly-settled point as a question rather than as an assertion.
-8. The checkout must bind an explicitly **resolved** commit, and that commit is the
-   **base** (see rule 21). Agent mode performs no Pull Request resolution, so a
-   default checkout on a comment event lands wherever `github.ref` points -- the
-   default branch, or on the review triggers the candidate's merge ref. The reviewed
+8. The checkout must bind an explicitly **resolved** commit, and that commit is
+   `github.workflow_sha` -- the protected default-branch revision this run was bound
+   to (see rule 21). It is **not** the Pull Request's base: for a candidate targeting
+   another branch, or one whose base predates this workflow revision, the two are
+   different commits and the checked-out bytes can be unrelated to the change. Saying
+   "the base" here would have a maintainer reading this rule treat them as the same.
+   Agent mode performs no Pull Request resolution, so a default checkout on a comment
+   event lands wherever `github.ref` points -- the default branch, or on the review
+   triggers the candidate's merge ref. The reviewed
    head is still resolved, in order, from a submitted review's `review.commit_id`
    when the event carries one (rule 18), else the event's own Pull Request head SHA,
    else the head reported by a token-side lookup of the resolved pull number, else

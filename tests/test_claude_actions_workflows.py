@@ -1909,6 +1909,15 @@ class ClaudeActionsWorkflowTests(unittest.TestCase):
         checkout_rationale = workflow_text.split("- name: Checkout", 1)[0]
         self.assertNotIn("pre-change state of any file", checkout_rationale)
         self.assertIn("NOT a pre-change state", checkout_rationale)
+        # And the normative rule that names what is checked out must not call it the
+        # base either. This claim has now been corrected in four separate places; the
+        # test covers each so the next correction cannot leave one behind.
+        decision = (
+            ROOT / "knowledge" / "decisions" / "0094-bound-claude-review-context.md"
+        ).read_text(encoding="utf-8")
+        rule_eight = decision.split("8. The checkout must bind", 1)[1].split("\n9.", 1)[0]
+        self.assertIn("github.workflow_sha", rule_eight)
+        self.assertIn("not** the Pull Request's base", rule_eight)
         self.assertNotIn("Read or Grep the checkout for the pre-change", prompt)
 
     def test_review_context_is_collected_with_fixed_arguments(self) -> None:
